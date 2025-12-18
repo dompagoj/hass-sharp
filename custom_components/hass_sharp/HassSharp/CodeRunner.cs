@@ -1,0 +1,61 @@
+using System.Reflection;
+
+namespace HassSharp;
+
+public class CodeRunner
+{
+    readonly List<(Type, Automation)> _automationInstances = [];
+    public Dictionary<string, List<string>> DependencyTracking { get; } = new();
+
+    public void AddInstance(Automation instance, Type type)
+    {
+        _automationInstances.Add((type, instance));
+    }
+
+    public void RunMethod(string methodName)
+    {
+        var (type, instance) = _automationInstances.First();
+
+        var result = type.InvokeMember(methodName,
+            BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
+            null,
+            instance,
+            null
+        );
+
+        if (result is Task task)
+        {
+            task.GetAwaiter().GetResult();
+        }
+    }
+
+    public void RunAll()
+    {
+        foreach (var (type, instance) in _automationInstances)
+        {
+            Logger.Info($"Running Class {type.Name}");
+
+            foreach (var method in type.GetMethods().Where(t => t.DeclaringType == type))
+            {
+                Logger.Info($"Running Method {method.Name}");
+                try
+                {
+                    var result = method.Invoke(instance,
+                        BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.DeclaredOnly,
+                        null, null, null);
+
+                    if (result is Task task)
+                    {
+                        task.GetAwaiter().GetResult();
+                    }
+
+                    instance.Initializing = false;
+                }
+                catch (Exception e)
+                {
+                    Logger.Error($"{e.Message} \n {e.StackTrace} \n {e.InnerException?.Message}");
+                }
+            }
+        }
+    }
+}

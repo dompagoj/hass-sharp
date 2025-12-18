@@ -4,8 +4,14 @@ public class ExampleAutomation : Automation
     {
         var buttonState = Entity("input_button.test");
 
+        Logger.Info("Wuhu reloading!!");
+
         if (Initializing) return;
 
-        Logger.Info("Button was pressed!");
+        var inputNumber = EntityUntracked<HaInputNumber>("input_number.test");
+
+        Logger.Info("Setting to 50");
+
+        inputNumber.SetValue(50);
     }
 }

@@ -6,7 +6,7 @@ using Microsoft.CodeAnalysis.CSharp;
 
 namespace HassSharp;
 
-using GetEntity = Func<string, string, HasEntityState?>;
+using GetEntity = Func<string, HasEntityState?>;
 
 public class HasEntityState
 {
@@ -43,57 +43,25 @@ public static class PyInterop
 {
     public static Action<int, string> Log { get; set; } = null!;
     public static GetEntity Entity { get; set; } = null!;
-}
-
-public class CodeRunner
-{
-    readonly List<(Type, Automation)> _automationInstances = [];
-    public Dictionary<string, List<string>> DependencyTracking { get; } = new();
-
-    public void AddInstance(Automation instance, Type type)
-    {
-        _automationInstances.Add((type, instance));
-    }
-
-    public void RunMethod(string methodName)
-    {
-        var (type, instance) = _automationInstances.First();
-
-        type.InvokeMember(methodName,
-            BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
-            null,
-            instance,
-            null
-        );
-    }
-
-    public void RunAll()
-    {
-        foreach (var (type, instance) in _automationInstances)
-        {
-            Logger.Info($"Running Class {type.Name}");
-
-            foreach (var method in type.GetMethods().Where(t => t.DeclaringType == type))
-            {
-                Logger.Info($"Running Method {method.Name}");
-                try
-                {
-                    method.Invoke(instance, BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.DeclaredOnly,
-                        null, null, null);
-
-                    instance.Initializing = false;
-                }
-                catch (Exception e)
-                {
-                    Logger.Error($"{e.Message} \n {e.StackTrace} \n {e.InnerException?.Message}");
-                }
-            }
-        }
-    }
+    public static Action<string, string, string?> CallService { get; set; } = null!;
 }
 
 public static class CodeCompiler
 {
+    public static CodeRunner CompileFromFolder(string folderPath)
+    {
+        if (!Directory.Exists(folderPath))
+        {
+            Directory.CreateDirectory(folderPath);
+        }
+
+        var sourcesTask = Directory.GetFiles(folderPath, "*.cs")
+            .Select(p => File.ReadAllTextAsync(p));
+        var sources = Task.WhenAll(sourcesTask).GetAwaiter().GetResult();
+
+        return Compile(sources);
+    }
+
     public static CodeRunner Compile(string[] sources)
     {
         var assemblies = sources.Select(CompilePriv);
@@ -143,12 +111,25 @@ public static class CodeCompiler
 
         // 2️⃣ Explicitly add assemblies that are often missing but required
         references.Add(
-            MetadataReference.CreateFromFile(typeof(object).Assembly.Location)); // mscorlib / System.Private.CoreLib
-        references.Add(MetadataReference.CreateFromFile(typeof(System.Threading.Tasks.Task).Assembly.Location)); // Task
-        references.Add(MetadataReference.CreateFromFile(typeof(Enumerable).Assembly.Location)); // System.Linq
+            MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
+        references.Add(MetadataReference.CreateFromFile(typeof(System.Threading.Tasks.Task).Assembly.Location));
+        references.Add(MetadataReference.CreateFromFile(typeof(Enumerable).Assembly.Location));
+        references.Add(
+            MetadataReference.CreateFromFile(typeof(System.Net.Http.HttpClient).Assembly.Location));
+        references.Add(
+            MetadataReference.CreateFromFile(typeof(System.Net.Http.Json.HttpClientJsonExtensions).Assembly
+                .Location));
+        references.Add(
+            MetadataReference.CreateFromFile(typeof(System.Uri).Assembly
+                .Location));
+
+
         references.Add(
             MetadataReference.CreateFromFile(typeof(System.Collections.Generic.List<>).Assembly
-                .Location)); // Collections
+                .Location));
+        references.Add(
+            MetadataReference.CreateFromFile(typeof(JsonSerializer).Assembly
+                .Location));
 
 
         // 3️⃣ Define compilation options
@@ -183,84 +164,5 @@ public static class CodeCompiler
 
         // 7️⃣ Return the compiled assembly bytes
         return ms.ToArray();
-    }
-}
-
-public class EntityRef<T>
-{
-    public required HasEntityState Raw { get; init; }
-    public string EntityId => Raw.EntityId;
-}
-
-// When adding methods to this class make sure to exclude them from the CodeRunner above or they will be run as an automation and fail
-public abstract class Automation
-{
-    public bool Initializing { get; set; } = true;
-    public CodeRunner Runner { get; internal set; } = null!;
-
-    // Injected by Python
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public HasEntityState? EntityRaw(string entityId, string caller)
-    {
-        if (!Runner.DependencyTracking.TryGetValue(entityId, out var methods))
-        {
-            methods = new List<string>();
-            Runner.DependencyTracking[entityId] = methods;
-        }
-
-        if (!methods.Contains(caller))
-        {
-            methods.Add(caller);
-        }
-
-        return PyInterop.Entity(entityId, caller);
-    }
-
-    public EntityRef<T> Entity<T>(string entityId, [CallerMemberName] string? caller = null)
-    {
-        var raw = EntityRaw(entityId, caller!);
-
-        if (raw == null) throw new($"Entity with id {entityId} not found");
-        return new()
-        {
-            Raw = raw,
-        };
-    }
-
-    public EntityRef<string> Entity(string entityId, [CallerMemberName] string? caller = null)
-    {
-        var raw = EntityRaw(entityId, caller!);
-        if (raw == null) throw new($"Entity with id {entityId} not found");
-        return new()
-        {
-            Raw = raw,
-        };
-    }
-}
-
-public static class AutomationExt
-{
-    extension(EntityRef<int> entityRef)
-    {
-        public int Value
-        {
-            get
-            {
-                var success = int.TryParse(entityRef.Raw.State, out var result);
-                if (success) return result;
-
-                return (int)Math.Floor(float.Parse(entityRef.Raw.State));
-            }
-        }
-    }
-
-    extension(EntityRef<string> entityRef)
-    {
-        public string Value => entityRef.Raw.State;
-    }
-
-    extension(EntityRef<float> entityRef)
-    {
-        public float Value => float.Parse(entityRef.Raw.State);
     }
 }

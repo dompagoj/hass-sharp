@@ -6,6 +6,7 @@ import os
 import sys
 import pythonnet as pynet
 import asyncio
+import json
 from clr_loader import get_coreclr
 
 from homeassistant.config_entries import ConfigEntry
@@ -47,26 +48,38 @@ rt = get_coreclr(
 pynet.set_runtime(rt)
 
 
-def read_scripts():
-  sources = []
-  for filename in os.listdir(USER_SCRIPTS_DIR):
-    if filename.endswith(".cs"):
-      with open(os.path.join(USER_SCRIPTS_DIR, filename), "r") as f:
-        sources.append(f.read())
-  return sources
-
 def python_log(level: int, message: str):
     logger.log(level, "[C#] %s", message)
 
 async def async_setup(hass: HomeAssistant, config: ConfigType):
+    await hass.http.async_register_static_paths([
+       StaticPathConfig(
+          "/hass-sharp-static",
+          hass.config.path("custom_components/hass_sharp/www")
+        )
+    ])
+    frontend.async_register_built_in_panel(
+      hass,
+      "hass-sharp-view",
+      "HassSharp",
+      "mdi:language-csharp",
+      True,
+      "hass-sharp",
+      {"hello": "asd"},
+      False,
+    )
+
+    frontend.add_extra_js_url(hass, "/hass-sharp-static/hass-sharp.js")
+    return True
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     import clr
     clr.AddReference("HassSharp")
     from HassSharp import CodeCompiler, PyInterop, HasEntityState
     from System import Action, String, Func, Object, Int32
     from System.Collections.Generic import Dictionary
 
-
-    def entity(entityId: str, csharpFunc: str) :
+    def entity(entityId: str) :
       entityState = hass.states.get(entityId)
       if entityState is None: return
 
@@ -86,56 +99,51 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
 
       return ref
 
+    def call_service(domain: str, service: str, data_json: str):
+      data = json.loads(data_json) if data_json else None
+      # Use hass.add_job to safely schedule the service call from a background thread
+      hass.add_job(hass.services.async_call(domain, service, data))
+
     PyInterop.Log = Action[Int32, String](python_log)
-    PyInterop.Entity = Func[String, String, HasEntityState](entity)
+    PyInterop.Entity = Func[String, HasEntityState](entity)
+    PyInterop.CallService = Action[String, String, String](call_service)
 
-    if not await hass.async_add_executor_job(os.path.exists, USER_SCRIPTS_DIR):
-        await hass.async_add_executor_job(os.makedirs, USER_SCRIPTS_DIR)
-
-  
-
-    csharp_sources = await hass.async_add_executor_job(read_scripts)
-
-    runner = CodeCompiler.Compile(csharp_sources)
-    runner.RunAll()
+    runner = await hass.async_add_executor_job(CodeCompiler.CompileFromFolder, USER_SCRIPTS_DIR)
+    await hass.async_add_executor_job(runner.RunAll)
 
     dependencies = runner.DependencyTracking
+
+    unsubs = []
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][entry.entry_id] = {
+        "unsubs": unsubs,
+        "runner": runner,
+    }
 
     @callback
     def on_entity_change(event: Event[EventStateChangedData]):
       entity_id = event.data.get("entity_id")
       if entity_id in dependencies:
         for func in dependencies[entity_id]:
-            runner.RunMethod(func)
+            hass.async_add_executor_job(runner.RunMethod, func)
 
     for entityId in dependencies.Keys:
       unsub = async_track_state_change_event(hass, entityId, on_entity_change)
-    
-    # If your component supports config entries, this should NOT be relied on
-    # Use async_setup_entry instead
+      unsubs.append(unsub)
+
+
     return True
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    await hass.http.async_register_static_paths([
-       StaticPathConfig(
-          "/hass-sharp-static",
-          hass.config.path("custom_components/hass_sharp/www")
-        )
-    ])
-    frontend.async_register_built_in_panel(
-      hass,
-      "hass-sharp-view",
-      "HassSharp",
-      "mdi:language-csharp",
-      True,
-      "hass-sharp",
-      {"hello": "asd"},
-      False,
-    )
-
-    frontend.add_extra_js_url(hass, "/hass-sharp-static/hass-sharp.js")
-
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    entry_data = hass.data[DOMAIN].pop(entry.entry_id)
+    
+    # Clean up event listeners
+    for unsub in entry_data["unsubs"]:
+        unsub()
+    
     return True
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    logger.info("Unloading...")
+    """Reload config entry."""
+    await hass.config_entries.async_reload(entry.entry_id)
