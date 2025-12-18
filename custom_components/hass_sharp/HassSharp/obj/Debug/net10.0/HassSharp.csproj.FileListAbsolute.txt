@@ -1,0 +1,12 @@
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/bin/Debug/net10.0/HassSharp.deps.json
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/bin/Debug/net10.0/HassSharp.dll
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/bin/Debug/net10.0/HassSharp.pdb
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Debug/net10.0/HassSharp.csproj.AssemblyReference.cache
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Debug/net10.0/HassSharp.GeneratedMSBuildEditorConfig.editorconfig
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Debug/net10.0/HassSharp.AssemblyInfoInputs.cache
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Debug/net10.0/HassSharp.AssemblyInfo.cs
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Debug/net10.0/HassSharp.csproj.CoreCompileInputs.cache
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Debug/net10.0/HassSharp.dll
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Debug/net10.0/refint/HassSharp.dll
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Debug/net10.0/HassSharp.pdb
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Debug/net10.0/ref/HassSharp.dll

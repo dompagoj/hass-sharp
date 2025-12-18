@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "kFzS3ZvUlWM=",
+  "success": true,
+  "projectFilePath": "/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/HassSharp.csproj",
+  "expectedPackageFiles": [
+    "/Users/dompa/.nuget/packages/microsoft.codeanalysis.analyzers/3.11.0/microsoft.codeanalysis.analyzers.3.11.0.nupkg.sha512",
+    "/Users/dompa/.nuget/packages/microsoft.codeanalysis.common/5.0.0/microsoft.codeanalysis.common.5.0.0.nupkg.sha512",
+    "/Users/dompa/.nuget/packages/microsoft.codeanalysis.csharp/5.0.0/microsoft.codeanalysis.csharp.5.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

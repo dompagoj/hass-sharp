@@ -1,0 +1,4 @@
+build_sharp_lib:
+  rm -rf ./out
+  cd HassSharp
+  dotnet publish -c Release ./HassSharp -o ./out
