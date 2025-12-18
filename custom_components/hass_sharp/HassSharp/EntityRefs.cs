@@ -2,7 +2,7 @@ namespace HassSharp;
 
 public class EntityRef<T>
 {
-    public required Automation Automation { get; init; }
+    internal Automation Automation { get; init; } = null!;
 
     public required HasEntityState Raw { get; init; }
     public string EntityId => Raw.EntityId;

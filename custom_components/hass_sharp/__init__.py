@@ -55,7 +55,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
     await hass.http.async_register_static_paths([
        StaticPathConfig(
           "/hass-sharp-static",
-          hass.config.path("custom_components/hass_sharp/www")
+          hass.config.path("custom_components/hass_sharp/www/dist")
         )
     ])
     frontend.async_register_built_in_panel(
@@ -65,11 +65,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
       "mdi:language-csharp",
       True,
       "hass-sharp",
-      {"hello": "asd"},
+      {},
       False,
     )
 
     frontend.add_extra_js_url(hass, "/hass-sharp-static/hass-sharp.js")
+    # frontend.add_extra_js_url(hass, "/hass-sharp-static/hass-sharp.css")
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):

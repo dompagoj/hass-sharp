@@ -1,5 +1,0 @@
-/Users/dompa/dev/HassSharp/custom_components/hass_sharp/out/HassSharp.dll
-/Users/dompa/dev/HassSharp/custom_components/hass_sharp/out/HassSharp.deps.json
-/Users/dompa/dev/HassSharp/custom_components/hass_sharp/out/HassSharp.pdb
-/Users/dompa/dev/HassSharp/custom_components/hass_sharp/out/Microsoft.CodeAnalysis.dll
-/Users/dompa/dev/HassSharp/custom_components/hass_sharp/out/Microsoft.CodeAnalysis.CSharp.dll

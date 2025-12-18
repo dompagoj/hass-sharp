@@ -60,9 +60,7 @@ public static class CodeCompiler
             Directory.CreateDirectory(folderPath);
         }
 
-        var filePaths = Directory.GetFiles(folderPath, "*.cs")
-            .OrderBy(p => p)
-            .ToArray();
+        var filePaths = Directory.GetFiles(folderPath, "*.cs");
 
         var sourcesTask = filePaths.Select(path => File.ReadAllTextAsync(path));
         var sources = Task.WhenAll(sourcesTask).GetAwaiter().GetResult();
