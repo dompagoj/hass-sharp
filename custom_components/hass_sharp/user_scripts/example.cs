@@ -10,8 +10,8 @@ public class ExampleAutomation : Automation
 
         var inputNumber = EntityUntracked<HaInputNumber>("input_number.test");
 
-        Logger.Info("Setting to 50");
+        Logger.Info("Setting to 10");
 
-        inputNumber.SetValue(50);
+        inputNumber.SetValue(10);
     }
 }

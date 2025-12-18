@@ -1,5 +1,7 @@
 ﻿using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -48,6 +50,9 @@ public static class PyInterop
 
 public static class CodeCompiler
 {
+    const string CacheDllName = "hass_sharp_user_scripts.dll";
+    const string CacheHashName = "hass_sharp_user_scripts.hash";
+
     public static CodeRunner CompileFromFolder(string folderPath)
     {
         if (!Directory.Exists(folderPath))
@@ -55,37 +60,74 @@ public static class CodeCompiler
             Directory.CreateDirectory(folderPath);
         }
 
-        var sourcesTask = Directory.GetFiles(folderPath, "*.cs")
-            .Select(p => File.ReadAllTextAsync(p));
+        var filePaths = Directory.GetFiles(folderPath, "*.cs")
+            .OrderBy(p => p)
+            .ToArray();
+
+        var sourcesTask = filePaths.Select(path => File.ReadAllTextAsync(path));
         var sources = Task.WhenAll(sourcesTask).GetAwaiter().GetResult();
 
-        return Compile(sources);
+        // If there are no scripts, return an empty runner
+        if (sources.Length == 0)
+        {
+            return new CodeRunner();
+        }
+
+        var hash = ComputeHash(filePaths, sources);
+
+        var cacheDllPath = Path.Combine(folderPath, CacheDllName);
+        var cacheHashPath = Path.Combine(folderPath, CacheHashName);
+
+        if (File.Exists(cacheDllPath) && File.Exists(cacheHashPath))
+        {
+            var existingHash = File.ReadAllText(cacheHashPath);
+            if (existingHash == hash)
+            {
+                var cachedBytes = File.ReadAllBytes(cacheDllPath);
+                Logger.Info("Detected no changes from user scripts, using cached DLL");
+                return BuildRunnerFromAssemblyBytes(cachedBytes);
+            }
+        }
+
+        Logger.Info("Compiling user scripts...");
+
+        var assemblyBytes = CompileToAssemblyBytes(sources);
+        File.WriteAllBytes(cacheDllPath, assemblyBytes);
+        File.WriteAllText(cacheHashPath, hash);
+
+        return BuildRunnerFromAssemblyBytes(assemblyBytes);
     }
 
     public static CodeRunner Compile(string[] sources)
     {
-        var assemblies = sources.Select(CompilePriv);
+        if (sources.Length == 0)
+        {
+            return new CodeRunner();
+        }
+
+        var assemblyBytes = CompileToAssemblyBytes(sources);
+        return BuildRunnerFromAssemblyBytes(assemblyBytes);
+    }
+
+    static CodeRunner BuildRunnerFromAssemblyBytes(byte[] assemblyBytes)
+    {
+        var assembly = Assembly.Load(assemblyBytes);
         var baseType = typeof(Automation);
 
         var codeRunner = new CodeRunner();
 
-        foreach (var assemblyBytes in assemblies)
+        foreach (var automationClass in assembly.GetTypes()
+                     .Where(t => baseType.IsAssignableFrom(t) && !t.IsAbstract))
         {
-            var assembly = Assembly.Load(assemblyBytes);
-
-            foreach (var automationClass in assembly.GetTypes()
-                         .Where(t => baseType.IsAssignableFrom(t) && !t.IsAbstract))
-            {
-                var instance = (Automation)Activator.CreateInstance(automationClass)!;
-                instance.Runner = codeRunner;
-                codeRunner.AddInstance(instance, automationClass);
-            }
+            var instance = (Automation)Activator.CreateInstance(automationClass)!;
+            instance.Runner = codeRunner;
+            codeRunner.AddInstance(instance, automationClass);
         }
 
         return codeRunner;
     }
 
-    static byte[] CompilePriv(string source)
+    static byte[] CompileToAssemblyBytes(string[] sources)
     {
         // 0️⃣ Prepend global usings to the source
         const string globalUsings = """
@@ -98,10 +140,9 @@ public static class CodeCompiler
 
                                     """;
 
-        var fullSource = globalUsings + source;
-
-        // Parse the C# source into a syntax tree
-        var syntaxTree = CSharpSyntaxTree.ParseText(fullSource);
+        var syntaxTrees = sources
+            .Select(source => CSharpSyntaxTree.ParseText(globalUsings + source))
+            .ToArray();
 
         // 1️⃣ Collect references from all loaded assemblies that have a file location
         var references = AppDomain.CurrentDomain.GetAssemblies()
@@ -141,7 +182,7 @@ public static class CodeCompiler
         // 4️⃣ Create the compilation
         var compilation = CSharpCompilation.Create(
             assemblyName: "Automation_" + Guid.NewGuid(),
-            syntaxTrees: [syntaxTree],
+            syntaxTrees: syntaxTrees,
             references: references,
             options: compilationOptions
         );
@@ -164,5 +205,22 @@ public static class CodeCompiler
 
         // 7️⃣ Return the compiled assembly bytes
         return ms.ToArray();
+    }
+
+    static string ComputeHash(string[] filePaths, string[] sources)
+    {
+        using var sha = SHA256.Create();
+
+        for (var i = 0; i < sources.Length; i++)
+        {
+            var pathBytes = Encoding.UTF8.GetBytes(filePaths[i]);
+            sha.TransformBlock(pathBytes, 0, pathBytes.Length, null, 0);
+
+            var contentBytes = Encoding.UTF8.GetBytes(sources[i]);
+            sha.TransformBlock(contentBytes, 0, contentBytes.Length, null, 0);
+        }
+
+        sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+        return Convert.ToHexString(sha.Hash!);
     }
 }
