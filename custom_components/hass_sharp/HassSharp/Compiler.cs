@@ -5,6 +5,10 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Completion;
+using Microsoft.CodeAnalysis.Host.Mef;
+using Microsoft.CodeAnalysis.Options;
+using Microsoft.CodeAnalysis.Text;
 
 namespace HassSharp;
 
@@ -52,6 +56,72 @@ public static class CodeCompiler
 {
     const string CacheDllName = "hass_sharp_user_scripts.dll";
     const string CacheHashName = "hass_sharp_user_scripts.hash";
+
+    static readonly AdhocWorkspace Workspace;
+    static readonly Project BaseProject;
+
+    static CodeCompiler()
+    {
+        var host = MefHostServices.Create(MefHostServices.DefaultAssemblies);
+        Workspace = new AdhocWorkspace(host);
+
+        var projectInfo = ProjectInfo.Create(
+            ProjectId.CreateNewId(),
+            VersionStamp.Create(),
+            "AutomationProject",
+            "AutomationProject",
+            LanguageNames.CSharp,
+            compilationOptions: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
+                optimizationLevel: OptimizationLevel.Release),
+            parseOptions: new CSharpParseOptions(LanguageVersion.Latest)
+        );
+
+        BaseProject = Workspace.AddProject(projectInfo);
+
+        // Add default references to the workspace project
+        var references = GetDefaultReferences();
+        Workspace.TryApplyChanges(Workspace.CurrentSolution.WithProjectMetadataReferences(BaseProject.Id, references));
+    }
+
+    public static string GetCompletions(string source, int position)
+    {
+        const string globalUsings = """
+                                    global using System;
+                                    global using System.Threading;
+                                    global using System.Threading.Tasks;
+                                    global using System.Collections.Generic;
+                                    global using System.Linq;
+                                    global using HassSharp;
+
+                                    """;
+        var fullSource = globalUsings + source;
+        var adjustedPosition = globalUsings.Length + position;
+
+        var document = Workspace.AddDocument(BaseProject.Id, "Script.cs", SourceText.From(fullSource));
+        var completionService = CompletionService.GetService(document);
+        if (completionService == null) return string.Empty;
+
+        var completionsTask = completionService.GetCompletionsAsync(document, adjustedPosition);
+
+        var completions = completionsTask.GetAwaiter().GetResult();
+
+        Workspace.TryApplyChanges(document.Project.Solution.RemoveDocument(document.Id));
+
+        return JsonSerializer.Serialize(completions.ItemsList.Take(50), JsonSerializerOptions.Web);
+    }
+
+    static List<MetadataReference> GetDefaultReferences()
+    {
+        var references = AppDomain.CurrentDomain.GetAssemblies()
+            .Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
+            .Select(a => MetadataReference.CreateFromFile(a.Location))
+            .Cast<MetadataReference>()
+            .ToList();
+
+        references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
+        references.Add(MetadataReference.CreateFromFile(typeof(JsonSerializer).Assembly.Location));
+        return references;
+    }
 
     public static CodeRunner CompileFromFolder(string folderPath)
     {

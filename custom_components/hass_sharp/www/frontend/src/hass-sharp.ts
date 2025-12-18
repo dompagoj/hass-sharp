@@ -27,7 +27,7 @@ export class HassSharpView extends LitElement {
           overflow: hidden;
         }
       </style>
-      <hass-sharp-editor></hass-sharp-editor>
+      <hass-sharp-editor .hass=${this.hass}></hass-sharp-editor>
     `
   }
 }

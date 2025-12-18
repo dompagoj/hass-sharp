@@ -13,8 +13,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, State, callback, Event, EventStateChangedData
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.components import frontend
+from homeassistant.components import frontend, websocket_api
+import homeassistant.components.websocket_api
 from homeassistant.components.http import StaticPathConfig
+import voluptuous as vol
 
 
 os.environ['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT'] = 'true'
@@ -70,7 +72,27 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
     )
 
     frontend.add_extra_js_url(hass, "/hass-sharp-static/hass-sharp.js")
-    # frontend.add_extra_js_url(hass, "/hass-sharp-static/hass-sharp.css")
+
+    @websocket_api.decorators.async_response
+    async def websocket_get_completions(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
+        import clr
+        clr.AddReference("HassSharp")
+        from HassSharp import CodeCompiler
+        
+        completions = await hass.async_add_executor_job(CodeCompiler.GetCompletions, msg["source"], msg["position"])
+        connection.send_result(msg["id"], json.loads(completions))
+
+    websocket_api.async_register_command(
+        hass, 
+        "hass_sharp/get_completions",
+        websocket_get_completions,
+        vol.Schema({
+            vol.Required("id"): vol.Coerce(int),
+            vol.Required("type"): "hass_sharp/get_completions",
+            vol.Required("source"): str,
+            vol.Required("position"): int,
+        })
+    )
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):

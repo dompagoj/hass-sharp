@@ -352,3 +352,13 @@ export interface LovelaceElementConfigBase {
   type: string
   style: Record<string, string>
 }
+
+export interface CompletionItem {
+  displayText: string
+  displayTextPrefix: string
+  displayTextSuffix: string
+  filterText: string
+  inlineDescription: string
+  isComplexTextEdit: boolean
+  tags: string[]
+}
