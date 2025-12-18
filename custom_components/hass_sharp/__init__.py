@@ -32,6 +32,9 @@ SHARED_PATH = os.path.join(DOTNET_ROOT_DIR, 'shared', 'Microsoft.NETCore.App', S
 
 HASS_SHARP_DLL_PATH = os.path.join(SCRIPT_DIR, "out")
 
+USER_SCRIPTS_DIR = os.path.join(SCRIPT_DIR, "user_scripts")
+
+
 sys.path.append(HASS_SHARP_DLL_PATH)
 
 rt = get_coreclr(
@@ -43,6 +46,14 @@ rt = get_coreclr(
 )
 pynet.set_runtime(rt)
 
+
+def read_scripts():
+  sources = []
+  for filename in os.listdir(USER_SCRIPTS_DIR):
+    if filename.endswith(".cs"):
+      with open(os.path.join(USER_SCRIPTS_DIR, filename), "r") as f:
+        sources.append(f.read())
+  return sources
 
 def python_log(level: int, message: str):
     logger.log(level, "[C#] %s", message)
@@ -78,27 +89,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
     PyInterop.Log = Action[Int32, String](python_log)
     PyInterop.Entity = Func[String, String, HasEntityState](entity)
 
-    csharp_source = """
-using HassSharp;
+    if not await hass.async_add_executor_job(os.path.exists, USER_SCRIPTS_DIR):
+        await hass.async_add_executor_job(os.makedirs, USER_SCRIPTS_DIR)
 
-public class TestAutomation : Automation
-{
-  public void OnNumberChange()
-  {
-      var numberValue = Entity<float>("input_number.test").Value;
-      PyLogger.Info($"Value changed! from c# {numberValue}");
-  }
+  
 
-  public void OnButtonPress()
-  {
-    var buttonState = Entity("input_button.test").Value;
-    if (Initializing) return;
+    csharp_sources = await hass.async_add_executor_job(read_scripts)
 
-    PyLogger.Info($"Button pressed? {buttonState}");
-  }
-}
-"""
-    runner = CodeCompiler.Compile([csharp_source])
+    runner = CodeCompiler.Compile(csharp_sources)
     runner.RunAll()
 
     dependencies = runner.DependencyTracking

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("HassSharp")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+763976ec4485d855729bbae025d805a0c459530f")]
 [assembly: System.Reflection.AssemblyProductAttribute("HassSharp")]
 [assembly: System.Reflection.AssemblyTitleAttribute("HassSharp")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -22,3 +22,4 @@
 /Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Release/net10.0/refint/HassSharp.dll
 /Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Release/net10.0/HassSharp.pdb
 /Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Release/net10.0/ref/HassSharp.dll
+/Users/dompa/dev/HassSharp/custom_components/hass_sharp/HassSharp/obj/Release/net10.0/HassSharp.sourcelink.json

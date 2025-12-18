@@ -1,5 +1,6 @@
 ﻿using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
@@ -30,7 +31,7 @@ public enum PyLogLevel
 public static class Logger
 {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void Log(PyLogLevel level, string msg) => PyInterp.Log((int)level, msg);
+    public static void Log(PyLogLevel level, string msg) => PyInterop.Log((int)level, msg);
 
     public static void Info(string msg) => Log(PyLogLevel.Info, msg);
     public static void Warn(string msg) => Log(PyLogLevel.Warn, msg);
@@ -38,7 +39,7 @@ public static class Logger
     public static void Error(string msg) => Log(PyLogLevel.Error, msg);
 }
 
-public static class PyInterp
+public static class PyInterop
 {
     public static Action<int, string> Log { get; set; } = null!;
     public static GetEntity Entity { get; set; } = null!;
@@ -118,8 +119,21 @@ public static class CodeCompiler
 
     static byte[] CompilePriv(string source)
     {
+        // 0️⃣ Prepend global usings to the source
+        const string globalUsings = """
+                                    global using System;
+                                    global using System.Threading;
+                                    global using System.Threading.Tasks;
+                                    global using System.Collections.Generic;
+                                    global using System.Linq;
+                                    global using HassSharp;
+
+                                    """;
+
+        var fullSource = globalUsings + source;
+
         // Parse the C# source into a syntax tree
-        var syntaxTree = CSharpSyntaxTree.ParseText(source);
+        var syntaxTree = CSharpSyntaxTree.ParseText(fullSource);
 
         // 1️⃣ Collect references from all loaded assemblies that have a file location
         var references = AppDomain.CurrentDomain.GetAssemblies()
@@ -137,19 +151,10 @@ public static class CodeCompiler
                 .Location)); // Collections
 
 
-        // 3️⃣ Define compilation options with global usings
+        // 3️⃣ Define compilation options
         var compilationOptions = new CSharpCompilationOptions(
             OutputKind.DynamicallyLinkedLibrary,
-            optimizationLevel: OptimizationLevel.Release,
-            usings:
-            [
-                "System",
-                "System.Threading",
-                "System.Threading.Tasks",
-                "System.Collections.Generic",
-                "System.Linq",
-                "HassSharp" // Your DSL namespace
-            ]
+            optimizationLevel: OptimizationLevel.Release
         );
 
         // 4️⃣ Create the compilation
@@ -208,7 +213,7 @@ public abstract class Automation
             methods.Add(caller);
         }
 
-        return PyInterp.Entity(entityId, caller);
+        return PyInterop.Entity(entityId, caller);
     }
 
     public EntityRef<T> Entity<T>(string entityId, [CallerMemberName] string? caller = null)
