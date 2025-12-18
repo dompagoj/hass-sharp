@@ -7,6 +7,14 @@ import type { MessageBase } from 'home-assistant-js-websocket'
 
 monaco.languages.register({ id: 'csharp', extensions: ['cs'] })
 
+function itemToLabel(item: CompletionItem) {
+  if (!item.displayTextPrefix && !item.displayTextSuffix) return item.displayText
+
+  const res = `${item.displayTextPrefix}${item.displayText}${item.displayTextSuffix}`
+
+  return res
+}
+
 function tagsToKind(tags: string[]) {
   const first = tags[0]
 
@@ -58,17 +66,20 @@ export class HassSharpEditor extends LitElement {
           const completions = await this.hass.callWS<CompletionItem[]>(message)
 
           return {
-            suggestions: completions.map(item => ({
-              label: item.displayText,
-              kind: tagsToKind(item.tags),
-              insertText: item.displayText,
-              range: {
-                startLineNumber: position.lineNumber,
-                endLineNumber: position.lineNumber,
-                startColumn: position.column,
-                endColumn: position.column,
-              },
-            })),
+            suggestions: completions.map(item => {
+              const label = itemToLabel(item)
+              return {
+                label,
+                kind: tagsToKind(item.tags),
+                insertText: label,
+                range: {
+                  startLineNumber: position.lineNumber,
+                  endLineNumber: position.lineNumber,
+                  startColumn: position.column,
+                  endColumn: position.column,
+                },
+              }
+            }),
           }
         } catch (e) {
           console.error('Failed to get completions', e)
