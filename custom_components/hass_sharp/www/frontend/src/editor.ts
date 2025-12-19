@@ -49,6 +49,15 @@ export class HassSharpEditor extends LitElement {
       return
     }
 
+    // Inject Monaco CSS globally to ensure overflow widgets (hovers) are styled
+    const styleId = 'monaco-global-styles'
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style')
+      style.id = styleId
+      style.textContent = editorCss
+      document.head.appendChild(style)
+    }
+
     // Register completion provider
     monaco.languages.registerCompletionItemProvider('csharp', {
       triggerCharacters: ['.'],
@@ -90,9 +99,7 @@ export class HassSharpEditor extends LitElement {
 
     try {
       this.editor = monaco.editor.create(container, {
-        value: `using HassSharp;
-
-public class MyAutomation : Automation
+        value: `public class MyAutomation : Automation
 {
     public void ExampleAutomation()
     {
@@ -102,7 +109,64 @@ public class MyAutomation : Automation
         language: 'csharp',
         theme: 'vs-dark',
         automaticLayout: true,
+        // Set fixedOverflowWidgets to false to keep it inside the component's DOM
+        fixedOverflowWidgets: false,
+        readOnly: false,
+        domReadOnly: false,
+        renderLineHighlight: 'all',
+        quickSuggestions: true,
+        suggest: {
+          insertMode: 'replace',
+        },
+        glyphMargin: true, // Enable glyph margin to see if that helps with hit-testing
       })
+
+      // Force theme again after a short delay
+      setTimeout(() => monaco.editor.setTheme('vs-dark'), 100)
+
+      // Validation logic
+      const validate = async () => {
+        const model = this.editor.getModel()
+        if (!model) return
+
+        try {
+          const diagnostics = await this.hass.callWS<any[]>({
+            type: 'hass_sharp/get_diagnostics',
+            source: model.getValue(),
+          })
+
+          const markers = diagnostics.map(d => {
+            return {
+              startLineNumber: d.startLine,
+              startColumn: d.startColumn,
+              endLineNumber: d.endLine,
+              endColumn: d.endColumn,
+              message: d.message,
+              origin: 'Compiler',
+              severity:
+                d.severity === 3
+                  ? monaco.MarkerSeverity.Error
+                  : d.severity === 2
+                  ? monaco.MarkerSeverity.Warning
+                  : monaco.MarkerSeverity.Info,
+            } as monaco.editor.IMarkerData
+          })
+
+          monaco.editor.setModelMarkers(model, 'csharp', markers)
+        } catch (e) {
+          console.error('Failed to get diagnostics', e)
+        }
+      }
+
+      // Validate on change with debounce
+      let timeoutId: number
+      this.editor.onDidChangeModelContent(() => {
+        clearTimeout(timeoutId)
+        timeoutId = setTimeout(validate, 500)
+      })
+
+      // Initial validation
+      validate()
     } catch (e) {
       console.error('Failed to create Monaco', e)
     }
@@ -111,12 +175,17 @@ public class MyAutomation : Automation
   render() {
     return html`
       <style>
+        :host {
+          display: block;
+          height: 100%;
+          overflow: visible !important;
+        }
         #editor {
           flex-grow: 1;
           width: 100%;
           display: block;
           position: relative;
-          overflow: hidden;
+          overflow: visible !important;
         }
         ha-card {
           height: 100%;
@@ -124,6 +193,7 @@ public class MyAutomation : Automation
           flex-direction: column;
           margin: 0 !important;
           border-radius: 0;
+          overflow: visible !important;
         }
 
         ${editorCss}

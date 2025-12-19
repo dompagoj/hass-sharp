@@ -82,6 +82,26 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
         completions = await hass.async_add_executor_job(CodeCompiler.GetCompletions, msg["source"], msg["position"])
         connection.send_result(msg["id"], json.loads(completions))
 
+    @websocket_api.decorators.async_response
+    async def websocket_get_diagnostics(hass, connection, msg):
+        import clr
+        clr.AddReference("HassSharp")
+        from HassSharp import CodeCompiler
+        
+        diagnostics = await hass.async_add_executor_job(CodeCompiler.GetDiagnostics, msg["source"])
+        # Convert C# objects to dictionaries for JSON serialization
+        results = []
+        for d in diagnostics:
+            results.append({
+                "startLine": d.StartLine,
+                "startColumn": d.StartColumn,
+                "endLine": d.EndLine,
+                "endColumn": d.EndColumn,
+                "message": d.Message,
+                "severity": d.Severity
+            })
+        connection.send_result(msg["id"], results)
+
     websocket_api.async_register_command(
         hass, 
         "hass_sharp/get_completions",
@@ -91,6 +111,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
             vol.Required("type"): "hass_sharp/get_completions",
             vol.Required("source"): str,
             vol.Required("position"): int,
+        })
+    )
+    websocket_api.async_register_command(
+        hass, 
+        "hass_sharp/get_diagnostics",
+        websocket_get_diagnostics,
+        vol.Schema({
+            vol.Required("id"): vol.Coerce(int),
+            vol.Required("type"): "hass_sharp/get_diagnostics",
+            vol.Required("source"): str,
         })
     )
     return True

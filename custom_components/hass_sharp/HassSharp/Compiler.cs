@@ -83,6 +83,61 @@ public static class CodeCompiler
         Workspace.TryApplyChanges(Workspace.CurrentSolution.WithProjectMetadataReferences(BaseProject.Id, references));
     }
 
+    public class DiagnosticModel
+    {
+        public int StartLine { get; set; }
+        public int StartColumn { get; set; }
+        public int EndLine { get; set; }
+        public int EndColumn { get; set; }
+        public string Message { get; set; } = null!;
+        public int Severity { get; set; }
+    }
+
+    public static List<DiagnosticModel> GetDiagnostics(string source)
+    {
+        const string globalUsings = """
+                                    global using System;
+                                    global using System.Threading;
+                                    global using System.Threading.Tasks;
+                                    global using System.Collections.Generic;
+                                    global using System.Linq;
+                                    global using HassSharp;
+
+                                    """;
+        var syntaxTree = CSharpSyntaxTree.ParseText(globalUsings + source);
+        var references = GetDefaultReferences();
+
+        var compilation = CSharpCompilation.Create(
+            "Diagnostics_" + Guid.NewGuid(),
+            [syntaxTree],
+            references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+        );
+
+        var prefixLineCount = globalUsings.Count(c => c == '\n');
+
+        return compilation.GetDiagnostics()
+            .Where(d => d.Location.GetLineSpan().StartLinePosition.Line >= prefixLineCount)
+            .Select(d =>
+            {
+                var lineSpan = d.Location.GetLineSpan();
+                // Roslyn lines are 0-based.
+                var startLine = lineSpan.StartLinePosition.Line - prefixLineCount + 1;
+                var endLine = lineSpan.EndLinePosition.Line - prefixLineCount + 1;
+
+                return new DiagnosticModel
+                {
+                    StartLine = startLine,
+                    StartColumn = lineSpan.StartLinePosition.Character + 1,
+                    EndLine = endLine,
+                    EndColumn = lineSpan.EndLinePosition.Character + 1,
+                    Message = d.GetMessage(),
+                    Severity = (int)d.Severity
+                };
+            })
+            .ToList();
+    }
+
     public static string GetCompletions(string source, int position)
     {
         const string globalUsings = """
