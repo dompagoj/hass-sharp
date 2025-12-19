@@ -4,8 +4,11 @@ import * as monaco from 'monaco-editor'
 import type { CompletionItem, HomeAssistant } from './types'
 import editorCss from 'monaco-editor/min/vs/editor/editor.main.css?inline'
 import type { MessageBase } from 'home-assistant-js-websocket'
+import visualAssistTheme from './visual-assist.json' with { type: 'json' }
 
 monaco.languages.register({ id: 'csharp', extensions: ['cs'] })
+// @ts-ignore
+monaco.editor.defineTheme('visual-assist', visualAssistTheme)
 
 function itemToLabel(item: CompletionItem) {
   if (!item.displayTextPrefix && !item.displayTextSuffix) return item.displayText
@@ -107,7 +110,7 @@ export class HassSharpEditor extends LitElement {
     }
 }`,
         language: 'csharp',
-        theme: 'vs-dark',
+        theme: 'visual-assist',
         automaticLayout: true,
         // Set fixedOverflowWidgets to false to keep it inside the component's DOM
         fixedOverflowWidgets: false,
@@ -120,9 +123,6 @@ export class HassSharpEditor extends LitElement {
         },
         glyphMargin: true, // Enable glyph margin to see if that helps with hit-testing
       })
-
-      // Force theme again after a short delay
-      setTimeout(() => monaco.editor.setTheme('vs-dark'), 100)
 
       // Validation logic
       const validate = async () => {

@@ -59,6 +59,7 @@ public static class CodeCompiler
 
     static readonly AdhocWorkspace Workspace;
     static readonly Project BaseProject;
+    static SyntaxTree EntitiesTree = null!;
 
     static CodeCompiler()
     {
@@ -81,6 +82,19 @@ public static class CodeCompiler
         // Add default references to the workspace project
         var references = GetDefaultReferences();
         Workspace.TryApplyChanges(Workspace.CurrentSolution.WithProjectMetadataReferences(BaseProject.Id, references));
+    }
+
+    public static void InitializeEntities(string[] entityIds)
+    {
+        Logger.Info("Generating entities...");
+        var source = EntityGenerator.Generate(entityIds);
+        Logger.Info($"Generated Enttity class: \n {source}");
+        EntitiesTree = CSharpSyntaxTree.ParseText(source);
+
+        // Update the workspace with the generated entities
+        var documentId = DocumentId.CreateNewId(BaseProject.Id);
+        var solution = Workspace.CurrentSolution.AddDocument(documentId, "Entities.g.cs", source);
+        Workspace.TryApplyChanges(solution);
     }
 
     public class DiagnosticModel
@@ -109,7 +123,7 @@ public static class CodeCompiler
 
         var compilation = CSharpCompilation.Create(
             "Diagnostics_" + Guid.NewGuid(),
-            [syntaxTree],
+            [syntaxTree, EntitiesTree],
             references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
         );
@@ -175,6 +189,7 @@ public static class CodeCompiler
 
         references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
         references.Add(MetadataReference.CreateFromFile(typeof(JsonSerializer).Assembly.Location));
+        references.Add(MetadataReference.CreateFromFile(typeof(Task).Assembly.Location));
         return references;
     }
 
@@ -244,6 +259,7 @@ public static class CodeCompiler
         {
             var instance = (Automation)Activator.CreateInstance(automationClass)!;
             instance.Runner = codeRunner;
+            if (automationClass.FullName != null) instance.UserClassName = automationClass.FullName;
             codeRunner.AddInstance(instance, automationClass);
         }
 
@@ -265,36 +281,12 @@ public static class CodeCompiler
 
         var syntaxTrees = sources
             .Select(source => CSharpSyntaxTree.ParseText(globalUsings + source))
-            .ToArray();
-
-        // 1️⃣ Collect references from all loaded assemblies that have a file location
-        var references = AppDomain.CurrentDomain.GetAssemblies()
-            .Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
-            .Select(a => MetadataReference.CreateFromFile(a.Location))
             .ToList();
 
-        // 2️⃣ Explicitly add assemblies that are often missing but required
-        references.Add(
-            MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
-        references.Add(MetadataReference.CreateFromFile(typeof(System.Threading.Tasks.Task).Assembly.Location));
-        references.Add(MetadataReference.CreateFromFile(typeof(Enumerable).Assembly.Location));
-        references.Add(
-            MetadataReference.CreateFromFile(typeof(System.Net.Http.HttpClient).Assembly.Location));
-        references.Add(
-            MetadataReference.CreateFromFile(typeof(System.Net.Http.Json.HttpClientJsonExtensions).Assembly
-                .Location));
-        references.Add(
-            MetadataReference.CreateFromFile(typeof(System.Uri).Assembly
-                .Location));
+        syntaxTrees.Add(EntitiesTree);
 
-
-        references.Add(
-            MetadataReference.CreateFromFile(typeof(System.Collections.Generic.List<>).Assembly
-                .Location));
-        references.Add(
-            MetadataReference.CreateFromFile(typeof(JsonSerializer).Assembly
-                .Location));
-
+        // 1️⃣ Collect references from all loaded assemblies that have a file location
+        var references = GetDefaultReferences();
 
         // 3️⃣ Define compilation options
         var compilationOptions = new CSharpCompilationOptions(
@@ -333,6 +325,13 @@ public static class CodeCompiler
     static string ComputeHash(string[] filePaths, string[] sources)
     {
         using var sha = SHA256.Create();
+
+        // Include the entities source in the hash to force a recompile if they change
+        if (EntitiesTree != null)
+        {
+            var entitiesBytes = Encoding.UTF8.GetBytes(EntitiesTree.ToString());
+            sha.TransformBlock(entitiesBytes, 0, entitiesBytes.Length, null, 0);
+        }
 
         for (var i = 0; i < sources.Length; i++)
         {

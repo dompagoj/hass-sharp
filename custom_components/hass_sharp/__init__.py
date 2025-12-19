@@ -54,6 +54,9 @@ def python_log(level: int, message: str):
     logger.log(level, "[C#] %s", message)
 
 async def async_setup(hass: HomeAssistant, config: ConfigType):
+    import clr
+    clr.AddReference("HassSharp")
+    from HassSharp import CodeCompiler
     await hass.http.async_register_static_paths([
        StaticPathConfig(
           "/hass-sharp-static",
@@ -75,18 +78,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
 
     @websocket_api.decorators.async_response
     async def websocket_get_completions(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-        import clr
-        clr.AddReference("HassSharp")
-        from HassSharp import CodeCompiler
-        
         completions = await hass.async_add_executor_job(CodeCompiler.GetCompletions, msg["source"], msg["position"])
         connection.send_result(msg["id"], json.loads(completions))
 
     @websocket_api.decorators.async_response
     async def websocket_get_diagnostics(hass, connection, msg):
-        import clr
-        clr.AddReference("HassSharp")
-        from HassSharp import CodeCompiler
         
         diagnostics = await hass.async_add_executor_job(CodeCompiler.GetDiagnostics, msg["source"])
         # Convert C# objects to dictionaries for JSON serialization
@@ -126,8 +122,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    import clr
-    clr.AddReference("HassSharp")
     from HassSharp import CodeCompiler, PyInterop, HasEntityState
     from System import Action, String, Func, Object, Int32
     from System.Collections.Generic import Dictionary
@@ -157,9 +151,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
       # Use hass.add_job to safely schedule the service call from a background thread
       hass.add_job(hass.services.async_call(domain, service, data))
 
+    def get_entities():
+      # Combine entities from states and registry to ensure we get everything
+      entity_ids = set(hass.states.async_entity_ids())
+      
+      from homeassistant.helpers import entity_registry as er
+      registry = er.async_get(hass)
+      entity_ids.update(registry.entities.keys())
+      
+      return list(entity_ids)
+
     PyInterop.Log = Action[Int32, String](python_log)
     PyInterop.Entity = Func[String, HasEntityState](entity)
     PyInterop.CallService = Action[String, String, String](call_service)
+
+    # Initialize type-safe entities once during startup
+    from HassSharp import CodeCompiler
+    await hass.async_add_executor_job(CodeCompiler.InitializeEntities, get_entities())
 
     runner = await hass.async_add_executor_job(CodeCompiler.CompileFromFolder, USER_SCRIPTS_DIR)
     await hass.async_add_executor_job(runner.RunAll)

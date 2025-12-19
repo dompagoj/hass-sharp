@@ -12,11 +12,44 @@ public class CodeRunner
         _automationInstances.Add((type, instance));
     }
 
-    public void RunMethod(string methodName)
-    {
-        var (type, instance) = _automationInstances.First();
+    string CombineClassAndMethod(string klass, string method) => $"{klass}::{method}";
 
-        var result = type.InvokeMember(methodName,
+    (string klass, string method) UnmixClassAndMethod(string combined)
+    {
+        var res = combined.Split("::");
+        return (res[0], res[1]);
+    }
+
+    public void TrackEntityCall(string entityId, string klass, string method)
+    {
+        var methodName = CombineClassAndMethod(klass, method);
+
+        if (!DependencyTracking.TryGetValue(entityId, out var methods))
+        {
+            methods = new List<string>();
+            DependencyTracking[entityId] = methods;
+        }
+
+        if (!methods.Contains(methodName))
+        {
+            methods.Add(methodName);
+        }
+    }
+
+    public void RunMethod(string classAndMethod)
+    {
+        var (klass, method) = UnmixClassAndMethod(classAndMethod);
+
+        var foundIdx = _automationInstances.FindIndex(i => i.Item1.FullName == klass);
+        if (foundIdx == -1)
+        {
+            Logger.Error($"Failed to find {classAndMethod}");
+            return;
+        }
+
+        var (type, instance) = _automationInstances[foundIdx];
+
+        var result = type.InvokeMember(method,
             BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
             null,
             instance,
