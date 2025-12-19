@@ -1,9 +1,11 @@
+using System.Collections.Immutable;
 using System.Text;
 using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Completion;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Host.Mef;
+using Microsoft.CodeAnalysis.Options;
 using Microsoft.CodeAnalysis.Text;
 
 namespace HassSharp;
@@ -15,6 +17,7 @@ public class DiagnosticsProvider
 
     readonly AdhocWorkspace Workspace;
     readonly Project BaseProject;
+    DocumentId? _scriptDocumentId;
 
     public DiagnosticsProvider()
     {
@@ -91,7 +94,7 @@ public class DiagnosticsProvider
             .ToList();
     }
 
-    public CompletionItem[] GetCompletions(string source, int position)
+    public IReadOnlyList<CompletionItem> GetCompletions(string source, int position)
     {
         const string globalUsings = """
                                     global using System;
@@ -105,17 +108,41 @@ public class DiagnosticsProvider
         var fullSource = globalUsings + source;
         var adjustedPosition = globalUsings.Length + position;
 
-        var document = Workspace.AddDocument(BaseProject.Id, "Script.cs", SourceText.From(fullSource));
+        Document document;
+        lock (Workspace)
+        {
+            if (_scriptDocumentId == null)
+            {
+                document = Workspace.AddDocument(BaseProject.Id, "Script.cs", SourceText.From(fullSource));
+                _scriptDocumentId = document.Id;
+            }
+            else
+            {
+                var solution =
+                    Workspace.CurrentSolution.WithDocumentText(_scriptDocumentId, SourceText.From(fullSource));
+                Workspace.TryApplyChanges(solution);
+                document = Workspace.CurrentSolution.GetDocument(_scriptDocumentId)!;
+            }
+        }
+
         var completionService = CompletionService.GetService(document);
         if (completionService == null) return [];
 
-        var completionsTask = completionService.GetCompletionsAsync(document, adjustedPosition);
+        var filterText = source.Substring(0, position).Split(' ', '.', '(', '\n', '\r', '\t').LastOrDefault() ?? "";
+        var lastChar = position > 0 ? source[position - 1] : '\0';
+        var trigger = lastChar == '.' ? CompletionTrigger.CreateInsertionTrigger('.') : CompletionTrigger.Invoke;
+
+        var completionsTask = completionService.GetCompletionsAsync(document, adjustedPosition, trigger);
 
         var completions = completionsTask.GetAwaiter().GetResult();
 
-        Workspace.TryApplyChanges(document.Project.Solution.RemoveDocument(document.Id));
+        var items = completions.ItemsList;
+        if (!string.IsNullOrEmpty(filterText))
+        {
+            items = completionService.FilterItems(document, [.. items], filterText);
+        }
 
-        return completions.ItemsList.Take(50).ToArray();
+        return items;
     }
 
     public void GenerateHassEntities(string[] entityIds) => GenerateImpl(entityIds);

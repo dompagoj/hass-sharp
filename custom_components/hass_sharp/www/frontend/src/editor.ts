@@ -29,6 +29,11 @@ function tagsToKind(tags: string[]) {
   if (first === 'Keyword') return monaco.languages.CompletionItemKind.Keyword
   if (first === 'Structure') return monaco.languages.CompletionItemKind.Struct
   if (first === 'ExtensionMethod') return monaco.languages.CompletionItemKind.Function
+  if (first === 'Local') return monaco.languages.CompletionItemKind.Variable
+  if (first === 'Interface') return monaco.languages.CompletionItemKind.Interface
+  if (first === 'Snippet') return monaco.languages.CompletionItemKind.Snippet
+  if (first === 'TypeParameter') return monaco.languages.CompletionItemKind.TypeParameter
+  if (first === 'TypeParameter') return monaco.languages.CompletionItemKind.TypeParameter
 
   console.log('Unknown tag: ', first)
   return monaco.languages.CompletionItemKind.Snippet
@@ -62,41 +67,51 @@ export class HassSharpEditor extends LitElement {
     }
 
     // Register completion provider
+    let completionTimeout: number
     monaco.languages.registerCompletionItemProvider('csharp', {
       triggerCharacters: ['.'],
       provideCompletionItems: async (model, position) => {
-        const source = model.getValue()
-        const offset = model.getOffsetAt(position)
+        return new Promise((resolve) => {
+          clearTimeout(completionTimeout)
+          completionTimeout = setTimeout(async () => {
+            const source = model.getValue()
+            const offset = model.getOffsetAt(position)
 
-        try {
-          const message: MessageBase = {
-            type: 'hass_sharp/get_completions',
-            source: source,
-            position: offset,
-          }
+            // Calculate word range for replacement
+            const word = model.getWordUntilPosition(position)
+            const range = {
+              startLineNumber: position.lineNumber,
+              endLineNumber: position.lineNumber,
+              startColumn: word.startColumn,
+              endColumn: word.endColumn,
+            }
 
-          const completions = await this.hass.callWS<CompletionItem[]>(message)
-
-          return {
-            suggestions: completions.map(item => {
-              const label = itemToLabel(item)
-              return {
-                label,
-                kind: tagsToKind(item.tags),
-                insertText: label,
-                range: {
-                  startLineNumber: position.lineNumber,
-                  endLineNumber: position.lineNumber,
-                  startColumn: position.column,
-                  endColumn: position.column,
-                },
+            try {
+              const message: MessageBase = {
+                type: 'hass_sharp/get_completions',
+                source: source,
+                position: offset,
               }
-            }),
-          }
-        } catch (e) {
-          console.error('Failed to get completions', e)
-          return { suggestions: [] }
-        }
+
+              const completions = await this.hass.callWS<CompletionItem[]>(message)
+
+              resolve({
+                suggestions: completions.map(item => {
+                  const label = itemToLabel(item)
+                  return {
+                    label,
+                    kind: tagsToKind(item.tags),
+                    insertText: label,
+                    range,
+                  }
+                }),
+              })
+            } catch (e) {
+              console.error('Failed to get completions', e)
+              resolve({ suggestions: [] })
+            }
+          }, 150) // 150ms debounce
+        })
       },
     })
 
@@ -120,6 +135,33 @@ export class HassSharpEditor extends LitElement {
         quickSuggestions: true,
         suggest: {
           insertMode: 'replace',
+          snippetsPreventQuickSuggestions: false,
+          showWords: false,
+          showMethods: true,
+          showFunctions: true,
+          showConstructors: true,
+          showFields: true,
+          showVariables: true,
+          showClasses: true,
+          showInterfaces: true,
+          showModules: true,
+          showProperties: true,
+          showEvents: true,
+          showOperators: true,
+          showUnits: true,
+          showValues: true,
+          showConstants: true,
+          showEnums: true,
+          showEnumMembers: true,
+          showKeywords: true,
+          showFolders: true,
+          showColors: true,
+          showFiles: true,
+          showReferences: true,
+          showSnippets: false,
+          showTypeParameters: true,
+          showIssues: true,
+          showUsers: true,
         },
         glyphMargin: true, // Enable glyph margin to see if that helps with hit-testing
       })
