@@ -82,7 +82,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
         connection.send_result(msg["id"], json.loads(completions))
 
     @websocket_api.decorators.async_response
-    async def websocket_get_diagnostics(hass, connection, msg):
+    async def websocket_get_diagnostics(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
         
         diagnostics = await hass.async_add_executor_job(CodeCompiler.GetDiagnostics, msg["source"])
         # Convert C# objects to dictionaries for JSON serialization
@@ -98,6 +98,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
             })
         connection.send_result(msg["id"], results)
 
+    @websocket_api.decorators.async_response
+    async def websocket_reload_entities(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
+        import clr
+        clr.AddReference("HassSharp")
+        from HassSharp import CodeCompiler
+        
+        entity_ids = get_entities()
+        await hass.async_add_executor_job(CodeCompiler.InitializeEntities, entity_ids)
+        connection.send_result(msg["id"], {"success": True})
+
     websocket_api.async_register_command(
         hass, 
         "hass_sharp/get_completions",
@@ -107,7 +117,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
             vol.Required("type"): "hass_sharp/get_completions",
             vol.Required("source"): str,
             vol.Required("position"): int,
-        })
+        }, extra=vol.ALLOW_EXTRA)
     )
     websocket_api.async_register_command(
         hass, 
@@ -117,7 +127,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
             vol.Required("id"): vol.Coerce(int),
             vol.Required("type"): "hass_sharp/get_diagnostics",
             vol.Required("source"): str,
-        })
+        }, extra=vol.ALLOW_EXTRA)
+    )
+    websocket_api.async_register_command(
+        hass, 
+        "hass_sharp/reload_entities",
+        websocket_reload_entities,
+        vol.Schema({
+            vol.Required("id"): vol.Coerce(int),
+            vol.Required("type"): "hass_sharp/reload_entities",
+        }, extra=vol.ALLOW_EXTRA)
     )
     return True
 

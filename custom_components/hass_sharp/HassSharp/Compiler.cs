@@ -5,10 +5,6 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.Completion;
-using Microsoft.CodeAnalysis.Host.Mef;
-using Microsoft.CodeAnalysis.Options;
-using Microsoft.CodeAnalysis.Text;
 
 namespace HassSharp;
 
@@ -57,141 +53,19 @@ public static class CodeCompiler
     const string CacheDllName = "hass_sharp_user_scripts.dll";
     const string CacheHashName = "hass_sharp_user_scripts.hash";
 
-    static readonly AdhocWorkspace Workspace;
-    static readonly Project BaseProject;
-    static SyntaxTree EntitiesTree = null!;
+
+    static readonly DiagnosticsProvider _diagnosticsProvider = new();
 
     static CodeCompiler()
     {
-        var host = MefHostServices.Create(MefHostServices.DefaultAssemblies);
-        Workspace = new AdhocWorkspace(host);
-
-        var projectInfo = ProjectInfo.Create(
-            ProjectId.CreateNewId(),
-            VersionStamp.Create(),
-            "AutomationProject",
-            "AutomationProject",
-            LanguageNames.CSharp,
-            compilationOptions: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
-                optimizationLevel: OptimizationLevel.Release),
-            parseOptions: new CSharpParseOptions(LanguageVersion.Latest)
-        );
-
-        BaseProject = Workspace.AddProject(projectInfo);
-
-        // Add default references to the workspace project
-        var references = GetDefaultReferences();
-        Workspace.TryApplyChanges(Workspace.CurrentSolution.WithProjectMetadataReferences(BaseProject.Id, references));
     }
 
     public static void InitializeEntities(string[] entityIds)
     {
         Logger.Info("Generating entities...");
-        var source = EntityGenerator.Generate(entityIds);
-        Logger.Info($"Generated Enttity class: \n {source}");
-        EntitiesTree = CSharpSyntaxTree.ParseText(source);
-
-        // Update the workspace with the generated entities
-        var documentId = DocumentId.CreateNewId(BaseProject.Id);
-        var solution = Workspace.CurrentSolution.AddDocument(documentId, "Entities.g.cs", source);
-        Workspace.TryApplyChanges(solution);
+        _diagnosticsProvider.GenerateHassEntities(entityIds);
     }
 
-    public class DiagnosticModel
-    {
-        public int StartLine { get; set; }
-        public int StartColumn { get; set; }
-        public int EndLine { get; set; }
-        public int EndColumn { get; set; }
-        public string Message { get; set; } = null!;
-        public int Severity { get; set; }
-    }
-
-    public static List<DiagnosticModel> GetDiagnostics(string source)
-    {
-        const string globalUsings = """
-                                    global using System;
-                                    global using System.Threading;
-                                    global using System.Threading.Tasks;
-                                    global using System.Collections.Generic;
-                                    global using System.Linq;
-                                    global using HassSharp;
-
-                                    """;
-        var syntaxTree = CSharpSyntaxTree.ParseText(globalUsings + source);
-        var references = GetDefaultReferences();
-
-        var compilation = CSharpCompilation.Create(
-            "Diagnostics_" + Guid.NewGuid(),
-            [syntaxTree, EntitiesTree],
-            references,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
-        );
-
-        var prefixLineCount = globalUsings.Count(c => c == '\n');
-
-        return compilation.GetDiagnostics()
-            .Where(d => d.Location.GetLineSpan().StartLinePosition.Line >= prefixLineCount)
-            .Select(d =>
-            {
-                var lineSpan = d.Location.GetLineSpan();
-                // Roslyn lines are 0-based.
-                var startLine = lineSpan.StartLinePosition.Line - prefixLineCount + 1;
-                var endLine = lineSpan.EndLinePosition.Line - prefixLineCount + 1;
-
-                return new DiagnosticModel
-                {
-                    StartLine = startLine,
-                    StartColumn = lineSpan.StartLinePosition.Character + 1,
-                    EndLine = endLine,
-                    EndColumn = lineSpan.EndLinePosition.Character + 1,
-                    Message = d.GetMessage(),
-                    Severity = (int)d.Severity
-                };
-            })
-            .ToList();
-    }
-
-    public static string GetCompletions(string source, int position)
-    {
-        const string globalUsings = """
-                                    global using System;
-                                    global using System.Threading;
-                                    global using System.Threading.Tasks;
-                                    global using System.Collections.Generic;
-                                    global using System.Linq;
-                                    global using HassSharp;
-
-                                    """;
-        var fullSource = globalUsings + source;
-        var adjustedPosition = globalUsings.Length + position;
-
-        var document = Workspace.AddDocument(BaseProject.Id, "Script.cs", SourceText.From(fullSource));
-        var completionService = CompletionService.GetService(document);
-        if (completionService == null) return string.Empty;
-
-        var completionsTask = completionService.GetCompletionsAsync(document, adjustedPosition);
-
-        var completions = completionsTask.GetAwaiter().GetResult();
-
-        Workspace.TryApplyChanges(document.Project.Solution.RemoveDocument(document.Id));
-
-        return JsonSerializer.Serialize(completions.ItemsList.Take(50), JsonSerializerOptions.Web);
-    }
-
-    static List<MetadataReference> GetDefaultReferences()
-    {
-        var references = AppDomain.CurrentDomain.GetAssemblies()
-            .Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
-            .Select(a => MetadataReference.CreateFromFile(a.Location))
-            .Cast<MetadataReference>()
-            .ToList();
-
-        references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
-        references.Add(MetadataReference.CreateFromFile(typeof(JsonSerializer).Assembly.Location));
-        references.Add(MetadataReference.CreateFromFile(typeof(Task).Assembly.Location));
-        return references;
-    }
 
     public static CodeRunner CompileFromFolder(string folderPath)
     {
@@ -283,10 +157,10 @@ public static class CodeCompiler
             .Select(source => CSharpSyntaxTree.ParseText(globalUsings + source))
             .ToList();
 
-        syntaxTrees.Add(EntitiesTree);
+        syntaxTrees.Add(_diagnosticsProvider.HasEntitiesSyntaxTree());
 
         // 1️⃣ Collect references from all loaded assemblies that have a file location
-        var references = GetDefaultReferences();
+        var references = ProjectReferences.GetDefaultReferences();
 
         // 3️⃣ Define compilation options
         var compilationOptions = new CSharpCompilationOptions(
@@ -326,12 +200,12 @@ public static class CodeCompiler
     {
         using var sha = SHA256.Create();
 
-        // Include the entities source in the hash to force a recompile if they change
-        if (EntitiesTree != null)
-        {
-            var entitiesBytes = Encoding.UTF8.GetBytes(EntitiesTree.ToString());
-            sha.TransformBlock(entitiesBytes, 0, entitiesBytes.Length, null, 0);
-        }
+        // // Include the entities source in the hash to force a recompile if they change
+        // if (EntitiesTree != null)
+        // {
+        //     var entitiesBytes = Encoding.UTF8.GetBytes(EntitiesTree.ToString());
+        //     sha.TransformBlock(entitiesBytes, 0, entitiesBytes.Length, null, 0);
+        // }
 
         for (var i = 0; i < sources.Length; i++)
         {
