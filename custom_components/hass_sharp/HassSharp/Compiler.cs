@@ -2,7 +2,6 @@
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
@@ -56,25 +55,23 @@ public static class CodeCompiler
 
     static readonly DiagnosticsProvider _diagnosticsProvider = new();
 
-    static CodeCompiler()
-    {
-    }
+    public static DiagnosticsProvider Diagnostics => _diagnosticsProvider;
 
-    public static void InitializeEntities(string[] entityIds)
+    public static void SetHassPaths(string configurationFolderPath)
     {
-        Logger.Info("Generating entities...");
-        _diagnosticsProvider.GenerateHassEntities(entityIds);
+        HassPath.HassConfiguration = configurationFolderPath;
     }
 
 
-    public static CodeRunner CompileFromFolder(string folderPath)
+    public static CodeRunner CompileFromUserScriptsFolder()
     {
-        if (!Directory.Exists(folderPath))
+        var userScriptsFolder = HassPath.UserScripts;
+        if (!Directory.Exists(userScriptsFolder))
         {
-            Directory.CreateDirectory(folderPath);
+            Directory.CreateDirectory(userScriptsFolder);
         }
 
-        var filePaths = Directory.GetFiles(folderPath, "*.cs");
+        var filePaths = Directory.GetFiles(userScriptsFolder, "*.cs");
 
         var sourcesTask = filePaths.Select(path => File.ReadAllTextAsync(path));
         var sources = Task.WhenAll(sourcesTask).GetAwaiter().GetResult();
@@ -87,8 +84,8 @@ public static class CodeCompiler
 
         var hash = ComputeHash(filePaths, sources);
 
-        var cacheDllPath = Path.Combine(folderPath, CacheDllName);
-        var cacheHashPath = Path.Combine(folderPath, CacheHashName);
+        var cacheDllPath = Path.Combine(userScriptsFolder, CacheDllName);
+        var cacheHashPath = Path.Combine(userScriptsFolder, CacheHashName);
 
         if (File.Exists(cacheDllPath) && File.Exists(cacheHashPath))
         {

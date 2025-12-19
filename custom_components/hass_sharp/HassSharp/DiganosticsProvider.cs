@@ -91,7 +91,7 @@ public class DiagnosticsProvider
             .ToList();
     }
 
-    public string GetCompletions(string source, int position)
+    public CompletionItem[] GetCompletions(string source, int position)
     {
         const string globalUsings = """
                                     global using System;
@@ -107,7 +107,7 @@ public class DiagnosticsProvider
 
         var document = Workspace.AddDocument(BaseProject.Id, "Script.cs", SourceText.From(fullSource));
         var completionService = CompletionService.GetService(document);
-        if (completionService == null) return string.Empty;
+        if (completionService == null) return [];
 
         var completionsTask = completionService.GetCompletionsAsync(document, adjustedPosition);
 
@@ -115,7 +115,7 @@ public class DiagnosticsProvider
 
         Workspace.TryApplyChanges(document.Project.Solution.RemoveDocument(document.Id));
 
-        return JsonSerializer.Serialize(completions.ItemsList.Take(50), JsonSerializerOptions.Web);
+        return completions.ItemsList.Take(50).ToArray();
     }
 
     public void GenerateHassEntities(string[] entityIds) => GenerateImpl(entityIds);

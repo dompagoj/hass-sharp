@@ -10,11 +10,10 @@ import json
 from clr_loader import get_coreclr
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, State, callback, Event, EventStateChangedData
+from homeassistant.core import  HomeAssistant, State, callback, Event, EventStateChangedData
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.components import frontend, websocket_api
-import homeassistant.components.websocket_api
 from homeassistant.components.http import StaticPathConfig
 import voluptuous as vol
 
@@ -34,10 +33,6 @@ SDK_PATH = os.path.join(DOTNET_ROOT_DIR, 'sdk', SDK_VERSION)
 SHARED_PATH = os.path.join(DOTNET_ROOT_DIR, 'shared', 'Microsoft.NETCore.App', SHARED_VERSION)
 
 HASS_SHARP_DLL_PATH = os.path.join(SCRIPT_DIR, "out")
-
-USER_SCRIPTS_DIR = os.path.join(SCRIPT_DIR, "user_scripts")
-
-
 sys.path.append(HASS_SHARP_DLL_PATH)
 
 rt = get_coreclr(
@@ -56,7 +51,7 @@ def python_log(level: int, message: str):
 async def async_setup(hass: HomeAssistant, config: ConfigType):
     import clr
     clr.AddReference("HassSharp")
-    from HassSharp import CodeCompiler
+
     await hass.http.async_register_static_paths([
        StaticPathConfig(
           "/hass-sharp-static",
@@ -76,15 +71,27 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
 
     frontend.add_extra_js_url(hass, "/hass-sharp-static/hass-sharp.js")
 
+    from HassSharp import CodeCompiler
+
+    CodeCompiler.SetHassPaths(hass.config.path(''))
+
     @websocket_api.decorators.async_response
     async def websocket_get_completions(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-        completions = await hass.async_add_executor_job(CodeCompiler.GetCompletions, msg["source"], msg["position"])
-        connection.send_result(msg["id"], json.loads(completions))
+        completions = await hass.async_add_executor_job(CodeCompiler.Diagnostics.GetCompletions, msg["source"], msg["position"])
+
+        completionsPy = [{
+               "displayText": c.DisplayText,
+               "displayTextPrefix": c.DisplayTextPrefix,
+               "displayTextSuffix": c.DisplayTextSuffix,
+               "tags": [t for t in c.Tags],
+            } for c in completions]
+
+        connection.send_result(msg["id"], completionsPy)
 
     @websocket_api.decorators.async_response
     async def websocket_get_diagnostics(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
         
-        diagnostics = await hass.async_add_executor_job(CodeCompiler.GetDiagnostics, msg["source"])
+        diagnostics = await hass.async_add_executor_job(CodeCompiler.Diagnostics.GetDiagnostics, msg["source"])
         # Convert C# objects to dictionaries for JSON serialization
         results = []
         for d in diagnostics:
@@ -186,9 +193,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     # Initialize type-safe entities once during startup
     from HassSharp import CodeCompiler
-    await hass.async_add_executor_job(CodeCompiler.InitializeEntities, get_entities())
+    await hass.async_add_executor_job(CodeCompiler.Diagnostics.GenerateHassEntities, get_entities())
 
-    runner = await hass.async_add_executor_job(CodeCompiler.CompileFromFolder, USER_SCRIPTS_DIR)
+    runner = await hass.async_add_executor_job(CodeCompiler.CompileFromUserScriptsFolder)
     await hass.async_add_executor_job(runner.RunAll)
 
     dependencies = runner.DependencyTracking
