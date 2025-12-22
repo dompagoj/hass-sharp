@@ -21,9 +21,21 @@ public abstract class Automation
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    HasEntityState? EntityRaw(string entityId)
+    HasEntityState? EntityRawUntracked(string entityId)
     {
         return PyInterop.Entity(entityId);
+    }
+
+    public EntityRef<T> Entity<T>(EntityRefWrapper<T> entityWrapper, [CallerMemberName] string? caller = null)
+    {
+        var raw = EntityRaw(entityWrapper.EntityId, UserClassName, caller!);
+
+        if (raw == null) throw new($"Entity with id {entityWrapper.EntityId} not found");
+        return new()
+        {
+            Automation = this,
+            Raw = raw,
+        };
     }
 
     public EntityRef<T> Entity<T>(string entityId, [CallerMemberName] string? caller = null)
@@ -38,6 +50,7 @@ public abstract class Automation
         };
     }
 
+
     public EntityRef<string> Entity(string entityId, [CallerMemberName] string? caller = null)
     {
         var raw = EntityRaw(entityId, UserClassName, caller!);
@@ -49,10 +62,10 @@ public abstract class Automation
         };
     }
 
-    public EntityRef<T> EntityUntracked<T>(string entityId)
+    public EntityRef<T> EntityUntracked<T>(EntityRefWrapper<T> entityRefWrapper)
     {
-        var raw = EntityRaw(entityId);
-        if (raw == null) throw new($"Entity with id {entityId} not found");
+        var raw = EntityRawUntracked(entityRefWrapper.EntityId);
+        if (raw == null) throw new($"Entity with id {entityRefWrapper.EntityId} not found");
         return new()
         {
             Automation = this,
@@ -62,7 +75,18 @@ public abstract class Automation
 
     public EntityRef<string> EntityUntracked(string entityId)
     {
-        var raw = EntityRaw(entityId);
+        var raw = EntityRawUntracked(entityId);
+        if (raw == null) throw new($"Entity with id {entityId} not found");
+        return new()
+        {
+            Automation = this,
+            Raw = raw,
+        };
+    }
+
+    public EntityRef<T> EntityUntracked<T>(string entityId)
+    {
+        var raw = EntityRawUntracked(entityId);
         if (raw == null) throw new($"Entity with id {entityId} not found");
         return new()
         {
@@ -76,14 +100,5 @@ public abstract class Automation
     {
         var json = data != null ? JsonSerializer.Serialize(data) : null;
         PyInterop.CallService(domain, service, json);
-    }
-
-    public void SetInputNumber(string entityId, int value)
-    {
-        CallService("input_number", "set_value", new
-        {
-            entity_id = entityId,
-            value,
-        });
     }
 }

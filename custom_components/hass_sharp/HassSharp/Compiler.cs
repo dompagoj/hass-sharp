@@ -1,5 +1,4 @@
 ﻿using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.CodeAnalysis;
@@ -7,63 +6,21 @@ using Microsoft.CodeAnalysis.CSharp;
 
 namespace HassSharp;
 
-using GetEntity = Func<string, HasEntityState?>;
-
-public class HasEntityState
-{
-    public string EntityId { get; set; } = null!;
-    public string Domain { get; set; } = null!;
-    public string ObjectId { get; set; } = null!;
-    public string State { get; set; } = null!;
-    public Dictionary<string, object> Attributes { get; set; } = null!;
-    public float LastChanged { get; set; }
-    public float LastReported { get; set; }
-}
-
-public enum PyLogLevel
-{
-    Info = 20,
-    Error = 40,
-    Warn = 30,
-    Debug = 10,
-    Critical = 50,
-}
-
-public static class Logger
-{
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void Log(PyLogLevel level, string msg) => PyInterop.Log((int)level, msg);
-
-    public static void Info(string msg) => Log(PyLogLevel.Info, msg);
-    public static void Warn(string msg) => Log(PyLogLevel.Warn, msg);
-    public static void Debug(string msg) => Log(PyLogLevel.Debug, msg);
-    public static void Error(string msg) => Log(PyLogLevel.Error, msg);
-}
-
-public static class PyInterop
-{
-    public static Action<int, string> Log { get; set; } = null!;
-    public static GetEntity Entity { get; set; } = null!;
-    public static Action<string, string, string?> CallService { get; set; } = null!;
-}
-
-public static class CodeCompiler
+public class CodeCompiler
 {
     const string CacheDllName = "hass_sharp_user_scripts.dll";
     const string CacheHashName = "hass_sharp_user_scripts.hash";
 
 
-    static readonly DiagnosticsProvider _diagnosticsProvider = new();
+    public DiagnosticsProvider Diagnostics { get; } = new();
 
-    public static DiagnosticsProvider Diagnostics => _diagnosticsProvider;
-
-    public static void SetHassPaths(string configurationFolderPath)
+    public void SetHassPaths(string configurationFolderPath)
     {
         HassPath.HassConfiguration = configurationFolderPath;
     }
 
 
-    public static CodeRunner CompileFromUserScriptsFolder()
+    public CodeRunner CompileFromUserScriptsFolder()
     {
         var userScriptsFolder = HassPath.UserScripts;
         if (!Directory.Exists(userScriptsFolder))
@@ -107,7 +64,7 @@ public static class CodeCompiler
         return BuildRunnerFromAssemblyBytes(assemblyBytes);
     }
 
-    public static CodeRunner Compile(string[] sources)
+    public CodeRunner Compile(string[] sources)
     {
         if (sources.Length == 0)
         {
@@ -137,7 +94,7 @@ public static class CodeCompiler
         return codeRunner;
     }
 
-    static byte[] CompileToAssemblyBytes(string[] sources)
+    byte[] CompileToAssemblyBytes(string[] sources)
     {
         // 0️⃣ Prepend global usings to the source
         const string globalUsings = """
@@ -154,18 +111,15 @@ public static class CodeCompiler
             .Select(source => CSharpSyntaxTree.ParseText(globalUsings + source))
             .ToList();
 
-        syntaxTrees.Add(_diagnosticsProvider.HasEntitiesSyntaxTree());
+        syntaxTrees.Add(Diagnostics.HassEntitiesSyntaxTree());
 
-        // 1️⃣ Collect references from all loaded assemblies that have a file location
         var references = ProjectReferences.GetDefaultReferences();
 
-        // 3️⃣ Define compilation options
         var compilationOptions = new CSharpCompilationOptions(
             OutputKind.DynamicallyLinkedLibrary,
             optimizationLevel: OptimizationLevel.Release
         );
 
-        // 4️⃣ Create the compilation
         var compilation = CSharpCompilation.Create(
             assemblyName: "Automation_" + Guid.NewGuid(),
             syntaxTrees: syntaxTrees,
@@ -173,7 +127,6 @@ public static class CodeCompiler
             options: compilationOptions
         );
 
-        // 5️⃣ Emit the assembly to a memory stream
         using var ms = new MemoryStream();
         var result = compilation.Emit(ms);
 
@@ -193,7 +146,7 @@ public static class CodeCompiler
         return ms.ToArray();
     }
 
-    static string ComputeHash(string[] filePaths, string[] sources)
+    string ComputeHash(string[] filePaths, string[] sources)
     {
         using var sha = SHA256.Create();
 
@@ -213,7 +166,7 @@ public static class CodeCompiler
             sha.TransformBlock(contentBytes, 0, contentBytes.Length, null, 0);
         }
 
-        sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+        sha.TransformFinalBlock([], 0, 0);
         return Convert.ToHexString(sha.Hash!);
     }
 }

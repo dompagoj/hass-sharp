@@ -1,13 +1,16 @@
+import tailwindcss from '@tailwindcss/vite'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
+import solidPlugin from 'vite-plugin-solid'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
+  plugins: [solidPlugin(), tailwindcss()],
   build: {
     target: 'esnext',
-    outDir: '../dist',
+    outDir: '../www/dist',
     lib: {
       entry: resolve(__dirname, 'src/hass-sharp.ts'),
       formats: ['es'],

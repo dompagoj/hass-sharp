@@ -14,7 +14,7 @@ public class CodeRunner
 
     string CombineClassAndMethod(string klass, string method) => $"{klass}::{method}";
 
-    (string klass, string method) UnmixClassAndMethod(string combined)
+    static (string klass, string method) UnmixClassAndMethod(string combined)
     {
         var res = combined.Split("::");
         return (res[0], res[1]);

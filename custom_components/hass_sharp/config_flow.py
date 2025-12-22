@@ -1,4 +1,3 @@
-import logging
 from homeassistant import config_entries
 import voluptuous as vol
 from .const import DOMAIN, logger

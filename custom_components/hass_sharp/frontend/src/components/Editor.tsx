@@ -1,0 +1,219 @@
+import { createEffect } from 'solid-js'
+import * as monaco from 'monaco-editor'
+import type { CompletionItem, HomeAssistant } from '../types'
+import type { MessageBase } from 'home-assistant-js-websocket'
+import visualAssistTheme from '../visual-assist.json'
+
+monaco.languages.register({ id: 'csharp', extensions: ['cs'] })
+// @ts-ignore
+monaco.editor.defineTheme('visual-assist', visualAssistTheme)
+
+function itemToLabel(item: CompletionItem) {
+  if (!item.displayTextPrefix && !item.displayTextSuffix)
+    return item.displayText
+
+  const res = `${item.displayTextPrefix}${item.displayText}${item.displayTextSuffix}`
+
+  return res
+}
+
+function tagsToKind(tags: string[]) {
+  const first = tags[0]
+
+  if (first === 'Method') return monaco.languages.CompletionItemKind.Method
+  if (first === 'Class') return monaco.languages.CompletionItemKind.Class
+  if (first === 'Property') return monaco.languages.CompletionItemKind.Property
+  if (first === 'Enum') return monaco.languages.CompletionItemKind.Enum
+  if (first === 'Delegate') return monaco.languages.CompletionItemKind.Function
+  if (first === 'Keyword') return monaco.languages.CompletionItemKind.Keyword
+  if (first === 'Structure') return monaco.languages.CompletionItemKind.Struct
+  if (first === 'ExtensionMethod')
+    return monaco.languages.CompletionItemKind.Function
+  if (first === 'Local') return monaco.languages.CompletionItemKind.Variable
+  if (first === 'Interface')
+    return monaco.languages.CompletionItemKind.Interface
+  if (first === 'Snippet') return monaco.languages.CompletionItemKind.Snippet
+  if (first === 'TypeParameter')
+    return monaco.languages.CompletionItemKind.TypeParameter
+  if (first === 'TypeParameter')
+    return monaco.languages.CompletionItemKind.TypeParameter
+  if (first === 'Namespace') return monaco.languages.CompletionItemKind.Module
+  if (first === 'Field') return monaco.languages.CompletionItemKind.Field
+
+  console.warn('Unknown tag: ', first)
+  return monaco.languages.CompletionItemKind.Snippet
+}
+
+export const Editor = (props: { hass: HomeAssistant }) => {
+  let editorRef: HTMLDivElement = undefined!
+
+  createEffect(() => {
+    if (!editorRef) return
+
+    let completionTimeout: number
+    monaco.languages.registerCompletionItemProvider('csharp', {
+      triggerCharacters: ['.'],
+      provideCompletionItems: async (model, position) => {
+        return new Promise(resolve => {
+          clearTimeout(completionTimeout)
+          completionTimeout = setTimeout(async () => {
+            const source = model.getValue()
+            const offset = model.getOffsetAt(position)
+
+            // Calculate word range for replacement
+            const word = model.getWordUntilPosition(position)
+            const range = {
+              startLineNumber: position.lineNumber,
+              endLineNumber: position.lineNumber,
+              startColumn: word.startColumn,
+              endColumn: word.endColumn,
+            }
+
+            try {
+              const message: MessageBase = {
+                type: 'hass_sharp/get_completions',
+                source: source,
+                position: offset,
+              }
+
+              const completions = await props.hass.callWS<CompletionItem[]>(
+                message
+              )
+
+              resolve({
+                suggestions: completions.map(item => {
+                  const label = itemToLabel(item)
+                  return {
+                    label,
+                    kind: tagsToKind(item.tags),
+                    insertText: label,
+                    range,
+                  }
+                }),
+              })
+            } catch (e) {
+              console.error('Failed to get completions', e)
+              resolve({ suggestions: [] })
+            }
+          }, 150) // 150ms debounce
+        })
+      },
+    })
+
+    const editor = monaco.editor.create(editorRef, {
+      value: `public class MyAutomation : Automation
+{
+    public void ExampleAutomation()
+    {
+
+    }
+}`,
+      language: 'csharp',
+      theme: 'visual-assist',
+      automaticLayout: true,
+      // Set fixedOverflowWidgets to false to keep it inside the component's DOM
+      renderLineHighlight: 'all',
+      suggest: {
+        insertMode: 'replace',
+        snippetsPreventQuickSuggestions: false,
+        showWords: false,
+        showMethods: true,
+        showFunctions: true,
+        showIcons: true,
+        showConstructors: true,
+        showFields: true,
+        showVariables: true,
+        showClasses: true,
+        showInterfaces: true,
+        showModules: true,
+        showProperties: true,
+        showEvents: true,
+        showOperators: true,
+        showUnits: true,
+        showValues: true,
+        showConstants: true,
+        showEnums: true,
+        showEnumMembers: true,
+        showKeywords: true,
+        showFolders: true,
+        showColors: true,
+        showFiles: true,
+        showReferences: true,
+        showSnippets: false,
+        showTypeParameters: true,
+        showIssues: true,
+        showUsers: true,
+      },
+    })
+
+    const validate = async () => {
+      const model = editor.getModel()
+      if (!model) return
+
+      try {
+        const diagnostics = await props.hass.callWS<any[]>({
+          type: 'hass_sharp/get_diagnostics',
+          source: model.getValue(),
+        })
+
+        if (diagnostics.length) console.error(diagnostics)
+
+        const markers = diagnostics.map(d => {
+          return {
+            startLineNumber: d.startLine,
+            startColumn: d.startColumn,
+            endLineNumber: d.endLine,
+            endColumn: d.endColumn,
+            message: d.message,
+            origin: 'Compiler',
+            severity:
+              d.severity === 3
+                ? monaco.MarkerSeverity.Error
+                : d.severity === 2
+                ? monaco.MarkerSeverity.Warning
+                : monaco.MarkerSeverity.Info,
+          } as monaco.editor.IMarkerData
+        })
+
+        monaco.editor.setModelMarkers(model, 'csharp', markers)
+      } catch (e) {
+        console.error('Failed to get diagnostics', e)
+      }
+    }
+
+    let timeoutId: number
+    editor.onDidChangeModelContent(() => {
+      clearTimeout(timeoutId)
+      timeoutId = setTimeout(validate, 500)
+    })
+
+    // Initial validation
+    validate()
+    monaco.languages.registerHoverProvider('csharp', {
+      provideHover: async (model, position) => {
+        console.log('Hover provider uuu')
+        const source = model.getValue()
+        const offset = model.getOffsetAt(position)
+
+        try {
+          const hoverText = await props.hass.callWS<string | null>({
+            type: 'hass_sharp/get_hover',
+            source: source,
+            position: offset,
+          })
+
+          if (!hoverText) return null
+
+          return {
+            contents: [{ value: hoverText }],
+          }
+        } catch (e) {
+          console.error('Failed to get hover', e)
+          return null
+        }
+      },
+    })
+  })
+
+  return <div class="h-full" ref={editorRef} id="editor" />
+}
