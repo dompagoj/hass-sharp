@@ -1,3 +1,4 @@
+from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry
 
@@ -8,3 +9,12 @@ def get_hass_entities(hass: HomeAssistant):
   entity_ids.update(registry.entities.keys())
       
   return list(entity_ids)
+
+
+HASS_DATA_MANAGER_KEY = "hass_sharp:manager"
+
+def set_hass_sharp_manager(hass: HomeAssistant, manager: Any):
+  hass.data[HASS_DATA_MANAGER_KEY] = manager
+
+def get_hass_sharp_manager(hass: HomeAssistant):
+   return hass.data[HASS_DATA_MANAGER_KEY]

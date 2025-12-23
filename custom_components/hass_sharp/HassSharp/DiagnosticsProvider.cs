@@ -11,19 +11,19 @@ public class DiagnosticsProvider
 {
     readonly EntityGenerator _entityGenerator = new();
     readonly AdhocWorkspace _workspace;
-    readonly Project _baseProject;
+    readonly ProjectId _baseProjectId;
 
     SyntaxTree? _entitiesSyntaxTree;
 
-    const string GlobalUsings = """
-                                global using System;
-                                global using System.Threading;
-                                global using System.Threading.Tasks;
-                                global using System.Collections.Generic;
-                                global using System.Linq;
-                                global using HassSharp;
+    public const string GlobalUsings = """
+                                       global using System;
+                                       global using System.Threading;
+                                       global using System.Threading.Tasks;
+                                       global using System.Collections.Generic;
+                                       global using System.Linq;
+                                       global using HassSharp;
 
-                                """;
+                                       """;
 
     static readonly int GlobalUsingsLineCount = GlobalUsings.Count(c => c == '\n');
 
@@ -43,12 +43,12 @@ public class DiagnosticsProvider
             parseOptions: new CSharpParseOptions(LanguageVersion.Latest)
         );
 
-        _baseProject = _workspace.AddProject(projectInfo);
+        _baseProjectId = _workspace.AddProject(projectInfo).Id;
 
         // Add default references to the workspace project
         var references = ProjectReferences.GetDefaultReferences();
         _workspace.TryApplyChanges(
-            _workspace.CurrentSolution.WithProjectMetadataReferences(_baseProject.Id, references));
+            _workspace.CurrentSolution.WithProjectMetadataReferences(_baseProjectId, references));
     }
 
     public SyntaxTree HassEntitiesSyntaxTree()
@@ -58,7 +58,13 @@ public class DiagnosticsProvider
         return _entitiesSyntaxTree;
     }
 
-    public List<DiagnosticModel> GetDiagnostics(string source)
+    public SyntaxTree? HassEntitiesSyntaxTreeNullable()
+    {
+        return _entitiesSyntaxTree;
+    }
+
+
+    public DiagnosticModel[] GetDiagnostics(string source)
     {
         var syntaxTree = CSharpSyntaxTree.ParseText(GlobalUsings + source);
         var references = ProjectReferences.GetDefaultReferences();
@@ -89,7 +95,7 @@ public class DiagnosticsProvider
                     Severity = (int)d.Severity
                 };
             })
-            .ToList();
+            .ToArray();
     }
 
     public IReadOnlyList<CompletionItem> GetCompletions(string source, int position)
@@ -97,7 +103,7 @@ public class DiagnosticsProvider
         var fullSource = GlobalUsings + source;
         var adjustedPosition = GlobalUsings.Length + position;
 
-        var userScriptDocument = _workspace.AddDocument(_baseProject.Id, "Script.cs", SourceText.From(fullSource));
+        var userScriptDocument = _workspace.AddDocument(_baseProjectId, "Script.cs", SourceText.From(fullSource));
 
         var completionService = CompletionService.GetService(userScriptDocument);
         if (completionService == null) return [];
@@ -116,6 +122,8 @@ public class DiagnosticsProvider
             items = completionService.FilterItems(userScriptDocument, [.. items], filterText);
         }
 
+        _workspace.TryApplyChanges(userScriptDocument.Project.Solution.RemoveDocument(userScriptDocument.Id));
+
         return items;
     }
 
@@ -124,7 +132,7 @@ public class DiagnosticsProvider
         var fullSource = GlobalUsings + source;
         var adjustedPosition = GlobalUsings.Length + position;
 
-        var userScriptDocument = _workspace.AddDocument(_baseProject.Id, "Script.cs", SourceText.From(fullSource));
+        var userScriptDocument = _workspace.AddDocument(_baseProjectId, "Script.cs", SourceText.From(fullSource));
 
         var quickInfoService = QuickInfoService.GetService(userScriptDocument);
         if (quickInfoService == null) return null;
@@ -133,6 +141,8 @@ public class DiagnosticsProvider
             .GetResult();
         if (quickInfo == null) return null;
 
+        _workspace.TryApplyChanges(userScriptDocument.Project.Solution.RemoveDocument(userScriptDocument.Id));
+
         return quickInfo.Sections.Select(s => s.Text).Aggregate((a, b) => a + "\n" + b);
     }
 
@@ -140,7 +150,7 @@ public class DiagnosticsProvider
     {
         _entitiesSyntaxTree = _entityGenerator.GenerateEntities(entityIds);
 
-        var entitiesDocumentId = DocumentId.CreateNewId(_baseProject.Id);
+        var entitiesDocumentId = DocumentId.CreateNewId(_baseProjectId);
         var solution =
             _workspace.CurrentSolution.AddDocument(entitiesDocumentId, "Entities.g.cs", _entitiesSyntaxTree.GetText());
         _workspace.TryApplyChanges(solution);

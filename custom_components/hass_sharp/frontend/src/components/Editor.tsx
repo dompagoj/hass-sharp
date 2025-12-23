@@ -4,13 +4,14 @@ import type { CompletionItem, HomeAssistant } from '../types'
 import type { MessageBase } from 'home-assistant-js-websocket'
 import visualAssistTheme from '../visual-assist.json'
 
+import 'monaco-editor/min/vs/editor/editor.main.css'
+
 monaco.languages.register({ id: 'csharp', extensions: ['cs'] })
 // @ts-ignore
 monaco.editor.defineTheme('visual-assist', visualAssistTheme)
 
 function itemToLabel(item: CompletionItem) {
-  if (!item.displayTextPrefix && !item.displayTextSuffix)
-    return item.displayText
+  if (!item.displayTextPrefix && !item.displayTextSuffix) return item.displayText
 
   const res = `${item.displayTextPrefix}${item.displayText}${item.displayTextSuffix}`
 
@@ -27,18 +28,15 @@ function tagsToKind(tags: string[]) {
   if (first === 'Delegate') return monaco.languages.CompletionItemKind.Function
   if (first === 'Keyword') return monaco.languages.CompletionItemKind.Keyword
   if (first === 'Structure') return monaco.languages.CompletionItemKind.Struct
-  if (first === 'ExtensionMethod')
-    return monaco.languages.CompletionItemKind.Function
+  if (first === 'ExtensionMethod') return monaco.languages.CompletionItemKind.Function
   if (first === 'Local') return monaco.languages.CompletionItemKind.Variable
-  if (first === 'Interface')
-    return monaco.languages.CompletionItemKind.Interface
+  if (first === 'Interface') return monaco.languages.CompletionItemKind.Interface
   if (first === 'Snippet') return monaco.languages.CompletionItemKind.Snippet
-  if (first === 'TypeParameter')
-    return monaco.languages.CompletionItemKind.TypeParameter
-  if (first === 'TypeParameter')
-    return monaco.languages.CompletionItemKind.TypeParameter
+  if (first === 'TypeParameter') return monaco.languages.CompletionItemKind.TypeParameter
+  if (first === 'TypeParameter') return monaco.languages.CompletionItemKind.TypeParameter
   if (first === 'Namespace') return monaco.languages.CompletionItemKind.Module
   if (first === 'Field') return monaco.languages.CompletionItemKind.Field
+  if (first === 'Parameter') return monaco.languages.CompletionItemKind.Variable
 
   console.warn('Unknown tag: ', first)
   return monaco.languages.CompletionItemKind.Snippet
@@ -76,9 +74,7 @@ export const Editor = (props: { hass: HomeAssistant }) => {
                 position: offset,
               }
 
-              const completions = await props.hass.callWS<CompletionItem[]>(
-                message
-              )
+              const completions = await props.hass.callWS<CompletionItem[]>(message)
 
               resolve({
                 suggestions: completions.map(item => {
@@ -109,10 +105,22 @@ export const Editor = (props: { hass: HomeAssistant }) => {
     }
 }`,
       language: 'csharp',
+      inlayHints: {
+        enabled: 'on',
+      },
       theme: 'visual-assist',
-      automaticLayout: true,
-      // Set fixedOverflowWidgets to false to keep it inside the component's DOM
       renderLineHighlight: 'all',
+      fixedOverflowWidgets: true,
+      automaticLayout: true,
+      domReadOnly: true,
+      smoothScrolling: true,
+      cursorSmoothCaretAnimation: 'on',
+      hover: {
+        enabled: true,
+        delay: 300,
+        sticky: true,
+        above: true,
+      },
       suggest: {
         insertMode: 'replace',
         snippetsPreventQuickSuggestions: false,

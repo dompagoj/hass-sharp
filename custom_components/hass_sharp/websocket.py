@@ -4,26 +4,26 @@ from homeassistant.core import HomeAssistant
 from homeassistant.components import websocket_api
 import voluptuous as vol
 
-from .utils import get_hass_entities
+from . import utils
 
-def register_websocket_routes(hass: HomeAssistant, CodeCompiler: Any):
+def register_websocket_routes(hass: HomeAssistant, hassSharp):
 
   @websocket_api.decorators.async_response
   async def websocket_reload_entities(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-        entity_ids = get_hass_entities(hass)
-        await hass.async_add_executor_job(CodeCompiler.InitializeEntities, entity_ids)
+
+        await hass.async_add_executor_job(hassSharp.GenerateHassEntities, utils.get_hass_entities(hass))
         connection.send_result(msg["id"], {"success": True})
 
   @websocket_api.decorators.async_response
   async def websocket_get_hover(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-        hover = await hass.async_add_executor_job(CodeCompiler.Diagnostics.GetHover, msg["source"], msg["position"])
+        hassSharp = utils.get_hass_sharp_manager(hass)
+        hover = await hass.async_add_executor_job(hassSharp.GetHoverDiagnostics, msg["source"], msg["position"])
         connection.send_result(msg["id"], hover)
 
 
   @websocket_api.decorators.async_response
   async def websocket_get_diagnostics(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-      diagnostics = await hass.async_add_executor_job(CodeCompiler.Diagnostics.GetDiagnostics, msg["source"])
-        # Convert C# objects to dictionaries for JSON serialization
+      diagnostics = await hass.async_add_executor_job(hassSharp.GetCompilationDiagnostics, msg["source"])
       diagnosticsPy = [{
                 "startLine": d.StartLine,
                 "startColumn": d.StartColumn,
@@ -37,7 +37,7 @@ def register_websocket_routes(hass: HomeAssistant, CodeCompiler: Any):
 
   @websocket_api.decorators.async_response
   async def websocket_get_completions(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-    completions = await hass.async_add_executor_job(CodeCompiler.Diagnostics.GetCompletions, msg["source"], msg["position"])
+    completions = await hass.async_add_executor_job(hassSharp.GetCodeCompletions, msg["source"], msg["position"])
 
     completionsPy = [{
              "displayText": c.DisplayText,

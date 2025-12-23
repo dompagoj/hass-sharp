@@ -1,34 +1,31 @@
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace HassSharp;
 
-// When adding methods to this class make sure to exclude them from the CodeRunner above or they will be run as an automation and fail
 public abstract class Automation
 {
-    public string UserClassName { get; set; } = "Unknown";
-    public bool Initializing { get; set; } = true;
-    public CodeRunner Runner { get; internal set; } = null!;
+    internal UserScript UserScript { get; set; } = null!;
+    public bool Initializing => UserScript.Initializing;
 
     // Injected by Python
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    HasEntityState? EntityRaw(string entityId, string klass, string method)
+    HasEntityState? GetEntityValueTracked(string entityId, string method)
     {
-        Runner.TrackEntityCall(entityId, klass, method);
+        UserScript.Runner.TrackEntityCall(entityId, UserScript, method);
 
         return PyInterop.Entity(entityId);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    HasEntityState? EntityRawUntracked(string entityId)
+    HasEntityState? GetEntityValueUntracked(string entityId)
     {
         return PyInterop.Entity(entityId);
     }
 
-    public EntityRef<T> Entity<T>(EntityRefWrapper<T> entityWrapper, [CallerMemberName] string? caller = null)
+    protected EntityRef<T> Entity<T>(EntityRefWrapper<T> entityWrapper, [CallerMemberName] string? caller = null)
     {
-        var raw = EntityRaw(entityWrapper.EntityId, UserClassName, caller!);
+        var raw = GetEntityValueTracked(entityWrapper.EntityId, caller!);
 
         if (raw == null) throw new($"Entity with id {entityWrapper.EntityId} not found");
         return new()
@@ -38,9 +35,9 @@ public abstract class Automation
         };
     }
 
-    public EntityRef<T> Entity<T>(string entityId, [CallerMemberName] string? caller = null)
+    protected EntityRef<T> Entity<T>(string entityId, [CallerMemberName] string? caller = null)
     {
-        var raw = EntityRaw(entityId, UserClassName, caller!);
+        var raw = GetEntityValueTracked(entityId, caller!);
 
         if (raw == null) throw new($"Entity with id {entityId} not found");
         return new()
@@ -51,9 +48,9 @@ public abstract class Automation
     }
 
 
-    public EntityRef<string> Entity(string entityId, [CallerMemberName] string? caller = null)
+    protected EntityRef<string> Entity(string entityId, [CallerMemberName] string? caller = null)
     {
-        var raw = EntityRaw(entityId, UserClassName, caller!);
+        var raw = GetEntityValueTracked(entityId, caller!);
         if (raw == null) throw new($"Entity with id {entityId} not found");
         return new()
         {
@@ -62,9 +59,9 @@ public abstract class Automation
         };
     }
 
-    public EntityRef<T> EntityUntracked<T>(EntityRefWrapper<T> entityRefWrapper)
+    protected EntityRef<T> EntityUntracked<T>(EntityRefWrapper<T> entityRefWrapper)
     {
-        var raw = EntityRawUntracked(entityRefWrapper.EntityId);
+        var raw = GetEntityValueUntracked(entityRefWrapper.EntityId);
         if (raw == null) throw new($"Entity with id {entityRefWrapper.EntityId} not found");
         return new()
         {
@@ -73,9 +70,9 @@ public abstract class Automation
         };
     }
 
-    public EntityRef<string> EntityUntracked(string entityId)
+    protected EntityRef<string> EntityUntracked(string entityId)
     {
-        var raw = EntityRawUntracked(entityId);
+        var raw = GetEntityValueUntracked(entityId);
         if (raw == null) throw new($"Entity with id {entityId} not found");
         return new()
         {
@@ -84,9 +81,9 @@ public abstract class Automation
         };
     }
 
-    public EntityRef<T> EntityUntracked<T>(string entityId)
+    protected EntityRef<T> EntityUntracked<T>(string entityId)
     {
-        var raw = EntityRawUntracked(entityId);
+        var raw = GetEntityValueUntracked(entityId);
         if (raw == null) throw new($"Entity with id {entityId} not found");
         return new()
         {
@@ -96,7 +93,7 @@ public abstract class Automation
     }
 
 
-    internal void CallService(string domain, string service, object? data = null)
+    public void CallService(string domain, string service, object? data = null)
     {
         var json = data != null ? JsonSerializer.Serialize(data) : null;
         PyInterop.CallService(domain, service, json);

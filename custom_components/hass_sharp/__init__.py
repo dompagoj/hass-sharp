@@ -14,7 +14,6 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.components import frontend, websocket_api
 from homeassistant.components.http import StaticPathConfig
 
-
 os.environ['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT'] = 'true'
 
 # --- Path definitions (as before) ---
@@ -42,13 +41,14 @@ rt = get_coreclr(
 pynet.set_runtime(rt)
 
 
+
 def python_log(level: int, message: str):
     logger.log(level, "[C#] %s", message)
 
 async def async_setup(hass: HomeAssistant, config: ConfigType):
     import clr
     clr.AddReference("HassSharp")
-    from HassSharp import CodeCompiler
+    from HassSharp import HassSharpManager
 
     await hass.http.async_register_static_paths([
        StaticPathConfig(
@@ -68,17 +68,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
     )
 
     frontend.add_extra_js_url(hass, "/hass-sharp-static/hass-sharp.js")
-    CodeCompiler.SetHassPaths(hass.config.path(''))
+    hassSharp = HassSharpManager(hass.config.path(''))
+    utils.set_hass_sharp_manager(hass, hassSharp)
 
-    websocket.register_websocket_routes(hass, CodeCompiler)
+    websocket.register_websocket_routes(hass, hassSharp)
     http.register_http_routes(hass)
    
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    from HassSharp import CodeCompiler, PyInterop, HasEntityState
+    from HassSharp import PyInterop, HasEntityState
     from System import Action, String, Func, Object, Int32
     from System.Collections.Generic import Dictionary
+
+    logger.info('Async setup entry')
+    
+    hassSharp = utils.get_hass_sharp_manager(hass)
 
     def entity(entityId: str) :
       entityState = hass.states.get(entityId)
@@ -105,36 +110,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
       # Use hass.add_job to safely schedule the service call from a background thread
       hass.add_job(hass.services.async_call(domain, service, data))
 
-
-
     PyInterop.Log = Action[Int32, String](python_log)
     PyInterop.Entity = Func[String, HasEntityState](entity)
     PyInterop.CallService = Action[String, String, String](call_service)
 
-    # Initialize type-safe entities once during startup
-    await hass.async_add_executor_job(CodeCompiler.Diagnostics.GenerateHassEntities, utils.get_hass_entities(hass))
+    await hass.async_add_executor_job(hassSharp.Init, utils.get_hass_entities(hass))
 
-    runner = await hass.async_add_executor_job(CodeCompiler.CompileFromUserScriptsFolder)
-    await hass.async_add_executor_job(runner.RunAll)
-
-    dependencies = runner.DependencyTracking
+    dependencies = hassSharp.GetScriptEntityDependencies()
 
     unsubs = []
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "unsubs": unsubs,
-        "runner": runner,
     }
 
     @callback
-    def on_entity_change(event: Event[EventStateChangedData]):
+    async def on_entity_change(event: Event[EventStateChangedData]):
       entity_id = event.data.get("entity_id")
-      if entity_id in dependencies:
-        for func in dependencies[entity_id]:
-            hass.async_add_executor_job(runner.RunMethod, func)
+      depEntries = dependencies[entity_id]
 
-    for entityId in dependencies.Keys:
-      unsub = async_track_state_change_event(hass, entityId, on_entity_change)
+      if (depEntries is not None):
+        await hass.async_add_executor_job(hassSharp.RunEntries, depEntries)
+
+    logger.info('Tracking %s', dependencies.Keys)
+    for entity_id in dependencies.Keys:
+      logger.info("Adding tracking for %s", entity_id)
+      unsub = async_track_state_change_event(hass, entity_id, on_entity_change)
       unsubs.append(unsub)
 
 
