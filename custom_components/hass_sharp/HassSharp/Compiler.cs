@@ -7,7 +7,7 @@ namespace HassSharp;
 public class CodeCompiler(
     DiagnosticsProvider _diagnosticsProvider)
 {
-    readonly UserScriptCacheProvider _cacheProvider = new(_diagnosticsProvider);
+    readonly UserScriptCacheProvider _cacheProvider = new();
 
     public Task<Assembly?> CompileFromUserScriptsFolder() => CompileFromFolder(HassPath.UserScripts);
 
@@ -20,8 +20,7 @@ public class CodeCompiler(
 
         var filePaths = Directory.GetFiles(folderPath, "*.cs");
 
-        var sourcesTask = filePaths.Select(path => File.ReadAllTextAsync(path));
-        var sources = await Task.WhenAll(sourcesTask);
+        var sources = await Task.WhenAll(filePaths.Select(path => File.ReadAllTextAsync(path)));
 
         // If there are no scripts, return an empty runner
         if (sources.Length == 0)

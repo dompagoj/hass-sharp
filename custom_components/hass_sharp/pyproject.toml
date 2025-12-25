@@ -1,0 +1,10 @@
+[project]
+name = "hass-sharp"
+dynamic = ["version"]
+dependencies = [
+    "basedpyright>=1.36.2",
+    "pyrefly>=0.46.0",
+]
+urls = [
+    "."
+]

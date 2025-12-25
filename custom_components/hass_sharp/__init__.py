@@ -1,5 +1,8 @@
 import os
 import sys
+from typing import override
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 import pythonnet as pynet
 import json
 from clr_loader import get_coreclr
@@ -11,8 +14,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import  HomeAssistant, callback, Event, EventStateChangedData
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.components import frontend, websocket_api
+from homeassistant.components import frontend
 from homeassistant.components.http import StaticPathConfig
+
 
 os.environ['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT'] = 'true'
 
@@ -83,40 +87,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     logger.info('Async setup entry')
     
-    hassSharp = utils.get_hass_sharp_manager(hass)
+    hass_sharp = utils.get_hass_sharp_manager(hass)
 
-    def entity(entityId: str) :
-      entityState = hass.states.get(entityId)
-      if entityState is None: return
+    await hass.config_entries.async_forward_entry_setups(entry, ['sensor'])
 
-      attributesDict = Dictionary[String, Object]()
+    def entity(entity_id: str) :
+        entity_state = hass.states.get(entity_id)
+        if entity_state is None: return
 
-      for k,v in entityState.attributes.items():
-        attributesDict[k] = v
+        attributes_dict = Dictionary[String, Object]()
 
-      ref = HasEntityState()
-      ref.EntityId = entityState.entity_id
-      ref.Domain = entityState.domain
-      ref.ObjectId = entityState.object_id
-      ref.State = entityState.state
-      ref.Attributes = attributesDict
-      ref.LastChanged = entityState.last_changed_timestamp
-      ref.LastReported = entityState.last_reported_timestamp
+        for k,v in entity_state.attributes.items():
+          attributes_dict[k] = v
 
-      return ref
+        ref = HasEntityState()
+        ref.EntityId = entity_state.entity_id
+        ref.Domain = entity_state.domain
+        ref.ObjectId = entity_state.object_id
+        ref.State = entity_state.state
+        ref.Attributes = attributes_dict
+        ref.LastChanged = entity_state.last_changed_timestamp
+        ref.LastReported = entity_state.last_reported_timestamp
+
+        return ref
 
     def call_service(domain: str, service: str, data_json: str):
-      data = json.loads(data_json) if data_json else None
-      # Use hass.add_job to safely schedule the service call from a background thread
-      hass.add_job(hass.services.async_call(domain, service, data))
+        data = json.loads(data_json) if data_json else None
+        # Use hass.add_job to safely schedule the service call from a background thread
+        hass.add_job(hass.services.async_call(domain, service, data))
 
     PyInterop.Log = Action[Int32, String](python_log)
     PyInterop.Entity = Func[String, HasEntityState](entity)
     PyInterop.CallService = Action[String, String, String](call_service)
 
-    await hass.async_add_executor_job(hassSharp.Init, utils.get_hass_entities(hass))
+    await hass.async_add_executor_job(hass_sharp.Init, utils.get_hass_entities(hass))
 
-    dependencies = hassSharp.GetScriptEntityDependencies()
+    dependencies = hass_sharp.GetScriptEntityDependencies()
 
     unsubs = []
     hass.data.setdefault(DOMAIN, {})
@@ -126,18 +132,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     @callback
     async def on_entity_change(event: Event[EventStateChangedData]):
-      entity_id = event.data.get("entity_id")
-      depEntries = dependencies[entity_id]
+      found_entity_id = event.data.get("entity_id")
+      dep_entries = dependencies[found_entity_id]
 
-      if (depEntries is not None):
-        await hass.async_add_executor_job(hassSharp.RunEntries, depEntries)
+      if dep_entries is not None:
+        await hass.async_add_executor_job(hass_sharp.RunEntries, dep_entries)
 
-    logger.info('Tracking %s', dependencies.Keys)
     for entity_id in dependencies.Keys:
-      logger.info("Adding tracking for %s", entity_id)
       unsub = async_track_state_change_event(hass, entity_id, on_entity_change)
       unsubs.append(unsub)
-
 
     return True
 

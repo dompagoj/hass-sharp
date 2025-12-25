@@ -3,7 +3,7 @@ using System.Text;
 
 namespace HassSharp;
 
-public class UserScriptCacheProvider(DiagnosticsProvider _diagnosticsProvider)
+public class UserScriptCacheProvider
 {
     const string CacheDllName = "hass_sharp_user_scripts.dll";
     const string CacheHashName = "hass_sharp_user_scripts.hash";
@@ -15,14 +15,6 @@ public class UserScriptCacheProvider(DiagnosticsProvider _diagnosticsProvider)
     public string ComputeHash(string[] filePaths, string[] sources)
     {
         using var sha = SHA256.Create();
-
-        // Include the entities source in the hash to force a recompile if they change
-        var entitiesTree = _diagnosticsProvider.HassEntitiesSyntaxTreeNullable();
-        if (entitiesTree != null)
-        {
-            var entitiesBytes = Encoding.UTF8.GetBytes(entitiesTree.ToString());
-            sha.TransformBlock(entitiesBytes, 0, entitiesBytes.Length, null, 0);
-        }
 
         for (var i = 0; i < sources.Length; i++)
         {
@@ -39,14 +31,13 @@ public class UserScriptCacheProvider(DiagnosticsProvider _diagnosticsProvider)
 
     public async Task<byte[]?> GetScriptsCached(string hash)
     {
-        if (File.Exists(CacheDllPath) && File.Exists(CacheHashPath))
+        if (!File.Exists(CacheDllPath) || !File.Exists(CacheHashPath)) return null;
+
+        var existingHash = await File.ReadAllTextAsync(CacheHashPath);
+        if (existingHash == hash)
         {
-            var existingHash = await File.ReadAllTextAsync(CacheHashPath);
-            if (existingHash == hash)
-            {
-                var cachedBytes = await File.ReadAllBytesAsync(CacheDllPath);
-                return cachedBytes;
-            }
+            var cachedBytes = await File.ReadAllBytesAsync(CacheDllPath);
+            return cachedBytes;
         }
 
         return null;
