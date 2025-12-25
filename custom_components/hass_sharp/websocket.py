@@ -6,24 +6,23 @@ import voluptuous as vol
 
 from . import utils
 
-def register_websocket_routes(hass: HomeAssistant, hassSharp):
+def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
     @websocket_api.decorators.async_response
     async def websocket_reload_entities(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
 
-          await hass.async_add_executor_job(hassSharp.GenerateHassEntities, utils.get_hass_entities(hass))
+          await hass.async_add_executor_job(hass_sharp.GenerateHassEntities, utils.get_hass_entities(hass))
           connection.send_result(msg["id"], {"success": True})
 
     @websocket_api.decorators.async_response
     async def websocket_get_hover(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-          hassSharp = utils.get_hass_sharp_manager(hass)
-          hover = await hass.async_add_executor_job(hassSharp.GetHoverDiagnostics, msg["source"], msg["position"])
+          hover = await hass.async_add_executor_job(hass_sharp.GetHoverDiagnostics, msg["source"], msg["position"])
           connection.send_result(msg["id"], hover)
 
 
     @websocket_api.decorators.async_response
     async def websocket_get_diagnostics(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-        diagnostics = await hass.async_add_executor_job(hassSharp.GetCompilationDiagnostics, msg["source"])
-        diagnosticsPy = [{
+        diagnostics = await hass.async_add_executor_job(hass_sharp.GetCompilationDiagnostics, msg["source"])
+        diagnostics_py = [{
                   "startLine": d.StartLine,
                   "startColumn": d.StartColumn,
                   "endLine": d.EndLine,
@@ -32,13 +31,13 @@ def register_websocket_routes(hass: HomeAssistant, hassSharp):
                   "severity": d.Severity,
               } for d in diagnostics]
 
-        connection.send_result(msg["id"], diagnosticsPy)
+        connection.send_result(msg["id"], diagnostics_py)
 
     @websocket_api.decorators.async_response
     async def websocket_get_completions(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-      completions = await hass.async_add_executor_job(hassSharp.GetCodeCompletions, msg["source"], msg["position"])
+      completions = await hass.async_add_executor_job(hass_sharp.GetCodeCompletions, msg["source"], msg["position"])
 
-      completionsPy = [{
+      completions_py = [{
               "displayText": c.DisplayText,
               "displayTextPrefix": c.DisplayTextPrefix,
               "displayTextSuffix": c.DisplayTextSuffix,
@@ -46,10 +45,38 @@ def register_websocket_routes(hass: HomeAssistant, hassSharp):
               "tags": [t for t in c.Tags],
             } for c in completions]
 
-      connection.send_result(msg["id"], completionsPy)
+      connection.send_result(msg["id"], completions_py)
+
+    # @websocket_api.decorators.async_response
+    # async def websocket_save_script(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
+    #     hassSharp = utils.get_hass_sharp_manager(hass)
+    #     path = msg["path"]
+    #     source = msg["source"]
+    #
+    #     # Save to disk
+    #     def save_file():
+    #         with open(path, "w") as f:
+    #             f.write(source)
+    #
+    #     await hass.async_add_executor_job(save_file)
+    #     await hass.async_add_executor_job(hassSharp.SaveScript, path, source)
+    #
+    #     connection.send_result(msg["id"], {"success": True})
+    #
+    # websocket_api.async_register_command(
+    #     hass,
+    #     "hass_sharp/save_script",
+    #     websocket_save_script,
+    #     vol.Schema({
+    #         vol.Required("id"): vol.Coerce(int),
+    #         vol.Required("type"): "hass_sharp/save_script",
+    #         vol.Required("path"): str,
+    #         vol.Required("source"): str,
+    #     }, extra=vol.ALLOW_EXTRA)
+    # )
 
     websocket_api.async_register_command(
-          hass, 
+          hass_outer,
           "hass_sharp/get_completions",
           websocket_get_completions,
           vol.Schema({
@@ -61,7 +88,7 @@ def register_websocket_routes(hass: HomeAssistant, hassSharp):
     )
 
     websocket_api.async_register_command(
-          hass, 
+          hass_outer,
           "hass_sharp/get_hover",
           websocket_get_hover,
           vol.Schema({
@@ -73,7 +100,7 @@ def register_websocket_routes(hass: HomeAssistant, hassSharp):
     )
 
     websocket_api.async_register_command(
-          hass, 
+          hass_outer,
           "hass_sharp/get_diagnostics",
           websocket_get_diagnostics,
           vol.Schema({
@@ -84,7 +111,7 @@ def register_websocket_routes(hass: HomeAssistant, hassSharp):
     )
 
     websocket_api.async_register_command(
-          hass, 
+          hass_outer,
           "hass_sharp/reload_entities",
           websocket_reload_entities,
           vol.Schema({

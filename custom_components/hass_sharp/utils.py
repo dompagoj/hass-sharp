@@ -2,6 +2,11 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry
 
+import os
+
+def get_file_name(path: str):
+  return os.path.basename(path)
+
 def get_hass_entities(hass: HomeAssistant):
   # Combine entities from states and registry to ensure we get everything
   entity_ids = set(hass.states.async_entity_ids())

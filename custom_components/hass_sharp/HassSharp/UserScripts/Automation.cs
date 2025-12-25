@@ -3,11 +3,8 @@ using System.Text.Json;
 
 namespace HassSharp;
 
-public abstract class Automation
+public abstract class Automation : UserScriptBase
 {
-    internal UserScript UserScript { get; set; } = null!;
-    public bool Initializing => UserScript.Initializing;
-
     // Injected by Python
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     HasEntityState? GetEntityValueTracked(string entityId, string method)

@@ -17,6 +17,7 @@ class UserScriptComparer : IEqualityComparer<UserScript>
 
 public class UserScript
 {
+    public required CompiledUserScript CompiledUserScript { get; set; }
     internal Type ClassType { get; set; }
     public string ClassName => ClassType.FullName ?? "Unknown";
     [JsonIgnore] public MethodInfo[] Methods { get; private set; }
@@ -36,7 +37,7 @@ public class UserScript
         Instance.UserScript = this;
     }
 
-    internal ValueTask RunMethod(string method)
+    internal Task RunMethod(string method)
     {
         var found = Methods.FirstOrDefault(m => m.Name == method);
 
@@ -50,22 +51,29 @@ public class UserScript
         return RunMethod(found);
     }
 
-    internal ValueTask RunMethod(MethodInfo method)
+    internal async Task RunMethod(MethodInfo method)
     {
-        var result = method.Invoke(
-            Instance,
-            BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
-            null,
-            null,
-            null
-        );
-
-        return result switch
+        try
         {
-            ValueTask valueTask => valueTask,
-            Task task => new(task),
-            _ => ValueTask.CompletedTask
-        };
+            var result = method.Invoke(
+                Instance,
+                BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
+                null,
+                null,
+                null
+            );
+
+            if (result is Task task) await task;
+            if (result is ValueTask valueTask) await valueTask;
+        }
+        catch (TargetInvocationException ex)
+        {
+            if (ex.InnerException is InitializingException)
+            {
+                Logger.Info("Script was initializing");
+            }
+            else throw;
+        }
     }
 
     internal async ValueTask RunAllMethods()

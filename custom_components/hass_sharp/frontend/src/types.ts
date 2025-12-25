@@ -362,3 +362,14 @@ export interface CompletionItem {
   isComplexTextEdit: boolean
   tags: string[]
 }
+
+export interface UserScript {
+  className: string
+  methods: string[]
+}
+
+export interface UserFile {
+  name: string
+  filePath: string
+  scripts: UserScript[]
+}

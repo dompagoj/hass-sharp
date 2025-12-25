@@ -1,5 +1,4 @@
 using Microsoft.CodeAnalysis.Completion;
-using Python.Runtime;
 
 namespace HassSharp;
 
@@ -30,14 +29,17 @@ public class HassSharpManager
         WaitForAsync(async () =>
         {
             _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
-            var assembly = await _compiler.CompileFromUserScriptsFolder();
-            if (assembly == null)
+            var assemblies = await _compiler.CompileFromUserScriptsFolder();
+
+            _userScriptManager.ClearUserScripts();
+
+            if (assemblies.Count == 0)
             {
                 Logger.Info("No user scripts found on initialization");
             }
             else
             {
-                _userScriptManager.LoadUserScripts(assembly);
+                _userScriptManager.LoadUserScripts(assemblies);
                 await _userScriptManager.InitializeUserScripts();
             }
         });
@@ -55,9 +57,20 @@ public class HassSharpManager
 
     public void RunEntries(List<DependencyEntry> entries) => WaitForAsync(() => _userScriptManager.RunEntries(entries));
 
+    public IEnumerable<CompiledUserScript> GetUserFiles() => _userScriptManager.GetUserFiles();
+
     public string? GetHoverDiagnostics(string source, int position) => _diagnosticsProvider.GetHover(source, position);
     public DiagnosticModel[] GetCompilationDiagnostics(string source) => _diagnosticsProvider.GetDiagnostics(source);
 
     public IReadOnlyList<CompletionItem> GetCodeCompletions(string source, int position) =>
         _diagnosticsProvider.GetCompletions(source, position);
+
+    public void SaveScript(string path, string source)
+    {
+        WaitForAsync(async () =>
+        {
+            var compiled = await _compiler.CompileSingleFile(path, source);
+            await _userScriptManager.UpdateUserScript(compiled);
+        });
+    }
 }

@@ -5,47 +5,55 @@ namespace HassSharp;
 
 public class UserScriptCacheProvider
 {
-    const string CacheDllName = "hass_sharp_user_scripts.dll";
-    const string CacheHashName = "hass_sharp_user_scripts.hash";
+    string GetCacheDir()
+    {
+        var dir = Path.Combine(HassPath.UserScripts, ".cache");
+        if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+        return dir;
+    }
 
-    // TODO: Move somewhere else
-    readonly string CacheDllPath = Path.Combine(HassPath.UserScripts, CacheDllName);
-    readonly string CacheHashPath = Path.Combine(HassPath.UserScripts, CacheHashName);
+    string GetCachePathForFile(string filePath, string extension)
+    {
+        var fileName = Path.GetFileName(filePath);
+        return Path.Combine(GetCacheDir(), fileName + extension);
+    }
 
-    public string ComputeHash(string[] filePaths, string[] sources)
+    public string ComputeHash(string filePath, string source)
     {
         using var sha = SHA256.Create();
 
-        for (var i = 0; i < sources.Length; i++)
-        {
-            var pathBytes = Encoding.UTF8.GetBytes(filePaths[i]);
-            sha.TransformBlock(pathBytes, 0, pathBytes.Length, null, 0);
+        var pathBytes = Encoding.UTF8.GetBytes(filePath);
+        sha.TransformBlock(pathBytes, 0, pathBytes.Length, null, 0);
 
-            var contentBytes = Encoding.UTF8.GetBytes(sources[i]);
-            sha.TransformBlock(contentBytes, 0, contentBytes.Length, null, 0);
-        }
+        var contentBytes = Encoding.UTF8.GetBytes(source);
+        sha.TransformBlock(contentBytes, 0, contentBytes.Length, null, 0);
 
         sha.TransformFinalBlock([], 0, 0);
         return Convert.ToHexString(sha.Hash!);
     }
 
-    public async Task<byte[]?> GetScriptsCached(string hash)
+    public async Task<byte[]?> GetFileCache(string filePath, string hash)
     {
-        if (!File.Exists(CacheDllPath) || !File.Exists(CacheHashPath)) return null;
+        var dllPath = GetCachePathForFile(filePath, ".dll");
+        var hashPath = GetCachePathForFile(filePath, ".hash");
 
-        var existingHash = await File.ReadAllTextAsync(CacheHashPath);
+        if (!File.Exists(dllPath) || !File.Exists(hashPath)) return null;
+
+        var existingHash = await File.ReadAllTextAsync(hashPath);
         if (existingHash == hash)
         {
-            var cachedBytes = await File.ReadAllBytesAsync(CacheDllPath);
-            return cachedBytes;
+            return await File.ReadAllBytesAsync(dllPath);
         }
 
         return null;
     }
 
-    public async Task SetScriptsCache(string hash, byte[] assemblyBytes)
+    public async Task SetFileCache(string filePath, string hash, byte[] assemblyBytes)
     {
-        await File.WriteAllBytesAsync(CacheDllPath, assemblyBytes);
-        await File.WriteAllTextAsync(CacheHashPath, hash);
+        var dllPath = GetCachePathForFile(filePath, ".dll");
+        var hashPath = GetCachePathForFile(filePath, ".hash");
+
+        await File.WriteAllBytesAsync(dllPath, assemblyBytes);
+        await File.WriteAllTextAsync(hashPath, hash);
     }
 }

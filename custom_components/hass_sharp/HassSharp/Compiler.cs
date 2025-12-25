@@ -9,9 +9,23 @@ public class CodeCompiler(
 {
     readonly UserScriptCacheProvider _cacheProvider = new();
 
-    public Task<Assembly?> CompileFromUserScriptsFolder() => CompileFromFolder(HassPath.UserScripts);
+    public Task<List<CompiledUserScript>> CompileFromUserScriptsFolder() => CompileFromFolder(HassPath.UserScripts);
 
-    async Task<Assembly?> CompileFromFolder(string folderPath)
+    public async Task<CompiledUserScript> CompileSingleFile(string path, string source)
+    {
+        var hash = _cacheProvider.ComputeHash(path, source);
+        var assemblyBytes = CompileSingleFileToBytes(source, path);
+        await _cacheProvider.SetFileCache(path, hash, assemblyBytes);
+
+        return new CompiledUserScript
+        {
+            Assembly = Assembly.Load(assemblyBytes),
+            FilePath = path,
+            FileName = Path.GetFileNameWithoutExtension(path)
+        };
+    }
+
+    async Task<List<CompiledUserScript>> CompileFromFolder(string folderPath)
     {
         if (!Directory.Exists(folderPath))
         {
@@ -20,36 +34,45 @@ public class CodeCompiler(
 
         var filePaths = Directory.GetFiles(folderPath, "*.cs");
 
-        var sources = await Task.WhenAll(filePaths.Select(path => File.ReadAllTextAsync(path)));
-
-        // If there are no scripts, return an empty runner
-        if (sources.Length == 0)
+        var tasks = filePaths.Select(async path =>
         {
-            return null;
-        }
+            var source = await File.ReadAllTextAsync(path);
+            var hash = _cacheProvider.ComputeHash(path, source);
+            var cachedBytes = await _cacheProvider.GetFileCache(path, hash);
 
-        var userScriptsHash = _cacheProvider.ComputeHash(filePaths, sources);
+            if (cachedBytes != null)
+            {
+                Logger.Info($"No change detected in {Path.GetFileName(path)}, using cached dll");
+                return new CompiledUserScript
+                {
+                    Assembly = Assembly.Load(cachedBytes),
+                    FilePath = path,
+                    FileName = Path.GetFileNameWithoutExtension(path)
+                };
+            }
 
-        var cachedBytes = await _cacheProvider.GetScriptsCached(userScriptsHash);
+            Logger.Info($"Change detected in {Path.GetFileName(path)}, recompiling");
+            var assemblyBytes = CompileSingleFileToBytes(source, path);
+            await _cacheProvider.SetFileCache(path, hash, assemblyBytes);
+            return new CompiledUserScript
+            {
+                Assembly = Assembly.Load(assemblyBytes),
+                FilePath = path,
+                FileName = Path.GetFileNameWithoutExtension(path)
+            };
+        });
 
-        if (cachedBytes != null)
-        {
-            Logger.Info("No change detected in user scripts, using dll");
-            return Assembly.Load(cachedBytes);
-        }
-
-        Logger.Info("User scripts change detected, recompiling");
-
-        var assemblyBytes = CompileUserScriptToBytes(sources);
-        await _cacheProvider.SetScriptsCache(userScriptsHash, assemblyBytes);
-        return Assembly.Load(assemblyBytes);
+        var assemblies = await Task.WhenAll(tasks);
+        return [.. assemblies];
     }
 
-    byte[] CompileUserScriptToBytes(string[] sources)
+    byte[] CompileSingleFileToBytes(string source, string path)
     {
+        var tree = CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings + source, path: path);
+
         SyntaxTree[] syntaxTrees =
         [
-            ..sources.Select(source => CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings + source)),
+            tree,
             _diagnosticsProvider.HassEntitiesSyntaxTree(),
         ];
 
@@ -80,6 +103,4 @@ public class CodeCompiler(
 
         throw new Exception(errors);
     }
-
-    byte[] CompileUserScriptToBytes(string source) => CompileUserScriptToBytes([source]);
 }

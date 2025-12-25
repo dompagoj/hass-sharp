@@ -2,35 +2,60 @@ using System.Reflection;
 
 namespace HassSharp;
 
+using EntityId = string;
+
 public readonly struct DependencyEntry
 {
     public required UserScript Script { get; init; }
     public required string MethodName { get; init; }
 }
 
+public class CompiledUserScript
+{
+    public required string FilePath { get; init; }
+    public required string FileName { get; init; }
+
+    public required Assembly Assembly { get; init; }
+
+    // This is used by the UI
+    public List<UserScript> Scripts { get; init; } = [];
+}
+
 class UserScriptManager
 {
     readonly HashSet<UserScript> _userScripts = new(new UserScriptComparer());
+    readonly List<CompiledUserScript> _compiledScripts = [];
+
+    public IEnumerable<CompiledUserScript> GetUserFiles() => _compiledScripts;
 
     // This is iterator on the python side which calles async_track_state_change_event from hass on each key
-    public Dictionary<string, List<DependencyEntry>> DependencyTracking { get; } = new();
+    public Dictionary<EntityId, List<DependencyEntry>> DependencyTracking { get; } = new();
 
-    public void ClearUserScripts() => _userScripts.Clear();
-
-    public void LoadUserScripts(Assembly[] assemblies)
+    public void ClearUserScripts()
     {
-        foreach (var assembly in assemblies) LoadUserScripts(assembly);
+        _userScripts.Clear();
+        _compiledScripts.Clear();
+        DependencyTracking.Clear();
     }
 
-    public void LoadUserScripts(Assembly assembly)
+    public void LoadUserScripts(List<CompiledUserScript> compiledScripts)
     {
-        var baseType = typeof(Automation);
+        _compiledScripts.AddRange(compiledScripts);
 
-        foreach (var automationClass in assembly.GetTypes()
-                     .Where(t => baseType.IsAssignableFrom(t) && !t.IsAbstract))
+        foreach (var compiled in compiledScripts)
         {
-            var userScript = new UserScript(automationClass, this);
-            _userScripts.Add(userScript);
+            var baseType = typeof(Automation);
+
+            foreach (var automationClass in compiled.Assembly.GetTypes()
+                         .Where(t => baseType.IsAssignableFrom(t) && !t.IsAbstract))
+            {
+                var userScript = new UserScript(automationClass, this)
+                {
+                    CompiledUserScript = compiled,
+                };
+                _userScripts.Add(userScript);
+                compiled.Scripts.Add(userScript);
+            }
         }
     }
 
@@ -65,20 +90,53 @@ class UserScriptManager
     public Task RunEntries(List<DependencyEntry> entries) =>
         Task.WhenAll(entries.Select(async e => await RunEntry(e)));
 
-    public ValueTask RunEntry(DependencyEntry entry) => entry.Script.RunMethod(entry.MethodName);
+    public Task RunEntry(DependencyEntry entry) => entry.Script.RunMethod(entry.MethodName);
 
-    public async Task InitializeUserScripts()
+    public Task InitializeUserScripts() => Task.WhenAll(_userScripts.Select(InitializeUserScript));
+
+    async Task InitializeUserScript(UserScript userScript)
     {
-        foreach (var userScript in _userScripts)
-        {
-            Logger.Info($"Running Class {userScript.ClassName}");
+        userScript.Initializing = true;
+        Logger.Info($"Running Class {userScript.ClassName}");
 
-            foreach (var method in userScript.Methods)
+        foreach (var method in userScript.Methods)
+        {
+            Logger.Info($"Running Method {method.Name}");
+            await userScript.RunMethod(method);
+        }
+
+        userScript.Initializing = false;
+    }
+
+    public async Task UpdateUserScript(CompiledUserScript compiled)
+    {
+        var existing = _compiledScripts.FirstOrDefault(c => c.FilePath == compiled.FilePath);
+        if (existing != null)
+        {
+            foreach (var script in existing.Scripts)
             {
-                Logger.Info($"Running Method {method.Name}");
-                await userScript.RunMethod(method.Name);
-                userScript.Initializing = false;
+                _userScripts.Remove(script);
+
+                // Remove from dependency tracking
+                foreach (var entityId in DependencyTracking.Keys.ToList())
+                {
+                    DependencyTracking[entityId].RemoveAll(e => e.Script == script);
+                    if (DependencyTracking[entityId].Count == 0)
+                    {
+                        // TODO: tell python we can unsub from tracking changes of this entity
+                        DependencyTracking.Remove(entityId);
+                    }
+                }
             }
+
+            _compiledScripts.Remove(existing);
+        }
+
+        LoadUserScripts([compiled]);
+
+        foreach (var script in compiled.Scripts)
+        {
+            await InitializeUserScript(script);
         }
     }
 }
