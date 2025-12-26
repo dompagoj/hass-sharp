@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis.Completion;
+using Python.Runtime;
 
 namespace HassSharp;
 
@@ -57,7 +58,10 @@ public class HassSharpManager
 
     public void RunEntries(List<DependencyEntry> entries) => WaitForAsync(() => _userScriptManager.RunEntries(entries));
 
-    public IEnumerable<CompiledUserScript> GetUserFiles() => _userScriptManager.GetUserFiles();
+    public PyList GetUserScripts() => PyDTOConverter.UserScriptToDto(_userScriptManager.GetUserScripts());
+
+    public UserScriptSourceDTO? GetUserScript(string fileName) =>
+        WaitForAsync(() => _userScriptManager.GetUserScriptSource(fileName));
 
     public string? GetHoverDiagnostics(string source, int position) => _diagnosticsProvider.GetHover(source, position);
     public DiagnosticModel[] GetCompilationDiagnostics(string source) => _diagnosticsProvider.GetDiagnostics(source);

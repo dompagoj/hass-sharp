@@ -8,9 +8,7 @@
   position: fixed;
   top: 0px;
   z-index: 4;
-  width: calc(
-    var(--mdc-top-app-bar-width, 100%) - var(--safe-area-inset-right, 0px)
-  );
+  width: calc(var(--mdc-top-app-bar-width, 100%) - var(--safe-area-inset-right, 0px));
   padding-top: var(--safe-area-inset-top);
   padding-right: var(--safe-area-inset-right);
   color: var(--app-header-text-color, #fff);
@@ -21,7 +19,9 @@
 
 .header-content {
   @apply h-full p-4;
-  padding-top: calc(
-    var(--header-height) + 70px + var(--safe-area-inset-top, 0px)
-  );
+  padding-top: calc(var(--header-height) + 70px + var(--safe-area-inset-top, 0px));
+}
+
+.monaco-editor {
+  @apply rounded-md!;
 }

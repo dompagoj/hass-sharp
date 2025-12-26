@@ -10,22 +10,13 @@ export const MainLayout = (props: RouteSectionProps) => {
           <span class="text-3xl ml-6">Hass Sharp</span>
         </div>
         <ha-tab-group>
-          <ha-tab-group-tab
-            class="text-lg"
-            onClick={() => navigate('/automations')}
-          >
-            Automation
+          <ha-tab-group-tab class="text-lg" onClick={() => navigate('/automations')}>
+            Automations
           </ha-tab-group-tab>
-          <ha-tab-group-tab
-            class="text-lg"
-            onClick={() => navigate('/devices')}
-          >
+          <ha-tab-group-tab class="text-lg" onClick={() => navigate('/devices')}>
             Devices
           </ha-tab-group-tab>
-          <ha-tab-group-tab
-            class="text-lg"
-            onClick={() => navigate('/entities')}
-          >
+          <ha-tab-group-tab class="text-lg" onClick={() => navigate('/entities')}>
             Entities
           </ha-tab-group-tab>
         </ha-tab-group>

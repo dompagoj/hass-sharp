@@ -224,12 +224,12 @@ export interface HomeAssistant {
     domain: ServiceCallRequest['domain'],
     service: ServiceCallRequest['service'],
     serviceData?: ServiceCallRequest['serviceData'],
-    target?: ServiceCallRequest['target']
+    target?: ServiceCallRequest['target'],
   ) => Promise<void>
   callApi: <T>(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     path: string,
-    parameters?: { [key: string]: any }
+    parameters?: { [key: string]: any },
   ) => Promise<T>
   fetchWithAuth: (path: string, init?: { [key: string]: any }) => Promise<Response>
   sendWS: (msg: MessageBase) => Promise<void>
@@ -363,13 +363,17 @@ export interface CompletionItem {
   tags: string[]
 }
 
-export interface UserScript {
-  className: string
+export interface UserScriptClassDto {
+  name: string
   methods: string[]
 }
 
-export interface UserFile {
-  name: string
-  filePath: string
-  scripts: UserScript[]
+export interface UserScriptDTO {
+  fileName: string
+  classes: UserScriptClassDto[]
+}
+
+export interface UserScriptSourceDTO {
+  fileName: string
+  source: string
 }

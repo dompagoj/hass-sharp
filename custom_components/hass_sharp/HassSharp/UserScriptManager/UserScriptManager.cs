@@ -1,5 +1,3 @@
-using System.Reflection;
-
 namespace HassSharp;
 
 using EntityId = string;
@@ -10,38 +8,38 @@ public readonly struct DependencyEntry
     public required string MethodName { get; init; }
 }
 
-public class CompiledUserScript
-{
-    public required string FilePath { get; init; }
-    public required string FileName { get; init; }
-
-    public required Assembly Assembly { get; init; }
-
-    // This is used by the UI
-    public List<UserScript> Scripts { get; init; } = [];
-}
-
 class UserScriptManager
 {
     readonly HashSet<UserScript> _userScripts = new(new UserScriptComparer());
-    readonly List<CompiledUserScript> _compiledScripts = [];
-
-    public IEnumerable<CompiledUserScript> GetUserFiles() => _compiledScripts;
 
     // This is iterator on the python side which calles async_track_state_change_event from hass on each key
     public Dictionary<EntityId, List<DependencyEntry>> DependencyTracking { get; } = new();
 
+    public HashSet<UserScript> GetUserScripts() => _userScripts;
+
+    public async Task<UserScriptSourceDTO?> GetUserScriptSource(string fileName)
+    {
+        var found = _userScripts.FirstOrDefault(s => s.CompiledUserScript.FileName == fileName);
+        if (found == null) return null;
+
+        var contents = await File.ReadAllTextAsync(found.CompiledUserScript.FilePath);
+
+        return new()
+        {
+            FileName = found.CompiledUserScript.FileName,
+            Source = contents,
+        };
+    }
+
+
     public void ClearUserScripts()
     {
         _userScripts.Clear();
-        _compiledScripts.Clear();
         DependencyTracking.Clear();
     }
 
     public void LoadUserScripts(List<CompiledUserScript> compiledScripts)
     {
-        _compiledScripts.AddRange(compiledScripts);
-
         foreach (var compiled in compiledScripts)
         {
             var baseType = typeof(Automation);
@@ -54,7 +52,6 @@ class UserScriptManager
                     CompiledUserScript = compiled,
                 };
                 _userScripts.Add(userScript);
-                compiled.Scripts.Add(userScript);
             }
         }
     }
@@ -110,33 +107,33 @@ class UserScriptManager
 
     public async Task UpdateUserScript(CompiledUserScript compiled)
     {
-        var existing = _compiledScripts.FirstOrDefault(c => c.FilePath == compiled.FilePath);
-        if (existing != null)
-        {
-            foreach (var script in existing.Scripts)
-            {
-                _userScripts.Remove(script);
-
-                // Remove from dependency tracking
-                foreach (var entityId in DependencyTracking.Keys.ToList())
-                {
-                    DependencyTracking[entityId].RemoveAll(e => e.Script == script);
-                    if (DependencyTracking[entityId].Count == 0)
-                    {
-                        // TODO: tell python we can unsub from tracking changes of this entity
-                        DependencyTracking.Remove(entityId);
-                    }
-                }
-            }
-
-            _compiledScripts.Remove(existing);
-        }
-
-        LoadUserScripts([compiled]);
-
-        foreach (var script in compiled.Scripts)
-        {
-            await InitializeUserScript(script);
-        }
+        // var existing = _compiledScripts.FirstOrDefault(c => c.FilePath == compiled.FilePath);
+        // if (existing != null)
+        // {
+        //     foreach (var script in existing.Scripts)
+        //     {
+        //         _userScripts.Remove(script);
+        //
+        //         // Remove from dependency tracking
+        //         foreach (var entityId in DependencyTracking.Keys.ToList())
+        //         {
+        //             DependencyTracking[entityId].RemoveAll(e => e.Script == script);
+        //             if (DependencyTracking[entityId].Count == 0)
+        //             {
+        //                 // TODO: tell python we can unsub from tracking changes of this entity
+        //                 DependencyTracking.Remove(entityId);
+        //             }
+        //         }
+        //     }
+        //
+        //     _compiledScripts.Remove(existing);
+        // }
+        //
+        // LoadUserScripts([compiled]);
+        //
+        // foreach (var script in compiled.Scripts)
+        // {
+        //     await InitializeUserScript(script);
+        // }
     }
 }

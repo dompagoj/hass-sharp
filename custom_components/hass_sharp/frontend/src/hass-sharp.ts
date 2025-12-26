@@ -37,7 +37,7 @@ export class HassSharpView extends LitElement {
     const container = this.renderRoot?.querySelector('#app')
 
     if (container) {
-      container.addEventListener('keydown', e => e.stopPropagation())
+      // container.addEventListener('keydown', e => e.stopPropagation())
       injectGlobalFont()
     }
 
@@ -55,7 +55,7 @@ export class HassSharpView extends LitElement {
 
   render() {
     return html`
-      <link rel="stylesheet" href="/hass-sharp-static/hass-sharp.css" />
+      <link id="cssLink" rel="stylesheet" href="/hass-sharp-static/hass-sharp.css" />
 
       <div class="h-full" id="app"></div>
     `

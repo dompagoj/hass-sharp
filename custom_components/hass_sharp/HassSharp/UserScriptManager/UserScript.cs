@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Text.Json.Serialization;
 
 namespace HassSharp;
 
@@ -20,7 +19,7 @@ public class UserScript
     public required CompiledUserScript CompiledUserScript { get; set; }
     internal Type ClassType { get; set; }
     public string ClassName => ClassType.FullName ?? "Unknown";
-    [JsonIgnore] public MethodInfo[] Methods { get; private set; }
+    public MethodInfo[] Methods { get; private set; }
     Automation Instance { get; set; }
 
     internal UserScriptManager Runner { get; }

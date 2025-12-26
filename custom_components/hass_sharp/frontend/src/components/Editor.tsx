@@ -1,10 +1,14 @@
 import { createEffect } from 'solid-js'
 import * as monaco from 'monaco-editor'
-import type { CompletionItem, HomeAssistant } from '../types'
 import type { MessageBase } from 'home-assistant-js-websocket'
+import { initVimMode, type VimAdapterInstance } from 'monaco-vim'
+
+import type { CompletionItem } from '../types'
 import visualAssistTheme from '../visual-assist.json'
 
 import 'monaco-editor/min/vs/editor/editor.main.css'
+import { useHass } from '../context'
+import { useLocalStorage } from '../hooks'
 
 monaco.languages.register({ id: 'csharp', extensions: ['cs'] })
 // @ts-ignore
@@ -42,8 +46,15 @@ function tagsToKind(tags: string[]) {
   return monaco.languages.CompletionItemKind.Snippet
 }
 
-export const Editor = (props: { hass: HomeAssistant }) => {
+export const Editor = (props: { initial?: string }) => {
+  const hass = useHass()
   let editorRef: HTMLDivElement = undefined!
+  let statusBarRef: HTMLDivElement = undefined!
+  let editor: monaco.editor.IStandaloneCodeEditor
+
+  const [vimEnabled, setVimEnabled] = useLocalStorage('vim-enabled', false)
+
+  let monacoVimMode: VimAdapterInstance | undefined = undefined
 
   createEffect(() => {
     if (!editorRef) return
@@ -74,7 +85,7 @@ export const Editor = (props: { hass: HomeAssistant }) => {
                 position: offset,
               }
 
-              const completions = await props.hass.callWS<CompletionItem[]>(message)
+              const completions = await hass.callWS<CompletionItem[]>(message)
 
               resolve({
                 suggestions: completions.map(item => {
@@ -96,8 +107,10 @@ export const Editor = (props: { hass: HomeAssistant }) => {
       },
     })
 
-    const editor = monaco.editor.create(editorRef, {
-      value: `public class MyAutomation : Automation
+    editor = monaco.editor.create(editorRef, {
+      value:
+        props.initial ??
+        `public class MyAutomation : Automation
 {
     public void ExampleAutomation()
     {
@@ -115,6 +128,9 @@ export const Editor = (props: { hass: HomeAssistant }) => {
       domReadOnly: true,
       smoothScrolling: true,
       cursorSmoothCaretAnimation: 'on',
+      padding: {
+        top: 25,
+      },
       hover: {
         enabled: true,
         delay: 300,
@@ -154,12 +170,24 @@ export const Editor = (props: { hass: HomeAssistant }) => {
       },
     })
 
+    const keydownCallback = (e: KeyboardEvent) => {
+      console.log(e)
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault()
+        console.log('SAVE')
+      }
+
+      e.stopPropagation()
+    }
+
+    document.addEventListener('keydown', keydownCallback)
+
     const validate = async () => {
       const model = editor.getModel()
       if (!model) return
 
       try {
-        const diagnostics = await props.hass.callWS<any[]>({
+        const diagnostics = await hass.callWS<any[]>({
           type: 'hass_sharp/get_diagnostics',
           source: model.getValue(),
         })
@@ -204,7 +232,7 @@ export const Editor = (props: { hass: HomeAssistant }) => {
         const offset = model.getOffsetAt(position)
 
         try {
-          const hoverText = await props.hass.callWS<string | null>({
+          const hoverText = await hass.callWS<string | null>({
             type: 'hass_sharp/get_hover',
             source: source,
             position: offset,
@@ -221,7 +249,27 @@ export const Editor = (props: { hass: HomeAssistant }) => {
         }
       },
     })
+
+    return () => {
+      document.removeEventListener('keydown', keydownCallback)
+    }
   })
 
-  return <div class="h-full" ref={editorRef} id="editor" />
+  createEffect(() => {
+    if (!editorRef || !editor) return
+
+    if (vimEnabled()) monacoVimMode = initVimMode(editor, statusBarRef)
+    else monacoVimMode?.dispose()
+  })
+
+  return (
+    <>
+      <ha-card class="flex justify-end p-4 my-4 items-center gap-2">
+        <span>VIM</span>
+        <ha-switch checked={vimEnabled()} onChange={() => setVimEnabled(!vimEnabled())}></ha-switch>
+      </ha-card>
+      <div ref={statusBarRef} />
+      <div class="h-full bg-red-500" ref={editorRef} id="editor" />
+    </>
+  )
 }
