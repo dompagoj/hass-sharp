@@ -1,13 +1,22 @@
 import { createSignal, type Accessor, type Setter } from 'solid-js'
 
+export function jsonParseOrDefault<T>(raw: string | null | undefined, defaultValue: T) {
+  try {
+    return JSON.parse(raw ?? '')
+  } catch {
+    return defaultValue
+  }
+}
+
 export function useLocalStorage<T>(key: string, defaultValue: T): [Accessor<T>, Setter<T>] {
   const valRaw = localStorage.getItem(key)
-  const val = valRaw ? (JSON.parse(valRaw ?? '') as T) : defaultValue
+
+  const val = jsonParseOrDefault(valRaw, defaultValue)
   const [getVal, setVal] = createSignal<T>(val)
 
   const setter = (newVal: T) => {
-    localStorage.setItem(key, JSON.stringify(newVal))
-    setVal(newVal as any)
+    const res = setVal(newVal as any)
+    localStorage.setItem(key, JSON.stringify(res))
   }
 
   return [getVal, setter as Setter<T>]

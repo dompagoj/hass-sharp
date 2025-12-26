@@ -6,6 +6,19 @@ public class EntityRef<T>
 
     public required HasEntityState Raw { get; init; }
     public string EntityId => Raw.EntityId;
+
+    public EntityRef<T>? Previous
+    {
+        get
+        {
+            if (Raw.OldState == null) return null;
+            return new()
+            {
+                Automation = Automation,
+                Raw = Raw.OldState
+            };
+        }
+    }
 }
 
 public class EntityRefWrapper<T>
@@ -28,6 +41,8 @@ public sealed class HaSun(string entityId) : EntityRefWrapper<HaSun>(entityId);
 public sealed class HaBinarySensor(string entityId) : EntityRefWrapper<HaBinarySensor>(entityId);
 
 public sealed class HaSensor(string entityId) : EntityRefWrapper<HaSensor>(entityId);
+
+public sealed class HaInputButton(string entityId) : EntityRefWrapper<HaInputButton>(entityId);
 
 public static class EntityRefExtensions
 {
@@ -92,5 +107,36 @@ public static class EntityRefExtensions
                 entity_id = eRef.EntityId,
             });
         }
+    }
+
+    extension(EntityRef<HaInputButton> eRef)
+    {
+        public void SinglePress()
+        {
+        }
+
+        public void DoublePress()
+        {
+        }
+
+        public void TriplePress()
+        {
+        }
+
+        public void QuadPress()
+        {
+        }
+
+        public void Hold()
+        {
+        }
+    }
+
+    extension(EntityRef<HaSun> eRef)
+    {
+        public bool IsRising() => (bool)eRef.Raw.Attributes["rising"];
+
+        public bool IsBelowHorizon() => (string)eRef.Raw.Attributes["State"] == "below_horizon";
+        public bool IsAboveHorizon() => (string)eRef.Raw.Attributes["State"] == "above_horizon";
     }
 }

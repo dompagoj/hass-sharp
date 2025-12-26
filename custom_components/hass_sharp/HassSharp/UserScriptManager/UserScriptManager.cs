@@ -2,6 +2,12 @@ namespace HassSharp;
 
 using EntityId = string;
 
+public class TriggerContext
+{
+    public required HasEntityState NewState { get; init; }
+    public HasEntityState? OldState { get; init; }
+}
+
 public readonly struct DependencyEntry
 {
     public required UserScript Script { get; init; }
@@ -10,6 +16,8 @@ public readonly struct DependencyEntry
 
 class UserScriptManager
 {
+    public static readonly AsyncLocal<TriggerContext?> CurrentTrigger = new();
+
     readonly HashSet<UserScript> _userScripts = new(new UserScriptComparer());
 
     // This is iterator on the python side which calles async_track_state_change_event from hass on each key
@@ -84,10 +92,21 @@ class UserScriptManager
         }
     }
 
-    public Task RunEntries(List<DependencyEntry> entries) =>
-        Task.WhenAll(entries.Select(async e => await RunEntry(e)));
+    public Task RunEntries(List<DependencyEntry> entries, TriggerContext trigger) =>
+        Task.WhenAll(entries.Select(async e => await RunEntry(e, trigger)));
 
-    public Task RunEntry(DependencyEntry entry) => entry.Script.RunMethod(entry.MethodName);
+    public async Task RunEntry(DependencyEntry entry, TriggerContext trigger)
+    {
+        CurrentTrigger.Value = trigger;
+        try
+        {
+            await entry.Script.RunMethod(entry.MethodName);
+        }
+        finally
+        {
+            CurrentTrigger.Value = null;
+        }
+    }
 
     public Task InitializeUserScripts() => Task.WhenAll(_userScripts.Select(InitializeUserScript));
 

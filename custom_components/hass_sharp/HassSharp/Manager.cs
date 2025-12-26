@@ -56,7 +56,15 @@ public class HassSharpManager
     public Dictionary<string, List<DependencyEntry>> GetScriptEntityDependencies() =>
         _userScriptManager.DependencyTracking;
 
-    public void RunEntries(List<DependencyEntry> entries) => WaitForAsync(() => _userScriptManager.RunEntries(entries));
+    public void RunEntries(List<DependencyEntry> entries, HasEntityState newState, HasEntityState? oldState)
+    {
+        var trigger = new TriggerContext
+        {
+            NewState = newState,
+            OldState = oldState
+        };
+        WaitForAsync(() => _userScriptManager.RunEntries(entries, trigger));
+    }
 
     public PyList GetUserScripts() => PyDTOConverter.UserScriptToDto(_userScriptManager.GetUserScripts());
 
@@ -68,6 +76,8 @@ public class HassSharpManager
 
     public IReadOnlyList<CompletionItem> GetCodeCompletions(string source, int position) =>
         _diagnosticsProvider.GetCompletions(source, position);
+
+    public string FormatCode(string source) => _diagnosticsProvider.FormatCode(source).GetAwaiter().GetResult();
 
     public void SaveScript(string path, string source)
     {

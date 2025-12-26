@@ -7,6 +7,7 @@ import { MainLayout } from './layout/MainLayout'
 import { HassCtx } from './context'
 import { AutomationsListView } from './views/AutomationsListView'
 import { AutomationView } from './views/AutomationView'
+import { findCustomComponent } from './utils'
 
 const client = new QueryClient({
   defaultOptions: {
@@ -24,7 +25,9 @@ window.process = {
     NODE_ENV: import.meta.env,
   },
 }
-console.log(import.meta.env.PROD)
+
+// @ts-expect-error
+window.findCustomComponent = findCustomComponent
 
 function App(props: { hass: HomeAssistant }) {
   return (

@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Completion;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Formatting;
 using Microsoft.CodeAnalysis.Host.Mef;
 using Microsoft.CodeAnalysis.QuickInfo;
 using Microsoft.CodeAnalysis.Text;
@@ -149,11 +150,21 @@ public class DiagnosticsProvider
     public void GenerateHassEntities(string[] entityIds)
     {
         _entitiesSyntaxTree = _entityGenerator.GenerateEntities(entityIds);
-
         var entitiesDocumentId = DocumentId.CreateNewId(_baseProjectId);
         var solution =
             _workspace.CurrentSolution.AddDocument(entitiesDocumentId, "Entities.g.cs", _entitiesSyntaxTree.GetText());
         _workspace.TryApplyChanges(solution);
+    }
+
+    public async Task<string> FormatCode(string source)
+    {
+        var userScriptDocument = _workspace.AddDocument(_baseProjectId, "Format.cs", SourceText.From(source));
+        var formattedDocument = await Formatter.FormatAsync(userScriptDocument);
+        var formattedText = (await formattedDocument.GetTextAsync()).ToString();
+
+        _workspace.TryApplyChanges(userScriptDocument.Project.Solution.RemoveDocument(userScriptDocument.Id));
+
+        return formattedText;
     }
 }
 

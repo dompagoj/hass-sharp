@@ -13,5 +13,5 @@ export function findCustomComponent(search: string) {
   // @ts-expect-error
   const components = customElements['h'] as Map<string, any>
 
-  return [...components.keys()].filter(c => c.includes(search)).map(name => components.get(name))
+  console.log([...components.keys()].filter(c => c.includes(search)).map(name => components.get(name)))
 }

@@ -1,19 +1,28 @@
 import type { LitElement } from 'lit'
 import type { JSX } from 'solid-js'
 
+import { HassValueChangedEvent } from './types'
+
+type HA<T = any> = JSX.HTMLAttributes<any> & {
+  'on:value-changed'?: (e: HassValueChangedEvent) => any
+} & T
+
 declare module 'solid-js' {
   namespace JSX {
     interface IntrinsicElements {
       'ha-progress-button': HaProgressButton
-      'ha-md-list': JSX.HTMLAttributes<any>
-      'ha-md-list-item': JSX.HTMLAttributes<any>
-      'ha-icon': JSX.HTMLAttributes<any>
-      'ha-icon-button': JSX.HTMLAttributes<any>
-      'ha-tab-group': JSX.HTMLAttributes<any>
-      'ha-tab-group-tab': JSX.HTMLAttributes<any>
-      'ha-card': JSX.HTMLAttributes<any>
-      'ha-button': JSX.HTMLAttributes<any>
-      'ha-spinner': JSX.HTMLAttributes<any>
+      'ha-md-list': HA
+      'ha-md-list-item': HA
+      'ha-icon': HA
+      'ha-icon-button': HA
+      'ha-tab-group': HA
+      'ha-tab-group-tab': HA
+      'ha-card': HA
+      'ha-button': HA
+      'ha-spinner': HA
+      'ha-switch': HA<{ checked: boolean }>
+      'ha-icon-button-arrow-prev': HA
+      'ha-combo-box': HA<{ items?: any[]; value?: any; label?: string; hideClearIcon?: boolean }>
     }
   }
 }
@@ -22,4 +31,10 @@ export declare type HaProgressButton = {
   disabled?: boolean
   progress?: boolean
   raised?: boolean
-} & JSX.HTMLAttributes<any>
+} & HA
+
+declare global {
+  interface Window {
+    findCustomComponent: typeof import('./utils').findCustomComponent
+  }
+}

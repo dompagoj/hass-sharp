@@ -9,6 +9,8 @@ obj/
 /node_modules
 /wwwroot/node_modules
 
+.output.txt
+
 
 ### VisualStudio template
 ## Ignore Visual Studio temporary files, build results, and

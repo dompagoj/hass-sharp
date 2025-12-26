@@ -5,19 +5,34 @@ namespace HassSharp;
 
 public abstract class Automation : UserScriptBase
 {
-    // Injected by Python
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     HasEntityState? GetEntityValueTracked(string entityId, string method)
     {
         UserScript.Runner.TrackEntityCall(entityId, UserScript, method);
 
-        return PyInterop.Entity(entityId);
+        var state = PyInterop.Entity(entityId);
+
+        var trigger = UserScriptManager.CurrentTrigger.Value;
+        if (trigger != null && trigger.NewState.EntityId == entityId && state != null)
+        {
+            state.OldState = trigger.OldState;
+        }
+
+        return state;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     HasEntityState? GetEntityValueUntracked(string entityId)
     {
-        return PyInterop.Entity(entityId);
+        var state = PyInterop.Entity(entityId);
+
+        var trigger = UserScriptManager.CurrentTrigger.Value;
+        if (trigger != null && trigger.NewState.EntityId == entityId && state != null)
+        {
+            state.OldState = trigger.OldState;
+        }
+
+        return state;
     }
 
     protected EntityRef<T> Entity<T>(EntityRefWrapper<T> entityWrapper, [CallerMemberName] string? caller = null)

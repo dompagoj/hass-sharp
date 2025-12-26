@@ -1,4 +1,5 @@
-import { createEffect } from 'solid-js'
+import { createEffect, Show } from 'solid-js'
+import { A } from '@solidjs/router'
 import * as monaco from 'monaco-editor'
 import type { MessageBase } from 'home-assistant-js-websocket'
 import { initVimMode, type VimAdapterInstance } from 'monaco-vim'
@@ -46,13 +47,18 @@ function tagsToKind(tags: string[]) {
   return monaco.languages.CompletionItemKind.Snippet
 }
 
-export const Editor = (props: { initial?: string }) => {
+export const Editor = (props: { fileName: string; initial?: string; onClose?: () => any; onBackRef?: string }) => {
   const hass = useHass()
   let editorRef: HTMLDivElement = undefined!
   let statusBarRef: HTMLDivElement = undefined!
   let editor: monaco.editor.IStandaloneCodeEditor
 
-  const [vimEnabled, setVimEnabled] = useLocalStorage('vim-enabled', false)
+  const [editorSettings, setEditorSettings] = useLocalStorage<{ vimEnabled: boolean; fontSize?: number }>(
+    'editor-settings',
+    { vimEnabled: false, fontSize: 16 },
+  )
+
+  const editorSettingsFont = () => editorSettings().fontSize ?? 16
 
   let monacoVimMode: VimAdapterInstance | undefined = undefined
 
@@ -128,6 +134,7 @@ export const Editor = (props: { initial?: string }) => {
       domReadOnly: true,
       smoothScrolling: true,
       cursorSmoothCaretAnimation: 'on',
+      fontSize: editorSettingsFont(),
       padding: {
         top: 25,
       },
@@ -170,11 +177,46 @@ export const Editor = (props: { initial?: string }) => {
       },
     })
 
-    const keydownCallback = (e: KeyboardEvent) => {
-      console.log(e)
+    const keydownCallback = async (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault()
-        console.log('SAVE')
+        const model = editor.getModel()
+        if (!model) return
+
+        const message: MessageBase = {
+          type: 'hass_sharp/format_source',
+          source: model.getValue(),
+        }
+        const formatted = await hass.callWS<string>(message)
+
+        const currPos = editor.getPosition()
+        let textToRight = ''
+        if (currPos) {
+          const lineContent = model.getLineContent(currPos.lineNumber)
+          textToRight = lineContent
+            .substring(currPos.column - 1)
+            .trimStart()
+            .substring(0, 10)
+        }
+
+        editor.executeEdits('format', [
+          {
+            range: model.getFullModelRange(),
+            text: formatted,
+          },
+        ])
+
+        if (currPos && textToRight) {
+          const newLineContent = model.getLineContent(currPos.lineNumber)
+          const newColumn = newLineContent.indexOf(textToRight)
+          if (newColumn !== -1) {
+            editor.setPosition({ lineNumber: currPos.lineNumber, column: newColumn + 1 })
+          } else {
+            const firstCol = model.getLineFirstNonWhitespaceColumn(currPos.lineNumber)
+            editor.setPosition({ lineNumber: currPos.lineNumber, column: firstCol || 1 })
+          }
+        }
+        editor.focus()
       }
 
       e.stopPropagation()
@@ -256,20 +298,60 @@ export const Editor = (props: { initial?: string }) => {
   })
 
   createEffect(() => {
-    if (!editorRef || !editor) return
-
-    if (vimEnabled()) monacoVimMode = initVimMode(editor, statusBarRef)
-    else monacoVimMode?.dispose()
+    if (editorRef && editorSettings().vimEnabled) {
+      monacoVimMode = initVimMode(editor, statusBarRef)
+    } else monacoVimMode?.dispose()
   })
 
   return (
     <>
-      <ha-card class="flex justify-end p-4 my-4 items-center gap-2">
-        <span>VIM</span>
-        <ha-switch checked={vimEnabled()} onChange={() => setVimEnabled(!vimEnabled())}></ha-switch>
+      <ha-card class="flex p-4 my-4 grow items-center gap-2">
+        <div class="flex grow items-center gap-2">
+          <Show when={!!props.onBackRef}>
+            <A href={props.onBackRef!}>
+              <ha-icon-button-arrow-prev />
+            </A>
+          </Show>
+          <span class="font-bold text-2xl">{props.fileName}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span>Font size</span>
+          <ha-combo-box
+            value={editorSettingsFont().toString()}
+            items={[8, 10, 14, 16, 18, 20, 24, 28]}
+            item-value-path=""
+            hide-clear-icon
+            item-label-path=""
+            item-id-path=""
+            hideClearIcon={true}
+            on:value-changed={e => {
+              const fontSize = parseInt(e.detail.value)
+              setEditorSettings(prev => {
+                prev.fontSize = fontSize
+                return prev
+              })
+              editor.updateOptions({
+                fontSize,
+              })
+            }}
+          />
+          <span>VIM</span>
+          <ha-switch
+            checked={editorSettings().vimEnabled}
+            onChange={() => {
+              const vimEnabled = !editorSettings().vimEnabled
+              setEditorSettings(prev => {
+                return {
+                  fontSize: prev.fontSize,
+                  vimEnabled,
+                }
+              })
+            }}
+          />
+        </div>
       </ha-card>
       <div ref={statusBarRef} />
-      <div class="h-full bg-red-500" ref={editorRef} id="editor" />
+      <div class="h-full" ref={editorRef} id="editor" />
     </>
   )
 }

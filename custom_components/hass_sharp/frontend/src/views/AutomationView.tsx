@@ -35,7 +35,7 @@ export const AutomationView = (route: RouteSectionProps) => {
           <span>{errorToHassError(query.error!).body.error}</span>
         </Match>
         <Match when={!query.isFetching}>
-          <Editor initial={query.data?.source!} />
+          <Editor fileName={query.data!.fileName} initial={query.data!.source!} onBackRef="/automations" />
         </Match>
       </Switch>
     </div>

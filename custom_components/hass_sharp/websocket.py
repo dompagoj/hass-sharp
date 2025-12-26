@@ -47,6 +47,13 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
 
       connection.send_result(msg["id"], completions_py)
 
+    @websocket_api.decorators.async_response
+    async def websocket_format_source(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
+        source = msg["source"]
+
+        formatted = await hass.async_add_executor_job(hass_sharp.FormatCode, source)
+        connection.send_result(msg["id"], formatted)
+
     # @websocket_api.decorators.async_response
     # async def websocket_save_script(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
     #     hassSharp = utils.get_hass_sharp_manager(hass)
@@ -118,4 +125,15 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
               vol.Required("id"): vol.Coerce(int),
               vol.Required("type"): "hass_sharp/reload_entities",
           }, extra=vol.ALLOW_EXTRA)
+    )
+
+    websocket_api.async_register_command(
+        hass_outer,
+        "hass_sharp/format_source",
+        websocket_format_source,
+        vol.Schema({
+            vol.Required("id"): vol.Coerce(int),
+            vol.Required("type"): "hass_sharp/format_source",
+            vol.Required("source"): str,
+        }, extra=vol.ALLOW_EXTRA)
     )

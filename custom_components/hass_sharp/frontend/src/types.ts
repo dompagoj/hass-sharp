@@ -96,33 +96,6 @@ export interface Window {
   }
 }
 
-declare global {
-  // for fire event
-  interface HASSDomEvents {
-    'value-changed': {
-      value: unknown
-    }
-    'config-changed': {
-      config: any
-    }
-    'hass-more-info': {
-      entityId: string | undefined
-    }
-    'll-rebuild': {}
-    'll-custom': {}
-    'location-changed': {
-      replace: boolean
-    }
-    'show-dialog': {}
-    // undefined
-    action: {
-      action: string
-    }
-  }
-}
-
-type ValidHassDomEvent = keyof HASSDomEvents
-
 export type LocalizeFunc = (key: string, ...args: any[]) => string
 
 export interface Credential {
@@ -376,4 +349,10 @@ export interface UserScriptDTO {
 export interface UserScriptSourceDTO {
   fileName: string
   source: string
+}
+
+export interface HassValueChangedEvent extends Event {
+  detail: {
+    value: string
+  }
 }

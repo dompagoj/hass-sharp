@@ -4,7 +4,7 @@ using Microsoft.CodeAnalysis.CSharp;
 
 namespace HassSharp;
 
-public class EntityGenerator
+class EntityGenerator
 {
     public SyntaxTree GenerateEntities(string[] hassEntityIds)
     {
@@ -77,12 +77,14 @@ public class EntityGenerator
         return pascal;
     }
 
-    Dictionary<string, string> HassDomainToEntityRefClass = new()
+    readonly Dictionary<string, string> HassDomainToEntityRefClass = new()
     {
         { "binary_sensor", nameof(HaBinarySensor) },
         { "switch", nameof(HaSwitch) },
         { "input_number", nameof(HaInputNumber) },
         { "sensor", nameof(HaSensor) },
+        { "input_button", nameof(HaInputButton) },
+        { "sun", nameof(HaSun) },
     };
 
     string GetEntityRefClassType(string hassDomain)

@@ -45,3 +45,4 @@ class AutomationByIdView(HomeAssistantView):
       "fileName": user_script.FileName,
       "source": user_script.Source
     }, 200)
+

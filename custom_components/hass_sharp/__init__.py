@@ -1,8 +1,5 @@
 import os
 import sys
-from typing import override
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 import pythonnet as pynet
 import json
 from clr_loader import get_coreclr
@@ -91,9 +88,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     await hass.config_entries.async_forward_entry_setups(entry, ['sensor'])
 
-    def entity(entity_id: str) :
-        entity_state = hass.states.get(entity_id)
-        if entity_state is None: return
+    def to_has_entity_state(entity_state):
+        if entity_state is None: return None
 
         attributes_dict = Dictionary[String, Object]()
 
@@ -110,6 +106,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         ref.LastReported = entity_state.last_reported_timestamp
 
         return ref
+
+    def entity(entity_id: str) :
+        entity_state = hass.states.get(entity_id)
+        return to_has_entity_state(entity_state)
 
     def call_service(domain: str, service: str, data_json: str):
         data = json.loads(data_json) if data_json else None
@@ -136,7 +136,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
       dep_entries = dependencies[found_entity_id]
 
       if dep_entries is not None:
-        await hass.async_add_executor_job(hass_sharp.RunEntries, dep_entries)
+        new_state = to_has_entity_state(event.data.get("new_state"))
+        old_state = to_has_entity_state(event.data.get("old_state"))
+        await hass.async_add_executor_job(hass_sharp.RunEntries, dep_entries, new_state, old_state)
 
     for entity_id in dependencies.Keys:
       unsub = async_track_state_change_event(hass, entity_id, on_entity_change)

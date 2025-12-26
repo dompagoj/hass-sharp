@@ -13,6 +13,7 @@ public class HasEntityState
     public Dictionary<string, object> Attributes { get; set; } = null!;
     public float LastChanged { get; set; }
     public float LastReported { get; set; }
+    public HasEntityState? OldState { get; set; }
 }
 
 public enum PyLogLevel
