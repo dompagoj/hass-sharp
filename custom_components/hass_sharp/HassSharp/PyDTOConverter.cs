@@ -2,15 +2,15 @@ using Python.Runtime;
 
 namespace HassSharp;
 
-public static class PyDTOConverter
+static class PyDTOConverter
 {
-    static PyList EnumerableToPy<T>(this IEnumerable<T> e)
+    public static PyList EnumerableToPy<T>(this IEnumerable<T> e)
     {
         var list = new PyList();
         foreach (var elem in e)
         {
             if (elem is PyObject pyObj) list.Append(pyObj);
-            else list.Append(elem.ToPython());
+            else list.Append(elem.ToPythonAs());
         }
 
         return list;

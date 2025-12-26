@@ -95,12 +95,12 @@ public class CodeCompiler(
 
         if (result.Success) return ms.ToArray();
 
-        var errors = string.Join("\n",
+        var errors =
             result.Diagnostics
                 .Where(d => d.Severity == DiagnosticSeverity.Error)
                 .Select(d => d.ToString())
-        );
+                .ToArray();
 
-        throw new Exception(errors);
+        throw new CompilationErrorException(errors);
     }
 }

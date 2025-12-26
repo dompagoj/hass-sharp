@@ -1,23 +1,21 @@
-import { useNavigate, type RouteSectionProps } from '@solidjs/router'
+import { A, type RouteSectionProps } from '@solidjs/router'
 
 export const MainLayout = (props: RouteSectionProps) => {
-  const navigate = useNavigate()
-
   return (
     <>
       <div class="header">
         <div class="p-4">
           <span class="text-3xl ml-6">Hass Sharp</span>
         </div>
-        <ha-tab-group>
-          <ha-tab-group-tab class="text-lg" onClick={() => navigate('/automations')}>
-            Automations
+        <ha-tab-group class="tab-group">
+          <ha-tab-group-tab class="text-lg">
+            <A href="/automations">Automations</A>
           </ha-tab-group-tab>
-          <ha-tab-group-tab class="text-lg" onClick={() => navigate('/devices')}>
-            Devices
+          <ha-tab-group-tab class="text-lg">
+            <A href="/devices">Devices</A>
           </ha-tab-group-tab>
-          <ha-tab-group-tab class="text-lg" onClick={() => navigate('/entities')}>
-            Entities
+          <ha-tab-group-tab class="text-lg">
+            <A href="/entities">Entities</A>
           </ha-tab-group-tab>
         </ha-tab-group>
       </div>

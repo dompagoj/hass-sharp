@@ -1,10 +1,11 @@
 import { useNavigate, type RouteSectionProps } from '@solidjs/router'
 import { useQuery } from '@tanstack/solid-query'
 import { createEffect, Match, Switch } from 'solid-js'
+import * as monaco from 'monaco-editor'
 
 import { useHass } from '../context'
 import type { UserScriptSourceDTO } from '../types'
-import { Editor } from '../components/Editor'
+import { Editor } from '../components/Editor/Editor'
 import { errorToHassError } from '../utils'
 
 export const AutomationView = (route: RouteSectionProps) => {
@@ -28,6 +29,9 @@ export const AutomationView = (route: RouteSectionProps) => {
     }
   })
 
+  const onEditorSave = (model: monaco.editor.ITextModel) =>
+    hass.callApi('POST', `hass-sharp/automations/${query.data!.fileName}`, { source: model.getValue() })
+
   return (
     <div class="h-full">
       <Switch>
@@ -35,7 +39,12 @@ export const AutomationView = (route: RouteSectionProps) => {
           <span>{errorToHassError(query.error!).body.error}</span>
         </Match>
         <Match when={!query.isFetching}>
-          <Editor fileName={query.data!.fileName} initial={query.data!.source!} onBackRef="/automations" />
+          <Editor
+            fileName={query.data!.fileName}
+            initial={query.data!.source!}
+            onBackRef="/automations"
+            onSave={onEditorSave}
+          />
         </Match>
       </Switch>
     </div>

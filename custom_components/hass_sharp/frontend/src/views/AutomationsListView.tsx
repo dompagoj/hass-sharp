@@ -17,7 +17,7 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
   })
 
   return (
-    <div class="w-full overflow-y-auto p-2">
+    <div class="w-full overflow-y-auto p-4">
       <ha-md-list class="w-full p-0! rounded-md">
         {userFiles().map(file => (
           <>

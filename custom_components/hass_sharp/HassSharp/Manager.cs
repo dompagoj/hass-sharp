@@ -79,12 +79,32 @@ public class HassSharpManager
 
     public string FormatCode(string source) => _diagnosticsProvider.FormatCode(source).GetAwaiter().GetResult();
 
-    public void SaveScript(string path, string source)
+    public PyTuple SaveScript(string path, string source)
     {
-        WaitForAsync(async () =>
+        return WaitForAsync(async () =>
         {
-            var compiled = await _compiler.CompileSingleFile(path, source);
-            await _userScriptManager.UpdateUserScript(compiled);
+            var scriptPath = Path.Join(HassPath.UserScripts, $"{path}.cs");
+            if (!File.Exists(scriptPath))
+            {
+                Logger.Error($"File not found at {scriptPath}");
+                return PyResult.Error("File not found");
+            }
+
+            Logger.Info($"Writing file to ${scriptPath}");
+
+            try
+            {
+                var compiled = await _compiler.CompileSingleFile(path, source);
+                await File.WriteAllTextAsync(scriptPath, source);
+
+                await _userScriptManager.UpdateUserScript(compiled);
+            }
+            catch (CompilationErrorException ex)
+            {
+                return PyResult.Errors(ex.Errors);
+            }
+
+            return PyResult.Success();
         });
     }
 }

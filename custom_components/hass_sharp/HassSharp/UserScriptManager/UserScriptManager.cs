@@ -2,7 +2,7 @@ namespace HassSharp;
 
 using EntityId = string;
 
-public class TriggerContext
+class TriggerContext
 {
     public required HasEntityState NewState { get; init; }
     public HasEntityState? OldState { get; init; }

@@ -4,6 +4,10 @@
   --color-header: var(--app-header-background-color);
 }
 
+:host {
+  --hass-sharp-header-height: calc(var(--header-height) + 56px);
+}
+
 .header {
   position: fixed;
   top: 0px;
@@ -14,14 +18,25 @@
   color: var(--app-header-text-color, #fff);
   border-bottom: var(--app-header-border-bottom, none);
   backdrop-filter: var(--app-header-backdrop-filter, none);
+  height: var(--hass-sharp-header-height);
   @apply bg-header;
 }
 
 .header-content {
-  @apply h-full p-4;
-  padding-top: calc(var(--header-height) + 70px + var(--safe-area-inset-top, 0px));
+  @apply h-full;
+  padding-top: calc(var(--hass-sharp-header-height) + var(--safe-area-inset-top, 0px));
 }
 
 .monaco-editor {
   @apply rounded-md!;
+}
+
+.tab-group::part(tabs) {
+  border: none !important;
+}
+
+hr.vertical {
+  width: 1px;
+  background-color: gray;
+  /* or height in PX */
 }

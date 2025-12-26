@@ -6,8 +6,11 @@ namespace HassSharp;
 
 class EntityGenerator
 {
+    public string[]? HassEntityIds { get; set; }
+
     public SyntaxTree GenerateEntities(string[] hassEntityIds)
     {
+        HassEntityIds = hassEntityIds;
         var sb = new StringBuilder();
         sb.AppendLine("namespace HassSharp;");
         sb.AppendLine();
