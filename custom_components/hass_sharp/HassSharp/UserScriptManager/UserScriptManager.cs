@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace HassSharp;
 
 using EntityId = string;
@@ -5,12 +7,13 @@ using EntityId = string;
 class TriggerContext
 {
     public required HasEntityState NewState { get; init; }
+
     public HasEntityState? OldState { get; init; }
 }
 
 public readonly struct DependencyEntry
 {
-    public required UserScript Script { get; init; }
+    public required UserScriptClass ScriptClass { get; init; }
     public required string MethodName { get; init; }
 }
 
@@ -18,23 +21,23 @@ class UserScriptManager
 {
     public static readonly AsyncLocal<TriggerContext?> CurrentTrigger = new();
 
-    readonly HashSet<UserScript> _userScripts = new(new UserScriptComparer());
+    readonly List<UserScript> _userScripts = new();
 
     // This is iterator on the python side which calles async_track_state_change_event from hass on each key
     public Dictionary<EntityId, List<DependencyEntry>> DependencyTracking { get; } = new();
 
-    public HashSet<UserScript> GetUserScripts() => _userScripts;
+    public List<UserScript> GetUserScripts() => _userScripts;
 
-    public async Task<UserScriptSourceDTO?> GetUserScriptSource(string fileName)
+    public async Task<UserScriptSourceDTO?> GetUserScriptSource(string scriptSlug)
     {
-        var found = _userScripts.FirstOrDefault(s => s.CompiledUserScript.FileName == fileName);
+        var found = _userScripts.FirstOrDefault(s => s.ScriptSlug() == scriptSlug);
         if (found == null) return null;
 
-        var contents = await File.ReadAllTextAsync(found.CompiledUserScript.FilePath);
+        var contents = await File.ReadAllTextAsync(found.ScriptId());
 
         return new()
         {
-            FileName = found.CompiledUserScript.FileName,
+            FileName = found.FileName,
             Source = contents,
         };
     }
@@ -46,27 +49,60 @@ class UserScriptManager
         DependencyTracking.Clear();
     }
 
-    public void LoadUserScripts(List<CompiledUserScript> compiledScripts)
+    public UserScript LoadUserScript(CompiledUserScript compiledScript)
     {
-        foreach (var compiled in compiledScripts)
-        {
-            var baseType = typeof(Automation);
+        var baseType = typeof(Automation);
 
-            foreach (var automationClass in compiled.Assembly.GetTypes()
-                         .Where(t => baseType.IsAssignableFrom(t) && !t.IsAbstract))
-            {
-                var userScript = new UserScript(automationClass, this)
-                {
-                    CompiledUserScript = compiled,
-                };
-                _userScripts.Add(userScript);
-            }
-        }
+        var userScriptClasses = compiledScript.Assembly.GetTypes()
+            .Where(t => baseType.IsAssignableFrom(t) && !t.IsAbstract)
+            .Select(t => new UserScriptClass(t, this))
+            .ToArray();
+
+        var userScript = new UserScript
+        {
+            FileName = compiledScript.FileName,
+            FilePath = compiledScript.FilePath,
+            Assembly = compiledScript.Assembly,
+            Classes = userScriptClasses,
+        };
+        _userScripts.Add(userScript);
+        return userScript;
+    }
+
+    public void LoadUserScripts(IEnumerable<CompiledUserScript> compiledScripts)
+    {
+        foreach (var compiled in compiledScripts) LoadUserScript(compiled);
     }
 
 
-    public void TrackEntityCall(string entityId, UserScript script, string method)
+    public void TrackEntityCall(string entityId, UserScriptClass scriptClass, string method)
     {
+        Dictionary<string, int> test = new();
+
+        ref var res = ref CollectionsMarshal.GetValueRefOrAddDefault(DependencyTracking, entityId, out _);
+        if (res != null)
+        {
+            if (!res.Exists(e => e.ScriptClass == scriptClass && e.MethodName == method))
+            {
+                res.Add(new()
+                {
+                    MethodName = method,
+                    ScriptClass = scriptClass
+                });
+            }
+        }
+        else
+        {
+            res =
+            [
+                new()
+                {
+                    MethodName = method,
+                    ScriptClass = scriptClass,
+                }
+            ];
+        }
+
         if (!DependencyTracking.TryGetValue(entityId, out var entries))
         {
             entries =
@@ -74,19 +110,19 @@ class UserScriptManager
                 new()
                 {
                     MethodName = method,
-                    Script = script,
+                    ScriptClass = scriptClass,
                 }
             ];
             DependencyTracking[entityId] = entries;
         }
         else
         {
-            if (!entries.Exists(e => e.Script == script && e.MethodName == method))
+            if (!entries.Exists(e => e.ScriptClass == scriptClass && e.MethodName == method))
             {
                 entries.Add(new()
                 {
                     MethodName = method,
-                    Script = script
+                    ScriptClass = scriptClass
                 });
             }
         }
@@ -100,7 +136,7 @@ class UserScriptManager
         CurrentTrigger.Value = trigger;
         try
         {
-            await entry.Script.RunMethod(entry.MethodName);
+            await entry.ScriptClass.RunMethod(entry.MethodName);
         }
         finally
         {
@@ -110,49 +146,35 @@ class UserScriptManager
 
     public Task InitializeUserScripts() => Task.WhenAll(_userScripts.Select(InitializeUserScript));
 
-    async Task InitializeUserScript(UserScript userScript)
-    {
-        userScript.Initializing = true;
-        Logger.Info($"Running Class {userScript.ClassName}");
+    Task InitializeUserScript(UserScript userScript) =>
+        Task.WhenAll(userScript.Classes.Select(InitializeUserScriptClass));
 
-        foreach (var method in userScript.Methods)
-        {
-            Logger.Info($"Running Method {method.Name}");
-            await userScript.RunMethod(method);
-        }
+    Task InitializeUserScriptClass(UserScriptClass klass) => klass.Initialize();
 
-        userScript.Initializing = false;
-    }
 
     public async Task UpdateUserScript(CompiledUserScript compiled)
     {
-        // var existing = _compiledScripts.FirstOrDefault(c => c.FilePath == compiled.FilePath);
-        // if (existing != null)
-        // {
-        //     foreach (var script in existing.Scripts)
-        //     {
-        //         _userScripts.Remove(script);
-        //
-        //         // Remove from dependency tracking
-        //         foreach (var entityId in DependencyTracking.Keys.ToList())
-        //         {
-        //             DependencyTracking[entityId].RemoveAll(e => e.Script == script);
-        //             if (DependencyTracking[entityId].Count == 0)
-        //             {
-        //                 // TODO: tell python we can unsub from tracking changes of this entity
-        //                 DependencyTracking.Remove(entityId);
-        //             }
-        //         }
-        //     }
-        //
-        //     _compiledScripts.Remove(existing);
-        // }
-        //
-        // LoadUserScripts([compiled]);
-        //
-        // foreach (var script in compiled.Scripts)
-        // {
-        //     await InitializeUserScript(script);
-        // }
+        Logger.Info(
+            $"New script path: {compiled.FilePath}, Existing scripts paths: {string.Join('\n', _userScripts.Select(s => s.FilePath))}");
+        var foundIdx = _userScripts.FindIndex(s => s.FilePath == compiled.FilePath);
+        if (foundIdx == -1) throw new("Script not found");
+
+        var found = _userScripts[foundIdx]; // TODO: Insert the old script back if something fails
+        _userScripts.RemoveAt(foundIdx);
+
+        foreach (var (entityId, scriptClasses) in DependencyTracking)
+        {
+            scriptClasses.RemoveAll(c => found.Classes.Contains(c.ScriptClass));
+            if (scriptClasses.Count == 0)
+            {
+                DependencyTracking.Remove(entityId);
+                // TODO: Stop tracking on the python side
+            }
+        }
+
+        var loadedScript = LoadUserScript(compiled);
+
+        Logger.Info("Initializing newly loaded scripts");
+        await InitializeUserScript(loadedScript);
     }
 }

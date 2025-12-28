@@ -3,12 +3,12 @@ using System.Text.Json;
 
 namespace HassSharp;
 
-public abstract class Automation : UserScriptBase
+public abstract class Automation : UserScriptClassBase
 {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     HasEntityState? GetEntityValueTracked(string entityId, string method)
     {
-        UserScript.Runner.TrackEntityCall(entityId, UserScript, method);
+        UserScriptClass.Runner.TrackEntityCall(entityId, UserScriptClass, method);
 
         var state = PyInterop.Entity(entityId);
 
@@ -40,6 +40,7 @@ public abstract class Automation : UserScriptBase
         var raw = GetEntityValueTracked(entityWrapper.EntityId, caller!);
 
         if (raw == null) throw new($"Entity with id {entityWrapper.EntityId} not found");
+
         return new()
         {
             Automation = this,

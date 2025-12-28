@@ -7,10 +7,10 @@ class InitializingException : Exception
     }
 }
 
-public abstract class UserScriptBase
+public abstract class UserScriptClassBase
 {
-    internal UserScript UserScript { get; set; } = null!;
-    public bool Initializing => UserScript.Initializing;
+    internal UserScriptClass UserScriptClass { get; set; } = null!;
+    public bool Initializing => UserScriptClass.Initializing;
 
     protected void InitGuard()
     {

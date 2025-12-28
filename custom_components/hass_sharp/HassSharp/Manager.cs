@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.CodeAnalysis.Completion;
 using Python.Runtime;
 
@@ -15,11 +16,13 @@ public class HassSharpManager
         _compiler = new(_diagnosticsProvider);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     T WaitForAsync<T>(Func<Task<T>> cb)
     {
         return cb().GetAwaiter().GetResult();
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static void WaitForAsync(Func<Task> cb) => cb().GetAwaiter().GetResult();
 
     // Public python interface is all blocking because it gets run using hass.async_add_executor_job,
@@ -77,7 +80,7 @@ public class HassSharpManager
     public IReadOnlyList<CompletionItem> GetCodeCompletions(string source, int position) =>
         _diagnosticsProvider.GetCompletions(source, position);
 
-    public string FormatCode(string source) => _diagnosticsProvider.FormatCode(source).GetAwaiter().GetResult();
+    public string FormatCode(string source) => WaitForAsync(() => _diagnosticsProvider.FormatCode(source));
 
     public PyTuple SaveScript(string path, string source)
     {
@@ -94,7 +97,7 @@ public class HassSharpManager
 
             try
             {
-                var compiled = await _compiler.CompileSingleFile(path, source);
+                var compiled = await _compiler.CompileSingleFile(scriptPath, source);
                 await File.WriteAllTextAsync(scriptPath, source);
 
                 await _userScriptManager.UpdateUserScript(compiled);

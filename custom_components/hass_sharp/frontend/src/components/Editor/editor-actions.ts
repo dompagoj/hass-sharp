@@ -212,6 +212,7 @@ export const useEditorActions = (hass: HomeAssistant) => {
 
     // Initial validation
     validate()
+
     return () => {
       document.removeEventListener('keydown', keydownCallback)
     }

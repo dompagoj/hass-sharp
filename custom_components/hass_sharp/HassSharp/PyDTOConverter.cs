@@ -36,15 +36,15 @@ static class PyDTOConverter
     }
 
 
-    public static PyList UserScriptToDto(HashSet<UserScript> userScripts)
+    public static PyList UserScriptToDto(List<UserScript> userScripts)
     {
         using var _ = Py.GIL();
         var pyList = new PyList();
-        foreach (var group in userScripts.GroupBy(s => s.CompiledUserScript.FileName))
+        foreach (var script in userScripts)
         {
             var dict = new PyDict();
-            dict["fileName"] = new PyString(group.Key);
-            dict["classes"] = group.Select(g =>
+            dict["fileName"] = new PyString(script.FileName);
+            dict["classes"] = script.Classes.Select(g =>
             {
                 var classDict = new PyDict();
                 classDict["name"] = new PyString(g.ClassName);
