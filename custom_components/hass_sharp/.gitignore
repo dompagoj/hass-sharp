@@ -4,3 +4,5 @@ __pycache__
 www/dist
 .idea
 user_scripts/*
+out
+dotnet

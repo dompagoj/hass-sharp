@@ -1,11 +1,5 @@
 from homeassistant import config_entries
-import voluptuous as vol
 from .const import DOMAIN, logger
-
-DATA_SCHEMA = vol.Schema({
-    vol.Required("username"): str,
-    vol.Required("password"): str
-})
 
 class ExampleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Example config flow."""
@@ -25,5 +19,5 @@ class ExampleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             
 
         return self.async_show_form(
-            step_id="user", data_schema=DATA_SCHEMA
+            step_id="user"
         )

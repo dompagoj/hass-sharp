@@ -14,22 +14,19 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.components import frontend
 from homeassistant.components.http import StaticPathConfig
 
-
 os.environ['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT'] = 'true'
 
-# --- Path definitions (as before) ---
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-DOTNET_ROOT_DIR = os.path.join(SCRIPT_DIR, "dotnet")
+ROOT_DIR = os.path.dirname(os.path.realpath(__file__))
+DOTNET_ROOT_DIR = os.path.join(ROOT_DIR, "dotnet")
 
-RUNTIME_CONFIG = os.path.join(SCRIPT_DIR, "dotnet.runtimeconfig.json")
+RUNTIME_CONFIG = os.path.join(ROOT_DIR, "dotnet.runtimeconfig.json")
 
-# --- 1. SET CORECLR_RUNTIME_CONFIG (The environment approach) ---
 SDK_VERSION = '10.0.101'
 SHARED_VERSION = '10.0.1'
 SDK_PATH = os.path.join(DOTNET_ROOT_DIR, 'sdk', SDK_VERSION)
 SHARED_PATH = os.path.join(DOTNET_ROOT_DIR, 'shared', 'Microsoft.NETCore.App', SHARED_VERSION)
 
-HASS_SHARP_DLL_PATH = os.path.join(SCRIPT_DIR, "out")
+HASS_SHARP_DLL_PATH = os.path.join(ROOT_DIR, "out")
 sys.path.append(HASS_SHARP_DLL_PATH)
 
 rt = get_coreclr(

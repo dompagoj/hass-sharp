@@ -1,8 +1,0 @@
-linux-musl-arm64
-linux-musl
-linux-arm64
-linux
-unix-arm64
-unix
-any
-base
