@@ -3,7 +3,6 @@
   "name": "HassSharp",
   "codeowners": ["@dompagoj"],
   "config_flow": true,
-  "single_config_entry": true,
   "dependencies": [],
   "documentation": "https://github.com/dompagoj/hass-sharp",
   "homekit": {},
@@ -12,6 +11,7 @@
   "issue_tracker": "https://github.com/dompagoj/hass-sharp/issues",
   "quality_scale": "silver",
   "requirements": ["pythonnet==3.0.5"],
+  "single_config_entry": true,
   "ssdp": [],
   "version": "1.0.0",
   "zeroconf": []
