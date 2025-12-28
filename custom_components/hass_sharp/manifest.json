@@ -4,7 +4,6 @@
   "codeowners": ["@dompagoj"],
   "config_flow": true,
   "single_config_entry": true,
-  "frontend": true,
   "dependencies": [],
   "documentation": "https://github.com/dompagoj/hass-sharp",
   "homekit": {},
