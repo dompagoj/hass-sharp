@@ -1,0 +1,10 @@
+{
+  "name": "HassSharp",
+  "content_in_root": false,
+  "render_readme": true,
+  "hide_default_branch": false,
+  "filename": "hass_sharp.zip",
+  "zip_release": true,
+  "homeassistant": "2025.12.3",
+  "persistent_directory": "user_scripts"
+}
