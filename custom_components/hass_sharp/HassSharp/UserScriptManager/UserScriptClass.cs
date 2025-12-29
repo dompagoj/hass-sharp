@@ -2,24 +2,22 @@ using System.Reflection;
 
 namespace HassSharp;
 
-public class UserScriptClass
+class UserScriptClass
 {
+    internal UserScript Script { get; }
     internal Type ClassType { get; }
     public string ClassName => ClassType.FullName ?? "Unknown";
     public MethodInfo[] Methods { get; }
     Automation Instance { get; }
 
-    internal UserScriptManager Runner { get; }
-
     internal bool Initializing { get; set; } = true;
 
-    internal UserScriptClass(Type classType, UserScriptManager runner)
+    internal UserScriptClass(Type classType, UserScript script)
     {
         ClassType = classType;
+        Script = script;
         Methods = classType.GetMethods().Where(t => t.DeclaringType == classType).ToArray();
         Instance = (Automation)Activator.CreateInstance(classType)!;
-        Runner = runner;
-
         Instance.UserScriptClass = this;
     }
 

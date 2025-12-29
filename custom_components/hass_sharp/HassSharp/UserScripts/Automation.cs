@@ -8,7 +8,7 @@ public abstract class Automation : UserScriptClassBase
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     HasEntityState? GetEntityValueTracked(string entityId, string method)
     {
-        UserScriptClass.Runner.TrackEntityCall(entityId, UserScriptClass, method);
+        UserScriptClass.Script.ScriptManager.TrackEntityCall(entityId, UserScriptClass, method);
 
         var state = PyInterop.Entity(entityId);
 

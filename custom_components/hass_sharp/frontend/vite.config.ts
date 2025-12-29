@@ -10,7 +10,7 @@ export default defineConfig({
   plugins: [solidPlugin(), tailwindcss()],
   build: {
     target: 'esnext',
-    outDir: '../www/dist',
+    outDir: '../www',
     lib: {
       entry: resolve(__dirname, 'src/hass-sharp.ts'),
       formats: ['es'],

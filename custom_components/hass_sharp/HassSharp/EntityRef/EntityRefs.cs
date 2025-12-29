@@ -72,6 +72,8 @@ public static class EntityRefExtensions
 
     extension(EntityRef<HaInputNumber> eRef)
     {
+        public float Value => float.Parse(eRef.Raw.State);
+
         public void SetValue(int value)
         {
             eRef.Automation.CallService("input_number", "set_value", new

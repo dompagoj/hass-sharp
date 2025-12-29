@@ -2,6 +2,7 @@ using Python.Runtime;
 
 namespace HassSharp;
 
+// TODO: Rethink this, object[] is kinda bad
 readonly struct PyResult
 {
     readonly object[]? _errors;

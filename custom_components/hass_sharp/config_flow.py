@@ -1,7 +1,7 @@
 from homeassistant import config_entries
 from .const import DOMAIN, logger
 
-class ExampleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class HassSharpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Example config flow."""
     # The schema version of the entries that it creates
     # Home Assistant will call your migrate method if the version changes
@@ -10,10 +10,9 @@ class ExampleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, info):
         if info is not None:
-            logger.info('Created stuff')
             logger.info(info)
             return self.async_create_entry(
-                title="Dompa Integration",
+                title="Hass Sharp Integration",
                 data=info,
             )
             

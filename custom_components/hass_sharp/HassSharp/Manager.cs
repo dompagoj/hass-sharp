@@ -35,38 +35,32 @@ public class HassSharpManager
             _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
             var assemblies = await _compiler.CompileFromUserScriptsFolder();
 
-            _userScriptManager.ClearUserScripts();
+            _userScriptManager.UnloadUserScripts(); // Just in case, shouldnt be needed
 
             if (assemblies.Count == 0)
             {
                 Logger.Info("No user scripts found on initialization");
+                return;
             }
-            else
-            {
-                _userScriptManager.LoadUserScripts(assemblies);
-                await _userScriptManager.InitializeUserScripts();
-            }
+
+            _userScriptManager.LoadUserScripts(assemblies);
+            await _userScriptManager.InitializeUserScripts();
+            _userScriptManager.DependencyTracking.Debug();
         });
     }
 
-    public void UnLoad()
-    {
-        _userScriptManager.ClearUserScripts();
-    }
+    public void UnLoad() => _userScriptManager.UnloadUserScripts();
 
     public void GenerateHassEntities(string[] entityIds) => _diagnosticsProvider.GenerateHassEntities(entityIds);
 
-    public Dictionary<string, List<DependencyEntry>> GetScriptEntityDependencies() =>
-        _userScriptManager.DependencyTracking;
-
-    public void RunEntries(List<DependencyEntry> entries, HasEntityState newState, HasEntityState? oldState)
+    public void OnTrackedEntityChange(string entityId, HasEntityState newState, HasEntityState? oldState)
     {
         var trigger = new TriggerContext
         {
             NewState = newState,
             OldState = oldState
         };
-        WaitForAsync(() => _userScriptManager.RunEntries(entries, trigger));
+        WaitForAsync(() => _userScriptManager.RunEntries(entityId, trigger));
     }
 
     public PyList GetUserScripts() => PyDTOConverter.UserScriptToDto(_userScriptManager.GetUserScripts());
@@ -101,10 +95,15 @@ public class HassSharpManager
                 await File.WriteAllTextAsync(scriptPath, source);
 
                 await _userScriptManager.UpdateUserScript(compiled);
+                _userScriptManager.DependencyTracking.Debug();
             }
             catch (CompilationErrorException ex)
             {
                 return PyResult.Errors(ex.Errors);
+            }
+            catch (Exception ex)
+            {
+                return PyResult.Errors([ex.Message]);
             }
 
             return PyResult.Success();
