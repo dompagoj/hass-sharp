@@ -10,10 +10,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: "actions/checkout@v4"
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
       - name: "Set version number"
         run: |
           yq -i -o json '.version="${{ github.event.release.tag_name }}"' \
             "${{ github.workspace }}/custom_components/hass_sharp/manifest.json"
+      - name: Publish HassSharp C# Library
+        run: |
+          dotnet publish -c Release ./custom_components/hass_sharp/HassSharp -o ./custom_components/hass_sharp/out
+      - name: Build Vite Frontend
+        run: |
+          cd ./custom_components/hass_sharp/frontend
+          bun install
+          bun run build
       # Pack the HACS dir as a zip and upload to the release
       - name: ZIP Hass Sharp Dir
         run: |
