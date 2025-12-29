@@ -26,7 +26,6 @@ window.process = {
   },
 }
 
-// @ts-expect-error
 window.findCustomComponent = findCustomComponent
 
 function App(props: { hass: HomeAssistant }) {
