@@ -102,8 +102,6 @@ class UserScriptManager
 
     public async Task UpdateUserScript(CompiledUserScript compiled)
     {
-        Logger.Info(
-            $"New script path: {compiled.FilePath}, Existing scripts paths: {string.Join('\n', _userScripts.Select(s => s.FilePath))}");
         var foundIdx = _userScripts.FindIndex(s => s.FilePath == compiled.FilePath);
         if (foundIdx == -1) throw new("Script not found");
 
