@@ -20,7 +20,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
       - name: "Set version number"
         run: |
-          yq -i -o json '.version="${{ github.event.release.tag_name }}"' \
+          yq -i -o json '.version="v${{ github.event.release.tag_name }}"' \
             "${{ github.workspace }}/custom_components/hass_sharp/manifest.json"
       - name: Publish HassSharp C# Library
         run: |
