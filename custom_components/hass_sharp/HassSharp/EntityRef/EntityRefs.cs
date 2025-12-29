@@ -138,7 +138,7 @@ public static class EntityRefExtensions
     {
         public bool IsRising() => (bool)eRef.Raw.Attributes["rising"];
 
-        public bool IsBelowHorizon() => (string)eRef.Raw.Attributes["State"] == "below_horizon";
-        public bool IsAboveHorizon() => (string)eRef.Raw.Attributes["State"] == "above_horizon";
+        public bool IsBelowHorizon() => eRef.Raw.State == "below_horizon";
+        public bool IsAboveHorizon() => eRef.Raw.State == "above_horizon";
     }
 }
