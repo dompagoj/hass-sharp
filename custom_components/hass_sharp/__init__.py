@@ -156,6 +156,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass_sharp = utils.get_hass_sharp_manager(hass)
 
     await hass.async_add_executor_job(hass_sharp.Unload)
+    frontend.async_remove_panel(hass, 'hass-sharp')
 
     return True
 

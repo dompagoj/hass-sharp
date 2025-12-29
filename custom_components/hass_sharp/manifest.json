@@ -7,7 +7,7 @@
   "documentation": "https://github.com/dompagoj/hass-sharp",
   "homekit": {},
   "integration_type": "device",
-  "iot_class": "calculated",
+  "iot_class": "local_push",
   "issue_tracker": "https://github.com/dompagoj/hass-sharp/issues",
   "quality_scale": "silver",
   "requirements": ["pythonnet==3.0.5"],
