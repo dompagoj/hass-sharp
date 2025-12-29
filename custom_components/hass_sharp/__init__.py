@@ -6,7 +6,7 @@ import pythonnet as pynet
 import json
 from clr_loader import get_coreclr
 
-from . import http, utils, websocket
+from . import http, utils, websocket, dotnet_downloader
 from .const import logger, DOMAIN
 
 from homeassistant.config_entries import ConfigEntry
@@ -23,22 +23,37 @@ DOTNET_ROOT_DIR = os.path.join(ROOT_DIR, "dotnet")
 
 RUNTIME_CONFIG = os.path.join(ROOT_DIR, "dotnet.runtimeconfig.json")
 
-SDK_VERSION = '10.0.101'
-SHARED_VERSION = '10.0.1'
-SDK_PATH = os.path.join(DOTNET_ROOT_DIR, 'sdk', SDK_VERSION)
-SHARED_PATH = os.path.join(DOTNET_ROOT_DIR, 'shared', 'Microsoft.NETCore.App', SHARED_VERSION)
+SDK_VERSION = dotnet_downloader.DOTNET_VERSION
 
 HASS_SHARP_DLL_PATH = os.path.join(ROOT_DIR, "out")
-sys.path.append(HASS_SHARP_DLL_PATH)
+if HASS_SHARP_DLL_PATH not in sys.path:
+    sys.path.append(HASS_SHARP_DLL_PATH)
 
-rt = get_coreclr(
-    dotnet_root=DOTNET_ROOT_DIR,
-    runtime_config=RUNTIME_CONFIG,
-    properties={
-        "System.Globalization.Invariant": "true",
-    }
-)
-pynet.set_runtime(rt)
+_runtime_initialized = False
+
+def initialize_dotnet_runtime():
+    global _runtime_initialized
+    if _runtime_initialized:
+        return True
+
+    if not dotnet_downloader.install_dotnet(DOTNET_ROOT_DIR):
+        logger.error("Failed to install .NET SDK")
+        return False
+
+    try:
+        rt = get_coreclr(
+            dotnet_root=DOTNET_ROOT_DIR,
+            runtime_config=RUNTIME_CONFIG,
+            properties={
+                "System.Globalization.Invariant": "true",
+            }
+        )
+        pynet.set_runtime(rt)
+        _runtime_initialized = True
+        return True
+    except Exception as e:
+        logger.error("Failed to initialize .NET runtime: %s", e)
+        return False
 
 
 def python_log(level: int, message: str):
@@ -46,6 +61,9 @@ def python_log(level: int, message: str):
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType):
+    if not await hass.async_add_executor_job(initialize_dotnet_runtime):
+        return False
+
     import clr
     clr.AddReference("HassSharp")
     from HassSharp import HassSharpManager
