@@ -109,4 +109,7 @@ public class HassSharpManager
             return PyResult.Success();
         });
     }
+
+    public void CreateEmptyScript(string name) =>
+        WaitForAsync(() => _userScriptManager.CreateEmptyScript(_compiler, name));
 }

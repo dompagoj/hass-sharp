@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 
 namespace HassSharp;
@@ -109,18 +110,20 @@ class UserScriptManager
         var found = _userScripts[foundIdx];
         _userScripts.RemoveAt(foundIdx);
 
+        UserScript? loadedScript = null;
+
         try
         {
             DependencyTracking.RemoveScript(found);
-            var loadedScript = LoadUserScript(compiled);
+            loadedScript = LoadUserScript(compiled);
 
             Logger.Info("Initializing newly loaded scripts");
             await InitializeUserScript(loadedScript);
-            _userScripts.Add(loadedScript);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not TargetInvocationException)
         {
             Logger.Error($"Failed to update user script {ex.Message} {ex.InnerException?.Message}");
+            if (loadedScript != null) _userScripts.Remove(loadedScript);
             await InitializeUserScript(found);
             _userScripts.Add(found);
             throw;
@@ -128,5 +131,17 @@ class UserScriptManager
 
         // TODO: Remove
         DependencyTracking.Debug();
+    }
+
+    public async Task CreateEmptyScript(CodeCompiler compiler, string scriptName)
+    {
+        const string emptyScriptSource = """
+                                         public class ReplaceThisNameAutomation : Automation
+                                         {
+                                         }
+                                         """;
+        var compiled = await compiler.CompileSingleFile(Path.Join(HassPath.UserScripts, scriptName), emptyScriptSource);
+        var script = LoadUserScript(compiled);
+        await InitializeUserScript(script);
     }
 }
