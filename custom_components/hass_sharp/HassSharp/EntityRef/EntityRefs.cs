@@ -49,25 +49,13 @@ public sealed class HaSensor(string entityId) : EntityRefWrapper<HaSensor>(entit
 
 public sealed class HaInputButton(string entityId) : EntityRefWrapper<HaInputButton>(entityId);
 
+public sealed class HaUnknownString(string entityId) : EntityRefWrapper<HaUnknownString>(entityId);
+
 public sealed class ShellyButton(string entityId) : EntityRefWrapper<ShellyButton>(entityId);
 
 public static class EntityRefExtensions
 {
-    extension(EntityRef<int> entityRef)
-    {
-        public int Value
-        {
-            get
-            {
-                var success = int.TryParse(entityRef.Raw.State, out var result);
-                if (success) return result;
-
-                return (int)Math.Floor(float.Parse(entityRef.Raw.State));
-            }
-        }
-    }
-
-    extension(EntityRef<string> entityRef)
+    extension(EntityRef<HaUnknownString> entityRef)
     {
         public string Value => entityRef.Raw.State;
     }

@@ -96,6 +96,6 @@ class EntityGenerator
         if (HassDomainToEntityRefClass.TryGetValue(hassDomain, out var entityRefClass))
             return $"{entityRefWrapperClassName}<{entityRefClass}>";
 
-        return $"{entityRefWrapperClassName}<string>";
+        return $"{entityRefWrapperClassName}<{nameof(HaUnknownString)}>";
     }
 }

@@ -69,7 +69,8 @@ public abstract class Automation : UserScriptClassBase
         };
     }
 
-    protected EntityRef<T> EntityUntracked<T>(EntityRefWrapper<T> entityRefWrapper) where T : EntityRefWrapper<T>
+    protected EntityRef<T> EntityUntracked<T>(EntityRefWrapper<T> entityRefWrapper)
+        where T : EntityRefWrapper<T>
     {
         var raw = GetEntityValueUntracked(entityRefWrapper.EntityId);
         if (raw == null) throw new($"Entity with id {entityRefWrapper.EntityId} not found");
