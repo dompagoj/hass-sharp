@@ -21,7 +21,8 @@ public class CodeCompiler(
         {
             Assembly = Assembly.Load(assemblyBytes),
             FilePath = path,
-            FileName = Path.GetFileNameWithoutExtension(path)
+            FileName = Path.GetFileNameWithoutExtension(path),
+            SourceCode = source,
         };
     }
 
@@ -47,7 +48,8 @@ public class CodeCompiler(
                 {
                     Assembly = Assembly.Load(cachedBytes),
                     FilePath = path,
-                    FileName = Path.GetFileNameWithoutExtension(path)
+                    FileName = Path.GetFileNameWithoutExtension(path),
+                    SourceCode = source,
                 };
             }
 
@@ -58,7 +60,8 @@ public class CodeCompiler(
             {
                 Assembly = Assembly.Load(assemblyBytes),
                 FilePath = path,
-                FileName = Path.GetFileNameWithoutExtension(path)
+                FileName = Path.GetFileNameWithoutExtension(path),
+                SourceCode = source,
             };
         });
 

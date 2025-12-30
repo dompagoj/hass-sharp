@@ -65,8 +65,17 @@ public class HassSharpManager
 
     public PyList GetUserScripts() => PyDTOConverter.UserScriptToDto(_userScriptManager.GetUserScripts());
 
-    public UserScriptSourceDTO? GetUserScript(string fileName) =>
-        WaitForAsync(() => _userScriptManager.GetUserScriptSource(fileName));
+    public UserScriptSourceDTO? GetUserScript(string fileName)
+    {
+        var script = _userScriptManager.GetUserScript(fileName);
+        if (script == null) return null;
+
+        return new()
+        {
+            FileName = script.FileName,
+            Source = script.SourceCode,
+        };
+    }
 
     public string? GetHoverDiagnostics(string source, int position) => _diagnosticsProvider.GetHover(source, position);
     public DiagnosticModel[] GetCompilationDiagnostics(string source) => _diagnosticsProvider.GetDiagnostics(source);
@@ -87,13 +96,9 @@ public class HassSharpManager
                 return PyResult.Error("File not found");
             }
 
-            Logger.Info($"Writing file to ${scriptPath}");
-
             try
             {
                 var compiled = await _compiler.CompileSingleFile(scriptPath, source);
-                await File.WriteAllTextAsync(scriptPath, source);
-
                 await _userScriptManager.UpdateUserScript(compiled);
                 _userScriptManager.DependencyTracking.Debug();
             }
@@ -103,6 +108,7 @@ public class HassSharpManager
             }
             catch (Exception ex)
             {
+                if (ex.InnerException != null) return PyResult.Errors([ex.InnerException.Message]);
                 return PyResult.Errors([ex.Message]);
             }
 

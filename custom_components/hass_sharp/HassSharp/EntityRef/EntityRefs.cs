@@ -2,7 +2,7 @@ namespace HassSharp;
 
 public class EntityRef<T>
 {
-    internal Automation Automation { get; init; } = null!;
+    // internal Automation Automation { get; init; } = null!;
 
     public required HasEntityState Raw { get; init; }
     public string EntityId => Raw.EntityId;
@@ -14,7 +14,7 @@ public class EntityRef<T>
             if (Raw.OldState == null) return null;
             return new()
             {
-                Automation = Automation,
+                // Automation = Automation,
                 Raw = Raw.OldState
             };
         }
@@ -22,17 +22,16 @@ public class EntityRef<T>
 }
 
 public class EntityRefWrapper<T>
+    where T : EntityRefWrapper<T>
 {
     public string EntityId { get; init; }
 
-    public EntityRefWrapper(string entityId) => EntityId = entityId;
+    protected EntityRefWrapper(string entityId) => EntityId = entityId;
 };
 
-public sealed class HaSwitch(string entityId) : EntityRefWrapper<HaSwitch>(entityId);
+public class HaSwitch(string entityId) : EntityRefWrapper<HaSwitch>(entityId);
 
-public sealed class HaNumberEntity(string entityId) : EntityRefWrapper<int>(entityId);
-
-public sealed class HaFloatEntity(string entityId) : EntityRefWrapper<float>(entityId);
+public sealed class HaLight(string entityId) : HaSwitch(entityId);
 
 public sealed class HaInputNumber(string entityId) : EntityRefWrapper<HaInputNumber>(entityId);
 
@@ -43,6 +42,8 @@ public sealed class HaBinarySensor(string entityId) : EntityRefWrapper<HaBinaryS
 public sealed class HaSensor(string entityId) : EntityRefWrapper<HaSensor>(entityId);
 
 public sealed class HaInputButton(string entityId) : EntityRefWrapper<HaInputButton>(entityId);
+
+public sealed class ShellyButton(string entityId) : EntityRefWrapper<ShellyButton>(entityId);
 
 public static class EntityRefExtensions
 {
@@ -76,7 +77,7 @@ public static class EntityRefExtensions
 
         public void SetValue(int value)
         {
-            eRef.Automation.CallService("input_number", "set_value", new
+            HassServices.CallService("input_number", "set_value", new
             {
                 entity_id = eRef.EntityId,
                 value,
@@ -86,9 +87,13 @@ public static class EntityRefExtensions
 
     extension(EntityRef<HaSwitch> eRef)
     {
+        public bool IsOn() => eRef.Raw.State == "on";
+        public bool IsOff() => eRef.Raw.State == "off";
+
         public void TurnOn()
         {
-            eRef.Automation.CallService("switch", "turn_on", new
+            if (eRef.IsOn()) return;
+            HassServices.CallService("switch", "turn_on", new
             {
                 entity_id = eRef.EntityId,
             });
@@ -96,7 +101,8 @@ public static class EntityRefExtensions
 
         public void TurnOff()
         {
-            eRef.Automation.CallService("switch", "turn_off", new
+            if (eRef.IsOff()) return;
+            HassServices.CallService("switch", "turn_off", new
             {
                 entity_id = eRef.EntityId,
             });
@@ -104,34 +110,24 @@ public static class EntityRefExtensions
 
         public void Toggle()
         {
-            eRef.Automation.CallService("switch", "toggle", new
+            HassServices.CallService("switch", "toggle", new
             {
                 entity_id = eRef.EntityId,
             });
         }
     }
 
-    extension(EntityRef<HaInputButton> eRef)
+    extension(EntityRef<ShellyButton> eRef)
     {
-        public void SinglePress()
-        {
-        }
+        bool GetState(string state) => (string)eRef.Raw.Attributes["event_type"] == state;
 
-        public void DoublePress()
-        {
-        }
-
-        public void TriplePress()
-        {
-        }
-
-        public void QuadPress()
-        {
-        }
-
-        public void Hold()
-        {
-        }
+        public bool IsSinglePress() => GetState(eRef, "press");
+        public bool IsDoublePress() => GetState(eRef, "double_press");
+        public bool IsTriplePress() => GetState(eRef, "tripple_press");
+        public bool IsIsLongPress() => GetState(eRef, "long_press");
+        public bool IsIsLongDoublePress() => GetState(eRef, "long_double_press");
+        public bool IsIsLongTriplePress() => GetState(eRef, "long_triple_press");
+        public bool IsHoldPress() => GetState(eRef, "hold_press");
     }
 
     extension(EntityRef<HaSun> eRef)

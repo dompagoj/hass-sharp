@@ -25,7 +25,7 @@ class UserScriptClass
     {
         Initializing = true;
         Logger.Info(
-            $"Initializing Class {ClassName} with methods: \n {string.Join('\n', Methods.Select(m => m.Name))}");
+            $"Initializing Class {ClassName} with methods: {string.Join('\n', Methods.Select(m => m.Name))}");
         await RunAllMethods();
         Initializing = false;
     }

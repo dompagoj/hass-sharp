@@ -125,7 +125,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     def call_service(domain: str, service: str, data_json: str):
         data = json.loads(data_json) if data_json else None
-        # Use hass.add_job to safely schedule the service call from a background thread
         hass.add_job(hass.services.async_call(domain, service, data))
 
     def unsub_from_entity(entity_id: str):

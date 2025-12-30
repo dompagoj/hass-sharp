@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Text.Json;
 
 namespace HassSharp;
 
@@ -19,19 +18,8 @@ class UserScriptManager
 
     public List<UserScript> GetUserScripts() => _userScripts;
 
-    public async Task<UserScriptSourceDTO?> GetUserScriptSource(string scriptSlug)
-    {
-        var found = _userScripts.FirstOrDefault(s => s.ScriptSlug() == scriptSlug);
-        if (found == null) return null;
-
-        var contents = await File.ReadAllTextAsync(found.ScriptId());
-
-        return new()
-        {
-            FileName = found.FileName,
-            Source = contents,
-        };
-    }
+    public UserScript? GetUserScript(string scriptSlug) =>
+        _userScripts.FirstOrDefault(s => s.ScriptSlug() == scriptSlug);
 
     public void UnloadUserScripts()
     {
@@ -50,6 +38,7 @@ class UserScriptManager
             FileName = compiledScript.FileName,
             FilePath = compiledScript.FilePath,
             Assembly = compiledScript.Assembly,
+            SourceCode = compiledScript.SourceCode,
             Classes = null!,
             ScriptManager = this,
         };
@@ -117,6 +106,8 @@ class UserScriptManager
 
             Logger.Info("Initializing newly loaded scripts");
             await InitializeUserScript(loadedScript);
+            Logger.Info($"Writing script to ${compiled.FilePath}");
+            await File.WriteAllTextAsync(compiled.FilePath, compiled.SourceCode);
         }
         catch (Exception ex) when (ex is not TargetInvocationException)
         {

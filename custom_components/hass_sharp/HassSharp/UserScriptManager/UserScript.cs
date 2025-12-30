@@ -8,6 +8,7 @@ class UserScript
     public required UserScriptClass[] Classes { get; set; }
     public required string FilePath { get; init; }
     public required string FileName { get; init; }
+    public required string SourceCode { get; init; }
 
     public required Assembly Assembly { get; init; }
 
