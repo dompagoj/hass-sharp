@@ -11,8 +11,8 @@ public class HasEntityState
     public string ObjectId { get; set; } = null!;
     public string State { get; set; } = null!;
     public Dictionary<string, object> Attributes { get; set; } = null!;
-    public float LastChanged { get; set; }
-    public float LastReported { get; set; }
+    public double LastChanged { get; set; }
+    public double LastReported { get; set; }
     internal HasEntityState? OldState { get; set; }
 }
 

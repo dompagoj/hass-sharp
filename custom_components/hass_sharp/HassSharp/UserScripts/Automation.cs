@@ -47,17 +47,6 @@ public abstract class Automation : UserScriptClassBase
         };
     }
 
-    protected EntityRef<T> Entity<T>(string entityId, [CallerMemberName] string? caller = null)
-    {
-        var raw = GetEntityValueTracked(entityId, caller!);
-
-        if (raw == null) throw new($"Entity with id {entityId} not found");
-        return new()
-        {
-            Raw = raw,
-        };
-    }
-
 
     protected EntityRef<string> Entity(string entityId, [CallerMemberName] string? caller = null)
     {
@@ -81,16 +70,6 @@ public abstract class Automation : UserScriptClassBase
     }
 
     protected EntityRef<string> EntityUntracked(string entityId)
-    {
-        var raw = GetEntityValueUntracked(entityId);
-        if (raw == null) throw new($"Entity with id {entityId} not found");
-        return new()
-        {
-            Raw = raw,
-        };
-    }
-
-    protected EntityRef<T> EntityUntracked<T>(string entityId)
     {
         var raw = GetEntityValueUntracked(entityId);
         if (raw == null) throw new($"Entity with id {entityId} not found");

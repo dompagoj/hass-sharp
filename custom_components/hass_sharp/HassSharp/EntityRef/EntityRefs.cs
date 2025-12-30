@@ -25,6 +25,25 @@ public class EntityRef<T>
             };
         }
     }
+
+    public bool StateChanged()
+    {
+        if (Previous == null) return true;
+        return Raw.State != Previous.Raw.State;
+    }
+
+    public bool AttributeChanged(string key)
+    {
+        if (Previous == null) return true;
+
+        var hasNew = Raw.Attributes.TryGetValue(key, out var newValue);
+        var hasOld = Previous.Raw.Attributes.TryGetValue(key, out var oldValue);
+
+        if (hasNew != hasOld) return true;
+        if (!hasNew) return false;
+
+        return newValue == oldValue;
+    }
 }
 
 public class EntityRefWrapper<T>
@@ -117,10 +136,10 @@ public static class EntityRefExtensions
 
         public bool IsSinglePress() => GetState(eRef, "press");
         public bool IsDoublePress() => GetState(eRef, "double_press");
-        public bool IsTriplePress() => GetState(eRef, "tripple_press");
-        public bool IsIsLongPress() => GetState(eRef, "long_press");
-        public bool IsIsLongDoublePress() => GetState(eRef, "long_double_press");
-        public bool IsIsLongTriplePress() => GetState(eRef, "long_triple_press");
+        public bool IsTriplePress() => GetState(eRef, "triple_press");
+        public bool IsLongPress() => GetState(eRef, "long_press");
+        public bool IsLongDoublePress() => GetState(eRef, "long_double_press");
+        public bool IsLongTriplePress() => GetState(eRef, "long_triple_press");
         public bool IsHoldPress() => GetState(eRef, "hold_press");
     }
 
