@@ -2,10 +2,16 @@ namespace HassSharp;
 
 public class EntityRef<T>
 {
-    // internal Automation Automation { get; init; } = null!;
-
     public required HasEntityState Raw { get; init; }
     public string EntityId => Raw.EntityId;
+
+    internal TValue? GetAttribute<TValue>(string key)
+    {
+        var found = Raw.Attributes.TryGetValue(key, out var value);
+        if (!found) return default;
+
+        return (TValue?)value;
+    }
 
     public EntityRef<T>? Previous
     {
@@ -26,7 +32,7 @@ public class EntityRefWrapper<T>
 {
     public string EntityId { get; init; }
 
-    protected EntityRefWrapper(string entityId) => EntityId = entityId;
+    public EntityRefWrapper(string entityId) => EntityId = entityId;
 };
 
 public class HaSwitch(string entityId) : EntityRefWrapper<HaSwitch>(entityId);
@@ -119,7 +125,7 @@ public static class EntityRefExtensions
 
     extension(EntityRef<ShellyButton> eRef)
     {
-        bool GetState(string state) => (string)eRef.Raw.Attributes["event_type"] == state;
+        bool GetState(string state) => eRef.GetAttribute<string>("event_type") == state;
 
         public bool IsSinglePress() => GetState(eRef, "press");
         public bool IsDoublePress() => GetState(eRef, "double_press");
@@ -132,7 +138,7 @@ public static class EntityRefExtensions
 
     extension(EntityRef<HaSun> eRef)
     {
-        public bool IsRising() => (bool)eRef.Raw.Attributes["rising"];
+        public bool IsRising() => eRef.GetAttribute<bool>("rising");
 
         public bool IsBelowHorizon() => eRef.Raw.State == "below_horizon";
         public bool IsAboveHorizon() => eRef.Raw.State == "above_horizon";
