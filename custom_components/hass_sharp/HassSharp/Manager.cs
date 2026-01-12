@@ -72,8 +72,8 @@ public class HassSharpManager
 
         return new()
         {
-            FileName = script.FileName,
-            Source = script.SourceCode,
+            FileName = script.CompiledScript.FileName,
+            Source = script.CompiledScript.SourceCode,
         };
     }
 
@@ -98,7 +98,7 @@ public class HassSharpManager
 
             try
             {
-                var compiled = await _compiler.CompileSingleFile(scriptPath, source);
+                var compiled = await _compiler.CompileSingleFile(scriptPath, source, false);
                 await _userScriptManager.UpdateUserScript(compiled);
                 _userScriptManager.DependencyTracking.Debug();
             }

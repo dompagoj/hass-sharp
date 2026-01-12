@@ -43,7 +43,7 @@ static class PyDTOConverter
         foreach (var script in userScripts)
         {
             var dict = new PyDict();
-            dict["fileName"] = new PyString(script.FileName);
+            dict["fileName"] = new PyString(script.CompiledScript.FileName);
             dict["classes"] = script.Classes.Select(g =>
             {
                 var classDict = new PyDict();

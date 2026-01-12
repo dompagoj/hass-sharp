@@ -9,6 +9,23 @@ public class CompiledUserScript
     public required string SourceCode { get; init; }
 
     public required Assembly Assembly { get; init; }
+
+    public required bool WrittenToDisk { get; set; }
+
+    public string Id() => FilePath;
+    public string Slug() => FileName;
+
+    public void SetDirty() => WrittenToDisk = false;
+
+    public Task WriteToDisk() => File.WriteAllTextAsync(FilePath, SourceCode);
+
+    public async ValueTask WriteIfDirty()
+    {
+        if (WrittenToDisk) return;
+        Logger.Debug($"Writing script to ${FilePath}");
+        await WriteToDisk();
+        WrittenToDisk = true;
+    }
 }
 
 public class UserScriptDTO

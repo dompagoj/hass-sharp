@@ -62,6 +62,8 @@ class DependencyTracking
 
     public void Debug()
     {
+        if (Logger.Level > PyLogLevel.Debug) return;
+
         var str = _dependencyTracking.Select(tuple =>
         {
             var (entityId, entries) = tuple;
@@ -70,11 +72,11 @@ class DependencyTracking
                             {string.Join(',', entries.Select(e => $"{e.ScriptClass.ClassName}:{e.MethodName}"))}
                     """;
         });
-        Logger.Info($"""
+        Logger.Debug($"""
 
-                     Currently tracking:
-                         {string.Join('\n', str)}
-                     """);
+                      Currently tracking:
+                          {string.Join('\n', str)}
+                      """);
     }
 
     public List<DependencyEntry> GetEntries(string entityId) => _dependencyTracking[entityId];

@@ -19,7 +19,7 @@ class UserScriptManager
     public List<UserScript> GetUserScripts() => _userScripts;
 
     public UserScript? GetUserScript(string scriptSlug) =>
-        _userScripts.FirstOrDefault(s => s.ScriptSlug() == scriptSlug);
+        _userScripts.FirstOrDefault(s => s.CompiledScript.Slug() == scriptSlug);
 
     public void UnloadUserScripts()
     {
@@ -32,13 +32,9 @@ class UserScriptManager
     {
         var baseType = typeof(Automation);
 
-
         var userScript = new UserScript
         {
-            FileName = compiledScript.FileName,
-            FilePath = compiledScript.FilePath,
-            Assembly = compiledScript.Assembly,
-            SourceCode = compiledScript.SourceCode,
+            CompiledScript = compiledScript,
             Classes = null!,
             ScriptManager = this,
         };
@@ -67,7 +63,6 @@ class UserScriptManager
         return Task.WhenAll(entries.Select(async e => await RunEntry(e, trigger)));
     }
 
-
     public async Task RunEntry(DependencyEntry entry, TriggerContext trigger)
     {
         CurrentTrigger.Value = trigger;
@@ -83,15 +78,17 @@ class UserScriptManager
 
     public Task InitializeUserScripts() => Task.WhenAll(_userScripts.Select(InitializeUserScript));
 
-    Task InitializeUserScript(UserScript userScript) =>
-        Task.WhenAll(userScript.Classes.Select(InitializeUserScriptClass));
+    async Task InitializeUserScript(UserScript userScript)
+    {
+        await Task.WhenAll(userScript.Classes.Select(InitializeUserScriptClass));
+        await userScript.WriteIfDirty();
+    }
 
     Task InitializeUserScriptClass(UserScriptClass klass) => klass.Initialize();
 
-
     public async Task UpdateUserScript(CompiledUserScript compiled)
     {
-        var foundIdx = _userScripts.FindIndex(s => s.FilePath == compiled.FilePath);
+        var foundIdx = _userScripts.FindIndex(s => s.CompiledScript.Id() == compiled.Id());
         if (foundIdx == -1) throw new("Script not found");
 
         var found = _userScripts[foundIdx];
@@ -106,11 +103,10 @@ class UserScriptManager
 
             Logger.Info("Initializing newly loaded scripts");
             await InitializeUserScript(loadedScript);
-            Logger.Info($"Writing script to ${compiled.FilePath}");
-            await File.WriteAllTextAsync(compiled.FilePath, compiled.SourceCode);
         }
         catch (Exception ex) when (ex is not TargetInvocationException)
         {
+            // Restore the original script
             Logger.Error($"Failed to update user script {ex.Message} {ex.InnerException?.Message}");
             if (loadedScript != null) _userScripts.Remove(loadedScript);
             await InitializeUserScript(found);
@@ -129,8 +125,8 @@ class UserScriptManager
                                          {
                                          }
                                          """;
-        var compiled = await compiler.CompileSingleFile(Path.Join(HassPath.UserScripts, scriptName), emptyScriptSource);
-        var script = LoadUserScript(compiled);
-        await InitializeUserScript(script);
+        var compiled =
+            await compiler.CompileFromUserScriptFile(scriptName, emptyScriptSource, false);
+        await InitializeUserScript(LoadUserScript(compiled));
     }
 }

@@ -55,7 +55,6 @@ def initialize_dotnet_runtime():
         logger.error("Failed to initialize .NET runtime: %s", e)
         return False
 
-
 def python_log(level: int, message: str):
     logger.log(level, "[C#] %s", message)
 
@@ -141,6 +140,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         unsubs[entity_id] = async_track_state_change_event(hass, entity_id, on_entity_change)
 
     PyInterop.Log = Action[Int32, String](python_log)
+    PyInterop.LogLevel = logger.level
     PyInterop.Entity = Func[String, HasEntityState](entity)
     PyInterop.CallService = Action[String, String, String](call_service)
     PyInterop.UnSubscribeFromEntityTracking = Action[String](unsub_from_entity)

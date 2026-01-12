@@ -80,13 +80,15 @@ class EntityGenerator
         return pascal;
     }
 
-    readonly Dictionary<string, string> HassDomainToEntityRefClass = new()
+    static readonly Dictionary<string, string> HassDomainToEntityRefClass = new()
     {
         { "binary_sensor", nameof(HaBinarySensor) },
         { "switch", nameof(HaSwitch) },
+        { "light", nameof(HaLight) },
         { "input_number", nameof(HaInputNumber) },
         { "sensor", nameof(HaSensor) },
         { "input_button", nameof(HaInputButton) },
+        { "media_player", nameof(HaMediaPlayer) },
         { "sun", nameof(HaSun) },
     };
 

@@ -47,7 +47,6 @@ public abstract class Automation : UserScriptClassBase
         };
     }
 
-
     protected EntityRef<string> Entity(string entityId, [CallerMemberName] string? caller = null)
     {
         var raw = GetEntityValueTracked(entityId, caller!);

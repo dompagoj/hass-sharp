@@ -11,7 +11,10 @@ public class CodeCompiler(
 
     public Task<List<CompiledUserScript>> CompileFromUserScriptsFolder() => CompileFromFolder(HassPath.UserScripts);
 
-    public async Task<CompiledUserScript> CompileSingleFile(string path, string source)
+    public Task<CompiledUserScript> CompileFromUserScriptFile(string path, string source, bool writtenToDisk) =>
+        CompileSingleFile(Path.Join(HassPath.UserScripts, path), source, writtenToDisk);
+
+    public async Task<CompiledUserScript> CompileSingleFile(string path, string source, bool writtenToDisk)
     {
         var hash = _cacheProvider.ComputeHash(path, source);
         var assemblyBytes = CompileSingleFileToBytes(source, path);
@@ -23,6 +26,7 @@ public class CodeCompiler(
             FilePath = path,
             FileName = Path.GetFileNameWithoutExtension(path),
             SourceCode = source,
+            WrittenToDisk = writtenToDisk,
         };
     }
 
@@ -50,6 +54,7 @@ public class CodeCompiler(
                     FilePath = path,
                     FileName = Path.GetFileNameWithoutExtension(path),
                     SourceCode = source,
+                    WrittenToDisk = true,
                 };
             }
 
@@ -62,6 +67,7 @@ public class CodeCompiler(
                 FilePath = path,
                 FileName = Path.GetFileNameWithoutExtension(path),
                 SourceCode = source,
+                WrittenToDisk = true,
             };
         });
 

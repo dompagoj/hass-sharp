@@ -68,56 +68,53 @@ public sealed class HaSensor(string entityId) : EntityRefWrapper<HaSensor>(entit
 
 public sealed class HaInputButton(string entityId) : EntityRefWrapper<HaInputButton>(entityId);
 
+public sealed class HaMediaPlayer(string entityId) : EntityRefWrapper<HaMediaPlayer>(entityId);
+
 public sealed class HaUnknownString(string entityId) : EntityRefWrapper<HaUnknownString>(entityId);
 
 public sealed class ShellyButton(string entityId) : EntityRefWrapper<ShellyButton>(entityId);
 
 public static class EntityRefExtensions
 {
-    extension(EntityRef<HaUnknownString> entityRef)
+    extension(EntityRef<HaUnknownString> unknown)
     {
-        public string Value => entityRef.Raw.State;
+        public string Value => unknown.Raw.State;
     }
 
-    extension(EntityRef<float> entityRef)
+    extension(EntityRef<HaInputNumber> num)
     {
-        public float Value => float.Parse(entityRef.Raw.State);
-    }
-
-    extension(EntityRef<HaInputNumber> eRef)
-    {
-        public float Value => float.Parse(eRef.Raw.State);
+        public float Value => float.Parse(num.Raw.State);
 
         public void SetValue(int value)
         {
             HassServices.CallService("input_number", "set_value", new
             {
-                entity_id = eRef.EntityId,
+                entity_id = num.EntityId,
                 value,
             });
         }
     }
 
-    extension(EntityRef<HaSwitch> eRef)
+    extension(EntityRef<HaSwitch> sw)
     {
-        public bool IsOn() => eRef.Raw.State == "on";
-        public bool IsOff() => eRef.Raw.State == "off";
+        public bool IsOn() => sw.Raw.State == "on";
+        public bool IsOff() => sw.Raw.State == "off";
 
         public void TurnOn()
         {
-            if (eRef.IsOn()) return;
+            if (sw.IsOn()) return;
             HassServices.CallService("switch", "turn_on", new
             {
-                entity_id = eRef.EntityId,
+                entity_id = sw.EntityId,
             });
         }
 
         public void TurnOff()
         {
-            if (eRef.IsOff()) return;
+            if (sw.IsOff()) return;
             HassServices.CallService("switch", "turn_off", new
             {
-                entity_id = eRef.EntityId,
+                entity_id = sw.EntityId,
             });
         }
 
@@ -125,29 +122,57 @@ public static class EntityRefExtensions
         {
             HassServices.CallService("switch", "toggle", new
             {
-                entity_id = eRef.EntityId,
+                entity_id = sw.EntityId,
             });
         }
     }
 
-    extension(EntityRef<ShellyButton> eRef)
+    extension(EntityRef<ShellyButton> btn)
     {
-        bool GetState(string state) => eRef.GetAttribute<string>("event_type") == state;
+        bool GetState(string state) => btn.GetAttribute<string>("event_type") == state;
+        public string? Value => btn.GetAttribute<string>("event_type");
 
-        public bool IsSinglePress() => GetState(eRef, "press");
-        public bool IsDoublePress() => GetState(eRef, "double_press");
-        public bool IsTriplePress() => GetState(eRef, "triple_press");
-        public bool IsLongPress() => GetState(eRef, "long_press");
-        public bool IsLongDoublePress() => GetState(eRef, "long_double_press");
-        public bool IsLongTriplePress() => GetState(eRef, "long_triple_press");
-        public bool IsHoldPress() => GetState(eRef, "hold_press");
+        public bool IsSinglePress() => GetState(btn, "press");
+        public bool IsDoublePress() => GetState(btn, "double_press");
+        public bool IsTriplePress() => GetState(btn, "triple_press");
+        public bool IsLongPress() => GetState(btn, "long_press");
+        public bool IsLongDoublePress() => GetState(btn, "long_double_press");
+        public bool IsLongTriplePress() => GetState(btn, "long_triple_press");
+        public bool IsHoldPress() => GetState(btn, "hold_press");
     }
 
-    extension(EntityRef<HaSun> eRef)
+    extension(EntityRef<HaSun> sun)
     {
-        public bool IsRising() => eRef.GetAttribute<bool>("rising");
+        public bool IsRising() => sun.GetAttribute<bool>("rising");
 
-        public bool IsBelowHorizon() => eRef.Raw.State == "below_horizon";
-        public bool IsAboveHorizon() => eRef.Raw.State == "above_horizon";
+        public bool IsBelowHorizon() => sun.Raw.State == "below_horizon";
+        public bool IsAboveHorizon() => sun.Raw.State == "above_horizon";
+    }
+
+    extension(EntityRef<HaMediaPlayer> p)
+    {
+        public void PlayMedia(string media, string? mediaContentType = null)
+        {
+            HassServices.CallService("media_player", "play_media", new
+            {
+                target = new
+                {
+                    entity_id = p.EntityId,
+                },
+                data = new
+                {
+                    media = new
+                    {
+                        media_content_id = $"media-source://local/{media}",
+                        media_content_type = mediaContentType ?? "audio/mpeg",
+                        metadata = new
+                        {
+                            title = media,
+                            media_class = "music"
+                        }
+                    }
+                }
+            });
+        }
     }
 }

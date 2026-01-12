@@ -18,10 +18,10 @@ public class HasEntityState
 
 public enum PyLogLevel
 {
-    Info = 20,
-    Error = 40,
-    Warn = 30,
     Debug = 10,
+    Info = 20,
+    Warn = 30,
+    Error = 40,
     Critical = 50,
 }
 
@@ -29,6 +29,8 @@ public static class Logger
 {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Log(PyLogLevel level, string msg) => PyInterop.Log((int)level, msg);
+
+    public static PyLogLevel Level => (PyLogLevel)PyInterop.LogLevel;
 
     public static void Info(string msg) => Log(PyLogLevel.Info, msg);
     public static void Warn(string msg) => Log(PyLogLevel.Warn, msg);
@@ -39,6 +41,7 @@ public static class Logger
 public static class PyInterop
 {
     public static Action<int, string> Log { get; set; } = null!;
+    public static int LogLevel { get; set; }
     public static GetEntity Entity { get; set; } = null!;
     public static Action<string, string, string?> CallService { get; set; } = null!;
     public static Action<string> UnSubscribeFromEntityTracking { get; set; } = null!;
