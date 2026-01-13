@@ -2,8 +2,25 @@ using System.Runtime.CompilerServices;
 
 namespace HassSharp;
 
+public enum AutomationMode
+{
+    Single,
+    Restart,
+    Queued,
+    Parallel
+}
+
+[AttributeUsage(AttributeTargets.Method)]
+public class ModeAttribute(AutomationMode mode) : Attribute
+{
+    public AutomationMode Mode { get; } = mode;
+}
+
 public abstract class Automation : UserScriptClassBase
 {
+    internal readonly AsyncLocal<CancellationToken> _cancellationToken = new();
+    public CancellationToken CancellationToken => _cancellationToken.Value;
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     HasEntityState? GetEntityValueTracked(string entityId, string method)
     {

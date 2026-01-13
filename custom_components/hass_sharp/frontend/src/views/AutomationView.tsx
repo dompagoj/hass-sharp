@@ -1,5 +1,5 @@
 import { useNavigate, type RouteSectionProps } from '@solidjs/router'
-import { useQuery } from '@tanstack/solid-query'
+import { useQuery, useQueryClient } from '@tanstack/solid-query'
 import { createEffect, Match, Switch } from 'solid-js'
 import * as monaco from 'monaco-editor'
 
@@ -11,6 +11,8 @@ import { errorToHassError } from '../utils'
 export const AutomationView = (route: RouteSectionProps) => {
   const hass = useHass()
   const navigate = useNavigate()
+
+  const queryClient = useQueryClient()
 
   const query = useQuery(() => ({
     queryKey: ['automations', route.params.id],
@@ -29,8 +31,10 @@ export const AutomationView = (route: RouteSectionProps) => {
     }
   })
 
-  const onEditorSave = (model: monaco.editor.ITextModel) =>
-    hass.callApi('POST', `hass-sharp/automations/${query.data!.fileName}`, { source: model.getValue() })
+  const onEditorSave = async (model: monaco.editor.ITextModel) => {
+    await hass.callApi('POST', `hass-sharp/automations/${query.data!.fileName}`, { source: model.getValue() })
+    await queryClient.invalidateQueries({ queryKey: ['automations', route.params.id], type: 'inactive' })
+  }
 
   return (
     <div class="h-full">

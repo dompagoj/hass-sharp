@@ -35,7 +35,7 @@ public class HassSharpManager
             _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
             var assemblies = await _compiler.CompileFromUserScriptsFolder();
 
-            _userScriptManager.UnloadUserScripts(); // Just in case, shouldnt be needed
+            await _userScriptManager.UnloadUserScripts(); // Just in case, shouldnt be needed
 
             if (assemblies.Count == 0)
             {
@@ -43,13 +43,12 @@ public class HassSharpManager
                 return;
             }
 
-            _userScriptManager.LoadUserScripts(assemblies);
-            await _userScriptManager.InitializeUserScripts();
+            await _userScriptManager.LoadUserScripts(assemblies);
             _userScriptManager.DependencyTracking.Debug();
         });
     }
 
-    public void UnLoad() => _userScriptManager.UnloadUserScripts();
+    public void UnLoad() => WaitForAsync(_userScriptManager.UnloadUserScripts);
 
     public void GenerateHassEntities(string[] entityIds) => _diagnosticsProvider.GenerateHassEntities(entityIds);
 

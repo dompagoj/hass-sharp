@@ -8,7 +8,8 @@ class UserScriptClass
     internal Type ClassType { get; }
     public string ClassName => ClassType.FullName ?? "Unknown";
     public MethodInfo[] Methods { get; }
-    Automation Instance { get; }
+    internal Automation Instance { get; }
+
 
     internal bool Initializing { get; set; } = true;
 
@@ -46,23 +47,20 @@ class UserScriptClass
 
     internal async Task RunMethod(MethodInfo method)
     {
-        try
-        {
-            var result = method.Invoke(
+        var mode = method.GetCustomAttribute<ModeAttribute>()?.Mode ?? AutomationMode.Single;
+
+        await Script.ScriptManager.SyncRunner.Run(
+            this,
+            method,
+            mode,
+            () => method.Invoke(
                 Instance,
                 BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
                 null,
                 null,
                 null
-            );
-
-            if (result is Task task) await task;
-            if (result is ValueTask valueTask) await valueTask;
-        }
-        catch (TargetInvocationException ex) when (ex.InnerException is InitializingException)
-        {
-            // ignore InitGuard(); calls
-        }
+            )
+        );
     }
 
     internal async Task RunAllMethods()
@@ -70,10 +68,10 @@ class UserScriptClass
         foreach (var method in Methods) await RunMethod(method);
     }
 
-    string GetConcatedMethodNameWithClass(string methodName)
+    internal string GetConcatedMethodNameWithClass(string methodName)
     {
         return CombineClassAndMethod(ClassName, methodName);
     }
 
-    string CombineClassAndMethod(string klass, string method) => $"{klass}::{method}";
+    internal string CombineClassAndMethod(string klass, string method) => $"{klass}::{method}";
 }

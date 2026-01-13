@@ -1,25 +1,22 @@
 import type { RouteSectionProps } from '@solidjs/router'
 import { HassCtx } from '../context'
-import { createEffect, createSignal, useContext } from 'solid-js'
+import { useContext } from 'solid-js'
 import type { UserScriptDTO } from '../types'
+import { useQuery } from '@tanstack/solid-query'
 
 export const AutomationsListView = (_props: RouteSectionProps) => {
   const hass = useContext(HassCtx)!
-  const [userFiles, setUserFiles] = createSignal<UserScriptDTO[]>([])
 
-  createEffect(async () => {
-    try {
-      const files = await hass.callApi<UserScriptDTO[]>('GET', 'hass-sharp/automations')
-      setUserFiles(files)
-    } catch (e) {
-      console.error('Failed to get user files', e)
-    }
-  })
+  const { data: userFiles, isPending } = useQuery(() => ({
+    queryKey: ['automations'],
+    queryFn: () => hass.callApi<UserScriptDTO[]>('GET', 'hass-sharp/automations'),
+  }))
 
   return (
     <div class="w-full overflow-y-auto p-4">
+      {isPending && <span>Loading...</span>} {/* TODO: Spinner */}
       <ha-md-list class="w-full p-0! rounded-md">
-        {userFiles().map(file => (
+        {userFiles?.map(file => (
           <>
             <ha-md-list-item>
               <div slot="headline" class="font-bold text-blue-400">

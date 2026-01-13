@@ -1,8 +1,8 @@
 namespace HassSharp;
 
-class InitializingException : Exception
+class HassSharpInitializingException : Exception
 {
-    public InitializingException() : base("User Script Initializing")
+    public HassSharpInitializingException() : base("User Script Initializing")
     {
     }
 }
@@ -14,6 +14,6 @@ public abstract class UserScriptClassBase
 
     protected void InitGuard()
     {
-        if (Initializing) throw new InitializingException();
+        if (Initializing) throw new HassSharpInitializingException();
     }
 }

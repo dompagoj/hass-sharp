@@ -15,17 +15,19 @@ class UserScriptManager
 
     readonly List<UserScript> _userScripts = new();
     public DependencyTracking DependencyTracking { get; } = new();
+    public ScriptSyncRunner SyncRunner { get; } = new();
 
     public List<UserScript> GetUserScripts() => _userScripts;
 
     public UserScript? GetUserScript(string scriptSlug) =>
         _userScripts.FirstOrDefault(s => s.CompiledScript.Slug() == scriptSlug);
 
-    public void UnloadUserScripts()
+    public async Task UnloadUserScripts()
     {
         PyInterop.UnSubscribeAllFromEntityTracking();
         DependencyTracking.Clear();
         _userScripts.Clear();
+        await SyncRunner.Clear();
     }
 
     public UserScript LoadUserScript(CompiledUserScript compiledScript)
@@ -48,10 +50,8 @@ class UserScriptManager
         return userScript;
     }
 
-    public void LoadUserScripts(IEnumerable<CompiledUserScript> compiledScripts)
-    {
-        foreach (var compiled in compiledScripts) LoadUserScript(compiled);
-    }
+    public Task LoadUserScripts(IEnumerable<CompiledUserScript> compiledScripts)
+        => Task.WhenAll(compiledScripts.Select(s => LoadUserScript(s).Initialize()));
 
 
     public void TrackEntityCall(string entityId, UserScriptClass scriptClass, string method) =>
@@ -76,16 +76,6 @@ class UserScriptManager
         }
     }
 
-    public Task InitializeUserScripts() => Task.WhenAll(_userScripts.Select(InitializeUserScript));
-
-    async Task InitializeUserScript(UserScript userScript)
-    {
-        await Task.WhenAll(userScript.Classes.Select(InitializeUserScriptClass));
-        await userScript.WriteIfDirty();
-    }
-
-    Task InitializeUserScriptClass(UserScriptClass klass) => klass.Initialize();
-
     public async Task UpdateUserScript(CompiledUserScript compiled)
     {
         var foundIdx = _userScripts.FindIndex(s => s.CompiledScript.Id() == compiled.Id());
@@ -98,23 +88,22 @@ class UserScriptManager
 
         try
         {
-            DependencyTracking.RemoveScript(found);
+            await found.DisposeAsync();
             loadedScript = LoadUserScript(compiled);
 
             Logger.Info("Initializing newly loaded scripts");
-            await InitializeUserScript(loadedScript);
+            await loadedScript.Initialize();
         }
         catch (Exception ex) when (ex is not TargetInvocationException)
         {
             // Restore the original script
             Logger.Error($"Failed to update user script {ex.Message} {ex.InnerException?.Message}");
             if (loadedScript != null) _userScripts.Remove(loadedScript);
-            await InitializeUserScript(found);
+            await found.Initialize();
             _userScripts.Add(found);
             throw;
         }
 
-        // TODO: Remove
         DependencyTracking.Debug();
     }
 
@@ -127,6 +116,6 @@ class UserScriptManager
                                          """;
         var compiled =
             await compiler.CompileFromUserScriptFile(scriptName, emptyScriptSource, false);
-        await InitializeUserScript(LoadUserScript(compiled));
+        await LoadUserScript(compiled).Initialize();
     }
 }
