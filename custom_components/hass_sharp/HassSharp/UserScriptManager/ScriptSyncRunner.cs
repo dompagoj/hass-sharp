@@ -110,7 +110,7 @@ class ScriptSyncRunner
             catch (Exception ex)
             {
                 Logger.Error(
-                    $"Error running automation {classMethodName}\n{ex.Message}\n{ex.StackTrace}");
+                    $"Error running automation {classMethodName}\n{ex.Message} {ex.InnerException?.Message}\n{ex.StackTrace}");
             }
             finally
             {

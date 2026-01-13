@@ -13,7 +13,7 @@ public class EntityRef<T>
 
     internal EntityRef(HasEntityState raw) => Raw = raw;
 
-    internal TValue? GetAttribute<TValue>(string key)
+    public TValue? GetAttribute<TValue>(string key)
     {
         var found = Raw.Attributes.TryGetValue(key, out var value);
         if (!found) return default;
@@ -83,7 +83,7 @@ public static class EntityRefExtensions
     extension(EntityRef<HaUnknown> unknown)
     {
         public string Value => unknown.Raw.State;
-        public EntityRef<T> As<T>() => (unknown as EntityRef<T>)!;
+        public EntityRef<T> As<T>() => new(unknown.Raw);
     }
 
     extension(EntityRef<HaInputNumber> num)
