@@ -80,7 +80,6 @@ def install_dotnet(install_dir: str):
         with tempfile.TemporaryDirectory() as temp_dir:
             tar_path = os.path.join(temp_dir, "dotnet.tar.gz")
             
-            logger.info("Downloading .NET SDK from %s", url)
             # Use a longer timeout for the download
             request = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(request, timeout=300) as response, open(tar_path, 'wb') as out_file:

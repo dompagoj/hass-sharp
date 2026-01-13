@@ -95,5 +95,16 @@ public abstract class Automation : UserScriptClassBase
         };
     }
 
+    protected EntityRef<T> EntityUntracked<T>(string entityId)
+    {
+        var raw = GetEntityValueUntracked(entityId);
+        if (raw == null) throw new($"Entity with id {entityId} not found");
+        return new()
+        {
+            Raw = raw,
+        };
+    }
+
+
     public HassServices Services() => HassServices.Instance();
 }

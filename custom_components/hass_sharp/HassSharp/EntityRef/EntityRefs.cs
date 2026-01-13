@@ -56,7 +56,7 @@ public class EntityRefWrapper<T>
 
 public class HaSwitch(string entityId) : EntityRefWrapper<HaSwitch>(entityId);
 
-public sealed class HaLight(string entityId) : HaSwitch(entityId);
+public sealed class HaLight(string entityId) : EntityRefWrapper<HaLight>(entityId);
 
 public sealed class HaInputNumber(string entityId) : EntityRefWrapper<HaInputNumber>(entityId);
 
