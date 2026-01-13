@@ -58,20 +58,14 @@ public abstract class Automation : UserScriptClassBase
 
         if (raw == null) throw new($"Entity with id {entityWrapper.EntityId} not found");
 
-        return new()
-        {
-            Raw = raw,
-        };
+        return new(raw);
     }
 
-    protected EntityRef<string> Entity(string entityId, [CallerMemberName] string? caller = null)
+    protected EntityRef<HaUnknown> Entity(string entityId, [CallerMemberName] string? caller = null)
     {
         var raw = GetEntityValueTracked(entityId, caller!);
         if (raw == null) throw new($"Entity with id {entityId} not found");
-        return new()
-        {
-            Raw = raw,
-        };
+        return new(raw);
     }
 
     protected EntityRef<T> EntityUntracked<T>(EntityRefWrapper<T> entityRefWrapper)
@@ -79,30 +73,14 @@ public abstract class Automation : UserScriptClassBase
     {
         var raw = GetEntityValueUntracked(entityRefWrapper.EntityId);
         if (raw == null) throw new($"Entity with id {entityRefWrapper.EntityId} not found");
-        return new()
-        {
-            Raw = raw,
-        };
+        return new(raw);
     }
 
-    protected EntityRef<string> EntityUntracked(string entityId)
+    protected EntityRef<HaUnknown> EntityUntracked(string entityId)
     {
         var raw = GetEntityValueUntracked(entityId);
         if (raw == null) throw new($"Entity with id {entityId} not found");
-        return new()
-        {
-            Raw = raw,
-        };
-    }
-
-    protected EntityRef<T> EntityUntracked<T>(string entityId)
-    {
-        var raw = GetEntityValueUntracked(entityId);
-        if (raw == null) throw new($"Entity with id {entityId} not found");
-        return new()
-        {
-            Raw = raw,
-        };
+        return new(raw);
     }
 
 

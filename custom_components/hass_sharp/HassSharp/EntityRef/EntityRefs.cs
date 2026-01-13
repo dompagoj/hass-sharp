@@ -2,8 +2,16 @@ namespace HassSharp;
 
 public class EntityRef<T>
 {
-    public required HasEntityState Raw { get; init; }
+    internal HasEntityState Raw { get; init; }
+
     public string EntityId => Raw.EntityId;
+
+    public double LastChanged => Raw.LastChanged;
+    public double LastReported => Raw.LastReported;
+    public string ObjectId => Raw.ObjectId;
+    public string Domain => Raw.Domain;
+
+    internal EntityRef(HasEntityState raw) => Raw = raw;
 
     internal TValue? GetAttribute<TValue>(string key)
     {
@@ -18,11 +26,7 @@ public class EntityRef<T>
         get
         {
             if (Raw.OldState == null) return null;
-            return new()
-            {
-                // Automation = Automation,
-                Raw = Raw.OldState
-            };
+            return new(Raw.OldState);
         }
     }
 
@@ -70,15 +74,16 @@ public sealed class HaInputButton(string entityId) : EntityRefWrapper<HaInputBut
 
 public sealed class HaMediaPlayer(string entityId) : EntityRefWrapper<HaMediaPlayer>(entityId);
 
-public sealed class HaUnknownString(string entityId) : EntityRefWrapper<HaUnknownString>(entityId);
+public sealed class HaUnknown(string entityId) : EntityRefWrapper<HaUnknown>(entityId);
 
 public sealed class ShellyButton(string entityId) : EntityRefWrapper<ShellyButton>(entityId);
 
 public static class EntityRefExtensions
 {
-    extension(EntityRef<HaUnknownString> unknown)
+    extension(EntityRef<HaUnknown> unknown)
     {
         public string Value => unknown.Raw.State;
+        public EntityRef<T> As<T>() => (unknown as EntityRef<T>)!;
     }
 
     extension(EntityRef<HaInputNumber> num)
@@ -129,16 +134,17 @@ public static class EntityRefExtensions
 
     extension(EntityRef<ShellyButton> btn)
     {
-        bool GetState(string state) => btn.GetAttribute<string>("event_type") == state;
         public string? Value => btn.GetAttribute<string>("event_type");
 
-        public bool IsSinglePress() => GetState(btn, "press");
-        public bool IsDoublePress() => GetState(btn, "double_press");
-        public bool IsTriplePress() => GetState(btn, "triple_press");
-        public bool IsLongPress() => GetState(btn, "long_press");
-        public bool IsLongDoublePress() => GetState(btn, "long_double_press");
-        public bool IsLongTriplePress() => GetState(btn, "long_triple_press");
-        public bool IsHoldPress() => GetState(btn, "hold_press");
+        bool IsState(string state) => btn.Value == state;
+
+        public bool IsSinglePress() => IsState(btn, "press");
+        public bool IsDoublePress() => IsState(btn, "double_press");
+        public bool IsTriplePress() => IsState(btn, "triple_press");
+        public bool IsLongPress() => IsState(btn, "long_press");
+        public bool IsLongDoublePress() => IsState(btn, "long_double_press");
+        public bool IsLongTriplePress() => IsState(btn, "long_triple_press");
+        public bool IsHoldPress() => IsState(btn, "hold_press");
     }
 
     extension(EntityRef<HaSun> sun)
