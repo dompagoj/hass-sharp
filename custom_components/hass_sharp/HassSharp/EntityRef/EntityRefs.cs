@@ -161,17 +161,11 @@ public static class EntityRefExtensions
         {
             HassServices.CallService("media_player", "play_media", new
             {
-                target = new
+                entity_id = p.EntityId,
+                media = new
                 {
-                    entity_id = p.EntityId,
-                },
-                data = new
-                {
-                    media = new
-                    {
-                        media_content_id = $"media-source://media_source/local/{media}",
-                        media_content_type = mediaContentType ?? "audio/mpeg",
-                    }
+                    media_content_id = $"media-source://media_source/local/{media}",
+                    media_content_type = mediaContentType ?? "audio/mpeg",
                 }
             });
         }
@@ -180,33 +174,21 @@ public static class EntityRefExtensions
         {
             HassServices.CallService("tss", "speak", new
             {
-                target = new
-                {
-                    entity_id = ttsEnttiyId ?? "tts.google_en.com"
-                },
-                data = new
-                {
-                    cache = true,
-                    media_player_entity_id = p.EntityId,
-                    message = speech,
-                }
+                entity_id = ttsEnttiyId ?? "tts.google_en.com",
+                cache = true,
+                media_player_entity_id = p.EntityId,
+                message = speech,
             });
         }
 
-        public void SetVolumeLevel(float level)
+        public void SetVolumeLevel(double level)
         {
             level = Math.Clamp(level, 0, 1);
 
             HassServices.CallService("media_player", "volume_set", new
             {
-                target = new
-                {
-                    entity_id = p.EntityId,
-                },
-                data = new
-                {
-                    volume_level = level,
-                }
+                entity_id = p.EntityId,
+                volume_level = level,
             });
         }
     }

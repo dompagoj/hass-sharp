@@ -16,12 +16,15 @@ public class HassServices
         return _instance;
     }
 
-    public static void CallService<T>(string domain, string service, T? data = default)
+    internal static void CallService<T>(string domain, string service, T? data = default)
     {
         var json = data != null ? JsonSerializer.Serialize(data) : null;
         Logger.Debug($"Calling service: {domain}.{service} with data: {json}");
         PyInterop.CallService(domain, service, json);
     }
+
+    public void Call<T>(string domain, string service, T? data = default) =>
+        CallService(domain, service, data);
 }
 
 public class NotificationService
