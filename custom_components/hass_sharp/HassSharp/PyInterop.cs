@@ -44,9 +44,25 @@ public static class Logger
 
     public static bool IsLevel(PyLogLevel level) => level >= Level;
 
+
+    public static void Debug(ref DebugLogHandler handler)
+    {
+        if (handler.IsEnabled) Log(PyLogLevel.Debug, handler.ToStringAndClear());
+    }
+
+    public static void Debug(string msg)
+    {
+        if (IsLevel(PyLogLevel.Debug)) Log(PyLogLevel.Debug, msg);
+    }
+
     public static void Info(ref InfoLogHandler handler)
     {
         if (handler.IsEnabled) Log(PyLogLevel.Info, handler.ToStringAndClear());
+    }
+
+    public static void Info(string msg)
+    {
+        if (IsLevel(PyLogLevel.Info)) Log(PyLogLevel.Info, msg);
     }
 
     public static void Warn(ref WarnLogHandler handler)
@@ -54,14 +70,20 @@ public static class Logger
         if (handler.IsEnabled) Log(PyLogLevel.Warn, handler.ToStringAndClear());
     }
 
-    public static void Debug(ref DebugLogHandler handler)
+    public static void Warn(string msg)
     {
-        if (handler.IsEnabled) Log(PyLogLevel.Debug, handler.ToStringAndClear());
+        if (IsLevel(PyLogLevel.Warn)) Log(PyLogLevel.Warn, msg);
     }
+
 
     public static void Error(ref ErrorLogHandler handler)
     {
         if (handler.IsEnabled) Log(PyLogLevel.Error, handler.ToStringAndClear());
+    }
+
+    public static void Error(string msg)
+    {
+        if (IsLevel(PyLogLevel.Error)) Log(PyLogLevel.Error, msg);
     }
 }
 
