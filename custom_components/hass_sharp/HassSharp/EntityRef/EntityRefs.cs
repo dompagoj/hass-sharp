@@ -1,6 +1,6 @@
 namespace HassSharp;
 
-public class EntityRef<T>
+public readonly struct EntityRef<T>
 {
     internal HasEntityState Raw { get; init; }
 
@@ -33,7 +33,7 @@ public class EntityRef<T>
     public bool StateChanged()
     {
         if (Previous == null) return true;
-        return Raw.State != Previous.Raw.State;
+        return Raw.State != Previous.Value.Raw.State;
     }
 
     public bool AttributeChanged(string key)
@@ -41,7 +41,7 @@ public class EntityRef<T>
         if (Previous == null) return true;
 
         var hasNew = Raw.Attributes.TryGetValue(key, out var newValue);
-        var hasOld = Previous.Raw.Attributes.TryGetValue(key, out var oldValue);
+        var hasOld = Previous.Value.Raw.Attributes.TryGetValue(key, out var oldValue);
 
         if (hasNew != hasOld) return true;
         if (!hasNew) return false;
@@ -169,13 +169,8 @@ public static class EntityRefExtensions
                 {
                     media = new
                     {
-                        media_content_id = $"media-source://local/{media}",
+                        media_content_id = $"media-source://media_source/local/{media}",
                         media_content_type = mediaContentType ?? "audio/mpeg",
-                        metadata = new
-                        {
-                            title = media,
-                            media_class = "music"
-                        }
                     }
                 }
             });

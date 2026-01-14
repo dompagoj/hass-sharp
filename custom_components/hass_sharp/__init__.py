@@ -122,9 +122,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         entity_state = hass.states.get(entity_id)
         return csharp_converters.to_has_entity_state(entity_state)
 
+    # TODO: See if this can be awaited on the c# side by using blocking=True in .async_call
     def call_service(domain: str, service: str, data_json: str):
         data = json.loads(data_json) if data_json else None
-        hass.add_job(hass.services.async_call(domain, service, data))
+        hass.services.async_call(domain, service, data)
 
     def unsub_from_entity(entity_id: str):
         unsubs.pop(entity_id)()
