@@ -175,5 +175,39 @@ public static class EntityRefExtensions
                 }
             });
         }
+
+        public void TextToSpeech(string speech, string? ttsEnttiyId = null)
+        {
+            HassServices.CallService("tss", "speak", new
+            {
+                target = new
+                {
+                    entity_id = ttsEnttiyId ?? "tts.google_en.com"
+                },
+                data = new
+                {
+                    cache = true,
+                    media_player_entity_id = p.EntityId,
+                    message = speech,
+                }
+            });
+        }
+
+        public void SetVolumeLevel(float level)
+        {
+            level = Math.Clamp(level, 0, 1);
+
+            HassServices.CallService("media_player", "volume_set", new
+            {
+                target = new
+                {
+                    entity_id = p.EntityId,
+                },
+                data = new
+                {
+                    volume_level = level,
+                }
+            });
+        }
     }
 }
