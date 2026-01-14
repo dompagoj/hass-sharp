@@ -143,13 +143,13 @@ public static class EntityRefExtensions
 
         bool IsState(string state) => btn.Value == state;
 
-        public bool IsSinglePress() => IsState(btn, "press");
-        public bool IsDoublePress() => IsState(btn, "double_press");
-        public bool IsTriplePress() => IsState(btn, "triple_press");
-        public bool IsLongPress() => IsState(btn, "long_press");
-        public bool IsLongDoublePress() => IsState(btn, "long_double_press");
-        public bool IsLongTriplePress() => IsState(btn, "long_triple_press");
-        public bool IsHoldPress() => IsState(btn, "hold_press");
+        public bool IsSinglePress() => btn.IsState("press");
+        public bool IsDoublePress() => btn.IsState("double_press");
+        public bool IsTriplePress() => btn.IsState("triple_press");
+        public bool IsLongPress() => btn.IsState("long_press");
+        public bool IsLongDoublePress() => btn.IsState("long_double_press");
+        public bool IsLongTriplePress() => btn.IsState("long_triple_press");
+        public bool IsHoldPress() => btn.IsState("hold_press");
     }
 
     extension(EntityRef<HaSun> sun)
