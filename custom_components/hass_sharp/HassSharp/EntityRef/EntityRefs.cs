@@ -1,8 +1,8 @@
 namespace HassSharp;
 
-public readonly struct EntityRef<T>
+public struct EntityRef<T>
 {
-    internal HasEntityState Raw { get; init; }
+    internal HasEntityState Raw { get; private set; }
 
     public string EntityId => Raw.EntityId;
 
@@ -47,6 +47,11 @@ public readonly struct EntityRef<T>
         if (!hasNew) return false;
 
         return newValue == oldValue;
+    }
+
+    public void Refresh()
+    {
+        Raw = PyInterop.Entity(EntityId) ?? Raw;
     }
 }
 
@@ -157,6 +162,12 @@ public static class EntityRefExtensions
 
     extension(EntityRef<HaMediaPlayer> p)
     {
+        public void TurnOn() => HassServices.CallService("media_player", "turn_on", new { entity_id = p.EntityId });
+        public void TurnOff() => HassServices.CallService("media_player", "turn_off", new { entity_id = p.EntityId });
+        public void Toggle() => HassServices.CallService("media_player", "toggle", new { entity_id = p.EntityId });
+
+        public double VolumeLevel => p.GetAttribute<double>("volume_level");
+
         public void PlayMedia(string media, string? mediaContentType = null)
         {
             HassServices.CallService("media_player", "play_media", new
