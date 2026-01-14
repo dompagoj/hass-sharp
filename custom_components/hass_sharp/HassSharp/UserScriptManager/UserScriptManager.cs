@@ -93,6 +93,8 @@ class UserScriptManager
 
             Logger.Info("Initializing newly loaded scripts");
             await loadedScript.Initialize();
+            await loadedScript
+                .WriteIfDirty(); // TODO maybe make this a single call? its easy to forget not to write to disk
         }
         catch (Exception ex) when (ex is not TargetInvocationException)
         {
@@ -100,6 +102,7 @@ class UserScriptManager
             Logger.Error($"Failed to update user script {ex.Message} {ex.InnerException?.Message}");
             if (loadedScript != null) _userScripts.Remove(loadedScript);
             await found.Initialize();
+            await found.WriteToDisk();
             _userScripts.Add(found);
             throw;
         }

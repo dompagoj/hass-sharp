@@ -72,11 +72,7 @@ class DependencyTracking
                             {string.Join(',', entries.Select(e => $"{e.ScriptClass.ClassName}:{e.MethodName}"))}
                     """;
         });
-        Logger.Debug($"""
-
-                      Currently tracking:
-                          {string.Join('\n', str)}
-                      """);
+        Logger.Debug($"Currently tracking: {string.Join(',', str)}");
     }
 
     public List<DependencyEntry> GetEntries(string entityId) => _dependencyTracking[entityId];
