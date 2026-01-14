@@ -30,12 +30,119 @@ public static class Logger
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Log(PyLogLevel level, string msg) => PyInterop.Log((int)level, msg);
 
-    public static PyLogLevel Level => (PyLogLevel)PyInterop.LogLevel;
+    static PyLogLevel? _level;
 
-    public static void Info(string msg) => Log(PyLogLevel.Info, msg);
-    public static void Warn(string msg) => Log(PyLogLevel.Warn, msg);
-    public static void Debug(string msg) => Log(PyLogLevel.Debug, msg);
-    public static void Error(string msg) => Log(PyLogLevel.Error, msg);
+    public static PyLogLevel Level
+    {
+        get
+        {
+            _level ??= (PyLogLevel)PyInterop.LogLevel;
+
+            return _level.Value;
+        }
+    }
+
+    public static bool IsLevel(PyLogLevel level) => level >= Level;
+
+    public static void Info(ref InfoLogHandler handler)
+    {
+        if (handler.IsEnabled) Log(PyLogLevel.Info, handler.ToStringAndClear());
+    }
+
+    public static void Warn(ref WarnLogHandler handler)
+    {
+        if (handler.IsEnabled) Log(PyLogLevel.Warn, handler.ToStringAndClear());
+    }
+
+    public static void Debug(ref DebugLogHandler handler)
+    {
+        if (handler.IsEnabled) Log(PyLogLevel.Debug, handler.ToStringAndClear());
+    }
+
+    public static void Error(ref ErrorLogHandler handler)
+    {
+        if (handler.IsEnabled) Log(PyLogLevel.Error, handler.ToStringAndClear());
+    }
+}
+
+[InterpolatedStringHandler]
+public ref struct InfoLogHandler
+{
+    private DefaultInterpolatedStringHandler _innerHandler;
+    public bool IsEnabled { get; }
+
+    public InfoLogHandler(int literalLength, int formattedCount, out bool isEnabled)
+    {
+        isEnabled = Logger.IsLevel(PyLogLevel.Info);
+        IsEnabled = isEnabled;
+        _innerHandler = isEnabled
+            ? new DefaultInterpolatedStringHandler(literalLength, formattedCount)
+            : default;
+    }
+
+    public void AppendLiteral(string value) => _innerHandler.AppendLiteral(value);
+    public void AppendFormatted<T>(T value) => _innerHandler.AppendFormatted(value);
+    public string ToStringAndClear() => _innerHandler.ToStringAndClear();
+}
+
+[InterpolatedStringHandler]
+public ref struct DebugLogHandler
+{
+    private DefaultInterpolatedStringHandler _innerHandler;
+    public bool IsEnabled { get; }
+
+    public DebugLogHandler(int literalLength, int formattedCount, out bool isEnabled)
+    {
+        isEnabled = Logger.IsLevel(PyLogLevel.Debug);
+        IsEnabled = isEnabled;
+        _innerHandler = isEnabled
+            ? new DefaultInterpolatedStringHandler(literalLength, formattedCount)
+            : default;
+    }
+
+    public void AppendLiteral(string value) => _innerHandler.AppendLiteral(value);
+    public void AppendFormatted<T>(T value) => _innerHandler.AppendFormatted(value);
+    public string ToStringAndClear() => _innerHandler.ToStringAndClear();
+}
+
+[InterpolatedStringHandler]
+public ref struct WarnLogHandler
+{
+    private DefaultInterpolatedStringHandler _innerHandler;
+    public bool IsEnabled { get; }
+
+    public WarnLogHandler(int literalLength, int formattedCount, out bool isEnabled)
+    {
+        isEnabled = Logger.IsLevel(PyLogLevel.Warn);
+        IsEnabled = isEnabled;
+        _innerHandler = isEnabled
+            ? new DefaultInterpolatedStringHandler(literalLength, formattedCount)
+            : default;
+    }
+
+    public void AppendLiteral(string value) => _innerHandler.AppendLiteral(value);
+    public void AppendFormatted<T>(T value) => _innerHandler.AppendFormatted(value);
+    public string ToStringAndClear() => _innerHandler.ToStringAndClear();
+}
+
+[InterpolatedStringHandler]
+public ref struct ErrorLogHandler
+{
+    private DefaultInterpolatedStringHandler _innerHandler;
+    public bool IsEnabled { get; }
+
+    public ErrorLogHandler(int literalLength, int formattedCount, out bool isEnabled)
+    {
+        isEnabled = Logger.IsLevel(PyLogLevel.Error);
+        IsEnabled = isEnabled;
+        _innerHandler = isEnabled
+            ? new DefaultInterpolatedStringHandler(literalLength, formattedCount)
+            : default;
+    }
+
+    public void AppendLiteral(string value) => _innerHandler.AppendLiteral(value);
+    public void AppendFormatted<T>(T value) => _innerHandler.AppendFormatted(value);
+    public string ToStringAndClear() => _innerHandler.ToStringAndClear();
 }
 
 public static class PyInterop

@@ -2,8 +2,6 @@ using System.Text.Json;
 
 namespace HassSharp;
 
-// TODO
-
 public class HassServices
 {
     static HassServices? _instance;
@@ -21,6 +19,7 @@ public class HassServices
     public static void CallService<T>(string domain, string service, T? data = default)
     {
         var json = data != null ? JsonSerializer.Serialize(data) : null;
+        Logger.Debug($"Calling service: {domain}.{service} with data: {json}");
         PyInterop.CallService(domain, service, json);
     }
 }
