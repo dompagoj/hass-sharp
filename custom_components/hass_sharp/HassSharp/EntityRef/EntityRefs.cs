@@ -172,7 +172,7 @@ public static class EntityRefExtensions
 
         public void TextToSpeech(string speech, string? ttsEnttiyId = null)
         {
-            HassServices.CallService("tss", "speak", new
+            HassServices.CallService("tts", "speak", new
             {
                 entity_id = ttsEnttiyId ?? "tts.google_en.com",
                 cache = true,
