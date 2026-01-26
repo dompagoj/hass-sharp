@@ -123,9 +123,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         return csharp_converters.to_has_entity_state(entity_state)
 
     # TODO: See if this can be awaited on the c# side by using blocking=True in .async_call
-    def call_service(domain: str, service: str, data_json: str):
+    def call_service(domain: str, service: str, data_json: str, callback_on_done: Action):
         data = json.loads(data_json) if data_json else None
-        hass.add_job(hass.services.async_call(domain, service, data))
+
+        async def call_and_callback():
+            await hass.services.async_call(domain, service, data, blocking=callback_on_done is not None)
+            if callback_on_done:
+                await hass.async_add_executor_job(callback_on_done)
+
+        hass.add_job(call_and_callback())
 
     def unsub_from_entity(entity_id: str):
         unsubs.pop(entity_id)()
@@ -143,7 +149,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     PyInterop.Log = Action[Int32, String](python_log)
     PyInterop.LogLevel = logger.level
     PyInterop.Entity = Func[String, HasEntityState](entity)
-    PyInterop.CallService = Action[String, String, String](call_service)
+    PyInterop.CallService = Action[String, String, String, Action](call_service)
     PyInterop.UnSubscribeFromEntityTracking = Action[String](unsub_from_entity)
     PyInterop.UnSubscribeAllFromEntityTracking = Action(unbsub_all)
     PyInterop.SubscribeToEntityTracking = Action[String](subscribe_to_entity_change)

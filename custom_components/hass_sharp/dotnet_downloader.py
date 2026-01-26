@@ -67,7 +67,6 @@ def install_dotnet(install_dir: str):
         logger.error("Unsupported architecture: %s", platform.machine())
         return False
 
-    # Log environment info to help debugging
     system = platform.system().lower()
     is_alpine = os.path.exists("/etc/alpine-release")
     logger.info("Detected environment: %s, machine: %s, arch: %s, is_alpine: %s", 
@@ -80,7 +79,6 @@ def install_dotnet(install_dir: str):
         with tempfile.TemporaryDirectory() as temp_dir:
             tar_path = os.path.join(temp_dir, "dotnet.tar.gz")
             
-            # Use a longer timeout for the download
             request = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(request, timeout=300) as response, open(tar_path, 'wb') as out_file:
                 shutil.copyfileobj(response, out_file)
@@ -92,7 +90,6 @@ def install_dotnet(install_dir: str):
             with tarfile.open(tar_path, "r:gz") as tar:
                 tar.extractall(path=install_dir)
         
-        # Ensure the dotnet executable is runnable
         dotnet_exe = os.path.join(install_dir, "dotnet")
         if os.path.exists(dotnet_exe):
             os.chmod(dotnet_exe, 0o755)

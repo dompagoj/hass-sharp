@@ -84,5 +84,5 @@ public abstract class Automation : UserScriptClassBase
     }
 
 
-    public HassServices Services() => HassServices.Instance();
+    public HassServices Services() => HassServices.Instance;
 }

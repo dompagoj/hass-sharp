@@ -172,7 +172,7 @@ public static class PyInterop
     public static Action<int, string> Log { get; set; } = null!;
     public static int LogLevel { get; set; }
     public static GetEntity Entity { get; set; } = null!;
-    public static Action<string, string, string?> CallService { get; set; } = null!;
+    public static Action<string, string, string?, Action?> CallService { get; set; } = null!;
     public static Action<string> UnSubscribeFromEntityTracking { get; set; } = null!;
     public static Action<string> SubscribeToEntityTracking { get; set; } = null!;
     public static Action UnSubscribeAllFromEntityTracking { get; set; } = null!;

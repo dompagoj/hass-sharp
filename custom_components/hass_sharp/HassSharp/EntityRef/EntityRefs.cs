@@ -1,3 +1,5 @@
+using System.Diagnostics.Contracts;
+
 namespace HassSharp;
 
 public struct EntityRef<T>
@@ -81,6 +83,8 @@ public sealed class HaMediaPlayer(string entityId) : EntityRefWrapper<HaMediaPla
 
 public sealed class HaUnknown(string entityId) : EntityRefWrapper<HaUnknown>(entityId);
 
+public sealed class HaMotionSensor(string entityId) : EntityRefWrapper<HaMotionSensor>(entityId);
+
 public sealed class ShellyButton(string entityId) : EntityRefWrapper<ShellyButton>(entityId);
 
 public static class EntityRefExtensions
@@ -95,14 +99,8 @@ public static class EntityRefExtensions
     {
         public float Value => float.Parse(num.Raw.State);
 
-        public void SetValue(int value)
-        {
-            HassServices.CallService("input_number", "set_value", new
-            {
-                entity_id = num.EntityId,
-                value,
-            });
-        }
+        [Pure]
+        public ServiceCall SetValue(int value) => HassServices.InputNumber.SetValue(num.EntityId, value);
     }
 
     extension(EntityRef<HaSwitch> sw)
@@ -110,31 +108,23 @@ public static class EntityRefExtensions
         public bool IsOn() => sw.Raw.State == "on";
         public bool IsOff() => sw.Raw.State == "off";
 
-        public void TurnOn()
-        {
-            if (sw.IsOn()) return;
-            HassServices.CallService("switch", "turn_on", new
-            {
-                entity_id = sw.EntityId,
-            });
-        }
+        public ServiceCall TurnOn() => HassServices.Switch.TurnOn(sw.EntityId);
+        public ServiceCall TurnOff() => HassServices.Switch.TurnOff(sw.EntityId);
+        public ServiceCall Toggle() => HassServices.Switch.Toggle(sw.EntityId);
+    }
 
-        public void TurnOff()
-        {
-            if (sw.IsOff()) return;
-            HassServices.CallService("switch", "turn_off", new
-            {
-                entity_id = sw.EntityId,
-            });
-        }
+    extension(EntityRef<HaBinarySensor> s)
+    {
+        public bool isState(string state) => s.Raw.State == state;
+        public bool isOn() => s.Raw.State == "on";
+        public bool isOff() => s.Raw.State == "off";
 
-        public void Toggle()
-        {
-            HassServices.CallService("switch", "toggle", new
-            {
-                entity_id = sw.EntityId,
-            });
-        }
+        public EntityRef<HaMotionSensor> asMotion() => new(s.Raw);
+    }
+
+    extension(EntityRef<HaMotionSensor> m)
+    {
+        public bool IsMotionDetected() => m.Raw.State == "on";
     }
 
     extension(EntityRef<ShellyButton> btn)
@@ -162,45 +152,24 @@ public static class EntityRefExtensions
 
     extension(EntityRef<HaMediaPlayer> p)
     {
-        public void TurnOn() => HassServices.CallService("media_player", "turn_on", new { entity_id = p.EntityId });
-        public void TurnOff() => HassServices.CallService("media_player", "turn_off", new { entity_id = p.EntityId });
-        public void Toggle() => HassServices.CallService("media_player", "toggle", new { entity_id = p.EntityId });
+        public ServiceCall TurnOn() => HassServices.MediaPlayer.TurnOn(p.EntityId);
 
+        public ServiceCall TurnOff() => HassServices.MediaPlayer.TurnOff(p.EntityId);
+
+        public ServiceCall Toggle() => HassServices.MediaPlayer.Toggle(p.EntityId);
+
+        /// <summary>
+        /// Will be 0 if the media player is off, call TurnOn first and then Refresh before calling this
+        /// </summary>
         public double VolumeLevel => p.GetAttribute<double>("volume_level");
 
-        public void PlayMedia(string media, string? mediaContentType = null)
-        {
-            HassServices.CallService("media_player", "play_media", new
-            {
-                entity_id = p.EntityId,
-                media = new
-                {
-                    media_content_id = $"media-source://media_source/local/{media}",
-                    media_content_type = mediaContentType ?? "audio/mpeg",
-                }
-            });
-        }
+        public ServiceCall PlayLocal(string media, string? mediaContentType = null)
+            => HassServices.MediaPlayer.MediaPlayLocal(p.EntityId, media, mediaContentType);
 
-        public void TextToSpeech(string speech, string? ttsEnttiyId = null)
-        {
-            HassServices.CallService("tts", "speak", new
-            {
-                entity_id = ttsEnttiyId ?? "tts.google_en.com",
-                cache = true,
-                media_player_entity_id = p.EntityId,
-                message = speech,
-            });
-        }
+        public ServiceCall TextToSpeech(string speech, string? ttsEnttiyId = null)
+            => HassServices.MediaPlayer.TextToSpeech(p.EntityId, speech, ttsEnttiyId);
 
-        public void SetVolumeLevel(double level)
-        {
-            level = Math.Clamp(level, 0, 1);
-
-            HassServices.CallService("media_player", "volume_set", new
-            {
-                entity_id = p.EntityId,
-                volume_level = level,
-            });
-        }
+        public ServiceCall SetVolumeLevel(double level)
+            => HassServices.MediaPlayer.SetVolumeLevel(p.EntityId, level);
     }
 }
