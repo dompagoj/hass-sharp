@@ -80,9 +80,10 @@ public abstract class Automation : UserScriptClassBase
     {
         var raw = GetEntityValueUntracked(entityId);
         if (raw == null) throw new($"Entity with id {entityId} not found");
+
         return new(raw);
     }
 
 
-    public HassServices Services() => HassServices.Instance;
+    public static HassServices Services => HassServices.Instance;
 }

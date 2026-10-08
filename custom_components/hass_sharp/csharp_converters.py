@@ -1,14 +1,15 @@
 from enum import Enum
 
-from HassSharp import HasEntityState
-from System import Action, String, Func, Object, Int32
+from homeassistant.core import State
+from System import Object, String
 from System.Collections.Generic import Dictionary
 
-from homeassistant.core import State
+from HassSharp import HasEntityState
 
 
 def to_has_entity_state(entity_state: State | None):
-    if entity_state is None: return None
+    if entity_state is None:
+        return None
 
     attributes_dict = Dictionary[String, Object]()
 
@@ -17,9 +18,9 @@ def to_has_entity_state(entity_state: State | None):
             v = v.value
         elif isinstance(v, (set, tuple)):
             v = list(v)
-        elif hasattr(v, 'isoformat'):
+        elif hasattr(v, "isoformat"):
             v = v.isoformat()
-        attributes_dict[k] = v
+        attributes_dict[str(k)] = v
 
     ref = HasEntityState()
     ref.EntityId = entity_state.entity_id

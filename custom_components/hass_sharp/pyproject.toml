@@ -8,3 +8,8 @@ dependencies = [
 urls = [
     "."
 ]
+
+[tool.pyright]
+venvPath = "../.."
+venv = ".venv"
+pythonVersion = "3.14"

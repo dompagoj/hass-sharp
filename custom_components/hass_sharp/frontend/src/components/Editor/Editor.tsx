@@ -5,13 +5,11 @@ import { initVimMode, type VimAdapterInstance } from 'monaco-vim'
 
 import visualAssistTheme from '../../visual-assist.json'
 
-import 'monaco-editor/min/vs/editor/editor.main.css'
 import { useHass } from '../../context'
 import { useLocalStorage } from '../../hooks'
 import { useMutation } from '@tanstack/solid-query'
 import { useEditorActions } from './editor-actions'
 
-monaco.languages.register({ id: 'csharp', extensions: ['cs'] })
 // @ts-ignore
 monaco.editor.defineTheme('visual-assist', visualAssistTheme)
 
@@ -67,7 +65,7 @@ export const Editor = (props: Props) => {
         top: 25,
       },
       hover: {
-        enabled: true,
+        enabled: 'on',
         delay: 300,
         sticky: true,
         above: true,
@@ -105,7 +103,7 @@ export const Editor = (props: Props) => {
       },
     })
 
-    return editorActions.register(editor)
+    editorActions.register(editor)
   })
 
   createEffect(() => {

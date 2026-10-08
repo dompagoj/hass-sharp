@@ -1,22 +1,21 @@
+import base64
+import json
 import os
 import sys
-from typing import Dict
 
 import pythonnet as pynet
-import json
 from clr_loader import get_coreclr
-
-from . import http, utils, websocket, dotnet_downloader
-from .const import logger, DOMAIN
-
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback, Event, EventStateChangedData
-from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.helpers.typing import ConfigType
 from homeassistant.components import frontend
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.typing import ConfigType
 
-os.environ['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT'] = 'true'
+from . import dotnet_downloader, http, utils, websocket
+from .const import logger
+
+os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "true"
 
 ROOT_DIR = os.path.dirname(os.path.realpath(__file__))
 DOTNET_ROOT_DIR = os.path.join(ROOT_DIR, "dotnet")
@@ -30,6 +29,7 @@ if HASS_SHARP_DLL_PATH not in sys.path:
     sys.path.append(HASS_SHARP_DLL_PATH)
 
 _runtime_initialized = False
+
 
 def initialize_dotnet_runtime():
     global _runtime_initialized
@@ -46,7 +46,7 @@ def initialize_dotnet_runtime():
             runtime_config=RUNTIME_CONFIG,
             properties={
                 "System.Globalization.Invariant": "true",
-            }
+            },
         )
         pynet.set_runtime(rt)
         _runtime_initialized = True
@@ -55,8 +55,19 @@ def initialize_dotnet_runtime():
         logger.error("Failed to initialize .NET runtime: %s", e)
         return False
 
+
 def python_log(level: int, message: str):
     logger.log(level, "[C#] %s", message)
+
+
+def serialize_service_response(value):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return base64.b64encode(value).decode()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if hasattr(value, "value"):
+        return value.value
+    raise TypeError(f"Cannot serialize {type(value).__name__}")
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType):
@@ -64,15 +75,18 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
         return False
 
     import clr
+
     clr.AddReference("HassSharp")
     from HassSharp import HassSharpManager
 
-    await hass.http.async_register_static_paths([
-        StaticPathConfig(
-            "/hass-sharp-static",
-            hass.config.path("custom_components/hass_sharp/www")
-        )
-    ])
+    await hass.http.async_register_static_paths(
+        [
+            StaticPathConfig(
+                "/hass-sharp-static",
+                hass.config.path("custom_components/hass_sharp/www"),
+            )
+        ]
+    )
     frontend.async_register_built_in_panel(
         hass,
         "hass-sharp-view",
@@ -85,7 +99,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
     )
 
     frontend.add_extra_js_url(hass, "/hass-sharp-static/hass-sharp.js")
-    hass_sharp = HassSharpManager(hass.config.path(''))
+    hass_sharp = HassSharpManager(hass.config.path(""))
     utils.set_hass_sharp_manager(hass, hass_sharp)
 
     websocket.register_websocket_routes(hass, hass_sharp)
@@ -93,21 +107,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
 
     return True
 
-unsubs: Dict[str, callable] = {}
+
+unsubs: dict[str, callable] = {}
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    from HassSharp import PyInterop, HasEntityState
-    from System import Action, String, Func, Object, Int32
-    from System.Collections.Generic import Dictionary
+    from System import Action, Func, Int32, String
+
+    from HassSharp import HasEntityState, PyInterop
 
     from . import csharp_converters
 
-    logger.info('Async setup entry')
-
+    logger.info("Async setup entry")
 
     hass_sharp = utils.get_hass_sharp_manager(hass)
 
-    await hass.config_entries.async_forward_entry_setups(entry, ['sensor'])
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
 
     @callback
     async def on_entity_change(event: Event[EventStateChangedData]):
@@ -115,7 +130,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         new_state = csharp_converters.to_has_entity_state(event.data.get("new_state"))
         old_state = csharp_converters.to_has_entity_state(event.data.get("old_state"))
 
-        await hass.async_add_executor_job(hass_sharp.OnTrackedEntityChange, entity_id, new_state, old_state)
+        await hass.async_add_executor_job(
+            hass_sharp.OnTrackedEntityChange, entity_id, new_state, old_state
+        )
         return True
 
     def entity(entity_id: str):
@@ -123,13 +140,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         return csharp_converters.to_has_entity_state(entity_state)
 
     # TODO: See if this can be awaited on the c# side by using blocking=True in .async_call
-    def call_service(domain: str, service: str, data_json: str, callback_on_done: Action):
+    def call_service(
+        domain: str, service: str, data_json: str, callback_on_done: Action
+    ):
         data = json.loads(data_json) if data_json else None
 
         async def call_and_callback():
-            await hass.services.async_call(domain, service, data, blocking=callback_on_done is not None)
+            await hass.services.async_call(
+                domain, service, data, blocking=callback_on_done is not None
+            )
             if callback_on_done:
                 await hass.async_add_executor_job(callback_on_done)
+
+        hass.add_job(call_and_callback())
+
+    def call_service_with_response(
+        domain: str,
+        service: str,
+        data_json: str,
+        callback_on_done: Action,
+        callback_on_error: Action,
+    ):
+        data = json.loads(data_json) if data_json else None
+
+        async def call_and_callback():
+            try:
+                response = await hass.services.async_call(
+                    domain,
+                    service,
+                    data,
+                    blocking=True,
+                    return_response=True,
+                )
+                response_json = json.dumps(
+                    response,
+                    default=serialize_service_response,
+                )
+                await hass.async_add_executor_job(callback_on_done, response_json)
+            except Exception as error:
+                await hass.async_add_executor_job(callback_on_error, str(error))
 
         hass.add_job(call_and_callback())
 
@@ -144,12 +193,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         if entity_id in unsubs:
             return
 
-        unsubs[entity_id] = async_track_state_change_event(hass, entity_id, on_entity_change)
+        unsubs[entity_id] = async_track_state_change_event(
+            hass, entity_id, on_entity_change
+        )
 
     PyInterop.Log = Action[Int32, String](python_log)
     PyInterop.LogLevel = logger.level
     PyInterop.Entity = Func[String, HasEntityState](entity)
     PyInterop.CallService = Action[String, String, String, Action](call_service)
+    PyInterop.CallServiceWithResponse = Action[
+        String, String, String, Action[String], Action[String]
+    ](call_service_with_response)
     PyInterop.UnSubscribeFromEntityTracking = Action[String](unsub_from_entity)
     PyInterop.UnSubscribeAllFromEntityTracking = Action(unbsub_all)
     PyInterop.SubscribeToEntityTracking = Action[String](subscribe_to_entity_change)
@@ -158,11 +212,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     return True
 
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass_sharp = utils.get_hass_sharp_manager(hass)
 
     await hass.async_add_executor_job(hass_sharp.UnLoad)
-    frontend.async_remove_panel(hass, 'hass-sharp')
+    frontend.async_remove_panel(hass, "hass-sharp")
 
     return True
 

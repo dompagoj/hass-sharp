@@ -8,9 +8,9 @@ public class ExampleAutomation : Automation
     {
         var button = Entity("input_button.test");
 
-        if (Initializing) return;
+        InitGuard();
 
-        var inputNumber = EntityUntracked<HaInputNumber>("input_number.test");
+        var inputNumber = EntityUntracked("input_number.test").As<HaInputNumber>();
 
         Logger.Info("Setting number from user custom dll to 50");
         inputNumber.SetValue(25);

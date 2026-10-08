@@ -1,7 +1,7 @@
 import * as monaco from 'monaco-editor'
 import type { CompletionItem, HomeAssistant } from '../../types'
 import type { MessageBase } from 'home-assistant-js-websocket'
-import { createSignal } from 'solid-js'
+import { createSignal, onCleanup } from 'solid-js'
 
 function itemToLabel(item: CompletionItem) {
   if (!item.displayTextPrefix && !item.displayTextSuffix) return item.displayText
@@ -11,25 +11,29 @@ function itemToLabel(item: CompletionItem) {
   return res
 }
 
+const tagToKindMap: { [key: string]: monaco.languages.CompletionItemKind } = {
+  Method: monaco.languages.CompletionItemKind.Method,
+  Class: monaco.languages.CompletionItemKind.Class,
+  Property: monaco.languages.CompletionItemKind.Property,
+  Enum: monaco.languages.CompletionItemKind.Enum,
+  Delegate: monaco.languages.CompletionItemKind.Function,
+  Keyword: monaco.languages.CompletionItemKind.Keyword,
+  Structure: monaco.languages.CompletionItemKind.Struct,
+  ExtensionMethod: monaco.languages.CompletionItemKind.Function,
+  Local: monaco.languages.CompletionItemKind.Variable,
+  Interface: monaco.languages.CompletionItemKind.Interface,
+  Snippet: monaco.languages.CompletionItemKind.Snippet,
+  TypeParameter: monaco.languages.CompletionItemKind.TypeParameter,
+  Namespace: monaco.languages.CompletionItemKind.Snippet,
+  Field: monaco.languages.CompletionItemKind.Field,
+  Parameter: monaco.languages.CompletionItemKind.Variable,
+}
+
 function tagsToKind(tags: string[]) {
   const first = tags[0]
+  const found = tagToKindMap[first]
 
-  if (first === 'Method') return monaco.languages.CompletionItemKind.Method
-  if (first === 'Class') return monaco.languages.CompletionItemKind.Class
-  if (first === 'Property') return monaco.languages.CompletionItemKind.Property
-  if (first === 'Enum') return monaco.languages.CompletionItemKind.Enum
-  if (first === 'Delegate') return monaco.languages.CompletionItemKind.Function
-  if (first === 'Keyword') return monaco.languages.CompletionItemKind.Keyword
-  if (first === 'Structure') return monaco.languages.CompletionItemKind.Struct
-  if (first === 'ExtensionMethod') return monaco.languages.CompletionItemKind.Function
-  if (first === 'Local') return monaco.languages.CompletionItemKind.Variable
-  if (first === 'Interface') return monaco.languages.CompletionItemKind.Interface
-  if (first === 'Snippet') return monaco.languages.CompletionItemKind.Snippet
-  if (first === 'TypeParameter') return monaco.languages.CompletionItemKind.TypeParameter
-  if (first === 'TypeParameter') return monaco.languages.CompletionItemKind.TypeParameter
-  if (first === 'Namespace') return monaco.languages.CompletionItemKind.Module
-  if (first === 'Field') return monaco.languages.CompletionItemKind.Field
-  if (first === 'Parameter') return monaco.languages.CompletionItemKind.Variable
+  if (found) return found
 
   console.warn('Unknown tag: ', first)
   return monaco.languages.CompletionItemKind.Snippet
@@ -37,6 +41,8 @@ function tagsToKind(tags: string[]) {
 
 export const useEditorActions = (hass: HomeAssistant) => {
   let completionTimeout: number
+
+  let diposer: () => void
 
   const [saveDisabled, setSaveDisabled] = createSignal(false)
 
@@ -87,9 +93,9 @@ export const useEditorActions = (hass: HomeAssistant) => {
   }
 
   const register = (editor: monaco.editor.IStandaloneCodeEditor) => {
-    monaco.languages.registerCompletionItemProvider('csharp', {
+    const disposeCompletionProvider = monaco.languages.registerCompletionItemProvider('csharp', {
       triggerCharacters: ['.'],
-      provideCompletionItems: async (model, position) => {
+      provideCompletionItems: (model, position) => {
         return new Promise(resolve => {
           clearTimeout(completionTimeout)
           completionTimeout = setTimeout(async () => {
@@ -165,8 +171,8 @@ export const useEditorActions = (hass: HomeAssistant) => {
               d.severity === 3
                 ? monaco.MarkerSeverity.Error
                 : d.severity === 2
-                ? monaco.MarkerSeverity.Warning
-                : monaco.MarkerSeverity.Info,
+                  ? monaco.MarkerSeverity.Warning
+                  : monaco.MarkerSeverity.Info,
           } as monaco.editor.IMarkerData
         })
 
@@ -186,7 +192,7 @@ export const useEditorActions = (hass: HomeAssistant) => {
       timeoutId = setTimeout(validate, 500)
     })
 
-    monaco.languages.registerHoverProvider('csharp', {
+    const disposeHoverProvider = monaco.languages.registerHoverProvider('csharp', {
       provideHover: async (model, position) => {
         const source = model.getValue()
         const offset = model.getOffsetAt(position)
@@ -213,10 +219,17 @@ export const useEditorActions = (hass: HomeAssistant) => {
     // Initial validation
     validate()
 
-    return () => {
+    diposer?.()
+    diposer = () => {
+      disposeHoverProvider.dispose()
+      disposeCompletionProvider.dispose()
       document.removeEventListener('keydown', keydownCallback)
     }
   }
+
+  onCleanup(() => {
+    diposer?.()
+  })
 
   return {
     register,

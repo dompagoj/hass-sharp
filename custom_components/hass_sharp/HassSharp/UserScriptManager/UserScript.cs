@@ -12,9 +12,16 @@ class UserScript : IAsyncDisposable
 
     internal Task Initialize() => Task.WhenAll(Classes.Select(c => c.Initialize()));
 
+    public async ValueTask UnloadAndDelete()
+    {
+        await DisposeAsync();
+        CompiledScript.DeleteFromDisk();
+    }
+
     public async ValueTask DisposeAsync()
     {
         await ScriptManager.SyncRunner.Clear(this);
         ScriptManager.DependencyTracking.RemoveScript(this);
+        ScriptManager.RemoveScriptFromList(this);
     }
 }

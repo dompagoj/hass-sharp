@@ -1,8 +1,10 @@
 from homeassistant import config_entries
 from .const import DOMAIN, logger
 
+
 class HassSharpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Example config flow."""
+
     # The schema version of the entries that it creates
     # Home Assistant will call your migrate method if the version changes
     VERSION = 1
@@ -15,8 +17,6 @@ class HassSharpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 title="Hass Sharp Integration",
                 data=info,
             )
-            
 
-        return self.async_show_form(
-            step_id="user"
-        )
+        return self.async_show_form(step_id="user")
+

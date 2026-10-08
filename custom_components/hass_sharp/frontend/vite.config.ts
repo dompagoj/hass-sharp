@@ -8,6 +8,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
   plugins: [solidPlugin(), tailwindcss()],
+  resolve: {
+    alias: [
+      {
+        find: /^monaco-editor\/esm\/vs\/editor\/editor\.api$/,
+        replacement: 'monaco-editor/editor/editor.api',
+      },
+    ],
+  },
   build: {
     target: 'esnext',
     outDir: '../www',
@@ -16,13 +24,13 @@ export default defineConfig({
       formats: ['es'],
     },
     minify: false,
-    rollupOptions: {
+    rolldownOptions: {
       external: ['lit'],
       output: {
         entryFileNames: 'hass-sharp.js',
         assetFileNames: 'hass-sharp.[ext]',
         paths: {
-          lit: 'https://unpkg.com/lit@3.3.1/index.js?module',
+          lit: 'https://unpkg.com/lit@3.3.3/index.js?module',
         },
       },
     },

@@ -26,6 +26,11 @@ public class CompiledUserScript
         await WriteToDisk();
         WrittenToDisk = true;
     }
+
+    public void DeleteFromDisk()
+    {
+        File.Delete(FilePath);
+    }
 }
 
 public class UserScriptDTO

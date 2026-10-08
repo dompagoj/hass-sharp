@@ -30,6 +30,11 @@ class UserScriptManager
         await SyncRunner.Clear();
     }
 
+    public void RemoveScriptFromList(UserScript script)
+    {
+        _userScripts.Remove(script);
+    }
+
     public UserScript LoadUserScript(CompiledUserScript compiledScript)
     {
         var baseType = typeof(Automation);
@@ -120,5 +125,18 @@ class UserScriptManager
         var compiled =
             await compiler.CompileFromUserScriptFile(scriptName, emptyScriptSource, false);
         await LoadUserScript(compiled).Initialize();
+    }
+
+    public async Task DeleteScript(string scriptPath)
+    {
+        var found = _userScripts.Find(s => s.CompiledScript.FilePath == scriptPath);
+
+        if (found is null)
+        {
+            throw new Exception("Script not found");
+        }
+
+        await found.UnloadAndDelete();
+        found.CompiledScript.DeleteFromDisk();
     }
 }

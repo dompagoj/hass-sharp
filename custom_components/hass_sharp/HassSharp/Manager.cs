@@ -54,11 +54,7 @@ public class HassSharpManager
 
     public void OnTrackedEntityChange(string entityId, HasEntityState newState, HasEntityState? oldState)
     {
-        var trigger = new TriggerContext
-        {
-            NewState = newState,
-            OldState = oldState
-        };
+        var trigger = new TriggerContext { NewState = newState, OldState = oldState };
         WaitForAsync(() => _userScriptManager.RunEntries(entityId, trigger));
     }
 
@@ -67,16 +63,14 @@ public class HassSharpManager
     public UserScriptSourceDTO? GetUserScript(string fileName)
     {
         var script = _userScriptManager.GetUserScript(fileName);
-        if (script == null) return null;
+        if (script == null)
+            return null;
 
-        return new()
-        {
-            FileName = script.CompiledScript.FileName,
-            Source = script.CompiledScript.SourceCode,
-        };
+        return new() { FileName = script.CompiledScript.FileName, Source = script.CompiledScript.SourceCode };
     }
 
     public string? GetHoverDiagnostics(string source, int position) => _diagnosticsProvider.GetHover(source, position);
+
     public DiagnosticModel[] GetCompilationDiagnostics(string source) => _diagnosticsProvider.GetDiagnostics(source);
 
     public IReadOnlyList<CompletionItem> GetCodeCompletions(string source, int position) =>
@@ -91,8 +85,7 @@ public class HassSharpManager
             var scriptPath = Path.Join(HassPath.UserScripts, $"{path}.cs");
             if (!File.Exists(scriptPath))
             {
-                Logger.Error($"File not found at {scriptPath}");
-                return PyResult.Error("File not found");
+                await File.Create(scriptPath).DisposeAsync();
             }
 
             try
@@ -107,7 +100,8 @@ public class HassSharpManager
             }
             catch (Exception ex)
             {
-                if (ex.InnerException != null) return PyResult.Errors([ex.InnerException.Message]);
+                if (ex.InnerException != null)
+                    return PyResult.Errors([ex.InnerException.Message]);
                 return PyResult.Errors([ex.Message]);
             }
 
@@ -117,4 +111,6 @@ public class HassSharpManager
 
     public void CreateEmptyScript(string name) =>
         WaitForAsync(() => _userScriptManager.CreateEmptyScript(_compiler, name));
+
+    public void DeleteScript(string scriptPath) => WaitForAsync(() => _userScriptManager.DeleteScript(scriptPath));
 }
