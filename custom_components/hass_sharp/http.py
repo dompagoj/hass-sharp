@@ -1,7 +1,7 @@
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.http import HomeAssistantView, Request
 
-from . import utils
+from . import dotnet_tasks, utils
 from .const import logger
 
 
@@ -51,8 +51,11 @@ class AutomationByIdView(HomeAssistantView):
 
     async def post(self, request: Request, file_name: str):
         data = await request.json()
-        (success, error) = await self.hass.async_add_executor_job(
-            self.hass_sharp.SaveScript, file_name, data["source"]
+        (success, error) = await dotnet_tasks.async_run_dotnet_task(
+            self.hass,
+            self.hass_sharp.SaveScriptAsync,
+            file_name,
+            data["source"],
         )
 
         if not success:

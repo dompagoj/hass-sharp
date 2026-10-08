@@ -17,6 +17,7 @@ class ScriptSyncRunner
 
         foreach (var semaphore in _queues.Values)
         {
+            await semaphore.WaitAsync(TimeSpan.FromSeconds(5));
             semaphore.Dispose();
         }
 
@@ -38,8 +39,7 @@ class ScriptSyncRunner
         }
     }
 
-    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode,
-        Func<object?> callMethod)
+    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode)
     {
         var classMethodName = scriptClass.GetConcatedMethodNameWithClass(methodInfo.Name);
         switch (mode)
@@ -90,7 +90,13 @@ class ScriptSyncRunner
             try
             {
                 scriptClass.Instance._cancellationToken.Value = cts.Token;
-                var result = callMethod();
+                var result = methodInfo.Invoke(
+                    scriptClass.Instance,
+                    BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
+                    null,
+                    null,
+                    null
+                );
 
                 if (result is Task task) await task;
                 if (result is ValueTask valueTask) await valueTask;

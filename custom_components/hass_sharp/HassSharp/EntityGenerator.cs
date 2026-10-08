@@ -7,6 +7,7 @@ namespace HassSharp;
 class EntityGenerator
 {
     public string[]? HassEntityIds { get; set; }
+    public DocumentId? EntitiesDocumentId { get; set; }
 
     public SyntaxTree GenerateEntities(string[] hassEntityIds)
     {

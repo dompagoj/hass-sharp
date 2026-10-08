@@ -51,6 +51,13 @@ public abstract class Automation : UserScriptClassBase
         return state;
     }
 
+    /// <summary>
+    ///  Use to get the entityId of the entity which triggered a rerun of this automation, will be null on first run or if the trigger is time based or otherwise non entity related
+    /// </summary>
+    /// <returns>Entity Id of the entity which triggered this automation to rerun</returns>
+    protected string? TriggeredBy()
+        => UserScriptManager.CurrentTrigger.Value?.NewState.EntityId;
+
     protected EntityRef<T> Entity<T>(EntityRefWrapper<T> entityWrapper, [CallerMemberName] string? caller = null)
         where T : EntityRefWrapper<T>
     {

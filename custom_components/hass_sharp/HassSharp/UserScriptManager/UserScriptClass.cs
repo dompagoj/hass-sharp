@@ -52,14 +52,7 @@ class UserScriptClass
         await Script.ScriptManager.SyncRunner.Run(
             this,
             method,
-            mode,
-            () => method.Invoke(
-                Instance,
-                BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
-                null,
-                null,
-                null
-            )
+            mode
         );
     }
 

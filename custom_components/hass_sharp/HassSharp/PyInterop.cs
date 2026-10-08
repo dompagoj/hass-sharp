@@ -167,14 +167,20 @@ public ref struct ErrorLogHandler
     public string ToStringAndClear() => _innerHandler.ToStringAndClear();
 }
 
+/// <summary>
+/// These functions are set from __init__.py
+/// We can assume they're defined using = null!, we want to crash as soon as possible if any of them are not defined
+/// </summary>
 public static class PyInterop
 {
     public static Action<int, string> Log { get; set; } = null!;
     public static int LogLevel { get; set; }
     public static GetEntity Entity { get; set; } = null!;
     public static Action<string, string, string?, Action?> CallService { get; set; } = null!;
+
     public static Action<string, string, string?, Action<string?>, Action<string>> CallServiceWithResponse { get; set; }
         = null!;
+
     public static Action<string> UnSubscribeFromEntityTracking { get; set; } = null!;
     public static Action<string> SubscribeToEntityTracking { get; set; } = null!;
     public static Action UnSubscribeAllFromEntityTracking { get; set; } = null!;

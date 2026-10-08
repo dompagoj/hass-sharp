@@ -12,7 +12,7 @@ from homeassistant.core import Event, EventStateChangedData, HomeAssistant, call
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
 
-from . import dotnet_downloader, http, utils, websocket
+from . import dotnet_downloader, dotnet_tasks, http, utils, websocket
 from .const import logger
 
 os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "true"
@@ -130,8 +130,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         new_state = csharp_converters.to_has_entity_state(event.data.get("new_state"))
         old_state = csharp_converters.to_has_entity_state(event.data.get("old_state"))
 
-        await hass.async_add_executor_job(
-            hass_sharp.OnTrackedEntityChange, entity_id, new_state, old_state
+        await dotnet_tasks.async_run_dotnet_task(
+            hass,
+            hass_sharp.OnTrackedEntityChangeAsync,
+            entity_id,
+            new_state,
+            old_state,
         )
         return True
 
@@ -146,7 +150,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         data = json.loads(data_json) if data_json else None
 
         async def call_and_callback():
-            await hass.services.async_call(
+            _ = await hass.services.async_call(
                 domain, service, data, blocking=callback_on_done is not None
             )
             if callback_on_done:
@@ -208,7 +212,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     PyInterop.UnSubscribeAllFromEntityTracking = Action(unbsub_all)
     PyInterop.SubscribeToEntityTracking = Action[String](subscribe_to_entity_change)
 
-    await hass.async_add_executor_job(hass_sharp.Init, utils.get_hass_entities(hass))
+    await dotnet_tasks.async_run_dotnet_task(
+        hass, hass_sharp.InitAsync, utils.get_hass_entities(hass)
+    )
 
     return True
 
@@ -216,7 +222,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass_sharp = utils.get_hass_sharp_manager(hass)
 
-    await hass.async_add_executor_job(hass_sharp.UnLoad)
+    await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync)
     frontend.async_remove_panel(hass, "hass-sharp")
 
     return True

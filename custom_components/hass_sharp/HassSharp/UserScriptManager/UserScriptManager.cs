@@ -70,6 +70,7 @@ class UserScriptManager
 
     public async Task RunEntry(DependencyEntry entry, TriggerContext trigger)
     {
+        var previousTrigger = CurrentTrigger.Value;
         CurrentTrigger.Value = trigger;
         try
         {
@@ -77,7 +78,7 @@ class UserScriptManager
         }
         finally
         {
-            CurrentTrigger.Value = null;
+            CurrentTrigger.Value = previousTrigger;
         }
     }
 

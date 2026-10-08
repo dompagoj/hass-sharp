@@ -4,7 +4,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.components import websocket_api
 import voluptuous as vol
 
-from . import utils
+from . import dotnet_tasks, utils
 
 def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
     @websocket_api.decorators.async_response
@@ -35,7 +35,9 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
 
     @websocket_api.decorators.async_response
     async def websocket_get_completions(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-      completions = await hass.async_add_executor_job(hass_sharp.GetCodeCompletions, msg["source"], msg["position"])
+      completions = await dotnet_tasks.async_run_dotnet_task(
+          hass, hass_sharp.GetCodeCompletionsAsync, msg["source"], msg["position"]
+      )
 
       completions_py = [{
               "displayText": c.DisplayText,
@@ -51,7 +53,9 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
     async def websocket_format_source(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
         source = msg["source"]
 
-        formatted = await hass.async_add_executor_job(hass_sharp.FormatCode, source)
+        formatted = await dotnet_tasks.async_run_dotnet_task(
+            hass, hass_sharp.FormatCodeAsync, source
+        )
         connection.send_result(msg["id"], formatted)
 
     # @websocket_api.decorators.async_response
@@ -66,7 +70,7 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
     #             f.write(source)
     #
     #     await hass.async_add_executor_job(save_file)
-    #     await hass.async_add_executor_job(hassSharp.SaveScript, path, source)
+    #     await dotnet_tasks.async_run_dotnet_task(hass, hassSharp.SaveScriptAsync, path, source)
     #
     #     connection.send_result(msg["id"], {"success": True})
     #

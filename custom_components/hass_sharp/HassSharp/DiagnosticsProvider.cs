@@ -99,7 +99,7 @@ public class DiagnosticsProvider
             .ToArray();
     }
 
-    public IReadOnlyList<CompletionItem> GetCompletions(string source, int position)
+    public async Task<IReadOnlyList<CompletionItem>> GetCompletions(string source, int position)
     {
         var fullSource = GlobalUsings + source;
         var adjustedPosition = GlobalUsings.Length + position;
@@ -107,15 +107,17 @@ public class DiagnosticsProvider
         var userScriptDocument = _workspace.AddDocument(_baseProjectId, "Script.cs", SourceText.From(fullSource));
 
         var completionService = CompletionService.GetService(userScriptDocument);
-        if (completionService == null) return [];
+        if (completionService == null)
+        {
+            _workspace.TryApplyChanges(userScriptDocument.Project.Solution.RemoveDocument(userScriptDocument.Id));
+            return [];
+        }
 
         var filterText = source.Substring(0, position).Split(' ', '.', '(', '\n', '\r', '\t').LastOrDefault() ?? "";
         var lastChar = position > 0 ? source[position - 1] : '\0';
         var trigger = lastChar == '.' ? CompletionTrigger.CreateInsertionTrigger('.') : CompletionTrigger.Invoke;
 
-        var completionsTask = completionService.GetCompletionsAsync(userScriptDocument, adjustedPosition, trigger);
-
-        var completions = completionsTask.GetAwaiter().GetResult();
+        var completions = await completionService.GetCompletionsAsync(userScriptDocument, adjustedPosition, trigger);
 
         var items = completions.ItemsList;
         if (!string.IsNullOrEmpty(filterText))
@@ -149,6 +151,12 @@ public class DiagnosticsProvider
 
     public void GenerateHassEntities(string[] entityIds)
     {
+        if (_entityGenerator.EntitiesDocumentId is not null)
+        {
+            var removed = _workspace.CurrentSolution.RemoveDocument(_entityGenerator.EntitiesDocumentId);
+            _workspace.TryApplyChanges(removed);
+        }
+
         _entitiesSyntaxTree = _entityGenerator.GenerateEntities(entityIds);
         var entitiesDocumentId = DocumentId.CreateNewId(_baseProjectId);
         var solution =

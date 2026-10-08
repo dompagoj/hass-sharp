@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using Microsoft.CodeAnalysis.Completion;
 using Python.Runtime;
 
@@ -16,46 +15,31 @@ public class HassSharpManager
         _compiler = new(_diagnosticsProvider);
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    T WaitForAsync<T>(Func<Task<T>> cb)
+    public async Task InitAsync(string[] hassEntityIds)
     {
-        return cb().GetAwaiter().GetResult();
-    }
+        _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
+        var assemblies = await _compiler.CompileFromUserScriptsFolder();
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    static void WaitForAsync(Func<Task> cb) => cb().GetAwaiter().GetResult();
+        await _userScriptManager.UnloadUserScripts(); // Just in case, shouldnt be needed
 
-    // Public python interface is all blocking because it gets run using hass.async_add_executor_job,
-    // we cannot await c# tasks from python unfortunately
-    // All other classes should use normal async/task methods so they can be awaited here in parallel if need be
-    public void Init(string[] hassEntityIds)
-    {
-        WaitForAsync(async () =>
+        if (assemblies.Count == 0)
         {
-            _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
-            var assemblies = await _compiler.CompileFromUserScriptsFolder();
+            Logger.Info("No user scripts found on initialization");
+            return;
+        }
 
-            await _userScriptManager.UnloadUserScripts(); // Just in case, shouldnt be needed
-
-            if (assemblies.Count == 0)
-            {
-                Logger.Info("No user scripts found on initialization");
-                return;
-            }
-
-            await _userScriptManager.LoadUserScripts(assemblies);
-            _userScriptManager.DependencyTracking.Debug();
-        });
+        await _userScriptManager.LoadUserScripts(assemblies);
+        _userScriptManager.DependencyTracking.Debug();
     }
 
-    public void UnLoad() => WaitForAsync(_userScriptManager.UnloadUserScripts);
+    public Task UnloadAsync() => _userScriptManager.UnloadUserScripts();
 
     public void GenerateHassEntities(string[] entityIds) => _diagnosticsProvider.GenerateHassEntities(entityIds);
 
-    public void OnTrackedEntityChange(string entityId, HasEntityState newState, HasEntityState? oldState)
+    public Task OnTrackedEntityChangeAsync(string entityId, HasEntityState newState, HasEntityState? oldState)
     {
         var trigger = new TriggerContext { NewState = newState, OldState = oldState };
-        WaitForAsync(() => _userScriptManager.RunEntries(entityId, trigger));
+        return _userScriptManager.RunEntries(entityId, trigger);
     }
 
     public PyList GetUserScripts() => PyDTOConverter.UserScriptToDto(_userScriptManager.GetUserScripts());
@@ -73,44 +57,40 @@ public class HassSharpManager
 
     public DiagnosticModel[] GetCompilationDiagnostics(string source) => _diagnosticsProvider.GetDiagnostics(source);
 
-    public IReadOnlyList<CompletionItem> GetCodeCompletions(string source, int position) =>
+    public Task<IReadOnlyList<CompletionItem>> GetCodeCompletionsAsync(string source, int position) =>
         _diagnosticsProvider.GetCompletions(source, position);
 
-    public string FormatCode(string source) => WaitForAsync(() => _diagnosticsProvider.FormatCode(source));
+    public Task<string> FormatCodeAsync(string source) => _diagnosticsProvider.FormatCode(source);
 
-    public PyTuple SaveScript(string path, string source)
+    public async Task<PyTuple> SaveScriptAsync(string path, string source)
     {
-        return WaitForAsync(async () =>
+        var scriptPath = Path.Join(HassPath.UserScripts, $"{path}.cs");
+        if (!File.Exists(scriptPath))
         {
-            var scriptPath = Path.Join(HassPath.UserScripts, $"{path}.cs");
-            if (!File.Exists(scriptPath))
-            {
-                await File.Create(scriptPath).DisposeAsync();
-            }
+            await File.Create(scriptPath).DisposeAsync();
+        }
 
-            try
-            {
-                var compiled = await _compiler.CompileSingleFile(scriptPath, source, false);
-                await _userScriptManager.UpdateUserScript(compiled);
-                _userScriptManager.DependencyTracking.Debug();
-            }
-            catch (CompilationErrorException ex)
-            {
-                return PyResult.Errors(ex.Errors);
-            }
-            catch (Exception ex)
-            {
-                if (ex.InnerException != null)
-                    return PyResult.Errors([ex.InnerException.Message]);
-                return PyResult.Errors([ex.Message]);
-            }
+        try
+        {
+            var compiled = await _compiler.CompileSingleFile(scriptPath, source, false);
+            await _userScriptManager.UpdateUserScript(compiled);
+            _userScriptManager.DependencyTracking.Debug();
+        }
+        catch (CompilationErrorException ex)
+        {
+            return PyResult.Errors(ex.Errors);
+        }
+        catch (Exception ex)
+        {
+            if (ex.InnerException != null)
+                return PyResult.Errors([ex.InnerException.Message]);
+            return PyResult.Errors([ex.Message]);
+        }
 
-            return PyResult.Success();
-        });
+        return PyResult.Success();
     }
 
-    public void CreateEmptyScript(string name) =>
-        WaitForAsync(() => _userScriptManager.CreateEmptyScript(_compiler, name));
+    public Task CreateEmptyScriptAsync(string name) => _userScriptManager.CreateEmptyScript(_compiler, name);
 
-    public void DeleteScript(string scriptPath) => WaitForAsync(() => _userScriptManager.DeleteScript(scriptPath));
+    public Task DeleteScriptAsync(string scriptPath) => _userScriptManager.DeleteScript(scriptPath);
 }

@@ -50,7 +50,7 @@ public struct EntityRef<T>
         if (hasNew != hasOld) return true;
         if (!hasNew) return false;
 
-        return newValue == oldValue;
+        return newValue != oldValue;
     }
 
     public void Refresh()
