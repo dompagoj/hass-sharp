@@ -15,12 +15,12 @@ public class HassSharpManager
         _compiler = new(_diagnosticsProvider);
     }
 
-    public async Task InitAsync(string[] hassEntityIds)
+    public async Task Init(string[] hassEntityIds)
     {
         _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
         var assemblies = await _compiler.CompileFromUserScriptsFolder();
 
-        await _userScriptManager.UnloadUserScripts(); // Just in case, shouldnt be needed
+        _userScriptManager.UnloadUserScripts(); // Just in case, shouldnt be needed
 
         if (assemblies.Count == 0)
         {
@@ -32,11 +32,11 @@ public class HassSharpManager
         _userScriptManager.DependencyTracking.Debug();
     }
 
-    public Task UnloadAsync() => _userScriptManager.UnloadUserScripts();
+    public void Unload() => _userScriptManager.UnloadUserScripts();
 
     public void GenerateHassEntities(string[] entityIds) => _diagnosticsProvider.GenerateHassEntities(entityIds);
 
-    public Task OnTrackedEntityChangeAsync(string entityId, HasEntityState newState, HasEntityState? oldState)
+    public Task OnTrackedEntityChange(string entityId, HasEntityState newState, HasEntityState? oldState)
     {
         var trigger = new TriggerContext { NewState = newState, OldState = oldState };
         return _userScriptManager.RunEntries(entityId, trigger);
@@ -57,12 +57,12 @@ public class HassSharpManager
 
     public DiagnosticModel[] GetCompilationDiagnostics(string source) => _diagnosticsProvider.GetDiagnostics(source);
 
-    public Task<IReadOnlyList<CompletionItem>> GetCodeCompletionsAsync(string source, int position) =>
+    public Task<IReadOnlyList<CompletionItem>> GetCodeCompletions(string source, int position) =>
         _diagnosticsProvider.GetCompletions(source, position);
 
-    public Task<string> FormatCodeAsync(string source) => _diagnosticsProvider.FormatCode(source);
+    public Task<string> FormatCode(string source) => _diagnosticsProvider.FormatCode(source);
 
-    public async Task<PyTuple> SaveScriptAsync(string path, string source)
+    public async Task<PyTuple> SaveScript(string path, string source)
     {
         var scriptPath = Path.Join(HassPath.UserScripts, $"{path}.cs");
         if (!File.Exists(scriptPath))
@@ -90,7 +90,7 @@ public class HassSharpManager
         return PyResult.Success();
     }
 
-    public Task CreateEmptyScriptAsync(string name) => _userScriptManager.CreateEmptyScript(_compiler, name);
+    public Task CreateEmptyScript(string name) => _userScriptManager.CreateEmptyScript(_compiler, name);
 
-    public Task DeleteScriptAsync(string scriptPath) => _userScriptManager.DeleteScript(scriptPath);
+    public void DeleteScript(string scriptPath) => _userScriptManager.DeleteScript(scriptPath);
 }

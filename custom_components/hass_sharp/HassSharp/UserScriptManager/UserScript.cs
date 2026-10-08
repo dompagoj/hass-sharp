@@ -1,27 +1,41 @@
 namespace HassSharp;
 
-class UserScript : IAsyncDisposable
+class UserScript
 {
+    volatile CancellationTokenSource _lifetimeCancellation = new();
+
     public required UserScriptManager ScriptManager { get; init; }
 
     public required CompiledUserScript CompiledScript { get; init; }
     public required UserScriptClass[] Classes { get; set; }
+
+    internal CancellationToken LifetimeToken => _lifetimeCancellation.Token;
 
     public Task WriteToDisk() => CompiledScript.WriteToDisk();
     public ValueTask WriteIfDirty() => CompiledScript.WriteIfDirty();
 
     internal Task Initialize() => Task.WhenAll(Classes.Select(c => c.Initialize()));
 
-    public async ValueTask UnloadAndDelete()
+    internal void CancelLifetime() => _lifetimeCancellation.Cancel();
+
+    internal void RenewLifetime() => _lifetimeCancellation = new();
+
+    public void UnloadAndDelete()
     {
-        await DisposeAsync();
+        ClearFromTracking();
+        Unload();
         CompiledScript.DeleteFromDisk();
     }
 
-    public async ValueTask DisposeAsync()
+    internal void ClearFromTracking()
     {
-        await ScriptManager.SyncRunner.Clear(this);
+        ScriptManager.SyncRunner.Clear(this);
         ScriptManager.DependencyTracking.RemoveScript(this);
         ScriptManager.RemoveScriptFromList(this);
+    }
+
+    internal void Unload()
+    {
+        CompiledScript.Unload();
     }
 }

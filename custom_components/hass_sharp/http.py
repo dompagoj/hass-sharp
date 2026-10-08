@@ -53,7 +53,7 @@ class AutomationByIdView(HomeAssistantView):
         data = await request.json()
         (success, error) = await dotnet_tasks.async_run_dotnet_task(
             self.hass,
-            self.hass_sharp.SaveScriptAsync,
+            self.hass_sharp.SaveScript,
             file_name,
             data["source"],
         )

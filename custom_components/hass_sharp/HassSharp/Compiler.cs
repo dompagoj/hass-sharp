@@ -22,7 +22,7 @@ public class CodeCompiler(
 
         return new CompiledUserScript
         {
-            Assembly = Assembly.Load(assemblyBytes),
+            Assembly = LoadAssembly(assemblyBytes),
             FilePath = path,
             FileName = Path.GetFileNameWithoutExtension(path),
             SourceCode = source,
@@ -50,7 +50,7 @@ public class CodeCompiler(
                 Logger.Info($"No change detected in {Path.GetFileName(path)}, using cached dll");
                 return new CompiledUserScript
                 {
-                    Assembly = Assembly.Load(cachedBytes),
+                    Assembly = LoadAssembly(cachedBytes),
                     FilePath = path,
                     FileName = Path.GetFileNameWithoutExtension(path),
                     SourceCode = source,
@@ -63,7 +63,7 @@ public class CodeCompiler(
             await _cacheProvider.SetFileCache(path, hash, assemblyBytes);
             return new CompiledUserScript
             {
-                Assembly = Assembly.Load(assemblyBytes),
+                Assembly = LoadAssembly(assemblyBytes),
                 FilePath = path,
                 FileName = Path.GetFileNameWithoutExtension(path),
                 SourceCode = source,
@@ -73,6 +73,14 @@ public class CodeCompiler(
 
         var assemblies = await Task.WhenAll(tasks);
         return [.. assemblies];
+    }
+
+    static Assembly LoadAssembly(byte[] assemblyBytes)
+    {
+        var loadContext = new ScriptLoadContext();
+
+        using var stream = new MemoryStream(assemblyBytes, writable: false);
+        return loadContext.LoadFromStream(stream);
     }
 
     byte[] CompileSingleFileToBytes(string source, string path)

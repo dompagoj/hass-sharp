@@ -128,7 +128,7 @@ public class HassServices
         var json = data != null ? JsonSerializer.Serialize(data, _jsonOpts) : null;
         Logger.Debug($"Calling service: {domain}.{service} with data: {json}");
 
-        PyInterop.CallService(domain, service, json, null);
+        PyInterop.CallService(domain, service, json, null, null);
     }
 
     internal static Task CallServiceAsync(string domain, string service, object? data = default)
@@ -136,8 +136,14 @@ public class HassServices
         var json = data != null ? JsonSerializer.Serialize(data, _jsonOpts) : null;
         Logger.Debug($"Calling service (async): {domain}.{service} with data: {json}");
 
-        var tcs = new TaskCompletionSource();
-        PyInterop.CallService(domain, service, json, () => tcs.SetResult());
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        PyInterop.CallService(
+            domain,
+            service,
+            json,
+            () => tcs.TrySetResult(),
+            error => tcs.TrySetException(new InvalidOperationException(error))
+        );
 
         return tcs.Task;
     }

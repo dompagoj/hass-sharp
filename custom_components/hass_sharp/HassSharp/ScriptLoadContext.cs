@@ -8,8 +8,14 @@ namespace HassSharp;
 /// </summary>
 public sealed class ScriptLoadContext : AssemblyLoadContext
 {
+    static readonly Assembly HassSharpAssembly = typeof(Automation).Assembly;
+
     readonly AssemblyDependencyResolver _resolver;
     readonly Dictionary<string, string> _assemblyPathsByName;
+
+    public ScriptLoadContext() : this(HassSharpAssembly.Location, [])
+    {
+    }
 
     public ScriptLoadContext(string basePath, IEnumerable<string> assemblyPaths) : base(true)
     {
@@ -22,6 +28,13 @@ public sealed class ScriptLoadContext : AssemblyLoadContext
 
     protected override Assembly? Load(AssemblyName assemblyName)
     {
+        // User automations must use the host's HassSharp types. Loading another copy
+        // would break type identity (for example, Automation.IsAssignableFrom()).
+        if (AssemblyName.ReferenceMatchesDefinition(assemblyName, HassSharpAssembly.GetName()))
+        {
+            return HassSharpAssembly;
+        }
+
         var path = _resolver.ResolveAssemblyToPath(assemblyName);
         if (path != null)
         {

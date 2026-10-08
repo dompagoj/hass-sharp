@@ -1,5 +1,3 @@
-using System.Reflection;
-
 namespace HassSharp;
 
 class TriggerContext
@@ -22,12 +20,18 @@ class UserScriptManager
     public UserScript? GetUserScript(string scriptSlug) =>
         _userScripts.FirstOrDefault(s => s.CompiledScript.Slug() == scriptSlug);
 
-    public async Task UnloadUserScripts()
+    public void UnloadUserScripts()
     {
+        var scripts = _userScripts.ToArray();
         PyInterop.UnSubscribeAllFromEntityTracking();
         DependencyTracking.Clear();
         _userScripts.Clear();
-        await SyncRunner.Clear();
+        SyncRunner.Clear(scripts);
+
+        foreach (var script in scripts)
+        {
+            script.Unload();
+        }
     }
 
     public void RemoveScriptFromList(UserScript script)
@@ -85,31 +89,44 @@ class UserScriptManager
     public async Task UpdateUserScript(CompiledUserScript compiled)
     {
         var foundIdx = _userScripts.FindIndex(s => s.CompiledScript.Id() == compiled.Id());
-        if (foundIdx == -1) throw new("Script not found");
+        if (foundIdx == -1)
+        {
+            compiled.Unload();
+            throw new("Script not found");
+        }
 
         var found = _userScripts[foundIdx];
-        _userScripts.RemoveAt(foundIdx);
 
         UserScript? loadedScript = null;
 
         try
         {
-            await found.DisposeAsync();
+            // Keep the old assembly loaded until the replacement has initialized,
+            // so it can still be restored if the update fails.
+            found.ClearFromTracking();
             loadedScript = LoadUserScript(compiled);
 
             Logger.Info("Initializing newly loaded scripts");
             await loadedScript.Initialize();
             await loadedScript
                 .WriteIfDirty(); // TODO maybe make this a single call? its easy to forget not to write to disk
+            found.Unload();
         }
-        catch (Exception ex) when (ex is not TargetInvocationException)
+        catch (Exception ex)
         {
             // Restore the original script
             Logger.Error($"Failed to update user script {ex.Message} {ex.InnerException?.Message}");
-            if (loadedScript != null) _userScripts.Remove(loadedScript);
+            if (loadedScript != null)
+            {
+                loadedScript.ClearFromTracking();
+            }
+
+            compiled.Unload();
+            found.RenewLifetime();
+            if (!_userScripts.Contains(found))
+                _userScripts.Add(found);
             await found.Initialize();
             await found.WriteToDisk();
-            _userScripts.Add(found);
             throw;
         }
 
@@ -128,7 +145,7 @@ class UserScriptManager
         await LoadUserScript(compiled).Initialize();
     }
 
-    public async Task DeleteScript(string scriptPath)
+    public void DeleteScript(string scriptPath)
     {
         var found = _userScripts.Find(s => s.CompiledScript.FilePath == scriptPath);
 
@@ -137,7 +154,6 @@ class UserScriptManager
             throw new Exception("Script not found");
         }
 
-        await found.UnloadAndDelete();
-        found.CompiledScript.DeleteFromDisk();
+        found.UnloadAndDelete();
     }
 }

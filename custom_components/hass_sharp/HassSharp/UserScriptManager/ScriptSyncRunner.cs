@@ -1,139 +1,170 @@
-using System.Collections.Concurrent;
 using System.Reflection;
 
 namespace HassSharp;
 
 class ScriptSyncRunner
 {
-    readonly ConcurrentDictionary<MethodInfo, CancellationTokenSource> _cts = new();
-    readonly ConcurrentDictionary<MethodInfo, SemaphoreSlim> _queues = new();
-
-    public async Task Clear()
+    sealed class ActiveRun(CancellationTokenSource cancellation)
     {
-        foreach (var token in _cts.Values)
-        {
-            await token.CancelAsync();
-        }
-
-        foreach (var semaphore in _queues.Values)
-        {
-            await semaphore.WaitAsync(TimeSpan.FromSeconds(5));
-            semaphore.Dispose();
-        }
-
-        _cts.Clear();
-        _queues.Clear();
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+        public Task? CancellationTask { get; set; }
+        public CancellationToken Token => Cancellation.Token;
     }
 
-    public async Task Clear(UserScript script)
+    sealed class MethodState
     {
-        foreach (var methodInfo in script.Classes.SelectMany(c => c.Methods))
-        {
-            if (_cts.TryRemove(methodInfo, out var token))
-            {
-                await token.CancelAsync();
-                token.Dispose();
-            }
+        public ActiveRun? CurrentRun { get; set; }
+        public SemaphoreSlim? Queue { get; set; }
+    }
 
-            if (_queues.TryRemove(methodInfo, out var sem)) sem.Dispose();
+    sealed record RunRegistration(
+        MethodState State,
+        ActiveRun Run,
+        Task? RestartCancellation,
+        SemaphoreSlim? Queue);
+
+    readonly Lock _gate = new();
+    readonly Dictionary<MethodInfo, MethodState> _methods = new();
+
+    public void Clear(UserScript script) => Clear([script]);
+
+    public void Clear(IEnumerable<UserScript> scripts)
+    {
+        var scriptArray = scripts.ToArray();
+        foreach (var script in scriptArray) script.CancelLifetime();
+
+        using var scope = _gate.EnterScope();
+        foreach (var method in scriptArray.SelectMany(s => s.Classes).SelectMany(c => c.Methods))
+        {
+            _methods.Remove(method);
         }
     }
 
     public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode)
     {
-        var classMethodName = scriptClass.GetConcatedMethodNameWithClass(methodInfo.Name);
-        switch (mode)
+        var registration = TryRegister(scriptClass, methodInfo, mode);
+        if (registration == null) return;
+
+        try
         {
-            case AutomationMode.Single:
-                if (_cts.TryGetValue(methodInfo, out _))
-                {
-                    Logger.Info(
-                        $"Automation {classMethodName} is already running. Skipping new run.");
-                    return;
-                }
+            if (registration.RestartCancellation is not null)
+                await registration.RestartCancellation;
 
-                break;
-
-            case AutomationMode.Restart:
-                if (_cts.TryRemove(methodInfo, out var oldCts))
-                {
-                    await oldCts.CancelAsync();
-                    oldCts.Dispose();
-                }
-
-                break;
-
-            case AutomationMode.Queued:
-            case AutomationMode.Parallel:
-            default:
-                break;
+            await Task.Run(() => Execute(scriptClass, methodInfo, registration));
         }
-
-        var cts = new CancellationTokenSource();
-        _cts[methodInfo] = cts;
-
-        await Task.Run(async () =>
+        finally
         {
-            if (mode == AutomationMode.Queued)
-            {
-                var semaphore = _queues.GetOrAdd(methodInfo, _ => new SemaphoreSlim(1, 1));
-                try
-                {
-                    await semaphore.WaitAsync(cts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
-            }
-
+            var cancellationTask = Unregister(methodInfo, registration);
             try
             {
-                scriptClass.Instance._cancellationToken.Value = cts.Token;
-                var result = methodInfo.Invoke(
-                    scriptClass.Instance,
-                    BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
-                    null,
-                    null,
-                    null
-                );
-
-                if (result is Task task) await task;
-                if (result is ValueTask valueTask) await valueTask;
-            }
-            catch (HassSharpInitializingException)
-            {
-                // ignore InitGuard(); calls
-            }
-            catch (TargetInvocationException ex) when (ex.InnerException is HassSharpInitializingException)
-            {
-                // ignore InitGuard(); calls
-            }
-            catch (OperationCanceledException)
-            {
-                // Task was canceled, ignore
-            }
-            catch (Exception ex)
-            {
-                Logger.Error(
-                    $"Error running automation {classMethodName} | {ex.Message} | {ex.InnerException?.Message} | {ex.StackTrace}");
+                if (cancellationTask is not null) await cancellationTask;
             }
             finally
             {
-                if (mode == AutomationMode.Queued)
-                {
-                    if (_queues.TryGetValue(methodInfo, out var semaphore))
-                    {
-                        semaphore.Release();
-                    }
-                }
-
-                if (_cts.TryGetValue(methodInfo, out var currentCts) && currentCts == cts)
-                {
-                    _cts.TryRemove(methodInfo, out _);
-                    cts.Dispose();
-                }
+                registration.Run.Cancellation.Dispose();
             }
-        }, cts.Token);
+        }
+    }
+
+    RunRegistration? TryRegister(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode)
+    {
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(scriptClass.Script.LifetimeToken);
+
+        using var scope = _gate.EnterScope();
+        if (cancellation.IsCancellationRequested)
+        {
+            cancellation.Dispose();
+            return null;
+        }
+
+        if (!_methods.TryGetValue(methodInfo, out var state))
+        {
+            state = new();
+            _methods.Add(methodInfo, state);
+        }
+
+        if (mode == AutomationMode.Single && state.CurrentRun != null)
+        {
+            cancellation.Dispose();
+            Logger.Info(
+                $"Automation {scriptClass.GetConcatedMethodNameWithClass(methodInfo.Name)} is already running. Skipping new run.");
+            return null;
+        }
+
+        Task? restartCancellation = null;
+        if (mode == AutomationMode.Restart && state.CurrentRun is { } runToRestart)
+        {
+            restartCancellation = runToRestart.CancellationTask ??=
+                runToRestart.Cancellation.CancelAsync();
+        }
+
+        var queue = mode == AutomationMode.Queued ? state.Queue ??= new(1, 1) : null;
+        var run = new ActiveRun(cancellation);
+        state.CurrentRun = run;
+        return new(state, run, restartCancellation, queue);
+    }
+
+    Task? Unregister(MethodInfo methodInfo, RunRegistration registration)
+    {
+        using var scope = _gate.EnterScope();
+        if (_methods.TryGetValue(methodInfo, out var currentState) &&
+            ReferenceEquals(currentState, registration.State) &&
+            ReferenceEquals(currentState.CurrentRun, registration.Run))
+        {
+            currentState.CurrentRun = null;
+        }
+
+        return registration.Run.CancellationTask;
+    }
+
+    static async Task Execute(
+        UserScriptClass scriptClass,
+        MethodInfo methodInfo,
+        RunRegistration registration)
+    {
+        var acquiredQueue = false;
+        try
+        {
+            if (registration.Queue != null)
+            {
+                await registration.Queue.WaitAsync(registration.Run.Token);
+                acquiredQueue = true;
+            }
+
+            registration.Run.Token.ThrowIfCancellationRequested();
+            scriptClass.Instance._cancellationToken.Value = registration.Run.Token;
+            var result = methodInfo.Invoke(
+                scriptClass.Instance,
+                BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
+                null,
+                null,
+                null
+            );
+
+            if (result is Task task) await task;
+            if (result is ValueTask valueTask) await valueTask;
+        }
+        catch (HassSharpInitializingException)
+        {
+            // ignore InitGuard(); calls
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is HassSharpInitializingException)
+        {
+            // ignore InitGuard(); calls
+        }
+        catch (OperationCanceledException)
+        {
+            // Task was canceled, ignore
+        }
+        catch (Exception ex)
+        {
+            var methodName = scriptClass.GetConcatedMethodNameWithClass(methodInfo.Name);
+            Logger.Error(
+                $"Error running automation {methodName} | {ex.Message} | {ex.InnerException?.Message} | {ex.StackTrace}");
+        }
+        finally
+        {
+            if (acquiredQueue) registration.Queue!.Release();
+        }
     }
 }

@@ -1,9 +1,12 @@
 using System.Reflection;
+using System.Runtime.Loader;
 
 namespace HassSharp;
 
 public class CompiledUserScript
 {
+    bool _unloaded;
+
     public required string FilePath { get; init; }
     public required string FileName { get; init; }
     public required string SourceCode { get; init; }
@@ -30,6 +33,14 @@ public class CompiledUserScript
     public void DeleteFromDisk()
     {
         File.Delete(FilePath);
+    }
+
+    public void Unload()
+    {
+        if (_unloaded) return;
+        var loadContext = AssemblyLoadContext.GetLoadContext(Assembly);
+        if (loadContext?.IsCollectible == true) loadContext.Unload();
+        _unloaded = true;
     }
 }
 

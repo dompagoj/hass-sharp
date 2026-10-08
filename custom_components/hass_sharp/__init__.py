@@ -132,7 +132,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         await dotnet_tasks.async_run_dotnet_task(
             hass,
-            hass_sharp.OnTrackedEntityChangeAsync,
+            hass_sharp.OnTrackedEntityChange,
             entity_id,
             new_state,
             old_state,
@@ -145,16 +145,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     # TODO: See if this can be awaited on the c# side by using blocking=True in .async_call
     def call_service(
-        domain: str, service: str, data_json: str, callback_on_done: Action
+        domain: str,
+        service: str,
+        data_json: str,
+        callback_on_done: Action | None,
+        callback_on_error: Action | None,
     ):
         data = json.loads(data_json) if data_json else None
 
         async def call_and_callback():
-            _ = await hass.services.async_call(
-                domain, service, data, blocking=callback_on_done is not None
-            )
-            if callback_on_done:
-                await hass.async_add_executor_job(callback_on_done)
+            try:
+                _ = await hass.services.async_call(
+                    domain, service, data, blocking=callback_on_done is not None
+                )
+                if callback_on_done:
+                    callback_on_done()
+            except Exception as error:
+                if callback_on_error:
+                    callback_on_error(str(error))
 
         hass.add_job(call_and_callback())
 
@@ -204,7 +212,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     PyInterop.Log = Action[Int32, String](python_log)
     PyInterop.LogLevel = logger.level
     PyInterop.Entity = Func[String, HasEntityState](entity)
-    PyInterop.CallService = Action[String, String, String, Action](call_service)
+    PyInterop.CallService = Action[
+        String, String, String, Action, Action[String]
+    ](call_service)
     PyInterop.CallServiceWithResponse = Action[
         String, String, String, Action[String], Action[String]
     ](call_service_with_response)
@@ -213,7 +223,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     PyInterop.SubscribeToEntityTracking = Action[String](subscribe_to_entity_change)
 
     await dotnet_tasks.async_run_dotnet_task(
-        hass, hass_sharp.InitAsync, utils.get_hass_entities(hass)
+        hass, hass_sharp.Init, utils.get_hass_entities(hass)
     )
 
     return True
@@ -222,7 +232,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass_sharp = utils.get_hass_sharp_manager(hass)
 
-    await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync)
+    await hass.async_add_executor_job(hass_sharp.Unload)
     frontend.async_remove_panel(hass, "hass-sharp")
 
     return True
