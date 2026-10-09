@@ -1,24 +1,40 @@
 using System.Reflection;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace HassSharp;
 
 class UserScriptClass
 {
     internal UserScript Script { get; }
-    internal Type ClassType { get; }
+    Type ClassType { get; }
     public string ClassName => ClassType.FullName ?? "Unknown";
     public MethodInfo[] Methods { get; }
     internal Automation Instance { get; }
-
 
     internal bool Initializing { get; set; } = true;
 
     internal UserScriptClass(Type classType, UserScript script)
     {
+        var instance = (Automation)Activator.CreateInstance(classType)!;
+        MethodInfo[] methods;
+        if (classType.IsSubclassOf(typeof(RunnableClassScript)))
+        {
+            Logger.Debug($"Got runnable! ${classType.Name}");
+            // ReSharper disable once EntityNameCapturedOnly.Local
+            var runMethod = nameof(RunnableClassScript.Run);
+            var runMethodInfo = classType.GetMethod(runMethod);
+            if (runMethodInfo is null) throw new Exception($"RunnableClassScript doesnt have a {runMethodInfo} method");
+            methods = [runMethodInfo];
+        }
+        else
+        {
+            methods = classType.GetMethods().Where(t => t.DeclaringType == classType).ToArray();
+        }
+
         ClassType = classType;
         Script = script;
-        Methods = classType.GetMethods().Where(t => t.DeclaringType == classType).ToArray();
-        Instance = (Automation)Activator.CreateInstance(classType)!;
+        Methods = methods;
+        Instance = instance;
         Instance.UserScriptClass = this;
     }
 
@@ -27,12 +43,24 @@ class UserScriptClass
         Initializing = true;
         Logger.Info(
             $"Initializing Class {ClassName} with methods: {string.Join('\n', Methods.Select(m => m.Name))}");
-        await RunAllMethods();
+
+        if (Instance is RunnableClassScript script)
+        {
+            await script.Initialize();
+        }
+        else
+        {
+            await RunAllMethods();
+        }
+
         Initializing = false;
     }
 
     internal Task RunMethod(string method)
     {
+        if (Instance is RunnableClassScript)
+            method = nameof(RunnableClassScript.Run);
+
         var found = Methods.FirstOrDefault(m => m.Name == method);
 
         if (found == null)

@@ -155,9 +155,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         async def call_and_callback():
             try:
-                _ = await hass.services.async_call(
-                    domain, service, data, blocking=callback_on_done is not None
-                )
+                _ = await hass.services.async_call(domain, service, data, blocking=callback_on_done is not None)
                 if callback_on_done:
                     callback_on_done()
             except Exception as error:
@@ -205,26 +203,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         if entity_id in unsubs:
             return
 
-        unsubs[entity_id] = async_track_state_change_event(
-            hass, entity_id, on_entity_change
-        )
+        unsubs[entity_id] = async_track_state_change_event(hass, entity_id, on_entity_change)
 
     PyInterop.Log = Action[Int32, String](python_log)
     PyInterop.LogLevel = logger.level
     PyInterop.Entity = Func[String, HasEntityState](entity)
-    PyInterop.CallService = Action[
-        String, String, String, Action, Action[String]
-    ](call_service)
-    PyInterop.CallServiceWithResponse = Action[
-        String, String, String, Action[String], Action[String]
-    ](call_service_with_response)
+    PyInterop.CallService = Action[String, String, String, Action, Action[String]](call_service)
+    PyInterop.CallServiceWithResponse = Action[String, String, String, Action[String], Action[String]](
+        call_service_with_response
+    )
     PyInterop.UnSubscribeFromEntityTracking = Action[String](unsub_from_entity)
     PyInterop.UnSubscribeAllFromEntityTracking = Action(unbsub_all)
     PyInterop.SubscribeToEntityTracking = Action[String](subscribe_to_entity_change)
 
-    await dotnet_tasks.async_run_dotnet_task(
-        hass, hass_sharp.Init, utils.get_hass_entities(hass)
-    )
+    await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.Init, utils.get_hass_entities(hass))
 
     return True
 

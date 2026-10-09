@@ -26,28 +26,26 @@ public abstract class Automation : UserScriptClassBase
     {
         UserScriptClass.Script.ScriptManager.TrackEntityCall(entityId, UserScriptClass, method);
 
-        var state = PyInterop.Entity(entityId);
-
         var trigger = UserScriptManager.CurrentTrigger.Value;
-        if (trigger != null && trigger.NewState.EntityId == entityId && state != null)
+        if (trigger != null && trigger.State.EntityId == entityId)
         {
-            state.OldState = trigger.OldState;
+            return trigger.State;
         }
 
+        var state = PyInterop.Entity(entityId);
         return state;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     HasEntityState? GetEntityValueUntracked(string entityId)
     {
-        var state = PyInterop.Entity(entityId);
-
         var trigger = UserScriptManager.CurrentTrigger.Value;
-        if (trigger != null && trigger.NewState.EntityId == entityId && state != null)
+        if (trigger != null && trigger.State.EntityId == entityId)
         {
-            state.OldState = trigger.OldState;
+            return trigger.State;
         }
 
+        var state = PyInterop.Entity(entityId);
         return state;
     }
 
@@ -59,7 +57,7 @@ public abstract class Automation : UserScriptClassBase
     {
         if (UserScriptManager.CurrentTrigger.Value is null) return null;
 
-        return new(UserScriptManager.CurrentTrigger.Value.NewState);
+        return new(UserScriptManager.CurrentTrigger.Value.State);
     }
 
     protected EntityRef<T> Entity<T>(EntityRefWrapper<T> entityWrapper, [CallerMemberName] string? caller = null)

@@ -212,8 +212,9 @@ public class LightService
         return new("light", "turn_on", new { entity_id = entities });
     }
 
-    public ServiceCall TurnOn(LightOnOpts opts)
+    public ServiceCall TurnOn(EntityId entityId, LightOnOpts opts)
     {
+        opts.EntityId = [entityId];
         return new("light", "turn_on", opts);
     }
 
@@ -225,7 +226,11 @@ public class LightService
         return new("light", "turn_off", new { entity_id = entities });
     }
 
-    public ServiceCall TurnOff(LightOffOpts opts) => new("light", "turn_off", opts);
+    public ServiceCall TurnOff(EntityId entityId, LightOffOpts opts)
+    {
+        opts.EntityId = [entityId];
+        return new("light", "turn_off", opts);
+    }
 
     public ServiceCall Toggle(EntityId entityId) => Toggle([entityId]);
 

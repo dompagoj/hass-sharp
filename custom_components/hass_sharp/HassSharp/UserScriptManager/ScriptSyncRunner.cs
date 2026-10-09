@@ -133,6 +133,13 @@ class ScriptSyncRunner
 
             registration.Run.Token.ThrowIfCancellationRequested();
             scriptClass.Instance._cancellationToken.Value = registration.Run.Token;
+
+            if (scriptClass.Instance is RunnableClassScript runnable)
+            {
+                await runnable.Run();
+                return;
+            }
+
             var result = methodInfo.Invoke(
                 scriptClass.Instance,
                 BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,

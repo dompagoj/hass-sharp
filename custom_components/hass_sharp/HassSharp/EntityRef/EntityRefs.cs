@@ -4,7 +4,25 @@ namespace HassSharp;
 
 public struct EntityRef<T>
 {
-    internal HasEntityState Raw { get; private set; }
+    HasEntityState _raw;
+
+    internal HasEntityState Raw
+    {
+        get
+        {
+            var trigger = UserScriptManager.CurrentTrigger.Value;
+            if (trigger is not null &&
+                trigger.State.EntityId == _raw.EntityId &&
+                trigger.State.LastReported >
+                _raw.LastReported) // This last check is important, otherwise this trigger assignment would overwrite fresh state fetched using Refresh();
+            {
+                _raw = trigger.State;
+            }
+
+            return _raw;
+        }
+        private set => _raw = value;
+    }
 
     public string EntityId => Raw.EntityId;
 
@@ -15,7 +33,7 @@ public struct EntityRef<T>
     public string ObjectId => Raw.ObjectId;
     public string Domain => Raw.Domain;
 
-    internal EntityRef(HasEntityState raw) => Raw = raw;
+    internal EntityRef(HasEntityState raw) => _raw = raw;
 
     public TValue? GetAttribute<TValue>(string key)
     {
@@ -53,9 +71,10 @@ public struct EntityRef<T>
         return newValue != oldValue;
     }
 
-    public void Refresh()
+    public EntityRef<T> Refresh()
     {
         Raw = PyInterop.Entity(EntityId) ?? Raw;
+        return this;
     }
 }
 
@@ -233,6 +252,7 @@ public static class EntityRefExtensions
     extension(EntityRef<HaMotionSensor> m)
     {
         public bool IsMotionDetected() => m.Raw.State == "on";
+        public bool IsClear() => m.Raw.State == "off";
     }
 
     extension(EntityRef<ShellyButton> btn)
@@ -286,8 +306,19 @@ public static class EntityRefExtensions
         public bool IsOn() => light.Raw.State == "on";
         public bool IsOff() => light.Raw.State == "off";
 
+        [Pure]
         public ServiceCall TurnOn() => HassServices.Light.TurnOn(light.EntityId);
+
+        [Pure]
+        public ServiceCall TurnOn(LightOnOpts opts) => HassServices.Light.TurnOn(light.EntityId, opts);
+
+        [Pure]
         public ServiceCall TurnOff() => HassServices.Light.TurnOff(light.EntityId);
+
+        [Pure]
+        public ServiceCall TurnOff(LightOffOpts opts) => HassServices.Light.TurnOff(light.EntityId, opts);
+
+        [Pure]
         public ServiceCall Toggle() => HassServices.Light.Toggle(light.EntityId);
     }
 

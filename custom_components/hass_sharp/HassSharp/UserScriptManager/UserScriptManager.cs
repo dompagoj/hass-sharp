@@ -3,12 +3,7 @@ using System.Text;
 
 namespace HassSharp;
 
-class TriggerContext
-{
-    public required HasEntityState NewState { get; init; }
-
-    public HasEntityState? OldState { get; init; }
-}
+record TriggerContext(HasEntityState State);
 
 class UserScriptManager
 {

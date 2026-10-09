@@ -38,7 +38,8 @@ public class HassSharpManager
 
     public Task OnTrackedEntityChange(string entityId, HasEntityState newState, HasEntityState? oldState)
     {
-        var trigger = new TriggerContext { NewState = newState, OldState = oldState };
+        newState.OldState = oldState;
+        var trigger = new TriggerContext(newState);
         return _userScriptManager.RunEntries(entityId, trigger);
     }
 

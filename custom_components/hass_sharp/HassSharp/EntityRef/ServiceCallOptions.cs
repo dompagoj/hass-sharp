@@ -65,7 +65,7 @@ public enum RecorderStatisticType
 
 public class LightOnOpts
 {
-    public required string[] EntityId { get; init; }
+    public string[] EntityId { get; set; } = null!;
     public double? Transition { get; init; }
     public int[]? RgbColor { get; init; }
     public int? BrightnessPct { get; init; }
@@ -87,7 +87,7 @@ public class LightOnOpts
 
 public class LightOffOpts
 {
-    public required string[] EntityId { get; init; }
+    public string[] EntityId { get; set; } = null!;
     public double? Transition { get; init; }
     public string? Flash { get; init; }
 }
@@ -266,10 +266,13 @@ public sealed class ConversationIntentResponse<TExtraData, TSpeechSlots>
 {
     public IReadOnlyDictionary<string, ConversationSpeech<TExtraData>> Speech { get; init; } =
         new Dictionary<string, ConversationSpeech<TExtraData>>();
+
     public IReadOnlyDictionary<string, ConversationSpeech<TExtraData>> Reprompt { get; init; } =
         new Dictionary<string, ConversationSpeech<TExtraData>>();
+
     public IReadOnlyDictionary<string, ConversationCard> Card { get; init; } =
         new Dictionary<string, ConversationCard>();
+
     public required string Language { get; init; }
     public required string ResponseType { get; init; }
     public required ConversationResponseData Data { get; init; }
