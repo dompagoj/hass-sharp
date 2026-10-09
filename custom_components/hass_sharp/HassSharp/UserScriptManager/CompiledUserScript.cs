@@ -7,8 +7,8 @@ public class CompiledUserScript
 {
     bool _unloaded;
 
-    public required string FilePath { get; init; }
-    public required string FileName { get; init; }
+    public required string FilePath { get; set; }
+    public required string FileName { get; set; }
     public required string SourceCode { get; init; }
 
     public required Assembly Assembly { get; init; }
@@ -21,6 +21,17 @@ public class CompiledUserScript
     public void SetDirty() => WrittenToDisk = false;
 
     public Task WriteToDisk() => File.WriteAllTextAsync(FilePath, SourceCode);
+
+    public void RenameOnDisk(string newSlug)
+    {
+        var newPath = UserScriptManager.GetScriptFilePathFromSlug($"{newSlug}.cs");
+        if (FilePath == newPath) return;
+
+        // Move without overwriting, and keep the original identity if the move fails.
+        File.Move(FilePath, newPath);
+        FileName = newSlug;
+        FilePath = newPath;
+    }
 
     public async ValueTask WriteIfDirty()
     {

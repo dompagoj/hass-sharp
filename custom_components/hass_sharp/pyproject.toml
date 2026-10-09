@@ -13,3 +13,6 @@ urls = [
 venvPath = "../.."
 venv = ".venv"
 pythonVersion = "3.14"
+
+[tool.ruff]
+line-length = 120

@@ -20,7 +20,7 @@ class UserScript
 
     internal void RenewLifetime() => _lifetimeCancellation = new();
 
-    public void UnloadAndDelete()
+    public void FullClean()
     {
         ClearFromTracking();
         Unload();

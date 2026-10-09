@@ -1,56 +1,136 @@
-using Python.Runtime;
-
 namespace HassSharp;
 
-// TODO: Rethink this, object[] is kinda bad
-readonly struct PyResult
+public static class Result
 {
-    readonly object[]? _errors;
+    public static Ok<T> Ok<T>(T value) => new(value);
 
-    PyResult(object? error)
+    public static Err<E> Err<E>(E value) => new(value);
+}
+
+public readonly record struct Ok<T>(T Value)
+{
+    public static implicit operator T(Ok<T> res) => res.Value;
+
+    public static Ok<T> New(T value) => new(value);
+};
+
+public readonly record struct Err<E>(E Value)
+{
+    public static implicit operator E(Err<E> res) => res.Value;
+
+    public static Err<E> New(E value) => new(value);
+}
+
+public union Result<T, E>(Ok<T>, Err<E>)
+{
+    public static implicit operator bool(Result<T, E> res) => res is Ok<T>;
+
+    public static implicit operator PyResult(Result<T, E> res)
     {
-        if (error != null)
-            _errors = [error];
+        return res.Value switch
+        {
+            Ok<T> ok => PyResult.Success(ok),
+            Err<E> err => PyResult.Error(err),
+            _ => throw new(),
+        };
     }
 
-    PyResult(object[] errors)
+    public bool IsErr() => this is Err<E>;
+    public bool IsOk() => this is Ok<T>;
+
+    public bool IsOk(out T val)
     {
-        _errors = errors;
+        var isOk = IsOk();
+        if (isOk) val = (Ok<T>)this.Value!;
+
+        val = default!;
+
+        return IsOk();
+    }
+
+    public Result<TMapped, E> MapOk<TMapped>(Func<T, TMapped> cb)
+    {
+        if (IsErr()) return Result.Err(this.Err());
+
+        return Result.Ok(cb(this.Ok()));
+    }
+
+    public Result<T, EMapped> MapError<EMapped>(Func<E, EMapped> cb)
+    {
+        if (IsOk()) return Result.Ok(this.Ok());
+
+        return Result.Err(cb(this.Err()));
     }
 
 
-    public static PyResult Success()
+    public E Err()
     {
-        return new((object?)null);
+        if (this.Value is Err<E> err) return err.Value;
+
+        throw new("Not an error");
     }
 
-    public static PyResult Error(object error)
+    public T Ok()
     {
-        return new(error);
+        if (this.Value is Ok<T> ok) return ok.Value;
+
+        throw new("Not an ok");
+    }
+}
+
+public union Result<T>(Ok<T>, Err<Exception>)
+{
+    public static implicit operator bool(Result<T> res) => res is Ok<T>;
+
+    public static PyResult ToPyResult(Result<T> res)
+    {
+        return res.Value switch
+        {
+            Ok<T> ok => PyResult.Success(ok),
+            Err<Exception> ex => PyResult.Error(ex.Value.Message),
+            _ => throw new(),
+        };
     }
 
-    public static PyResult Errors(object[] errors)
+    public bool IsErr() => this is Err<Exception>;
+    public bool IsOk() => this is Ok<T>;
+
+    public bool IsOk(out T val)
     {
-        return new(errors);
+        var isOk = IsOk();
+        if (isOk) val = (Ok<T>)this.Value!;
+
+        val = default!;
+
+        return IsOk();
     }
 
-    public static PyResult Errors(string[] errors)
+    public Result<TMapped, Exception> MapOk<TMapped>(Func<T, TMapped> cb)
     {
-        return new(errors.Select(object (e) => e).ToArray());
+        if (IsErr()) return Result.Err(this.Err());
+
+        return Result.Ok(cb(this.Ok()));
+    }
+
+    public Result<T, EMapped> MapError<EMapped>(Func<Exception, EMapped> cb)
+    {
+        if (IsOk()) return Result.Ok(this.Ok());
+
+        return Result.Err(cb(this.Err()));
     }
 
 
-    public static implicit operator PyTuple(PyResult res) => res.ToPy();
-
-    PyTuple ToPy()
+    public Exception Err()
     {
-        using var _ = Py.GIL();
+        if (this.Value is Err<Exception> err) return err.Value;
 
-        var error = PyObject.None;
+        throw new("Not an error");
+    }
 
-        if (_errors != null)
-            error = _errors.Length == 1 ? _errors[0].ToPython() : _errors.EnumerableToPy();
+    public T Ok()
+    {
+        if (this.Value is Ok<T> ok) return ok.Value;
 
-        return new([(_errors == null).ToPythonAs(), error]);
+        throw new("Not an ok");
     }
 }

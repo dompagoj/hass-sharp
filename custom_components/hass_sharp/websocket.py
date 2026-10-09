@@ -58,34 +58,6 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
         )
         connection.send_result(msg["id"], formatted)
 
-    # @websocket_api.decorators.async_response
-    # async def websocket_save_script(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-    #     hassSharp = utils.get_hass_sharp_manager(hass)
-    #     path = msg["path"]
-    #     source = msg["source"]
-    #
-    #     # Save to disk
-    #     def save_file():
-    #         with open(path, "w") as f:
-    #             f.write(source)
-    #
-    #     await hass.async_add_executor_job(save_file)
-    #     await dotnet_tasks.async_run_dotnet_task(hass, hassSharp.SaveScript, path, source)
-    #
-    #     connection.send_result(msg["id"], {"success": True})
-    #
-    # websocket_api.async_register_command(
-    #     hass,
-    #     "hass_sharp/save_script",
-    #     websocket_save_script,
-    #     vol.Schema({
-    #         vol.Required("id"): vol.Coerce(int),
-    #         vol.Required("type"): "hass_sharp/save_script",
-    #         vol.Required("path"): str,
-    #         vol.Required("source"): str,
-    #     }, extra=vol.ALLOW_EXTRA)
-    # )
-
     websocket_api.async_register_command(
           hass_outer,
           "hass_sharp/get_completions",

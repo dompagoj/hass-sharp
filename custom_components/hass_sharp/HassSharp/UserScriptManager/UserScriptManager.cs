@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Text;
+
 namespace HassSharp;
 
 class TriggerContext
@@ -133,16 +136,88 @@ class UserScriptManager
         DependencyTracking.Debug();
     }
 
-    public async Task CreateEmptyScript(CodeCompiler compiler, string scriptName)
+    public async Task<string> CreateEmptyScript(CodeCompiler compiler, string scriptNameUserInput)
     {
+        var slug = $"{NormalizeScriptName(scriptNameUserInput)}.cs";
         const string emptyScriptSource = """
                                          public class ReplaceThisNameAutomation : Automation
                                          {
                                          }
                                          """;
-        var compiled =
-            await compiler.CompileFromUserScriptFile(scriptName, emptyScriptSource, false);
-        await LoadUserScript(compiled).Initialize();
+        var scriptPath = GetScriptFilePathFromSlug(slug);
+        var slugWithoutExtension = Path.GetFileNameWithoutExtension(slug);
+
+        if (GetUserScript(slugWithoutExtension) is not null || File.Exists(scriptPath))
+            throw new InvalidOperationException($"An automation named '{slugWithoutExtension}' already exists");
+
+        FileStream stream;
+        try
+        {
+            stream = new FileStream(
+                scriptPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 4096,
+                useAsync: true
+            );
+        }
+        catch (IOException ex) when (File.Exists(scriptPath))
+        {
+            throw new InvalidOperationException($"An automation named '{slugWithoutExtension}' already exists", ex);
+        }
+
+        try
+        {
+            await using (stream)
+            await using (var writer = new StreamWriter(stream))
+                await writer.WriteAsync(emptyScriptSource);
+        }
+        catch
+        {
+            TryDeleteFailedScript(scriptPath);
+            throw;
+        }
+
+        CompiledUserScript? compiled = null;
+        UserScript? loadedScript = null;
+
+        try
+        {
+            compiled = await compiler.CompileFromUserScriptFile(slug, emptyScriptSource, true);
+            loadedScript = LoadUserScript(compiled);
+            await loadedScript.Initialize();
+        }
+        catch
+        {
+            if (loadedScript is not null)
+            {
+                loadedScript.ClearFromTracking();
+                loadedScript.Unload();
+            }
+            else
+            {
+                compiled?.Unload();
+            }
+
+            TryDeleteFailedScript(scriptPath);
+
+            throw;
+        }
+
+        return slug;
+    }
+
+    static void TryDeleteFailedScript(string scriptPath)
+    {
+        try
+        {
+            File.Delete(scriptPath);
+        }
+        catch (Exception cleanupError)
+        {
+            Logger.Error($"Failed to clean up script after creation failed: {cleanupError.Message}");
+        }
     }
 
     public void DeleteScript(string scriptPath)
@@ -154,6 +229,43 @@ class UserScriptManager
             throw new Exception("Script not found");
         }
 
-        found.UnloadAndDelete();
+        found.FullClean();
     }
+
+    public static string NormalizeScriptName(string name)
+    {
+        var normalized = name.Trim().Normalize(NormalizationForm.FormD);
+        var slug = new StringBuilder();
+        var needsSeparator = false;
+
+        foreach (var character in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark)
+                continue;
+
+            var lower = char.ToLowerInvariant(character);
+            var isAsciiLetter = char.IsAsciiLetter(lower);
+            var isDigit = char.IsAsciiDigit(lower);
+
+            if (isAsciiLetter || isDigit)
+            {
+                if (needsSeparator && slug.Length > 0)
+                    slug.Append('_');
+
+                slug.Append(lower);
+                needsSeparator = false;
+            }
+            else
+            {
+                needsSeparator = true;
+            }
+        }
+
+        if (slug.Length == 0)
+            throw new ArgumentException("Automation name must contain at least one letter or number", nameof(name));
+
+        return slug.ToString();
+    }
+
+    internal static string GetScriptFilePathFromSlug(string slug) => Path.Join(HassPath.UserScripts, slug);
 }

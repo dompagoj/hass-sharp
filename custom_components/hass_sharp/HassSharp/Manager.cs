@@ -65,11 +65,6 @@ public class HassSharpManager
     public async Task<PyTuple> SaveScript(string path, string source)
     {
         var scriptPath = Path.Join(HassPath.UserScripts, $"{path}.cs");
-        if (!File.Exists(scriptPath))
-        {
-            await File.Create(scriptPath).DisposeAsync();
-        }
-
         try
         {
             var compiled = await _compiler.CompileSingleFile(scriptPath, source, false);
@@ -90,7 +85,29 @@ public class HassSharpManager
         return PyResult.Success();
     }
 
-    public Task CreateEmptyScript(string name) => _userScriptManager.CreateEmptyScript(_compiler, name);
+    public PyTuple RenameScript(string path, string name)
+    {
+        return WrapPyResult(() =>
+        {
+            var normalizedName = UserScriptManager.NormalizeScriptName(name);
+            var found = _userScriptManager.GetUserScripts().Find(s => s.CompiledScript.Id() == path);
+            if (found is null) throw new ArgumentException($"Cant find script at {path}");
+
+            var alreadyExists = _userScriptManager.GetUserScripts().Exists(s =>
+                s.CompiledScript.Id() != path && s.CompiledScript.Slug() == normalizedName);
+
+            if (alreadyExists) throw new ArgumentException($"Script with name {name} already exists");
+
+            found.CompiledScript.RenameOnDisk(normalizedName);
+            return normalizedName;
+        });
+    }
+
+    public async Task<PyTuple> CreateEmptyScript(string name)
+    {
+        return await WrapPyResult(() => _userScriptManager.CreateEmptyScript(_compiler, name));
+    }
+
 
     public void DeleteScript(string scriptPath) => _userScriptManager.DeleteScript(scriptPath);
 }
