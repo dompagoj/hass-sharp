@@ -54,18 +54,20 @@ The editor supplies imports for `System`, `System.Threading`, `System.Threading.
 ### Entity tracks; EntityUntracked does not
 
 ```csharp
-var light = Entity(Entities.Light.Whatever);
+var light = Entity(Entities.Light.LivingRoom);
 ```
 
-This reads `light.whatever` and **tracks it**. Whenever its state changes, the calling automation method is eligible to run again, subject to its automation mode. Home Assistant state-change events can also contain attribute changes, so a rerun does not necessarily mean the state string changed.
+This reads `light.living_room` and **tracks it**. Whenever its state changes, the calling automation method is eligible to run again, subject to its automation mode. Home Assistant state-change events can also contain attribute changes, so a rerun does not necessarily mean the state string changed.
 
 ```csharp
-var light = EntityUntracked(Entities.Light.Whatever);
+var light = EntityUntracked(Entities.Light.LivingRoom);
 ```
 
 This reads the entity **without registering a dependency**. A later change to this light does not, by itself, rerun this method. Use tracked reads for inputs that should trigger an automation, and untracked reads for action targets or conditions that should only be checked when another input triggers it.
 
-`Entities.Light.Whatever` itself is a generated typed identifier. Merely accessing that identifier does not read or track the entity. Generated identifiers use PascalCase: for example, `binary_sensor.hallway_motion` becomes `Entities.BinarySensor.HallwayMotion`.
+Prefer identifiers from the generated static `Entities` class over raw entity ID strings for editor completion and compile-time checking.
+
+`Entities.Light.LivingRoom` itself is a generated typed identifier. Merely accessing that identifier does not read or track the entity. Generated identifiers use PascalCase: for example, `binary_sensor.hallway_motion` becomes `Entities.BinarySensor.HallwayMotion`.
 
 Both methods also accept string IDs. String reads return an unknown entity type; use `.As<HaLight>()`, `.As<HaInputNumber>()`, and similar conversions for domain-specific helpers. Conversion does not change whether the original read was tracked.
 
@@ -192,7 +194,7 @@ public class LightLogger : Automation
 {
     public void LogLight()
     {
-        var light = Entity(Entities.Light.Whatever);
+        var light = Entity(Entities.Light.LivingRoom);
         InitGuard();
 
         Logger.Info($"{light.EntityId}: {light.RawState}");
