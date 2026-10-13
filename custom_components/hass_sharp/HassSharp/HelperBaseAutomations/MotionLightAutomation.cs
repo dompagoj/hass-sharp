@@ -10,6 +10,8 @@ public abstract class MotionLightAutomation : RunnableClassScript
     public LightOnOpts? LightOnOptions { get; set; }
     public LightOffOpts? LightOffOptions { get; set; }
 
+    public Func<Task<bool>>? ShouldTurnOffCallback { get; set; }
+
     EntityRef<HaLight> _light;
     EntityRef<HaMotionSensor> _motion;
 
@@ -35,6 +37,13 @@ public abstract class MotionLightAutomation : RunnableClassScript
             {
                 Logger.Debug("Motion stil on, not turning off light");
                 _ = ScheduleTurnOff();
+                return;
+            }
+
+            if (ShouldTurnOffCallback is { } cb && !await cb())
+            {
+                Logger.Debug("User provided callback canceled light turn off");
+
                 return;
             }
 

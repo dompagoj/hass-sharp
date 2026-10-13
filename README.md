@@ -8,6 +8,7 @@ The central idea is automatic dependency discovery: **reading an entity with `En
 
 ## Contents
 
+- [Comparison with NetDaemon](#comparison-with-netdaemon)
 - [Getting started](#getting-started)
 - [How automations work](#how-automations-work)
 - [Entity tracking and state](#entity-tracking-and-state)
@@ -19,6 +20,14 @@ The central idea is automatic dependency discovery: **reading an entity with `En
 - [Built-in MotionLightAutomation](#built-in-motionlightautomation)
 - [Practical notes](#practical-notes)
 - [Building from source](#building-from-source)
+
+## Comparison with NetDaemon
+
+Both HassSharp and [NetDaemon](https://netdaemon.xyz/) let you write Home Assistant automations in C#. The main difference is where they run: NetDaemon runs in a separate process, deployed as an [add-on, Docker container, or standalone application](https://netdaemon.xyz/docs/user/), and communicates with Home Assistant through its WebSocket API. **HassSharp runs directly inside the Home Assistant process**, embedding .NET through Python.NET.
+
+This integration provides a web editor directly in the Home Assistant sidebar. Write and save your C# scripts there; HassSharp dynamically compiles them with Roslyn at runtime, loads them, and runs them inside Home Assistant. Updating an automation does not require a separate build and deployment step or a Home Assistant restart.
+
+Service calls also stay within the Home Assistant process. For example, `light.TurnOn().Run()` calls Home Assistant's service registry through the Python.NET bridge, using the same internal service API that YAML automations and Python integrations use. Avoiding a WebSocket round trip removes networking overhead between the automation and Home Assistant and should reduce service-dispatch latency. The size of any performance improvement requires benchmarking; Python.NET interop and service-data serialization still have a cost, and device or integration latency still affects how quickly an action completes.
 
 ## Getting started
 
@@ -135,11 +144,11 @@ await light.TurnOn().RunAsync(); // Dispatches and awaits service completion.
 
 **You must call `Run()` or `RunAsync()` on a returned `ServiceCall`.** This applies to entity methods such as `TurnOn`, `SetValue`, `Activate`, and `Speak`, and to methods on `HassServices`.
 
-| API | Behavior | Use when |
-| --- | --- | --- |
-| `ServiceCall.Run()` | Dispatches the call and immediately returns `void`. | You do not need to wait for the service to complete. |
-| `ServiceCall.RunAsync()` | Returns a `Task` that completes when the Home Assistant service finishes; failures fault the task. | You want to await completion, check the result, or handle errors. |
-| `ServiceCall<TResult>.RunAsync()` | Executes a response-producing service and returns `Task<TResult?>`. | You need response data, such as weather forecasts. |
+| API                               | Behavior                                                                                           | Use when                                                          |
+| --------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `ServiceCall.Run()`               | Dispatches the call and immediately returns `void`.                                                | You do not need to wait for the service to complete.              |
+| `ServiceCall.RunAsync()`          | Returns a `Task` that completes when the Home Assistant service finishes; failures fault the task. | You want to await completion, check the result, or handle errors. |
+| `ServiceCall<TResult>.RunAsync()` | Executes a response-producing service and returns `Task<TResult?>`.                                | You need response data, such as weather forecasts.                |
 
 **Use `await ...RunAsync()` when you want to wait for the service to complete.** For example, await turning a light on before refreshing its reference and checking `IsOn()`. Calling `RunAsync()` without awaiting its task does not make your method wait.
 
@@ -161,12 +170,12 @@ The names `RunnableClassScript.Run()`, a script entity's `Run()`, and `ServiceCa
 
 Apply `[Mode(AutomationMode.X)]` to an automation method, or to a `RunnableClassScript.Run()` override. These modes mirror the run policies in [Home Assistant automation modes](https://www.home-assistant.io/docs/automation/modes/):
 
-| HassSharp mode | Home Assistant mode | When another trigger arrives during a run |
-| --- | --- | --- |
-| `Single` | `single` | Skip the new run. This is the default. |
-| `Restart` | `restart` | Request cancellation of the current run and start a new one. |
-| `Queued` | `queued` | Wait to execute until the current run releases the queue. |
-| `Parallel` | `parallel` | Start another run alongside existing runs. |
+| HassSharp mode | Home Assistant mode | When another trigger arrives during a run                    |
+| -------------- | ------------------- | ------------------------------------------------------------ |
+| `Single`       | `single`            | Skip the new run. This is the default.                       |
+| `Restart`      | `restart`           | Request cancellation of the current run and start a new one. |
+| `Queued`       | `queued`            | Wait to execute until the current run releases the queue.    |
+| `Parallel`     | `parallel`          | Start another run alongside existing runs.                   |
 
 These are run policies; HassSharp conditions remain C# code inside your method. HassSharp's mode attribute currently has no `max` or `max_exceeded` settings. Queued execution serializes runs, but the current semaphore implementation does not promise strict trigger ordering.
 
@@ -371,14 +380,10 @@ public class TemperatureFan : Automation
         var fan = EntityUntracked(Entities.Switch.OfficeFan);
         InitGuard();
 
-        if (!double.TryParse(temperature.RawState,
-                System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var degrees))
+        if (!double.TryParse(temperature.RawState, out var degrees))
             return;
 
-        if (!double.TryParse(threshold.RawState,
-                System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var limit))
+        if (!double.TryParse(threshold.RawState, out var limit))
             return;
 
         if (degrees >= limit)
@@ -766,9 +771,7 @@ public class RunnableBrightness : RunnableClassScript
         var brightness = Entity(Entities.InputNumber.DeskBrightness);
         var light = EntityUntracked(Entities.Light.Desk);
 
-        if (!double.TryParse(brightness.RawState,
-                System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var percent))
+        if (!double.TryParse(brightness.RawState, out var percent))
             return;
 
         await light.TurnOn(new LightOnOpts
@@ -812,13 +815,13 @@ public class HallwayLightHelper : MotionLightAutomation
 }
 ```
 
-| Property | Purpose | Default |
-| --- | --- | --- |
-| `MotionSensor` | Required binary sensor identifier, interpreted as motion. | Must be supplied. |
-| `Light` | Required light identifier. | Must be supplied. |
-| `TurnOffDelay` | Interval before checking whether motion has cleared. | 10 seconds. |
-| `LightOnOptions` | Optional brightness, color, and transition settings. | Standard turn-on call. |
-| `LightOffOptions` | Optional turn-off settings. | Standard turn-off call. |
+| Property          | Purpose                                                   | Default                 |
+| ----------------- | --------------------------------------------------------- | ----------------------- |
+| `MotionSensor`    | Required binary sensor identifier, interpreted as motion. | Must be supplied.       |
+| `Light`           | Required light identifier.                                | Must be supplied.       |
+| `TurnOffDelay`    | Interval before checking whether motion has cleared.      | 10 seconds.             |
+| `LightOnOptions`  | Optional brightness, color, and transition settings.      | Standard turn-on call.  |
+| `LightOffOptions` | Optional turn-off settings.                               | Standard turn-off call. |
 
 The helper's `Initialize()` tracks the motion sensor and reads the light untracked. Its `Run()` uses `Restart` mode: when motion is detected it dispatches a light turn-on and schedules a delayed check. If motion is still detected at that check, it schedules another check; when motion is clear, it dispatches turn-off. The delay is a repeated check interval, rather than a guaranteed duration measured from the moment motion cleared.
 
