@@ -1,3 +1,4 @@
+from homeassistant.components.http import require_admin
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.http import HomeAssistantView, Request
 
@@ -14,12 +15,13 @@ def register_http_routes(hass: HomeAssistant):
 class AutomationsView(HomeAssistantView):
     url = "/api/hass-sharp/automations"
     name = "api:hass-sharp:automations"
-    requires_auth = False
+    requires_auth = True
 
     def __init__(self, hass: HomeAssistant):
         self.hass = hass
         self.hass_sharp = utils.get_hass_sharp_manager(hass)
 
+    @require_admin
     async def get(self, _request):
         user_files = await self.hass.async_add_executor_job(
             self.hass_sharp.GetUserScripts
@@ -27,6 +29,7 @@ class AutomationsView(HomeAssistantView):
 
         return self.json(user_files, 200)
 
+    @require_admin
     async def post(self, request: Request):
         try:
             data = await request.json()
@@ -51,12 +54,13 @@ class AutomationsView(HomeAssistantView):
 class AutomationByIdView(HomeAssistantView):
     url = "/api/hass-sharp/automations/{file_name}"
     name = "api:hass-sharp:automation-by-id"
-    requires_auth = False
+    requires_auth = True
 
     def __init__(self, hass: HomeAssistant):
         self.hass = hass
         self.hass_sharp = utils.get_hass_sharp_manager(hass)
 
+    @require_admin
     async def get(self, _request, file_name: str):
         user_script = await self.hass.async_add_executor_job(
             self.hass_sharp.GetUserScript, file_name
@@ -69,6 +73,7 @@ class AutomationByIdView(HomeAssistantView):
             {"fileName": user_script.FileName, "source": user_script.Source}, 200
         )
 
+    @require_admin
     async def post(self, request: Request, file_name: str):
         data = await request.json()
         (success, error) = await dotnet_tasks.async_run_dotnet_task(
@@ -83,6 +88,7 @@ class AutomationByIdView(HomeAssistantView):
 
         return self.json({"success": True}, 200)
 
+    @require_admin
     async def put(self, request: Request, file_name: str):
         if not file_name or file_name in (".", "..") or any(
             character in file_name for character in ("/", "\\", "\0")
@@ -114,6 +120,7 @@ class AutomationByIdView(HomeAssistantView):
 
         return self.json({"fileName": str(renamed_file_name)}, 200)
 
+    @require_admin
     async def delete(self, _request, file_name: str):
         if not file_name or file_name in (".", "..") or any(
             character in file_name for character in ("/", "\\", "\0")

@@ -7,6 +7,11 @@ namespace HassSharp;
 public class CodeCompiler(
     DiagnosticsProvider _diagnosticsProvider)
 {
+    static readonly CSharpCompilationOptions _compileOptions = new(
+        OutputKind.DynamicallyLinkedLibrary,
+        optimizationLevel: OptimizationLevel.Release
+    );
+
     readonly UserScriptCacheProvider _cacheProvider = new();
 
     public Task<List<CompiledUserScript>> CompileFromUserScriptsFolder() => CompileFromFolder(HassPath.UserScripts);
@@ -95,16 +100,11 @@ public class CodeCompiler(
 
         var references = ProjectReferences.GetDefaultReferences();
 
-        var compilationOptions = new CSharpCompilationOptions(
-            OutputKind.DynamicallyLinkedLibrary,
-            optimizationLevel: OptimizationLevel.Release
-        );
-
         var compilation = CSharpCompilation.Create(
             assemblyName: "Automation_" + Guid.NewGuid(),
             syntaxTrees: syntaxTrees,
             references: references,
-            options: compilationOptions
+            options: _compileOptions
         );
 
         using var ms = new MemoryStream();
