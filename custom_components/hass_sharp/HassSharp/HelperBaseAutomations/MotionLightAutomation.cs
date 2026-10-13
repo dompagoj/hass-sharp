@@ -1,6 +1,6 @@
 namespace HassSharp.HelperBaseAutomations;
 
-public class MotionLightAutomation : RunnableClassScript
+public abstract class MotionLightAutomation : RunnableClassScript
 {
     public EntityRefWrapper<HaBinarySensor> MotionSensor { get; set; } = null!;
     public EntityRefWrapper<HaLight> Light { get; set; } = null!;
@@ -30,7 +30,7 @@ public class MotionLightAutomation : RunnableClassScript
     {
         return Task.Run(async () =>
         {
-            await Task.Delay(TurnOffDelay);
+            await Task.Delay(TurnOffDelay, CancellationToken);
             if (_motion.Refresh().IsMotionDetected())
             {
                 Logger.Debug("Motion stil on, not turning off light");
@@ -47,8 +47,6 @@ public class MotionLightAutomation : RunnableClassScript
     [Mode(AutomationMode.Restart)]
     public override Task Run()
     {
-        Logger.Debug($"Motion state: {_motion.RawState}");
-
         if (_motion.IsMotionDetected())
         {
             Logger.Debug("Motion detected!");

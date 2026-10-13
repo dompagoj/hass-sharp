@@ -73,8 +73,8 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
       const hassError = errorToHassError(err as Error)
       setError(
         hassError.body?.error ??
-        hassError.error ??
-        (fileName ? 'Unable to rename the automation.' : 'Unable to create the automation.'),
+          hassError.error ??
+          (fileName ? 'Unable to rename the automation.' : 'Unable to create the automation.'),
       )
     } finally {
       setSubmitting(false)
@@ -179,12 +179,7 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
         onClose={closeNameDialog}
         footer={
           <>
-            <ha-button
-              slot="secondaryAction"
-              appearance="plain"
-              prop:disabled={submitting()}
-              onClick={closeNameDialog}
-            >
+            <ha-button slot="secondaryAction" appearance="plain" prop:disabled={submitting()} onClick={closeNameDialog}>
               Cancel
             </ha-button>
             <ha-button
@@ -235,12 +230,7 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
         onClose={closeDeleteDialog}
         footer={
           <>
-            <ha-button
-              slot="secondaryAction"
-              appearance="plain"
-              prop:disabled={deleting()}
-              onClick={closeDeleteDialog}
-            >
+            <ha-button slot="secondaryAction" appearance="plain" prop:disabled={deleting()} onClick={closeDeleteDialog}>
               Cancel
             </ha-button>
             <ha-button
@@ -257,8 +247,8 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
       >
         <div class="flex flex-col gap-[12px]">
           <p>
-            Delete <strong>{deleteFile()}</strong>? This will remove the script and all its automations.
-            This cannot be undone.
+            Delete <strong>{deleteFile()}</strong>? This will remove the script and all its automations. This cannot be
+            undone.
           </p>
           <Show when={deleteError()}>
             {message => (
