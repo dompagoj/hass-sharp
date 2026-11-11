@@ -843,6 +843,11 @@ Source references: [automation API](custom_components/hass_sharp/HassSharp/UserS
 
 ## Building from source
 
+For a local Home Assistant instance, use the repository's `docker-compose.yaml`.
+See [the agent development guide](AGENTS.md#run-home-assistant-locally) for build,
+startup, logging, and reload commands. Home Assistant is available at
+<http://localhost:5001>.
+
 The repository contains a Python custom integration, a .NET 10 library, and a SolidJS/Monaco frontend. Building a source checkout requires the .NET 10 SDK and Bun. From the repository root:
 
 ```sh

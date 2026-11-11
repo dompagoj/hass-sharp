@@ -1,0 +1,11 @@
+# Keep managing the existing development container after relocating this file.
+name: hass_dev
+
+services:
+  hass:
+    container_name: "hass"
+    ports:
+      - "5001:8123"
+    image: "homeassistant/home-assistant"
+    volumes:
+      - "./custom_components/hass_sharp:/config/custom_components/hass_sharp"
