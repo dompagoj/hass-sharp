@@ -85,23 +85,27 @@ PyInterop.CallService = (_, service, _, _, _) => turnedOff |= service == "turn_o
 await motion.Run();
 Check(turnedOff, "motion-off trigger must finish turn-off after restart");
 Console.WriteLine("PASS motion-off delay");
+await HandoverTests.Run();
 await HistoryTests.Run();
 await ScheduleTests.Run();
 await VisualTests.Run();
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
 public class Probe : Automation
 {
+    public static Action? Configuring;
+    public static TaskCompletionSource? DelayedExit;
     public static ConcurrentQueue<int> Order = new();
     public static AutomationMode Mode;
     public static AutomationSchedule[]? Schedules;
     public static System.Threading.Channels.Channel<InvocationCause> Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
     public static ConcurrentBag<InvocationCause> Completed = new();
     public static TaskCompletionSource Release = new();
-    public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Run), Mode, true, true, ["sensor.test", "sensor.test"], Schedules));
+    public override AutomationConfiguration Configure() { Configuring?.Invoke(); return new(new AutomationAction(nameof(Run), Mode, true, true, ["sensor.test", "sensor.test"], Schedules)); }
     public async Task Run()
     {
         var cause = Cause;
         Starts.Writer.TryWrite(cause);
+        if (DelayedExit is { } exit) await exit.Task;
         await Release.Task.WaitAsync(CancellationToken);
         await Task.Delay(10, CancellationToken);
         if (Entity("sensor.test").Refresh().RawState != "fresh") throw new Exception("refresh failed");

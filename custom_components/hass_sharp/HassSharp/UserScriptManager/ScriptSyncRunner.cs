@@ -145,7 +145,9 @@ class ScriptSyncRunner
                 runToRestart.Cancellation.CancelAsync();
         }
 
-        var predecessor = mode == AutomationMode.Queued ? state.Tail : null;
+        // Cancellation callbacks finishing does not mean user code has exited.
+        // Keep the completion chain even when an intermediate restart is cancelled.
+        var predecessor = mode is AutomationMode.Queued or AutomationMode.Restart ? state.Tail : null;
         var run = new ActiveRun(cancellation);
         state.CurrentRun = run;
         state.Tail = run.Completed.Task;

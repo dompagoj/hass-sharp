@@ -76,59 +76,93 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
 
     @websocket_api.decorators.async_response
     async def websocket_reload_entities(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-
-          await hass.async_add_executor_job(hass_sharp.GenerateHassEntities, utils.get_hass_entities(hass))
-          connection.send_result(msg["id"], {"success": True})
+        if not connection.user.is_admin:
+            connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        try:
+            await hass.async_add_executor_job(hass_sharp.GenerateHassEntities, utils.get_hass_entities(hass))
+            connection.send_result(msg["id"], {"success": True})
+        except Exception:
+            logger.exception("Editor request failed")
+            connection.send_error(msg["id"], "editor_failed", "Editor request failed; check integration logs")
 
     @websocket_api.decorators.async_response
     async def websocket_get_hover(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-          hover = await hass.async_add_executor_job(hass_sharp.GetHoverDiagnostics, msg["source"], msg["position"])
-          connection.send_result(msg["id"], hover)
+        if not connection.user.is_admin:
+            connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        try:
+            hover = await hass.async_add_executor_job(hass_sharp.GetHoverDiagnostics, msg["source"], msg["position"])
+            connection.send_result(msg["id"], hover)
+        except Exception:
+            logger.exception("Editor request failed")
+            connection.send_error(msg["id"], "editor_failed", "Editor request failed; check integration logs")
 
 
     @websocket_api.decorators.async_response
     async def websocket_get_diagnostics(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-        diagnostics = await hass.async_add_executor_job(hass_sharp.GetCompilationDiagnostics, msg["source"])
-        diagnostics_py = [{
-                  "startLine": d.StartLine,
-                  "startColumn": d.StartColumn,
-                  "endLine": d.EndLine,
-                  "endColumn": d.EndColumn,
-                  "message": d.Message,
-                  "severity": d.Severity,
-              } for d in diagnostics]
+        if not connection.user.is_admin:
+            connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        try:
+            diagnostics = await hass.async_add_executor_job(hass_sharp.GetCompilationDiagnostics, msg["source"])
+            diagnostics_py = [{
+                      "startLine": d.StartLine,
+                      "startColumn": d.StartColumn,
+                      "endLine": d.EndLine,
+                      "endColumn": d.EndColumn,
+                      "message": d.Message,
+                      "severity": d.Severity,
+                  } for d in diagnostics]
 
-        connection.send_result(msg["id"], diagnostics_py)
+            connection.send_result(msg["id"], diagnostics_py)
+        except Exception:
+            logger.exception("Editor request failed")
+            connection.send_error(msg["id"], "editor_failed", "Editor request failed; check integration logs")
 
     @websocket_api.decorators.async_response
     async def websocket_get_completions(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-      completions = await dotnet_tasks.async_run_dotnet_task(
-          hass, hass_sharp.GetCodeCompletions, msg["source"], msg["position"]
-      )
+        if not connection.user.is_admin:
+            connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        try:
+            completions = await dotnet_tasks.async_run_dotnet_task(
+                hass, hass_sharp.GetCodeCompletions, msg["source"], msg["position"]
+            )
 
-      completions_py = [{
-              "displayText": c.DisplayText,
-              "displayTextPrefix": c.DisplayTextPrefix,
-              "displayTextSuffix": c.DisplayTextSuffix,
-              "filterText": c.FilterText,
-              "tags": [t for t in c.Tags],
-              "textEdit": {"start": c.TextEdit.Start, "length": c.TextEdit.Length, "newText": c.TextEdit.NewText},
-              "additionalTextEdits": [
-                  {"start": e.Start, "length": e.Length, "newText": e.NewText}
-                  for e in c.AdditionalTextEdits
-              ],
-            } for c in completions]
+            completions_py = [{
+                    "displayText": c.DisplayText,
+                    "displayTextPrefix": c.DisplayTextPrefix,
+                    "displayTextSuffix": c.DisplayTextSuffix,
+                    "filterText": c.FilterText,
+                    "tags": [t for t in c.Tags],
+                    "textEdit": {"start": c.TextEdit.Start, "length": c.TextEdit.Length, "newText": c.TextEdit.NewText},
+                    "additionalTextEdits": [
+                        {"start": e.Start, "length": e.Length, "newText": e.NewText}
+                        for e in c.AdditionalTextEdits
+                    ],
+                  } for c in completions]
 
-      connection.send_result(msg["id"], completions_py)
+            connection.send_result(msg["id"], completions_py)
+        except Exception:
+            logger.exception("Editor request failed")
+            connection.send_error(msg["id"], "editor_failed", "Editor request failed; check integration logs")
 
     @websocket_api.decorators.async_response
     async def websocket_format_source(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-        source = msg["source"]
+        if not connection.user.is_admin:
+            connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        try:
+            source = msg["source"]
 
-        formatted = await dotnet_tasks.async_run_dotnet_task(
-            hass, hass_sharp.FormatCode, source
-        )
-        connection.send_result(msg["id"], formatted)
+            formatted = await dotnet_tasks.async_run_dotnet_task(
+                hass, hass_sharp.FormatCode, source
+            )
+            connection.send_result(msg["id"], formatted)
+        except Exception:
+            logger.exception("Editor request failed")
+            connection.send_error(msg["id"], "editor_failed", "Editor request failed; check integration logs")
 
     websocket_api.async_register_command(
           hass_outer,

@@ -60,16 +60,19 @@ class UserScriptClass
 
     internal Task RunSchedule(string method, string scheduleId, string planned)
     {
-        if (Script.LifetimeToken.IsCancellationRequested) return Task.CompletedTask;
-        var utc = DateTimeOffset.Parse(planned, System.Globalization.CultureInfo.InvariantCulture).UtcDateTime;
-        var identity = System.Text.Json.JsonSerializer.Serialize(new[] {
-            Script.AutomationId, ClassName, method, scheduleId, utc.ToString("O") });
-        var occurrence = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity)));
-        if (!_occurrences.TryAdd(occurrence, 0)) return Task.CompletedTask;
-        if (Script.ScriptManager.History is { } history && !history.ClaimOccurrence(occurrence)) return Task.CompletedTask;
-        return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method),
-            _actions[method].Mode, InvocationCause.Schedule, occurrence, utc,
-            System.Text.Json.JsonSerializer.Serialize(new { ScheduleId = scheduleId, OccurrenceId = occurrence }));
+        lock (Script.ScriptManager.ActivationGate)
+        {
+            if (!Script.Active || Script.LifetimeToken.IsCancellationRequested) return Task.CompletedTask;
+            var utc = DateTimeOffset.Parse(planned, System.Globalization.CultureInfo.InvariantCulture).UtcDateTime;
+            var identity = System.Text.Json.JsonSerializer.Serialize(new[] {
+                Script.AutomationId, ClassName, method, scheduleId, utc.ToString("O") });
+            var occurrence = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity)));
+            if (!_occurrences.TryAdd(occurrence, 0)) return Task.CompletedTask;
+            if (Script.ScriptManager.History is { } history && !history.ClaimOccurrence(occurrence)) return Task.CompletedTask;
+            return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method),
+                _actions[method].Mode, InvocationCause.Schedule, occurrence, utc,
+                System.Text.Json.JsonSerializer.Serialize(new { ScheduleId = scheduleId, OccurrenceId = occurrence }));
+        }
     }
 
     internal Task StartupCompletion { get; private set; } = Task.CompletedTask;

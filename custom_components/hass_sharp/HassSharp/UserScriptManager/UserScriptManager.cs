@@ -35,6 +35,8 @@ class UserScriptManager
     public static readonly AsyncLocal<InvocationCause> CurrentCause = new();
     public static readonly AsyncLocal<TriggerContext?> CurrentTrigger = new();
 
+    internal object ActivationGate { get; } = new();
+    readonly SemaphoreSlim _updates = new(1, 1);
     readonly List<UserScript> _userScripts = new();
     public DependencyTracking DependencyTracking { get; } = new();
     public ScriptSyncRunner SyncRunner { get; } = new();
@@ -46,10 +48,15 @@ class UserScriptManager
 
     public void UnloadUserScripts()
     {
-        var scripts = _userScripts.ToArray();
+        UserScript[] scripts;
+        lock (ActivationGate)
+        {
+            scripts = _userScripts.ToArray();
+            foreach (var script in scripts) script.Active = false;
+            _userScripts.Clear();
+        }
         SyncRunner.Clear(scripts);
         DependencyTracking.Clear();
-        _userScripts.Clear();
 
         foreach (var script in scripts)
         {
@@ -59,15 +66,20 @@ class UserScriptManager
 
     public void RemoveScriptFromList(UserScript script)
     {
-        _userScripts.Remove(script);
+        lock (ActivationGate)
+        {
+            script.Active = false;
+            _userScripts.Remove(script);
+        }
     }
 
-    public UserScript LoadUserScript(CompiledUserScript compiledScript)
+    public UserScript LoadUserScript(CompiledUserScript compiledScript, bool staged = false)
     {
         var baseType = typeof(Automation);
 
         var userScript = new UserScript
         {
+            Active = !staged,
             AutomationId = History?.Identity(compiledScript.FilePath) ?? compiledScript.FilePath,
             CompiledScript = compiledScript,
             Classes = null!,
@@ -79,7 +91,7 @@ class UserScriptManager
             .ToArray();
 
         userScript.Classes = userScriptClasses;
-        _userScripts.Add(userScript);
+        if (!staged) _userScripts.Add(userScript);
         return userScript;
     }
 
@@ -92,8 +104,11 @@ class UserScriptManager
 
     public Task RunEntries(string entityId, TriggerContext trigger)
     {
-        var entries = DependencyTracking.GetEntries(entityId);
-        return Task.WhenAll(entries.Select(async e => await RunEntry(e, trigger)));
+        lock (ActivationGate)
+        {
+            var entries = DependencyTracking.GetEntries(entityId);
+            return Task.WhenAll(entries.Where(e => e.ScriptClass.Script.Active).Select(e => RunEntry(e, trigger)));
+        }
     }
 
     public async Task RunEntry(DependencyEntry entry, TriggerContext trigger)
@@ -112,49 +127,44 @@ class UserScriptManager
 
     public async Task UpdateUserScript(CompiledUserScript compiled)
     {
-        var foundIdx = _userScripts.FindIndex(s => s.CompiledScript.Id() == compiled.Id());
-        if (foundIdx == -1)
-        {
-            compiled.Unload();
-            throw new("Script not found");
-        }
-
-        var found = _userScripts[foundIdx];
-
-        UserScript? loadedScript = null;
-
+        await _updates.WaitAsync();
         try
         {
-            // Keep the old assembly loaded until the replacement has initialized,
-            // so it can still be restored if the update fails.
-            found.ClearFromTracking();
-            loadedScript = LoadUserScript(compiled);
-
-            Logger.Info("Initializing newly loaded scripts");
-            await loadedScript.ConfigureAndStart();
-            await loadedScript
-                .WriteIfDirty(); // TODO maybe make this a single call? its easy to forget not to write to disk
-            found.Unload();
-        }
-        catch (Exception ex)
-        {
-            // Restore the original script
-            Logger.Error($"Failed to update user script {ex.Message} {ex.InnerException?.Message}");
-            if (loadedScript != null)
+            var found = _userScripts.SingleOrDefault(s => s.CompiledScript.Id() == compiled.Id());
+            if (found is null)
             {
-                loadedScript.ClearFromTracking();
+                compiled.Unload();
+                throw new InvalidOperationException("Script not found");
+            }
+            UserScript? replacement = null;
+            try
+            {
+                // Stage subscriptions while the original remains the only trigger recipient.
+                replacement = LoadUserScript(compiled, staged: true);
+                replacement.Prepare();
+                await replacement.WriteIfDirty();
+                lock (ActivationGate)
+                {
+                    var index = _userScripts.IndexOf(found);
+                    if (index < 0 || !found.Active)
+                        throw new InvalidOperationException("Script was unloaded during update");
+                    found.Active = false;
+                    replacement.Active = true;
+                    _userScripts[index] = replacement;
+                }
+            }
+            catch
+            {
+                replacement?.ClearFromTracking();
+                compiled.Unload();
+                throw;
             }
 
-            compiled.Unload();
-            found.RenewLifetime();
-            if (!_userScripts.Contains(found))
-                _userScripts.Add(found);
-            await found.ConfigureAndStart();
-            await found.WriteToDisk();
-            throw;
+            found.ClearFromTracking();
+            found.Unload();
+            replacement.Start();
         }
-
-        DependencyTracking.Debug();
+        finally { _updates.Release(); }
     }
 
     public async Task<string> CreateEmptyScript(CodeCompiler compiler, string scriptNameUserInput)
