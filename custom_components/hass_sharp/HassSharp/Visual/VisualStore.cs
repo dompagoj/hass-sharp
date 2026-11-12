@@ -67,7 +67,7 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
         {
             var path = FilePath(id); var old = Read(id);
             if ((old?.Revision ?? 0) != expectedRevision) throw new VisualConflictException();
-            var snapshot = (JsonObject)graph.DeepClone();
+            var snapshot = VisualGraphContract.FillMissingLayout(graph);
             var preview = generator.Preview(snapshot);
             if (!preview.Valid) throw new VisualValidationException(preview);
             var document = new VisualDocument(1, id, checked(expectedRevision + 1), snapshot, preview.Source, preview.SourceMap);

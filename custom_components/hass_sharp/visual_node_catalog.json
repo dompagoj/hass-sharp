@@ -1,7 +1,7 @@
 {
   "version": 1,
   "graphVersion": 4,
-  "runtimeSupport": "contract; execution supplied by the v4 runtime",
+  "runtimeSupport": "Graph v4 typed execution and structured scopes",
   "limits": {
     "nodes": 256,
     "edges": 512,
@@ -179,7 +179,9 @@
       "execution": [
         "next"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "condition": {
       "label": "State condition",
@@ -210,7 +212,9 @@
         "false",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "service": {
       "label": "Call service",
@@ -275,7 +279,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "delay": {
       "label": "Delay",
@@ -305,7 +311,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "custom": {
       "label": "Custom C#",
@@ -327,7 +335,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "if": {
       "label": "If",
@@ -356,7 +366,9 @@
         "false",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "and": {
       "label": "And",
@@ -409,7 +421,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "or": {
       "label": "Or",
@@ -462,7 +476,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "xor": {
       "label": "Xor",
@@ -515,7 +531,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "not": {
       "label": "Not",
@@ -555,7 +573,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "compare": {
       "label": "Compare",
@@ -623,7 +643,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": [],
+      "runtimeVersions": [
+        4
+      ],
       "comparison": {
         "leftInput": "left",
         "rightInput": "right",
@@ -675,7 +697,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "set_value": {
       "label": "Set value",
@@ -731,7 +755,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "convert": {
       "label": "Convert",
@@ -787,7 +813,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "stop": {
       "label": "Stop",
@@ -798,7 +826,9 @@
       "inputs": {},
       "outputs": {},
       "execution": [],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "log": {
       "label": "Log",
@@ -839,7 +869,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "repeat": {
       "label": "Repeat",
@@ -901,7 +933,9 @@
       "requiredExecution": [
         "body"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "while": {
       "label": "While",
@@ -949,7 +983,9 @@
         "body",
         "condition"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "until": {
       "label": "Until",
@@ -997,7 +1033,9 @@
         "body",
         "condition"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "foreach": {
       "label": "Foreach",
@@ -1040,7 +1078,8 @@
           ],
           "default": "object",
           "description": "Required type for every foreach item; heterogeneous arrays fail if an item does not match.",
-          "label": "Item type"
+          "label": "Item type",
+          "enumSource": "types"
         }
       },
       "inputs": {
@@ -1049,7 +1088,7 @@
             "array"
           ],
           "required": true,
-          "description": "Array snapshotted at loop entry; later source changes cannot alter iteration.",
+          "description": "JSON array or compatible closed CLR array, snapshotted at loop entry; CLR element type must be assignable to itemType.",
           "default": {
             "kind": "literal",
             "type": "array",
@@ -1084,7 +1123,9 @@
       "requiredExecution": [
         "body"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "parallel": {
       "label": "Parallel",
@@ -1113,7 +1154,9 @@
         "error"
       ],
       "dynamicExecution": "branches",
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "condition_result": {
       "label": "Condition result",
@@ -1138,7 +1181,9 @@
       },
       "outputs": {},
       "execution": [],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "loop_result": {
       "label": "Loop result",
@@ -1157,7 +1202,9 @@
       "outputs": {},
       "execution": [],
       "dynamicInputs": "loop",
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "wait_until": {
       "label": "Wait until",
@@ -1263,7 +1310,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": [],
+      "runtimeVersions": [
+        4
+      ],
       "comparison": {
         "typeConfig": "type",
         "rightInput": "right",
@@ -1309,7 +1358,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "array": {
       "label": "Array",
@@ -1343,7 +1394,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "object_create": {
       "label": "Create object",
@@ -1371,7 +1424,9 @@
         "error"
       ],
       "dynamicInputs": "fields",
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "array_create": {
       "label": "Create array",
@@ -1399,7 +1454,9 @@
         "error"
       ],
       "dynamicInputs": "items",
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "get_field": {
       "label": "Get field",
@@ -1452,7 +1509,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "trigger_data": {
       "label": "Trigger data",
@@ -1472,7 +1531,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "service_response": {
       "label": "Service response",
@@ -1501,7 +1562,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     },
     "entity_field": {
       "label": "Entity field",
@@ -1566,7 +1629,9 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [
+        4
+      ]
     }
   },
   "edgeKinds": {

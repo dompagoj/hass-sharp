@@ -27,7 +27,7 @@ public static class VisualGraphValidator
         string[] Types => Root["types"]!.AsObject().Select(p => p.Key).ToArray();
         void Error(string? node, string message, string? input = null, string? port = null) => errors.Add(new(node, message, InputId: input, PortId: port));
         static bool Bool(JsonNode? node, string key, bool fallback = false) => node is JsonObject o && o[key] is JsonValue v && v.TryGetValue<bool>(out var result) ? result : fallback;
-        static double? Number(JsonNode? value) => value is JsonValue v && v.TryGetValue<double>(out var number) && double.IsFinite(number) ? number : null;
+        static double? Number(JsonNode? value) => value is JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.Number && double.TryParse(v.ToJsonString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) ? number : null;
         static string[] Strings(JsonNode? value) => (value as JsonArray ?? []).OfType<JsonValue>().Select(v => v.TryGetValue<string>(out var s) ? s : "").ToArray();
         static bool Match(string text, string pattern) => Regex.IsMatch(text, pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         static string Kind(JsonObject node) => Text(node, "kind");

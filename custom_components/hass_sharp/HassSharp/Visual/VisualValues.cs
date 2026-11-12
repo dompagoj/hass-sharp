@@ -8,12 +8,15 @@ namespace HassSharp;
 /// <summary>Strict, invocation-local values for visual graphs. No absent value is replaced by a default.</summary>
 public sealed class VisualValues
 {
-    readonly Dictionary<string, object> values = new(StringComparer.Ordinal);
-    public void Set(string name, object value) => values[name] = value;
+    readonly Dictionary<string, object?> values = new(StringComparer.Ordinal);
+    public void Set(string name, object? value) => values[name] = value;
+    internal bool TryGet(string name, out object? value) => values.TryGetValue(name, out value);
+    internal VisualValues Snapshot(VisualSnapshot copier) { var result = new VisualValues(); foreach(var pair in values) result.Set(pair.Key,copier.Copy(pair.Value)); return result; }
     public T Get<T>(string name, string node)
     {
         if (!values.TryGetValue(name, out var value)) throw new InvalidOperationException($"Node {node}: value '{name}' has not been assigned on this path.");
-        if (value is not T typed) throw new InvalidOperationException($"Node {node}: value '{name}' requires {typeof(T).Name}, got {value.GetType().Name}.");
+        if (value == null && default(T) == null) return default!;
+        if (value is not T typed) throw new InvalidOperationException($"Node {node}: value '{name}' requires {typeof(T).Name}, got {value?.GetType().Name ?? "null"}.");
         return typed;
     }
     public static object ConvertValue(object? value, string type)

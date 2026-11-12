@@ -117,7 +117,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
                 }
                 root["nodes"]![kind] = new JsonObject {
                     ["label"] = title, ["category"] = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Category").Value.Value as string ?? "Custom",
-                    ["description"] = DocText(doc?.Element("summary")), ["minGraphVersion"] = 4, ["runtimeVersions"] = new JsonArray(),
+                    ["description"] = DocText(doc?.Element("summary")), ["minGraphVersion"] = 4, ["runtimeVersions"] = new JsonArray(4),
                     ["sourceId"] = source.Id, ["argumentStorage"] = "arguments", ["config"] = new JsonObject { ["arguments"] = new JsonObject { ["type"] = "object", ["default"] = new JsonObject(), ["description"] = "Typed method arguments" } },
                     ["inputs"] = input, ["outputs"] = result == null ? new JsonObject() : new JsonObject { ["result"] = new JsonObject { ["type"] = TypeIdentity(result), ["label"] = PortLabel(method.GetReturnTypeAttributes()) ?? "Result", ["description"] = DocText(doc?.Element("returns")) } },
                     ["execution"] = new JsonArray("next", "error") };
@@ -132,9 +132,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
         foreach (var declared in typeSymbols.Values.ToArray())
         {
             foreach (var contract in declared.AllInterfaces)
-                if (!Unsupported(contract)) typeSymbols.TryAdd(TypeIdentity(contract), contract);
+                if (!Unsupported(contract) && compilation.IsSymbolAccessibleWithin(contract, compilation.Assembly)) typeSymbols.TryAdd(TypeIdentity(contract), contract);
             for (var baseType = declared.BaseType; baseType != null; baseType = baseType.BaseType)
-                if (!Unsupported(baseType)) typeSymbols.TryAdd(TypeIdentity(baseType), baseType);
+                if (!Unsupported(baseType) && compilation.IsSymbolAccessibleWithin(baseType, compilation.Assembly)) typeSymbols.TryAdd(TypeIdentity(baseType), baseType);
         }
         var types = root["types"]!.AsObject();
         foreach (var (id, symbol) in typeSymbols)
@@ -142,6 +142,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
             var type = types[id] as JsonObject ?? new JsonObject();
             if (!types.ContainsKey(id)) types[id] = type;
             type["label"] = symbol.ToDisplayString(); type["description"] ??= symbol.ToDisplayString();
+            if (symbol is IArrayTypeSymbol arraySymbol) type["elementType"] = TypeIdentity(arraySymbol.ElementType);
             type["category"] = Category(symbol); type["nullable"] = Nullable(symbol); type["literalKind"] = LiteralKind(symbol);
             var scalar = symbol is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullableScalar ? nullableScalar.TypeArguments[0] : symbol;
             if (scalar.SpecialType == SpecialType.System_Char) type["character"] = true;
@@ -156,7 +157,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
         foreach (var method in methods)
             foreach (var (_, input) in root["nodes"]![method.Kind]!["inputs"]!.AsObject())
                 if (input is JsonObject rule && rule["default"] is JsonObject operand && !VisualNodeCatalog.ValidLiteral(VisualNodeCatalog.Text(operand, "type"), operand["value"], operand.ContainsKey("value"), root)) rule.Remove("default");
-        var snapshot = new VisualCatalogSnapshot(root, sources, methods, typeSymbols.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)), compilation);
+        var snapshot = new VisualCatalogSnapshot(root, sources, methods, typeSymbols.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)), compilation, errors);
         return new(!errors.Any(e => e.Severity == 3), errors.ToImmutableArray(), snapshot);
     }
 

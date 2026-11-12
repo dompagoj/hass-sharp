@@ -19,6 +19,7 @@ public sealed class VisualCatalogSnapshot
     readonly JsonObject catalog;
     internal JsonObject Root => catalog;
     internal CSharpCompilation? Compilation { get; }
+    internal ImmutableArray<NodeLibraryDiagnostic> LibraryDiagnostics { get; }
     public JsonObject Catalog => (JsonObject)catalog.DeepClone();
     public ImmutableArray<NodeLibrarySource> Sources { get; }
     public ImmutableDictionary<string, NodeMethodDescriptor> Methods { get; }
@@ -26,13 +27,14 @@ public sealed class VisualCatalogSnapshot
     public static VisualCatalogSnapshot BuiltIn { get; } = new(VisualNodeCatalog.Root, [], [], [], null);
 
     internal VisualCatalogSnapshot(JsonObject catalog, IEnumerable<NodeLibrarySource> sources,
-        IEnumerable<NodeMethodDescriptor> methods, IEnumerable<NodeTypeDescriptor> types, CSharpCompilation? compilation)
+        IEnumerable<NodeMethodDescriptor> methods, IEnumerable<NodeTypeDescriptor> types, CSharpCompilation? compilation, IEnumerable<NodeLibraryDiagnostic>? libraryDiagnostics = null)
     {
         this.catalog = (JsonObject)catalog.DeepClone();
         Sources = sources.ToImmutableArray();
         Methods = methods.ToImmutableDictionary(m => m.Kind, StringComparer.Ordinal);
         Types = types.ToImmutableDictionary(t => t.Id, StringComparer.Ordinal);
         Compilation = compilation;
+        LibraryDiagnostics = libraryDiagnostics?.ToImmutableArray() ?? [];
     }
 
     public bool IsAssignable(string source, string target)

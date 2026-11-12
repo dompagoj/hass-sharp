@@ -44,6 +44,10 @@ public static class VisualNodeCatalog
         var ports = (spec?["inputs"]?.DeepClone() as JsonObject) ?? [];
         foreach (var (_, value) in ports) if (value is JsonObject port && port["types"] is JsonArray types)
             port["types"] = new JsonArray(types.SelectMany(t => t!.GetValue<string>() == "$any" ? (snapshot?.Root ?? Root)["types"]!.AsObject().Select(p => p.Key) : new[] { ResolveType(t!.GetValue<string>(), node) }).Select(t => JsonValue.Create(t)).ToArray<JsonNode?>());
+        if (Text(node,"kind") == "foreach" && ports["items"] is JsonObject itemsPort)
+            itemsPort["types"] = new JsonArray(new[] { "array" }.Concat((snapshot?.Root ?? Root)["types"]!.AsObject()
+                .Where(p => p.Value?["nullable"]?.GetValue<bool>() != true && p.Value?["elementType"] is JsonValue element && CompatibleTypes(element.GetValue<string>(), Text(node["config"],"itemType"), snapshot)).Select(p=>p.Key))
+                .Select(t=>(JsonNode?)JsonValue.Create(t)).ToArray());
         JsonObject Input(IEnumerable<string> types, bool required, string description) => new() { ["types"] = new JsonArray(types.Select(t => JsonValue.Create(t)).ToArray<JsonNode?>()), ["required"] = required, ["description"] = description };
         var all = (snapshot?.Root ?? Root)["types"]!.AsObject().Select(p => p.Key).ToArray();
         var dynamic = Text(spec, "dynamicInputs");

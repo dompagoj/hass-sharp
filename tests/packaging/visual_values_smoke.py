@@ -56,3 +56,87 @@ for key in ("list", "dict", "null"):
         else:
             raise AssertionError((key, destination, "must reject non-scalar"))
 print("PASS: real Python.NET scalar normalization and collection/null rejection from managed worker threads")
+
+# The bridge's actual attribute dictionary contains PyObject wrappers, including nested
+# Python collections. Snapshot construction must detach them on a managed worker.
+from HassSharp import EntityStateSnapshot, HasEntityState
+from System import DateTimeOffset, Nullable
+state = HasEntityState()
+state.EntityId = "sensor.test"
+state.State = "on"
+state.Attributes = attributes
+state.LastChanged = 123
+state.LastReported = 456
+snapshot_method = clr.GetClrType(EntityStateSnapshot).GetMethod("From")
+snapshot_call = Expression.Call(snapshot_method, Array[Expression]([
+    Expression.Constant(state, clr.GetClrType(HasEntityState)),
+    Expression.Constant(None, clr.GetClrType(Nullable[DateTimeOffset])),
+]))
+snapshot_delegate = Expression.Lambda[Func[EntityStateSnapshot]](snapshot_call, Array[ParameterExpression]([])).Compile()
+
+def finish(task):
+    deadline = time.monotonic() + 20
+    while not task.IsCompleted:
+        if time.monotonic() > deadline:
+            raise TimeoutError("Managed worker timed out; possible Python GIL deadlock")
+        time.sleep(0.005)
+    return task.GetAwaiter().GetResult()
+
+snapshot = finish(Task.Run[EntityStateSnapshot](snapshot_delegate))
+assert snapshot.Attributes.GetProperty("int").GetInt64() == 42
+assert snapshot.Attributes.GetProperty("list")[1].GetInt32() == 2
+assert snapshot.Attributes.GetProperty("dict").GetProperty("x").GetInt32() == 3
+assert snapshot.LastUpdated is None
+attributes["int"] = 99
+assert snapshot.Attributes.GetProperty("int").GetInt64() == 42, "snapshot retains no mutable Python aliases"
+attributes["int"] = 42
+
+# Execute the real generated typed Read entity -> custom class -> custom record chain.
+import json
+import tempfile
+from HassSharp import DiagnosticsProvider, NodeLibraryCompiler, NodeLibrarySource, VisualGenerator, CodeCompiler, HassPath, PyInterop
+from System.Text.Json.Nodes import JsonNode
+from System import Action, Int32
+
+diagnostics = DiagnosticsProvider()
+diagnostics.GenerateHassEntities(Array[String](["sensor.test"]))
+source = '''
+public sealed class Box { public EntityStateSnapshot State {get;set;} = null!; }
+public sealed record Reading(long Value);
+public static class Smoke {
+ [Node("Box")] public static Box Box(EntityStateSnapshot state) => new() { State=state };
+ [Node("Read")] public static Reading Read(Box box) => new(box.State.Attributes.GetProperty("int").GetInt64());
+ [Node("Consume")] public static void Consume(Reading reading) { if(reading.Value!=42) throw new Exception("typed Python snapshot lost"); }
+}
+'''
+library = NodeLibraryCompiler(diagnostics).Preview(Array[NodeLibrarySource]([NodeLibrarySource("smoke", source, 1)]))
+assert library.Valid, str(library.Diagnostics)
+kinds = {method.MethodName: method.Kind for method in library.Snapshot.Methods.Values}
+nodes = [
+    {"id": "t", "kind": "trigger", "config": {"type": "manual"}},
+    {"id": "entity", "kind": "read_entity", "config": {"entity": {"kind": "literal", "type": "entity_id", "value": "sensor.test"}}},
+    *[{"id": name.lower(), "kind": kinds[name], "config": {"arguments": {}}} for name in ("Box", "Read", "Consume")],
+]
+edges = [{"id": "e" + str(i), "source": a["id"], "target": b["id"]} for i, (a, b) in enumerate(zip(nodes, nodes[1:]))]
+for i, (source_id, source_port, target, target_port) in enumerate([
+    ("entity", "value", "box", "state"), ("box", "result", "read", "box"), ("read", "result", "consume", "reading")
+]):
+    edges.append({"id": "d" + str(i), "kind": "data", "source": source_id, "sourcePort": source_port, "target": target, "targetPort": target_port})
+graph = JsonNode.Parse(json.dumps({"version": 4, "name": "Python snapshot", "nodes": nodes, "edges": edges}))
+preview = VisualGenerator(diagnostics).Preview(graph, library.Snapshot)
+assert preview.Valid, str(preview.Diagnostics)
+PyInterop.Entity = Func[String, HasEntityState](lambda _: state)
+PyInterop.Log = Action[Int32, String](lambda *_: None)
+with tempfile.TemporaryDirectory(prefix="visual-pythonnet-") as temporary:
+    HassPath.HassConfiguration = temporary
+    compiled = finish(CodeCompiler(diagnostics).CompileSingleFile(str(Path(temporary) / "smoke.cs"), preview.Source, True))
+    try:
+        from System import Activator
+        automation_type = compiled.Assembly.GetType("VisualAutomation")
+        instance = Activator.CreateInstance(automation_type)
+        call = Expression.Call(Expression.Constant(instance, automation_type), automation_type.GetMethod("Run_74"))
+        invoke = Expression.Lambda[Func[Task]](call, Array[ParameterExpression]([])).Compile()
+        finish(Task.Run(invoke))
+    finally:
+        compiled.Unload()
+print("PASS: real Python.NET worker snapshot detachment and compiled entity -> custom class -> custom record consumers")

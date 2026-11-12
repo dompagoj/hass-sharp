@@ -9,7 +9,7 @@ public class CodeCompiler(
 {
     static readonly CSharpCompilationOptions _compileOptions = new(
         OutputKind.DynamicallyLinkedLibrary,
-        optimizationLevel: OptimizationLevel.Release
+        optimizationLevel: OptimizationLevel.Release, allowUnsafe: true
     );
 
     readonly UserScriptCacheProvider _cacheProvider = new();
@@ -108,15 +108,16 @@ public class CodeCompiler(
 
     byte[] CompileSingleFileToBytes(string source, string path, SyntaxTree entities)
     {
-        var tree = CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings + source, path: path);
+        var tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Latest), path: path);
 
         SyntaxTree[] syntaxTrees =
         [
             tree,
+            CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings),
             entities,
         ];
 
-        var references = ProjectReferences.GetDefaultReferences();
+        var references = NodeLibraryCompiler.FrameworkReferences();
 
         var compilation = CSharpCompilation.Create(
             assemblyName: "Automation_" + Guid.NewGuid(),

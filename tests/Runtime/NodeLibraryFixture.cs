@@ -24,6 +24,7 @@ public static class NodeLibraryFixture
             [Node("Widen")] public static void Widen(double number) {}
             [Node("Nullable elements")] public static string?[] NullableElements() => new string?[] { null };
             [Node("Required elements")] public static string[] RequiredElements() => new[] { "text" };
+            [Node("Nullable array")] public static string[]? NullableArray() => null;
             [Node("Required enumerable")] public static void RequiredEnumerable(IEnumerable<string> items) {}
             [Node("Required readonly list")] public static void RequiredReadOnlyList(IReadOnlyList<string> items) {}
             [Node("Required list")] public static void RequiredList(IList<string> items) {}
@@ -88,6 +89,14 @@ public static class NodeLibraryFixture
         Wire(requiredElements, "array", "result", "consumer", "items");
         Case("required array elements accept required enumerable", requiredElements, true);
         Case("nonfinite nullable defaults remain optional", Graph(Node("NonfiniteDefaults", "defaults")), true);
+        foreach(var (factory,itemType,valid) in new[]{("RequiredElements","string",true),("NullableElements","string",false),("NullableElements","global::System.String?",true),("RequiredElements","number",false),("NullableArray","string",false)})
+        {
+            var loop=VisualGraphContract.CreateNode("foreach","loop",snapshot);loop["config"]!["itemType"]=itemType;
+            var body=VisualGraphContract.CreateNode("log","body",snapshot);
+            var graph=Graph(Node(factory,"array"),loop,body);graph["edges"]![2]!["port"]="body";
+            Wire(graph,"array","result","loop","items");
+            Case("CLR array foreach "+factory+" to "+itemType,graph,valid,valid?null:"items");
+        }
         return new() { ["sourceId"] = "shared", ["revision"] = 2, ["source"] = Source, ["catalog"] = snapshot.Catalog, ["cases"] = cases };
     }
 

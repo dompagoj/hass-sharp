@@ -26,22 +26,22 @@ static class BackendReviewTests
             var compiler = new CodeCompiler(diagnostics);
             foreach (var symbol in new[] { "Dispatch", "stopped", "values", "executed" })
             {
-                await Test($"legacy {symbol} binding survives compiled execution", async () => {
+                await Test($"v4 {symbol} binding survives compiled execution", async () => {
                     var preview = generator.Preview(VisualTests.MemberBindingGraph(symbol));
-                    Check(preview.Valid, "legacy member preview rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
+                    Check(preview.Valid, "v4 member preview rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
                     var compiled = await compiler.CompileSingleFile(Path.Combine(root, "binding-" + symbol + ".cs"), preview.Source, true);
                     try {
                         var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
                         await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
-                        Check((bool)instance.GetType().GetField("Completed")!.GetValue(instance)!, "legacy continuation was skipped");
+                        Check((bool)instance.GetType().GetField("Completed")!.GetValue(instance)!, "v4 continuation was skipped");
                     } finally { compiled.Unload(); }
                 });
-                await Test($"saved legacy {symbol} binding survives startup regeneration", async () => {
+                await Test($"saved v4 {symbol} binding survives startup regeneration", async () => {
                     var graph = VisualTests.MemberBindingGraph(symbol);
                     var directory = Path.Combine(root, ".storage", "hass_sharp", "visual");
                     Directory.CreateDirectory(directory);
                     var id = "binding-" + symbol.ToLowerInvariant();
-                    // A pre-v3 saved document must load even if its old generated source is usable.
+                    // A saved v4 document must load even if its old generated source is usable.
                     var source = $$"""
                     public class VisualAutomation : Automation {
                       {{graph["members"]!.GetValue<string>()}}
@@ -58,47 +58,47 @@ static class BackendReviewTests
                     var api = new HassSharpManager(root);
                     try {
                         await api.Init(["binary_sensor.motion", "light.hall"]);
-                        Check(api.GetUserScript("visual_" + id) != null, "saved legacy graph failed activation");
+                        Check(api.GetUserScript("visual_" + id) != null, "saved v4 graph failed activation");
                         await completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
                         Check(File.ReadAllText(path) == persisted, "startup rewrote the saved document");
                     } finally { api.Unload(); PyInterop.Log = oldLog; File.Delete(path); }
                 });
             }
             foreach (var symbol in new[] { "Dispatch", "stopped", "executed" })
-                await Test($"v3 internal controls preserve authored {symbol} binding", async () => {
-                    var graph = VisualTests.MemberBindingGraph(symbol); graph["version"] = 3;
+                await Test($"v4 internal controls preserve authored {symbol} binding", async () => {
+                    var graph = VisualTests.MemberBindingGraph(symbol); graph["version"] = 4;
                     var preview = generator.Preview(graph);
-                    Check(preview.Valid, "v3 member preview rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
-                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v3-binding-" + symbol + ".cs"), preview.Source, true);
+                    Check(preview.Valid, "v4 member preview rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
+                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-binding-" + symbol + ".cs"), preview.Source, true);
                     try {
                         var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
                         await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
-                        Check((bool)instance.GetType().GetField("Completed")!.GetValue(instance)!, "v3 continuation was skipped");
+                        Check((bool)instance.GetType().GetField("Completed")!.GetValue(instance)!, "v4 continuation was skipped");
                     } finally { compiled.Unload(); }
                 });
             foreach (var (symbol, internalName) in new[] { ("Dispatch", "@__hassSharpDispatch"), ("stopped", "__hassSharpStopped"), ("executed", "__hassSharpExecuted"), ("step", "__hassSharpStep") })
-                await Test($"v3 controls avoid authored prefix collision for {symbol}", async () => {
-                    var graph = VisualTests.MemberBindingGraph(symbol); graph["version"] = 3;
+                await Test($"v4 controls avoid authored prefix collision for {symbol}", async () => {
+                    var graph = VisualTests.MemberBindingGraph(symbol); graph["version"] = 4;
                     graph["members"] = graph["members"]!.GetValue<string>().Replace(symbol, internalName);
                     foreach (var node in graph["nodes"]!.AsArray().Skip(1))
                         node!["config"]!["code"] = node["config"]!["code"]!.GetValue<string>().Replace(symbol,internalName);
                     var preview = generator.Preview(graph);
                     Check(preview.Valid, "authored prefix member rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
-                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v3-prefix-" + symbol + ".cs"), preview.Source, true);
+                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-prefix-" + symbol + ".cs"), preview.Source, true);
                     try {
                         var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
                         await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
                         Check((bool)instance.GetType().GetField("Completed")!.GetValue(instance)!, "authored prefix member changed control flow");
                     } finally { compiled.Unload(); }
                 });
-            await Test("v3 internal names avoid declarations inside interpolated strings", async () => {
-                var graph = VisualTests.MemberBindingGraph("step"); graph["version"] = 3;
+            await Test("v4 internal names avoid declarations inside interpolated strings", async () => {
+                var graph = VisualTests.MemberBindingGraph("step"); graph["version"] = 4;
                 graph["members"] = "public bool Completed;";
                 graph["nodes"]![1]!["config"]!["code"] = """Logger.Info($"interpolation:{int.TryParse("7", out var __hassSharpStep)} {__hassSharpStep}"); Completed = true;""";
                 graph["nodes"]![2]!["config"]!["code"] = "if (!Completed) throw new Exception(\"interpolation node did not run\");";
                 var preview = generator.Preview(graph);
                 Check(preview.Valid, "interpolated declaration rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
-                var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v3-interpolation-binding.cs"), preview.Source, true);
+                var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-interpolation-binding.cs"), preview.Source, true);
                 try {
                     var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
                     await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
@@ -268,28 +268,28 @@ static class BackendReviewTests
                     Check(logs.Any(x => x.Contains("System.InvalidOperationException") && x.Contains("Throwing.Run")), "exception diagnostics missing");
                 } finally { manager.UnloadUserScripts(); }
             });
-            await Test("legacy visual source regenerates on startup without changing saved revision", async () => {
+            await Test("v4 visual source regenerates on startup without changing saved revision", async () => {
                 var directory = Path.Combine(root, ".storage", "hass_sharp", "visual");
                 var store = new VisualStore(directory, generator);
-                var saved = store.Save("legacy", VisualTests.Graph(), 0);
-                var legacy = saved with { Source = saved.Source.Replace("Entities: [Entities.BinarySensor.Motion]", "Entities: [\"binary_sensor.motion\"]").Replace("Entity(Entities.BinarySensor.Motion)", "Entity(\"binary_sensor.motion\")") };
-                var path = Path.Combine(directory, "legacy.json");
-                File.WriteAllText(path, JsonSerializer.Serialize(legacy, VisualStore.Json));
+                var saved = store.Save("v4", VisualTests.Graph(), 0);
+                var v4 = saved with { Source = "deliberately stale generated source" };
+                var path = Path.Combine(directory, "v4.json");
+                File.WriteAllText(path, JsonSerializer.Serialize(v4, VisualStore.Json));
                 var persisted = File.ReadAllText(path);
                 var api = new HassSharpManager(root);
                 try {
                     await api.Init(["binary_sensor.motion", "light.hall"]);
-                    Check(api.GetUserScript("visual_legacy") != null, "legacy generated string source failed to activate");
-                    var read = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"legacy\"}"))!["result"]!;
-                    Check(api.GetUserScript("visual_legacy")!.Source.Contains("Entities: [Entities.BinarySensor.Motion]"), "runtime did not compile regenerated source");
-                    Check(read["source"]!.GetValue<string>() == legacy.Source, "read changed last-saved source provenance");
-                    Check(read["sourceMap"]!.ToJsonString() == JsonSerializer.SerializeToNode(legacy.SourceMap, VisualStore.Json)!.ToJsonString(), "read changed last-saved source map provenance");
+                    Check(api.GetUserScript("visual_v4") != null, "v4 generated string source failed to activate");
+                    var read = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"v4\"}"))!["result"]!;
+                    Check(api.GetUserScript("visual_v4")!.Source.Contains("Entities:[Entities.BinarySensor.Motion]"), "runtime did not compile regenerated source");
+                    Check(read["source"]!.GetValue<string>() == v4.Source, "read changed last-saved source provenance");
+                    Check(read["sourceMap"]!.ToJsonString() == JsonSerializer.SerializeToNode(v4.SourceMap, VisualStore.Json)!.ToJsonString(), "read changed last-saved source map provenance");
                     Check(read["revision"]!.GetValue<long>() == saved.Revision && File.ReadAllText(path) == persisted, "startup rewrote saved revision/source");
                     await api.Init(["light.hall"]);
-                    Check(api.GetUserScript("visual_legacy") == null, "missing trigger still active");
-                    var missing = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"legacy\"}"))!["result"]!;
+                    Check(api.GetUserScript("visual_v4") == null, "missing trigger still active");
+                    var missing = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"v4\"}"))!["result"]!;
                     Check(missing["activationError"]!.GetValue<string>().Contains("t: Unknown entity"), "missing entity omitted actionable graph node");
-                } finally { api.Unload(); store.Delete("legacy", saved.Revision); }
+                } finally { api.Unload(); store.Delete("v4", saved.Revision); }
             });
             await Test("startup isolates code and visual compilation errors", async () => {
                 Directory.CreateDirectory(HassPath.UserScripts);

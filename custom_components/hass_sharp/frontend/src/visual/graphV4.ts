@@ -14,7 +14,7 @@ export interface ConfigSpec { label?: string; description?: string; type: string
 export interface InputSpec { label?: string; types: string[]; required: boolean; description: string; default?: unknown; min?: number; max?: number; integer?: boolean }
 export interface OutputSpec { label?: string; type: string; description: string; visibility?: string }
 export interface NodeSpec { argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
-export interface TypeSpec { description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[] }
+export interface TypeSpec { elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[] }
 export interface VisualCatalogSnapshot { version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; nodes: Record<string, NodeSpec>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
 /** Pass the server-produced catalog explicitly for each document; graph metadata is never type authority. */
 export const nodeCatalog = rawCatalog as unknown as VisualCatalogSnapshot
@@ -41,6 +41,7 @@ export function dataOutputs(node: V4Node, catalog: VisualCatalogSnapshot = nodeC
 export function dataInputs(node: V4Node, loopOwner?: V4Node, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, InputSpec> {
   const spec = nodeSpec(node.kind, catalog)
   const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.inputs ?? {}).map(([key, value]) => [key, { ...value, types: value.types.flatMap(t => t === '$any' ? Object.keys(catalog.types) : [resolveType(t, node)]) }]))) as Record<string, InputSpec>
+  if (node.kind === 'foreach' && ports.items) ports.items.types = ['array', ...Object.entries(catalog.types).filter(([, type]) => !type.nullable && type.elementType && compatibleTypes(type.elementType, text(node.config.itemType), catalog)).map(([id]) => id)]
   const types = Object.keys(catalog.types)
   const dynamic = spec?.dynamicInputs
   if (dynamic === 'fields' && record(node.config.fields)) for (const key of Object.keys(node.config.fields)) ports[`field:${key}`] = { types, required: true, label: key, description: `Object field ${key}` }
