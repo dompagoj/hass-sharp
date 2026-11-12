@@ -1,0 +1,40 @@
+diff --git a/dist/index/index.js b/dist/index/index.js
+index d13f4b55e3a7834cdcc7bba3b91b2cd93498d83e..bc13ecf6bcb53108b1827ad5b3cc74744c9cb53e 100644
+--- a/dist/index/index.js
++++ b/dist/index/index.js
+@@ -1110,8 +1110,14 @@ const GroupNode = (props) => (() => {
+ 				nodeClickDistance: params.nodeClickDistance
+ 			});
+ 		}
++		// Keep D3 touch gestures alive while Solid updates node geometry.
++		const dragParams = createMemo(params, undefined, { equals: (a, b) =>
++			a.nodeId === b.nodeId && a.disabled === b.disabled &&
++			a.noDragClass === b.noDragClass && a.handleSelector === b.handleSelector &&
++			a.isSelectable === b.isSelectable && a.nodeClickDistance === b.nodeClickDistance
++		});
+ 		createEffect(() => {
+-			updateDrag(elem(), params());
++			updateDrag(elem(), dragParams());
+ 		}), onCleanup(() => {
+ 			dragInstance.destroy();
+ 		});
+diff --git a/dist/index/index.jsx b/dist/index/index.jsx
+index d7d0dae5495621fe32964a5b425d2d64cc34fddc..907cf43b8c31b2eb79225fa51216aa4fa019b99a 100644
+--- a/dist/index/index.jsx
++++ b/dist/index/index.jsx
+@@ -593,8 +593,14 @@ const Handle = (props) => {
+ 				nodeClickDistance: params.nodeClickDistance
+ 			});
+ 		}
++		// Keep D3 touch gestures alive while Solid updates node geometry.
++		const dragParams = createMemo(params, undefined, { equals: (a, b) =>
++			a.nodeId === b.nodeId && a.disabled === b.disabled &&
++			a.noDragClass === b.noDragClass && a.handleSelector === b.handleSelector &&
++			a.isSelectable === b.isSelectable && a.nodeClickDistance === b.nodeClickDistance
++		});
+ 		createEffect(() => {
+-			updateDrag(elem(), params());
++			updateDrag(elem(), dragParams());
+ 		}), onCleanup(() => {
+ 			dragInstance.destroy();
+ 		});

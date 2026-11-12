@@ -3,6 +3,7 @@ import { render } from 'solid-js/web'
 import { MemoryRouter, Route } from '@solidjs/router'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
+import { VisualAutomationView } from '../src/views/VisualAutomationView'
 import { AutomationsListView } from '../src/views/AutomationsListView'
 
 let dispose: (() => void) | undefined
@@ -20,7 +21,7 @@ function setup(failWrites = false) {
   } }
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={hass as any}>
-    <MemoryRouter><Route path="/" component={AutomationsListView} /></MemoryRouter>
+    <MemoryRouter><Route path="/" component={AutomationsListView} /><Route path="/visual/new" component={VisualAutomationView} /></MemoryRouter>
   </HassCtx.Provider></QueryClientProvider>, root)
   return { root, calls }
 }
@@ -60,4 +61,29 @@ it('opens row actions by keyboard, renames with form submit, and restores focus 
   expect(calls).toContainEqual({ method: 'PUT', path: 'hass-sharp/automations/Heating.cs', data: { name: 'Warm house' } })
   press(input, 'Escape'); await Promise.resolve()
   expect(document.activeElement).toBe(trigger)
+})
+it('starts a named Visual draft without posting a C# automation', async () => {
+  const { root, calls } = setup()
+  await vi.waitFor(() => expect(root.textContent).toContain('Heating.cs'))
+  ;[...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.includes('New automation'))!.click()
+  await Promise.resolve()
+  const visual = root.querySelector<HTMLInputElement>('input[value="visual"]')!
+  expect(visual).not.toBeNull()
+  visual.click()
+  const name = root.querySelector<HTMLInputElement>('input[name="name"]')!
+  name.value = 'Morning lights'; name.dispatchEvent(new Event('input', { bubbles: true }))
+  root.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  await Promise.resolve()
+  expect(calls.filter(call => call.method !== 'GET')).toEqual([])
+  expect(root.querySelector('[aria-label="Visual automation editor"] h1')?.textContent).toBe('Morning lights')
+})
+it('keeps C# creation on the existing backend endpoint', async () => {
+  const { root, calls } = setup()
+  await vi.waitFor(() => expect(root.textContent).toContain('Heating.cs'))
+  ;[...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.includes('New automation'))!.click()
+  await Promise.resolve()
+  const name = root.querySelector<HTMLInputElement>('input[name="name"]')!
+  name.value = 'Warm house'; name.dispatchEvent(new Event('input', { bubbles: true }))
+  root.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  await vi.waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: 'hass-sharp/automations', data: { name: 'Warm house' } }))
 })

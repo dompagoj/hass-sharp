@@ -6,6 +6,7 @@ import { TODOView } from './views/TODOView'
 import { MainLayout } from './layout/MainLayout'
 import { HassCtx } from './context'
 import { AutomationsListView } from './views/AutomationsListView'
+import { VisualAutomationView } from './views/VisualAutomationView'
 import { AutomationView } from './views/AutomationView'
 import { findCustomComponent } from './utils'
 
@@ -36,6 +37,7 @@ function App(props: { hass: HomeAssistant }) {
           <Route path="/" component={() => <Navigate href="/automations" />} />
           <Route path="/automations" component={AutomationsListView} />
           <Route path="/automations/:id" component={AutomationView} />
+          <Route path="/visual/new" component={VisualAutomationView} />
           <Route path="/devices" component={TODOView} />
           <Route path="/entities" component={TODOView} />
         </Router>

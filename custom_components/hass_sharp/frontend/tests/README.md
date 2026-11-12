@@ -20,3 +20,10 @@ For smoke-check evidence in browser devtools, the iframe exposes `previewCode()`
 (real Monaco models) and `previewSaved()` (last in-memory saved source). This
 fixture is outside the production build entry point. Live Home Assistant checks
 still require the local instance described in the repository's AGENTS.md.
+
+Visual editor shell coverage lives in `visual-graph.test.ts`, `VisualEditor.test.tsx`
+and `VisualAutomationView.test.tsx`. Tests use the real pinned Solid Flow/D3
+implementation. Happy DOM has no layout engine; the resize/edge tests supply only
+measured DOM dimensions at that boundary. These tests do not replace desktop/mobile
+browser acceptance. See `../docs/visual-editor-feasibility.md` for the local patch,
+capability limits, and outstanding browser verification.

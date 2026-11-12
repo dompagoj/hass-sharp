@@ -18,6 +18,7 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
   const queryClient = useQueryClient()
   const [nameDialogOpen, setNameDialogOpen] = createSignal(false)
   const [renameFile, setRenameFile] = createSignal<string>()
+  const [authoringMode, setAuthoringMode] = createSignal<'code' | 'visual'>('code')
   const [name, setName] = createSignal('')
   const [error, setError] = createSignal<string>()
   const [submitting, setSubmitting] = createSignal(false)
@@ -40,6 +41,7 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
 
   const openNameDialog = (fileName?: string) => {
     setRenameFile(fileName)
+    setAuthoringMode('code')
     setName(fileName ?? '')
     setError(undefined)
     setNameDialogOpen(true)
@@ -53,6 +55,11 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
     const automationName = name().trim()
     if (!automationName || submitting()) return
     const fileName = renameFile()
+    if (!fileName && authoringMode() === 'visual') {
+      setNameDialogOpen(false)
+      navigate(`/visual/new?name=${encodeURIComponent(automationName)}`)
+      return
+    }
 
     setSubmitting(true)
     setError(undefined)
@@ -134,7 +141,7 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
       <Show when={query.isSuccess && !files().length}><div class="hs-empty" role="status">
         <span class="hs-empty-icon"><Icon name="code" /></span>
         <h2>No automations{search() ? ' found' : ' yet'}</h2>
-        <p>{search() ? 'Try another file or class name.' : 'Create your first C# automation to get started.'}</p>
+        <p>{search() ? 'Try another file or class name.' : 'Create your first automation to get started.'}</p>
         <Show when={!search()}><Button variant="primary" onClick={() => openNameDialog()}>New automation</Button></Show>
       </div></Show>
       <ul class="hs-automation-list" aria-label="Automation files">
@@ -177,7 +184,7 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
               busy={submitting()}
               onClick={() => void submitAutomationName()}
             >
-              {renameFile() ? 'Rename' : 'Create'}
+              {renameFile() ? 'Rename' : authoringMode() === 'visual' ? 'Open draft' : 'Create'}
             </Button>
           </>
         }
@@ -189,8 +196,13 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
             void submitAutomationName()
           }}
         >
+          <Show when={!renameFile()}><fieldset class="hs-authoring-choice"><legend>Author with</legend>
+            <label><input type="radio" name="authoring-mode" value="code" checked={authoringMode() === 'code'} onChange={() => setAuthoringMode('code')} /><span><strong>C#</strong><small>Write and run C# automations</small></span></label>
+            <label><input type="radio" name="authoring-mode" value="visual" checked={authoringMode() === 'visual'} onChange={() => setAuthoringMode('visual')} /><span><strong>Visual</strong><small>Try the visual draft editor</small></span></label>
+          </fieldset></Show>
+          <Show when={!renameFile() && authoringMode() === 'visual'}><p class="hs-muted">A local draft only. Saving and running visual automations are not available yet.</p></Show>
           <Field label="Automation name" type="text" name="name" autofocus required value={name()} disabled={submitting()}
-            hint="Choose a descriptive name. The .cs extension is added automatically."
+            hint={authoringMode() === 'visual' && !renameFile() ? 'Give your visual draft a name.' : 'Choose a descriptive name. The .cs extension is added automatically.'}
             onInput={event => setName(event.currentTarget.value)} />
           <Show when={error()}>
             {message => (
