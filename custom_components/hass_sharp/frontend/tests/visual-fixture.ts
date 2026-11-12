@@ -14,6 +14,8 @@ export function visualFixture() {
     calls.push(structuredClone(message))
     if (message.type === 'hass_sharp/run_history') return { version: 1, offset: 0, limit: 20, runs: [] }
     if (message.type === 'hass_sharp/run_now') return { version: 1, runId: 'manual-visual-run' }
+    if (message.type === 'hass_sharp/get_entities') return { entities: [] }
+    if (message.type === 'hass_sharp/reload_entities') return { success: true }
     const req = message.request
     let result: unknown
     const fail = (code: string, detail: unknown) => ({ version: 1, ok: false, error: { code, detail } })

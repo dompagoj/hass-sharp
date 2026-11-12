@@ -158,7 +158,7 @@ export const Editor = (props: Props) => {
           <Show when={props.onBackRef}><A class="hs-button hs-button--ghost hs-icon-button" href={props.onBackRef!} aria-label="Back to automations"><Icon name="arrow" /></A></Show>
           <div class="hs-editor-title"><p class="hs-eyebrow">C# AUTOMATION</p><h1>{props.fileName}</h1></div>
         </div>
-        <div class="hs-editor-actions"><Show when={props.renderRuns}><Button onClick={() => setTab('runs')}>Run now…</Button></Show>
+        <div class="hs-editor-actions"><a class="hs-button hs-button--secondary" aria-label="C# automation help" href="https://github.com/dompagoj/hass-sharp/blob/main/docs/writing-csharp-automations.md" target="_blank" rel="noopener noreferrer">Help</a><Show when={props.renderRuns}><Button onClick={() => setTab('runs')}>Run now…</Button></Show>
         <Button data-save variant="primary" busy={saveMut.isPending} onClick={() => { void saveMut.mutateAsync().catch(() => {}) }} disabled={editorActions.saveDisabled()}>
           <Icon name="save" />{saveMut.isPending ? 'Saving…' : 'Save'}
         </Button></div>
@@ -171,7 +171,10 @@ export const Editor = (props: Props) => {
       <div class="hs-editor-feedback" role="status" aria-live="polite">
         <Show when={saveMut.isPending}>Formatting, checking and saving…</Show>
       </div>
-      <section class="hs-editor-source" role="tabpanel" id={`${tabId}-source-panel`} aria-labelledby={`${tabId}-source`} hidden={tab() !== 'source'}>
+      {/* Native bubbling listeners run after Monaco, before HA's document shortcuts.
+          Do not preventDefault: typing, Vim and Monaco keybindings still own the key. */}
+      <section class="hs-editor-source" role="tabpanel" id={`${tabId}-source-panel`} aria-labelledby={`${tabId}-source`} hidden={tab() !== 'source'}
+        on:keydown={event => event.stopPropagation()} on:keypress={event => event.stopPropagation()} on:keyup={event => event.stopPropagation()}>
         <div class="hs-monaco" ref={editorRef} id="editor" />
         <footer class="hs-editor-status"><Status>C#</Status><span>Roslyn language services</span><div ref={statusBarRef} /></footer>
       </section>

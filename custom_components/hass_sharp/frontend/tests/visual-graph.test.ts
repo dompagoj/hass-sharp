@@ -131,3 +131,24 @@ describe('port-aware edges', () => {
     expect(canConnect(graph, 'otherwise', 'condition-1', 'error')).toBe(false)
   })
 })
+
+it('creates positioned nodes and exact output connections atomically, revalidating stale requests', async () => {
+  const { createNodeAt, canCreateNode } = await import('../src/visual/graph')
+  for (const [source, port] of [['service-1', 'next'], ['condition-1', 'false'], ['service-1', 'error'], ['condition-1', 'true']] as const) {
+    const base = { ...createGraph('Flow'), edges: [] }
+    const history = createGraphHistory(base)
+    const pending = { source, port }
+    expect(canCreateNode(base, 'trigger', pending)).toBe(false)
+    history.commit(createNodeAt(base, 'delay', { x: 120, y: -30 }, pending))
+    const created = history.graph()
+    expect(created.nodes.at(-1)?.position).toEqual({ x: 120, y: -30 })
+    expect(created.edges[0]).toMatchObject({ source, target: created.nodes.at(-1)!.id, ...(port === 'next' ? {} : { port }) })
+    expect(createNodeAt(created, 'service', { x: 0, y: 0 }, pending)).toBe(created)
+    history.undo(); expect(history.graph()).toEqual(base)
+    history.redo(); expect(history.graph()).toEqual(created)
+  }
+  const legacy = { ...createGraph('Legacy'), version: 1 as const }
+  expect(canCreateNode(legacy, 'trigger')).toBe(false)
+  expect(createNodeAt(legacy, 'trigger', { x: 0, y: 0 })).toBe(legacy)
+  expect(createNodeAt(legacy, 'delay', { x: 0, y: 0 }, { source: 'deleted', port: 'next' })).toBe(legacy)
+})

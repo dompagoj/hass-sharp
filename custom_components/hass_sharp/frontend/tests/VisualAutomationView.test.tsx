@@ -29,8 +29,8 @@ it('creates, edits and saves separate drafts on HTTP without crypto.randomUUID',
   // HTTP LAN origins expose getRandomValues but not randomUUID.
   vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
   const { root, fixture } = setup()
-  button(root, 'Add Wait').click()
-  button(root, 'Add Wait').click()
+  button(root, 'Add step').click(); button(root, 'Create Wait').click()
+  button(root, 'Add step').click(); button(root, 'Create Wait').click()
   await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
   button(root, 'Save graph').click()
   await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 1'))
@@ -172,7 +172,7 @@ it('authors two v2 triggers and C# sections, saves/reloads them, then dispatches
   setControl(root, 'Daily time', '07:30')
   setControl(root, 'Time zone', 'Europe/Zagreb')
   setControl(root, 'Concurrency mode', 'Restart')
-  button(root, 'Add Entity changes').click()
+  button(root, 'Add step').click(); button(root, 'Create Entity changes').click()
   setControl(root, 'Node label', 'Manual evening')
   setControl(root, 'Trigger type', 'manual')
   setControl(root, 'Connect to', 'service-1')
@@ -204,7 +204,7 @@ it('authors two v2 triggers and C# sections, saves/reloads them, then dispatches
   // UUIDs are ASCII; independently derive the request expectation from the persisted ID.
   expect(methods).toContain('Run_' + Array.from(second.id as string, c => c.charCodeAt(0).toString(16).toUpperCase()).join(''))
   // Unsaved trigger changes must not change the list of runnable saved actions.
-  button(root, 'Add Entity changes').click()
+  button(root, 'Add step').click(); button(root, 'Create Entity changes').click()
   expect(root.querySelectorAll('.hs-run-action option')).toHaveLength(2)
 })
 
@@ -227,7 +227,7 @@ it('edits all trigger kinds, boolean overrides and expressions without changing 
     type: 'daily', startup: true, manual: false, entitiesExpression: '["sensor.temperature"]', schedulesExpression: '[]',
     at: '2026-12-01T07:30:00+01:00', entity: 'sensor.temperature',
   } })
-  button(root, 'Add Custom C#').click()
+  button(root, 'Add step').click(); button(root, 'Create Custom C#').click()
   setControl(root, 'Custom C# section', 'await Task.Delay(10, CancellationToken);')
   expect(json(root).nodes.at(-1).config.code).toBe('await Task.Delay(10, CancellationToken);')
 })
@@ -237,7 +237,7 @@ it('keeps v1 editing and Run, and upgrades only when explicitly chosen', async (
   fixture.documents.get('motion')!.graph.version = 1
   await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Saved motion'))
   expect(control(root, 'C# imports')).toBeNull()
-  expect(button(root, 'Add Entity changes').disabled).toBe(true)
+  expect(button(root, 'About Entity changes').getAttribute('draggable')).toBe('false')
   edit(root, 'Legacy trigger')
   expect(json(root).version).toBe(1)
   button(root, 'Run now').click()
@@ -245,7 +245,7 @@ it('keeps v1 editing and Run, and upgrades only when explicitly chosen', async (
   button(root, 'Upgrade to graph v2').click()
   expect(json(root).version).toBe(2)
   expect(json(root).nodes[0].id).toBe('trigger-1')
-  expect(button(root, 'Add Entity changes').disabled).toBe(false)
+  expect(button(root, 'About Entity changes').getAttribute('draggable')).toBe('true')
   // The saved v1 action remains available until the upgrade is saved.
   expect(root.querySelector('.hs-run-action option')?.getAttribute('value')).toBe('VisualAutomation::Run')
 })

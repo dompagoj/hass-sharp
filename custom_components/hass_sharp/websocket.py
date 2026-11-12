@@ -75,6 +75,22 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
         )
 
     @websocket_api.decorators.async_response
+    async def websocket_get_entities(hass, connection, msg):
+        if not connection.user.is_admin:
+            connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        try:
+            connection.send_result(msg["id"], {"entities": utils.get_hass_entity_suggestions(hass)})
+        except Exception:
+            logger.exception("Entity discovery failed")
+            connection.send_error(msg["id"], "entities_failed", "Could not load entities; try again")
+
+    websocket_api.async_register_command(
+        hass_outer, "hass_sharp/get_entities", websocket_get_entities,
+        vol.Schema({vol.Required("id"): int, vol.Required("type"): "hass_sharp/get_entities"})
+    )
+
+    @websocket_api.decorators.async_response
     async def websocket_reload_entities(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
         if not connection.user.is_admin:
             connection.send_error(msg["id"], "unauthorized", "Administrator required")

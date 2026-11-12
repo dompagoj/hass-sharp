@@ -43,7 +43,7 @@ it('renders same-count edits, resizing and undo positions through the real adapt
 it('offers palette, inspector, connection editing and undo/redo while requesting a server preview', async () => {
   const host = root()
   dispose = render(() => <VisualEditor name="Heating" />, host)
-  button(host, 'Add Wait').click()
+  button(host, 'Add step').click(); button(host, 'Create Wait').click()
   await vi.waitFor(() => expect(host.querySelector('input[aria-label="Node label"]')?.getAttribute('value') ?? (host.querySelector('input[aria-label="Node label"]') as HTMLInputElement)?.value).toBe('Wait'))
   input(host, 'Node label', 'Wait for warmth')
   input(host, 'Seconds', '90')
@@ -64,7 +64,7 @@ it('offers palette, inspector, connection editing and undo/redo while requesting
 it('uses keyboard history only outside text controls, and keeps JSON available', () => {
   const host = root()
   dispose = render(() => <VisualEditor name="Heating" />, host)
-  button(host, 'Add Wait').click()
+  button(host, 'Add step').click(); button(host, 'Create Wait').click()
   const label = host.querySelector<HTMLInputElement>('input[aria-label="Node label"]')!
   label.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))
   expect(label.value).toBe('Wait')
@@ -345,8 +345,8 @@ const options = (host: Element, label: string) => [...host.querySelector<HTMLSel
 it('authors condition false and error branches from the inspector and undoes them', () => {
   const host = root()
   dispose = render(() => <VisualEditor name="Heating" />, host)
-  button(host, 'Add Wait').click(); input(host, 'Node label', 'Otherwise')
-  button(host, 'Add Call service').click(); input(host, 'Node label', 'Recover')
+  button(host, 'Add step').click(); button(host, 'Create Wait').click(); input(host, 'Node label', 'Otherwise')
+  button(host, 'Add step').click(); button(host, 'Create Call service').click(); input(host, 'Node label', 'Recover')
   focusNode(host, 'condition-1')
   expect(options(host, 'Output')).toEqual(['If true (used)', 'If false', 'On error'])
   expect(host.querySelector<HTMLSelectElement>('select[aria-label="Output"]')!.value).toBe('false')
@@ -371,11 +371,11 @@ it('authors condition false and error branches from the inspector and undoes the
 it('blocks a second outgoing edge on a used port in the inspector', () => {
   const host = root()
   dispose = render(() => <VisualEditor name="Heating" />, host)
-  button(host, 'Add Wait').click()
+  button(host, 'Add step').click(); button(host, 'Create Wait').click()
   focusNode(host, 'service-1')
   const wait = json(host).nodes.at(-1).id
   input(host, 'Connect to', wait); button(host, 'Connect').click()
-  button(host, 'Add Call service').click()
+  button(host, 'Add step').click(); button(host, 'Create Call service').click()
   focusNode(host, 'service-1')
   expect(options(host, 'Output')).toEqual(['Next (used)', 'On error'])
   expect(host.querySelector<HTMLSelectElement>('select[aria-label="Output"]')!.value).toBe('next')
@@ -447,4 +447,176 @@ it('connects by dragging from a port handle and rejects a second edge on that po
   await vi.waitFor(() => expect(graph().edges.at(-1)).toMatchObject({ source: 'otherwise', target: 'recover', port: 'error' }))
   expect(graph().edges.filter(e => e.source === 'condition-1').map(e => [e.port, e.target])).toEqual([['true', 'service-1'], ['false', 'otherwise']])
   await vi.waitFor(() => expect(host.querySelectorAll('.solid-flow__edge')).toHaveLength(graph().edges.length))
+})
+
+it('palette clicks describe configuration and connections without editing history', () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const before = json(host)
+  button(host, 'About State condition').click()
+  const inspector = host.querySelector('[aria-label="Node inspector"]')!
+  expect(inspector.textContent).toContain('Required state')
+  expect(inspector.textContent).toContain('If true')
+  expect(inspector.textContent).toContain('If false')
+  expect(inspector.textContent).toContain('On error')
+  expect(inspector.querySelector('input')).toBeNull()
+  expect(json(host)).toEqual(before)
+  expect(button(host, 'Undo').disabled).toBe(true)
+})
+it('opens a focused keyboard chooser and cancels without creating anything', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const before = json(host)
+  button(host, 'Add step').click()
+  await Promise.resolve()
+  const search = host.querySelector<HTMLInputElement>('[aria-label="Search steps"]')!
+  expect(search).not.toBeNull(); expect(document.activeElement).toBe(search)
+  search.value = 'wait'; search.dispatchEvent(new Event('input', { bubbles: true }))
+  expect(host.querySelectorAll('[aria-label="Step choices"] [role="option"]')).toHaveLength(1)
+  search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  expect(json(host)).toEqual(before)
+  button(host, 'Add step').click()
+  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  button(host, 'Add step').click()
+  const next = host.querySelector<HTMLInputElement>('[aria-label="Search steps"]')!
+  next.value = 'wait'; next.dispatchEvent(new Event('input', { bubbles: true }))
+  next.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  next.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  expect(json(host).nodes.at(-1).kind).toBe('delay')
+  expect(host.querySelector<HTMLInputElement>('[aria-label="Node label"]')!.value).toBe('Wait')
+  button(host, 'Undo').click(); expect(json(host)).toEqual(before)
+})
+it('drops palette nodes at flow coordinates accounting for pan and zoom', () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const data = new DataTransfer()
+  button(host, 'About Wait').dispatchEvent(dragEvent('dragstart', data))
+  const canvas = host.querySelector('[aria-label="Automation canvas"]')!
+  canvas.dispatchEvent(dragEvent('drop', data, 160, 170))
+  expect(json(host).nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: 200, y: 200 } })
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+})
+it('opens on empty canvas click at pointer position and ignores right clicks', () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const pane = host.querySelector('.solid-flow__pane')!
+  pane.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 160, clientY: 170, button: 2 }))
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  pane.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 160, clientY: 170, button: 0 }))
+  button(host, 'Create Wait').click()
+  expect(json(host).nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: 200, y: 200 } })
+})
+it('offers valid steps after an output drag and undoes node plus branch in one operation', async () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const before = json(host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  const pane = host.querySelector('.solid-flow__pane')!
+  vi.spyOn(document, 'elementFromPoint').mockReturnValue(pane)
+  const handle = host.querySelector('[data-id="condition-1"] [data-handleid="false"]')!
+  handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+  document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 160, clientY: 170 }))
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 160, clientY: 170 }))
+  expect(host.querySelector('[aria-label="Search steps"]')).not.toBeNull()
+  expect(host.querySelector('[aria-label="Create Entity changes"]')).toBeNull()
+  button(host, 'Create Wait').click()
+  const after = json(host)
+  expect(after.edges.at(-1)).toMatchObject({ source: 'condition-1', port: 'false', target: after.nodes.at(-1).id })
+  button(host, 'Undo').click(); expect(json(host)).toEqual(before)
+  button(host, 'Redo').click(); expect(json(host)).toEqual(after)
+})
+
+// happy-dom exposes DragEvent as Event and omits DataTransfer/coordinates.
+function dragEvent(type: string, data: DataTransfer, clientX = 0, clientY = 0) {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY })
+  Object.defineProperty(event, 'dataTransfer', { value: data })
+  return event
+}
+
+it('does not open a chooser after panning, node drags, resize or drops outside the canvas', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const pane = host.querySelector('.solid-flow__pane')!
+  pane.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+  pane.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, buttons: 1, clientX: 80, clientY: 80 }))
+  pane.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, clientX: 80, clientY: 80 }))
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  const data = new DataTransfer()
+  button(host, 'About Wait').dispatchEvent(dragEvent('dragstart', data))
+  document.body.dispatchEvent(dragEvent('drop', data, 1000, 1000))
+  expect(json(host).nodes).toHaveLength(3)
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+})
+it.each(['next', 'error'] as const)('preserves the %s output in the connection chooser and cancels pending drags with Escape', async port => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  const pane = host.querySelector('.solid-flow__pane')!
+  const hit = vi.spyOn(document, 'elementFromPoint').mockReturnValue(pane)
+  const handle = host.querySelector(`[data-id="service-1"] [data-handleid="${port}"]`)!
+  const start = () => {
+    handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+    document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 160, clientY: 170 }))
+  }
+  const end = () => document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 160, clientY: 170 }))
+  start(); handle.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' })); end()
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  start(); hit.mockReturnValue(document.body); end()
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  hit.mockReturnValue(pane); start(); end()
+  button(host, 'Create Wait').click()
+  expect(json(host).edges.at(-1)).toMatchObject({ source: 'service-1', ...(port === 'error' ? { port: 'error' } : {}) })
+  start(); end() // now occupied
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+})
+it('entity picker keyboard selection works inside the editor shortcut boundary', async () => {
+  const host = root()
+  const fixture = visualFixture()
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ ...fixture,
+    callWS: (message: any) => message.type === 'hass_sharp/get_entities' ? Promise.resolve({ entities: [{ entity_id: 'sensor.fresh', friendly_name: 'New sensor' }] }) : fixture.callWS(message),
+  } as any}><RealVisualEditor name="Keys" /></HassCtx.Provider></QueryClientProvider>, host)
+  const field = host.querySelector<HTMLInputElement>('[aria-label="Entity ID"]')!
+  field.focus(); input(host, 'Entity ID', 'new')
+  await vi.waitFor(() => expect(host.querySelector('[role="option"]')).not.toBeNull())
+  field.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  expect(json(host).nodes[0].config.entity).toBe('sensor.fresh')
+})
+it('opens visual help with node examples without changing the graph', () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Help" />, host)
+  const help = host.querySelector<HTMLAnchorElement>('a[aria-label="Visual automation help"]')
+  expect(help).not.toBeNull()
+  expect(help!.href).toContain('/docs/writing-visual-automations.md')
+  expect(help!.target).toBe('_blank')
+  expect(button(host, 'Undo').disabled).toBe(true)
+})
+
+it('fetches current entity suggestions when reopening an editor with a fresh cache', async () => {
+  const host = root()
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  client.setQueryData(['hass-entities'], [{ entity_id: 'sensor.old' }])
+  const fixture = visualFixture()
+  const callWS = vi.fn((message: any) => message.type === 'hass_sharp/get_entities'
+    ? Promise.resolve({ entities: [{ entity_id: 'sensor.new' }] }) : fixture.callWS(message))
+  dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={{ ...fixture, callWS } as any}>
+    <RealVisualEditor name="Reopened" />
+  </HassCtx.Provider></QueryClientProvider>, host)
+  await vi.waitFor(() => expect(client.getQueryData(['hass-entities'])).toEqual([{ entity_id: 'sensor.new' }]))
+  expect(callWS).toHaveBeenCalledWith({ type: 'hass_sharp/get_entities' })
+})
+it('clears a touch connection canceled before a later touch release', async () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
+  const host = root(); dispose = render(() => <VisualEditor name="Touch cancel" />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  const pane = host.querySelector('.solid-flow__pane')!
+  vi.spyOn(document, 'elementFromPoint').mockReturnValue(pane)
+  const handle = host.querySelector('[data-id="service-1"] [data-handleid="next"]')!
+  const finger = { identifier: 1, clientX: 10, clientY: 10, target: handle } as Touch
+  handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'touch', clientX: 10, clientY: 10 }))
+  const endFinger = { ...finger, clientX: 160, clientY: 170 } as Touch
+  document.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, touches: [endFinger], changedTouches: [endFinger] }))
+  document.dispatchEvent(new TouchEvent('touchcancel', { bubbles: true, touches: [], changedTouches: [endFinger] }))
+  document.dispatchEvent(new TouchEvent('touchend', { bubbles: true, touches: [], changedTouches: [endFinger] }))
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  expect(json(host).nodes).toHaveLength(3)
 })

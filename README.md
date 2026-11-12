@@ -1,4 +1,6 @@
 > Runtime API changed: use [declarative automations](docs/runtime/declarative-automations.md).
+
+Start here: [C# automation guide](docs/writing-csharp-automations.md) · [Visual automation guide](docs/writing-visual-automations.md). These guides use the current declarative API; older runnable-class examples below describe the legacy API.
 > Lifecycle examples below using Initialize, InitGuard, RunnableClassScript or implicit triggers are historical and no longer compile.
 
 # HassSharp

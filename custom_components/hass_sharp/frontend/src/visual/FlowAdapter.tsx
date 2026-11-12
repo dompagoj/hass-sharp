@@ -1,11 +1,13 @@
-import { createEffect, For, on, onCleanup, onMount, untrack, type Component } from 'solid-js'
+import { createEffect, createSignal, Show, For, on, onCleanup, onMount, untrack, type Component } from 'solid-js'
 import { createStore, reconcile } from 'solid-js/store'
 import { Background, Controls, Handle, NodeResizer, Position, SolidFlow, useSolidFlow, type Node, type NodeProps, type Edge } from '@dschz/solid-flow'
 import flowStyles from '@dschz/solid-flow/styles?inline'
+import { NodeChooser } from './NodeChooser'
 import type { VisualDiagnostic } from './api'
-import { canConnect, connectNodes, outputPort, outputPorts, portLabels, updateNode, type EdgePort, type VisualGraph } from './graph'
+import { canConnect, canCreateNode, createNodeAt, palette, connectNodes, outputPort, outputPorts, portLabels, updateNode, type EdgePort, type NodeKind, type PendingConnection, type VisualGraph } from './graph'
 
 interface Props {
+  addStepRequest?: number
   graph: VisualGraph
   selectedId?: string
   diagnostics?: VisualDiagnostic[]
@@ -16,6 +18,43 @@ interface Props {
 // The rest of the app depends only on VisualGraph, never on Solid Flow stores/events.
 export const FlowAdapter: Component<Props> = props => {
   let canvas!: HTMLDivElement
+  type Point = { x: number; y: number }
+  const [chooser, setChooser] = createSignal<{ screen: Point; position: Point; pending?: PendingConnection }>()
+  let toFlow = (point: Point) => point
+  let pending: PendingConnection | undefined
+  const cancelPending = () => { pending = undefined }
+  // XYFlow listens for touchend, but not touchcancel. A later release must not
+  // resurrect a canceled output-to-empty-space gesture.
+  onMount(() => canvas.ownerDocument.addEventListener('touchcancel', cancelPending, true))
+  onCleanup(() => canvas.ownerDocument.removeEventListener('touchcancel', cancelPending, true))
+  let gestureStart: Point | undefined
+  let gestureMoved = false
+  let suppressPaneClick = false
+  const closeChooser = () => setChooser(undefined)
+  const openChooser = (screen: Point, connection?: PendingConnection) => {
+    setChooser({ screen, position: toFlow(screen), pending: connection })
+  }
+  const create = (kind: NodeKind, position: Point, connection?: PendingConnection) => {
+    const next = createNodeAt(props.graph, kind, position, connection)
+    closeChooser()
+    if (next !== props.graph) { props.onChange(next); props.onSelect(next.nodes.at(-1)!.id) }
+  }
+  const Coordinates = () => {
+    const flow = useSolidFlow()
+    toFlow = point => flow.screenToFlowPosition(point, { snapToGrid: false })
+    createEffect(on(() => props.addStepRequest, request => {
+      if (!request) return
+      const rect = canvas.getBoundingClientRect()
+      openChooser({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+    }))
+    return null
+  }
+  const emptyPane = (element: Element | null) => !!element && canvas.contains(element) && element.classList.contains('solid-flow__pane')
+  const chooserOffset = () => {
+    const rect = canvas.getBoundingClientRect()
+    const point = chooser()!.screen
+    return { x: Math.max(8, Math.min(point.x - rect.left, rect.width - 292)), y: Math.max(8, Math.min(point.y - rect.top, rect.height - 340)) }
+  }
   let touchDrag: { id: string; graph: VisualGraph } | undefined
   const [nodes, setNodes] = createStore<Node[]>([])
   const [edges, setEdges] = createStore<Edge[]>([])
@@ -131,8 +170,17 @@ export const FlowAdapter: Component<Props> = props => {
     }}</For>
   </>
   return <div ref={canvas} class="hs-flow" aria-label="Automation canvas"
+    on:pointerdown={event => { gestureStart = { x: event.clientX, y: event.clientY }; gestureMoved = false }}
+    on:pointermove={event => { if (gestureStart && Math.hypot(event.clientX - gestureStart.x, event.clientY - gestureStart.y) > 3) gestureMoved = true }}
+    onDragOver={event => { if (event.dataTransfer?.types.includes('application/x-hass-sharp-node')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
+    onDrop={event => {
+      event.preventDefault()
+      const kind = event.dataTransfer?.getData('application/x-hass-sharp-node') as NodeKind
+      if (palette.some(item => item.kind === kind)) create(kind, toFlow({ x: event.clientX, y: event.clientY }))
+    }}
     onFocusIn={event => { const id = (event.target as Element).closest('.solid-flow__node')?.getAttribute('data-id'); if (id) props.onSelect(id) }}
     on:keydown={event => {
+      if (event.key === 'Escape') { pending = undefined; closeChooser() }
       const id = (event.target as Element).closest('.solid-flow__node')?.getAttribute('data-id')
       if (!id) return
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); props.onSelect(id); return }
@@ -150,14 +198,37 @@ export const FlowAdapter: Component<Props> = props => {
     <style>{`@scope (.hs-flow) { ${flowStyles} }`}</style>
     <SolidFlow nodes={nodes} edges={edges} nodeTypes={{ automation: AutomationNode }}
       initialViewport={{ x: 10, y: 20, zoom: 0.75 }} minZoom={0.25} maxZoom={1.5}
-      autoPanOnNodeDrag={false}
+      autoPanOnNodeDrag={false} autoPanOnConnect={false} clickConnect={false}
+      onPaneClick={({ event }) => { if (event.button === 0 && !gestureMoved && !suppressPaneClick) openChooser({ x: event.clientX, y: event.clientY }) }}
+      onMoveStart={closeChooser}
+      onMove={() => { gestureMoved = true }}
+      onConnectStart={(_event, params) => {
+        closeChooser()
+        pending = params.handleType === 'source' && params.nodeId && params.handleId ? { source: params.nodeId, port: params.handleId as EdgePort } : undefined
+      }}
+      onConnectEnd={(event, state) => {
+        const connection = pending; pending = undefined
+        suppressPaneClick = true
+        queueMicrotask(() => { suppressPaneClick = false })
+        if (!connection || state.isValid || event.type === 'touchcancel') return
+        const point = 'changedTouches' in event ? event.changedTouches[0] : event
+        if (!point) return
+        const root = canvas.getRootNode() as Document | ShadowRoot
+        const below = root.elementFromPoint?.(point.clientX, point.clientY)
+        if (emptyPane(below) && palette.some(item => canCreateNode(props.graph, item.kind, connection))) {
+          openChooser({ x: point.clientX, y: point.clientY }, connection)
+        }
+      }}
       deleteKey={null} multiSelectionKey={null} selectionKey={null} panActivationKey={null} zoomActivationKey={null}
       onNodeClick={({ node }) => props.onSelect(node.id)}
       onNodeDragStart={({ targetNode }) => { if (targetNode) props.onSelect(targetNode.id) }}
       onNodeDragStop={commitGeometry}
       isValidConnection={connection => canConnect(props.graph, connection.source, connection.target, port(connection.sourceHandle))}
       onConnect={connection => props.onChange(connectNodes(props.graph, connection.source, connection.target, port(connection.sourceHandle)))}>
-      <TouchNodeDrag /><Background variant="dots" /><Controls showLock={false} />
+      <Coordinates /><TouchNodeDrag /><Background variant="dots" /><Controls showLock={false} />
     </SolidFlow>
+    <Show when={chooser()} keyed>{request => <NodeChooser {...chooserOffset()} pending={request.pending}
+      allowed={kind => canCreateNode(props.graph, kind, request.pending)} onClose={closeChooser}
+      onChoose={kind => create(kind, request.position, request.pending)} />}</Show>
   </div>
 }

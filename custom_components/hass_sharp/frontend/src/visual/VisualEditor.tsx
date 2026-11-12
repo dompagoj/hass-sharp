@@ -1,6 +1,8 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
 import { Button, Field, Status } from '../components/Controls'
 import { FlowAdapter } from './FlowAdapter'
+import { EntityAutocomplete } from '../components/EntityAutocomplete'
+import { useEntities } from '../entities'
 import { TriggerConfig } from './TriggerConfig'
 import { useHass } from '../context'
 import { useQueryClient } from '@tanstack/solid-query'
@@ -8,13 +10,22 @@ import { AutomationRuns } from '../components/AutomationRuns'
 import { Dialog } from '../components/Dialog'
 import { createVisualSession } from './session'
 import type { VisualDiagnostic, VisualDocument } from './api'
-import { addNode, canConnect, connectNodes, createGraph, outputPort, outputPorts, palette, portLabels, removeEdge, removeNode, serializeGraph, updateNode, visualRunClasses, visualActionLabels, type EdgePort } from './graph'
+import { canCreateNode, canConnect, connectNodes, createGraph, outputPort, outputPorts, palette, portLabels, removeEdge, removeNode, serializeGraph, updateNode, visualRunClasses, visualActionLabels, type EdgePort, type NodeKind } from './graph'
 
+const nodeExplanations: Record<NodeKind, string> = {
+  trigger: 'Configure Entity ID for state changes, a daily time and time zone, a one-time timestamp, or manual and startup triggers. Concurrency mode controls overlapping runs.',
+  condition: 'Entity ID identifies the entity to check. Required state is compared with its current state. Continue through If true or If false.',
+  service: 'Service is the Home Assistant action, such as light.turn_on. Entity ID is the target of that action.',
+  delay: 'Seconds sets how long to wait before continuing. The wait respects cancellation.',
+  custom: 'Custom C# section inserts your code in this step. Use it for logic beyond the built-in nodes.',
+}
 const configLabels: Record<string, string> = { entity: 'Entity ID', state: 'Required state', service: 'Service', seconds: 'Seconds', code: 'Custom C# section' }
 
 export function VisualEditor(props: { name: string; documentId?: string; onDirtyChange?: (dirty: boolean) => void; onSaved?: (document: VisualDocument) => void }) {
   const session = createVisualSession(useHass(), createGraph(props.name))
   const queryClient = useQueryClient()
+  const entities = useEntities()
+  onMount(() => { void entities.refetch() })
   const history = session.history
   const [reloadDialog, setReloadDialog] = createSignal(false)
   const [sourceLine, setSourceLine] = createSignal<number>()
@@ -40,6 +51,9 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
   }
   let editor!: HTMLElement
   const { graph, commit } = history
+  const [paletteKind, setPaletteKind] = createSignal<NodeKind>()
+  const [addStepRequest, setAddStepRequest] = createSignal(0)
+  const description = createMemo(() => palette.find(item => item.kind === paletteKind()))
   const [selectedId, setSelectedId] = createSignal<string>('trigger-1')
   const [target, setTarget] = createSignal('')
   const [port, setPort] = createSignal<EdgePort>()
@@ -49,7 +63,7 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
   const beforeUnload = (event: BeforeUnloadEvent) => { if (edited()) { event.preventDefault(); event.returnValue = '' } }
   onMount(() => window.addEventListener('beforeunload', beforeUnload))
   onCleanup(() => window.removeEventListener('beforeunload', beforeUnload))
-  const choose = (id: string) => { setSelectedId(id); setTarget(''); setPort(undefined); setSourceLine(undefined) }
+  const choose = (id: string) => { setPaletteKind(undefined); setSelectedId(id); setTarget(''); setPort(undefined); setSourceLine(undefined) }
   // Default to the first free main output; On error is only ever chosen on purpose.
   const activePort = (id: string) => {
     const kind = graph().nodes.find(n => n.id === id)?.kind
@@ -90,7 +104,7 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
   return <section ref={editor} class="hs-visual" aria-label="Visual automation editor" on:keydown={keyboard} on:keyup={event => event.stopPropagation()}>
     <header class="hs-visual-heading">
       <div><p class="hs-eyebrow">VISUAL AUTOMATION</p><h1>{graph().name}</h1><p class="hs-muted">Build a flow, one step at a time.</p></div>
-      <div class="hs-visual-actions"><Status>{session.document() ? `Saved · revision ${session.document()!.revision}` : 'Not saved'}</Status>
+      <div class="hs-visual-actions"><a class="hs-button hs-button--secondary" aria-label="Visual automation help" href="https://github.com/dompagoj/hass-sharp/blob/main/docs/writing-visual-automations.md" target="_blank" rel="noopener noreferrer">Help</a><Status>{session.document() ? `Saved · revision ${session.document()!.revision}` : 'Not saved'}</Status>
         <Show when={session.dirty()}><Status>Unsaved changes</Status></Show><Button onClick={download}>Export graph</Button>
         <Show when={props.documentId}><Button disabled={session.loading() || session.saving()} onClick={reload}>Reload saved graph</Button></Show>
         <Button variant="primary" busy={session.saving()} disabled={!session.canSave()} onClick={() => void save()}>Save graph</Button></div>
@@ -105,22 +119,35 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
     <Show when={session.activationError()}><div class="hs-notice hs-notice--danger" role="alert"><strong>Saved, but not activated.</strong><p>{session.activationError()}</p><p>The previous runtime may still be running. Edit and save again, or reload the HassSharp integration.</p></div></Show>
     <div inert={session.loading() || session.saving()} aria-busy={session.loading() || session.saving()}>
     <div class="hs-flow-toolbar" aria-label="Canvas controls">
+      <Button onClick={() => setAddStepRequest(value => value + 1)}>Add step</Button>
       <Button aria-label="Undo" disabled={!history.canUndo()} onClick={history.undo}>↶ Undo</Button>
       <Button aria-label="Redo" disabled={!history.canRedo()} onClick={history.redo}>↷ Redo</Button>
       <span class="hs-muted">Drag to move · Tab to a node, Enter to select, arrows to move</span>
     </div>
     <div class="hs-visual-workspace">
-      <aside class="hs-palette" aria-label="Node palette"><h2>Add a step</h2><p class="hs-muted">Choose a building block</p>
-        <For each={palette}>{item => <Button class="hs-palette-item" disabled={item.kind === 'trigger' && graph().version === 1 && graph().nodes.some(node => node.kind === 'trigger')} aria-label={`Add ${item.label}`} onClick={() => {
-          const next = addNode(graph(), item.kind); commit(next); choose(next.nodes.at(-1)!.id)
-        }}><span class={`hs-node-dot hs-node-dot--${item.kind}`} /><span><strong>{item.label}</strong><small>{item.description}</small></span><span aria-hidden="true">+</span></Button>}</For>
+      <aside class="hs-palette" aria-label="Node palette"><h2>Add a step</h2><p class="hs-muted">Click for details · Drag to add</p>
+        <For each={palette}>{item => <Button class="hs-palette-item" aria-label={`About ${item.label}`}
+          draggable={canCreateNode(graph(), item.kind)} onClick={() => setPaletteKind(item.kind)}
+          onDragStart={event => {
+            if (!canCreateNode(graph(), item.kind)) { event.preventDefault(); return }
+            event.dataTransfer?.setData('application/x-hass-sharp-node', item.kind)
+            if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy'
+          }}><span class={`hs-node-dot hs-node-dot--${item.kind}`} /><span><strong>{item.label}</strong><small>{item.description}</small></span><span aria-hidden="true">⠿</span></Button>}</For>
       </aside>
-      <FlowAdapter graph={graph()} selectedId={selectedId()} onSelect={choose} onChange={commit} diagnostics={session.preview()?.diagnostics} />
+      <FlowAdapter graph={graph()} addStepRequest={addStepRequest()} selectedId={selectedId()} onSelect={choose} onChange={commit} diagnostics={session.preview()?.diagnostics} />
       <aside class="hs-inspector" aria-label="Node inspector"><h2>Step details</h2>
-        <Show when={selected()} fallback={<p class="hs-muted">Select a step on the canvas to edit it.</p>}>{node => <div class="hs-stack">
+        <Show when={description()}>{item => <div class="hs-stack">
+          <h3>{item().label}</h3><p>{item().description}</p>
+          <p>{nodeExplanations[item().kind]}</p>
+          <p>Input: {item().kind === 'trigger' ? 'None. Triggers start a flow.' : 'Receives a connection from another step.'}</p>
+          <p>Outputs: {outputPorts(item().kind).map(port => portLabels[port]).join(', ')}</p>
+          <p class="hs-muted">{canCreateNode(graph(), item().kind) ? 'Drag this building block onto the canvas, or use Add step.' : 'Graph v1 supports one trigger. Upgrade to v2 to add more.'}</p>
+        </div>}</Show>
+        <Show when={!description()}><Show when={selected()} fallback={<p class="hs-muted">Select a step on the canvas to edit it.</p>}>{node => <div class="hs-stack">
           <Status>{node().kind}</Status>
           <Field label="Label" aria-label="Node label" value={node().label ?? node().kind} onInput={event => commit(updateNode(graph(), node().id, { label: event.currentTarget.value }))} />
           <Show when={node().kind === 'trigger'} fallback={<For each={Object.keys(node().config)}>{key => key === 'code' ? <div class="hs-field"><label for="hs-custom-code">Custom C# section</label><textarea id="hs-custom-code" aria-label="Custom C# section" class="hs-input hs-code-input" rows="6" value={String(node().config[key])} onInput={event => commit(updateNode(graph(), node().id, { config: { ...node().config, [key]: event.currentTarget.value } }))} /></div>
+            : key === 'entity' ? <EntityAutocomplete value={String(node().config[key])} onChange={value => commit(updateNode(graph(), node().id, { config: { ...node().config, [key]: value } }))} />
             : <Field label={configLabels[key] ?? key} aria-label={configLabels[key] ?? key} value={String(node().config[key])} onInput={event => commit(updateNode(graph(), node().id, { config: { ...node().config, [key]: event.currentTarget.value } }))} />}</For>}>
             <TriggerConfig node={node()} version={graph().version} onChange={config => commit(updateNode(graph(), node().id, { config }))} />
           </Show>
@@ -140,7 +167,7 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
           </select></div>
           <Button disabled={!canConnect(graph(), node().id, target(), activePort(node().id))} onClick={() => { commit(connectNodes(graph(), node().id, target(), activePort(node().id))); setTarget(''); setPort(undefined) }}>Connect</Button>
           <Button variant="danger" onClick={() => commit(removeNode(graph(), node().id))}>Delete step</Button>
-        </div>}</Show>
+        </div>}</Show></Show>
       </aside>
     </div>
     <Show when={graph().version === 2}><section class="hs-graph-sections" aria-label="Graph C# sections">

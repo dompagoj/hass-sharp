@@ -60,3 +60,46 @@ it('moves between editor tabs with arrow keys without recreating the model', asy
   expect(document.activeElement).toBe(tabs[0])
   expect(editors).toHaveLength(1)
 })
+
+it('keeps every editor keyboard event away from Home Assistant without blocking typing or Monaco shortcuts', () => {
+  const div = document.createElement('div'); document.body.append(div)
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS: async () => [] } as any}>
+    <Editor fileName="keys.cs" initial="source" onSave={async () => {}} />
+  </HassCtx.Provider></QueryClientProvider>, div)
+  // Monaco owns descendants of its host, including text input and suggestion/find widgets.
+  const input = document.createElement('textarea'); div.querySelector('.hs-monaco')!.append(input)
+  const homeAssistant = vi.fn()
+  const local = vi.fn()
+  for (const type of ['keydown', 'keypress', 'keyup']) {
+    document.addEventListener(type, homeAssistant)
+    input.addEventListener(type, local)
+  }
+  try {
+    for (const type of ['keydown', 'keypress', 'keyup']) {
+      for (const key of ['c', 'e', 'd', 'Escape', 'Enter', 'ArrowDown', 's']) {
+        const event = new KeyboardEvent(type, { key, ctrlKey: key === 's', bubbles: true, composed: true, cancelable: true })
+        input.dispatchEvent(event)
+        expect(event.defaultPrevented).toBe(false)
+      }
+    }
+    expect(local).toHaveBeenCalledTimes(21)
+    expect(homeAssistant).not.toHaveBeenCalled()
+    // HA shortcuts still work elsewhere in the panel.
+    div.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }))
+    expect(homeAssistant).toHaveBeenCalledTimes(1)
+  } finally {
+    for (const type of ['keydown', 'keypress', 'keyup']) document.removeEventListener(type, homeAssistant)
+  }
+})
+
+it('opens the C# automation guide without losing the current draft', () => {
+  const div = document.createElement('div'); document.body.append(div)
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS: async () => [] } as any}>
+    <Editor fileName="help.cs" initial="unsaved source" onSave={async () => {}} />
+  </HassCtx.Provider></QueryClientProvider>, div)
+  const help = div.querySelector<HTMLAnchorElement>('a[aria-label="C# automation help"]')
+  expect(help).not.toBeNull()
+  expect(help!.href).toContain('/docs/writing-csharp-automations.md')
+  expect(help!.target).toBe('_blank')
+  expect(editors[0].model.getValue()).toBe('unsaved source')
+})

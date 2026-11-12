@@ -45,6 +45,22 @@ export function addNode(graph: VisualGraph, kind: NodeKind, id: string = createU
   const offset = graph.nodes.length * 35
   return { ...graph, nodes: [...graph.nodes, { id, kind, label: item.label, config: { ...item.config }, position: { x: 60 + offset, y: 240 + offset }, size: { width: 220, height: 112 } }] }
 }
+export interface PendingConnection { source: string; port: EdgePort }
+export function canCreateNode(graph: VisualGraph, kind: NodeKind, pending?: PendingConnection): boolean {
+  if (kind === 'trigger' && graph.version === 1 && graph.nodes.some(node => node.kind === 'trigger')) return false
+  if (!pending) return true
+  let id = '$candidate'
+  while (graph.nodes.some(node => node.id === id)) id += '_'
+  return canConnect(addNode(graph, kind, id), pending.source, id, pending.port)
+}
+/** Validate against the latest graph, then create and connect as one history entry. */
+export function createNodeAt(graph: VisualGraph, kind: NodeKind, position: GraphNode['position'], pending?: PendingConnection): VisualGraph {
+  if (!canCreateNode(graph, kind, pending)) return graph
+  const next = addNode(graph, kind)
+  const id = next.nodes.at(-1)!.id
+  const positioned = updateNode(next, id, { position })
+  return pending ? connectNodes(positioned, pending.source, id, pending.port) : positioned
+}
 export function createGraph(name: string): VisualGraph {
   let graph: VisualGraph = { version: 2, name, nodes: [], edges: [] }
   for (const [i, kind] of (['trigger', 'condition', 'service'] as const).entries()) {

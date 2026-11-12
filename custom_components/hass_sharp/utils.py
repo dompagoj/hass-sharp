@@ -18,6 +18,22 @@ def get_hass_entities(hass: HomeAssistant):
     return all_entity_ids
 
 
+def get_hass_entity_suggestions(hass: HomeAssistant):
+    registry = er.async_get(hass)
+    entities = []
+    for entity_id in sorted(get_hass_entities(hass)):
+        state = hass.states.get(entity_id)
+        entry = registry.entities.get(entity_id)
+        name = (state.attributes.get("friendly_name") if state else None) or (
+            (entry.name or entry.original_name) if entry else None
+        )
+        entity = {"entity_id": entity_id}
+        if name:
+            entity["friendly_name"] = name
+        entities.append(entity)
+    return entities
+
+
 HASS_DATA_MANAGER_KEY = "hass_sharp:manager"
 
 def set_hass_sharp_manager(hass: HomeAssistant, manager: Any):

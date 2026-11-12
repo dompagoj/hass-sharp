@@ -12,11 +12,11 @@ let dispose: (() => void) | undefined
 let client: QueryClient
 afterEach(() => { dispose?.(); client.clear(); document.body.innerHTML = '' })
 const scripts = [{ fileName: 'Heating.cs', classes: [{ name: 'Home.Heating', methods: ['Start'] }] }, { fileName: 'Lights.cs', classes: [] }]
-function setup(failWrites = false) {
+function setup(failWrites = false, admin = true, refresh?: () => Promise<unknown>) {
   const root = document.createElement('div'); document.body.append(root)
   const calls: { method: string; path: string; data: unknown }[] = []
   const fixture = visualFixture()
-  const hass = { ...fixture, callApi: async (method: string, path: string, data: unknown) => {
+  const hass = { ...fixture, user: { is_admin: admin }, callWS: (message: any) => message.type === 'hass_sharp/reload_entities' && refresh ? refresh() : fixture.callWS(message), callApi: async (method: string, path: string, data: unknown) => {
     calls.push({ method, path, data })
     if (method === 'GET') return scripts
     if (failWrites) throw { body: { error: 'Name already exists' } }
@@ -121,4 +121,32 @@ it('deletes visual documents with their listed revision and preserves a conflict
   fixture.controls.deleteConflict = false
   deleteButton().click()
   await vi.waitFor(() => expect(root.querySelector('a[href="/visual/motion"]')).toBeNull())
+})
+
+it('refreshes symbols once, reports progress and invalidates entity suggestions', async () => {
+  let finish!: (value: unknown) => void
+  const refresh = vi.fn(() => new Promise(resolve => { finish = resolve }))
+  const { root } = setup(false, true, refresh)
+  client.setQueryData(['hass-entities'], [{ entity_id: 'light.old' }])
+  const button = [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Refresh entity IDs')!
+  expect(button).toBeDefined(); button.click(); button.click()
+  expect(button.disabled).toBe(true); expect(refresh).toHaveBeenCalledTimes(1)
+  expect(root.textContent).toContain('Refreshing entity IDs')
+  finish({ success: true })
+  await vi.waitFor(() => expect(root.textContent).toContain('Entity IDs refreshed'))
+  expect(client.getQueryState(['hass-entities'])?.isInvalidated).toBe(true)
+  expect(button.disabled).toBe(false)
+})
+it('reports refresh failure and allows retry', async () => {
+  const refresh = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ success: true })
+  const { root } = setup(false, true, refresh)
+  const button = [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Refresh entity IDs')!
+  expect(button).toBeDefined(); button.click()
+  await vi.waitFor(() => expect(root.textContent).toContain('Could not refresh entity IDs'))
+  expect(button.disabled).toBe(false); button.click()
+  await vi.waitFor(() => expect(root.textContent).toContain('Entity IDs refreshed'))
+})
+it('hides entity refresh from non-administrators', () => {
+  const { root } = setup(false, false)
+  expect(root.textContent).not.toContain('Refresh entity IDs')
 })

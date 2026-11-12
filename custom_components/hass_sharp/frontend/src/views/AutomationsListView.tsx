@@ -7,6 +7,7 @@ import { Dialog } from '../components/Dialog'
 import { Button, Field, Icon, Status } from '../components/Controls'
 import { Menu } from '../components/Menu'
 import { visualApi, visualError, type VisualDocument } from '../visual/api'
+import { entityQueryKey } from '../entities'
 import { errorToHassError } from '../utils'
 
 interface AutomationNameResponse {
@@ -17,6 +18,21 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
   const hass = useContext(HassCtx)!
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [refreshing, setRefreshing] = createSignal(false)
+  const [refreshMessage, setRefreshMessage] = createSignal('')
+  const [refreshFailed, setRefreshFailed] = createSignal(false)
+  const refreshEntities = async () => {
+    if (refreshing() || !hass.user?.is_admin) return
+    setRefreshing(true); setRefreshFailed(false); setRefreshMessage('Refreshing entity IDs…')
+    try {
+      const result = await hass.callWS<{ success: boolean }>({ type: 'hass_sharp/reload_entities' })
+      if (!result.success) throw new Error('Refresh failed')
+      await queryClient.invalidateQueries({ queryKey: entityQueryKey })
+      setRefreshMessage('Entity IDs refreshed. New completions, diagnostics and compilations use the updated IDs. Running automations are unchanged.')
+    } catch {
+      setRefreshFailed(true); setRefreshMessage('Could not refresh entity IDs. Try again.')
+    } finally { setRefreshing(false) }
+  }
   const [nameDialogOpen, setNameDialogOpen] = createSignal(false)
   const [renameFile, setRenameFile] = createSignal<string>()
   const [authoringMode, setAuthoringMode] = createSignal<'code' | 'visual'>('code')
@@ -146,8 +162,9 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
       <header class="hs-page-heading">
         <div><p class="hs-eyebrow">YOUR WORKSPACE</p><h1 id="automations-title">Automations</h1>
           <p class="hs-muted">A little C#. A home that works your way.</p></div>
-        <Button variant="primary" onClick={() => openNameDialog()}><Icon name="plus" />New automation</Button>
+        <div class="hs-visual-actions"><Show when={hass.user?.is_admin}><Button busy={refreshing()} onClick={() => void refreshEntities()}>Refresh entity IDs</Button></Show><Button variant="primary" onClick={() => openNameDialog()}><Icon name="plus" />New automation</Button></div>
       </header>
+      <Show when={refreshMessage()}><p role={refreshFailed() ? 'alert' : 'status'} class="hs-notice">{refreshMessage()}</p></Show>
       <div class="hs-list-toolbar">
         <Field type="search" label="Search automations" placeholder="Search by name, file or class…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
         <span class="hs-muted hs-count" aria-live="polite">{count()} {count() === 1 ? 'automation' : 'automations'}</span>

@@ -1,4 +1,5 @@
 import { For, Show, createUniqueId } from 'solid-js'
+import { EntityAutocomplete } from '../components/EntityAutocomplete'
 import { Field } from '../components/Controls'
 import type { GraphNode } from './graph'
 
@@ -26,7 +27,7 @@ export function TriggerConfig(props: { node: GraphNode; version: 1 | 2; onChange
     <Select label="Trigger type" value={type()} options={[
       ['entity', 'Entity changes'], ['daily', 'Daily'], ['once', 'Once'], ['manual', 'Manual'], ['startup', 'Startup'],
     ]} onChange={value => set('type', value)} />
-    <Show when={type() === 'entity'}><Field label="Entity ID" aria-label="Entity ID" value={String(config().entity ?? '')} onInput={event => set('entity', event.currentTarget.value)} /></Show>
+    <Show when={type() === 'entity'}><EntityAutocomplete value={String(config().entity ?? '')} onChange={value => set('entity', value)} /></Show>
     <Show when={type() === 'daily'}>
       <Field label="Daily time" aria-label="Daily time" type="time" value={String(config().time ?? '')} onInput={event => set('time', event.currentTarget.value)} />
       <Field label="Time zone" aria-label="Time zone" placeholder="Europe/Zagreb" value={String(config().timeZone ?? '')} onInput={event => set('timeZone', event.currentTarget.value)} hint="Explicit system time zone, for example Europe/Zagreb or UTC." />
