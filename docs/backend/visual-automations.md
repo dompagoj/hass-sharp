@@ -99,13 +99,19 @@ determinism, node diagnostics, atomic pair persistence/reopen, conflicts, rename
 and delete, concurrent writers, generated cancellation, failed activation cleanup
 and save/update/delete/reload through the backend bridge. Existing runtime tests exercise policy cancellation/history/scheduling.
 `python3 -m unittest discover -s tests/python` checks the WebSocket admin boundary.
-Live HA has not been tested from this branch (Docker socket permission denied).
+The integrated branch was tested in a local Home Assistant instance: an administrator
+saved and reloaded a visual graph, dispatched its generated action with Run now,
+and saw the failed manual run in history. The sample entity did not exist, so
+this did not verify a successful device action. Python.NET SQLite loading was
+also checked in the local Alpine container.
 
-## Optional graph v2 (backend contract; frontend remains v1)
+## Graph v2
 
 The API and document envelope remain version 1. Set **graph.version** to 2 to use
 multiple trigger nodes. Existing v1 graphs keep their single `Run` action and
-existing node/edge behavior. No frontend changes or automatic upgrades are made.
+existing node/edge behavior. New visual drafts use v2. Saved v1 graphs remain v1
+until the user explicitly selects **Upgrade to graph v2** in the editor; this
+changes their action methods on the next save.
 
 Each v2 trigger becomes an independent action, ordered by ordinal node ID, with
 its own mode, subscriptions, schedules, startup/manual flags and history action.

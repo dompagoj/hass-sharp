@@ -18,3 +18,7 @@ No live HA/Python.NET event-loop or device verification was performed. Service t
 verify dispatch only. Cancellation remains cooperative. Public Run now bridge and
 persistent attempt/outcome history belong to Task 3. Historical README examples
 are marked obsolete; the new declarative guide is the current Task 1 API example.
+
+The integrated branch was later exercised in a local Home Assistant instance:
+visual save/reload, manual dispatch and run-history reporting worked. The sample
+entity was absent, so a successful device action remains unverified.

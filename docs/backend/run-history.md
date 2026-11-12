@@ -30,7 +30,9 @@ service calls do not prove a device effect.
 The newest 10,000 completed records are retained globally; active runs are never
 pruned. Reads order by received timestamp then run ID descending. Offset pages
 can shift as new runs arrive. Error and cause details are capped at 2,048
-characters. Initial database failure prevents action execution; later failures
+characters. If opening or migrating the database fails at startup, HassSharp
+setup fails closed: automations, the sidebar, and its WebSocket routes do not
+start. This avoids executing actions without an initial history record. Later failures
 surface through the bridge/logs, and unfinished records become Interrupted on
 process restart. A final write failure cannot undo an action already performed.
 
@@ -39,5 +41,6 @@ concurrent persistence, migration/reopen interruption, retention, pagination,
 UTC roundtrip, manual dispatch, skip, cancellation, success, failure, and initial
 database failure. Python handler tests cover dispatch/read arguments, admin
 access and sanitized errors with diagnostic logging. Live HA/Python.NET native
-SQLite loading remains unverified: no HA image or development container was
-installed on the host during this task. No frontend files were changed.
+SQLite loading was unverified during the original task. The integrated branch
+subsequently passed the packaging smoke check in the local Alpine Home Assistant
+container. No frontend files were changed in the original backend task.
