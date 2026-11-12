@@ -18,10 +18,8 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
-      - name: "Set version number"
-        run: |
-          yq -i -o json '.version="v${{ github.event.release.tag_name }}"' \
-            "${{ github.workspace }}/custom_components/hass_sharp/manifest.json"
+      - name: Test release packaging
+        run: python3 -m unittest discover -s tests -v
       - name: Publish HassSharp C# Library
         run: |
           dotnet publish -c Release ./custom_components/hass_sharp/HassSharp -o ./custom_components/hass_sharp/out
@@ -33,14 +31,15 @@ jobs:
       - name: Build Vite Frontend
         run: |
           cd ./custom_components/hass_sharp/frontend
-          bun install
+          bun install --frozen-lockfile
           bun run build
-      # Pack the HACS dir as a zip and upload to the release
-      - name: ZIP Hass Sharp Dir
+      - name: Package Marketplace integration
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          cd "${{ github.workspace }}/custom_components/hass_sharp"
-          zip hass_sharp.zip -r ./
+          python3 scripts/package_release.py --version "$RELEASE_TAG"
       - name: Upload zip to release
         uses: softprops/action-gh-release@v2.2.1
         with:
-          files: ${{ github.workspace }}/custom_components/hass_sharp/hass_sharp.zip
+          files: ${{ github.workspace }}/dist/hass_sharp.zip
+          fail_on_unmatched_files: true

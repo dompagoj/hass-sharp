@@ -34,7 +34,15 @@ Service calls also stay within the Home Assistant process. For example, `light.T
 
 ## Getting started
 
-Install the integration through HACS using this repository as a custom integration repository, or extract the release's `hass_sharp.zip` into your Home Assistant configuration directory's `custom_components/hass_sharp` folder. Release packages include the compiled .NET library and frontend.
+On Home Assistant 2026.11 or newer:
+
+1. Open **Settings → Marketplace → Add from link**.
+2. Enter `https://github.com/dompagoj/hass-sharp`, connect GitHub if prompted, and select **Add**. If asked for a type, choose **Integration**.
+3. Open **HassSharp** in the Marketplace and install a release.
+
+HassSharp is a custom integration. Adding this URL under **Settings → Apps** reports “not a valid app repository”; use the Marketplace steps above.
+
+On older Home Assistant versions, add this URL in HACS as a custom repository with type **Integration**. For manual installation, extract a release's `hass_sharp.zip` into your Home Assistant configuration directory's `custom_components/hass_sharp` folder. Release packages include the compiled .NET library and frontend; source branches require building these first.
 
 Restart Home Assistant, add **HassSharp** under **Settings → Devices & services → Add integration**, and open **HassSharp** in the sidebar. First startup downloads the .NET SDK into the integration directory, so it needs internet access and may take longer than subsequent starts. The project currently targets .NET 10; `hacs.json` declares Home Assistant 2025.12.3 as the minimum version.
 

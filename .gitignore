@@ -2,4 +2,5 @@
 __pycache__
 .idea
 output.txt
+dist/
 custom_components/hass_sharp/dotnet/
