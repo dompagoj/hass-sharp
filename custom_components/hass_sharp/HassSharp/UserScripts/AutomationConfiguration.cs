@@ -3,7 +3,7 @@ namespace HassSharp;
 public enum InvocationCause { Startup, Entity, Manual, Schedule }
 
 public sealed record AutomationAction(string Method, AutomationMode Mode = AutomationMode.Single,
-    bool Startup = false, bool Manual = true, string[]? Entities = null, AutomationSchedule[]? Schedules = null);
+    bool Startup = false, bool Manual = true, IEntityReference[]? Entities = null, AutomationSchedule[]? Schedules = null);
 
 public sealed class AutomationConfiguration(params AutomationAction[] actions)
 {

@@ -4,7 +4,7 @@ import { Background, Controls, Handle, NodeResizer, Position, SolidFlow, useSoli
 import flowStyles from '@dschz/solid-flow/styles?inline'
 import { NodeChooser } from './NodeChooser'
 import type { VisualDiagnostic } from './api'
-import { canConnect, canCreateNode, createNodeAt, palette, connectNodes, outputPort, outputPorts, portLabels, updateNode, type EdgePort, type NodeKind, type PendingConnection, type VisualGraph } from './graph'
+import { canConnect, canCreateNode, createNodeAt, palette, connectNodes, outputPort, nodeSummary, outputPorts, portLabels, updateNode, type EdgePort, type NodeKind, type PendingConnection, type VisualGraph } from './graph'
 
 interface Props {
   addStepRequest?: number
@@ -142,7 +142,7 @@ export const FlowAdapter: Component<Props> = props => {
   }
   createEffect(on(() => [props.graph, props.selectedId, props.diagnostics] as const, ([graph, selectedId]) => untrack(() => {
     setNodes(reconcile(graph.nodes.map((node, index) => ({
-      id: node.id, type: 'automation', data: { label: node.label ?? node.kind, kind: node.kind, summary: String(Object.values(node.config)[0] ?? ''), errors: props.diagnostics?.filter(d => d.nodeId === node.id && d.severity === 3).length ?? 0, ports: outputPorts(node.kind) },
+      id: node.id, type: 'automation', data: { label: node.label ?? node.kind, kind: node.kind, summary: nodeSummary(node), errors: props.diagnostics?.filter(d => d.nodeId === node.id && d.severity === 3).length ?? 0, ports: outputPorts(node.kind) },
       position: touchDrag?.graph === graph && touchDrag.id === node.id ? { ...nodes.find(n => n.id === node.id)!.position } : node.position ? { ...node.position } : { x: 60 + index * 300, y: 100 }, width: node.size?.width ?? 220, height: node.size?.height ?? 112,
       ariaLabel: `${node.label ?? node.kind}, ${node.kind}`, selected: node.id === selectedId,
     })), { key: 'id' }))

@@ -5,7 +5,7 @@ Declare schedules on the same action as entity/manual/startup triggers:
 ```csharp
 public override AutomationConfiguration Configure() => new(
     new AutomationAction(nameof(Run), AutomationMode.Restart,
-        Entities: ["sensor.temperature"],
+        Entities: [Entities.Sensor.Temperature],
         Schedules: [
             AutomationSchedule.Daily("morning", new TimeOnly(7, 30), "Europe/Zagreb"),
             AutomationSchedule.Once("appointment", DateTimeOffset.Parse("2026-12-01T10:00:00Z"))

@@ -46,7 +46,7 @@ public class HallMotion : Automation
 {
     public override AutomationConfiguration Configure() => new(
         new AutomationAction(nameof(TurnOn), AutomationMode.Single,
-            Manual: false, Entities: ["binary_sensor.hall_motion"]));
+            Manual: false, Entities: [Entities.BinarySensor.HallMotion]));
 
     public async Task TurnOn()
     {
@@ -80,7 +80,7 @@ public class HallOffDelay : Automation
 {
     public override AutomationConfiguration Configure() => new(
         new AutomationAction(nameof(TurnOffLater), AutomationMode.Restart,
-            Manual: false, Entities: ["binary_sensor.hall_motion"]));
+            Manual: false, Entities: [Entities.BinarySensor.HallMotion]));
 
     public async Task TurnOffLater()
     {

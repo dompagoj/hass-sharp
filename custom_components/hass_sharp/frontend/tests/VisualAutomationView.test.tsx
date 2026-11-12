@@ -213,7 +213,11 @@ it('edits all trigger kinds, boolean overrides and expressions without changing 
   for (const type of ['once', 'startup', 'manual', 'entity', 'daily']) {
     setControl(root, 'Trigger type', type)
     if (type === 'once') setControl(root, 'Once timestamp', '2026-12-01T07:30:00+01:00')
-    if (type === 'entity') setControl(root, 'Entity ID', 'sensor.temperature')
+    if (type === 'entity') {
+      root.querySelector<HTMLButtonElement>('[aria-label="Entity ID"]')!.click()
+      setControl(root, 'Search entities', 'sensor.temperature')
+      button(root, 'Use ID: sensor.temperature').click()
+    }
   }
   for (const mode of ['Single', 'Restart', 'Queued', 'Parallel']) {
     setControl(root, 'Concurrency mode', mode)

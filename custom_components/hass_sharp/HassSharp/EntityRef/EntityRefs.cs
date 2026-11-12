@@ -78,7 +78,12 @@ public struct EntityRef<T>
     }
 }
 
-public class EntityRefWrapper<T>
+public interface IEntityReference
+{
+    string EntityId { get; }
+}
+
+public class EntityRefWrapper<T> : IEntityReference
     where T : EntityRefWrapper<T>
 {
     public string EntityId { get; init; }

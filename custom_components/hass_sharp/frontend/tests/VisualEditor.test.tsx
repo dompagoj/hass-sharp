@@ -469,7 +469,7 @@ it('opens a focused keyboard chooser and cancels without creating anything', asy
   await Promise.resolve()
   const search = host.querySelector<HTMLInputElement>('[aria-label="Search steps"]')!
   expect(search).not.toBeNull(); expect(document.activeElement).toBe(search)
-  search.value = 'wait'; search.dispatchEvent(new Event('input', { bubbles: true }))
+  search.value = 'pause'; search.dispatchEvent(new Event('input', { bubbles: true }))
   expect(host.querySelectorAll('[aria-label="Step choices"] [role="option"]')).toHaveLength(1)
   search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
@@ -479,7 +479,7 @@ it('opens a focused keyboard chooser and cancels without creating anything', asy
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
   button(host, 'Add step').click()
   const next = host.querySelector<HTMLInputElement>('[aria-label="Search steps"]')!
-  next.value = 'wait'; next.dispatchEvent(new Event('input', { bubbles: true }))
+  next.value = 'pause'; next.dispatchEvent(new Event('input', { bubbles: true }))
   next.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
   next.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
   expect(json(host).nodes.at(-1).kind).toBe('delay')
@@ -574,8 +574,9 @@ it('entity picker keyboard selection works inside the editor shortcut boundary',
   dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ ...fixture,
     callWS: (message: any) => message.type === 'hass_sharp/get_entities' ? Promise.resolve({ entities: [{ entity_id: 'sensor.fresh', friendly_name: 'New sensor' }] }) : fixture.callWS(message),
   } as any}><RealVisualEditor name="Keys" /></HassCtx.Provider></QueryClientProvider>, host)
-  const field = host.querySelector<HTMLInputElement>('[aria-label="Entity ID"]')!
-  field.focus(); input(host, 'Entity ID', 'new')
+  host.querySelector<HTMLButtonElement>('[aria-label="Entity ID"]')!.click()
+  const field = host.querySelector<HTMLInputElement>('[aria-label="Search entities"]')!
+  field.focus(); input(host, 'Search entities', 'new')
   await vi.waitFor(() => expect(host.querySelector('[role="option"]')).not.toBeNull())
   field.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
   field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
@@ -583,10 +584,10 @@ it('entity picker keyboard selection works inside the editor shortcut boundary',
 })
 it('opens visual help with node examples without changing the graph', () => {
   const host = root(); dispose = render(() => <VisualEditor name="Help" />, host)
-  const help = host.querySelector<HTMLAnchorElement>('a[aria-label="Visual automation help"]')
+  const help = host.querySelector<HTMLButtonElement>('button[aria-label="Visual automation help"]')
   expect(help).not.toBeNull()
-  expect(help!.href).toContain('/docs/writing-visual-automations.md')
-  expect(help!.target).toBe('_blank')
+  help!.click()
+  expect(host.querySelector('dialog[open]')?.textContent).toContain('Build and connect steps')
   expect(button(host, 'Undo').disabled).toBe(true)
 })
 
@@ -619,4 +620,29 @@ it('clears a touch connection canceled before a later touch release', async () =
   document.dispatchEvent(new TouchEvent('touchend', { bubbles: true, touches: [], changedTouches: [endFinger] }))
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
   expect(json(host).nodes).toHaveLength(3)
+})
+
+it('keeps advanced C# collapsed by default and retains helpers across collapse', () => {
+ const host=root();dispose=render(()=><VisualEditor name="Advanced"/>,host)
+ const section=host.querySelector<HTMLDetailsElement>('[aria-label="Graph C# sections"]')!
+ expect(section.open).toBe(false)
+ section.open=true;section.dispatchEvent(new Event('toggle'))
+ input(host,'C# members','private int Count = 4;')
+ section.open=false;section.dispatchEvent(new Event('toggle'))
+ section.open=true;section.dispatchEvent(new Event('toggle'))
+ expect(host.querySelector<HTMLTextAreaElement>('[aria-label="C# members"]')!.value).toBe('private int Count = 4;')
+ expect(json(host).members).toBe('private int Count = 4;')
+})
+it('reveals and focuses Advanced C# when selecting an imports or members diagnostic', async () => {
+ const host=root();const fixture=visualFixture()
+ fixture.controls.preview={valid:false,source:'using Broken;\nclass VisualAutomation {\n invalid;\n}',sourceMap:[{nodeId:'$imports',startLine:1,endLine:1},{nodeId:'$members',startLine:3,endLine:3}],diagnostics:[{nodeId:'$imports',message:'Broken import',severity:3,startLine:1},{nodeId:'$members',message:'Broken member',severity:3,startLine:3}]}
+ dispose=render(()=><QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={fixture as any}><RealVisualEditor name="Diagnostics"/></HassCtx.Provider></QueryClientProvider>,host)
+ await vi.waitFor(()=>expect(host.querySelector('[aria-label="Graph diagnostics"]')?.textContent).toContain('Broken import'))
+ const section=host.querySelector<HTMLDetailsElement>('[aria-label="Graph C# sections"]')!
+ for (const [message,label] of [['Broken import · line 1','C# imports'],['Broken member · line 3','C# members']]) {
+  section.open=false;section.dispatchEvent(new Event('toggle'))
+  button(host,message).click();await Promise.resolve()
+  expect(section.open).toBe(true)
+  expect(document.activeElement).toBe(host.querySelector(`[aria-label="${label}"]`))
+ }
 })

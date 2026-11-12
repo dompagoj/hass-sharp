@@ -69,3 +69,12 @@ outside-finger release, and external graph replacement/removal. The real library
 remains mounted; only its node-body touch path is owned by the adapter. Native
 mouse/resize regressions still exercise D3. Physical touch hardware remains a
 separate acceptance check.
+
+For compiler-marker browser checks, open `tests/preview.html?diagnostics=1`.
+Append `&shadow=1` to embed the app beneath two open shadow roots, matching Home
+Assistant event retargeting and exercising the pinned Monaco hover correction.
+This opens a deliberately broken C# source with a `MissingName` diagnostic from
+an in-memory fixture. Check the red squiggle, Show Hover (Ctrl+K, Ctrl+I), the
+clickable error below the editor, and clear/recheck behavior after removing the
+name. The fixture intentionally returns no symbol hover so marker hover is tested
+independently from Roslyn QuickInfo.

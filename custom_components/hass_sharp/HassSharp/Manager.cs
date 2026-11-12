@@ -10,7 +10,9 @@ public partial class HassSharpManager
     readonly RunHistoryStore _history;
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _loadErrors = new();
     void RecordLoadError(string path, Exception error) => _loadErrors[path] = error is CompilationErrorException compilation
-        ? string.Join("\n", compilation.Errors) : error.GetBaseException().Message;
+        ? string.Join("\n", compilation.Errors) : error is VisualValidationException visual
+            ? string.Join("\n", visual.Preview.Diagnostics.Select(d => $"{d.NodeId ?? "graph"}: {d.Message}"))
+            : error.GetBaseException().Message;
 
     public HassSharpManager(string hassConfigPath)
     {
@@ -27,7 +29,12 @@ public partial class HassSharpManager
         var assemblies = await _compiler.CompileFromUserScriptsFolder(RecordLoadError);
         foreach (var document in VisualDocuments.List())
         {
-            try { assemblies.Add(await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), document.Source, true)); }
+            try
+            {
+                var preview = new VisualGenerator(_diagnosticsProvider).Preview(document.Graph);
+                if (!preview.Valid) throw new VisualValidationException(preview);
+                assemblies.Add(await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), preview.Source, true));
+            }
             catch (Exception ex)
             {
                 RecordLoadError(VisualRuntimePath(document.Id), ex);

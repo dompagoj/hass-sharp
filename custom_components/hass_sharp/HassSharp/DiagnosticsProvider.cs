@@ -56,14 +56,13 @@ public class DiagnosticsProvider
 
     public SyntaxTree HassEntitiesSyntaxTree()
     {
-        if (_entitiesSyntaxTree == null) throw new("Entities Tree not initialized, call generate");
-
-        return _entitiesSyntaxTree;
+        lock (_gate)
+            return _entitiesSyntaxTree ?? throw new InvalidOperationException("Entities Tree not initialized, call generate");
     }
 
     public SyntaxTree? HassEntitiesSyntaxTreeNullable()
     {
-        return _entitiesSyntaxTree;
+        lock (_gate) return _entitiesSyntaxTree;
     }
 
     public DiagnosticModel[] GetDiagnostics(string source)
@@ -179,23 +178,39 @@ public class DiagnosticsProvider
         return string.Join("\n", quickInfo.Sections.Select(s => s.Text));
     }
 
+    public string EntityReferenceExpression(string entityId)
+    {
+        lock (_gate)
+        {
+            var names = EntityGenerator.ResolveNames(_entityIds);
+            if (!names.TryGetValue(entityId, out var name))
+                throw new ArgumentException($"Unknown entity: {entityId}");
+            return $"Entities.{name.Domain}.{name.Property}";
+        }
+    }
+
+    string[] _entityIds = [];
+
     public void GenerateHassEntities(string[] entityIds)
     {
         lock (_gate)
         {
-            _entitiesSyntaxTree = _entityGenerator.GenerateEntities(entityIds);
+            var ids = entityIds.ToArray();
+            var tree = _entityGenerator.GenerateEntities(ids);
             var solution = _workspace.CurrentSolution;
             if (_entitiesDocumentId is null)
             {
                 _entitiesDocumentId = DocumentId.CreateNewId(_baseProjectId);
-                solution = solution.AddDocument(_entitiesDocumentId, "Entities.g.cs", _entitiesSyntaxTree.GetText());
+                solution = solution.AddDocument(_entitiesDocumentId, "Entities.g.cs", tree.GetText());
             }
             else
             {
-                solution = solution.WithDocumentText(_entitiesDocumentId, _entitiesSyntaxTree.GetText());
+                solution = solution.WithDocumentText(_entitiesDocumentId, tree.GetText());
             }
             if (!_workspace.TryApplyChanges(solution))
                 throw new InvalidOperationException("Could not replace generated entities document.");
+            _entityIds = ids;
+            _entitiesSyntaxTree = tree;
         }
     }
 

@@ -30,12 +30,24 @@ export class FakeEditor {
   disposed = false
   listeners = new Set<() => void>()
   modelListeners = new Set<() => void>()
+  keyListeners = new Set<(e: any) => void>()
+  cursorListeners = new Set<(e: any) => void>()
+  position = { lineNumber: 1, column: 1 }
   actions = new Map<string, any>()
   options: any
   constructor(options: any) { this.options = options; this.model = new FakeModel(options.value ?? '') }
   getModel() { return this.model }
   hasTextFocus() { return true }
-  getPosition() { return { lineNumber: 1, column: 1 } }
+  getPosition() { return this.position }
+  onKeyDown(fn: (e: any) => void) { this.keyListeners.add(fn); return disposable(() => this.keyListeners.delete(fn)) }
+  onDidChangeCursorPosition(fn: (e: any) => void) { this.cursorListeners.add(fn); return disposable(() => this.cursorListeners.delete(fn)) }
+  move(position: any, source = "keyboard", reason = 3) { this.position = position; this.cursorListeners.forEach(fn => fn({ position, source, reason })) }
+  key(keyCode: number) { this.keyListeners.forEach(fn => fn({ keyCode })) }
+  selection: any
+  triggers: string[] = []
+  setSelection(range: any) { this.selection = range }
+  revealRangeInCenter() {}
+  trigger(_source: string, action: string) { this.triggers.push(action) }
   setPosition() {}
   focus() {}
   updateOptions(options: any) { Object.assign(this.options, options) }
@@ -58,14 +70,15 @@ export class FakeEditor {
 }
 function provider(list: any[], value: any) { list.push(value); return disposable(() => list.splice(list.indexOf(value), 1)) }
 export const host = {
-  KeyMod: { CtrlCmd: 2048 }, KeyCode: { KeyS: 49 },
+  KeyMod: { CtrlCmd: 2048 }, KeyCode: { KeyS: 49, Escape: 9 },
   MarkerSeverity: { Error: 8, Warning: 4, Info: 2 },
   languages: {
-    CompletionItemKind: { Method: 0, Function: 1, Field: 3, Variable: 4, Class: 5, Struct: 6, Interface: 7, Property: 9, Enum: 15, Keyword: 17, TypeParameter: 24, Snippet: 28 },
+    CompletionItemKind: { Method: 0, Function: 1, Field: 3, Variable: 4, Class: 5, Struct: 6, Interface: 7, Module: 8, Property: 9, Enum: 15, Keyword: 17, TypeParameter: 24, Snippet: 28 },
     registerCompletionItemProvider: (_language: string, value: any) => provider(completions, value),
     registerHoverProvider: (_language: string, value: any) => provider(hovers, value),
   },
   editor: {
+    CursorChangeReason: { NotSet: 0, Explicit: 3 },
     defineTheme: () => {},
     create: (_element: any, options: any) => { const editor = new FakeEditor(options); editors.push(editor); return editor },
     setModelMarkers: (model: FakeModel, _owner: string, value: any[]) => markers.set(model.uri.toString(), value),

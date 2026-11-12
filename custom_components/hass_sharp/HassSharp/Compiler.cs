@@ -21,8 +21,9 @@ public class CodeCompiler(
 
     public async Task<CompiledUserScript> CompileSingleFile(string path, string source, bool writtenToDisk)
     {
-        var hash = _cacheProvider.ComputeHash(path, source);
-        var assemblyBytes = CompileSingleFileToBytes(source, path);
+        var entities = _diagnosticsProvider.HassEntitiesSyntaxTree();
+        var hash = _cacheProvider.ComputeHash(path, source + "\0" + entities.ToString());
+        var assemblyBytes = CompileSingleFileToBytes(source, path, entities);
         await _cacheProvider.SetFileCache(path, hash, assemblyBytes);
 
         return new CompiledUserScript
@@ -49,7 +50,8 @@ public class CodeCompiler(
             try
             {
                 var source = await File.ReadAllTextAsync(path);
-                var hash = _cacheProvider.ComputeHash(path, source);
+                var entities = _diagnosticsProvider.HassEntitiesSyntaxTree();
+                var hash = _cacheProvider.ComputeHash(path, source + "\0" + entities.ToString());
                 var cachedBytes = await _cacheProvider.GetFileCache(path, hash);
 
                 if (cachedBytes != null)
@@ -71,7 +73,7 @@ public class CodeCompiler(
                 }
 
                 Logger.Info($"Change detected in {Path.GetFileName(path)}, recompiling");
-                var assemblyBytes = CompileSingleFileToBytes(source, path);
+                var assemblyBytes = CompileSingleFileToBytes(source, path, entities);
                 await _cacheProvider.SetFileCache(path, hash, assemblyBytes);
                 return new CompiledUserScript
                 {
@@ -104,14 +106,14 @@ public class CodeCompiler(
         catch { loadContext.Unload(); throw; }
     }
 
-    byte[] CompileSingleFileToBytes(string source, string path)
+    byte[] CompileSingleFileToBytes(string source, string path, SyntaxTree entities)
     {
         var tree = CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings + source, path: path);
 
         SyntaxTree[] syntaxTrees =
         [
             tree,
-            _diagnosticsProvider.HassEntitiesSyntaxTree(),
+            entities,
         ];
 
         var references = ProjectReferences.GetDefaultReferences();

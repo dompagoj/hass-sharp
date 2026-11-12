@@ -12,6 +12,8 @@ public partial class HassSharpManager
     {
         var path = VisualRuntimePath(document.Id);
         var active = _userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == path && s.Active);
+        // Source/maps are the last-saved artifact. Live generation belongs to preview,
+        // save and startup; listing documents must not compile every graph.
         return document with { AutomationId = _history.Identity(path), Active = active,
             ActivationError = _loadErrors.TryGetValue(path, out var error) ? error : active ? null : "Not active" };
     }

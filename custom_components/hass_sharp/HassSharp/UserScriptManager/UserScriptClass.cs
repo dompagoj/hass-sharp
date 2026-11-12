@@ -44,7 +44,7 @@ class UserScriptClass
         foreach (var action in _actions.Values)
         {
             foreach (var entity in action.Entities ?? [])
-                Script.ScriptManager.TrackEntityCall(entity, this, action.Method);
+                Script.ScriptManager.TrackEntityCall(entity.EntityId, this, action.Method);
             var lifetime = Script.LifetimeToken;
             foreach (var schedule in action.Schedules ?? [])
                 _scheduleUnsubs.Add(PyInterop.RegisterSchedule(System.Text.Json.JsonSerializer.Serialize(schedule),

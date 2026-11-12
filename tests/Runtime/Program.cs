@@ -90,6 +90,7 @@ await HandoverTests.Run();
 await HistoryTests.Run();
 await ScheduleTests.Run();
 await VisualTests.Run();
+await VisualValuesTests.Run();
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
 public class Probe : Automation
 {
@@ -101,7 +102,7 @@ public class Probe : Automation
     public static System.Threading.Channels.Channel<InvocationCause> Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
     public static ConcurrentBag<InvocationCause> Completed = new();
     public static TaskCompletionSource Release = new();
-    public override AutomationConfiguration Configure() { Configuring?.Invoke(); return new(new AutomationAction(nameof(Run), Mode, true, true, ["sensor.test", "sensor.test"], Schedules)); }
+    public override AutomationConfiguration Configure() { Configuring?.Invoke(); return new(new AutomationAction(nameof(Run), Mode, true, true, [new EntityRefWrapper<HaSensor>("sensor.test"), new EntityRefWrapper<HaSensor>("sensor.test")], Schedules)); }
     public async Task Run()
     {
         var cause = Cause;

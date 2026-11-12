@@ -6,79 +6,74 @@ namespace HassSharp;
 
 class EntityGenerator
 {
-    public string[]? HassEntityIds { get; set; }
-    public DocumentId? EntitiesDocumentId { get; set; }
-
     public SyntaxTree GenerateEntities(string[] hassEntityIds)
     {
-        HassEntityIds = hassEntityIds;
-        var sb = new StringBuilder();
-        sb.AppendLine("namespace HassSharp;");
-        sb.AppendLine();
-        sb.AppendLine("public static class Entities");
-        sb.AppendLine("{");
-
-        var domains = hassEntityIds
-            .Select(id => id.Split('.'))
-            .Where(parts => parts.Length == 2)
-            .GroupBy(parts => parts[0]);
-
-        foreach (var domainGroup in domains)
+        var names = ResolveNames(hassEntityIds);
+        var sb = new StringBuilder("namespace HassSharp;\npublic static class Entities\n{\n");
+        foreach (var group in names.GroupBy(x => x.Value.Domain))
         {
-            var domainName = Sanitize(domainGroup.Key);
-            sb.AppendLine($"    public static class {domainName}");
-            sb.AppendLine("    {");
-
-            foreach (var entityIdParts in domainGroup)
-            {
-                var originalId = string.Join(".", entityIdParts);
-                var propertyName = Sanitize(entityIdParts[1]);
-
-                // If property name matches class name, append "Entity" to property
-                if (propertyName == domainName)
-                {
-                    propertyName += "Entity";
-                }
-
-                var entityRefClass = GetEntityRefClassType(domainGroup.Key);
-
-                sb.AppendLine(
-                    $"        public static {entityRefClass} {propertyName} => new(\"{originalId}\");"
-                );
-            }
-
+            sb.AppendLine($"    public static class {group.Key}\n    {{");
+            foreach (var item in group)
+                sb.AppendLine($"        public static {GetEntityRefClassType(item.Key.Split('.')[0])} {item.Value.Property} => new({Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(item.Key, true)});");
             sb.AppendLine("    }");
-            sb.AppendLine();
         }
-
         sb.AppendLine("}");
-        var source = sb.ToString();
+        return CSharpSyntaxTree.ParseText(sb.ToString());
+    }
 
-        return CSharpSyntaxTree.ParseText(source);
+    internal static Dictionary<string, (string Domain, string Property)> ResolveNames(IEnumerable<string> entityIds)
+    {
+        var result = new Dictionary<string, (string, string)>(StringComparer.Ordinal);
+        var groups = entityIds.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)
+            .Where(id => id.Split('.') is [var domain, var name] && domain.Length > 0 && name.Length > 0)
+            .GroupBy(id => id.Split('.')[0]);
+        foreach (var group in groups)
+        {
+            var domainBase = Sanitize(group.Key);
+            var domain = OwnedName(group.Key, domainBase, group.Key == CanonicalIdentity(domainBase) && domainBase != "Entities");
+            foreach (var id in group)
+            {
+                var objectId = id.Split('.')[1];
+                var propertyBase = Sanitize(objectId);
+                var canonical = objectId == CanonicalIdentity(propertyBase);
+                if (propertyBase == domain) propertyBase += "Entity";
+                else if (propertyBase == domain + "Entity") canonical = false;
+                result[id] = (domain, OwnedName(id, propertyBase, canonical));
+            }
+        }
+        return result;
+    }
 
-        // if (EntitiesDocumentId != null)
-        // {
-        //     var solution = _workspace.CurrentSolution.WithDocumentText(EntitiesDocumentId, SourceText.From(source));
-        //     _workspace.TryApplyChanges(solution);
-        // }
-        // else
-        // {
-        //     EntitiesDocumentId = DocumentId.CreateNewId(_baseProject.Id);
-        //     var solution = _workspace.CurrentSolution.AddDocument(EntitiesDocumentId, "Entities.g.cs", source);
-        //     _workspace.TryApplyChanges(solution);
-        // }
+    // Plain names belong to exactly one canonical snake_case identity, independent
+    // of the live catalog. Aliases always retain their full identity in the suffix.
+    static string OwnedName(string identity, string name, bool canonical) => canonical
+        ? name : name + "_" + Convert.ToHexString(Encoding.UTF8.GetBytes(identity));
+
+    static string CanonicalIdentity(string name)
+    {
+        var sb = new StringBuilder();
+        foreach (var c in name.TrimStart('_'))
+        {
+            if (char.IsUpper(c) && sb.Length > 0) sb.Append('_');
+            sb.Append(char.ToLowerInvariant(c));
+        }
+        return sb.ToString();
     }
 
     static string Sanitize(string name)
     {
-        var parts = name.Split('_', '.', '-');
-        var pascal = string.Join("", parts.Select(p =>
-            p.Length > 0 ? char.ToUpper(p[0]) + p.Substring(1) : ""));
-
-        if (pascal.Length > 0 && char.IsDigit(pascal[0]))
-            pascal = "_" + pascal;
-
-        return pascal;
+        var sb = new StringBuilder();
+        var upper = true;
+        foreach (var c in name)
+        {
+            if (!SyntaxFacts.IsIdentifierPartCharacter(c) || c == '_') { upper = true; continue; }
+            sb.Append(upper ? char.ToUpperInvariant(c) : c);
+            upper = false;
+        }
+        if (sb.Length == 0) sb.Append("Entity");
+        if (!SyntaxFacts.IsIdentifierStartCharacter(sb[0])) sb.Insert(0, '_');
+        var value = sb.ToString();
+        return SyntaxFacts.GetKeywordKind(value) != SyntaxKind.None ? "_" + value : value;
     }
 
     static readonly Dictionary<string, string> HassDomainToEntityRefClass = new()

@@ -9,7 +9,7 @@ public sealed record VisualDiagnostic(string? NodeId, string Message, int Severi
 public sealed record VisualSourceMap(string NodeId, int StartLine, int EndLine);
 public sealed record VisualPreview(bool Valid, string Source, List<VisualSourceMap> SourceMap, List<VisualDiagnostic> Diagnostics);
 
-/// <summary>Versions 1 and 2 are domain graphs, never a serialized canvas/library object.</summary>
+/// <summary>Versions 1, 2 and 3 are domain graphs, never a serialized canvas/library object.</summary>
 public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
 {
     static string Text(JsonNode? node, string key, string fallback = "") => node?[key]?.GetValue<string>() ?? fallback;
@@ -27,7 +27,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         try
         {
             var version = graph["version"]?.GetValue<int>();
-            if (version is not (1 or 2)) throw new ArgumentException("Unsupported graph version");
+            if (version is not (1 or 2 or 3)) throw new ArgumentException("Unsupported graph version");
             Required(graph, "name");
             var nodes = graph["nodes"]!.AsArray(); var edges = graph["edges"]!.AsArray();
             if (nodes.Count is < 1 or > 256 || edges.Count > 512) throw new ArgumentException("Graph limit: 1–256 nodes, at most 512 edges");
@@ -53,6 +53,20 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             foreach (var root in roots) Visit(Text(root, "id"));
             if (visited.Count != byId.Count) throw new ArgumentException("Every node must be reachable from the trigger");
             if (outgoing.Values.Any(es => es.Any(e => roots.Any(r => Text(r, "id") == e.Target)))) throw new ArgumentException("Trigger cannot have incoming edges");
+            var typed = new VisualNodeCompiler(new[] { Text(graph,"imports"), Text(graph,"members") }
+                .Concat(byId.Values.SelectMany(node => new[] { Text(node["config"],"code"), Text(node["config"],"entitiesExpression"), Text(node["config"],"schedulesExpression") })));
+            foreach (var node in byId.Values) { current = Text(node,"id"); if (version < 3 && VisualNodeCompiler.Kinds.Contains(Text(node,"kind"))) throw new ArgumentException("Typed nodes require graph version 3"); typed.Declare(node); }
+            // A repeat body owns a separate scope. All ordinary/error edges stay in their scope.
+            var scopes = new Dictionary<string,string?>();
+            void Scope(string id, string? scope, int depth)
+            {
+                current = id;
+                if (depth > 8) throw new ArgumentException("Repeat nesting limit is 8");
+                if (scopes.TryGetValue(id, out var owner)) { if (owner != scope) throw new ArgumentException("Repeat body cannot share nodes or connect outside its scope; use Repeat Next for continuation"); return; }
+                scopes[id] = scope;
+                foreach (var edge in outgoing[id]) Scope(edge.Target, Text(byId[id],"kind") == "repeat" && edge.Port == "body" ? id : scope, depth + (Text(byId[id],"kind") == "repeat" && edge.Port == "body" ? 1 : 0));
+            }
+            foreach (var root in roots) Scope(Text(root,"id"), null, 0);
             var ids = byId.Keys.Order(StringComparer.Ordinal).ToArray();
             var index = ids.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i);
             void Section(string key)
@@ -79,7 +93,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 if (!Enum.GetNames<AutomationMode>().Contains(mode, StringComparer.Ordinal)) throw new ArgumentException("Unknown concurrency mode");
                 var triggerType = Text(config, "type", "entity");
                 var entities = "[]"; var schedules = "[]";
-                if (triggerType == "entity") entities = $"[{Quote(Required(config, "entity"))}]";
+                if (triggerType == "entity") entities = $"[{diagnostics.EntityReferenceExpression(Required(config, "entity"))}]";
                 else if (triggerType == "daily")
                 {
                     var time = TimeOnly.ParseExact(Required(config, "time"), "HH:mm", CultureInfo.InvariantCulture);
@@ -94,14 +108,14 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                     schedules = $"[AutomationSchedule.Once({Quote(rootId)}, DateTimeOffset.Parse({Quote(instant.ToString("O"))}))]";
                 }
                 else if (triggerType != "manual" && triggerType != "startup") throw new ArgumentException("Unknown trigger type");
-                if (version == 2)
+                if (version >= 2)
                 {
                     entities = Text(config, "entitiesExpression", entities);
                     schedules = Text(config, "schedulesExpression", schedules);
                 }
                 var startup = triggerType == "startup";
                 var manual = true;
-                if (version == 2)
+                if (version >= 2)
                 {
                     startup = config["startup"]?.GetValue<bool>() ?? startup;
                     manual = config["manual"]?.GetValue<bool>() ?? manual;
@@ -117,15 +131,26 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 lines.Add($"public Task {Method(root)}() => ExecuteGraph({index[Text(root, "id")]});");
                 maps.Add(new(Text(root, "id"), first, lines.Count));
             }
-            lines.Add("private async Task ExecuteGraph(int step)"); lines.Add("{");
+            var step = version >= 3 ? typed.StepName : "step";
+            lines.Add($"private async Task ExecuteGraph(int {step})"); lines.Add("{");
             lines.Add("var responses = new System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>();");
             lines.Add("Exception lastError = null; _ = lastError;");
-            lines.Add("while (step >= 0)"); lines.Add("{");
-            lines.Add("CancellationToken.ThrowIfCancellationRequested();"); lines.Add("switch (step)"); lines.Add("{");
+            // Legacy graphs cannot contain typed nodes. Keep their original execution
+            // scope so newly introduced v3 locals/functions cannot shadow authored members.
+            if (version >= 3)
+            {
+                lines.Add($"var values = new VisualValues(); bool {typed.StoppedName} = false; int {typed.ExecutedName} = 0;");
+                lines.Add($"await {typed.DispatchName}({step});");
+                lines.Add($"async Task {typed.DispatchName}(int {step})"); lines.Add("{");
+            }
+            lines.Add(version >= 3 ? $"while ({step} >= 0 && !{typed.StoppedName})" : $"while ({step} >= 0)"); lines.Add("{");
+            lines.Add("CancellationToken.ThrowIfCancellationRequested();");
+            if (version >= 3) lines.Add($"if (++{typed.ExecutedName} > 100000) throw new InvalidOperationException(\"Graph execution limit: 100000 steps\");");
+            lines.Add($"switch ({step})"); lines.Add("{");
             foreach (var id in ids)
             {
                 current = id; var node = byId[id]; var kind = Text(node, "kind"); var cfg = node["config"] ?? new JsonObject();
-                var allowed = kind == "condition" ? new[] { "next", "true", "false", "error" } : new[] { "next", "error" };
+                var allowed = kind == "condition" ? new[] { "next", "true", "false", "error" } : kind == "if" ? new[] { "true", "false", "error" } : kind == "repeat" ? new[] { "body", "next", "error" } : kind == "stop" ? Array.Empty<string>() : kind == "trigger" && version >= 3 ? new[] { "next" } : new[] { "next", "error" };
                 if (outgoing[id].Any(e => !allowed.Contains(e.Port))) throw new ArgumentException("Unsupported edge port");
                 if (kind == "condition" && outgoing[id].Any(e => e.Port == "next") && outgoing[id].Any(e => e.Port == "true")) throw new ArgumentException("Use next or true, not both");
                 int Next(string port) => outgoing[id].Where(e => e.Port == port).Select(e => index[e.Target]).DefaultIfEmpty(-1).Single();
@@ -135,7 +160,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                     case "trigger": break;
                     case "condition":
                         var yes = Next("true"); if (yes == -1) yes = Next("next");
-                        lines.Add($"step = Entity({Quote(Required(cfg, "entity"))}).RawState == {Quote(Required(cfg, "state"))} ? {yes} : {Next("false")};"); break;
+                        lines.Add($"{step} = Entity({diagnostics.EntityReferenceExpression(Required(cfg, "entity"))}).RawState == {Quote(Required(cfg, "state"))} ? {yes} : {Next("false")};"); break;
                     case "delay":
                         var seconds = double.Parse(Required(cfg, "seconds"), CultureInfo.InvariantCulture);
                         if (!double.IsFinite(seconds) || seconds < 0 || seconds > (uint.MaxValue - 1) / 1000.0) throw new ArgumentException("Invalid delay seconds");
@@ -153,15 +178,19 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                         var code = Text(cfg, "code");
                         if (code.Split('\n').Any(l => l.TrimStart().StartsWith('#'))) throw new ArgumentException("Preprocessor directives are not supported in custom sections");
                         lines.AddRange(code.Replace("\r\n", "\n").Split('\n')); break;
-                    default: throw new ArgumentException("Unknown node kind");
+                    default:
+                        if (!VisualNodeCompiler.Kinds.Contains(kind)) throw new ArgumentException("Unknown node kind");
+                        lines.AddRange(typed.Emit(kind,cfg,id,diagnostics,Next)); break;
                 }
-                if (kind != "condition") lines.Add($"step = {Next("next")};");
+                if (kind is not ("condition" or "if" or "stop")) lines.Add($"{step} = {Next("next")};");
                 lines.Add("}");
                 lines.Add("catch (OperationCanceledException) when (CancellationToken.IsCancellationRequested) { throw; }");
-                if (Next("error") >= 0) lines.Add($"catch (Exception error) {{ lastError = error; step = {Next("error")}; }}");
+                if (Next("error") >= 0) lines.Add($"catch (Exception error) {{ lastError = error; {step} = {Next("error")}; }}");
                 lines.Add("break;"); lines.Add("}"); maps.Add(new(id, start, lines.Count));
             }
-            lines.Add("default: throw new InvalidOperationException();"); lines.Add("}"); lines.Add("}"); lines.Add("}"); lines.Add("}");
+            lines.Add("default: throw new InvalidOperationException();"); lines.Add("}"); lines.Add("}");
+            if (version >= 3) lines.Add("}");
+            lines.Add("}"); lines.Add("}");
             var source = string.Join('\n', lines) + "\n";
             foreach (var d in diagnostics.GetDiagnostics(source))
                 errors.Add(new(maps.FirstOrDefault(m => d.StartLine >= m.StartLine && d.StartLine <= m.EndLine)?.NodeId, d.Message, d.Severity, d.StartLine, d.StartColumn));

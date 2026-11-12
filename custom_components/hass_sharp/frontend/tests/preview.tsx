@@ -5,6 +5,8 @@ import App from '../src/App'
 import '../src/style.css'
 import type { AutomationRun, HomeAssistant, UserScriptDTO } from '../src/types'
 
+const diagnosticsFixture = new URLSearchParams(location.search).has('diagnostics')
+const shadowFixture = new URLSearchParams(location.search).has('shadow')
 const scripts: UserScriptDTO[] = [
   { fileName: 'BathroomHeating.cs', automationId: 'fixture-bathroom', revision: 'fixture-revision', classes: [{ name: 'Home.BathroomHeating', methods: ['Execute'] }] },
   { fileName: 'EveningLights.cs', classes: [{ name: 'Home.EveningLights', methods: ['Configure', 'ExecuteAsync'] }] },
@@ -21,6 +23,7 @@ let source = `public class BathroomHeating : Automation
         return Task.CompletedTask;
     }
 }`
+if (diagnosticsFixture) source = 'public class Broken { void Run() { MissingName(); } }'
 // Fixture controls are deliberately local: no HA websocket or device call is made.
 const fixture = { historyError: false, dispatchError: false, result: 'Succeeded' as AutomationRun['status'] }
 ;(window as any).runFixture = fixture
@@ -43,7 +46,7 @@ const runs: AutomationRun[] = Array.from({ length: 23 }, (_, i) => ({
 const visualBackend = makeVisualFixture()
 ;(window as any).visualFixture = visualBackend
 const visualFixture = new URLSearchParams(location.search).get('view') === 'visual'
-history.replaceState(null, '', visualFixture ? '/hass-sharp/visual/new?name=Motion%20lights' : '/hass-sharp/automations')
+history.replaceState(null, '', diagnosticsFixture ? '/hass-sharp/automations/BathroomHeating.cs' : visualFixture ? '/hass-sharp/visual/new?name=Motion%20lights' : '/hass-sharp/automations')
 const hass = {
   user: { is_admin: true },
   async callApi(method: string, path: string, parameters?: { name?: string; source?: string }) {
@@ -58,7 +61,15 @@ const hass = {
     return { fileName }
   },
   async callWS(message: { type: string; source: string }) {
+    if (message.type === 'hass_sharp/get_entities') return { entities: Array.from({length:80},(_,i)=>({entity_id: `${i%2?'light':'binary_sensor'}.hall_${i}`, friendly_name: `Hall ${i%2?'lamp':'motion'} ${i}`})) }
+    if (message.type === 'get_services') return { light: { turn_on: {name:'Turn on',description:'Turn on a light'}, turn_off: {name:'Turn off',description:'Turn off a light'} }, climate: { set_temperature: {name:'Set temperature',description:'Change the target temperature'} } }
     if (message.type === 'hass_sharp/visual') return visualBackend.callWS(message)
+    if (diagnosticsFixture && message.type.endsWith('get_diagnostics')) {
+      const start = message.source.indexOf('MissingName')
+      if (start < 0) return []
+      const before = message.source.slice(0, start).split('\n')
+      return [{ startLine: before.length, startColumn: before.at(-1)!.length + 1, endLine: before.length, endColumn: before.at(-1)!.length + 12, message: "The name 'MissingName' does not exist in the current context", severity: 3 }]
+    }
     if (message.type.endsWith('format_source')) return message.source
     if (message.type === 'hass_sharp/run_history') {
       if (fixture.historyError) throw { message: 'Example history connection error' }
@@ -77,7 +88,19 @@ const hass = {
     return message.type.endsWith('get_hover') ? null : []
   },
 } as unknown as HomeAssistant
-render(() => <App hass={hass} />, document.getElementById('preview')!)
+let previewRoot: HTMLElement | ShadowRoot = document.getElementById('preview')!
+if (shadowFixture) {
+  for (let level = 0; level < 2; level++) {
+    const host = document.createElement('div')
+    host.style.cssText = 'display:block;height:100%'
+    previewRoot.append(host)
+    previewRoot = host.attachShadow({ mode: 'open' })
+  }
+  // Mirror the built CSS into HA-like nested shadow roots. Vite's global dev style
+  // injection cannot cross this boundary; keep the preview's real app styling.
+  for (const style of document.querySelectorAll('style, link[rel="stylesheet"]')) previewRoot.append(style.cloneNode(true))
+}
+render(() => <App hass={hass} />, previewRoot)
 // Browser smoke checks can inspect the real Monaco model without replacing it.
 import * as monaco from 'monaco-editor'
 ;(window as any).previewCode = () => monaco.editor.getModels().map(model => model.getValue())

@@ -152,3 +152,19 @@ it('creates positioned nodes and exact output connections atomically, revalidati
   expect(createNodeAt(legacy, 'trigger', { x: 0, y: 0 })).toBe(legacy)
   expect(createNodeAt(legacy, 'delay', { x: 0, y: 0 }, { source: 'deleted', port: 'next' })).toBe(legacy)
 })
+
+it('upgrades typed nodes to v3 and preserves typed operands through history and serialization', () => {
+  const legacy = createGraph('Typed')
+  const graph = addNode(legacy, 'and', 'logic')
+  expect(graph.version).toBe(3)
+  expect(legacy.version).toBe(2)
+  expect(graph.nodes.at(-1)?.config.left).toEqual({ kind: 'literal', type: 'boolean', value: true })
+  expect(JSON.parse(serializeGraph(graph))).toEqual(graph)
+  expect(outputPorts('repeat')).toEqual(['body', 'next', 'error'])
+  expect(outputPorts('if')).toEqual(['true', 'false', 'error'])
+  expect(outputPorts('stop')).toEqual([])
+})
+it('gives repeated value producers distinct default output names', () => {
+ const graph=addNode(addNode(addNode(createGraph('Defaults'),'xor','first'),'xor','second'),'xor','third')
+ expect(graph.nodes.slice(-3).map(node=>node.config.output)).toEqual(['xor_result','xor_result_2','xor_result_3'])
+})

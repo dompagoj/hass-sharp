@@ -1,4 +1,4 @@
-import { createEffect, createSignal, createUniqueId, onMount, onCleanup, Show, type JSX } from 'solid-js'
+import { createEffect, createSignal, createUniqueId, onMount, onCleanup, Show, For, type JSX } from 'solid-js'
 import { A } from '@solidjs/router'
 import * as monaco from 'monaco-editor'
 import { initVimMode, type VimAdapterInstance } from 'monaco-vim'
@@ -12,6 +12,7 @@ import { useLocalStorage } from '../../hooks'
 import { useMutation } from '@tanstack/solid-query'
 import { useEditorActions } from './editor-actions'
 import { Button, Icon, Status } from '../Controls'
+import { HelpDialog } from '../HelpDialog'
 import { Tabs } from '../Tabs'
 
 // @ts-ignore
@@ -158,7 +159,7 @@ export const Editor = (props: Props) => {
           <Show when={props.onBackRef}><A class="hs-button hs-button--ghost hs-icon-button" href={props.onBackRef!} aria-label="Back to automations"><Icon name="arrow" /></A></Show>
           <div class="hs-editor-title"><p class="hs-eyebrow">C# AUTOMATION</p><h1>{props.fileName}</h1></div>
         </div>
-        <div class="hs-editor-actions"><a class="hs-button hs-button--secondary" aria-label="C# automation help" href="https://github.com/dompagoj/hass-sharp/blob/main/docs/writing-csharp-automations.md" target="_blank" rel="noopener noreferrer">Help</a><Show when={props.renderRuns}><Button onClick={() => setTab('runs')}>Run now…</Button></Show>
+        <div class="hs-editor-actions"><HelpDialog mode="code" /><Show when={props.renderRuns}><Button onClick={() => setTab('runs')}>Run now…</Button></Show>
         <Button data-save variant="primary" busy={saveMut.isPending} onClick={() => { void saveMut.mutateAsync().catch(() => {}) }} disabled={editorActions.saveDisabled()}>
           <Icon name="save" />{saveMut.isPending ? 'Saving…' : 'Save'}
         </Button></div>
@@ -176,6 +177,11 @@ export const Editor = (props: Props) => {
       <section class="hs-editor-source" role="tabpanel" id={`${tabId}-source-panel`} aria-labelledby={`${tabId}-source`} hidden={tab() !== 'source'}
         on:keydown={event => event.stopPropagation()} on:keypress={event => event.stopPropagation()} on:keyup={event => event.stopPropagation()}>
         <div class="hs-monaco" ref={editorRef} id="editor" />
+        <Show when={editorActions.validationError()}><div class="hs-notice hs-notice--danger" role="alert">Code validation failed: {editorActions.validationError()}. Edit the code to retry.</div></Show>
+        <section class="hs-editor-diagnostics" aria-label="Compiler diagnostics">
+          <div role="status" aria-live="polite">{editorActions.validating() ? 'Checking code…' : `${editorActions.diagnostics().filter(d => d.severity === 3).length} errors · ${editorActions.diagnostics().filter(d => d.severity === 2).length} warnings`}</div>
+          <ul><For each={editorActions.diagnostics().filter(d => d.severity >= 2)}>{diagnostic => <li><button type="button" onClick={() => editorActions.goToDiagnostic(diagnostic)}><span>{diagnostic.severity === 3 ? 'Error' : 'Warning'} · {diagnostic.startLine}:{diagnostic.startColumn}</span> {diagnostic.message}</button></li>}</For></ul>
+        </section>
         <footer class="hs-editor-status"><Status>C#</Status><span>Roslyn language services</span><div ref={statusBarRef} /></footer>
       </section>
       <Show when={props.renderRuns}><section class="hs-editor-runs" role="tabpanel" id={`${tabId}-runs-panel`} aria-labelledby={`${tabId}-runs`} hidden={tab() !== 'runs'}>

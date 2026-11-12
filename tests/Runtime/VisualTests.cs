@@ -3,6 +3,26 @@ using System.Text.Json.Nodes;
 
 static class VisualTests
 {
+    public static JsonObject MemberBindingGraph(string symbol)
+    {
+        var (members, code, verify) = symbol switch
+        {
+            "Dispatch" => ("private bool dispatched; private Task Dispatch() { dispatched = true; return Task.CompletedTask; }", "await Dispatch();", "if (!dispatched) throw new Exception(\"helper was not called\");"),
+            "stopped" => ("private bool stopped;", "stopped = true;", "if (!stopped) throw new Exception(\"member was not set\");"),
+            "values" => ("private string values = \"original\";", "Logger.Info(values); values = \"changed\";", "if (values != \"changed\") throw new Exception(\"member was not set\");"),
+            "executed" => ("private int executed;", "executed = 10;", "if (executed != 10) throw new Exception(\"member was changed by control flow\");"),
+            "step" => ("private int step;", "step = 10;", "if (step != 10) throw new Exception(\"member was changed by control flow\");"),
+            _ => throw new ArgumentException(symbol)
+        };
+        return new JsonObject {
+            ["version"] = 2, ["name"] = "Member binding", ["members"] = members + " public bool Completed;",
+            ["nodes"] = new JsonArray(
+                new JsonObject { ["id"]="t", ["kind"]="trigger", ["config"]=new JsonObject { ["type"]="startup" } },
+                new JsonObject { ["id"]="c", ["kind"]="custom", ["config"]=new JsonObject { ["code"]=code } },
+                new JsonObject { ["id"]="verify", ["kind"]="custom", ["config"]=new JsonObject { ["code"]=verify + " Completed = true; Logger.Info(\"binding-" + symbol + "-\" + Cause);" } }),
+            ["edges"] = new JsonArray(JsonNode.Parse("""{"source":"t","target":"c"}"""),JsonNode.Parse("""{"source":"c","target":"verify"}"""))
+        };
+    }
     public static JsonObject Graph() => JsonNode.Parse("""
     {"version":1,"name":"Motion","nodes":[
       {"id":"t","kind":"trigger","config":{"entity":"binary_sensor.motion"}},
@@ -14,12 +34,22 @@ static class VisualTests
     public static async Task Run()
     {
         var diagnostics = new DiagnosticsProvider();
-        diagnostics.GenerateHassEntities([]);
+        diagnostics.GenerateHassEntities(["binary_sensor.motion", "light.hall", "sensor.bathroom", "sensor.extra"]);
         var generator = new VisualGenerator(diagnostics);
         var graph = Graph();
         var preview = generator.Preview(graph);
         Check(preview.Valid, "simple graph must compile: " + System.Text.Json.JsonSerializer.Serialize(preview.Diagnostics));
+        Check(preview.Source.Contains("Entities: [Entities.BinarySensor.Motion]"), "stored IDs resolve to typed references");
+        var unknown = Graph(); unknown["nodes"]![0]!["config"]!["entity"] = "sensor.missing";
+        Check(generator.Preview(unknown).Diagnostics.Any(d => d.NodeId == "t" && d.Message.Contains("Unknown entity")), "missing live trigger entity rejected");
         Check(preview.Source == generator.Preview(graph).Source, "deterministic generation");
+        var legacyTriggerError = Graph();
+        legacyTriggerError["nodes"]!.AsArray().Add(JsonNode.Parse("""{"id":"legacy-error","kind":"custom","config":{"code":""}}"""));
+        legacyTriggerError["edges"]!.AsArray().Add(JsonNode.Parse("""{"source":"t","target":"legacy-error","port":"error"}"""));
+        Check(generator.Preview(legacyTriggerError).Valid, "legacy trigger error edges remain readable");
+        Check(preview.Source.Contains("Entity(Entities.BinarySensor.Motion)"), "conditions use typed references");
+        var unknownCondition = Graph(); unknownCondition["nodes"]![1]!["config"]!["entity"] = "sensor.missing";
+        Check(generator.Preview(unknownCondition).Diagnostics.Any(d => d.NodeId == "c" && d.Message.Contains("Unknown entity")), "missing condition entity rejected");
         var bad = Graph(); bad["edges"]!.AsArray().Add(JsonNode.Parse("""{"id":"cycle","source":"s","target":"c"}"""));
         Check(!generator.Preview(bad).Valid, "cycle rejected");
         bad = Graph(); bad["nodes"]![2]!["kind"] = "custom"; bad["nodes"]![2]!["config"] = JsonNode.Parse("""{"code":"this is not C#;"}""");
@@ -80,7 +110,7 @@ static class VisualTests
               {"id":"heat","kind":"custom","config":{"code":"if (Entity(\"sensor.bathroom\").RawState == \"cold\" && EntityUntracked(\"sensor.enabled\").RawState == \"on\") { for (int i = 0; i < 2; i++) { CancellationToken.ThrowIfCancellationRequested(); await Task.WhenAll(Heat(), Heat()); } }"}}
              ],"edges":[{"source":"a","target":"heat"},{"source":"b","target":"heat"}]}
             """)!.AsObject();
-            multi["nodes"]![0]!["config"]!["entitiesExpression"] = "[\"sensor.bathroom\", \"sensor.bathroom\", \"sensor.extra\"]";
+            multi["nodes"]![0]!["config"]!["entitiesExpression"] = "[Entities.Sensor.Bathroom, Entities.Sensor.Bathroom, Entities.Sensor.Extra]";
             multi["nodes"]![1]!["config"]!["manual"] = false;
             var multiPreview = generator.Preview(multi);
             Check(multiPreview.Valid, "v2 multiple triggers and C# sections compile: " + System.Text.Json.JsonSerializer.Serialize(multiPreview.Diagnostics));
@@ -88,7 +118,7 @@ static class VisualTests
             brokenMembers["members"] = "invalid C# here;";
             Check(generator.Preview(brokenMembers).Diagnostics.Any(d => d.NodeId == "$members" && d.Severity == 3), "member diagnostic mapping");
             var multiline = (JsonObject)multi.DeepClone();
-            multiline["nodes"]![0]!["config"]!["entitiesExpression"] = "[\n\"sensor.bathroom\"\n]";
+            multiline["nodes"]![0]!["config"]!["entitiesExpression"] = "[\nEntities.Sensor.Bathroom\n]";
             multiline["nodes"]![2]!["config"]!["code"] = "unknownHelper();";
             Check(generator.Preview(multiline).Diagnostics.Any(d => d.NodeId == "heat" && d.Severity == 3), "multiline configuration preserves later node mappings");
             multiline["nodes"]![0]!["config"]!["entitiesExpression"] = "[\nmissingEntity\n]";
@@ -169,6 +199,32 @@ static class VisualTests
             await Execute(branch); Check(calls == 1, "false condition stops effect");
             branch["edges"]![1]!["port"] = "false";
             await Execute(branch); Check(calls == 2, "false branch executes");
+            var previousService = PyInterop.CallService;
+            try
+            {
+                string? actualPayload = null;
+                PyInterop.CallService = (_, _, payload, done, _) => { actualPayload = payload; done?.Invoke(); };
+                foreach (var data in new[] { "{\"entity_id\":[\"light.kitchen\",\"light.bedroom\"]}", "{}" })
+                {
+                    var targetless = Graph(); targetless["nodes"]![2]!["config"]!["entity"] = ""; targetless["nodes"]![2]!["config"]!["data"] = data;
+                    await Execute(targetless);
+                    Check(JsonNode.DeepEquals(JsonNode.Parse(actualPayload!),JsonNode.Parse(data)), "empty optional target must preserve service data entity_id or its absence");
+                }
+            }
+            finally { PyInterop.CallService = previousService; }
+            foreach (var kind in new[] { "trigger", "condition", "read_entity", "wait_until" })
+            {
+                var required = Graph(); required["version"] = 3;
+                var node = required["nodes"]![kind == "trigger" ? 0 : 1]!;
+                node["kind"] = kind;
+                node["config"] = JsonNode.Parse(kind switch {
+                    "trigger" => "{\"type\":\"entity\",\"entity\":\"\"}",
+                    "condition" => "{\"entity\":\"\",\"state\":\"on\"}",
+                    "read_entity" => "{\"entity\":\"\",\"field\":\"state\",\"type\":\"string\",\"output\":\"read\"}",
+                    _ => "{\"entity\":\"\",\"field\":\"state\",\"type\":\"string\",\"operator\":\"eq\",\"right\":{\"kind\":\"literal\",\"type\":\"string\",\"value\":\"on\"},\"timeout\":\"1\",\"interval\":\"0.01\"}"
+                });
+                Check(!generator.Preview(required).Valid, "required entity cannot be empty: " + kind);
+            }
             var response = Graph(); response["nodes"]![2]!["config"]!["response"] = "answer";
             response["nodes"]!.AsArray().Add(JsonNode.Parse("""{"id":"verify","kind":"custom","config":{"code":"if (responses[\"answer\"].GetProperty(\"ok\").GetBoolean() != true) throw new Exception();"}}"""));
             response["edges"]!.AsArray().Add(JsonNode.Parse("""{"id":"sv","source":"s","target":"verify"}"""));
@@ -200,7 +256,7 @@ static class VisualTests
             }
             finally { cancelCompiled.Unload(); }
             var api = new HassSharpManager(fixtureRoot);
-            api.GenerateHassEntities([]);
+            api.GenerateHassEntities(["binary_sensor.motion", "light.hall", "sensor.bathroom", "sensor.extra"]);
             var originalSubscribe = PyInterop.SubscribeToEntityTracking;
             PyInterop.SubscribeToEntityTracking = _ => throw new InvalidOperationException("fixture registration failure");
             try
@@ -211,14 +267,14 @@ static class VisualTests
                 Check(api.GetUserScript("visual_broken") == null, "failed initial activation must leave no runtime entry");
             }
             finally { PyInterop.SubscribeToEntityTracking = originalSubscribe; api.Unload(); }
-            await api.Init([]);
+            await api.Init(["binary_sensor.motion", "light.hall", "sensor.bathroom", "sensor.extra"]);
             Check(api.GetUserScript("visual_broken") != null, "persisted visual source loads after restart");
             var edited = Graph(); edited["name"] = "Display rename";
             var saveReply = JsonNode.Parse(await api.VisualRequest(new JsonObject { ["operation"] = "save", ["id"] = "broken", ["expectedRevision"] = 1, ["graph"] = edited }.ToJsonString()))!;
             Check(saveReply["result"]!["active"]!.GetValue<bool>(), "saved update activates");
             var deleteReply = JsonNode.Parse(await api.VisualRequest("""{"operation":"delete","id":"broken","expectedRevision":2}"""))!;
             Check(deleteReply["ok"]!.GetValue<bool>() && api.GetUserScript("visual_broken") == null, "delete unloads visual runtime");
-            await api.Init([]);
+            await api.Init(["binary_sensor.motion", "light.hall", "sensor.bathroom", "sensor.extra"]);
             Check(api.GetUserScript("visual_broken") == null, "delete survives reload");
             api.Unload();
             foreach (var configuration in new[] { """{"type":"daily","time":"07:30","timeZone":"Europe/Zagreb"}""", """{"type":"once","at":"2030-01-01T10:00:00Z"}""" })

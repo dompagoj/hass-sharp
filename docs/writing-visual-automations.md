@@ -22,8 +22,8 @@ after saving to test manual actions and inspect results.
   a node and use **Output**, **Connect to**, and **Connect** in its inspector.
 
 Each output has one connection. Several paths can enter the same non-trigger
-step. Triggers cannot receive connections. Graphs cannot contain loops or parallel
-forks. Conditions offer **If true**, **If false**, and **On error**; other action
+step. Triggers cannot receive connections. Graph connections cannot form cycles or parallel
+forks. Use Repeat for bounded loops. Conditions offer **If true**, **If false**, and **On error**; other action
 steps offer **Next** and **On error**. Triggers offer **Next** only.
 
 ## 1. Turn on a hallway light when motion starts
@@ -92,11 +92,11 @@ outputs cannot acquire another connection until you remove the existing one.
 ## Entity suggestions
 
 Entity ID fields search by ID and friendly name, ignoring case. Selecting a
-suggestion writes the exact ID. You can also type an ID manually. Suggestions
+suggestion writes the exact ID. You can retain a saved unavailable ID; choose a catalog result to change it. Suggestions
 refresh when the picker opens and include registered entities without a current
 state. Those entities may still be unavailable when the automation executes.
 
-Loading or connection errors do not erase your text. Use **Retry** to fetch again.
+Loading or connection errors do not erase your selection. Use **Retry** to fetch again.
 Administrators can also use **Refresh entity IDs** on the Automations page to
 refresh generated C# symbols and invalidate the picker cache. Refresh does not
 restart or run automations.
@@ -113,5 +113,55 @@ restart or run automations.
 - In graph v2, trigger nodes can share downstream steps. Concurrency policies
   apply per trigger action, not across every trigger in the graph.
 
-For logic that needs loops, concurrency or richer service data, use a Custom C#
-step or [write a C# automation](writing-csharp-automations.md).
+## Typed values and logic (graph v3)
+
+Both palettes group steps into **Hass**, **Logic**, **Flow**, **Data** and **Code**.
+Search includes category names; the chooser also has a category filter. Adding a
+new typed/flow node upgrades the graph to v3. Older graphs remain readable; adding
+one to v1 changes its single Run action to individual trigger actions when saved.
+
+A useful pipeline is **Read entity → Compare → If → Call service**:
+
+1. Read entity: select your temperature sensor, **State**, result type **Number**,
+   output name `temperature`. For an attribute instead, choose **Attribute** and
+   select a suggested attribute name (or enter an unavailable saved key).
+2. Compare: left operand **Value reference → temperature**, **Greater than**, right
+   operand **Literal → 24**, output name `too_warm`.
+3. If: **Value reference → too_warm**. Connect **If true** to a cooling service;
+   leave **If false** empty or connect another action.
+
+**And**, **Or**, **Xor** (exactly one true), and **Not** accept boolean inputs and
+produce a named boolean value. Inputs offer typed literals or existing value
+references. Names use letters/numbers/underscores, begin with a letter/underscore,
+and have at most 64 characters. A producing step must execute before a value is
+read; a producer on another branch does not supply a default. Missing values and
+conversion errors follow **On error**, or fail the invocation when unconnected.
+Reassigning a name requires the same result type. Each invocation has its own values.
+
+**Set value** assigns a value and explicitly converts its result type. Boolean
+conversion accepts true/false, on/off and 1/0; numeric conversion requires a finite
+number with an invariant decimal point. Attribute collections/null are rejected.
+Compare equality requires matching operand types; ordering requires numbers.
+**Log** writes a typed value to Home Assistant at the selected level. **Call service**
+accepts a JSON object in Service data; the selected target overrides `entity_id`.
+An optional response name is available to C# through `responses["name"]`.
+
+## Repeat, wait and stop
+
+**Repeat** runs a Body between 0 and 1,000 times. Connect **Body** to the first body
+step and leave the final body output unconnected: that returns to Repeat. Connect
+**Next** on Repeat to the continuation after all iterations. Body paths may branch
+and handle errors, but may not connect outside their scope or be entered from
+another scope. Put any shared continuation after Repeat, never inside Body.
+Nested repeats are limited to 8, with 100,000 dispatched steps per invocation.
+
+**Wait until** compares fresh entity state/attributes on every poll. Set a timeout
+of 0.01–86,400 seconds and polling interval of 0.01–3,600 seconds. Timeout follows
+**On error** or fails the run. It does not watch local variables, which would stay
+unchanged during the wait. **Wait** is a simple cancellable delay. **Stop** ends the
+whole invocation, including nested repeats. Cancellation bypasses error paths.
+
+Custom C# remains available for concurrent work and richer operations, or
+[write a C# automation](writing-csharp-automations.md). Custom nodes can read local
+values with `values.Get<double>("temperature", "my-step")`. A C# `return;` exits the
+current body; use Stop to end the entire invocation from within a Repeat.

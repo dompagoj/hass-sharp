@@ -45,7 +45,7 @@ Directory-entry durability across sudden power loss is filesystem-dependent.
 Save first commits, then attempts runtime activation. `active:false` explicitly
 means persistence succeeded but activation failed: display `activationError` and
 offer editing/reload. It does not mean the previous runtime has been replaced.
-On integration initialization the saved source is compiled and loaded. Preview
+On integration initialization the persisted graph is regenerated against current entity symbols, then compiled and loaded. The saved source remains the last-save artifact. Preview
 never executes custom C#. Saving can execute startup code, exactly like code
 saving. Custom code has the same trust/access as handwritten automations.
 
@@ -72,7 +72,7 @@ position and node-array order. A missing outgoing edge ends the invocation.
 
 Every trigger also supports manual runs. A service with `response` awaits a JSON
 response into `responses[config.response]`; other calls await completion. Entity
-config overrides data.entity_id. All nodes can use an `error` edge; an exception
+config overrides data.entity_id. All action nodes except Stop can use an `error` edge; an exception
 sets `lastError` and follows it. Unhandled errors reach the ordinary runtime
 history. Cancellation is rethrown and never routed to an error handler. Each step
 checks cancellation; delay uses the invocation token. Custom sections can access
@@ -170,8 +170,7 @@ Cause, TriggeredBy(), CancellationToken and the normal Automation APIs. Pass the
 token to delays/I/O and await all child work. Cancellation from Restart/unload
 propagates through awaited helpers and bypasses graph error edges. Class fields
 are shared across concurrent invocations, so use synchronization for shared state.
-Use method locals for invocation-local values. A `return;` in a custom node ends
-that invocation; it does not execute its next edge.
+Use method locals for invocation-local values. A `return;` in a custom node ends the current dispatcher body; at top level this ends the invocation. Inside Repeat it ends that iteration. Use Stop for whole-invocation termination.
 
 Tracked `Entity(...)` and `EntityUntracked(...)` APIs are available with the same
 semantics as handwritten code. The current declarative runtime does **not**
@@ -179,8 +178,7 @@ discover subscriptions from either read: declare triggering entities explicitly.
 TriggeredBy() is the event snapshot and Cause preserves Entity/Startup/Manual/
 Schedule; helper execution does not create separate history records.
 
-Boundaries: graph edges remain acyclic and have one target per port. There are no
-new visual loop/fork/join widgets; custom C# provides those operations explicitly.
+Boundaries: graph edges remain acyclic and have one target per port. Version 3 adds structured Repeat loops; custom C# provides concurrent fork/join operations.
 Generated class name/base class/action signatures and Configure are reserved;
 do not redeclare them in members. This is parity for behavior expressible through
 the current Automation runtime, not arbitrary C# source-file round-tripping or
@@ -200,3 +198,55 @@ replacement failed, `activationError`. These are runtime metadata, not graph dat
 A corrupt stored JSON document may be removed with `delete`, its ID and
 `expectedRevision: 0`. This recovery value never bypasses revision checks for a
 valid document. Read/save still report `invalid_request` for corrupt JSON.
+
+
+## Graph v3: typed nodes and structured bodies
+
+The outer API/document envelope is unchanged. Graph v3 retains all v1/v2 node
+configurations and v2 trigger identities/advanced sections. New nodes require v3.
+Operands are JSON objects: `{kind:"literal",type:"boolean"|"number"|"string",value:...}`
+or `{kind:"variable",name:"output_name"}`. JSON literal values must match their type.
+
+| kind | configuration | outputs |
+|---|---|---|
+| if | `value`: boolean operand | true / false / error |
+| and, or, xor | `left`, `right`: boolean operands; `output` | next / error |
+| not | `value`: boolean operand; `output` | next / error |
+| compare | `left`, `right` operands; `operator`: eq/ne/lt/le/gt/ge; `output` | next / error |
+| read_entity | `entity`; `field`: state/attribute; `attribute` when needed; `type`; `output` | next / error |
+| set_value | `value` operand; destination `type`; `output` | next / error |
+| log | `value` operand; `level`: Debug/Info/Warn/Error | next / error |
+| stop | empty configuration | none |
+| repeat | `count`: invariant integer string 0–1000 | body / next / error |
+| wait_until | entity/field/attribute/type as read_entity; `operator`, `right` operand; `timeout`, `interval`: seconds strings | next / error |
+
+A name has the pattern `[A-Za-z_][A-Za-z0-9_]{0,63}`. Declarations with conflicting
+types, missing producers, incompatible operands and invalid fields are rejected
+before compilation. Boolean/number/string values are held in `VisualValues` inside
+each invocation, along with responses/lastError. Reads are checked at runtime too:
+a declaration on a path that did not run never yields a silent default. Equality
+requires matching types; ordering requires numbers. Logic evaluates both inputs,
+so a missing right-hand value is still diagnosed. Set value performs explicit
+invariant conversion; entity extraction does the selected conversion. Boolean
+accepts true/false, on/off and 1/0. Nonfinite numbers, missing attributes, null and
+collections fail. Python.NET scalar attributes are normalized while holding the GIL.
+
+Repeat uses a flat DAG, with a Body edge entering a distinct scope. Ordinary and
+error edges may not escape or enter that scope. Body nodes cannot be shared with
+an outer continuation, another repeat body, or an independent trigger. The same
+invocation-local dispatcher executes the body and returns on an unconnected output;
+Repeat Next runs once after all iterations. Nested scopes are limited to 8 and an
+invocation to 100,000 dispatched steps. Stop propagates across nested dispatchers.
+Cancellation checks occur at every node/iteration and bypass error routes.
+
+Wait until reevaluates its entity predicate with live `PyInterop.Entity` reads,
+so the original triggering snapshot cannot hide state changes. It uses a monotonic
+clock, mandatory timeout 0.01–86400 seconds and interval 0.01–3600 seconds; the final
+delay is capped by remaining time. Timeout throws TimeoutException into error
+routing. Frozen local-variable conditions are deliberately unsupported.
+
+New regression coverage executes generated C# for logic truth tables, branches,
+state/attribute conversion, local-value isolation and missing-path errors, nested
+Repeat completion/stop/cancellation/scope errors, Wait fresh polling/timeout/
+cancellation, validation and v3 persistence. Frontend tests cover category filters,
+typed editing, compatible references, attributes and graph serialization.

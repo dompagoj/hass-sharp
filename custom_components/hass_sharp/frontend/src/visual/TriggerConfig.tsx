@@ -13,7 +13,7 @@ function Select(props: { label: string; value: string; options: [string, string]
 }
 
 /** Type changes preserve inactive fields and extensions so editing never discards saved C#. */
-export function TriggerConfig(props: { node: GraphNode; version: 1 | 2; onChange: (config: Config) => void }) {
+export function TriggerConfig(props: { node: GraphNode; version: 1 | 2 | 3; onChange: (config: Config) => void }) {
   const config = () => props.node.config
   const type = () => String(config().type ?? 'entity')
   const set = (key: string, value: string | boolean) => props.onChange({ ...config(), [key]: value })
@@ -37,7 +37,7 @@ export function TriggerConfig(props: { node: GraphNode; version: 1 | 2; onChange
       ['Single', 'Single'], ['Restart', 'Restart'], ['Queued', 'Queued'], ['Parallel', 'Parallel'],
     ]} onChange={value => set('mode', value)} />
     <p class="hs-muted">Concurrency applies to whole invocations. Restart cancels the previous invocation; Parallel allows overlapping runs.</p>
-    <Show when={props.version === 2}>
+    <Show when={props.version >= 2}>
       <Select label="Startup override" value={config().startup == null ? '' : String(config().startup)} options={[
         ['', 'Follow trigger type'], ['true', 'Run at startup'], ['false', 'Do not run at startup'],
       ]} onChange={value => optional('startup', value === '' ? '' : value === 'true')} />

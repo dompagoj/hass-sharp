@@ -97,9 +97,24 @@ it('opens the C# automation guide without losing the current draft', () => {
   dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS: async () => [] } as any}>
     <Editor fileName="help.cs" initial="unsaved source" onSave={async () => {}} />
   </HassCtx.Provider></QueryClientProvider>, div)
-  const help = div.querySelector<HTMLAnchorElement>('a[aria-label="C# automation help"]')
+  const help = div.querySelector<HTMLButtonElement>('button[aria-label="C# automation help"]')
   expect(help).not.toBeNull()
-  expect(help!.href).toContain('/docs/writing-csharp-automations.md')
-  expect(help!.target).toBe('_blank')
+  help!.click()
+  expect(div.querySelector('dialog[open]')?.textContent).toContain('Entities.BinarySensor.HallMotion')
   expect(editors[0].model.getValue()).toBe('unsaved source')
+})
+
+it('renders clickable compiler errors below the editor and clears them on typing', async () => {
+  const div = document.createElement('div'); document.body.append(div)
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS: async () => [{ startLine: 1, startColumn: 2, endLine: 1, endColumn: 5, message: 'Unknown name', severity: 3 }] } as any}>
+    <Editor fileName="broken.cs" initial="broken" onSave={async () => {}} />
+  </HassCtx.Provider></QueryClientProvider>, div)
+  await vi.advanceTimersByTimeAsync(0)
+  const issue = div.querySelector<HTMLButtonElement>('[aria-label="Compiler diagnostics"] button')
+  expect(issue?.textContent).toContain('Error · 1:2')
+  expect(issue?.textContent).toContain('Unknown name')
+  issue!.click()
+  expect(editors[0].selection).toEqual({ startLineNumber: 1, startColumn: 2, endLineNumber: 1, endColumn: 5 })
+  editors[0].change('fixed')
+  expect(div.querySelector('[aria-label="Compiler diagnostics"] button')).toBeNull()
 })

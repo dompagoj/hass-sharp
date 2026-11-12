@@ -16,7 +16,7 @@ public abstract class MotionLightAutomation : Automation
     EntityRef<HaMotionSensor> _motion;
 
     public override AutomationConfiguration Configure() => new(
-        new AutomationAction(nameof(Run), AutomationMode.Restart, Entities: [(MotionSensor ?? throw new InvalidOperationException("Set MotionSensor before configuring MotionLightAutomation")).EntityId]));
+        new AutomationAction(nameof(Run), AutomationMode.Restart, Entities: [(MotionSensor ?? throw new InvalidOperationException("Set MotionSensor before configuring MotionLightAutomation"))]));
 
     public async Task Run()
     {

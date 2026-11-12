@@ -24,7 +24,7 @@ const tagToKindMap: { [key: string]: monaco.languages.CompletionItemKind } = {
   Interface: monaco.languages.CompletionItemKind.Interface,
   Snippet: monaco.languages.CompletionItemKind.Snippet,
   TypeParameter: monaco.languages.CompletionItemKind.TypeParameter,
-  Namespace: monaco.languages.CompletionItemKind.Snippet,
+  Namespace: monaco.languages.CompletionItemKind.Module,
   Field: monaco.languages.CompletionItemKind.Field,
   Parameter: monaco.languages.CompletionItemKind.Variable,
 }
@@ -43,6 +43,9 @@ function tagsToKind(tags: string[]) {
 export const useEditorActions = (hass: HomeAssistant) => {
   const [validating, setValidating] = createSignal(true)
   const [hasErrors, setHasErrors] = createSignal(false)
+  const [diagnostics, setDiagnostics] = createSignal<Diagnostic[]>([])
+  const [validationError, setValidationError] = createSignal<string | null>(null)
+  let navigate: (diagnostic: Diagnostic) => void = () => {}
   const [saving, setSaving] = createSignal(false)
   let disposeRegistration: (() => void) | undefined
   let saveCommand: () => Promise<void> = async () => {}
@@ -55,6 +58,13 @@ export const useEditorActions = (hass: HomeAssistant) => {
     disposeRegistration?.()
     let disposed = false
     let validationTimer: ReturnType<typeof setTimeout> | undefined
+    let completionTimer: ReturnType<typeof setTimeout> | undefined
+    let completionPosition: monaco.IPosition | null = null
+    const cancelCompletionRetry = () => {
+      clearTimeout(completionTimer)
+      completionTimer = undefined
+      completionPosition = null
+    }
     let savingPromise: Promise<void> | undefined
     let markedModel = editor.getModel()
     const pending = new Map<string, () => void>()
@@ -111,6 +121,21 @@ export const useEditorActions = (hass: HomeAssistant) => {
       })
     }
 
+    const clearDiagnostics = () => {
+      setDiagnostics([])
+      setValidationError(null)
+      setHasErrors(false)
+      const model = editor.getModel()
+      if (model && owns(model)) monaco.editor.setModelMarkers(model, 'csharp', [])
+    }
+    navigate = diagnostic => {
+      if (disposed || !diagnostics().includes(diagnostic)) return
+      const range = { startLineNumber: diagnostic.startLine, startColumn: diagnostic.startColumn,
+        endLineNumber: diagnostic.endLine, endColumn: diagnostic.endColumn }
+      editor.setSelection(range)
+      editor.revealRangeInCenter(range)
+      editor.focus()
+    }
     const validate = async (): Promise<boolean> => {
       clearTimeout(validationTimer)
       const model = editor.getModel()
@@ -130,12 +155,14 @@ export const useEditorActions = (hass: HomeAssistant) => {
             : d.severity === 2 ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Info,
         }))
         monaco.editor.setModelMarkers(model, 'csharp', markers)
+        setDiagnostics(diagnostics.value)
+        setValidationError(null)
         const errors = markers.some(m => m.severity === monaco.MarkerSeverity.Error)
         setHasErrors(errors)
         setValidating(false)
         return !errors
       } catch (error) {
-        if (owns(model)) { setHasErrors(true); setValidating(false) }
+        if (owns(model)) { setDiagnostics([]); monaco.editor.setModelMarkers(model, 'csharp', []); setValidationError(String(error)); setHasErrors(true); setValidating(false) }
         console.error('Failed to get diagnostics', error)
         return false
       }
@@ -169,7 +196,7 @@ export const useEditorActions = (hass: HomeAssistant) => {
           const items = await request<CompletionItem[]>('get_completions', model,
             { position: model.getOffsetAt(position) }, token)
           if (!items?.isCurrent()) return { suggestions: [] }
-          return { suggestions: items.value.map(item => {
+          return { incomplete: true, suggestions: items.value.map(item => {
             const toRange = (edit: CompletionTextEdit) => {
               const start = model.getPositionAt(edit.start)
               const end = model.getPositionAt(edit.start + edit.length)
@@ -205,15 +232,43 @@ export const useEditorActions = (hass: HomeAssistant) => {
       },
     })
     const contentSubscription = editor.onDidChangeModelContent(() => {
+      const retryCompletion = pending.has('get_completions') || completionTimer !== undefined
       invalidate()
+      clearDiagnostics()
+      cancelCompletionRetry()
+      if (retryCompletion) {
+        const model = editor.getModel()
+        const version = model?.getVersionId()
+        completionPosition = editor.getPosition()
+        completionTimer = setTimeout(() => {
+          completionTimer = undefined
+          const position = editor.getPosition()
+          if (model && owns(model) && model.getVersionId() === version && editor.hasTextFocus()
+            && position && completionPosition && position.lineNumber === completionPosition.lineNumber
+            && position.column === completionPosition.column) editor.trigger('typing-recovery', 'editor.action.triggerSuggest', {})
+          completionPosition = null
+        }, 100)
+      }
       setValidating(true)
       clearTimeout(validationTimer)
       validationTimer = setTimeout(() => { void validate() }, 500)
+    })
+    const keySubscription = editor.onKeyDown(event => {
+      if (event.keyCode === monaco.KeyCode.Escape) cancelCompletionRetry()
+    })
+    const cursorSubscription = editor.onDidChangeCursorPosition(event => {
+      if (completionTimer === undefined) return
+      // Ordinary typing updates the cursor after the content event; explicit navigation
+      // (including keyboard arrows), mouse movement and programmatic selection end recovery.
+      if (event.source === 'keyboard' && event.reason === monaco.editor.CursorChangeReason.NotSet) completionPosition = event.position
+      else cancelCompletionRetry()
     })
     const modelSubscription = editor.onDidChangeModel(() => {
       invalidate()
       if (markedModel && !markedModel.isDisposed()) monaco.editor.setModelMarkers(markedModel, 'csharp', [])
       markedModel = editor.getModel()
+      cancelCompletionRetry()
+      clearDiagnostics()
       void validate()
     })
     const saveAction = editor.addAction({
@@ -226,10 +281,13 @@ export const useEditorActions = (hass: HomeAssistant) => {
     disposeRegistration = () => {
       if (disposed) return
       disposed = true
+      cancelCompletionRetry()
       clearTimeout(validationTimer)
       invalidate()
       completionProvider.dispose()
       hoverProvider.dispose()
+      keySubscription.dispose()
+      cursorSubscription.dispose()
       contentSubscription.dispose()
       modelSubscription.dispose()
       saveAction.dispose()
@@ -240,6 +298,10 @@ export const useEditorActions = (hass: HomeAssistant) => {
   onCleanup(() => disposeRegistration?.())
   return {
     register,
+    diagnostics,
+    validationError,
+    validating,
+    goToDiagnostic: (diagnostic: Diagnostic) => navigate(diagnostic),
     save: () => saveCommand(),
     dispose: () => disposeRegistration?.(),
     saveDisabled: () => validating() || hasErrors() || saving(),
