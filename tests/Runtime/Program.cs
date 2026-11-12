@@ -86,15 +86,17 @@ await motion.Run();
 Check(turnedOff, "motion-off trigger must finish turn-off after restart");
 Console.WriteLine("PASS motion-off delay");
 await HistoryTests.Run();
+await ScheduleTests.Run();
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
 public class Probe : Automation
 {
     public static ConcurrentQueue<int> Order = new();
     public static AutomationMode Mode;
+    public static AutomationSchedule[]? Schedules;
     public static System.Threading.Channels.Channel<InvocationCause> Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
     public static ConcurrentBag<InvocationCause> Completed = new();
     public static TaskCompletionSource Release = new();
-    public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Run), Mode, true, true, ["sensor.test", "sensor.test"]));
+    public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Run), Mode, true, true, ["sensor.test", "sensor.test"], Schedules));
     public async Task Run()
     {
         var cause = Cause;

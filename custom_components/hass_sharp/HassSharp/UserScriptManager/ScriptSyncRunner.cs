@@ -32,7 +32,11 @@ class ScriptSyncRunner
     public void Clear(IEnumerable<UserScript> scripts)
     {
         var scriptArray = scripts.ToArray();
-        foreach (var script in scriptArray) script.CancelLifetime();
+        foreach (var script in scriptArray)
+        {
+            script.CancelLifetime();
+            foreach (var klass in script.Classes) klass.UnsubscribeSchedules();
+        }
 
         using var scope = _gate.EnterScope();
         foreach (var key in scriptArray.SelectMany(s => s.Classes).SelectMany(c => c.Methods.Select(m => (c, m))))
@@ -41,14 +45,15 @@ class ScriptSyncRunner
         }
     }
 
-    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, string? runId = null)
+    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, string? runId = null, DateTime? plannedUtc = null, string? details = null)
     {
         var record = new InvocationRecord
         {
             RunId = runId ?? Guid.NewGuid().ToString("N"),
             AutomationId = scriptClass.Script.AutomationId, Revision = scriptClass.Script.Revision,
             Action = scriptClass.GetConcatedMethodNameWithClass(methodInfo.Name), Cause = cause.ToString(),
-            Details = cause == InvocationCause.Entity ? UserScriptManager.CurrentTrigger.Value?.State.EntityId : null
+            PlannedUtc = plannedUtc,
+            Details = details ?? (cause == InvocationCause.Entity ? UserScriptManager.CurrentTrigger.Value?.State.EntityId : null)
         };
         void Save() => scriptClass.Script.ScriptManager.History?.Save(record);
         // Fail closed before registering work if history is unavailable.

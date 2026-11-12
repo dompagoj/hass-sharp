@@ -12,7 +12,7 @@ from homeassistant.core import Event, EventStateChangedData, HomeAssistant, call
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
 
-from . import dotnet_downloader, dotnet_tasks, http, utils, websocket
+from . import scheduling, dotnet_downloader, dotnet_tasks, http, utils, websocket
 from .const import logger
 
 os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "true"
@@ -209,6 +209,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         unsubs[entity_id] = async_track_state_change_event(hass, entity_id, on_entity_change)
 
+    def register_schedule(rule_json, dispatch):
+        def fire(planned):
+            hass.async_create_task(dotnet_tasks.async_run_dotnet_task(hass, dispatch, planned))
+        return Action(scheduling.register_ha(hass, rule_json, fire))
+
+    from System.Threading.Tasks import Task
+    PyInterop.RegisterSchedule = Func[String, Func[String, Task], Action](register_schedule)
     PyInterop.Log = Action[Int32, String](python_log)
     PyInterop.LogLevel = logger.level
     PyInterop.Entity = Func[String, HasEntityState](entity)

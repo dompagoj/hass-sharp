@@ -173,6 +173,7 @@ public ref struct ErrorLogHandler
 /// </summary>
 public static class PyInterop
 {
+    public static Func<string, Func<string, Task>, Action> RegisterSchedule { get; set; } = null!;
     public static Action<int, string> Log { get; set; } = null!;
     public static int LogLevel { get; set; }
     public static GetEntity Entity { get; set; } = null!;

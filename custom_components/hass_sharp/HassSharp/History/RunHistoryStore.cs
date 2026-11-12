@@ -63,6 +63,14 @@ internal sealed class InitialHistory : Migration
     protected override void Down(MigrationBuilder m) { m.DropTable("Runs"); m.DropTable("Identities"); }
 }
 
+[DbContext(typeof(HistoryContext))]
+[Migration("202611120002_ScheduleOccurrences")]
+internal sealed class ScheduleOccurrences : Migration
+{
+    protected override void Up(MigrationBuilder m) => m.Sql("CREATE TABLE ScheduleOccurrences (Id TEXT NOT NULL PRIMARY KEY)");
+    protected override void Down(MigrationBuilder m) => m.DropTable("ScheduleOccurrences");
+}
+
 /// <summary>One connection per operation, serialized writes; errors propagate to callers.</summary>
 public sealed class RunHistoryStore
 {
@@ -80,6 +88,14 @@ public sealed class RunHistoryStore
         db.Runs.Where(r => r.EndUtc == null).ExecuteUpdate(s => s
             .SetProperty(r => r.Status, "Interrupted").SetProperty(r => r.EndUtc, DateTime.UtcNow)
             .SetProperty(r => r.Error, "Runtime stopped before completion was recorded"));
+    }
+    public bool ClaimOccurrence(string id)
+    {
+        lock (gate)
+        {
+            using var db = new HistoryContext(path);
+            return db.Database.ExecuteSqlInterpolated($"INSERT OR IGNORE INTO ScheduleOccurrences (Id) VALUES ({id})") == 1;
+        }
     }
     public string Identity(string scriptPath)
     {
