@@ -57,9 +57,14 @@ public sealed class VisualCatalogSnapshot
     {
         if ((source.NullableAnnotation == NullableAnnotation.Annotated || source is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }) && target.IsReferenceType && target.NullableAnnotation != NullableAnnotation.Annotated) return false;
         if (source is IArrayTypeSymbol sa && target is IArrayTypeSymbol ta) return NullabilitySafe(sa.ElementType, ta.ElementType);
-        if (source is INamedTypeSymbol sn && target is INamedTypeSymbol tn)
+        if (target is INamedTypeSymbol tn)
         {
-            var matching = new[] { sn }.Concat(sn.AllInterfaces).Concat(BaseTypes(sn)).FirstOrDefault(t => SymbolEqualityComparer.Default.Equals(t.OriginalDefinition, tn.OriginalDefinition));
+            // Arrays also implement constructed generic interfaces. Their element annotations
+            // must survive conversions to IEnumerable<T>, IReadOnlyList<T> and IList<T>.
+            var candidates = source is INamedTypeSymbol sn
+                ? new[] { sn }.Concat(sn.AllInterfaces).Concat(BaseTypes(sn))
+                : source.AllInterfaces;
+            var matching = candidates.FirstOrDefault(t => SymbolEqualityComparer.Default.Equals(t.OriginalDefinition, tn.OriginalDefinition));
             if (matching != null)
                 for (var i = 0; i < matching.TypeArguments.Length; i++)
                 {

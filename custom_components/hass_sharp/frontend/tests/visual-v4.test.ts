@@ -81,3 +81,10 @@ it('custom node creation and connections preserve reserved argument names', () =
   expect(contract.validateGraphV4(original, richCatalog)).toEqual([])
   expect(contract.validateGraphV4(original).some(d => d.message === 'Unknown node kind')).toBe(true)
 })
+
+it('nullable non-finite compiler defaults remain omitted when creating custom nodes', () => {
+  const kind = Object.entries(richCatalog.nodes).find(([, spec]) => spec.label === 'Nonfinite defaults')![0]
+  const node = contract.addV4Node({ version: 4, name: 'Defaults', nodes: [], edges: [] }, kind, 'd', richCatalog).nodes[0]
+  expect(node.config.arguments).toEqual({})
+  for (const input of Object.values(richCatalog.nodes[kind].inputs)) expect(Object.hasOwn(input, 'default')).toBe(false)
+})

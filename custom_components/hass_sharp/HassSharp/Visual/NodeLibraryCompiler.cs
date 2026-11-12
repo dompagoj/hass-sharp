@@ -73,8 +73,6 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
             if (type is INamedTypeSymbol named)
             {
                 foreach (var argument in named.TypeArguments) Register(argument);
-                foreach (var contract in named.AllInterfaces) if (!Unsupported(contract)) Register(contract);
-                if (named.BaseType != null && !Unsupported(named.BaseType)) Register(named.BaseType);
             }
         }
         foreach (var (id, descriptor) in root["types"]!.AsObject())
@@ -114,7 +112,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
                         ["label"] = PortLabel(p.GetAttributes()) ?? p.Name, ["description"] = DocText(doc?.Elements("param").FirstOrDefault(e => (string?)e.Attribute("name") == p.Name)),
                         ["nullable"] = Nullable(p.Type), ["hasDefaultValue"] = p.HasExplicitDefaultValue };
                     if (p.HasExplicitDefaultValue && CanLiteral(p.Type) && (p.ExplicitDefaultValue is not double dv || double.IsFinite(dv)) && (p.ExplicitDefaultValue is not float fv || float.IsFinite(fv))) rule["default"] = new JsonObject { ["kind"] = "literal", ["type"] = parameter.TypeId, ["value"] = JsonSerializer.SerializeToNode(p.ExplicitDefaultValue) };
-                    else if (optional && Nullable(p.Type)) rule["default"] = new JsonObject { ["kind"] = "literal", ["type"] = parameter.TypeId, ["value"] = null };
+                    else if (Nullable(p.Type) && (!p.HasExplicitDefaultValue || p.ExplicitDefaultValue == null)) rule["default"] = new JsonObject { ["kind"] = "literal", ["type"] = parameter.TypeId, ["value"] = null };
                     input[p.Name] = rule;
                 }
                 root["nodes"]![kind] = new JsonObject {
@@ -126,6 +124,17 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
                 if (methods.Any(m => m.Kind == kind)) { Report(declaration.Identifier.GetLocation(), "Duplicate node method signature"); continue; }
                 methods.Add(new(kind, source.Id, TypeIdentity(method.ContainingType), Escape(method.Name), result == null ? null : TypeIdentity(result), awaitResult, parameters, method));
             }
+        }
+        // Declared signatures have finite structural type trees. Add their related types in
+        // one separate pass, without recursively exploring related types' generic arguments.
+        // Grow<T> : I<Grow<Grow<T>>> otherwise introduces endlessly deeper constructed types.
+        // Every explicitly declared closed type was registered above, irrespective of depth.
+        foreach (var declared in typeSymbols.Values.ToArray())
+        {
+            foreach (var contract in declared.AllInterfaces)
+                if (!Unsupported(contract)) typeSymbols.TryAdd(TypeIdentity(contract), contract);
+            for (var baseType = declared.BaseType; baseType != null; baseType = baseType.BaseType)
+                if (!Unsupported(baseType)) typeSymbols.TryAdd(TypeIdentity(baseType), baseType);
         }
         var types = root["types"]!.AsObject();
         foreach (var (id, symbol) in typeSymbols)

@@ -1,6 +1,9 @@
 using HassSharp;
 using System.Collections.Concurrent;
 
+if (args.Contains("--node-library-expanding-child")) { NodeLibraryTests.ExpandingGenericPreview(); return; }
+if (args.Any(a => a.StartsWith("--node-library-review"))) { await NodeLibraryTests.RunReview(args.First(a => a.StartsWith("--node-library-review")).Split('=').ElementAtOrDefault(1)); return; }
+
 if (args.Contains("--write-node-library-fixture")) { File.WriteAllText("tests/fixtures/visual-rich-catalog.json", NodeLibraryFixture.Build().ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n"); return; }
 
 if (args.Contains("--node-library")) { await NodeLibraryTests.Run(); return; }

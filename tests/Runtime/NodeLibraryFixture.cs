@@ -22,6 +22,13 @@ public static class NodeLibraryFixture
             [Node("Required")] public static void Required(Reading reading) {}
             [Node("Factory")] public static int Factory() => 4;
             [Node("Widen")] public static void Widen(double number) {}
+            [Node("Nullable elements")] public static string?[] NullableElements() => new string?[] { null };
+            [Node("Required elements")] public static string[] RequiredElements() => new[] { "text" };
+            [Node("Required enumerable")] public static void RequiredEnumerable(IEnumerable<string> items) {}
+            [Node("Required readonly list")] public static void RequiredReadOnlyList(IReadOnlyList<string> items) {}
+            [Node("Required list")] public static void RequiredList(IList<string> items) {}
+            [Node("Nullable enumerable")] public static void NullableEnumerable(IEnumerable<string?> items) {}
+            [Node("Nonfinite defaults")] public static void NonfiniteDefaults(double? nan = double.NaN, float? positive = float.PositiveInfinity, double? negative = double.NegativeInfinity) {}
         }
         """;
 
@@ -68,6 +75,19 @@ public static class NodeLibraryFixture
         Case("arbitrary record is wire-only", missing, false, "reading");
         var extraction = Graph(VisualGraphContract.CreateNode("read_entity", "r", snapshot), VisualGraphContract.CreateNode("entity_field", "field", snapshot));
         Wire(extraction, "r", "value", "field", "entity"); Case("entity scalar extraction is separate", extraction, true);
+        foreach (var consumer in new[] { "RequiredEnumerable", "RequiredReadOnlyList", "RequiredList" })
+        {
+            var arrayGraph = Graph(Node("NullableElements", "array"), Node(consumer, "consumer"));
+            Wire(arrayGraph, "array", "result", "consumer", "items");
+            Case("nullable array elements reject " + consumer, arrayGraph, false, "items");
+        }
+        var nullableElements = Graph(Node("NullableElements", "array"), Node("NullableEnumerable", "consumer"));
+        Wire(nullableElements, "array", "result", "consumer", "items");
+        Case("nullable array elements accept nullable enumerable", nullableElements, true);
+        var requiredElements = Graph(Node("RequiredElements", "array"), Node("RequiredEnumerable", "consumer"));
+        Wire(requiredElements, "array", "result", "consumer", "items");
+        Case("required array elements accept required enumerable", requiredElements, true);
+        Case("nonfinite nullable defaults remain optional", Graph(Node("NonfiniteDefaults", "defaults")), true);
         return new() { ["sourceId"] = "shared", ["revision"] = 2, ["source"] = Source, ["catalog"] = snapshot.Catalog, ["cases"] = cases };
     }
 

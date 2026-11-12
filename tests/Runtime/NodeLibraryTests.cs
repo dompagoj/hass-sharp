@@ -34,7 +34,7 @@ public static class NodeLibraryTests
         public class Convertible { public static implicit operator Reading(Convertible value) => new("effect"); }
         public static class Conversions { [Node("Convertible")] public static Convertible Make() => new(); }
         """;
-    public static Task Run()
+    public static async Task Run()
     {
         var output = VisualNodeCatalog.DataOutputs(new JsonObject { ["kind"] = "read_entity", ["config"] = new JsonObject() });
         Check(output["value"]?["type"]?.GetValue<string>() == "global::HassSharp.EntityStateSnapshot", "Read entity concrete snapshot");
@@ -157,6 +157,105 @@ public static class NodeLibraryTests
         Check(entity.Attributes.GetProperty("nested")[0].GetString() == "original" && entity.LastChanged == DateTimeOffset.FromUnixTimeSeconds(10), "detached immutable attributes/timestamp conversion");
         NodeLibraryFixture.Verify();
         Console.WriteLine("PASS rich node libraries: Roslyn discovery, docs, signatures, conversion, snapshots and graph validation");
-        return Task.CompletedTask;
+        await RunReview(null);
     }
+    public static async Task RunReview(string? scenario)
+    {
+        if (scenario is null or "generic")
+        {
+            // Run potentially unbounded discovery in a disposable child, so the regression itself
+            // has a hard deadline and cannot exhaust the full test harness's stack or memory.
+            using var process = new System.Diagnostics.Process { StartInfo = new("dotnet") {
+                RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false } };
+            process.StartInfo.ArgumentList.Add(typeof(NodeLibraryTests).Assembly.Location);
+            process.StartInfo.ArgumentList.Add("--node-library-expanding-child");
+            process.Start();
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (TimeoutException)
+            {
+                process.Kill(entireProcessTree: true); await process.WaitForExitAsync();
+                throw new Exception("Expanding generic preview must terminate within ten seconds");
+            }
+            Check(process.ExitCode == 0, "Expanding generic preview must terminate successfully: " + (await error)[..Math.Min(500, (await error).Length)]);
+            Check((await output).Contains("PASS expanding generic preview"), "expanding generic child completed assertions");
+            Console.WriteLine("PASS review: bounded expanding generic metadata");
+        }
+        if (scenario is null or "array")
+        {
+            var preview = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new("arrays", """
+                public static class Arrays {
+                    [Node("Nullable array")] public static string?[] NullableArray() => new string?[] { null };
+                    [Node("Required array")] public static string[] RequiredArray() => new[] { "text" };
+                    [Node("Consumers")] public static void Consumers(IEnumerable<string> requiredEnumerable, IReadOnlyList<string> requiredReadOnlyList, IList<string> requiredList, IEnumerable<string?> nullableEnumerable, IReadOnlyList<string?> nullableReadOnlyList, IList<string?> nullableList) {}
+                }
+                """, 1)]);
+            Check(preview.Valid, string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
+            foreach (var container in new[] { "IEnumerable", "IReadOnlyList", "IList" })
+            {
+                var required = $"global::System.Collections.Generic.{container}<global::System.String>";
+                var nullable = $"global::System.Collections.Generic.{container}<global::System.String?>";
+                Check(!preview.Snapshot.IsAssignable("global::System.String?[]", required), "nullable array elements cannot feed required " + container);
+                Check(!(preview.Snapshot.Catalog["types"]!["global::System.String?[]"]!["assignableTo"]!.AsArray()).Any(t => t!.GetValue<string>() == required), "published array relation preserves nested nullability");
+                Check(preview.Snapshot.IsAssignable("global::System.String?[]", nullable), "nullable array elements can feed nullable " + container);
+                Check(preview.Snapshot.IsAssignable("global::System.String[]", required), "required array elements can feed required " + container);
+            }
+            Console.WriteLine("PASS review: array/interface nullable element conversions");
+        }
+        if (scenario is null or "defaults")
+        {
+            var preview = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new("defaults", """
+                public static class Defaults {
+                    [Node("Nonfinite")] public static void Nonfinite(double? nan = double.NaN, double? positive = double.PositiveInfinity, double? negative = double.NegativeInfinity, float? singleNan = float.NaN, float? singlePositive = float.PositiveInfinity, float? singleNegative = float.NegativeInfinity) {}
+                    [Node("Null")] public static void Null(double? noDefault, double? explicitNull = null) {}
+                }
+                """, 1)]);
+            Check(preview.Valid, "nullable non-finite CLR defaults are valid signatures");
+            var method = preview.Snapshot.Methods.Values.Single(m => m.Method.Name == "Nonfinite");
+            var node = VisualGraphContract.CreateNode(method.Kind, "d", preview.Snapshot);
+            foreach (var parameter in method.Parameters)
+            {
+                Check(parameter.HasDefaultValue && parameter.DefaultValue != null, "explicit non-finite default remains in descriptor");
+                Check(parameter.Name switch {
+                    "nan" => parameter.DefaultValue is double d && double.IsNaN(d),
+                    "positive" => parameter.DefaultValue is double d && d == double.PositiveInfinity,
+                    "negative" => parameter.DefaultValue is double d && d == double.NegativeInfinity,
+                    "singleNan" => parameter.DefaultValue is float f && float.IsNaN(f),
+                    "singlePositive" => parameter.DefaultValue is float f && f == float.PositiveInfinity,
+                    "singleNegative" => parameter.DefaultValue is float f && f == float.NegativeInfinity,
+                    _ => false }, "exact non-finite CLR default survives: " + parameter.Name);
+                Check(preview.Snapshot.Catalog["nodes"]![method.Kind]!["inputs"]![parameter.Name]!["default"] == null, "unrepresentable explicit default must not become a null literal: " + parameter.Name);
+                Check(!node["config"]!["arguments"]!.AsObject().ContainsKey(parameter.Name), "created node omits explicit non-finite default: " + parameter.Name);
+            }
+            var nullMethod = preview.Snapshot.Methods.Values.Single(m => m.Method.Name == "Null");
+            var nullNode = VisualGraphContract.CreateNode(nullMethod.Kind, "n", preview.Snapshot);
+            foreach (var name in new[] { "noDefault", "explicitNull" })
+                Check(nullNode["config"]!["arguments"]![name] is JsonObject operand && operand.ContainsKey("value") && operand["value"] == null, "true nullable null defaults remain explicit literals");
+            Console.WriteLine("PASS review: nullable non-finite default omission");
+        }
+    }
+
+    public static void ExpandingGenericPreview()
+    {
+        var preview = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new("expanding", """
+            public interface I<T> { }
+            public class Grow<T> : I<Grow<Grow<T>>> { }
+            public static class Expanding {
+                [Node("Grow")] public static Grow<int> Produce() => new();
+                [Node("Deep")] public static Grow<Grow<Grow<int>>> Deep(Grow<Grow<int>> input) => new();
+            }
+            """, 1)]);
+        Check(preview.Valid, string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
+        Check(preview.Snapshot.Types.Count < 250, "expanding generic discovery has a finite type registry");
+        foreach (var method in preview.Snapshot.Methods.Values)
+        {
+            Check(preview.Snapshot.Types.ContainsKey(method.ResultType!), "declared closed result type preserved");
+            foreach (var parameter in method.Parameters) Check(preview.Snapshot.Types.ContainsKey(parameter.TypeId), "declared closed parameter type preserved");
+        }
+        Check(preview.Snapshot.Types.ContainsKey("global::NodeLib.Grow<global::NodeLib.Grow<global::NodeLib.Grow<global::System.Int32>>>"), "deep explicitly declared constructed type preserved");
+        Check(preview.Snapshot.IsAssignable("global::NodeLib.Grow<global::System.Int32>", "global::NodeLib.I<global::NodeLib.Grow<global::NodeLib.Grow<global::System.Int32>>>"), "declared expanding type retains its implemented interface conversion");
+        Console.WriteLine("PASS expanding generic preview");
+    }
+
 }
