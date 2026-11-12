@@ -198,7 +198,7 @@ ha-panel-hass-sharp-view > #app { height: 100%; }
 .hs-app .hs-inspector .hs-status { align-self: flex-start; }
 .hs-app .hs-inspector textarea { font: 12px/1.6 monospace; resize: vertical; }
 .hs-app .hs-flow { height: 570px; min-width: 0; position: relative; background: var(--hs-bg); }
-.hs-app .hs-flow .solid-flow { --xy-background-color: var(--hs-bg); --xy-node-color: var(--hs-text); --xy-node-background-color: var(--hs-surface); --xy-edge-stroke: var(--hs-muted); --xy-handle-background-color: var(--hs-accent); --xy-controls-button-background-color: var(--hs-surface); --xy-controls-button-color: var(--hs-text); }
+.hs-app .hs-flow .solid-flow { --xy-background-color: var(--hs-bg); --xy-node-color: var(--hs-text); --xy-node-background-color: var(--hs-surface); --xy-edge-stroke: var(--hs-muted); --xy-handle-background-color: var(--hs-accent); --xy-controls-button-background-color: var(--hs-surface); --xy-controls-button-color: var(--hs-text); --xy-controls-button-background-color-hover: var(--hs-soft); --xy-controls-button-color-hover: var(--hs-text); --xy-controls-button-border-color: var(--hs-line); --xy-attribution-background-color: var(--hs-surface); }
 .hs-app .hs-flow .solid-flow__node-automation { background: var(--hs-surface); border: 1px solid var(--hs-line); color: var(--hs-text); border-radius: 10px; box-shadow: 0 3px 12px #0001; }
 .hs-app .hs-flow .solid-flow__node-automation.selected { border-color: var(--hs-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--hs-accent) 25%, transparent); }
 .hs-app .hs-flow-card { height: 100%; display: flex; flex-direction: column; padding: 16px; gap: 6px; overflow: hidden; }
@@ -236,3 +236,6 @@ ha-panel-hass-sharp-view > #app { height: 100%; }
 }
 
 .hs-app .hs-size-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+
+.hs-app .hs-flow .solid-flow__controls-button { width: 44px; height: 44px; }
+.hs-app .hs-flow .solid-flow__attribution { color: var(--hs-muted); }

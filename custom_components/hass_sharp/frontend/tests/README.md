@@ -26,4 +26,6 @@ and `VisualAutomationView.test.tsx`. Tests use the real pinned Solid Flow/D3
 implementation. Happy DOM has no layout engine; the resize/edge tests supply only
 measured DOM dimensions at that boundary. These tests do not replace desktop/mobile
 browser acceptance. See `../docs/visual-editor-feasibility.md` for the local patch,
-capability limits, and outstanding browser verification.
+capability limits, and browser follow-up results.
+
+Run `bun run build:preview` to build the mock-data responsive fixture; see the feasibility report for the temporary local HA static-route workflow. This is not a real HA integration test.

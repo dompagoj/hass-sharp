@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "build:watch": "vite build --watch",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:preview": "vite build --config tests/preview-build.config.ts"
   },
   "dependencies": {
     "@dschz/solid-flow": "0.2.6",

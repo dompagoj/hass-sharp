@@ -18,7 +18,8 @@ let source = `public class BathroomHeating : ManagedAutomation\n{\n    // Your a
   document.documentElement.style.colorScheme = theme
 }
 ;(window as any).setPreviewTheme('light')
-history.replaceState(null, '', '/hass-sharp/automations')
+const visualFixture = new URLSearchParams(location.search).get('view') === 'visual'
+history.replaceState(null, '', visualFixture ? '/hass-sharp/visual/new?name=Motion%20lights' : '/hass-sharp/automations')
 const hass = {
   async callApi(method: string, path: string, parameters?: { name?: string; source?: string }) {
     const file = decodeURIComponent(path.split('/')[2] ?? '')

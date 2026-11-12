@@ -24,21 +24,36 @@ The adapter additionally commits final geometry after touch-end/cancel in a capt
 
 | Concern | Evidence and implementation | Remaining verification |
 | --- | --- | --- |
-| Same-count external updates | Real-library DOM test updates label, position and size, then restores coordinates | Real browser rendering |
-| Drag retention | Mouse, single-touch and multitouch interruption drive real D3 events; JSON position changes, prior snapshot stays intact | Physical pointer/touch behavior |
-| Resized nodes | Live resize-handle width and final domain dimensions tested with a DOM measurement fixture; duplicate inline size removed | Real layout and connected edge alignment |
-| Keyboard | Native boundary blocks ancestor shortcuts; adapter handles node Enter/Escape/arrows, inspector handles connections/sizing, editor supports undo/redo/Delete for nodes and edges | Real HA focus and shortcuts |
-| CSS isolation | Upstream CSS imported as inline text and enclosed in `@scope (.hs-flow)`; application styles prefixed with `.hs-app`; no global CSS import | Computed styles outside canvas, dark/light screenshots |
-| Narrow layout | Responsive rules stack palette/canvas/inspector and bottom panels at 700px | 390px and desktop screenshots/overflow check |
+| Same-count external updates | Real-library DOM test updates label, position and size, then restores coordinates | Browser rendering passed |
+| Drag retention | Mouse, single-touch and multitouch interruption drive real D3 events; JSON position changes, prior snapshot stays intact | Mouse passed in browser; physical touch unverified |
+| Resized nodes | Live resize-handle width and final domain dimensions tested with a DOM measurement fixture; duplicate inline size removed | Browser size/edge layout inspected |
+| Keyboard | Native boundary blocks ancestor shortcuts; adapter handles node Enter/Escape/arrows, inspector handles connections/sizing, editor supports undo/redo/Delete for nodes and edges | Fixture native keys passed; actual HA unverified |
+| CSS isolation | Upstream CSS imported as inline text and enclosed in `@scope (.hs-flow)`; application styles prefixed with `.hs-app`; no global CSS import | Outside sentinel and light/dark screenshots passed |
+| Narrow layout | Responsive rules stack palette/canvas/inspector and bottom panels at 700px | 390px/1280px screenshots and overflow checks passed |
 
-CSS `@scope` support is required (use a current browser). The browser acceptance gate remains open; DOM tests do not prove visual isolation, colors, edge alignment or mobile usability.
+CSS `@scope` support is required (use a current browser). The browser acceptance gate was subsequently checked through an isolated mock-data fixture on the existing HA static route (see below). DOM tests alone do not prove visual isolation, colors, edge alignment or mobile usability.
 
-## Verification and browser blocker
+## Verification and browser access
 
 Run from this frontend directory: `bun install --frozen-lockfile`, `bun run test`, `bun run build`. Build outputs are ignored and were produced only inside this isolated worktree.
 
-The selected OpenMausBot Browser was used first. Opening the local fixture at `http://localhost:5176/tests/preview-app.html` failed with `ERR_SOCKS_CONNECTION_FAILED`: the browser's service allowlist treated the native-shell process as a service no bot started. A LAN-address attempt was initially rejected by automatic approval review as an unverified destination/exposure concern. Host network and listener checks subsequently proved `192.168.100.53` is this VM and port 5176 belongs to this worktree's Vite process; a further browser attempt still hit the same service allowlist. No alternate browser or external tunnel was used. The temporary preview server was stopped after testing. No desktop/mobile screenshot or HA-integration visual success is claimed.
+The selected OpenMausBot Browser was used first. Opening the local fixture at `http://localhost:5176/tests/preview-app.html` failed with `ERR_SOCKS_CONNECTION_FAILED`: the browser's service allowlist treated the native-shell process as a service no bot started. A LAN-address attempt was initially rejected by automatic approval review as an unverified destination/exposure concern. Host network and listener checks subsequently proved `192.168.100.53` is this VM and port 5176 belongs to this worktree's Vite process; a further browser attempt still hit the same service allowlist. No alternate browser or external tunnel was used. The temporary preview server was stopped after testing. This initial blocker was subsequently resolved using the existing static route, without making port 5176 public.
 
-When the selected Browser can reach the fixture, create Visual through the modal, inspect 1440px and 390px layouts in light/dark, drag/resize and undo, test touch, Tab/Enter/arrows and inspector connections, and verify an outside element with a Solid Flow class retains its styles. Also recheck against the actual HA panel once its integration is ready.
+### Completed browser follow-up
 
-Final local result: a fresh installation from the frozen lockfile installed 158 packages with the patch; all **48 frontend tests across 9 files passed**, and `tsc && vite build` passed. `git diff --check` passed. The temporary port 5176 listener was stopped and its absence verified. A separate read-only code review found no Critical issues; all reported Important code findings have regression coverage and were fixed. Real-browser acceptance remains blocked as described above.
+`bun run build:preview` builds the existing mock-data App fixture and a responsive iframe wrapper. The output was copied into a unique temporary `visual-check-6c76542` subdirectory of the existing HA-served `www` directory; the live panel bundle and backend files were untouched. The selected Browser opened it at `http://localhost:5001/hass-sharp-static/visual-check-6c76542/tests/visual-check.html`. The fixture makes no real HA service calls. Temporary hosted files were removed after checking.
+
+Verified in the mounted Chromium browser:
+
+- 1280×720 desktop and 390×720 iframe viewports in light and dark themes; also checked 1440px layout metrics. No page-level horizontal overflow. On narrow screens palette, canvas, inspector, connections and code preview stack correctly; code scrolls within its own region.
+- New Automation → Visual → named draft opens the real frontend shell. Leaving shows the discard dialog, and explicit discard returns to the mock automation list.
+- Browser-dispatched mouse drag changed domain position `(60,100)` to `(140,140)`; native ArrowRight moved to `(150,140)`; Ctrl+Z and Undo restored the original geometry.
+- Changing inspector Width to 300 produced graph width 300 and rendered width 225 at zoom 0.75. Edges remained connected in the inspected layout. Fit View made the complete graph visible on mobile.
+- An outside `solid-flow__node` sentinel retained `position: static`; CSS scope was supported by this browser.
+- Found and fixed an unreadable light hover background on dark zoom controls. All canvas buttons now use theme-aware hover/border/text colors and 44×44px targets; verified computed styles and screenshots afterward.
+
+Screenshots are preserved at `/home/dompa/workspace/hass-sharp-visual-checks/`: `desktop-light.png`, `desktop-dark.png`, `mobile-light.png`, `mobile-dark.png`, `mobile-dark-canvas.png`, `mobile-code-preview.png`.
+
+Remaining: physical phone/touch hardware and the actual signed-in HA panel are not verified. Synthetic single-touch/multitouch behavior is covered by the real-library DOM tests. The responsive fixture verifies this frontend in a browser, not the running HA integration or generated-code/backend behavior.
+
+Final local result: a fresh installation from the frozen lockfile installed 158 packages with the patch; all **48 frontend tests across 9 files passed**, and `tsc && vite build` passed. `git diff --check` passed. The temporary port 5176 listener was stopped and its absence verified. A separate read-only code review found no Critical issues; all reported Important code findings have regression coverage and were fixed. The subsequent browser follow-up above completed local responsive/theme acceptance; physical touch and signed-in HA integration remain unverified.
