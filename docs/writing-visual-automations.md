@@ -26,9 +26,11 @@ Data edges supply typed values and **never execute their source nodes**. The
 producer must have executed on the chosen path before the consumer reads it.
 Missing producer output is a mapped runtime error, not an implicit default.
 
-Inputs can be literals, C# expressions, explicit unset values, or connected data
-ports. Types include booleans, numbers, strings, entity IDs, JSON values and the
-full CLR types exposed by custom nodes. Null and absence are distinct. Use the
+Inputs can be literals, named variable references, explicit unset values, or
+connected data ports. Use Custom C# nodes for calculations; graph imports and
+members and trigger override expressions provide the existing C# escape hatches.
+Types include booleans, numbers, strings, entity IDs, JSON values and the full CLR
+types exposed by custom nodes. Null and absence are distinct. Use the
 server catalog for assignability, nullability and literal choices; explicit
 conversion nodes perform checked conversions where supported.
 

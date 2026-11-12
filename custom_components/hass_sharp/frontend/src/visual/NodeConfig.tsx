@@ -324,7 +324,7 @@ export function NodeConfig(props: {
             const edges = () =>
               props.graph.edges.filter(e => e.kind !== 'data' && e.source === props.node.id && (e.port ?? 'next') === port)
             return (
-              <div class="hs-port-row hs-port-row--execution">
+              <div class="hs-port-row hs-port-row--execution" style={{ '--hs-value-color': port === 'error' ? 'var(--hs-port-error)' : 'var(--hs-port-execution)' }}>
                 <strong>{portLabel(port)} · Execution</strong>
                 <p>
                   {port === 'next' && props.node.kind === 'parallel'

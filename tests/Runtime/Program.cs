@@ -1,6 +1,8 @@
 using HassSharp;
 using System.Collections.Concurrent;
 
+if (args.Any(a => a.StartsWith("--visual-trigger-review"))) { await VisualTriggerReviewTests.Run(args.First(a => a.StartsWith("--visual-trigger-review")).Split('=').ElementAtOrDefault(1)); return; }
+
 if (args.Contains("--node-library-expanding-child")) { NodeLibraryTests.ExpandingGenericPreview(); return; }
 if (args.Any(a => a.StartsWith("--node-library-review"))) { await NodeLibraryTests.RunReview(args.First(a => a.StartsWith("--node-library-review")).Split('=').ElementAtOrDefault(1)); return; }
 
@@ -120,6 +122,7 @@ await VisualExecutionTests.Run();
 await VisualConversionReviewTests.Run();
 await NodeLibraryTests.Run();
 await VisualGraphV4Tests.Run();
+await VisualTriggerReviewTests.Run();
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
 await AuthoringAdapterTests.Run();
 await NodeLibraryStoreTests.Run();

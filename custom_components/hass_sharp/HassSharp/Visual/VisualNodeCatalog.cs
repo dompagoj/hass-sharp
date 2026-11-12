@@ -10,7 +10,17 @@ public static class VisualNodeCatalog
     {
         using var stream = typeof(VisualNodeCatalog).Assembly.GetManifestResourceStream("HassSharp.visual_node_catalog.json")
             ?? throw new InvalidOperationException("Embedded visual node catalog is missing");
-        return JsonNode.Parse(stream)!.AsObject();
+        var root = JsonNode.Parse(stream)!.AsObject();
+        RefreshStructuralTypes(root);
+        return root;
+    }
+    internal static void RefreshStructuralTypes(JsonObject catalog)
+    {
+        var types = catalog["types"]!.AsObject();
+        catalog["structures"]!["loopDeclaration"]!["type"]!["enum"] = new JsonArray(types.Select(t => (JsonNode?)JsonValue.Create(t.Key)).ToArray());
+        catalog["structures"]!["operand"]!["literal"]!["types"] = new JsonArray(types
+            .Where(t => Text(t.Value, "literalKind") != "" || t.Value?["nullable"]?.GetValue<bool>() == true)
+            .Select(t => (JsonNode?)JsonValue.Create(t.Key)).ToArray());
     }
     public static JsonObject GetCatalog(VisualCatalogSnapshot? snapshot = null) => (JsonObject)(snapshot?.Root ?? Root).DeepClone();
     public static JsonObject? GetNode(string kind, VisualCatalogSnapshot? snapshot = null) => (snapshot?.Root ?? Root)["nodes"]?[kind]?.DeepClone() as JsonObject;
@@ -19,6 +29,7 @@ public static class VisualNodeCatalog
     internal static IEnumerable<JsonObject> Declarations(JsonObject node, string key) => (node["config"]?[key] as JsonArray ?? []).OfType<JsonObject>();
     internal static string ResolveType(string type, JsonObject node) => type.StartsWith('$') ? Text(node["config"], type[1..]) : type;
     public static string EffectiveTriggerMethod(JsonObject node) => "Run_" + Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(Text(node, "id")));
+    internal static string TriggerType(JsonObject node, VisualCatalogSnapshot snapshot) => Text(node["config"], "type", Text(Spec(node, snapshot)?["config"]?["type"], "default"));
     public static bool CompatibleTypes(string source, string target, VisualCatalogSnapshot? snapshot = null) => (snapshot ?? VisualCatalogSnapshot.BuiltIn).IsAssignable(source, target);
     public static string[] ExecutionPorts(JsonObject node, VisualCatalogSnapshot? snapshot = null)
     {

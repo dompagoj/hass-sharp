@@ -210,10 +210,15 @@ public static class VisualGraphValidator
                     _ => false
                 };
                 if (!valid) { Error(id, $"{field} must be {Text(rule, "type")}", field); continue; }
+                // Trigger type changes retain inactive fields so drafts and overrides are not lost.
+                if (kind == "trigger" && field == "at" && TriggerType(node, snapshot) != "once") continue;
                 var choices = Text(rule, "enumSource") == "types" ? new JsonArray(Types.Select(t => (JsonNode?)JsonValue.Create(t)).ToArray()) : rule["enum"] as JsonArray;
                 if (choices != null && !choices.Any(v => JsonNode.DeepEquals(v, value))) Error(id, field + " must be one of " + string.Join(", ", choices), field);
                 if (Number(value) is { } number && (Number(rule["min"]) is { } min && number < min || Number(rule["max"]) is { } max && number > max)) Error(id, $"{field} must be between {rule["min"]} and {rule["max"]}", field);
                 if (value is JsonValue text && text.TryGetValue<string>(out var str) && Text(rule, "pattern") is { Length: > 0 } pattern && !Match(str, pattern)) Error(id, field + " has invalid format", field);
+                if (value is JsonValue date && date.TryGetValue<string>(out var timestamp) && Text(rule, "format") == "date-time-offset" &&
+                    !DateTimeOffset.TryParse(timestamp, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
+                    Error(id, field + " must be a valid ISO timestamp with an explicit offset or Z", field);
                 if (value is JsonArray list && (Number(rule["minItems"]) is { } minItems && list.Count < minItems || Number(rule["maxItems"]) is { } maxItems && list.Count > maxItems)) Error(id, field + " item count is out of range", field);
             }
             foreach (var port in Strings(spec["requiredExecution"])) if (!outgoing[id].Any(e => FlowPort(node, e) == port)) Error(id, "Execution connection is required", port, port);
@@ -239,7 +244,7 @@ public static class VisualGraphValidator
             if (cfg.ContainsKey("output") && !Match(Text(cfg, "output"), "^[A-Za-z_][A-Za-z0-9_]{0,63}$")) Error(id, "Invalid variable output name", "output");
             if (kind == "trigger")
             {
-                var type = Text(cfg, "type", "entity");
+                var type = TriggerType(node, snapshot);
                 string[] required = type switch { "ha" => ["trigger"], "entity" => ["entity"], "daily" => ["time", "timeZone"], "once" => ["at"], _ => [] };
                 foreach (var field in required) if (!cfg.ContainsKey(field) || cfg[field] is JsonValue v && v.TryGetValue<string>(out var s) && s == "") Error(id, field + " is required", field);
                 if (type == "ha" && cfg["trigger"] is JsonObject trigger && string.IsNullOrWhiteSpace(Text(trigger, "trigger")) && string.IsNullOrWhiteSpace(Text(trigger, "platform"))) Error(id, "Native trigger requires a platform", "trigger");

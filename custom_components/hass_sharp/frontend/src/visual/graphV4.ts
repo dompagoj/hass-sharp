@@ -10,7 +10,7 @@ export interface DataEdge { id: string; kind: 'data'; source: string; target: st
 export type V4Edge = ExecutionEdge | DataEdge
 export interface GraphV4 { version: 4; name: string; nodes: V4Node[]; edges: V4Edge[]; imports?: string; members?: string }
 export interface V4Diagnostic { nodeId: string | null; message: string; severity: number; inputId?: string; portId?: string }
-export interface ConfigSpec { label?: string; description?: string; type: string; required?: boolean; default?: unknown; enum?: unknown[]; enumSource?: 'types'; min?: number; max?: number; pattern?: string; minItems?: number; maxItems?: number }
+export interface ConfigSpec { label?: string; description?: string; type: string; required?: boolean; default?: unknown; enum?: unknown[]; enumSource?: 'types'; min?: number; max?: number; pattern?: string; format?: 'date-time-offset'; minItems?: number; maxItems?: number }
 export interface InputSpec { nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description: string; default?: unknown; min?: number; max?: number; integer?: boolean }
 export interface OutputSpec { label?: string; type: string; description: string; visibility?: string }
 export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
@@ -90,6 +90,17 @@ function validLiteral(type: string, value: unknown, catalog: VisualCatalogSnapsh
     case 'integer': case 'number': return typeof value === 'number' && Number.isFinite(value) && (spec.literalKind !== 'integer' || Number.isInteger(value)) && (spec.min === undefined || value >= spec.min) && (spec.max === undefined || value <= spec.max)
     default: return false
   }
+}
+
+// The catalog pattern checks ISO syntax, wall-clock fields and the explicit offset.
+// Date.parse alone normalizes impossible days, so validate the calendar separately.
+function validOffsetDateTime(value: string): boolean {
+  const year = Number(value.slice(0, 4)), month = Number(value.slice(5, 7)), day = Number(value.slice(8, 10))
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  const instant = Date.parse(value)
+  return year >= 1 && day <= days[month - 1] && Number.isFinite(instant) &&
+    instant >= Date.parse('0001-01-01T00:00:00Z') && instant <= Date.parse('9999-12-31T23:59:59.999Z')
 }
 
 /** Static validation only: evaluating data never schedules a producer. */
@@ -232,10 +243,13 @@ export function validateGraphV4(value: unknown, catalog: VisualCatalogSnapshot =
       if (v === undefined) { if (rule.required) error(node.id, `${field} is required`, field); continue }
       const valid = rule.type === 'array' ? Array.isArray(v) : rule.type === 'object' ? record(v) : rule.type === 'integer' ? typeof v === 'number' && Number.isInteger(v) : typeof v === rule.type
       if (!valid) { error(node.id, `${field} must be ${rule.type}`, field); continue }
+      // Trigger type changes retain inactive fields so drafts and overrides are not lost.
+      if (node.kind === 'trigger' && field === 'at' && (node.config.type ?? spec.config.type.default) !== 'once') continue
       const choices = rule.enumSource === 'types' ? types : rule.enum
       if (choices && !choices.includes(v as string)) error(node.id, `${field} must be one of ${choices.join(', ')}`, field)
       if (typeof v === 'number' && ((rule.min !== undefined && v < rule.min) || (rule.max !== undefined && v > rule.max))) error(node.id, `${field} must be between ${rule.min} and ${rule.max}`, field)
       if (typeof v === 'string' && rule.pattern && !new RegExp(rule.pattern).test(v)) error(node.id, `${field} has invalid format`, field)
+      if (typeof v === 'string' && rule.format === 'date-time-offset' && !validOffsetDateTime(v)) error(node.id, `${field} must be a valid ISO timestamp with an explicit offset or Z`, field)
       if (Array.isArray(v) && ((rule.minItems !== undefined && v.length < rule.minItems) || (rule.maxItems !== undefined && v.length > rule.maxItems))) error(node.id, `${field} item count is out of range`, field)
     }
     for (const port of spec.requiredExecution ?? []) if (!outgoing.get(node.id)!.some(e => flowPort(node, e) === port)) error(node.id, 'Execution connection is required', port, port)
@@ -252,7 +266,7 @@ export function validateGraphV4(value: unknown, catalog: VisualCatalogSnapshot =
     }
     if (node.config.output !== undefined && (typeof node.config.output !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(node.config.output))) error(node.id, 'Invalid variable output name', 'output')
     if (node.kind === 'trigger') {
-      const type = node.config.type ?? 'entity'
+      const type = node.config.type ?? spec.config.type.default
       const required = type === 'ha' ? ['trigger'] : type === 'entity' ? ['entity'] : type === 'daily' ? ['time','timeZone'] : type === 'once' ? ['at'] : []
       for (const field of required) if (node.config[field] === undefined || node.config[field] === '') error(node.id, `${field} is required`, field)
       if (type === 'ha' && record(node.config.trigger) && ![node.config.trigger.trigger, node.config.trigger.platform].some(p => typeof p === 'string' && p.trim())) error(node.id, 'Native trigger requires a platform', 'trigger')

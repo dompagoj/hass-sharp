@@ -46,6 +46,19 @@ public static class NodeLibraryTests
             Check(snapshot.Catalog["types"]![id]!["label"]?.GetValue<string>() == label, "merged catalog preserves built-in display label: " + id);
         Check(snapshot.Catalog["types"]!["global::System.Double"]!["label"]!.GetValue<string>() == "double", "canonical CLR type retains Roslyn display label");
         Check(snapshot.Catalog["types"]!["global::NodeLib.Reading"]!["label"]!.GetValue<string>() == "NodeLib.Reading", "arbitrary CLR type retains Roslyn display label");
+        var structures = snapshot.Catalog["structures"]!;
+        var loopTypes = structures["loopDeclaration"]!["type"]!["enum"]!.AsArray().Select(t => t!.GetValue<string>()).ToArray();
+        Check(loopTypes.Contains("global::NodeLib.Reading"), "structural loop schema exposes registered custom CLR types");
+        var literalTypes = structures["operand"]!["literal"]!["types"]!.AsArray().Select(t => t!.GetValue<string>()).ToArray();
+        foreach (var type in new[] { "global::System.Int32", "global::NodeLib.Mode", "global::NodeLib.Reading?" })
+            Check(literalTypes.Contains(type), "structural literal schema exposes representable CLR type: " + type);
+        Check(!literalTypes.Contains("global::NodeLib.Reading"), "non-null rich class cannot advertise JSON literals");
+        Check(structures["operand"]!["literal"]!["constraintsSource"]?.GetValue<string>() == "types", "literal value restrictions reference the authoritative registry");
+        Check(VisualNodeCatalog.ValidLiteral("global::System.Int32", JsonValue.Create(3), true, snapshot), "integer literal advertised and accepted");
+        Check(VisualNodeCatalog.ValidLiteral("global::NodeLib.Mode", JsonValue.Create(1), true, snapshot), "enum literal advertised and accepted");
+        Check(!VisualNodeCatalog.ValidLiteral("global::NodeLib.Mode", JsonValue.Create(42), true, snapshot), "enum membership remains enforced");
+        Check(VisualNodeCatalog.ValidLiteral("global::NodeLib.Reading?", null, true, snapshot), "nullable rich literal allows null");
+        Check(!VisualNodeCatalog.ValidLiteral("global::NodeLib.Reading?", new JsonObject(), true, snapshot), "nullable rich literal rejects object JSON");
         var read = snapshot.Methods.Values.Single(m => m.Method.Name == "Read");
         var consume = snapshot.Methods.Values.Single(m => m.Method.Name == "Consume");
         Check(read.InvocationType == "global::NodeLib.Nodes" && read.ResultType == "global::NodeLib.Reading", "exact invocation and result type");

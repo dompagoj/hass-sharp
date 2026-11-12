@@ -155,6 +155,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
             type["assignableTo"] = new JsonArray(typeSymbols.Where(pair => pair.Key != "entity_id" || id == "entity_id")
                 .Where(pair => VisualCatalogSnapshot.StandardConversion(compilation, symbol, pair.Value)).Select(pair => (JsonNode?)JsonValue.Create(pair.Key)).ToArray());
         }
+        VisualNodeCatalog.RefreshStructuralTypes(root);
         // Keep optional CLR defaults that cannot be represented faithfully in the JSON literal editor
         // in the backend descriptor only. Omitting their argument preserves C# default semantics.
         foreach (var method in methods)

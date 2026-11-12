@@ -5658,5 +5658,363 @@
     },
     "valid": true,
     "maxValidationMs": 1000
+  },
+  {
+    "name": "omitted entity trigger type",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "entity": "binary_sensor.motion"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "once missing timestamp",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "at"
+  },
+  {
+    "name": "once missing offset",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2030-01-01T10:00:00"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "at"
+  },
+  {
+    "name": "once malformed timestamp",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "tomorrow"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "at"
+  },
+  {
+    "name": "once invalid calendar date",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2030-02-30T10:00:00Z"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "at"
+  },
+  {
+    "name": "once invalid leap day",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2030-02-29T10:00:00Z"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "at"
+  },
+  {
+    "name": "once invalid month",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2030-13-01T10:00:00Z"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "at"
+  },
+  {
+    "name": "once invalid hour",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2030-01-01T24:00:00Z"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "at"
+  },
+  {
+    "name": "once invalid offset",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2030-01-01T10:00:00+14:01"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "at"
+  },
+  {
+    "name": "once UTC timestamp",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2030-01-01T10:00:00Z"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "once positive offset",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2030-01-01T10:00:00+01:00"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "once negative offset",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2030-01-01T10:00:00-05:30"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "once fractional leap day",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2032-02-29T10:00:00.1234567Z"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "inactive once timestamp is preserved after changing trigger type",
+    "graph": {
+      "version": 4,
+      "name": "Inactive trigger field",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual",
+            "at": ""
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "once minute precision UTC",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2050-01-01T12:30Z"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "once minute precision positive offset",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2050-01-01T12:30+01:00"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "once minute precision negative offset",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2050-01-01T12:30-05:30"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "once fraction without seconds",
+    "graph": {
+      "version": 4,
+      "name": "Trigger contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2050-01-01T12:30.5Z"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "at"
   }
 ]

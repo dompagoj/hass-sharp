@@ -230,6 +230,8 @@ it('uses the same category token on all five typed handles, edges, inspector row
     graph = connectNodes(graph, `source-${type}`, `target-${type}`)
     graph = connectData(graph, `source-${type}`, 'value', `target-${type}`, 'value')
   }
+  graph = addNode(graph, 'stop', 'on-error')
+  graph = connectNodes(graph, 'target-number', 'on-error', 'error')
   dispose = render(
     () => (
       <>
@@ -256,6 +258,14 @@ it('uses the same category token on all five typed handles, edges, inspector row
         .find(element => element.dataset.id === edge.id)!
         .querySelector<SVGElement>('.solid-flow__edge-path')!.style.stroke,
     ).toBe(token)
+  }
+  for (const port of ['error', 'next']) {
+    const token = `var(--hs-port-${port === 'error' ? 'error' : 'execution'})`
+    expect(el.querySelector<HTMLElement>(`[data-id="target-number"] .source[data-handleid="${port}"]`)!.style.background).toBe(token)
+    const edge = graph.edges.find(e => e.kind !== 'data' && e.source === 'target-number' && (e.port ?? 'next') === port)!
+    expect([...el.querySelectorAll<SVGElement>('.solid-flow__edge')].find(element => element.dataset.id === edge.id)!.querySelector<SVGElement>('.solid-flow__edge-path')!.style.stroke).toBe(token)
+    const row = [...el.querySelectorAll<HTMLElement>('.hs-port-row--execution')].find(element => element.querySelector('strong')?.textContent === `${port === 'error' ? 'On error' : 'Next'} · Execution`)!
+    expect(row.style.getPropertyValue('--hs-value-color')).toBe(token)
   }
   expect(el.querySelector<HTMLElement>('.hs-typed-input[data-input-id="value"]')!.style.getPropertyValue('--hs-value-color')).toBe(
     'var(--hs-port-number)',

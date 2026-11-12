@@ -365,7 +365,7 @@ export const FlowAdapter: Component<Props> = props => {
                   target = graph.nodes.find(n => n.id === edge.target)
                 const output = edge.kind === 'data' && source ? dataOutputs(source, catalog())[edge.sourcePort] : undefined
                 const handle = outputPort(source?.kind ?? 'service', edge),
-                  color = edge.kind === 'data' ? typeColor(output?.type ?? 'object', catalog()) : 'var(--hs-port-execution)'
+                  color = edge.kind === 'data' ? typeColor(output?.type ?? 'object', catalog()) : edge.port === 'error' ? 'var(--hs-port-error)' : 'var(--hs-port-execution)'
                 return {
                   id: edge.id,
                   source: edge.source,
@@ -479,7 +479,7 @@ export const FlowAdapter: Component<Props> = props => {
               'source',
               index() + inputs().length + (node.data.kind === 'trigger' ? 0 : 1),
               `${portLabel(id)} output`,
-              'var(--hs-port-execution)',
+              id === 'error' ? 'var(--hs-port-error)' : 'var(--hs-port-execution)',
             )
           }
         </For>
