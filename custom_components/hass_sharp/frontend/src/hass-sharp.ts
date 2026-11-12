@@ -3,8 +3,11 @@ import { customElement, property } from 'lit/decorators.js'
 import { render } from 'solid-js/web'
 import App from './App'
 import type { HomeAssistant } from './types'
+import { panelStylesheetUrl } from './panel-stylesheet'
 
 import './style.css'
+
+const stylesheetUrl = panelStylesheetUrl(import.meta.url)
 
 // Function to "leak" the font to the global scope
 const injectGlobalFont = () => {
@@ -55,7 +58,7 @@ export class HassSharpView extends LitElement {
 
   render() {
     return html`
-      <link id="cssLink" rel="stylesheet" href="/hass-sharp-static/hass-sharp.css" />
+      <link id="cssLink" rel="stylesheet" href=${stylesheetUrl} />
 
       <div class="h-full" id="app"></div>
     `
