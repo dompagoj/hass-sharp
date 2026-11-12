@@ -1,0 +1,75 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+namespace HassSharp;
+
+public partial class HassSharpManager
+{
+    readonly SemaphoreSlim _visualGate = new(1, 1);
+    VisualStore VisualDocuments => new(Path.Combine(HassPath.HassConfiguration, ".storage", "hass_sharp", "visual"), new(_diagnosticsProvider));
+    string VisualRuntimePath(string id) => Path.Combine(HassPath.HassConfiguration, ".storage", "hass_sharp", "visual", "visual_" + id + ".cs");
+
+    VisualDocument WithRuntimeIdentity(VisualDocument document) => document with { AutomationId = _history.Identity(VisualRuntimePath(document.Id)) };
+
+    // Single JSON bridge keeps Python.NET calls and frontend versioning explicit.
+    public async Task<string> VisualRequest(string requestJson)
+    {
+        await _visualGate.WaitAsync();
+        try
+        {
+            var request = JsonNode.Parse(requestJson)!.AsObject();
+            var operation = request["operation"]!.GetValue<string>();
+            object result;
+            var store = VisualDocuments;
+            if (operation == "preview") result = new VisualGenerator(_diagnosticsProvider).Preview(request["graph"]!.AsObject());
+            else if (operation == "list") result = store.List().Select(WithRuntimeIdentity).ToArray();
+            else
+            {
+                var id = request["id"]!.GetValue<string>();
+                if (operation == "read") result = WithRuntimeIdentity(store.Read(id) ?? throw new FileNotFoundException("Visual document not found"));
+                else
+                {
+                    var revision = request["expectedRevision"]!.GetValue<long>();
+                    if (operation == "save")
+                    {
+                        var document = WithRuntimeIdentity(store.Save(id, request["graph"]!.AsObject(), revision));
+                        string? activationError = null;
+                        try
+                        {
+                            var compiled = await _compiler.CompileSingleFile(VisualRuntimePath(id), document.Source, true);
+                            if (!_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(id)))
+                            {
+                                var loaded = _userScriptManager.LoadUserScript(compiled);
+                                try { await loaded.ConfigureAndStart(); }
+                                catch
+                                {
+                                    loaded.ClearFromTracking();
+                                    loaded.Unload();
+                                    throw;
+                                }
+                            }
+                            else await _userScriptManager.UpdateUserScript(compiled);
+                        }
+                        catch (Exception ex) { activationError = ex.Message; }
+                        result = new { document, active = activationError == null, activationError };
+                    }
+                    else if (operation == "delete")
+                    {
+                        store.Delete(id, revision);
+                        if (_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(id)))
+                            _userScriptManager.DeleteScript(VisualRuntimePath(id));
+                        result = new { deleted = true };
+                    }
+                    else throw new ArgumentException("Unknown visual operation");
+                }
+            }
+            return JsonSerializer.Serialize(new { version = 1, ok = true, result }, VisualStore.Json);
+        }
+        catch (VisualValidationException ex) { return Error("validation", ex.Preview); }
+        catch (VisualConflictException ex) { return Error("conflict", ex.Message); }
+        catch (FileNotFoundException ex) { return Error("not_found", ex.Message); }
+        catch (Exception ex) when (ex is ArgumentException or JsonException or InvalidOperationException or NullReferenceException or OverflowException)
+        { return Error("invalid_request", ex.Message); }
+        finally { _visualGate.Release(); }
+    }
+    static string Error(string code, object detail) => JsonSerializer.Serialize(new { version = 1, ok = false, error = new { code, detail } }, VisualStore.Json);
+}

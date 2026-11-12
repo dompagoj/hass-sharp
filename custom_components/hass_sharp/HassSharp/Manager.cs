@@ -2,7 +2,7 @@ using Python.Runtime;
 
 namespace HassSharp;
 
-public class HassSharpManager
+public partial class HassSharpManager
 {
     readonly DiagnosticsProvider _diagnosticsProvider = new();
     readonly CodeCompiler _compiler;
@@ -21,6 +21,8 @@ public class HassSharpManager
     {
         _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
         var assemblies = await _compiler.CompileFromUserScriptsFolder();
+        foreach (var document in VisualDocuments.List())
+            assemblies.Add(await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), document.Source, true));
 
         _userScriptManager.UnloadUserScripts(); // Just in case, shouldnt be needed
 
@@ -55,7 +57,7 @@ public class HassSharpManager
         return _userScriptManager.RunEntries(entityId, trigger);
     }
 
-    public PyList GetUserScripts() => PyDTOConverter.UserScriptToDto(_userScriptManager.GetUserScripts());
+    public PyList GetUserScripts() => PyDTOConverter.UserScriptToDto(_userScriptManager.GetUserScripts().Where(s => Path.GetDirectoryName(s.CompiledScript.FilePath) == HassPath.UserScripts).ToList());
 
     public UserScriptSourceDTO? GetUserScript(string fileName)
     {
@@ -77,6 +79,9 @@ public class HassSharpManager
 
     public async Task<PyTuple> SaveScript(string path, string source)
     {
+        if (_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FileName == path && Path.GetDirectoryName(s.CompiledScript.FilePath) != HassPath.UserScripts)
+            && !File.Exists(Path.Join(HassPath.UserScripts, $"{path}.cs")))
+            return PyResult.Errors(["Use the visual API for visual documents"]);
         var scriptPath = Path.Join(HassPath.UserScripts, $"{path}.cs");
         try
         {

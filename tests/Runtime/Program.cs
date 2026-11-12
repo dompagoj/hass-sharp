@@ -87,6 +87,7 @@ Check(turnedOff, "motion-off trigger must finish turn-off after restart");
 Console.WriteLine("PASS motion-off delay");
 await HistoryTests.Run();
 await ScheduleTests.Run();
+await VisualTests.Run();
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
 public class Probe : Automation
 {
