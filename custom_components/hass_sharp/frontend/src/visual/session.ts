@@ -2,6 +2,7 @@ import { batch, createEffect, createMemo, createSignal, onCleanup } from 'solid-
 import type { HomeAssistant } from '../types'
 import { createGraphHistory, serializeGraph, type VisualGraph } from './graph'
 import { visualApi, VisualApiError, visualError, type VisualDocument, type VisualPreview } from './api'
+import { createUuid } from './id'
 
 /** Owns graph/source pairs and their revisions. Never generates or persists source locally. */
 export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial: VisualGraph) {
@@ -19,7 +20,7 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
   const [readFailed, setReadFailed] = createSignal(false)
   const [previewAttempt, setPreviewAttempt] = createSignal(0)
   const dirty = createMemo(() => serializeGraph(history.graph()) !== baseline())
-  let id = `visual-${crypto.randomUUID()}`
+  let id = `visual-${createUuid()}`
   let generation = 0, loadGeneration = 0, identityGeneration = 0, disposed = false
   onCleanup(() => { disposed = true; generation++; loadGeneration++ })
   createEffect(() => {
@@ -40,7 +41,7 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
   const canSave = () => !loading() && !saving() && !readFailed() && !conflict() && !!preview()?.valid && !preview()?.diagnostics.some(d => d.severity === 3)
   const newDraft = (graph: VisualGraph) => {
     identityGeneration++; loadGeneration++
-    id = `visual-${crypto.randomUUID()}`
+    id = `visual-${createUuid()}`
     batch(() => {
       history.reset(graph); setDocument(undefined); setBaseline(serializeGraph(graph))
       setError(undefined); setConflict(false); setReadFailed(false); setActivationError(undefined)

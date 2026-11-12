@@ -8,7 +8,7 @@ import { visualFixture } from './visual-fixture'
 import { createGraph } from '../src/visual/graph'
 let dispose: (() => void) | undefined
 let client: QueryClient
-afterEach(() => { dispose?.(); client?.clear(); document.body.innerHTML = '' })
+afterEach(() => { dispose?.(); client?.clear(); document.body.innerHTML = ''; vi.unstubAllGlobals() })
 function setup(saved = false, minimal = false) {
   const fixture = visualFixture()
   if (saved) fixture.documents.set('motion', { version: 1, id: 'motion', revision: 4, graph: createGraph('Saved motion'), source: 'saved', sourceMap: [], automationId: 'visual:motion' })
@@ -25,6 +25,33 @@ function setup(saved = false, minimal = false) {
 }
 const button = (root: Element, text: string) => [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === text || b.getAttribute('aria-label') === text)!
 const edit = (root: Element, text: string) => { const input = root.querySelector<HTMLInputElement>('[aria-label="Node label"]')!; input.value = text; input.dispatchEvent(new Event('input', { bubbles: true })) }
+it('creates, edits and saves separate drafts on HTTP without crypto.randomUUID', async () => {
+  // HTTP LAN origins expose getRandomValues but not randomUUID.
+  vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
+  const { root, fixture } = setup()
+  button(root, 'Add Wait').click()
+  button(root, 'Add Wait').click()
+  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
+  button(root, 'Save graph').click()
+  await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 1'))
+  const first = [...fixture.documents.values()][0]
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+  expect(first.id.slice('visual-'.length)).toMatch(uuid)
+  expect(first.graph.nodes).toHaveLength(5)
+  for (const node of first.graph.nodes.slice(3)) expect(node.id).toMatch(uuid)
+  expect(new Set(first.graph.nodes.map(node => node.id)).size).toBe(5)
+
+  root.querySelector<HTMLAnchorElement>('a[href="/visual/new?name=Fresh"]')!.click()
+  await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Fresh'))
+  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
+  button(root, 'Save graph').click()
+  await vi.waitFor(() => expect(fixture.documents.size).toBe(2))
+  const second = [...fixture.documents.values()][1]
+  expect(second.id).not.toBe(first.id)
+  expect(second.id.slice('visual-'.length)).toMatch(uuid)
+  expect(first.graph.nodes).toHaveLength(5)
+  expect(second.graph.nodes).toHaveLength(3)
+})
 it('leaves an unchanged draft without a warning', async () => {
   const { root } = setup()
   root.querySelector<HTMLAnchorElement>('a')!.click(); await Promise.resolve()

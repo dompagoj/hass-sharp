@@ -1,4 +1,5 @@
 import { createSignal } from 'solid-js'
+import { createUuid } from './id'
 
 // Domain data only. Library objects, JSX, selection and measured sizes never enter JSON.
 export type NodeKind = 'trigger' | 'condition' | 'service' | 'delay' | 'custom'
@@ -39,7 +40,7 @@ export const palette: { kind: NodeKind; label: string; description: string; conf
   { kind: 'custom', label: 'Custom C#', description: 'Keep a code section in the graph', config: { code: '// Add your C# here' } },
 ]
 
-export function addNode(graph: VisualGraph, kind: NodeKind, id: string = crypto.randomUUID()): VisualGraph {
+export function addNode(graph: VisualGraph, kind: NodeKind, id: string = createUuid()): VisualGraph {
   const item = palette.find(item => item.kind === kind)!
   const offset = graph.nodes.length * 35
   return { ...graph, nodes: [...graph.nodes, { id, kind, label: item.label, config: { ...item.config }, position: { x: 60 + offset, y: 240 + offset }, size: { width: 220, height: 112 } }] }
