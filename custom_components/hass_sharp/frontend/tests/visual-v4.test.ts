@@ -5,7 +5,9 @@ import type { GraphV4 } from '../src/visual/graphV4'
 
 describe('shared v4 validation contract', () => {
   for (const fixture of cases) it(fixture.name, () => {
+    const started = performance.now()
     const errors = contract.validateGraphV4(fixture.graph as GraphV4)
+    if (fixture.maxValidationMs) expect(performance.now() - started).toBeLessThan(fixture.maxValidationMs)
     expect(errors.length === 0, JSON.stringify(errors)).toBe(fixture.valid)
     if (!fixture.valid) expect(errors.some(e =>
       (!fixture.nodeId || e.nodeId === fixture.nodeId) && (!fixture.inputId || e.inputId === fixture.inputId) &&

@@ -13,24 +13,26 @@ export interface V4Diagnostic { nodeId: string | null; message: string; severity
 export interface ConfigSpec { label?: string; description?: string; type: string; required?: boolean; default?: unknown; enum?: unknown[]; min?: number; max?: number; pattern?: string; minItems?: number; maxItems?: number }
 export interface InputSpec { label?: string; types: string[]; required: boolean; description: string; default?: unknown; min?: number; max?: number; integer?: boolean }
 export interface OutputSpec { label?: string; type: string; description: string; visibility?: string }
-export interface NodeSpec { label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string }
+export interface NodeSpec { label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 export const nodeCatalog = rawCatalog as unknown as { version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<DataType, { description: string; refines?: string; pattern?: string }>; nodes: Record<string, NodeSpec>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
 const types = Object.keys(nodeCatalog.types)
-const nodeSpec = (kind: string) => Object.hasOwn(nodeCatalog.nodes, kind) ? nodeCatalog.nodes[kind] : undefined
+const nodeSpec = (kind: unknown) => typeof kind === 'string' && Object.hasOwn(nodeCatalog.nodes, kind) ? nodeCatalog.nodes[kind] : undefined
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const declarations = (node: V4Node, key: 'carry' | 'exports') => (Array.isArray(node.config[key]) ? node.config[key] as unknown[] : []).filter(record)
-const resolveType = (type: string, node: V4Node) => type.startsWith('$') ? String(node.config[type.slice(1)] ?? '') : type
+const text = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback
+const resolveType = (type: string, node: V4Node) => type.startsWith('$') ? text(node.config[type.slice(1)]) : type
 export const effectiveTriggerMethod = (node: V4Node) => 'Run_' + Array.from(new TextEncoder().encode(node.id), byte => byte.toString(16).padStart(2, '0').toUpperCase()).join('')
 export const compatibleTypes = (source: string, target: string) => source === target || (source === 'entity_id' && target === 'string')
 export function executionPorts(node: V4Node): string[] {
   const spec = nodeSpec(node.kind)
-  return spec ? [...(spec.dynamicExecution === 'branches' && Array.isArray(node.config.branches) ? node.config.branches.map(id => `branch:${id}`) : []), ...spec.execution] : []
+  return spec ? [...(spec.dynamicExecution === 'branches' && Array.isArray(node.config.branches) ? node.config.branches.filter((id): id is string => typeof id === 'string').map(id => `branch:${id}`) : []), ...spec.execution] : []
 }
 export function dataOutputs(node: V4Node): Record<string, OutputSpec> {
   const spec = nodeSpec(node.kind)
   const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.outputs ?? {}).map(([key, value]) => [key, { ...value, type: resolveType(value.type, node) }]))) as Record<string, OutputSpec>
   if (spec?.dynamicOutputs === 'loop') for (const key of ['carry', 'exports'] as const) for (const item of declarations(node, key)) {
-    ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { type: String(item.type), label: String(item.name), description: `${key} value ${item.name}`, visibility: key === 'carry' ? 'loop' : 'outside' }
+    if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
+    ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { type: item.type, label: item.name, description: `${key} value ${item.name}`, visibility: key === 'carry' ? 'loop' : 'outside' }
   }
   return ports
 }
@@ -40,7 +42,10 @@ export function dataInputs(node: V4Node, loopOwner?: V4Node): Record<string, Inp
   const dynamic = spec?.dynamicInputs
   if (dynamic === 'fields' && record(node.config.fields)) for (const key of Object.keys(node.config.fields)) ports[`field:${key}`] = { types, required: true, label: key, description: `Object field ${key}` }
   if (dynamic === 'items' && Array.isArray(node.config.items)) node.config.items.forEach((_, i) => { ports[`item:${i}`] = { types, required: true, label: `Item ${i}`, description: `Array item ${i}` } })
-  if (dynamic === 'loop' && loopOwner) for (const key of ['carry', 'exports'] as const) for (const item of declarations(loopOwner, key)) ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { types: [String(item.type)], required: false, label: String(item.name), description: `Next ${key} value` }
+  if (dynamic === 'loop' && loopOwner) for (const key of ['carry', 'exports'] as const) for (const item of declarations(loopOwner, key)) {
+    if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
+    ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { types: [item.type], required: false, label: item.name, description: `Next ${key} value` }
+  }
   return ports
 }
 function inputValue(node: V4Node, port: string): unknown {
@@ -155,11 +160,12 @@ export function validateGraphV4(value: unknown): V4Diagnostic[] {
     if (!record(raw) || raw.kind === 'unset') { if (spec.required) error(node.id, 'Input is required; connect a source or set a literal', port, port); else if (raw !== undefined && !record(raw)) error(node.id, 'Expected a typed operand', port, port); return }
     let type: string | undefined
     if (raw.kind === 'variable') {
-      const candidates = [...nodes.values()].filter(n => n.config.output === raw.name && dataOutputs(n).value && visible(n, node, dataOutputs(n).value))
+      if (typeof raw.name !== 'string' || !new RegExp(nodeCatalog.structures.loopDeclaration.name.pattern).test(raw.name)) { error(node.id, 'Variable name is required and must be a valid identifier', port, port); return }
+      const candidates = [...nodes.values()].filter(n => typeof n.config.output === 'string' && n.config.output === raw.name && dataOutputs(n).value && visible(n, node, dataOutputs(n).value))
       type = candidates[0] ? dataOutputs(candidates[0]).value.type : undefined
       if (!type || candidates.some(n => dataOutputs(n).value.type !== type)) error(node.id, 'Variable has no visible producer or conflicting types', port)
     } else if (raw.kind === 'literal') {
-      type = String(raw.type)
+      type = text(raw.type, 'unknown')
       const v = raw.value
       const valid = type === 'boolean' ? typeof v === 'boolean' : type === 'number' ? typeof v === 'number' && Number.isFinite(v) : type === 'string' ? typeof v === 'string' : type === 'entity_id' ? typeof v === 'string' && new RegExp(nodeCatalog.types.entity_id.pattern!).test(v) : type === 'object' ? record(v) : type === 'array' ? Array.isArray(v) : false
       if (!valid) error(node.id, `Invalid ${type} literal`, port)
@@ -168,16 +174,22 @@ export function validateGraphV4(value: unknown): V4Diagnostic[] {
     if (type && !spec.types.some(t => compatibleTypes(type!, t))) error(node.id, `Incompatible input type ${type}; expected ${spec.types.join('/')}`, port)
     return type
   }
-  function terminalsValid(start: string, terminal: string, owner: string, active = new Set<string>()): boolean {
-    if (active.has(start)) return false
+  // Memoize by the full analysis context. Shared successors are visited once,
+  // even when a DAG describes exponentially many possible execution routes.
+  const terminalMemo = new Map<string, boolean>(), terminalActive = new Set<string>()
+  function terminalsValid(start: string, terminal: string, owner: string): boolean {
+    const memoKey = JSON.stringify([start, terminal, owner])
+    if (terminalMemo.has(memoKey)) return terminalMemo.get(memoKey)!
+    if (terminalActive.has(memoKey)) return false
+    terminalActive.add(memoKey)
     const node = nodes.get(start)!
-    if (node.kind === terminal) return scopes.get(start)?.at(-1)?.owner === owner
-    if (node.kind === 'stop') return terminal === 'loop_result'
     const next = (outgoing.get(start) ?? []).filter(e => !scopePort(node, flowPort(node, e)))
-    if (!next.length) return false
-    if (['if', 'condition'].includes(node.kind) && !['true', 'false'].every(p => next.some(e => flowPort(node, e) === p))) return false
-    const seen = new Set(active).add(start)
-    return next.every(e => terminalsValid(e.target, terminal, owner, seen))
+    const normalPorts = executionPorts(node).filter(p => p !== 'error' && !scopePort(node, p))
+    const valid = node.kind === terminal ? scopes.get(start)?.at(-1)?.owner === owner : node.kind === 'stop' ? true :
+      normalPorts.length > 0 && normalPorts.every(p => next.some(e => flowPort(node, e) === p)) &&
+      next.every(e => terminalsValid(e.target, terminal, owner))
+    terminalActive.delete(memoKey); terminalMemo.set(memoKey, valid)
+    return valid
   }
   for (const node of nodes.values()) {
     const spec = nodeSpec(node.kind); if (!spec) continue
@@ -194,9 +206,12 @@ export function validateGraphV4(value: unknown): V4Diagnostic[] {
     for (const port of spec.requiredExecution ?? []) if (!outgoing.get(node.id)!.some(e => flowPort(node, e) === port)) error(node.id, 'Execution connection is required', port, port)
     const resolved: Record<string, string | undefined> = {}
     for (const [port, rule] of Object.entries(dataInputs(node, ownerOf(node)))) resolved[port] = operand(node, port, inputValue(node, port), rule)
-    if (node.kind === 'compare' && resolved.left && resolved.right) {
-      if (!(compatibleTypes(resolved.left, resolved.right) || compatibleTypes(resolved.right, resolved.left))) error(node.id, 'Comparison operands must have matching types', 'right')
-      if (!['eq','ne'].includes(String(node.config.operator ?? 'eq')) && resolved.left !== 'number') error(node.id, 'Ordering comparison requires number type', 'left')
+    if (spec.comparison) {
+      const rule = spec.comparison
+      const left = rule.leftInput ? resolved[rule.leftInput] : text(node.config[rule.typeConfig!])
+      const right = resolved[rule.rightInput]
+      if (left && right && !(compatibleTypes(left, right) || compatibleTypes(right, left))) error(node.id, 'Comparison operands must have matching types', rule.rightInput)
+      if (rule.orderingOperators.includes(text(node.config[rule.operatorConfig])) && left !== rule.orderingType) error(node.id, `Ordering comparison requires ${rule.orderingType} type`, rule.leftInput ?? rule.typeConfig)
     }
     if (node.config.output !== undefined && (typeof node.config.output !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(node.config.output))) error(node.id, 'Invalid variable output name', 'output')
     if (node.kind === 'trigger') {
@@ -211,7 +226,7 @@ export function validateGraphV4(value: unknown): V4Diagnostic[] {
       const ids = new Set<string>()
       for (const branch of node.config.branches) {
         if (typeof branch !== 'string' || !new RegExp(nodeCatalog.structures.branchId.pattern).test(branch) || ids.has(branch)) error(node.id, 'Branch ids must be unique stable names', 'branches')
-        ids.add(String(branch))
+        if (typeof branch === 'string') ids.add(branch)
       }
     }
     if (spec.dynamicOutputs === 'loop') {
@@ -219,9 +234,9 @@ export function validateGraphV4(value: unknown): V4Diagnostic[] {
         const names = new Set<string>()
         if (Array.isArray(node.config[group]) && node.config[group].some(d => !record(d))) error(node.id, 'Invalid loop declaration', group)
         for (const decl of declarations(node, group)) {
-          if (!record(decl) || typeof decl.name !== 'string' || !new RegExp(nodeCatalog.structures.loopDeclaration.name.pattern).test(decl.name) || names.has(decl.name) || !types.includes(String(decl.type))) { error(node.id, 'Loop declarations require unique names and valid types', group); continue }
+          if (!record(decl) || typeof decl.name !== 'string' || !new RegExp(nodeCatalog.structures.loopDeclaration.name.pattern).test(decl.name) || names.has(decl.name) || typeof decl.type !== 'string' || !types.includes(decl.type)) { error(node.id, 'Loop declarations require unique names and valid types', group); continue }
           names.add(decl.name)
-          operand(node, `${group}.${decl.name}.initial`, decl.initial, { types: [String(decl.type)], required: true, description: 'Initial value' })
+          operand(node, `${group}.${decl.name}.initial`, decl.initial, { types: [decl.type], required: true, description: 'Initial value' })
         }
       }
       if (['while','until'].includes(node.kind)) {

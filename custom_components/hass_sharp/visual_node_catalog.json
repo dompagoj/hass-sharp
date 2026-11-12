@@ -581,7 +581,19 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [],
+      "comparison": {
+        "leftInput": "left",
+        "rightInput": "right",
+        "operatorConfig": "operator",
+        "orderingOperators": [
+          "lt",
+          "le",
+          "gt",
+          "ge"
+        ],
+        "orderingType": "number"
+      }
     },
     "read_entity": {
       "label": "Read entity",
@@ -1252,7 +1264,19 @@
         "next",
         "error"
       ],
-      "runtimeVersions": []
+      "runtimeVersions": [],
+      "comparison": {
+        "typeConfig": "type",
+        "rightInput": "right",
+        "operatorConfig": "operator",
+        "orderingOperators": [
+          "lt",
+          "le",
+          "gt",
+          "ge"
+        ],
+        "orderingType": "number"
+      }
     },
     "object": {
       "label": "Object",
@@ -1593,6 +1617,10 @@
       "carry:<name>": "own body or condition descendants",
       "export:<name>": "outside own body and condition; initialized for zero iterations"
     },
-    "parallelJoin": "All branch executions complete before next. Branch values, responses and lastError are isolated and never implicitly merged."
+    "parallelJoin": "All branch executions complete before next. Branch values, responses and lastError are isolated and never implicitly merged.",
+    "loopConditionOrder": {
+      "while": "before body",
+      "until": "after body"
+    }
   }
 }

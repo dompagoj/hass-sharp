@@ -8,8 +8,10 @@ public static class VisualGraphV4Tests
         var fixtures = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "visual-v4-validation.json")))!.AsArray();
         foreach (var fixture in fixtures)
         {
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
             var errors = VisualGraphValidator.Validate(fixture!["graph"]!.AsObject());
             var name = fixture["name"]!.GetValue<string>();
+            if (fixture["maxValidationMs"] is { } limit && elapsed.ElapsedMilliseconds >= limit.GetValue<int>()) throw new Exception($"V4 {name}: validation exceeded bounded time");
             var valid = fixture["valid"]!.GetValue<bool>();
             if ((errors.Count == 0) != valid) throw new Exception($"V4 {name}: {string.Join("; ", errors.Select(e => e.Message))}");
             if (!valid && !errors.Any(e =>

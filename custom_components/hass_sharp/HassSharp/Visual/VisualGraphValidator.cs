@@ -127,22 +127,23 @@ public static class VisualGraphValidator
                 Scope(Text(edge, "target"), ScopePort(node, port) ? [.. path, (id, port)] : path);
             }
         }
-        string? Operand(JsonObject node, string port, JsonNode? raw, JsonNode spec)
+        string? Operand(JsonObject node, string port, JsonNode? raw, JsonNode spec, bool present = true)
         {
             if (incoming.TryGetValue((Id(node), port), out var edge)) return Text(DataOutputs(nodes[Text(edge, "source")])[Text(edge, "sourcePort")], "type");
             var required = Bool(spec, "required");
-            if (raw == null && !required) return null;
+            if (!present && !required) return null;
             if (raw is not JsonObject operand || Text(raw, "kind") == "unset")
             {
                 if (required) Error(Id(node), "Input is required; connect a source or set a literal", port, port);
-                else if (raw != null && raw is not JsonObject) Error(Id(node), "Expected a typed operand", port, port);
+                else if (present && raw is not JsonObject) Error(Id(node), "Expected a typed operand", port, port);
                 return null;
             }
             string? type = null;
             if (Text(operand, "kind") == "variable")
             {
                 var name = Text(operand, "name");
-                var candidates = nodes.Values.Where(n => Text(Config(n), "output") == name && DataOutputs(n)["value"] is { } output && Visible(n, node, output)).ToArray();
+                if (!Match(name, Text(Root["structures"]?["loopDeclaration"]?["name"], "pattern"))) { Error(Id(node), "Variable name is required and must be a valid identifier", port, port); return null; }
+                var candidates = nodes.Values.Where(n => Config(n)["output"] is JsonValue outputName && outputName.TryGetValue<string>(out var named) && named == name && DataOutputs(n)["value"] is { } output && Visible(n, node, output)).ToArray();
                 type = candidates.Length > 0 ? Text(DataOutputs(candidates[0])["value"], "type") : null;
                 if (type == null || candidates.Any(n => Text(DataOutputs(n)["value"], "type") != type)) Error(Id(node), "Variable has no visible producer or conflicting types", port);
             }
@@ -167,17 +168,21 @@ public static class VisualGraphValidator
             if (type != null && !Strings(spec["types"]).Any(t => CompatibleTypes(type, t))) Error(Id(node), $"Incompatible input type {type}; expected {string.Join('/', Strings(spec["types"]))}", port);
             return type;
         }
-        bool TerminalsValid(string start, string terminal, string owner, HashSet<string>? active = null)
+        readonly Dictionary<(string Node, string Terminal, string Owner), bool> terminalMemo = [];
+        readonly HashSet<(string Node, string Terminal, string Owner)> terminalActive = [];
+        bool TerminalsValid(string start, string terminal, string owner)
         {
-            active ??= [];
-            if (!active.Add(start)) return false;
+            var key = (start, terminal, owner);
+            if (terminalMemo.TryGetValue(key, out var known)) return known;
+            if (!terminalActive.Add(key)) return false;
             var node = nodes[start];
-            if (Kind(node) == terminal) return scopes.TryGetValue(start, out var scope) && scope.LastOrDefault().Owner == owner;
-            if (Kind(node) == "stop") return terminal == "loop_result";
             var next = outgoing[start].Where(e => !ScopePort(node, FlowPort(node, e))).ToArray();
-            if (next.Length == 0) return false;
-            if (Kind(node) is "if" or "condition" && !new[] { "true", "false" }.All(p => next.Any(e => FlowPort(node, e) == p))) return false;
-            return next.All(e => TerminalsValid(Text(e, "target"), terminal, owner, new(active)));
+            var normalPorts = ExecutionPorts(node).Where(p => p != "error" && !ScopePort(node, p)).ToArray();
+            var valid = Kind(node) == terminal ? scopes.TryGetValue(start, out var scope) && scope.LastOrDefault().Owner == owner
+                : Kind(node) == "stop" || normalPorts.Length > 0 && normalPorts.All(p => next.Any(e => FlowPort(node, e) == p))
+                    && next.All(e => TerminalsValid(Text(e, "target"), terminal, owner));
+            terminalActive.Remove(key); terminalMemo[key] = valid;
+            return valid;
         }
         void ValidateNode(JsonObject node)
         {
@@ -205,11 +210,20 @@ public static class VisualGraphValidator
             }
             foreach (var port in Strings(spec["requiredExecution"])) if (!outgoing[id].Any(e => FlowPort(node, e) == port)) Error(id, "Execution connection is required", port, port);
             var resolved = new Dictionary<string, string?>();
-            foreach (var (port, rule) in DataInputs(node, Owner(node))) resolved[port] = Operand(node, port, InputValue(node, port), rule!);
-            if (kind == "compare" && resolved.GetValueOrDefault("left") is { } left && resolved.GetValueOrDefault("right") is { } right)
+            foreach (var (port, rule) in DataInputs(node, Owner(node)))
             {
-                if (!CompatibleTypes(left, right) && !CompatibleTypes(right, left)) Error(id, "Comparison operands must have matching types", "right");
-                if (Text(cfg, "operator", "eq") is not ("eq" or "ne") && left != "number") Error(id, "Ordering comparison requires number type", "left");
+                var present = TryGetInputValue(node, port, out var value);
+                resolved[port] = Operand(node, port, value, rule!, present);
+            }
+            if (spec["comparison"] is JsonObject comparison)
+            {
+                var leftInput = Text(comparison, "leftInput"); var typeConfig = Text(comparison, "typeConfig");
+                var left = leftInput != "" ? resolved.GetValueOrDefault(leftInput) : Text(cfg, typeConfig);
+                var rightInput = Text(comparison, "rightInput"); var right = resolved.GetValueOrDefault(rightInput);
+                if (!string.IsNullOrEmpty(left) && !string.IsNullOrEmpty(right) && !CompatibleTypes(left, right) && !CompatibleTypes(right, left)) Error(id, "Comparison operands must have matching types", rightInput);
+                var orderingType = Text(comparison, "orderingType");
+                if (Strings(comparison["orderingOperators"]).Contains(Text(cfg, Text(comparison, "operatorConfig"))) && left != orderingType)
+                    Error(id, $"Ordering comparison requires {orderingType} type", leftInput != "" ? leftInput : typeConfig);
             }
             if (cfg.ContainsKey("output") && !Match(Text(cfg, "output"), "^[A-Za-z_][A-Za-z0-9_]{0,63}$")) Error(id, "Invalid variable output name", "output");
             if (kind == "trigger")

@@ -1,6 +1,8 @@
 using HassSharp;
 using System.Collections.Concurrent;
 
+if (args.Contains("--visual-v4")) { await VisualGraphV4Tests.Run(); return; }
+
 PyInterop.Log = (_, _) => {};
 var subscriptions = new HashSet<string>();
 PyInterop.SubscribeToEntityTracking = id => { if (!subscriptions.Add(id)) throw new Exception("duplicate subscription"); };

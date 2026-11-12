@@ -3430,5 +3430,2235 @@
     "valid": false,
     "nodeId": "p",
     "contains": "port"
+  },
+  {
+    "name": "condition normal fallthrough cannot hide behind error result",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "while",
+          "config": {}
+        },
+        {
+          "id": "c",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "r",
+          "kind": "condition_result",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "stop",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:condition:c",
+          "source": "w",
+          "target": "c",
+          "port": "condition"
+        },
+        {
+          "id": "c:error:r",
+          "source": "c",
+          "target": "r",
+          "port": "error"
+        },
+        {
+          "id": "w:body:b",
+          "source": "w",
+          "target": "b",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "w",
+    "inputId": "condition",
+    "contains": "condition_result"
+  },
+  {
+    "name": "condition normal and error routes both return",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "while",
+          "config": {}
+        },
+        {
+          "id": "c",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "r",
+          "kind": "condition_result",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "stop",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:condition:c",
+          "source": "w",
+          "target": "c",
+          "port": "condition"
+        },
+        {
+          "id": "c:error:r",
+          "source": "c",
+          "target": "r",
+          "port": "error"
+        },
+        {
+          "id": "w:body:b",
+          "source": "w",
+          "target": "b",
+          "port": "body"
+        },
+        {
+          "id": "c:next:r",
+          "source": "c",
+          "target": "r",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "carried body normal fallthrough cannot hide behind error result",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              {
+                "name": "sum",
+                "type": "number",
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "b",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "r",
+          "kind": "loop_result",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:body:b",
+          "source": "w",
+          "target": "b",
+          "port": "body"
+        },
+        {
+          "id": "b:error:r",
+          "source": "b",
+          "target": "r",
+          "port": "error"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "w",
+    "inputId": "body",
+    "contains": "loop_result"
+  },
+  {
+    "name": "while condition Stop terminates invocation",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "while",
+          "config": {}
+        },
+        {
+          "id": "c",
+          "kind": "stop",
+          "config": {}
+        },
+        {
+          "id": "b",
+          "kind": "stop",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:condition:c",
+          "source": "w",
+          "target": "c",
+          "port": "condition"
+        },
+        {
+          "id": "w:body:b",
+          "source": "w",
+          "target": "b",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "until condition Stop terminates invocation",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "until",
+          "config": {}
+        },
+        {
+          "id": "c",
+          "kind": "stop",
+          "config": {}
+        },
+        {
+          "id": "b",
+          "kind": "stop",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:condition:c",
+          "source": "w",
+          "target": "c",
+          "port": "condition"
+        },
+        {
+          "id": "w:body:b",
+          "source": "w",
+          "target": "b",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "variable name absent rejected",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "variable"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "variable"
+  },
+  {
+    "name": "variable name empty rejected",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "variable",
+              "name": ""
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "variable"
+  },
+  {
+    "name": "variable name null rejected",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "variable",
+              "name": null
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "variable"
+  },
+  {
+    "name": "variable name number rejected",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "variable",
+              "name": 12
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "variable"
+  },
+  {
+    "name": "variable name object rejected",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "variable",
+              "name": {
+                "toString": null
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "variable"
+  },
+  {
+    "name": "variable name invalid identifier rejected",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "variable",
+              "name": "not valid"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "variable"
+  },
+  {
+    "name": "optional service target explicit null rejected",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on",
+            "target": null
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:s",
+          "source": "t",
+          "target": "s",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "operand"
+  },
+  {
+    "name": "optional service data explicit null rejected",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on",
+            "data": null
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:s",
+          "source": "t",
+          "target": "s",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "data",
+    "contains": "operand"
+  },
+  {
+    "name": "optional service omitted inputs allowed",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:s",
+          "source": "t",
+          "target": "s",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "optional loop update null",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              {
+                "name": "sum",
+                "type": "number",
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "r",
+          "kind": "loop_result",
+          "config": {
+            "values": {
+              "carry:sum": null
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:body:r",
+          "source": "w",
+          "target": "r",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "r",
+    "inputId": "carry:sum",
+    "contains": "operand"
+  },
+  {
+    "name": "optional loop update absent",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              {
+                "name": "sum",
+                "type": "number",
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "r",
+          "kind": "loop_result",
+          "config": {
+            "values": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:body:r",
+          "source": "w",
+          "target": "r",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "wait_until ordering with object",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "wait_until",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "sensor.test"
+            },
+            "type": "object",
+            "operator": "gt",
+            "right": {
+              "kind": "literal",
+              "type": "object",
+              "value": {}
+            },
+            "timeout": {
+              "kind": "literal",
+              "type": "number",
+              "value": 3
+            },
+            "interval": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "w",
+    "inputId": "type",
+    "contains": "number"
+  },
+  {
+    "name": "wait_until ordering with string",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "wait_until",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "sensor.test"
+            },
+            "type": "string",
+            "operator": "gt",
+            "right": {
+              "kind": "literal",
+              "type": "string",
+              "value": "3"
+            },
+            "timeout": {
+              "kind": "literal",
+              "type": "number",
+              "value": 3
+            },
+            "interval": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "w",
+    "inputId": "type",
+    "contains": "number"
+  },
+  {
+    "name": "wait_until ordering with number",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "wait_until",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "sensor.test"
+            },
+            "type": "number",
+            "operator": "gt",
+            "right": {
+              "kind": "literal",
+              "type": "number",
+              "value": 3
+            },
+            "timeout": {
+              "kind": "literal",
+              "type": "number",
+              "value": 3
+            },
+            "interval": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "malformed object node kind returns diagnostic",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "x",
+          "kind": {
+            "toString": null
+          },
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:x",
+          "source": "t",
+          "target": "x",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "x",
+    "contains": "kind"
+  },
+  {
+    "name": "malformed branch ID returns diagnostic",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              {
+                "toString": null
+              }
+            ]
+          }
+        },
+        {
+          "id": "x",
+          "kind": "stop",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:p",
+          "source": "t",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "p:next:x",
+          "source": "p",
+          "target": "x",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "p",
+    "inputId": "branches",
+    "contains": "Branch"
+  },
+  {
+    "name": "malformed carry name returns diagnostic",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              {
+                "name": {
+                  "toString": null
+                },
+                "type": "number",
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "r",
+          "kind": "loop_result",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:body:r",
+          "source": "w",
+          "target": "r",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "w",
+    "inputId": "carry",
+    "contains": "declaration"
+  },
+  {
+    "name": "malformed carry type returns diagnostic",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              {
+                "name": "sum",
+                "type": {
+                  "toString": null
+                },
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "r",
+          "kind": "loop_result",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:body:r",
+          "source": "w",
+          "target": "r",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "w",
+    "inputId": "carry",
+    "contains": "declaration"
+  },
+  {
+    "name": "malformed literal type returns diagnostic",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": {
+                "toString": null
+              },
+              "value": 2
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "contains": "literal"
+  },
+  {
+    "name": "malformed configured type returns diagnostic",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "v",
+          "kind": "set_value",
+          "config": {
+            "type": {
+              "toString": null
+            },
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:v",
+          "source": "t",
+          "target": "v",
+          "port": "next"
+        },
+        {
+          "id": "v:next:l",
+          "source": "v",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "v:value:l:value",
+          "kind": "data",
+          "source": "v",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "v",
+    "inputId": "type",
+    "contains": "string"
+  },
+  {
+    "name": "malformed comparison operator returns diagnostic",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "compare",
+          "config": {
+            "left": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "right": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            },
+            "operator": {
+              "toString": null
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:c",
+          "source": "t",
+          "target": "c",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "c",
+    "inputId": "operator",
+    "contains": "string"
+  },
+  {
+    "name": "bounded reconvergent condition DAG",
+    "graph": {
+      "version": 4,
+      "name": "Review regressions",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "while",
+          "config": {}
+        },
+        {
+          "id": "b",
+          "kind": "stop",
+          "config": {}
+        },
+        {
+          "id": "c0",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c1",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c2",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c3",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c4",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c5",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c6",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c7",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c8",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c9",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c10",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c11",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c12",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c13",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c14",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c15",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c16",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c17",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c18",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c19",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c20",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c21",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c22",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c23",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c24",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c25",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c26",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c27",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c28",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c29",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c30",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "c31",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "r",
+          "kind": "condition_result",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:body:b",
+          "source": "w",
+          "target": "b",
+          "port": "body"
+        },
+        {
+          "id": "w:condition:c0",
+          "source": "w",
+          "target": "c0",
+          "port": "condition"
+        },
+        {
+          "id": "c0:true:c1",
+          "source": "c0",
+          "target": "c1",
+          "port": "true"
+        },
+        {
+          "id": "c0:false:c1",
+          "source": "c0",
+          "target": "c1",
+          "port": "false"
+        },
+        {
+          "id": "c1:true:c2",
+          "source": "c1",
+          "target": "c2",
+          "port": "true"
+        },
+        {
+          "id": "c1:false:c2",
+          "source": "c1",
+          "target": "c2",
+          "port": "false"
+        },
+        {
+          "id": "c2:true:c3",
+          "source": "c2",
+          "target": "c3",
+          "port": "true"
+        },
+        {
+          "id": "c2:false:c3",
+          "source": "c2",
+          "target": "c3",
+          "port": "false"
+        },
+        {
+          "id": "c3:true:c4",
+          "source": "c3",
+          "target": "c4",
+          "port": "true"
+        },
+        {
+          "id": "c3:false:c4",
+          "source": "c3",
+          "target": "c4",
+          "port": "false"
+        },
+        {
+          "id": "c4:true:c5",
+          "source": "c4",
+          "target": "c5",
+          "port": "true"
+        },
+        {
+          "id": "c4:false:c5",
+          "source": "c4",
+          "target": "c5",
+          "port": "false"
+        },
+        {
+          "id": "c5:true:c6",
+          "source": "c5",
+          "target": "c6",
+          "port": "true"
+        },
+        {
+          "id": "c5:false:c6",
+          "source": "c5",
+          "target": "c6",
+          "port": "false"
+        },
+        {
+          "id": "c6:true:c7",
+          "source": "c6",
+          "target": "c7",
+          "port": "true"
+        },
+        {
+          "id": "c6:false:c7",
+          "source": "c6",
+          "target": "c7",
+          "port": "false"
+        },
+        {
+          "id": "c7:true:c8",
+          "source": "c7",
+          "target": "c8",
+          "port": "true"
+        },
+        {
+          "id": "c7:false:c8",
+          "source": "c7",
+          "target": "c8",
+          "port": "false"
+        },
+        {
+          "id": "c8:true:c9",
+          "source": "c8",
+          "target": "c9",
+          "port": "true"
+        },
+        {
+          "id": "c8:false:c9",
+          "source": "c8",
+          "target": "c9",
+          "port": "false"
+        },
+        {
+          "id": "c9:true:c10",
+          "source": "c9",
+          "target": "c10",
+          "port": "true"
+        },
+        {
+          "id": "c9:false:c10",
+          "source": "c9",
+          "target": "c10",
+          "port": "false"
+        },
+        {
+          "id": "c10:true:c11",
+          "source": "c10",
+          "target": "c11",
+          "port": "true"
+        },
+        {
+          "id": "c10:false:c11",
+          "source": "c10",
+          "target": "c11",
+          "port": "false"
+        },
+        {
+          "id": "c11:true:c12",
+          "source": "c11",
+          "target": "c12",
+          "port": "true"
+        },
+        {
+          "id": "c11:false:c12",
+          "source": "c11",
+          "target": "c12",
+          "port": "false"
+        },
+        {
+          "id": "c12:true:c13",
+          "source": "c12",
+          "target": "c13",
+          "port": "true"
+        },
+        {
+          "id": "c12:false:c13",
+          "source": "c12",
+          "target": "c13",
+          "port": "false"
+        },
+        {
+          "id": "c13:true:c14",
+          "source": "c13",
+          "target": "c14",
+          "port": "true"
+        },
+        {
+          "id": "c13:false:c14",
+          "source": "c13",
+          "target": "c14",
+          "port": "false"
+        },
+        {
+          "id": "c14:true:c15",
+          "source": "c14",
+          "target": "c15",
+          "port": "true"
+        },
+        {
+          "id": "c14:false:c15",
+          "source": "c14",
+          "target": "c15",
+          "port": "false"
+        },
+        {
+          "id": "c15:true:c16",
+          "source": "c15",
+          "target": "c16",
+          "port": "true"
+        },
+        {
+          "id": "c15:false:c16",
+          "source": "c15",
+          "target": "c16",
+          "port": "false"
+        },
+        {
+          "id": "c16:true:c17",
+          "source": "c16",
+          "target": "c17",
+          "port": "true"
+        },
+        {
+          "id": "c16:false:c17",
+          "source": "c16",
+          "target": "c17",
+          "port": "false"
+        },
+        {
+          "id": "c17:true:c18",
+          "source": "c17",
+          "target": "c18",
+          "port": "true"
+        },
+        {
+          "id": "c17:false:c18",
+          "source": "c17",
+          "target": "c18",
+          "port": "false"
+        },
+        {
+          "id": "c18:true:c19",
+          "source": "c18",
+          "target": "c19",
+          "port": "true"
+        },
+        {
+          "id": "c18:false:c19",
+          "source": "c18",
+          "target": "c19",
+          "port": "false"
+        },
+        {
+          "id": "c19:true:c20",
+          "source": "c19",
+          "target": "c20",
+          "port": "true"
+        },
+        {
+          "id": "c19:false:c20",
+          "source": "c19",
+          "target": "c20",
+          "port": "false"
+        },
+        {
+          "id": "c20:true:c21",
+          "source": "c20",
+          "target": "c21",
+          "port": "true"
+        },
+        {
+          "id": "c20:false:c21",
+          "source": "c20",
+          "target": "c21",
+          "port": "false"
+        },
+        {
+          "id": "c21:true:c22",
+          "source": "c21",
+          "target": "c22",
+          "port": "true"
+        },
+        {
+          "id": "c21:false:c22",
+          "source": "c21",
+          "target": "c22",
+          "port": "false"
+        },
+        {
+          "id": "c22:true:c23",
+          "source": "c22",
+          "target": "c23",
+          "port": "true"
+        },
+        {
+          "id": "c22:false:c23",
+          "source": "c22",
+          "target": "c23",
+          "port": "false"
+        },
+        {
+          "id": "c23:true:c24",
+          "source": "c23",
+          "target": "c24",
+          "port": "true"
+        },
+        {
+          "id": "c23:false:c24",
+          "source": "c23",
+          "target": "c24",
+          "port": "false"
+        },
+        {
+          "id": "c24:true:c25",
+          "source": "c24",
+          "target": "c25",
+          "port": "true"
+        },
+        {
+          "id": "c24:false:c25",
+          "source": "c24",
+          "target": "c25",
+          "port": "false"
+        },
+        {
+          "id": "c25:true:c26",
+          "source": "c25",
+          "target": "c26",
+          "port": "true"
+        },
+        {
+          "id": "c25:false:c26",
+          "source": "c25",
+          "target": "c26",
+          "port": "false"
+        },
+        {
+          "id": "c26:true:c27",
+          "source": "c26",
+          "target": "c27",
+          "port": "true"
+        },
+        {
+          "id": "c26:false:c27",
+          "source": "c26",
+          "target": "c27",
+          "port": "false"
+        },
+        {
+          "id": "c27:true:c28",
+          "source": "c27",
+          "target": "c28",
+          "port": "true"
+        },
+        {
+          "id": "c27:false:c28",
+          "source": "c27",
+          "target": "c28",
+          "port": "false"
+        },
+        {
+          "id": "c28:true:c29",
+          "source": "c28",
+          "target": "c29",
+          "port": "true"
+        },
+        {
+          "id": "c28:false:c29",
+          "source": "c28",
+          "target": "c29",
+          "port": "false"
+        },
+        {
+          "id": "c29:true:c30",
+          "source": "c29",
+          "target": "c30",
+          "port": "true"
+        },
+        {
+          "id": "c29:false:c30",
+          "source": "c29",
+          "target": "c30",
+          "port": "false"
+        },
+        {
+          "id": "c30:true:c31",
+          "source": "c30",
+          "target": "c31",
+          "port": "true"
+        },
+        {
+          "id": "c30:false:c31",
+          "source": "c30",
+          "target": "c31",
+          "port": "false"
+        },
+        {
+          "id": "c31:true:r",
+          "source": "c31",
+          "target": "r",
+          "port": "true"
+        },
+        {
+          "id": "c31:false:r",
+          "source": "c31",
+          "target": "r",
+          "port": "false"
+        }
+      ]
+    },
+    "valid": true,
+    "maxValidationMs": 1000
   }
 ]

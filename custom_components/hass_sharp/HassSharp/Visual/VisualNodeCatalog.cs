@@ -55,11 +55,20 @@ public static class VisualNodeCatalog
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = Input([Text(item, "type")], false, "Next " + key + " value");
         return ports;
     }
-    public static JsonNode? InputValue(JsonObject node, string port)
+    public static JsonNode? InputValue(JsonObject node, string port) => TryGetInputValue(node, port, out var value) ? value : null;
+    /// <summary>Returns property presence separately because an explicit JSON null is not an absent operand.</summary>
+    public static bool TryGetInputValue(JsonObject node, string port, out JsonNode? value)
     {
+        value = null;
         var cfg = node["config"] as JsonObject;
-        if (port.StartsWith("field:")) return (cfg?["fields"] as JsonObject)?[port[6..]];
-        if (port.StartsWith("item:") && int.TryParse(port[5..], out var i) && cfg?["items"] is JsonArray items) return i >= 0 && i < items.Count ? items[i] : null;
-        return Text(node, "kind") == "loop_result" ? (cfg?["values"] as JsonObject)?[port] : cfg?[port];
+        if (port.StartsWith("field:")) return (cfg?["fields"] as JsonObject)?.TryGetPropertyValue(port[6..], out value) ?? false;
+        if (port.StartsWith("item:") && int.TryParse(port[5..], out var i) && cfg?["items"] is JsonArray items)
+        {
+            if (i < 0 || i >= items.Count) return false;
+            value = items[i]; return true;
+        }
+        return Text(node, "kind") == "loop_result"
+            ? (cfg?["values"] as JsonObject)?.TryGetPropertyValue(port, out value) ?? false
+            : cfg?.TryGetPropertyValue(port, out value) ?? false;
     }
 }
