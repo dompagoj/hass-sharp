@@ -38,7 +38,7 @@ public sealed class NodeLibraryStore(string directory)
         return d;
     }
     public NodeLibraryDocument[] List() => !Directory.Exists(DirectoryPath) ? [] : Directory.GetFiles(DirectoryPath, "*.json")
-        .Order(StringComparer.Ordinal).Select(p => Read(Path.GetFileNameWithoutExtension(p))!).ToArray();
+        .Select(p => Read(Path.GetFileNameWithoutExtension(p))!).OrderBy(d => d.Id, StringComparer.Ordinal).ToArray();
     public static string Generation(IEnumerable<NodeLibraryDocument> documents) => Convert.ToHexString(SHA256.HashData(
         Encoding.UTF8.GetBytes(JsonSerializer.Serialize(documents.OrderBy(d => d.Id, StringComparer.Ordinal), VisualStore.Json)))).ToLowerInvariant();
 }

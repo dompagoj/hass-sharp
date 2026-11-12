@@ -17,6 +17,7 @@ static class NodeLibraryStoreTests
     static async Task<JsonObject> Visual(HassSharpManager m, object r) => JsonNode.Parse(await m.VisualRequest(JsonSerializer.Serialize(r)))!.AsObject();
     public static async Task Run()
     {
+        await RunOrderingReview();
         var previous = HassPath.HassConfiguration;
         var path = Path.Combine(Path.GetTempPath(), "library-store-" + Guid.NewGuid());
         var log = PyInterop.Log; PyInterop.Log = (_, _) => { };
@@ -105,6 +106,42 @@ static class NodeLibraryStoreTests
         }
         finally { await manager.UnloadAsync(); PyInterop.Log=log; HassPath.HassConfiguration=previous; }
     }
+    public static async Task RunOrderingReview(string? scenario = null)
+    {
+        foreach (var change in scenario == null ? new[] { "edit", "create", "prefix-create" } : new[] { scenario })
+        {
+            var previous = HassPath.HassConfiguration;
+            var log = PyInterop.Log; PyInterop.Log = (_, _) => { };
+            var path = Path.Combine(Path.GetTempPath(), "library-ordering-" + Guid.NewGuid());
+            var manager = new HassSharpManager(path);
+            try
+            {
+                await manager.Init([]);
+                const string sourceA = "public static class A { public static int Value => 1; }";
+                if (change == "edit")
+                    Result(await Request(manager, new { operation = "save", id = "a", name = "A.cs", source = sourceA, expectedRevision = 0 }));
+                var otherId = change == "prefix-create" ? "a-helper" : "b";
+                Result(await Request(manager, new { operation = "save", id = otherId, name = "B.cs", source = "public class B {}", expectedRevision = 0 }));
+                Result(await Visual(manager, new { operation = "save", id = "ordered", graph = G(), expectedRevision = 0 }));
+                Result(await Request(manager, new { operation = "save", id = "a", name = "A.cs", source = sourceA.Replace("=> 1", "=> 2"), expectedRevision = change == "edit" ? 1 : 0 }));
+                var before = Result(await Visual(manager, new { operation = "read", id = "ordered" }));
+                var source = before["source"]!.GetValue<string>();
+                var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(source)));
+                Check(before["revision"]!.GetValue<long>() == 2 && before["currentRevisionActive"]!.GetValue<bool>(), change + ": committed revision activates before reload");
+                Check(before["activeSourceHash"]!.GetValue<string>() == hash, change + ": running artifact exactly matches saved source before reload");
+                await manager.UnloadAsync(); await manager.Init([]);
+                var after = Result(await Visual(manager, new { operation = "read", id = "ordered" }));
+                Check(after["active"]!.GetValue<bool>() && after["activationError"] == null, change + ": reload successfully activates the graph");
+                Check(after["revision"]!.GetValue<long>() == 2 && after["activeRevision"]!.GetValue<long>() == 2, change + ": reload preserves saved and active revision");
+                Check(after["source"]!.GetValue<string>() == source, change + ": reload preserves exact saved artifact");
+                Check(after["activeSourceHash"]!.GetValue<string>() == hash, change + ": running source hash survives reload");
+                Check(after["currentRevisionActive"]!.GetValue<bool>(), change + ": saved revision remains current after reload");
+                Console.WriteLine("PASS library ordering reload identity: " + change);
+            }
+            finally { await manager.UnloadAsync(); PyInterop.Log = log; HassPath.HassConfiguration = previous; }
+        }
+    }
+
     static async Task TransactionRecovery(HassSharpManager manager,string path)
     {
         var root=Path.Combine(path,".storage","hass_sharp");

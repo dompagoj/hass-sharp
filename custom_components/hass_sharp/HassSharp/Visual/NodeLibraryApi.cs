@@ -81,7 +81,9 @@ public partial class HassSharpManager
                 var name = RequiredString(request, "name"); NodeLibraryStore.ValidateName(name);
                 document = new(1, id, name, checked(revision + 1), RequiredString(request, "source"));
             }
-            var candidates = saved.Documents.Where(d => d.Id != id).Concat(document == null ? [] : new[] { document }).ToArray();
+            // Source ordering is part of the generated artifact identity and must match reload.
+            var candidates = saved.Documents.Where(d => d.Id != id).Concat(document == null ? [] : new[] { document })
+                .OrderBy(d => d.Id, StringComparer.Ordinal).ToArray();
             var candidate = new NodeLibraryCompiler(_diagnosticsProvider).Preview(candidates.Select(d => d.AsSource()));
             var generation = LibraryWorkspaceGeneration(candidates);
             // Every artifact embeds every source, including advanced C# and indirect helper dependencies.
