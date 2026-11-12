@@ -2,12 +2,17 @@ import { batch, createEffect, createMemo, createSignal, onCleanup } from 'solid-
 import type { HomeAssistant } from '../types'
 import { createGraphHistory, serializeGraph, type VisualGraph } from './graph'
 import { visualApi, VisualApiError, visualError, type VisualDocument, type VisualPreview } from './api'
+import { nodeCatalog, validateGraphV4, type VisualCatalogSnapshot } from './graphV4'
 import { createUuid } from './id'
 
 /** Owns graph/source pairs and their revisions. Never generates or persists source locally. */
 export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial: VisualGraph) {
   const api = visualApi(hass)
   const history = createGraphHistory(initial)
+  const [catalog, setCatalog] = createSignal<VisualCatalogSnapshot>(nodeCatalog)
+  const [catalogGeneration, setCatalogGeneration] = createSignal<string>()
+  const [catalogReady, setCatalogReady] = createSignal(false)
+  const [catalogError, setCatalogError] = createSignal<string>()
   const [document, setDocument] = createSignal<VisualDocument>()
   const [baseline, setBaseline] = createSignal(serializeGraph(initial))
   const [preview, setPreview] = createSignal<VisualPreview>()
@@ -20,14 +25,83 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
   const [readFailed, setReadFailed] = createSignal(false)
   const [previewAttempt, setPreviewAttempt] = createSignal(0)
   const dirty = createMemo(() => serializeGraph(history.graph()) !== baseline())
+  const diagnostics = createMemo(() => {
+    const local = validateGraphV4(history.graph(), catalog()).map(d => ({ ...d, startLine: null, startColumn: null }))
+    const backend = preview()?.diagnostics ?? []
+    return [
+      ...local,
+      ...backend.filter(d => !local.some(other => other.nodeId === d.nodeId && other.inputId === d.inputId && other.message === d.message)),
+    ]
+  })
   let id = `visual-${createUuid()}`
-  let generation = 0, loadGeneration = 0, identityGeneration = 0, disposed = false
-  onCleanup(() => { disposed = true; generation++; loadGeneration++ })
+  let generation = 0,
+    loadGeneration = 0,
+    identityGeneration = 0,
+    disposed = false
+  let catalogRequest = 0
+  const refreshCatalog = async () => {
+    const request = ++catalogRequest
+    const opened = document(),
+      previousGeneration = catalogGeneration()
+    try {
+      const result = await api.catalog()
+      if (disposed || request !== catalogRequest) return
+      if (!result.catalog || result.catalog.graphVersion !== 4 || !result.valid) throw new Error('The saved node catalog is invalid')
+      batch(() => {
+        if (result.generation !== catalogGeneration()) {
+          setCatalog(result.catalog)
+          setCatalogGeneration(result.generation)
+        }
+        setCatalogReady(true)
+        setCatalogError(undefined)
+      })
+      if (opened && previousGeneration !== undefined && previousGeneration !== result.generation) {
+        const latest = await api.read(opened.id)
+        if (
+          !disposed &&
+          request === catalogRequest &&
+          document()?.id === opened.id &&
+          document()?.revision === opened.revision &&
+          latest.revision !== opened.revision
+        ) {
+          batch(() => {
+            setConflict(true)
+            setError('Node library changed this saved graph. Your local graph is preserved; reload the saved revision to continue.')
+          })
+        }
+      }
+    } catch (err) {
+      if (!disposed && request === catalogRequest) {
+        setCatalogReady(false)
+        setCatalogError(visualError(err))
+      }
+    }
+  }
+  void refreshCatalog()
+  const catalogChanged = () => {
+    void refreshCatalog()
+  }
+  window.addEventListener('hass-sharp-libraries-changed', catalogChanged)
+  window.addEventListener('focus', catalogChanged)
+  onCleanup(() => {
+    window.removeEventListener('hass-sharp-libraries-changed', catalogChanged)
+    window.removeEventListener('focus', catalogChanged)
+  })
+  onCleanup(() => {
+    disposed = true
+    generation++
+    loadGeneration++
+    catalogRequest++
+  })
   createEffect(() => {
     const graph = history.graph()
     previewAttempt()
+    catalog()
     const current = ++generation
-    batch(() => { setPreview(undefined); setPreviewError(undefined) })
+    batch(() => {
+      setPreview(undefined)
+      setPreviewError(undefined)
+    })
     const timer = setTimeout(async () => {
       try {
         const result = await api.preview(graph)
@@ -36,44 +110,84 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
         if (!disposed && current === generation) setPreviewError(visualError(err))
       }
     }, 300)
-    onCleanup(() => { clearTimeout(timer); if (current === generation) generation++ })
+    onCleanup(() => {
+      clearTimeout(timer)
+      if (current === generation) generation++
+    })
   })
-  const canSave = () => !loading() && !saving() && !readFailed() && !conflict() && !!preview()?.valid && !preview()?.diagnostics.some(d => d.severity === 3)
+  const canSave = () =>
+    catalogReady() &&
+    !diagnostics().some(d => d.severity === 3) &&
+    !loading() &&
+    !saving() &&
+    !readFailed() &&
+    !conflict() &&
+    !!preview()?.valid &&
+    !preview()?.diagnostics.some(d => d.severity === 3)
   const newDraft = (graph: VisualGraph) => {
-    identityGeneration++; loadGeneration++
+    identityGeneration++
+    loadGeneration++
     id = `visual-${createUuid()}`
     batch(() => {
-      history.reset(graph); setDocument(undefined); setBaseline(serializeGraph(graph))
-      setError(undefined); setConflict(false); setReadFailed(false); setActivationError(undefined)
-      setLoading(false); setSaving(false)
+      history.reset(graph)
+      setDocument(undefined)
+      setBaseline(serializeGraph(graph))
+      setError(undefined)
+      setConflict(false)
+      setReadFailed(false)
+      setActivationError(undefined)
+      setLoading(false)
+      setSaving(false)
     })
   }
   const load = async (documentId: string) => {
-    identityGeneration++; setSaving(false)
+    identityGeneration++
+    setSaving(false)
     const current = ++loadGeneration
-    batch(() => { setLoading(true); setDocument(undefined); setError(undefined) })
+    batch(() => {
+      setLoading(true)
+      setDocument(undefined)
+      setError(undefined)
+    })
     try {
       const saved = await api.read(documentId)
       if (disposed || current !== loadGeneration) return
+      if (saved.graph.version !== 4) throw new Error(`Unsupported graph version ${saved.graph.version}; only version 4 is supported`)
       batch(() => {
-        history.reset(saved.graph); setDocument(saved); setBaseline(serializeGraph(saved.graph))
-        setConflict(false); setReadFailed(false); setActivationError(undefined)
+        history.reset(saved.graph)
+        setDocument(saved)
+        setBaseline(serializeGraph(saved.graph))
+        setConflict(false)
+        setReadFailed(false)
+        setActivationError(saved.activationError ?? undefined)
       })
+      void refreshCatalog()
     } catch (err) {
-      if (!disposed && current === loadGeneration) { setError(visualError(err)); setReadFailed(true) }
-    } finally { if (!disposed && current === loadGeneration) setLoading(false) }
+      if (!disposed && current === loadGeneration) {
+        setError(visualError(err))
+        setReadFailed(true)
+      }
+    } finally {
+      if (!disposed && current === loadGeneration) setLoading(false)
+    }
   }
   const save = async () => {
     if (!canSave()) return
     const snapshot = history.graph()
     const current = identityGeneration
-    setSaving(true); setError(undefined)
+    setSaving(true)
+    setError(undefined)
     try {
       const result = await api.save(document()?.id ?? id, snapshot, document()?.revision ?? 0)
       if (disposed || current !== identityGeneration) return
       batch(() => {
-        setDocument(result.document); setBaseline(serializeGraph(snapshot))
-        setActivationError(result.active ? undefined : result.activationError ?? 'Runtime activation failed. Edit and save again, or reload the HassSharp integration.')
+        setDocument(result.document)
+        setBaseline(serializeGraph(snapshot))
+        setActivationError(
+          result.active
+            ? undefined
+            : (result.activationError ?? 'Runtime activation failed. Edit and save again, or reload the HassSharp integration.'),
+        )
       })
       return result
     } catch (err) {
@@ -81,10 +195,33 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
       setError(visualError(err))
       if (err instanceof VisualApiError) {
         if (err.code === 'conflict') setConflict(true)
-        if (err.code === 'validation' && serializeGraph(history.graph()) === serializeGraph(snapshot)) setPreview(err.detail as VisualPreview)
+        if (err.code === 'validation' && serializeGraph(history.graph()) === serializeGraph(snapshot))
+          setPreview(err.detail as VisualPreview)
       }
-    } finally { if (!disposed && current === identityGeneration) setSaving(false) }
+    } finally {
+      if (!disposed && current === identityGeneration) setSaving(false)
+    }
   }
-  return { history, document, dirty, preview, previewError, error, conflict, activationError, loading, saving, canSave, load, save, newDraft,
-    retryPreview: () => setPreviewAttempt(value => value + 1) }
+  return {
+    history,
+    catalog,
+    catalogGeneration,
+    catalogError,
+    refreshCatalog,
+    diagnostics,
+    document,
+    dirty,
+    preview,
+    previewError,
+    error,
+    conflict,
+    activationError,
+    loading,
+    saving,
+    canSave,
+    load,
+    save,
+    newDraft,
+    retryPreview: () => setPreviewAttempt(value => value + 1),
+  }
 }

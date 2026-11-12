@@ -14,7 +14,7 @@ export interface ConfigSpec { label?: string; description?: string; type: string
 export interface InputSpec { label?: string; types: string[]; required: boolean; description: string; default?: unknown; min?: number; max?: number; integer?: boolean }
 export interface OutputSpec { label?: string; type: string; description: string; visibility?: string }
 export interface NodeSpec { argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
-export interface TypeSpec { elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[] }
+export interface TypeSpec { clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[] }
 export interface VisualCatalogSnapshot { version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; nodes: Record<string, NodeSpec>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
 /** Pass the server-produced catalog explicitly for each document; graph metadata is never type authority. */
 export const nodeCatalog = rawCatalog as unknown as VisualCatalogSnapshot
@@ -52,14 +52,14 @@ export function dataInputs(node: V4Node, loopOwner?: V4Node, catalog: VisualCata
   }
   return ports
 }
-function inputValue(node: V4Node, port: string, catalog: VisualCatalogSnapshot): unknown {
+export function inputValue(node: V4Node, port: string, catalog: VisualCatalogSnapshot): unknown {
   if (nodeSpec(node.kind, catalog)?.argumentStorage === 'arguments') return (node.config.arguments as Record<string, unknown> | undefined)?.[port]
   if (port.startsWith('field:')) return (node.config.fields as Record<string, unknown> | undefined)?.[port.slice(6)]
   if (port.startsWith('item:')) return (node.config.items as unknown[] | undefined)?.[Number(port.slice(5))]
   if (node.kind === 'loop_result') return (node.config.values as Record<string, unknown> | undefined)?.[port]
   return node.config[port]
 }
-function setInput(node: V4Node, port: string, value: V4Operand, catalog: VisualCatalogSnapshot) {
+export function setInput(node: V4Node, port: string, value: V4Operand, catalog: VisualCatalogSnapshot) {
   if (nodeSpec(node.kind, catalog)?.argumentStorage === 'arguments') {
     if (!record(node.config.arguments)) node.config.arguments = {}
     ;(node.config.arguments as Record<string, unknown>)[port] = value

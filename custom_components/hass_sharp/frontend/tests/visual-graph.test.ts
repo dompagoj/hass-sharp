@@ -13,7 +13,7 @@ describe('visual draft graph', () => {
   it('keeps JSON versioned and excludes canvas/library state', () => {
     const graph = updateNode(createGraph('Heating'), 'trigger-1', { size: { width: 300, height: 180 } })
     const value = JSON.parse(serializeGraph(graph))
-    expect(value).toMatchObject({ version: 2, name: 'Heating', nodes: [{ id: 'trigger-1', size: { width: 300, height: 180 } }, {}, {}] })
+    expect(value).toMatchObject({ version: 4, name: 'Heating', nodes: [{ id: 'trigger-1', size: { width: 300, height: 180 } }, {}, {}] })
     expect(value.nodes[0]).not.toHaveProperty('selected')
     expect(value).not.toHaveProperty('generatedSource')
   })
@@ -33,7 +33,7 @@ describe('visual draft graph', () => {
   it('adds a configurable node and a valid connection', () => {
     const graph = addNode(createGraph('Heating'), 'delay', 'delay-new')
     const connected = connectNodes(graph, 'service-1', 'delay-new')
-    expect(connected.nodes.at(-1)).toMatchObject({ id: 'delay-new', kind: 'delay', config: { seconds: '60' } })
+    expect(connected.nodes.at(-1)).toMatchObject({ id: 'delay-new', kind: 'delay', config: { seconds: {kind:'literal',type:'number',value:60} } })
     expect(connected.edges.at(-1)).toMatchObject({ source: 'service-1', target: 'delay-new' })
   })
 })
@@ -63,12 +63,11 @@ it('derives stable v2 actions from UTF-8 trigger IDs and omits manual-disabled a
   expect(visualRunClasses({ ...graph, nodes: [...graph.nodes].reverse() })).toEqual([
     { name: 'VisualAutomation', methods: ['Run_747269676765722D31', 'Run_C48DF09F94A5'] },
   ])
-  expect(visualRunClasses({ ...graph, version: 1 })).toEqual([{ name: 'VisualAutomation', methods: ['Run'] }])
 })
 
 
 it('distinguishes same-label triggers in the manual action chooser', () => {
-  const graph = addNode(createGraph('Multiple'), 'trigger', 'evening')
+  const graph = updateNode(addNode(createGraph('Multiple'), 'trigger', 'evening'),'evening',{label:'Entity changes'})
   expect(visualActionLabels(graph)).toEqual({
     'VisualAutomation::Run_747269676765722D31': 'Entity changes · trigger-1',
     'VisualAutomation::Run_6576656E696E67': 'Entity changes · evening',
@@ -147,24 +146,24 @@ it('creates positioned nodes and exact output connections atomically, revalidati
     history.undo(); expect(history.graph()).toEqual(base)
     history.redo(); expect(history.graph()).toEqual(created)
   }
-  const legacy = { ...createGraph('Legacy'), version: 1 as const }
-  expect(canCreateNode(legacy, 'trigger')).toBe(false)
-  expect(createNodeAt(legacy, 'trigger', { x: 0, y: 0 })).toBe(legacy)
-  expect(createNodeAt(legacy, 'delay', { x: 0, y: 0 }, { source: 'deleted', port: 'next' })).toBe(legacy)
+  expect(createNodeAt(createGraph('Fresh'), 'delay', { x: 0, y: 0 }, { source: 'deleted', port: 'next' }).nodes).toHaveLength(3)
 })
 
-it('upgrades typed nodes to v3 and preserves typed operands through history and serialization', () => {
+it('keeps typed nodes in v4 and preserves typed operands through history and serialization', () => {
   const legacy = createGraph('Typed')
   const graph = addNode(legacy, 'and', 'logic')
-  expect(graph.version).toBe(3)
-  expect(legacy.version).toBe(2)
+  expect(graph.version).toBe(4)
+  expect(legacy.version).toBe(4)
   expect(graph.nodes.at(-1)?.config.left).toEqual({ kind: 'literal', type: 'boolean', value: true })
   expect(JSON.parse(serializeGraph(graph))).toEqual(graph)
   expect(outputPorts('repeat')).toEqual(['body', 'next', 'error'])
   expect(outputPorts('if')).toEqual(['true', 'false', 'error'])
   expect(outputPorts('stop')).toEqual([])
 })
-it('gives repeated value producers distinct default output names', () => {
- const graph=addNode(addNode(addNode(createGraph('Defaults'),'xor','first'),'xor','second'),'xor','third')
- expect(graph.nodes.slice(-3).map(node=>node.config.output)).toEqual(['xor_result','xor_result_2','xor_result_3'])
+it('preserves explicit named variable references, layout and C# through v4 edits',()=>{
+ const before={...createGraph('Names'),imports:'using System;',members:'private int count;'}
+ const graph=updateNode(addNode(before,'and','logic'),'logic',{config:{output:'custom_result',left:{kind:'variable',name:'prior'},right:{kind:'literal',type:'boolean',value:true}}})
+ expect(graph.nodes.slice(0,3)).toEqual(before.nodes)
+ expect(graph.imports).toBe(before.imports);expect(graph.members).toBe(before.members)
+ expect(JSON.parse(serializeGraph(graph)).nodes.at(-1).config).toEqual(graph.nodes.at(-1)!.config)
 })

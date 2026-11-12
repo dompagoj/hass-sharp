@@ -349,3 +349,52 @@ ha-panel-hass-sharp-view > #app { height: 100%; }
  .hs-app .hs-palette-group { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
  .hs-app .hs-palette-group h3 { width: 100%; margin: 8px 0 2px; }
 }
+
+/* Port categories are visual tokens; stable CLR identities remain in the catalog. */
+.hs-app, .hs-flow {
+ --hs-port-boolean: #9464d5;
+ --hs-port-number: #397fd1;
+ --hs-port-string: #32875b;
+ --hs-port-object: #d28335;
+ --hs-port-array: #1599ad;
+ --hs-port-execution: var(--hs-muted, #6c7583);
+ --hs-port-error: var(--hs-danger, #d03651);
+}
+.hs-app .hs-visual-workspace { grid-template-columns: 210px minmax(0, 1fr) 290px; }
+.hs-app .hs-palette, .hs-app .hs-inspector { padding: 14px 12px; }
+.hs-app .hs-palette-item { padding: 7px 6px; margin-bottom: 3px; border-color: transparent; background: transparent; box-shadow: none; }
+.hs-app .hs-palette-item small { display: none; }
+.hs-app .hs-canvas-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.hs-app .hs-canvas-column .hs-flow { flex: 1; min-height: 240px; }
+.hs-app .hs-canvas-column .hs-diagnostics { flex: none; max-height: 150px; overflow: auto; margin: 0; padding: 4px 10px; border-top: 1px solid var(--hs-line); list-style: none; background: var(--hs-surface); font-size: 11px; }
+.hs-app .hs-diagnostics .hs-button { padding: 5px 2px; text-align: left; white-space: normal; }
+.hs-app .hs-flow-card { padding: 7px 10px; gap: 2px; border-radius: 7px; }
+.hs-app .hs-flow-card > strong { font-size: 12px; }
+.hs-app .hs-flow-kind { font-size: 8px; letter-spacing: .03em; }
+.hs-app .hs-port-label { font-size: 10px; letter-spacing: 0; background: transparent; }
+.hs-app .hs-port-label--target { left: 9px; right: auto; }
+.hs-app .hs-port-label--source { right: 9px; left: auto; }
+.hs-app .hs-flow .solid-flow__handle:focus-visible { outline: 3px solid var(--hs-accent); outline-offset: 3px; }
+.hs-app .hs-flow .solid-flow__handle[aria-invalid="true"] { outline: 3px solid var(--hs-port-error); outline-offset: 2px; }
+.hs-app .hs-flow-card--error { outline: 2px solid var(--hs-port-error); outline-offset: 0; }
+.hs-app .hs-node-errors { display: none; position: absolute; z-index: 20; left: calc(100% + 12px); top: 0; min-width: 200px; max-width: 340px; width: max-content; padding: 10px 12px; border: 1px solid var(--hs-port-error); border-radius: 6px; background: var(--hs-surface); box-shadow: 0 4px 18px #0002; color: var(--hs-text); font-size: 12px; pointer-events: none; }
+.hs-app .hs-node-errors p { margin: 0 0 4px; }
+.hs-app .solid-flow__node:hover > .hs-node-errors, .hs-app .solid-flow__node:focus-within > .hs-node-errors, .hs-app .solid-flow__node:focus > .hs-node-errors { display: block; }
+.hs-app .hs-connection-error, .hs-app .hs-connection-prompt { position: absolute; z-index: 10; bottom: 8px; left: 56px; right: 8px; border: 1px solid currentColor; background: var(--hs-surface); border-radius: 6px; padding: 8px; font-size: 12px; pointer-events: none; }
+.hs-app .hs-typed-inspector header h2 { font-size: 15px; margin: 0; }
+.hs-app .hs-typed-inspector p { font-size: 12px; margin: 6px 0; }
+.hs-app .hs-typed-inspector h3 { font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--hs-muted); margin: 14px 0 9px; }
+.hs-app .hs-typed-input, .hs-app .hs-port-row { border-left: 3px solid var(--hs-value-color); padding-left: 9px; margin: 12px 0; font-size: 11px; overflow-wrap: anywhere; }
+.hs-app .hs-port-row--execution { --hs-value-color: var(--hs-port-execution); }
+.hs-app .hs-typed-input[aria-invalid="true"], .hs-app [data-input-id][aria-invalid="true"] { outline: 1px solid var(--hs-port-error); outline-offset: 4px; }
+.hs-app [data-input-id]:focus-within, .hs-app [data-input-id]:focus-visible { outline: 2px solid var(--hs-accent); outline-offset: 4px; }
+.hs-app .hs-typed-input .hs-operand { padding: 6px; border: 0; }
+.hs-app .hs-typed-inspector details > summary { cursor: pointer; padding: 8px 0; font-size: 12px; font-weight: 600; }
+.hs-app .hs-typed-inspector .hs-field { margin-top: 8px; }
+@media (min-width: 701px) and (max-width: 1150px) {
+ .hs-app .hs-visual-workspace { grid-template-columns: minmax(0, 1fr) 290px; }
+}
+@media (max-width: 700px) {
+ .hs-app .hs-visual-workspace { grid-template-columns: minmax(0, 1fr); }
+ .hs-app .hs-canvas-column { min-height: 360px; }
+}

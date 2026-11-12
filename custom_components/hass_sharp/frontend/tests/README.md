@@ -54,8 +54,8 @@ See `../docs/visual-api-integration.md` for browser evidence and the live sign-i
 blocker. Fixture results do not verify backend compilation or persistence.
 
 
-Graph v2 authoring is covered by `VisualAutomationView.test.tsx` (multiple
-triggers, C# sections, saved action dispatch, v1 upgrade and source mappings) and
+Graph v4 authoring is covered by `VisualAutomationView.test.tsx` (multiple
+triggers, C# sections, saved action dispatch, unsupported-version rejection and source mappings) and
 `visual-graph.test.ts` (UTF-8 action IDs and duplicate-label disambiguation).
 The fixture's `visualFixture.controls.preview` accepts an explicit backend preview
 response for inspecting real source and maps without authenticating to HA. This
@@ -78,3 +78,23 @@ an in-memory fixture. Check the red squiggle, Show Hover (Ctrl+K, Ctrl+I), the
 clickable error below the editor, and clear/recheck behavior after removing the
 name. The fixture intentionally returns no symbol hover so marker hover is tested
 independently from Roslyn QuickInfo.
+
+Typed v4 coverage also lives in `typed-editor.test.tsx`, `NodeConfig.test.tsx`,
+`TriggerConfig.test.tsx` and `visual-session.test.ts`. These mount real Solid Flow
+handles/edges for mouse, touch, keyboard, category colors and Option/Alt deletion,
+and cover immediate local diagnostics, saved-catalog generations, HA-shaped trigger
+metadata subscriptions and cleanup, revision conflicts, and stale preview/source maps.
+
+Open `tests/preview.html?view=visual&typed=1` for the checked-in source-derived rich
+CLR catalog and its valid Read entity → Describe → Consume sample. Without `typed=1`,
+the new-draft preview uses that same saved catalog, including its custom palette.
+The fixture implements library catalog/list/read envelopes and real-shaped HA
+trigger metadata. Library source authoring/language operations belong to Task4b;
+unsupported fixture operations fail explicitly rather than returning empty language
+results. Preview graphs remain in-memory samples; they do not compile or execute C#.
+
+Graph sessions refetch saved catalogs on window focus and the payload-free
+`hass-sharp-libraries-changed` event. A changed generation invalidates backend
+preview/source maps without creating an undo entry. If a library mutation rebuilt
+the opened saved graph, the session preserves its local draft and surfaces a revision
+conflict; export/reload resolves it. Save-time backend revision checks remain authoritative.

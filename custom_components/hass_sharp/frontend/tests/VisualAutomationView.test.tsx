@@ -29,8 +29,8 @@ it('creates, edits and saves separate drafts on HTTP without crypto.randomUUID',
   // HTTP LAN origins expose getRandomValues but not randomUUID.
   vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
   const { root, fixture } = setup()
-  button(root, 'Add step').click(); button(root, 'Create Wait').click()
-  button(root, 'Add step').click(); button(root, 'Create Wait').click()
+  button(root, 'Add step').click(); button(root, 'Create Trigger').click();setControl(root,'Trigger type','manual')
+  button(root, 'Add step').click(); button(root, 'Create Trigger').click();setControl(root,'Trigger type','manual')
   await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
   button(root, 'Save graph').click()
   await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 1'))
@@ -113,7 +113,7 @@ it('maps diagnostics onto nodes and source lines and blocks invalid saves', asyn
   const { root, fixture } = setup(); fixture.controls.invalid = true
   await vi.waitFor(() => expect(root.textContent).toContain('Invalid entity'))
   expect(button(root, 'Save graph').disabled).toBe(true)
-  expect(root.querySelector('[data-id="trigger-1"]')?.textContent).toContain('error')
+  expect(root.querySelector('[data-id="trigger-1"] .hs-flow-card--error')).not.toBeNull()
   button(root, 'Invalid entity · line 3').click()
   expect(root.querySelector('[data-source-line="3"]')?.getAttribute('aria-current')).toBe('true')
   expect(root.querySelector('[data-id="trigger-1"]')?.classList.contains('selected')).toBe(true)
@@ -144,7 +144,7 @@ it('creates a fresh draft when navigating from a saved visual graph to new', asy
 it('opens valid API graphs without optional canvas metadata and preserves their identity', async () => {
   const { root, fixture } = setup(true, true)
   await vi.waitFor(() => expect(root.querySelector('[data-id="trigger-1"]')).not.toBeNull())
-  expect(root.querySelector('[data-id="trigger-1"]')?.textContent).toContain('trigger')
+  await vi.waitFor(()=>expect(root.querySelector('[data-id="trigger-1"] .hs-flow-card strong')?.textContent).toBe('Trigger'))
   await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
   button(root, 'Save graph').click()
   await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 5'))
@@ -164,7 +164,7 @@ function json(root: Element) {
   return JSON.parse(root.querySelector('[aria-label="Graph JSON"]')!.textContent!)
 }
 
-it('authors two v2 triggers and C# sections, saves/reloads them, then dispatches either saved action', async () => {
+it('authors two v4 triggers and C# sections, saves/reloads them, then dispatches either saved action', async () => {
   const { root, fixture } = setup()
   setControl(root, 'C# imports', 'using System.Globalization;')
   setControl(root, 'C# members', 'private string Prefix() => "Heating";')
@@ -172,14 +172,14 @@ it('authors two v2 triggers and C# sections, saves/reloads them, then dispatches
   setControl(root, 'Daily time', '07:30')
   setControl(root, 'Time zone', 'Europe/Zagreb')
   setControl(root, 'Concurrency mode', 'Restart')
-  button(root, 'Add step').click(); button(root, 'Create Entity changes').click()
+  button(root, 'Add step').click(); button(root, 'Create Trigger').click()
   setControl(root, 'Node label', 'Manual evening')
   setControl(root, 'Trigger type', 'manual')
-  setControl(root, 'Connect to', 'service-1')
-  button(root, 'Connect').click()
+  setControl(root, 'Next destination', 'service-1')
+  button(root, 'Connect Next').click()
   const draft = json(root)
   const second = draft.nodes.at(-1)
-  expect(draft).toMatchObject({ version: 2, imports: 'using System.Globalization;', members: 'private string Prefix() => "Heating";' })
+  expect(draft).toMatchObject({ version: 4, imports: 'using System.Globalization;', members: 'private string Prefix() => "Heating";' })
   expect(draft.nodes[0]).toMatchObject({ id: 'trigger-1', config: { type: 'daily', time: '07:30', timeZone: 'Europe/Zagreb', mode: 'Restart' } })
   expect(second).toMatchObject({ kind: 'trigger', config: { type: 'manual' } })
   expect(draft.edges).toContainEqual({ id: `${second.id}->service-1`, source: second.id, target: 'service-1' })
@@ -204,7 +204,7 @@ it('authors two v2 triggers and C# sections, saves/reloads them, then dispatches
   // UUIDs are ASCII; independently derive the request expectation from the persisted ID.
   expect(methods).toContain('Run_' + Array.from(second.id as string, c => c.charCodeAt(0).toString(16).toUpperCase()).join(''))
   // Unsaved trigger changes must not change the list of runnable saved actions.
-  button(root, 'Add step').click(); button(root, 'Create Entity changes').click()
+  button(root, 'Add step').click(); button(root, 'Create Trigger').click()
   expect(root.querySelectorAll('.hs-run-action option')).toHaveLength(2)
 })
 
@@ -236,22 +236,12 @@ it('edits all trigger kinds, boolean overrides and expressions without changing 
   expect(json(root).nodes.at(-1).config.code).toBe('await Task.Delay(10, CancellationToken);')
 })
 
-it('keeps v1 editing and Run, and upgrades only when explicitly chosen', async () => {
-  const { root, fixture } = setup(true)
-  fixture.documents.get('motion')!.graph.version = 1
-  await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Saved motion'))
-  expect(control(root, 'C# imports')).toBeNull()
-  expect(button(root, 'About Entity changes').getAttribute('draggable')).toBe('false')
-  edit(root, 'Legacy trigger')
-  expect(json(root).version).toBe(1)
-  button(root, 'Run now').click()
-  await vi.waitFor(() => expect(fixture.calls).toContainEqual({ type: 'hass_sharp/run_now', automationId: 'visual:motion', className: 'VisualAutomation', method: 'Run' }))
-  button(root, 'Upgrade to graph v2').click()
-  expect(json(root).version).toBe(2)
-  expect(json(root).nodes[0].id).toBe('trigger-1')
-  expect(button(root, 'About Entity changes').getAttribute('draggable')).toBe('true')
-  // The saved v1 action remains available until the upgrade is saved.
-  expect(root.querySelector('.hs-run-action option')?.getAttribute('value')).toBe('VisualAutomation::Run')
+it('rejects old saved graph versions without offering upgrade or overwriting the document',async()=>{
+ const {root,fixture}=setup(true);fixture.documents.get('motion')!.graph.version=1 as any
+ await vi.waitFor(()=>expect(root.textContent).toContain('Unsupported graph version 1; only version 4 is supported'))
+ expect(button(root,'Save graph').disabled).toBe(true)
+ expect(root.textContent).not.toContain('Upgrade to')
+ expect(fixture.documents.get('motion')!.revision).toBe(4)
 })
 
 it('locates import/member diagnostics and all ranges for the same trigger from backend mappings', async () => {
@@ -286,5 +276,5 @@ it('renders a save-time validation rejection and a structural diagnostic without
   expect(root.textContent).toContain('Not saved')
   fixture.controls.preview = { valid: false, source: '', sourceMap: [], diagnostics: [{ nodeId: null, message: 'Only one outgoing edge per port is supported', severity: 3, startLine: null, startColumn: null }] }
   edit(root, 'Changed')
-  await vi.waitFor(() => expect(root.querySelector('[aria-label="Graph diagnostics"]')?.textContent).toBe('Error: Only one outgoing edge per port is supported'))
+  await vi.waitFor(() => expect(root.querySelector('[aria-label="Graph diagnostics"]')?.textContent).toContain('Error: Only one outgoing edge per port is supported'))
 })

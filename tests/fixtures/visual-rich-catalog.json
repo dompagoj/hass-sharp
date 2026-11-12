@@ -32,7 +32,7 @@
           "global::System.Object"
         ],
         "literalKind": "boolean",
-        "label": "bool"
+        "label": "Boolean"
       },
       "number": {
         "description": "Number",
@@ -86,7 +86,7 @@
           "global::System.Numerics.IMinMaxValue\u003Cglobal::System.Double\u003E"
         ],
         "literalKind": "number",
-        "label": "double"
+        "label": "Number"
       },
       "string": {
         "description": "String",
@@ -109,7 +109,7 @@
           "global::System.IParsable\u003Cglobal::System.String\u003E"
         ],
         "literalKind": "string",
-        "label": "string"
+        "label": "String"
       },
       "object": {
         "description": "Object",
@@ -128,7 +128,7 @@
           "global::System.Text.Json.Nodes.JsonNode"
         ],
         "literalKind": "object",
-        "label": "System.Text.Json.Nodes.JsonObject"
+        "label": "Object"
       },
       "array": {
         "description": "Array",
@@ -146,7 +146,7 @@
           "global::System.Collections.Generic.IEnumerable\u003Cglobal::System.Text.Json.Nodes.JsonNode?\u003E"
         ],
         "literalKind": "array",
-        "label": "System.Text.Json.Nodes.JsonArray"
+        "label": "Array"
       },
       "entity_id": {
         "description": "Entity Id",
@@ -172,7 +172,7 @@
           "global::System.IParsable\u003Cglobal::System.String\u003E"
         ],
         "literalKind": "string",
-        "label": "string"
+        "label": "Entity ID"
       },
       "global::HassSharp.EntityStateSnapshot": {
         "description": "Detached Home Assistant entity state",

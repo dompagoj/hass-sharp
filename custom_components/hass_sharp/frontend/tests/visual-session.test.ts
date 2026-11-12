@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
+import { nodeCatalog } from '../src/visual/graphV4'
 import { createRoot } from 'solid-js'
 import { createGraph, updateNode } from '../src/visual/graph'
 import { createVisualSession } from '../src/visual/session'
@@ -12,7 +13,7 @@ const ok = (result: unknown) => ({ version: 1, ok: true, result })
 const flush = async () => { await Promise.resolve(); await Promise.resolve() }
 function setup(handler: (request: any) => Promise<any>) {
   const calls: any[] = []
-  const hass = { callWS: async (message: any) => { calls.push(message); return handler(message.request) } } as any
+  const hass = { callWS: async (message: any) => { if(message.type==='hass_sharp/node_library')return ok({catalog:nodeCatalog,generation:'fixture',saved:true,valid:true,diagnostics:[]}); calls.push(message); return handler(message.request) } } as any
   const session = createRoot(d => { dispose = d; return createVisualSession(hass, graph()) })
   return { session, calls, hass }
 }
@@ -113,4 +114,63 @@ it('does not attach an old save result to a new draft', async () => {
   finish(ok({ document: document(1), active: true, activationError: null })); await saving
   expect(session.document()).toBeUndefined()
   expect(session.history.graph().name).toBe('Different draft')
+})
+
+it('reports local typed input errors immediately and rejects old graphs without replacing the draft', async () => {
+ const {session}=setup(async req=>req.operation==='read'?ok({...document(),graph:{...graph(),version:3}}):ok(preview()))
+ const before=session.history.graph()
+ await session.load('motion')
+ expect(session.error()).toContain('Unsupported graph version 3; only version 4 is supported')
+ expect(session.history.graph()).toEqual(before)
+ session.history.commit(updateNode(before,'condition-1',{config:{entity:{kind:'unset'},state:'on'}}))
+ expect(session.diagnostics()).toEqual(expect.arrayContaining([expect.objectContaining({nodeId:'condition-1',inputId:'entity',severity:3})]))
+ expect(session.canSave()).toBe(false)
+})
+
+it('refreshes document-owned catalogs and surfaces dependent graph revision conflicts',async()=>{
+ let generation='one',revision=2
+ const mutableCatalog=structuredClone(nodeCatalog)
+ mutableCatalog.nodes['saved:custom']={label:'Saved custom',description:'Saved source method',category:'Library',minGraphVersion:4,config:{},inputs:{},outputs:{},execution:['next']}
+ const hass={callWS:async(message:any)=>message.type==='hass_sharp/node_library'?ok({catalog:mutableCatalog,generation,saved:true,valid:true,diagnostics:[]}):message.request.operation==='read'?ok({...document(revision),catalogGeneration:generation}):ok(preview())} as any
+ const session=createRoot(d=>{dispose=d;return createVisualSession(hass,graph())})
+ await flush();await session.load('motion');await flush()
+ expect(session.catalog().nodes['saved:custom']?.label).toBe('Saved custom')
+ expect(nodeCatalog.nodes['saved:custom']).toBeUndefined()
+ const local=updateNode(session.history.graph(),'trigger-1',{label:'Unsaved label'});session.history.commit(local)
+ generation='two';revision=3
+ await session.refreshCatalog()
+ expect(session.conflict()).toBe(true)
+ expect(session.error()).toContain('Node library changed this saved graph')
+ expect(session.history.graph()).toEqual(local)
+ expect(session.document()?.revision).toBe(2)
+ expect(session.canSave()).toBe(false)
+})
+
+it('invalidates old previews and source maps when only the saved catalog generation changes',async()=>{
+ vi.useFakeTimers();let generation='one';const pending:((value:any)=>void)[]=[]
+ const hass={callWS:async(message:any)=>message.type==='hass_sharp/node_library'?ok({catalog:structuredClone(nodeCatalog),generation,saved:true,valid:true,diagnostics:[]}):new Promise(resolve=>pending.push(resolve))} as any
+ const session=createRoot(d=>{dispose=d;return createVisualSession(hass,graph())})
+ await flush();await vi.advanceTimersByTimeAsync(350);expect(pending).toHaveLength(1)
+ const original=session.history.graph();generation='two';await session.refreshCatalog();await vi.advanceTimersByTimeAsync(350)
+ expect(session.history.graph()).toBe(original);expect(session.history.canUndo()).toBe(false);expect(pending).toHaveLength(2)
+ pending[1](ok({...preview('current library'),sourceMap:[{nodeId:'condition-1',startLine:9,endLine:11}]}));await flush()
+ pending[0](ok({...preview('old library'),diagnostics:[{nodeId:'trigger-1',message:'Obsolete library error',severity:3}]}));await flush()
+ expect(session.preview()?.source).toBe('current library');expect(session.preview()?.sourceMap[0].startLine).toBe(9)
+ expect(session.diagnostics().some(d=>d.message==='Obsolete library error')).toBe(false)
+})
+it('ignores in-flight old catalogs and cleans up library/focus listeners',async()=>{
+ const pending:((value:any)=>void)[]=[];const listeners=vi.spyOn(window,'addEventListener'),removed=vi.spyOn(window,'removeEventListener')
+ const hass={callWS:async(message:any)=>message.type==='hass_sharp/node_library'?new Promise(resolve=>pending.push(resolve)):ok(preview())} as any
+ const session=createRoot(d=>{dispose=d;return createVisualSession(hass,graph())})
+ const fresh=session.refreshCatalog();expect(pending).toHaveLength(2)
+ const latest=structuredClone(nodeCatalog);latest.nodes['library:latest']={label:'Latest saved',description:'Current',category:'Library',minGraphVersion:4,config:{},inputs:{},outputs:{},execution:['next']}
+ pending[1](ok({catalog:latest,generation:'latest',saved:true,valid:true,diagnostics:[]}));await fresh
+ pending[0](ok({catalog:nodeCatalog,generation:'old',saved:true,valid:true,diagnostics:[]}));await flush()
+ expect(session.catalogGeneration()).toBe('latest');expect(session.catalog().nodes['library:latest']).toBeDefined()
+ const registered=listeners.mock.calls.filter(([name])=>name==='hass-sharp-libraries-changed'||name==='focus')
+ expect(registered).toHaveLength(2);dispose()
+ for(const [name,callback] of registered)expect(removed).toHaveBeenCalledWith(name,callback)
+ window.dispatchEvent(new Event('hass-sharp-libraries-changed'));window.dispatchEvent(new Event('focus'))
+ expect(pending).toHaveLength(2)
+ listeners.mockRestore();removed.mockRestore()
 })

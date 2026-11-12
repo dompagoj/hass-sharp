@@ -1,7 +1,12 @@
 import type { HomeAssistant } from '../types'
 import type { VisualGraph } from './graph'
+import type { VisualCatalogSnapshot } from './graphV4'
 
-export interface SourceRange { nodeId: string; startLine: number; endLine: number }
+export interface SourceRange {
+  nodeId: string
+  startLine: number
+  endLine: number
+}
 export interface VisualDiagnostic {
   inputId?: string | null
   portId?: string | null
@@ -11,7 +16,12 @@ export interface VisualDiagnostic {
   startLine: number | null
   startColumn: number | null
 }
-export interface VisualPreview { valid: boolean; source: string; sourceMap: SourceRange[]; diagnostics: VisualDiagnostic[] }
+export interface VisualPreview {
+  valid: boolean
+  source: string
+  sourceMap: SourceRange[]
+  diagnostics: VisualDiagnostic[]
+}
 export interface VisualDocument {
   version: 1
   id: string
@@ -19,13 +29,32 @@ export interface VisualDocument {
   graph: VisualGraph
   source: string
   sourceMap: SourceRange[]
+  catalogGeneration?: string | null
+  activeRevision?: number | null
+  activeSourceHash?: string | null
+  currentRevisionActive?: boolean
+  active?: boolean
+  activationError?: string | null
   automationId: string
 }
-export interface VisualSaveResult { document: VisualDocument; active: boolean; activationError: string | null }
+export interface VisualSaveResult {
+  document: VisualDocument
+  active: boolean
+  activationError: string | null
+}
 type Envelope<T> = { version: 1; ok: true; result: T } | { version: 1; ok: false; error: { code: string; detail: unknown } }
 export class VisualApiError extends Error {
-  constructor(public code: string, public detail: unknown) {
-    super(typeof detail === 'string' ? detail : code === 'validation' ? 'Fix the graph errors before saving.' : `Visual automation request failed (${code}).`)
+  constructor(
+    public code: string,
+    public detail: unknown,
+  ) {
+    super(
+      typeof detail === 'string'
+        ? detail
+        : code === 'validation'
+          ? 'Fix the graph errors before saving.'
+          : `Visual automation request failed (${code}).`,
+    )
   }
 }
 export const visualError = (error: unknown) => {
@@ -39,6 +68,13 @@ export function visualApi(hass: Pick<HomeAssistant, 'callWS'>) {
     return response.result
   }
   return {
+    catalog: async () => {
+      const response = await hass.callWS<
+        Envelope<{ catalog: VisualCatalogSnapshot; generation: string; saved: true; valid: boolean; diagnostics: VisualDiagnostic[] }>
+      >({ type: 'hass_sharp/node_library', request: { operation: 'catalog' } })
+      if (!response.ok) throw new VisualApiError(response.error.code, response.error.detail)
+      return response.result
+    },
     preview: (graph: VisualGraph) => request<VisualPreview>('preview', { graph }),
     list: () => request<VisualDocument[]>('list'),
     read: (id: string) => request<VisualDocument>('read', { id }),

@@ -42,6 +42,10 @@ public static class NodeLibraryTests
         var preview = compiler.Preview([new NodeLibrarySource("sensors", Source, 7)]);
         Check(preview.Valid, string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
         var snapshot = preview.Snapshot;
+        foreach (var (id, label) in new[] { ("boolean", "Boolean"), ("number", "Number"), ("string", "String"), ("object", "Object"), ("array", "Array"), ("entity_id", "Entity ID") })
+            Check(snapshot.Catalog["types"]![id]!["label"]?.GetValue<string>() == label, "merged catalog preserves built-in display label: " + id);
+        Check(snapshot.Catalog["types"]!["global::System.Double"]!["label"]!.GetValue<string>() == "double", "canonical CLR type retains Roslyn display label");
+        Check(snapshot.Catalog["types"]!["global::NodeLib.Reading"]!["label"]!.GetValue<string>() == "NodeLib.Reading", "arbitrary CLR type retains Roslyn display label");
         var read = snapshot.Methods.Values.Single(m => m.Method.Name == "Read");
         var consume = snapshot.Methods.Values.Single(m => m.Method.Name == "Consume");
         Check(read.InvocationType == "global::NodeLib.Nodes" && read.ResultType == "global::NodeLib.Reading", "exact invocation and result type");

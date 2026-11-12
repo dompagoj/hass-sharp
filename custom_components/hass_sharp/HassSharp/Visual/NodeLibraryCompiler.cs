@@ -144,7 +144,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
             cancellationToken.ThrowIfCancellationRequested();
             var type = types[id] as JsonObject ?? new JsonObject();
             if (!types.ContainsKey(id)) types[id] = type;
-            type["label"] = symbol.ToDisplayString(); type["description"] ??= symbol.ToDisplayString();
+            type["label"] ??= symbol.ToDisplayString(); type["description"] ??= symbol.ToDisplayString();
             if (symbol is IArrayTypeSymbol arraySymbol) type["elementType"] = TypeIdentity(arraySymbol.ElementType);
             type["category"] = Category(symbol); type["nullable"] = Nullable(symbol); type["literalKind"] = LiteralKind(symbol);
             var scalar = symbol is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullableScalar ? nullableScalar.TypeArguments[0] : symbol;

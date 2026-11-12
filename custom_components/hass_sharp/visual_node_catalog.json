@@ -18,7 +18,8 @@
       "assignableTo": [
         "boolean"
       ],
-      "literalKind": "boolean"
+      "literalKind": "boolean",
+      "label": "Boolean"
     },
     "number": {
       "description": "Number",
@@ -28,7 +29,8 @@
       "assignableTo": [
         "number"
       ],
-      "literalKind": "number"
+      "literalKind": "number",
+      "label": "Number"
     },
     "string": {
       "description": "String",
@@ -38,7 +40,8 @@
       "assignableTo": [
         "string"
       ],
-      "literalKind": "string"
+      "literalKind": "string",
+      "label": "String"
     },
     "object": {
       "description": "Object",
@@ -48,7 +51,8 @@
       "assignableTo": [
         "object"
       ],
-      "literalKind": "object"
+      "literalKind": "object",
+      "label": "Object"
     },
     "array": {
       "description": "Array",
@@ -58,7 +62,8 @@
       "assignableTo": [
         "array"
       ],
-      "literalKind": "array"
+      "literalKind": "array",
+      "label": "Array"
     },
     "entity_id": {
       "description": "Entity Id",
@@ -71,7 +76,8 @@
         "entity_id",
         "string"
       ],
-      "literalKind": "string"
+      "literalKind": "string",
+      "label": "Entity ID"
     },
     "global::HassSharp.EntityStateSnapshot": {
       "description": "Detached Home Assistant entity state",

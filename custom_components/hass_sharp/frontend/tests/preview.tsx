@@ -1,4 +1,6 @@
 // Development-only fixture. No backend or Home Assistant services are called.
+import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
+import { fillGraphLayout, type GraphV4, type VisualCatalogSnapshot } from '../src/visual/graphV4'
 import { visualFixture as makeVisualFixture } from './visual-fixture'
 import { render } from 'solid-js/web'
 import App from '../src/App'
@@ -43,12 +45,15 @@ const runs: AutomationRun[] = Array.from({ length: 23 }, (_, i) => ({
   document.documentElement.style.colorScheme = theme
 }
 ;(window as any).setPreviewTheme('light')
-const visualBackend = makeVisualFixture()
+const visualBackend = makeVisualFixture({catalog:rich.catalog as unknown as VisualCatalogSnapshot,libraries:[{id:rich.sourceId,name:'Typed sample',revision:rich.revision,source:rich.source}]})
+const typedFixture=new URLSearchParams(location.search).has('typed')
+if(typedFixture)visualBackend.documents.set('typed-demo',{version:1,id:'typed-demo',revision:1,graph:fillGraphLayout(rich.cases[0].graph as GraphV4),source:'// Typed fixture generated on the server',sourceMap:[],automationId:'visual:typed-demo',currentRevisionActive:true,catalogGeneration:'saved-fixture'})
 ;(window as any).visualFixture = visualBackend
 const visualFixture = new URLSearchParams(location.search).get('view') === 'visual'
-history.replaceState(null, '', diagnosticsFixture ? '/hass-sharp/automations/BathroomHeating.cs' : visualFixture ? '/hass-sharp/visual/new?name=Motion%20lights' : '/hass-sharp/automations')
+history.replaceState(null, '', diagnosticsFixture ? '/hass-sharp/automations/BathroomHeating.cs' : visualFixture ? typedFixture?'/hass-sharp/visual/typed-demo':'/hass-sharp/visual/new?name=Motion%20lights' : '/hass-sharp/automations')
 const hass = {
   user: { is_admin: true },
+  connection:visualBackend.connection,
   async callApi(method: string, path: string, parameters?: { name?: string; source?: string }) {
     const file = decodeURIComponent(path.split('/')[2] ?? '')
     if (method === 'GET') return file ? { fileName: file, source } : [...scripts]
@@ -63,7 +68,7 @@ const hass = {
   async callWS(message: { type: string; source: string }) {
     if (message.type === 'hass_sharp/get_entities') return { entities: Array.from({length:80},(_,i)=>({entity_id: `${i%2?'light':'binary_sensor'}.hall_${i}`, friendly_name: `Hall ${i%2?'lamp':'motion'} ${i}`})) }
     if (message.type === 'get_services') return { light: { turn_on: {name:'Turn on',description:'Turn on a light'}, turn_off: {name:'Turn off',description:'Turn off a light'} }, climate: { set_temperature: {name:'Set temperature',description:'Change the target temperature'} } }
-    if (message.type === 'hass_sharp/visual') return visualBackend.callWS(message)
+    if (message.type === 'hass_sharp/visual'||message.type==='hass_sharp/node_library') return visualBackend.callWS(message)
     if (diagnosticsFixture && message.type.endsWith('get_diagnostics')) {
       const start = message.source.indexOf('MissingName')
       if (start < 0) return []
