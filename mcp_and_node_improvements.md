@@ -12,7 +12,7 @@ Register a separate administrator-only **HassSharp** tool set. Keep saving and a
 - Define one machine-readable node catalog containing configuration, inputs, outputs, types, descriptions, defaults, and constraints. Use it for the editor, MCP discovery, and backend validation.
 - Distinguish **execution edges** from **data edges**. Execution edges retain their current shape; data edges identify source and destination ports. Missing edge kind means execution.
 - Execution connections determine when nodes run. Data connections read outputs from nodes that have executed; they never execute dependencies implicitly.
-- Support Boolean, Number, String, Object, and Array data types, with descriptive refinements such as Entity ID. Require explicit conversions between incompatible types.
+- Support arbitrary C# port types, including user classes/records, interfaces, nullable types, arrays, and constructed generic types. Boolean, Number, String, Object, and Array are visual categories and literal-editor choices, not a closed type system. Derive type compatibility from C# type information and require explicit conversions between incompatible types.
 - Allow one data source per input and multiple consumers per output. Reject incompatible types, flow/data mixing, forbidden scope crossings, and data cycles.
 - Store outputs per invocation and execution scope. Missing values produce precise errors rather than defaults.
 - Connecting an input replaces its active literal. Disconnecting leaves it explicitly unset; required inputs become invalid. Undo restores the complete prior state.
@@ -21,6 +21,8 @@ Register a separate administrator-only **HassSharp** tool set. Keep saving and a
 ## 2. Clear node details and error feedback
 
 Reorganize the inspector into a node heading, **Inputs**, **Outputs**, and collapsed **Appearance** settings.
+
+Follow the supplied node-editor references: a searchable node library beside a dotted canvas and compact inspector; compact node cards with labeled ports; a searchable popup chooser; persistent red error outlines, anchored exact-error tooltips, and clickable errors below the canvas. Adapt the layout to HassSharp’s existing Home Assistant theme.
 
 - Every input shows its name, type badge, required/optional status, description, and either a literal editor or its connected source.
 - Every output appears individually with its name, type, meaning, and connected destinations. Preserve keyboard and touch connection controls.
@@ -63,6 +65,12 @@ Add Object/Array literals and constructors, field extraction using JSON pointers
 
 Keep custom C#, imports, and members available for advanced behavior.
 
+### Reusable custom C# node library
+
+Add the custom node editor shown in the supplied reference: a file list, Monaco C# editor, and live visual previews of the nodes defined in the selected file. Users can create, edit, validate, save, and remove reusable custom nodes. Infer typed input/output ports and descriptions from C# node definitions and expose them in the visual editor’s node library, inspector, validation, and MCP node discovery. Show compilation diagnostics and preserve revision checks for concurrent edits.
+
+Custom nodes must accept the actual C# types emitted by built-in nodes. In particular, **Read entity** returns a concrete C# entity-state object with state/results that a custom node can take as an input. Preserve rich CLR types during execution. Provide full Roslyn-assisted editing for custom node libraries, including completion, diagnostics, hover/documentation, signature help, formatting, and cross-file/type awareness.
+
 ## 4. MCP integration and agent workflow
 
 Register an administrator-only LLM API with ID `hass_sharp`, using HA’s built-in registration and lifecycle APIs. Home Assistant serves registered APIs over MCP; `/api/mcp` exposes the selected sets, and `/api/mcp/hass_sharp` addresses this set directly. ([HA API documentation](https://contributors.home-assistant.io/core/internals/llm-api/))
@@ -97,6 +105,7 @@ Required verification:
 - Test trigger validation, payloads, failed attachment cleanup, replacement, reload, and unload against real HA interfaces.
 - Verify v4 graph/source round trips, clear rejection of unsupported graph versions, and concurrent editor/MCP revision conflicts.
 - Test inspector type labels, matching port colors, rejection explanations, hover/focus errors, error-list navigation, and Alt/Option-click undo/redo.
+- Test custom node compilation, typed schema discovery, visual previews, persistence/revisions, graph execution, and editor/MCP visibility.
 - Exercise real MCP discovery, parameter schemas, administrator enforcement, read-only filtering, and create → preview → save → read → run → history → delete.
 - Run Python tests, the .NET runtime harness, frontend tests/build, publish, and Python.NET packaging smoke checks.
 - Verify the complete workflow in the local HA instance using test events and harmless automations.
