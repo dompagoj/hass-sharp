@@ -194,14 +194,7 @@ public partial class HassSharpManager
     public async Task DeleteScriptAsync(string scriptPath)
     {
         RequireCodeScript(scriptPath);
-        if (_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == scriptPath))
-            await _userScriptManager.DeleteScriptAsync(scriptPath);
-        else
-        {
-            if (!File.Exists(scriptPath)) throw new FileNotFoundException("Script not found");
-            File.Delete(scriptPath);
-            _history.Forget(scriptPath);
-        }
+        await _userScriptManager.DeleteScriptAsync(scriptPath);
         _loadErrors.TryRemove(scriptPath, out _);
     }
 }

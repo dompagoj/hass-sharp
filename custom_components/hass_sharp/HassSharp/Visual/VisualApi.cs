@@ -65,9 +65,7 @@ public partial class HassSharpManager
                     else if (operation == "delete")
                     {
                         store.Delete(id, revision);
-                        if (_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(id)))
-                            await _userScriptManager.DeleteScriptAsync(VisualRuntimePath(id));
-                        else _history.Forget(VisualRuntimePath(id));
+                        await _userScriptManager.DeleteScriptAsync(VisualRuntimePath(id), requireExisting: false);
                         _loadErrors.TryRemove(VisualRuntimePath(id), out _);
                         result = new { deleted = true };
                     }

@@ -3,6 +3,7 @@ namespace HassSharp;
 class UserScript
 {
     internal bool Active { get; set; } = true;
+    internal bool Invalidated { get; private set; }
     internal string Generation { get; } = Guid.NewGuid().ToString("N");
     Task _preparation = Task.CompletedTask;
     Task? _cleanup;
@@ -24,13 +25,10 @@ class UserScript
 
     internal async Task ConfigureAndStart()
     {
+        var epoch = ScriptManager.ActivationEpoch;
         Active = false;
         await PrepareAsync();
-        lock (ScriptManager.ActivationGate)
-        {
-            LifetimeToken.ThrowIfCancellationRequested();
-            Active = true;
-        }
+        ScriptManager.ActivatePreparedScript(this, epoch);
         Start();
     }
 
@@ -58,8 +56,14 @@ class UserScript
 
     internal void Start()
     {
-        foreach (var klass in Classes) klass.Start();
+        lock (ScriptManager.ActivationGate)
+        {
+            if (!Active || Invalidated || LifetimeToken.IsCancellationRequested) return;
+            foreach (var klass in Classes) klass.Start();
+        }
     }
+
+    internal void Invalidate() { Active = false; Invalidated = true; }
 
     internal void CancelLifetime() => _lifetimeCancellation.Cancel();
 
@@ -67,10 +71,12 @@ class UserScript
 
     public async Task FullCleanAsync()
     {
-        await ClearFromTrackingAsync();
-        Unload();
-        CompiledScript.DeleteFromDisk();
-        ScriptManager.History?.Forget(CompiledScript.FilePath);
+        List<Exception> errors = [];
+        try { await ClearFromTrackingAsync(); } catch (Exception error) { errors.Add(error); }
+        try { Unload(); } catch (Exception error) { errors.Add(error); }
+        try { CompiledScript.DeleteFromDisk(); } catch (Exception error) { errors.Add(error); }
+        try { ScriptManager.History?.Forget(CompiledScript.FilePath); } catch (Exception error) { errors.Add(error); }
+        if (errors.Count > 0) throw new AggregateException(errors);
     }
 
     internal Task ClearFromTrackingAsync()
@@ -81,16 +87,16 @@ class UserScript
     async Task ClearCoreAsync()
     {
         ScriptManager.RemoveScriptFromList(this);
-        CancelLifetime();
         List<Exception> errors = [];
+        try { CancelLifetime(); } catch (Exception error) { errors.Add(error); }
+        // Invalidated callbacks are already inert. Wait until preparation stops
+        // publishing subscriptions before draining either schedule/native lists.
+        try { await _preparation; } catch (Exception error) { errors.Add(error); }
         try { ScriptManager.SyncRunner.Clear(this); } catch (Exception error) { errors.Add(error); }
-        ScriptManager.DependencyTracking.RemoveScript(this);
-        await _preparation;
-        // Preparation may have registered dependencies after the first removal.
-        try { ScriptManager.SyncRunner.Clear(this); } catch (Exception error) { errors.Add(error); }
-        ScriptManager.DependencyTracking.RemoveScript(this);
-        try { await Task.WhenAll(Classes.Select(klass => klass.UnsubscribeNativeAsync())); }
-        catch (Exception error) { errors.Add(error); }
+        try { ScriptManager.DependencyTracking.RemoveScript(this); } catch (Exception error) { errors.Add(error); }
+        var nativeCleanup = Task.WhenAll(Classes.Select(klass => klass.UnsubscribeNativeAsync()));
+        try { await nativeCleanup; }
+        catch (Exception error) { errors.Add(nativeCleanup.Exception ?? error); }
         if (errors.Count > 0) throw new AggregateException(errors);
     }
 

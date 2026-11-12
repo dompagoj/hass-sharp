@@ -39,6 +39,7 @@ class DependencyTracking
 
     public void RemoveScript(UserScript script)
     {
+        List<Exception> errors = [];
         lock (_gate)
         foreach (var (entityId, entries) in _dependencyTracking.ToArray())
         {
@@ -47,9 +48,11 @@ class DependencyTracking
             {
                 _dependencyTracking.Remove(entityId);
                 Logger.Info($"Unsubscribing from entity tracking for entity_id: {entityId}:");
-                PyInterop.UnSubscribeFromEntityTracking(entityId);
+                try { PyInterop.UnSubscribeFromEntityTracking(entityId); }
+                catch (Exception error) { errors.Add(error); }
             }
         }
+        if (errors.Count > 0) throw new AggregateException(errors);
     }
 
     public void Debug()

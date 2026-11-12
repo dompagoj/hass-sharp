@@ -9,6 +9,11 @@ PyInterop.SubscribeToEntityTracking = id => { if (!subscriptions.Add(id)) throw 
 PyInterop.UnSubscribeFromEntityTracking = id => subscriptions.Remove(id);
 PyInterop.UnSubscribeAllFromEntityTracking = () => subscriptions.Clear();
 PyInterop.Entity = id => new() { EntityId = id, State = "fresh" };
+if (args.Any(a => a.StartsWith("--native-trigger-review")))
+{
+    await NativeTriggerTests.RunReview(args.First(a => a.StartsWith("--native-trigger-review")).Split('=').ElementAtOrDefault(1));
+    return;
+}
 foreach (var mode in Enum.GetValues<AutomationMode>())
 {
     Probe.Mode = mode;

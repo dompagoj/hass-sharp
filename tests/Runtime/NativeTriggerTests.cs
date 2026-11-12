@@ -6,6 +6,189 @@ static class NativeTriggerTests
 {
     static void Check(bool ok, string message) { if (!ok) throw new Exception(message); }
     static CompiledUserScript Compiled(string source = "test") => new() { FilePath = "native.cs", FileName = "native", SourceCode = source, Assembly = typeof(Probe).Assembly, WrittenToDisk = true };
+    static CompiledUserScript NamedCompiled(string name)
+    {
+        var compiled = Compiled(); compiled.FilePath = name + ".cs"; compiled.FileName = name; return compiled;
+    }
+
+    public static async Task RunReview(string? scenario = null)
+    {
+        Probe.Mode = AutomationMode.Parallel;
+        Probe.Release = new(TaskCreationOptions.RunContinuationsAsynchronously); Probe.Release.SetResult();
+        Probe.Configuring = null; Probe.Schedules = null; Probe.DelayedExit = null;
+        Probe.Triggers = [new HomeAssistantTrigger("event", "{\"trigger\":\"event\",\"event_type\":\"test\"}")];
+        PyInterop.Entity = id => new() { EntityId = id, State = "fresh" };
+        var unsubscribeEntity = PyInterop.UnSubscribeFromEntityTracking;
+        var registerSchedule = PyInterop.RegisterSchedule;
+        try
+        {
+            if (scenario == null || scenario == "cleanup-token") await ThrowingCleanup(true);
+            if (scenario == null || scenario == "cleanup-entity") await ThrowingCleanup(false);
+            if (scenario == null || scenario == "epoch-initial") await InvalidationDuringSlowCancellation(false);
+            if (scenario == null || scenario == "epoch-direct") await InvalidationDuringSlowCancellation(true);
+            if (scenario == null || scenario == "delete-initial") await PublicDeleteDuringInitialRegistration();
+            if (scenario == null || scenario == "schedule-drain") await SchedulePublicationDuringCleanup();
+        }
+        finally
+        {
+            Probe.Triggers = null; Probe.Schedules = null;
+            PyInterop.UnSubscribeFromEntityTracking = unsubscribeEntity;
+            PyInterop.RegisterSchedule = registerSchedule;
+        }
+    }
+
+    static async Task ThrowingCleanup(bool throwingToken)
+    {
+        var removed = new ConcurrentQueue<(string Id, Action Done)>();
+        var removalsStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var leaseNumber = 0;
+        PyInterop.BeginRegisterHaTriggers = (_, _, _, success, _) => success("throwing-" + ++leaseNumber);
+        PyInterop.BeginRemoveHaTriggers = (id, done, _) => {
+            removed.Enqueue((id, done));
+            if (removed.Count == 2) removalsStarted.TrySetResult();
+        };
+        var entityUnsubscribe = PyInterop.UnSubscribeFromEntityTracking;
+        var manager = new UserScriptManager();
+        await manager.LoadUserScripts([NamedCompiled("throwing-first"), NamedCompiled("throwing-second")]);
+        await Task.WhenAll(manager.GetUserScripts().SelectMany(s => s.Classes).Select(c => c.StartupCompletion));
+        if (throwingToken) manager.GetUserScripts()[0].LifetimeToken.Register(() => throw new InvalidOperationException("token cleanup failed"));
+        else PyInterop.UnSubscribeFromEntityTracking = _ => { entityUnsubscribe(_); throw new InvalidOperationException("entity cleanup failed"); };
+        var unloading = Task.Run(manager.UnloadUserScriptsAsync);
+        try
+        {
+            await Task.WhenAny(unloading, removalsStarted.Task).WaitAsync(TimeSpan.FromSeconds(3));
+            Check(removed.Count == 2, "all native removals reached despite throwing " + (throwingToken ? "cancellation callback" : "entity unsubscribe"));
+            Check(!unloading.IsCompleted, "cleanup errors are deferred until every native removal acknowledges");
+            foreach (var removal in removed) removal.Done();
+            try { await unloading; throw new Exception("cleanup exception was lost"); }
+            catch (AggregateException error)
+            {
+                Check(error.Flatten().InnerExceptions.Any(e => e.Message == (throwingToken ? "token cleanup failed" : "entity cleanup failed")),
+                    "reported cleanup aggregate retains the original callback fault");
+            }
+            Check(manager.GetUserScripts().Count == 0, "throwing cleanup leaves no active scripts");
+        }
+        finally
+        {
+            foreach (var removal in removed) removal.Done();
+            PyInterop.UnSubscribeFromEntityTracking = entityUnsubscribe;
+        }
+        Console.WriteLine("PASS native cleanup continues after throwing " + (throwingToken ? "token callback" : "entity unsubscribe"));
+    }
+
+    static async Task InvalidationDuringSlowCancellation(bool directConfigure)
+    {
+        Probe.Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
+        Probe.TriggerPayloads = new();
+        var calls = new List<(Func<string, Task> Fire, Action<string> Success)>();
+        PyInterop.BeginRegisterHaTriggers = (_, _, fire, success, _) => calls.Add((fire, success));
+        PyInterop.BeginRemoveHaTriggers = (_, done, _) => done();
+        var manager = new UserScriptManager();
+        var firstLoad = manager.LoadUserScripts([NamedCompiled("epoch-first")]);
+        calls[0].Success("epoch-first"); await firstLoad;
+        var first = manager.GetUserScripts().Single();
+        await first.Classes.Single().StartupCompletion;
+        while (Probe.Starts.Reader.TryRead(out _)) { }
+        while (Probe.TriggerPayloads.TryDequeue(out _)) { }
+        using var blocked = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        first.LifetimeToken.Register(() => { entered.TrySetResult(); if (!blocked.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("release cancellation callback"); });
+        UserScript? direct = null;
+        var pending = directConfigure
+            ? (direct = manager.LoadUserScript(NamedCompiled("epoch-second"))).ConfigureAndStart()
+            : manager.LoadUserScripts([NamedCompiled("epoch-second")]);
+        var unloading = Task.Run(manager.UnloadUserScriptsAsync);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            calls[1].Success("epoch-second");
+            try { await pending.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (InvalidOperationException) when (directConfigure) { }
+            await calls[1].Fire("{\"trigger\":{\"id\":\"invalidated\"}}");
+            Check(manager.GetUserScripts().Count == 0 && !Probe.Starts.Reader.TryRead(out _) && Probe.TriggerPayloads.IsEmpty,
+                "unload epoch prevents " + (directConfigure ? "ConfigureAndStart" : "initial load") + " activation/start/dispatch before token cancellation");
+        }
+        finally
+        {
+            blocked.Set();
+            await unloading.WaitAsync(TimeSpan.FromSeconds(3));
+            if (direct != null) await direct.ClearFromTrackingAsync();
+        }
+        Console.WriteLine("PASS post-await invalidation during slow cancellation: " + (directConfigure ? "ConfigureAndStart" : "initial load"));
+    }
+
+    static async Task PublicDeleteDuringInitialRegistration()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "hass-sharp-pending-delete-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var originalHassPath = HassPath.HassConfiguration;
+        var log = PyInterop.Log;
+        var runs = 0;
+        PyInterop.Log = (level, message) => {
+            if (message.Contains("PENDING SCRIPT MUST NOT START")) Interlocked.Increment(ref runs);
+            else log(level, message);
+        };
+        var registration = new TaskCompletionSource<(Func<string, Task> Fire, Action<string> Success)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var removal = new TaskCompletionSource<Action>(TaskCreationOptions.RunContinuationsAsynchronously);
+        PyInterop.BeginRegisterHaTriggers = (_, _, fire, success, _) => registration.TrySetResult((fire, success));
+        PyInterop.BeginRemoveHaTriggers = (_, done, _) => removal.TrySetResult(done);
+        try
+        {
+            var api = new HassSharpManager(folder);
+            Directory.CreateDirectory(HassPath.UserScripts);
+            var path = Path.Combine(HassPath.UserScripts, "pending.cs");
+            File.WriteAllText(path, """
+                public class PendingAutomation : Automation
+                {
+                    public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Run), Startup: true,
+                        Triggers: [new HomeAssistantTrigger("pending", "{\"trigger\":\"event\",\"event_type\":\"test\"}")]));
+                    public Task Run() { Logger.Info("PENDING SCRIPT MUST NOT START"); return Task.CompletedTask; }
+                }
+                """);
+            var init = api.Init([]);
+            var pending = await registration.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var delete = api.DeleteScriptAsync(path);
+            Check(!delete.IsCompleted, "public delete waits for first-load native registration");
+            pending.Success("pending-delete");
+            var done = await removal.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Check(!delete.IsCompleted, "public delete waits for native removal acknowledgement");
+            done();
+            await Task.WhenAll(init, delete).WaitAsync(TimeSpan.FromSeconds(5));
+            Check(!File.Exists(path) && api.GetScriptSummaries().Count == 0, "public delete removes a preparing script and its source");
+            await pending.Fire("{\"trigger\":{}}");
+            Check(runs == 0, "deleted first-load generation cannot start or dispatch stale callbacks");
+            await api.UnloadAsync();
+        }
+        finally { PyInterop.Log = log; HassPath.HassConfiguration = originalHassPath; Directory.Delete(folder, true); }
+        Console.WriteLine("PASS public deletion drains pending first-load generation");
+    }
+
+    static async Task SchedulePublicationDuringCleanup()
+    {
+        Probe.Triggers = null;
+        Probe.Schedules = [AutomationSchedule.Daily("first", new TimeOnly(12, 0), "UTC"), AutomationSchedule.Daily("second", new TimeOnly(13, 0), "UTC")];
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registered = 0;
+        var removed = new ConcurrentQueue<int>();
+        PyInterop.RegisterSchedule = (_, _) => {
+            var id = Interlocked.Increment(ref registered);
+            if (id == 2) { entered.TrySetResult(); if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("release schedule registration"); }
+            return () => removed.Enqueue(id);
+        };
+        var manager = new UserScriptManager();
+        var loading = Task.Run(() => manager.LoadUserScripts([NamedCompiled("schedule-publication")]));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var unloading = manager.UnloadUserScriptsAsync();
+        try
+        {
+            Check(!unloading.IsCompleted && removed.IsEmpty, "schedule drain waits for in-progress registration publication");
+        }
+        finally { release.Set(); await Task.WhenAll(loading, unloading).WaitAsync(TimeSpan.FromSeconds(3)); Probe.Schedules = null; }
+        Check(removed.Order().SequenceEqual(new[] { 1, 2 }), "every concurrently published schedule is removed exactly once");
+        Console.WriteLine("PASS schedule registration and teardown publication/drain race");
+    }
+
     public static async Task Run()
     {
         Probe.Mode = AutomationMode.Parallel;
@@ -114,6 +297,7 @@ static class NativeTriggerTests
         await leaseTask.ContinueWith(_ => continuationInline = callbackThread == Environment.CurrentManagedThreadId, TaskContinuationOptions.ExecuteSynchronously);
         Check(!continuationInline, "registration continuations never run synchronously in Python callback");
         await (await leaseTask).DisposeAsync();
+        await RunReview();
         Probe.Triggers = null;
         Console.WriteLine("PASS native trigger Task bridge, payload, staged activation, replacement rollback, late lease/unload/stale generation");
     }

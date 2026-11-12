@@ -41,6 +41,8 @@ class UserScriptManager
     readonly List<UserScript> _userScripts = new();
     readonly HashSet<UserScript> _preparing = new();
     long _epoch;
+    readonly HashSet<string> _deletingPaths = new(StringComparer.Ordinal);
+    internal long ActivationEpoch { get { lock (ActivationGate) return _epoch; } }
     bool _accepting = true;
     public DependencyTracking DependencyTracking { get; } = new();
     public ScriptSyncRunner SyncRunner { get; } = new();
@@ -60,25 +62,54 @@ class UserScriptManager
             _epoch++;
             _accepting = false;
             scripts = _userScripts.Concat(_preparing).Distinct().ToArray();
-            foreach (var script in scripts) script.Active = false;
+            foreach (var script in scripts) script.Invalidate();
             _userScripts.Clear();
             _preparing.Clear();
         }
-        foreach (var script in scripts) script.CancelLifetime();
-        return CleanupScriptsAsync(scripts);
+        List<Exception> errors = [];
+        foreach (var script in scripts)
+            try { script.CancelLifetime(); } catch (Exception error) { errors.Add(error); }
+        return CleanupScriptsAsync(scripts, errors);
     }
 
-    async Task CleanupScriptsAsync(UserScript[] scripts)
+    async Task CleanupScriptsAsync(UserScript[] scripts, List<Exception>? errors = null)
     {
-        try { await Task.WhenAll(scripts.Select(script => script.ClearFromTrackingAsync())); }
-        finally { foreach (var script in scripts) script.Unload(); }
+        errors ??= [];
+        var cleanup = Task.WhenAll(scripts.Select(script => script.ClearFromTrackingAsync()));
+        try { await cleanup; }
+        catch (Exception error) { errors.Add(cleanup.Exception ?? error); }
+        foreach (var script in scripts)
+            try { script.Unload(); } catch (Exception error) { errors.Add(error); }
+        if (errors.Count > 0) throw new AggregateException(errors);
+    }
+
+    internal void EnsureCanActivate(UserScript script, long epoch)
+    {
+        lock (ActivationGate)
+        {
+            if (!_accepting || epoch != _epoch || script.Invalidated ||
+                (!_preparing.Contains(script) && !_userScripts.Contains(script)))
+                throw new InvalidOperationException("Script generation was invalidated during preparation");
+            script.LifetimeToken.ThrowIfCancellationRequested();
+        }
+    }
+
+    internal void ActivatePreparedScript(UserScript script, long epoch)
+    {
+        lock (ActivationGate)
+        {
+            EnsureCanActivate(script, epoch);
+            script.Active = true;
+            _preparing.Remove(script);
+            if (!_userScripts.Contains(script)) _userScripts.Add(script);
+        }
     }
 
     public void RemoveScriptFromList(UserScript script)
     {
         lock (ActivationGate)
         {
-            script.Active = false;
+            script.Invalidate();
             _userScripts.Remove(script);
             _preparing.Remove(script);
         }
@@ -104,7 +135,7 @@ class UserScriptManager
         userScript.Classes = userScriptClasses;
         lock (ActivationGate)
         {
-            if (!_accepting)
+            if (!_accepting || _deletingPaths.Contains(compiledScript.FilePath))
             {
                 compiledScript.Unload();
                 throw new InvalidOperationException("Script manager is unloaded");
@@ -130,11 +161,7 @@ class UserScriptManager
                     script = LoadUserScript(compiled, staged: true);
                 }
                 await script.PrepareAsync();
-                lock (ActivationGate)
-                {
-                    script.LifetimeToken.ThrowIfCancellationRequested();
-                    script.Active = true; _preparing.Remove(script); _userScripts.Add(script);
-                }
+                ActivatePreparedScript(script, epoch);
                 script.Start();
             }
             catch (Exception ex)
@@ -199,17 +226,15 @@ class UserScriptManager
                 // Stage subscriptions while the original remains the only trigger recipient.
                 replacement = LoadUserScript(compiled, staged: true);
                 await replacement.PrepareAsync();
-                replacement.LifetimeToken.ThrowIfCancellationRequested();
-                if (epoch != _epoch) throw new InvalidOperationException("Script was unloaded during update");
+                EnsureCanActivate(replacement, epoch);
                 await replacement.WriteIfDirty();
                 lock (ActivationGate)
                 {
-                    replacement.LifetimeToken.ThrowIfCancellationRequested();
-                    if (epoch != _epoch) throw new InvalidOperationException("Script was unloaded during update");
+                    EnsureCanActivate(replacement, epoch);
                     var index = found == null ? -1 : _userScripts.IndexOf(found);
                     if (found != null && (index < 0 || !found.Active))
                         throw new InvalidOperationException("Script was unloaded during update");
-                    if (found != null) found.Active = false;
+                    if (found != null) found.Invalidate();
                     replacement.Active = true;
                     _preparing.Remove(replacement);
                     if (found == null) _userScripts.Add(replacement);
@@ -318,24 +343,33 @@ class UserScriptManager
         }
     }
 
-    public async Task DeleteScriptAsync(string scriptPath)
+    public async Task DeleteScriptAsync(string scriptPath, bool requireExisting = true)
     {
-        // Invalidate synchronously before waiting for a concurrent preparation.
         UserScript[] deleting;
         lock (ActivationGate)
         {
+            if (!_deletingPaths.Add(scriptPath)) throw new InvalidOperationException("Script deletion is already in progress");
             deleting = _userScripts.Concat(_preparing).Where(s => s.CompiledScript.FilePath == scriptPath).Distinct().ToArray();
-            foreach (var script in deleting) script.Active = false;
+            foreach (var script in deleting) script.Invalidate();
         }
-        foreach (var script in deleting) script.CancelLifetime();
-        await _updates.WaitAsync();
+        List<Exception> errors = [];
         try
         {
-            var found = _userScripts.Find(s => s.CompiledScript.FilePath == scriptPath);
-            if (found is null) throw new InvalidOperationException("Script not found");
-            await found.FullCleanAsync();
+            foreach (var script in deleting)
+                try { script.CancelLifetime(); } catch (Exception error) { errors.Add(error); }
+            await _updates.WaitAsync();
+            try
+            {
+                if (requireExisting && deleting.Length == 0 && !File.Exists(scriptPath))
+                    throw new FileNotFoundException("Script not found");
+                try { await CleanupScriptsAsync(deleting); } catch (Exception error) { errors.Add(error); }
+                try { File.Delete(scriptPath); } catch (Exception error) { errors.Add(error); }
+                try { History?.Forget(scriptPath); } catch (Exception error) { errors.Add(error); }
+            }
+            finally { _updates.Release(); }
         }
-        finally { _updates.Release(); }
+        finally { lock (ActivationGate) _deletingPaths.Remove(scriptPath); }
+        if (errors.Count > 0) throw new AggregateException(errors);
     }
 
     public static string NormalizeScriptName(string name)

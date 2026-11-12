@@ -35,7 +35,7 @@ class ScriptSyncRunner
         List<Exception> errors = [];
         foreach (var script in scriptArray)
         {
-            script.CancelLifetime();
+            try { script.CancelLifetime(); } catch (Exception error) { errors.Add(error); }
             foreach (var klass in script.Classes)
                 try { klass.UnsubscribeSchedules(); } catch (Exception error) { errors.Add(error); }
         }
