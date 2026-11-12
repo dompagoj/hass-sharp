@@ -169,3 +169,26 @@ it('does not resurrect a discarded absent file from an older pending file list',
   expect(session.selected()?.source).toBe('preserve me'); expect(session.generation()).toBe('g2')
   expect(calls.filter(r => r.operation === 'preview').at(-1).sources).toEqual([])
 })
+it.each([false, true])('recovers a missing file with a delayed authority list without conflicting the remaining draft (edit while pending: %s)', async editWhilePending => {
+  let deleted = false
+  let resolveList!: (value: any) => void
+  const { calls } = setup(r => {
+    if (r.operation === 'list') return deleted ? new Promise(done => { resolveList = done }) : { documents: [doc(), doc('other', 'public class Other {}')], generation: 'g1' }
+    if (r.operation === 'read' && deleted) return { ok: false, error: { code: 'not_found', detail: 'Library missing' } }
+    if (r.operation === 'preview' && deleted && r.generation !== 'g2') return { ok: false, error: { code: 'conflict', detail: 'Saved library generation changed' } }
+  })
+  await flush(); session.edit('discard A'); session.select('other'); session.edit('keep B'); session.select('shared')
+  deleted = true
+  const reloading = session.reload('shared'); await flush(0)
+  expect(session.selected()?.id).toBe('other'); expect(session.preview()).toBeUndefined()
+  if (editWhilePending) session.edit('newer B while refresh is pending')
+  await flush(650) // Both the original debounce and a later edit can request the old generation.
+  expect(session.conflict()).toBe(false)
+  expect(session.canSave()).toBe(false)
+  resolveList({ documents: [doc('other', 'public class Other {}')], generation: 'g2' }); await reloading; await flush()
+  expect(session.selected()?.revision).toBe(1)
+  expect(session.selected()?.source).toBe(editWhilePending ? 'newer B while refresh is pending' : 'keep B')
+  expect(session.dirty()).toBe(true); expect(session.preview()?.valid).toBe(true)
+  expect(session.error()).toBeUndefined(); expect(session.conflict()).toBe(false); expect(session.canSave()).toBe(true)
+  expect(calls.filter(r => r.operation === 'preview').at(-1)).toMatchObject({ id: 'other', generation: 'g2', sources: [] })
+})

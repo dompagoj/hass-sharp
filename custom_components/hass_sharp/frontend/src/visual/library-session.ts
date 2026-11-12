@@ -46,7 +46,10 @@ export function createLibrarySession(api: LibraryApi) {
       return true
     } catch (e) {
       if (!current(c)) return false
-      batch(() => { setError(String(e)); setPreviewing(false); if (e instanceof LibraryApiError && e.code === 'conflict') setFiles(list => list.map(f => f.id === c.id ? { ...f, conflict: true } : f)) })
+      // Draft operations check the workspace generation, never a document revision.
+      // Keep a generation mismatch transient until authority refreshes; only list
+      // revision comparisons and mutations can mark a file revision-conflicted.
+      batch(() => { setError(String(e)); setPreviewing(false) })
       return false
     }
   }
