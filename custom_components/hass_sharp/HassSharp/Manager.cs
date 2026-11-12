@@ -8,6 +8,9 @@ public partial class HassSharpManager
     readonly CodeCompiler _compiler;
     readonly UserScriptManager _userScriptManager;
     readonly RunHistoryStore _history;
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _loadErrors = new();
+    void RecordLoadError(string path, Exception error) => _loadErrors[path] = error is CompilationErrorException compilation
+        ? string.Join("\n", compilation.Errors) : error.GetBaseException().Message;
 
     public HassSharpManager(string hassConfigPath)
     {
@@ -20,12 +23,14 @@ public partial class HassSharpManager
     public async Task Init(string[] hassEntityIds)
     {
         _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
-        var assemblies = await _compiler.CompileFromUserScriptsFolder();
+        _loadErrors.Clear();
+        var assemblies = await _compiler.CompileFromUserScriptsFolder(RecordLoadError);
         foreach (var document in VisualDocuments.List())
         {
             try { assemblies.Add(await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), document.Source, true)); }
             catch (Exception ex)
             {
+                RecordLoadError(VisualRuntimePath(document.Id), ex);
                 Logger.Error($"Cannot load visual document {document.Id}: {ex}");
                 if (ex is CompilationErrorException compilation) Logger.Error(string.Join("\n", compilation.Errors));
             }
@@ -39,7 +44,7 @@ public partial class HassSharpManager
             return;
         }
 
-        await _userScriptManager.LoadUserScripts(assemblies);
+        await _userScriptManager.LoadUserScripts(assemblies, RecordLoadError);
         _userScriptManager.DependencyTracking.Debug();
     }
 
@@ -64,13 +69,35 @@ public partial class HassSharpManager
         return _userScriptManager.RunEntries(entityId, trigger);
     }
 
-    public PyList GetUserScripts() => PyDTOConverter.UserScriptToDto(_userScriptManager.GetUserScripts().Where(s => Path.GetDirectoryName(s.CompiledScript.FilePath) == HassPath.UserScripts).ToList());
+    public PyList GetUserScripts() => PyDTOConverter.UserScriptToDto(GetScriptSummaries());
+
+    internal List<UserScriptDTO> GetScriptSummaries()
+    {
+        var scripts = _userScriptManager.GetUserScripts()
+        .Where(s => Path.GetDirectoryName(s.CompiledScript.FilePath) == HassPath.UserScripts)
+        .Select(s => new UserScriptDTO { AutomationId = s.AutomationId, Revision = s.Revision,
+            FileName = s.CompiledScript.FileName, Active = s.Active,
+            Classes = s.Classes.Select(c => new UserScriptClassDto { Name = c.ClassName, Methods = c.Methods.Select(m => m.Name).ToArray() }).ToArray() })
+        .ToList();
+        if (Directory.Exists(HassPath.UserScripts))
+        foreach (var path in Directory.GetFiles(HassPath.UserScripts, "*.cs").Order(StringComparer.Ordinal))
+        {
+            var name = Path.GetFileNameWithoutExtension(path);
+            if (scripts.Any(s => s.FileName == name)) continue;
+            scripts.Add(new UserScriptDTO { FileName = name, Active = false, Classes = [],
+                ActivationError = _loadErrors.TryGetValue(path, out var error) ? error : "Not active; save to activate" });
+        }
+        return scripts;
+    }
 
     public UserScriptSourceDTO? GetUserScript(string fileName)
     {
         var script = _userScriptManager.GetUserScript(fileName);
         if (script == null)
-            return null;
+        {
+            var path = CodePath(fileName);
+            return File.Exists(path) ? new() { FileName = fileName, Source = File.ReadAllText(path) } : null;
+        }
 
         return new() { FileName = script.CompiledScript.FileName, Source = script.CompiledScript.SourceCode };
     }
@@ -89,11 +116,12 @@ public partial class HassSharpManager
         if (_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FileName == path && Path.GetDirectoryName(s.CompiledScript.FilePath) != HassPath.UserScripts)
             && !File.Exists(Path.Join(HassPath.UserScripts, $"{path}.cs")))
             return PyResult.Errors(["Use the visual API for visual documents"]);
-        var scriptPath = Path.Join(HassPath.UserScripts, $"{path}.cs");
+        var scriptPath = CodePath(path);
         try
         {
             var compiled = await _compiler.CompileSingleFile(scriptPath, source, false);
             await _userScriptManager.UpdateUserScript(compiled);
+            _loadErrors.TryRemove(scriptPath, out _);
             _userScriptManager.DependencyTracking.Debug();
         }
         catch (CompilationErrorException ex)
@@ -139,6 +167,13 @@ public partial class HassSharpManager
     }
 
 
+    static string CodePath(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name is "." or ".." || name.IndexOfAny(['/', '\\', '\0']) >= 0)
+            throw new ArgumentException("Invalid script name");
+        return Path.Combine(HassPath.UserScripts, name + ".cs");
+    }
+
     static void RequireCodeScript(string path)
     {
         if (Path.GetDirectoryName(Path.GetFullPath(path)) != Path.GetFullPath(HassPath.UserScripts))
@@ -148,6 +183,14 @@ public partial class HassSharpManager
     public void DeleteScript(string scriptPath)
     {
         RequireCodeScript(scriptPath);
-        _userScriptManager.DeleteScript(scriptPath);
+        if (_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == scriptPath))
+            _userScriptManager.DeleteScript(scriptPath);
+        else
+        {
+            if (!File.Exists(scriptPath)) throw new FileNotFoundException("Script not found");
+            File.Delete(scriptPath);
+            _history.Forget(scriptPath);
+        }
+        _loadErrors.TryRemove(scriptPath, out _);
     }
 }

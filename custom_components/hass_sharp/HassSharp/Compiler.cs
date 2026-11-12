@@ -14,7 +14,7 @@ public class CodeCompiler(
 
     readonly UserScriptCacheProvider _cacheProvider = new();
 
-    public Task<List<CompiledUserScript>> CompileFromUserScriptsFolder() => CompileFromFolder(HassPath.UserScripts);
+    public Task<List<CompiledUserScript>> CompileFromUserScriptsFolder(Action<string, Exception>? onFailure = null) => CompileFromFolder(HassPath.UserScripts, onFailure);
 
     public Task<CompiledUserScript> CompileFromUserScriptFile(string path, string source, bool writtenToDisk) =>
         CompileSingleFile(Path.Join(HassPath.UserScripts, path), source, writtenToDisk);
@@ -35,7 +35,7 @@ public class CodeCompiler(
         };
     }
 
-    async Task<List<CompiledUserScript>> CompileFromFolder(string folderPath)
+    async Task<List<CompiledUserScript>> CompileFromFolder(string folderPath, Action<string, Exception>? onFailure)
     {
         if (!Directory.Exists(folderPath))
         {
@@ -54,15 +54,20 @@ public class CodeCompiler(
 
                 if (cachedBytes != null)
                 {
-                    Logger.Info($"No change detected in {Path.GetFileName(path)}, using cached dll");
-                    return new CompiledUserScript
+                    try
                     {
-                        Assembly = LoadAssembly(cachedBytes),
-                        FilePath = path,
-                        FileName = Path.GetFileNameWithoutExtension(path),
-                        SourceCode = source,
-                        WrittenToDisk = true,
-                    };
+                        Logger.Info($"No change detected in {Path.GetFileName(path)}, using cached dll");
+                        return new CompiledUserScript
+                        {
+                            Assembly = LoadAssembly(cachedBytes),
+                            FilePath = path,
+                            FileName = Path.GetFileNameWithoutExtension(path),
+                            SourceCode = source,
+                            WrittenToDisk = true,
+                        };
+                    }
+                    catch (Exception ex) when (ex is BadImageFormatException or FileLoadException)
+                    { Logger.Error($"Invalid compile cache for {path}; rebuilding: {ex}"); }
                 }
 
                 Logger.Info($"Change detected in {Path.GetFileName(path)}, recompiling");
@@ -81,6 +86,7 @@ public class CodeCompiler(
             {
                 Logger.Error($"Cannot load script {path}: {ex}");
                 if (ex is CompilationErrorException compilation) Logger.Error(string.Join("\n", compilation.Errors));
+                onFailure?.Invoke(path, ex);
                 return null;
             }
         });
@@ -94,7 +100,8 @@ public class CodeCompiler(
         var loadContext = new ScriptLoadContext();
 
         using var stream = new MemoryStream(assemblyBytes, writable: false);
-        return loadContext.LoadFromStream(stream);
+        try { return loadContext.LoadFromStream(stream); }
+        catch { loadContext.Unload(); throw; }
     }
 
     byte[] CompileSingleFileToBytes(string source, string path)

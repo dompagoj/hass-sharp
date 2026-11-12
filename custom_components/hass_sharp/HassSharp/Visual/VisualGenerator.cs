@@ -119,7 +119,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             }
             lines.Add("private async Task ExecuteGraph(int step)"); lines.Add("{");
             lines.Add("var responses = new System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>();");
-            lines.Add("Exception? lastError = null;");
+            lines.Add("Exception lastError = null; _ = lastError;");
             lines.Add("while (step >= 0)"); lines.Add("{");
             lines.Add("CancellationToken.ThrowIfCancellationRequested();"); lines.Add("switch (step)"); lines.Add("{");
             foreach (var id in ids)

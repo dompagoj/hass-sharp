@@ -55,6 +55,79 @@ static class BackendReviewTests
                 Check(!plan.Contains("TEMP B-TREE") && plan.Contains("IX_Runs_Completed"), "retention sorts/scans without completed index: " + plan);
                 return Task.CompletedTask;
             });
+            await Test("preview has no scaffolding warnings", () => {
+                var preview = generator.Preview(VisualTests.Graph());
+                Check(preview.Valid && preview.Diagnostics.Count == 0, "unexpected diagnostics: " + JsonSerializer.Serialize(preview.Diagnostics));
+                return Task.CompletedTask;
+            });
+            await Test("damaged compile cache rebuilds", async () => {
+                Directory.CreateDirectory(HassPath.UserScripts);
+                var path = Path.Combine(HassPath.UserScripts, "cached.cs");
+                File.WriteAllText(path, "public class Cached : Automation {}");
+                foreach (var script in await compiler.CompileFromUserScriptsFolder()) script.Unload();
+                File.WriteAllBytes(Path.Combine(HassPath.UserScripts,".cache","cached.cs.dll"), [1,2,3]);
+                var rebuilt = await compiler.CompileFromUserScriptsFolder();
+                try { Check(rebuilt.Any(x => x.FileName == "cached"), "valid source blocked by cache"); }
+                finally { foreach (var script in rebuilt) script.Unload(); File.Delete(path); }
+            });
+            await Test("corrupt visual can be explicitly deleted", () => {
+                var dir = Path.Combine(root,"corrupt-delete"); Directory.CreateDirectory(dir);
+                var path = Path.Combine(dir,"hall.json"); File.WriteAllText(path,"{ truncated");
+                var store = new VisualStore(dir,generator);
+                try { store.Delete("hall", 5); throw new Exception("stale revision deleted corrupt file"); }
+                catch (VisualConflictException) { }
+                store.Delete("hall",0);
+                Check(!File.Exists(path), "corrupt file not deleted");
+                store.Save("hall",VisualTests.Graph(),0);
+                try { store.Delete("hall",0); throw new Exception("zero revision deleted healthy document"); }
+                catch (VisualConflictException) { }
+                return Task.CompletedTask;
+            });
+            await Test("failed startup code remains readable and deletable", async () => {
+                Directory.CreateDirectory(HassPath.UserScripts);
+                var path = Path.Combine(HassPath.UserScripts,"repair.cs");
+                File.WriteAllText(path,"invalid code for repair");
+                var api = new HassSharpManager(root);
+                try {
+                    await api.Init([]);
+                    var summary = api.GetScriptSummaries().SingleOrDefault(x => x.FileName == "repair");
+                    Check(summary is { Active: false } && !string.IsNullOrEmpty(summary.ActivationError), "failed code not listed with error");
+                    Check(api.GetUserScript("repair")?.Source == "invalid code for repair", "failed code cannot be opened");
+                    api.DeleteScript(path);
+                    Check(!File.Exists(path) && api.GetUserScript("repair") == null, "failed code cannot be deleted");
+                } finally { api.Unload(); File.Delete(path); }
+            });
+            await Test("failed startup code can be repaired and activated", async () => {
+                Directory.CreateDirectory(HassPath.UserScripts);
+                var path = Path.Combine(HassPath.UserScripts,"repair.cs");
+                File.WriteAllText(path,"invalid code for repair");
+                var manager = new UserScriptManager();
+                var compiled = await compiler.CompileSingleFile(path,"public class Repaired : Automation {}",false);
+                try {
+                    var rejected = await compiler.CompileSingleFile(path, "public class Invalid : Automation { public override AutomationConfiguration Configure() => throw new InvalidOperationException(\"not ready\"); }", false);
+                    try { await manager.UpdateUserScript(rejected); throw new Exception("invalid repair accepted"); }
+                    catch (InvalidOperationException ex) when (ex.Message == "not ready") { }
+                    Check(File.ReadAllText(path) == "invalid code for repair" && manager.GetUserScripts().Count == 0, "invalid repair damaged source or activated");
+                    await manager.UpdateUserScript(compiled);
+                    Check(manager.GetUserScripts().Single().CompiledScript.FileName == "repair", "repair did not activate");
+                    Check(File.ReadAllText(path).Contains("Repaired"), "repair not persisted");
+                } finally { manager.UnloadUserScripts(); File.Delete(path); }
+            });
+            await Test("visual startup failure is visible in read and list", async () => {
+                var dir = Path.Combine(root,".storage","hass_sharp","visual");
+                var store = new VisualStore(dir,generator);
+                var doc = store.Save("status", VisualTests.Graph(),0);
+                File.WriteAllText(Path.Combine(dir,"status.json"),JsonSerializer.Serialize(doc with { Source = "invalid C#" },VisualStore.Json));
+                var api = new HassSharpManager(root);
+                try {
+                    await api.Init([]);
+                    foreach(var operation in new[] { "read", "list" }) {
+                        var result = JsonNode.Parse(await api.VisualRequest(new JsonObject { ["operation"] = operation, ["id"] = "status" }.ToJsonString()))!["result"]!;
+                        var item = operation == "read" ? result : result.AsArray().Single(x => x!["id"]!.GetValue<string>() == "status")!;
+                        Check(item["active"]?.GetValue<bool>() == false && !string.IsNullOrWhiteSpace(item["activationError"]?.GetValue<string>()), "failure status absent from " + operation);
+                    }
+                } finally { api.Unload(); store.Delete("status",1); }
+            });
             await Test("strict mode names", () => {
                 foreach (var mode in new[] { "0", "Single, Restart", " Single " }) {
                     var graph = VisualTests.Graph(); graph["nodes"]![0]!["config"]!["mode"] = mode;

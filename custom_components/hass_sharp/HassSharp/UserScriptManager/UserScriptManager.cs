@@ -95,7 +95,7 @@ class UserScriptManager
         return userScript;
     }
 
-    public async Task LoadUserScripts(IEnumerable<CompiledUserScript> compiledScripts)
+    public async Task LoadUserScripts(IEnumerable<CompiledUserScript> compiledScripts, Action<string, Exception>? onFailure = null)
     {
         foreach (var compiled in compiledScripts)
         {
@@ -109,6 +109,7 @@ class UserScriptManager
             }
             catch (Exception ex)
             {
+                onFailure?.Invoke(compiled.FilePath, ex);
                 Logger.Error($"Cannot activate script {compiled.FilePath}: {ex}");
                 try { script?.ClearFromTracking(); }
                 catch (Exception cleanup) { Logger.Error($"Cannot clean up script {compiled.FilePath}: {cleanup}"); }
@@ -151,7 +152,7 @@ class UserScriptManager
         try
         {
             var found = _userScripts.SingleOrDefault(s => s.CompiledScript.Id() == compiled.Id());
-            if (found is null)
+            if (found is null && !File.Exists(compiled.FilePath))
             {
                 compiled.Unload();
                 throw new InvalidOperationException("Script not found");
@@ -165,12 +166,13 @@ class UserScriptManager
                 await replacement.WriteIfDirty();
                 lock (ActivationGate)
                 {
-                    var index = _userScripts.IndexOf(found);
-                    if (index < 0 || !found.Active)
+                    var index = found == null ? -1 : _userScripts.IndexOf(found);
+                    if (found != null && (index < 0 || !found.Active))
                         throw new InvalidOperationException("Script was unloaded during update");
-                    found.Active = false;
+                    if (found != null) found.Active = false;
                     replacement.Active = true;
-                    _userScripts[index] = replacement;
+                    if (found == null) _userScripts.Add(replacement);
+                    else _userScripts[index] = replacement;
                 }
             }
             catch
@@ -180,8 +182,8 @@ class UserScriptManager
                 throw;
             }
 
-            found.ClearFromTracking();
-            found.Unload();
+            found?.ClearFromTracking();
+            found?.Unload();
             replacement.Start();
         }
         finally { _updates.Release(); }

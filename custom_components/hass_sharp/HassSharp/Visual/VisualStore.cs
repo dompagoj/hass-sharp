@@ -9,6 +9,10 @@ public sealed class VisualValidationException(VisualPreview preview) : Exception
 public sealed record VisualDocument(int Version, string Id, long Revision, JsonObject Graph, string Source, List<VisualSourceMap> SourceMap)
 {
     public string? AutomationId { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Active { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? ActivationError { get; init; }
 }
 
 public sealed class VisualStore(string directory, VisualGenerator generator)
@@ -26,7 +30,12 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
         lock (Gate)
         {
             var path = FilePath(id);
-            return File.Exists(path) ? JsonSerializer.Deserialize<VisualDocument>(File.ReadAllText(path), Json) : null;
+            if (!File.Exists(path)) return null;
+            var document = JsonSerializer.Deserialize<VisualDocument>(File.ReadAllText(path), Json);
+            if (document == null || document.Version != 1 || document.Id != id ||
+                document.Graph == null || document.Source == null || document.SourceMap == null || document.Revision < 1)
+                throw new JsonException("Invalid visual document envelope");
+            return document;
         }
     }
     public VisualDocument[] List()
@@ -78,7 +87,15 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
     {
         lock (Gate)
         {
-            var old = Read(id) ?? throw new FileNotFoundException("Visual document not found");
+            VisualDocument old;
+            try { old = Read(id) ?? throw new FileNotFoundException("Visual document not found"); }
+            catch (JsonException)
+            {
+                // Revision zero is an explicit recovery request, never a wildcard for valid documents.
+                if (expectedRevision != 0) throw new VisualConflictException();
+                File.Delete(FilePath(id));
+                return;
+            }
             if (old.Revision != expectedRevision) throw new VisualConflictException();
             File.Delete(FilePath(id));
         }

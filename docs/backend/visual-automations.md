@@ -194,3 +194,9 @@ untracked reads, event cause, shared action paths, loops and awaited concurrent
 helpers), duplicated triggers, deterministic output, member diagnostics, and
 generated Restart/Parallel executions cancelled on unload. This is a representative
 fixture, not a claim of testing a particular installation's devices or script.
+
+Runtime status: list/read document results include `active` and, when inactive or a
+replacement failed, `activationError`. These are runtime metadata, not graph data.
+A corrupt stored JSON document may be removed with `delete`, its ID and
+`expectedRevision: 0`. This recovery value never bypasses revision checks for a
+valid document. Read/save still report `invalid_request` for corrupt JSON.

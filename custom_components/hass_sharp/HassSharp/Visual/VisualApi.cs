@@ -8,7 +8,13 @@ public partial class HassSharpManager
     VisualStore VisualDocuments => new(Path.Combine(HassPath.HassConfiguration, ".storage", "hass_sharp", "visual"), new(_diagnosticsProvider));
     string VisualRuntimePath(string id) => Path.Combine(HassPath.HassConfiguration, ".storage", "hass_sharp", "visual", "visual_" + id + ".cs");
 
-    VisualDocument WithRuntimeIdentity(VisualDocument document) => document with { AutomationId = _history.Identity(VisualRuntimePath(document.Id)) };
+    VisualDocument WithRuntimeIdentity(VisualDocument document)
+    {
+        var path = VisualRuntimePath(document.Id);
+        var active = _userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == path && s.Active);
+        return document with { AutomationId = _history.Identity(path), Active = active,
+            ActivationError = _loadErrors.TryGetValue(path, out var error) ? error : active ? null : "Not active" };
+    }
 
     // Single JSON bridge keeps Python.NET calls and frontend versioning explicit.
     public async Task<string> VisualRequest(string requestJson)
@@ -49,7 +55,9 @@ public partial class HassSharpManager
                             }
                             else await _userScriptManager.UpdateUserScript(compiled);
                         }
-                        catch (Exception ex) { activationError = ex.Message; }
+                        catch (Exception ex) { activationError = ex.Message; RecordLoadError(VisualRuntimePath(id), ex); }
+                        if (activationError == null) _loadErrors.TryRemove(VisualRuntimePath(id), out _);
+                        document = WithRuntimeIdentity(document);
                         result = new { document, active = activationError == null, activationError };
                     }
                     else if (operation == "delete")
@@ -58,6 +66,7 @@ public partial class HassSharpManager
                         if (_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(id)))
                             _userScriptManager.DeleteScript(VisualRuntimePath(id));
                         else _history.Forget(VisualRuntimePath(id));
+                        _loadErrors.TryRemove(VisualRuntimePath(id), out _);
                         result = new { deleted = true };
                     }
                     else throw new ArgumentException("Unknown visual operation");
