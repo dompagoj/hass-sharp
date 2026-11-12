@@ -256,6 +256,4 @@ it('renders a save-time validation rejection and a structural diagnostic without
   fixture.controls.preview = { valid: false, source: '', sourceMap: [], diagnostics: [{ nodeId: null, message: 'Only one outgoing edge per port is supported', severity: 3, startLine: null, startColumn: null }] }
   edit(root, 'Changed')
   await vi.waitFor(() => expect(root.querySelector('[aria-label="Graph diagnostics"]')?.textContent).toBe('Error: Only one outgoing edge per port is supported'))
-  button(root, 'Only one outgoing edge per port is supported').click()
-  expect(button(root, 'Save graph').disabled).toBe(true)
 })

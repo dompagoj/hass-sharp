@@ -108,18 +108,24 @@ export const FlowAdapter: Component<Props> = props => {
       ariaLabel: `${node.label ?? node.kind}, ${node.kind}`, selected: node.id === selectedId,
     })), { key: 'id' }))
     setEdges(reconcile(graph.edges.map(edge => {
-      const handle = outputPort(graph.nodes.find(n => n.id === edge.source)?.kind ?? 'service', edge)
-      return { id: edge.id, source: edge.source, target: edge.target, sourceHandle: handle, targetHandle: 'in', type: 'smoothstep', label: handle === 'next' ? undefined : portLabels[handle] }
+      const source = graph.nodes.find(n => n.id === edge.source)
+      const handle = outputPort(source?.kind ?? 'service', edge)
+      const ports = outputPorts(source?.kind ?? 'service')
+      // A stored port the node shows no handle for (for example an imported trigger error edge) stays visible on its first handle.
+      const name = portLabels[handle] ?? handle
+      return { id: edge.id, source: edge.source, target: edge.target, sourceHandle: ports.includes(handle) ? handle : ports[0], targetHandle: 'in', type: 'smoothstep',
+        label: handle === 'next' ? undefined : name,
+        ariaLabel: `${handle === 'next' ? 'Edge' : `${name} edge`} from ${source?.label ?? edge.source} to ${graph.nodes.find(n => n.id === edge.target)?.label ?? edge.target}` }
     }), { key: 'id' }))
   })))
   const AutomationNode = (node: NodeProps) => <>
     <NodeResizer visible={node.selected} minWidth={180} minHeight={100} onResizeEnd={commitGeometry} />
     {node.data.kind !== 'trigger' && <Handle type="target" position={Position.Left} id="in" />}
-    <div class="hs-flow-card" classList={{ 'hs-flow-card--error': !!node.data.errors }}><span class="hs-flow-kind">{String(node.data.kind)}</span><strong>{String(node.data.label)}</strong><span>{String(node.data.summary)}</span>{!!node.data.errors && <span class="hs-error">{String(node.data.errors)} error(s)</span>}</div>
+    <div class="hs-flow-card" classList={{ 'hs-flow-card--error': !!node.data.errors, 'hs-flow-card--ports': (node.data.ports as EdgePort[]).length > 1 }}><span class="hs-flow-kind">{String(node.data.kind)}</span><strong>{String(node.data.label)}</strong><span>{String(node.data.summary)}</span>{!!node.data.errors && <span class="hs-error">{String(node.data.errors)} error(s)</span>}</div>
     <For each={node.data.ports as EdgePort[]}>{(id, index) => {
       const top = () => `${(index() + 1) * 100 / ((node.data.ports as EdgePort[]).length + 1)}%`
       return <>
-        <Handle type="source" position={Position.Right} id={id} class={`hs-port hs-port--${id}`} style={{ top: top() }} title={portLabels[id]} />
+        <Handle type="source" position={Position.Right} id={id} class={`hs-port hs-port--${id}`} style={{ top: top() }} title={portLabels[id]} aria-label={`${portLabels[id]} output`} />
         {(node.data.ports as EdgePort[]).length > 1 && <span class="hs-port-label" style={{ top: top() }} aria-hidden="true">{portLabels[id]}</span>}
       </>
     }}</For>

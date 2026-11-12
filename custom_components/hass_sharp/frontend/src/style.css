@@ -198,7 +198,7 @@ ha-panel-hass-sharp-view > #app { height: 100%; }
 .hs-app .hs-inspector .hs-status { align-self: flex-start; }
 .hs-app .hs-inspector textarea { font: 12px/1.6 monospace; resize: vertical; }
 .hs-app .hs-flow { height: 570px; min-width: 0; position: relative; background: var(--hs-bg); }
-.hs-app .hs-flow .solid-flow { --xy-background-color: var(--hs-bg); --xy-node-color: var(--hs-text); --xy-node-background-color: var(--hs-surface); --xy-edge-stroke: var(--hs-muted); --xy-handle-background-color: var(--hs-accent); --xy-controls-button-background-color: var(--hs-surface); --xy-controls-button-color: var(--hs-text); --xy-controls-button-background-color-hover: var(--hs-soft); --xy-controls-button-color-hover: var(--hs-text); --xy-controls-button-border-color: var(--hs-line); --xy-attribution-background-color: var(--hs-surface); }
+.hs-app .hs-flow .solid-flow { --xy-background-color: var(--hs-bg); --xy-node-color: var(--hs-text); --xy-node-background-color: var(--hs-surface); --xy-edge-stroke: var(--hs-muted); --xy-handle-background-color: var(--hs-accent); --xy-controls-button-background-color: var(--hs-surface); --xy-controls-button-color: var(--hs-text); --xy-controls-button-background-color-hover: var(--hs-soft); --xy-controls-button-color-hover: var(--hs-text); --xy-controls-button-border-color: var(--hs-line); --xy-attribution-background-color: var(--hs-surface); --xy-edge-label-background-color: var(--hs-surface); --xy-edge-label-color: var(--hs-muted); }
 .hs-app .hs-flow .solid-flow__node-automation { background: var(--hs-surface); border: 1px solid var(--hs-line); color: var(--hs-text); border-radius: 10px; box-shadow: 0 3px 12px #0001; }
 .hs-app .hs-flow .solid-flow__node-automation.selected { border-color: var(--hs-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--hs-accent) 25%, transparent); }
 .hs-app .hs-flow-card { height: 100%; display: flex; flex-direction: column; padding: 16px; gap: 6px; overflow: hidden; }
@@ -207,7 +207,8 @@ ha-panel-hass-sharp-view > #app { height: 100%; }
 .hs-app .hs-flow .solid-flow__handle { width: 12px; height: 12px; background: var(--hs-accent); border: 2px solid var(--hs-surface); }
 .hs-app .hs-flow .hs-port--false { background: var(--hs-muted); }
 .hs-app .hs-flow .hs-port--error { background: var(--hs-danger); }
-.hs-app .hs-port-label { position: absolute; right: 10px; transform: translateY(-50%); font-size: 9px; letter-spacing: .04em; color: var(--hs-muted); pointer-events: none; }
+.hs-app .hs-flow-card--ports { padding-right: 56px; }
+.hs-app .hs-port-label { position: absolute; right: 10px; transform: translateY(-50%); font-size: 9px; letter-spacing: .04em; color: var(--hs-muted); background: var(--hs-surface); padding: 0 2px; pointer-events: none; }
 .hs-app .hs-visual-bottom { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(0, 2fr); gap: 20px; margin-top: 20px; }
 .hs-app .hs-connections, .hs-app .hs-graph-preview { padding: 20px; border: 1px solid var(--hs-line); border-radius: 10px; background: var(--hs-surface); min-width: 0; }
 .hs-app .hs-connections > p, .hs-app .hs-graph-preview > p { margin: 8px 0; font-size: 11px; }

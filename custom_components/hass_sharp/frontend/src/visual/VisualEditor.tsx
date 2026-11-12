@@ -50,14 +50,14 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
   onMount(() => window.addEventListener('beforeunload', beforeUnload))
   onCleanup(() => window.removeEventListener('beforeunload', beforeUnload))
   const choose = (id: string) => { setSelectedId(id); setTarget(''); setPort(undefined); setSourceLine(undefined) }
-  // Default to the first free output so a fresh step connects without choosing a port.
+  // Default to the first free main output; On error is only ever chosen on purpose.
   const activePort = (id: string) => {
     const kind = graph().nodes.find(n => n.id === id)?.kind
     if (!kind) return undefined
     const ports = outputPorts(kind)
     const chosen = port()
     if (chosen && ports.includes(chosen)) return chosen
-    return ports.find(p => !portUsed(id, p)) ?? ports[0]
+    return ports.find(p => p !== 'error' && !portUsed(id, p)) ?? ports[0]
   }
   const portUsed = (id: string, p: EdgePort) => {
     const kind = graph().nodes.find(n => n.id === id)?.kind
@@ -95,7 +95,7 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
         <Show when={props.documentId}><Button disabled={session.loading() || session.saving()} onClick={reload}>Reload saved graph</Button></Show>
         <Button variant="primary" busy={session.saving()} disabled={!session.canSave()} onClick={() => void save()}>Save graph</Button></div>
     </header>
-    <p class="hs-visual-notice" role="note">{graph().version === 2 ? 'Multiple independent triggers can share downstream steps.' : 'Graph v1 supports one trigger.'} Each output connects to one step: conditions branch with If true and If false, and any step can route failures through On error. Graph edges cannot loop or fork in parallel. Use custom C# and helpers for loops, concurrent work and custom schedules. Saving activates the automation and may execute startup code.</p>
+    <p class="hs-visual-notice" role="note">{graph().version === 2 ? 'Multiple independent triggers can share downstream steps.' : 'Graph v1 supports one trigger.'} Each output connects to one step: conditions branch with If true and If false, and other steps can route failures through On error. Graph edges cannot loop or fork in parallel. Use custom C# and helpers for loops, concurrent work and custom schedules. Saving activates the automation and may execute startup code.</p>
     <Show when={graph().version === 1}><div class="hs-visual-notice"><p>Upgrade to v2 to add triggers and C# imports or members. Trigger actions change from Run to individual actions after saving.</p><Button disabled={session.loading() || session.saving()} onClick={() => commit({ ...graph(), version: 2 })}>Upgrade to graph v2</Button></div></Show>
     <Field label="Automation name" aria-label="Automation name" value={graph().name} disabled={session.loading() || session.saving()} onInput={event => commit({ ...graph(), name: event.currentTarget.value })} />
     <Show when={session.loading()}><p role="status">Loading saved graph…</p></Show>

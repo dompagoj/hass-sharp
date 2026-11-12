@@ -99,11 +99,24 @@ describe('port-aware edges', () => {
   it('treats a legacy port-less condition edge as its true branch and keeps it unchanged', () => {
     const legacy = { id: 'condition-1->service-1', source: 'condition-1', target: 'service-1' }
     const graph = { ...branching(), edges: branching().edges.map(e => e.source === 'condition-1' ? legacy : e) }
-    expect(JSON.parse(serializeGraph(graph)).edges[1]).toEqual(legacy)
+    const edited = connectNodes(graph, 'condition-1', 'otherwise', 'false')
+    const saved = JSON.parse(serializeGraph(edited)).edges
+    expect(Object.keys(saved[1])).toEqual(['id', 'source', 'target'])
+    expect(saved[1]).toEqual(legacy)
+    expect(saved.at(-1)).toEqual({ id: 'condition-1:false->otherwise', source: 'condition-1', target: 'otherwise', port: 'false' })
     expect(canConnect(graph, 'condition-1', 'otherwise', 'true')).toBe(false)
     expect(canConnect(graph, 'condition-1', 'otherwise', 'next')).toBe(false)
     expect(canConnect(graph, 'condition-1', 'otherwise', 'false')).toBe(true)
     expect(outputPort('condition', graph.edges.find(e => e.source === 'condition-1')!)).toBe('true')
+  })
+  it('lets different outputs lead to the same step', () => {
+    const graph = connectNodes(connectNodes(branching(), 'condition-1', 'service-1', 'false'), 'condition-1', 'service-1', 'error')
+    expect(graph.edges.filter(e => e.source === 'condition-1').map(e => [e.port, e.target])).toEqual([['true', 'service-1'], ['false', 'service-1'], ['error', 'service-1']])
+  })
+  it('suffixes a generated edge id that another edge already uses', () => {
+    const graph = branching()
+    const taken = { ...graph, edges: [...graph.edges, { id: 'service-1->otherwise', source: 'condition-1', target: 'recover', port: 'false' as const }] }
+    expect(connectNodes(taken, 'service-1', 'otherwise').edges.at(-1)).toEqual({ id: 'service-1->otherwise#2', source: 'service-1', target: 'otherwise' })
   })
   it('rejects ports the backend does not accept for a node kind', () => {
     const graph = branching()

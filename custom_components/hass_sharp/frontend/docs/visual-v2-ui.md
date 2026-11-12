@@ -35,11 +35,15 @@ kept byte-for-byte. Each output holds one edge, so a used output (on the canvas 
 in the inspector's **Output** picker) accepts no second edge, and `next` and `true`
 on one condition count as the same output. Cycles stay rejected through every port.
 Different outputs may lead to the same step. The inspector defaults to the first
-free output.
+free main output (never **On error**, which must be chosen on purpose). A stored edge
+whose port has no handle on its node, such as an imported trigger `error` edge, is
+drawn from the node's first handle and keeps its port label. Edges and handles carry
+their port in their accessible names.
 
 ## Verification, 2026-11-12
 
-- Baseline: 77 frontend tests. Final: `bun run test`, 83 tests across 11 files pass.
+- Baseline: 77 frontend tests. Graph v2 final: 83 tests across 11 files; edge ports
+  bring `bun run test` to 96 tests across 11 files.
   Regression tests were run failing before implementation. Coverage includes two
   triggers plus imports/members save/reload, all trigger kinds and concurrency
   modes, boolean/expression encoding, v1 preservation/explicit upgrade, stable
