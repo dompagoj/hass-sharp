@@ -1,3 +1,4 @@
+import { librariesChanged } from '../visual/library-api'
 import { A, useNavigate, type RouteSectionProps } from '@solidjs/router'
 import { HassCtx } from '../context'
 import { useContext, For, Show, createEffect, createSignal, createMemo } from 'solid-js'
@@ -27,6 +28,7 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
     try {
       const result = await hass.callWS<{ success: boolean }>({ type: 'hass_sharp/reload_entities' })
       if (!result.success) throw new Error('Refresh failed')
+      librariesChanged()
       await queryClient.invalidateQueries({ queryKey: entityQueryKey })
       setRefreshMessage('Entity IDs refreshed. New completions, diagnostics and compilations use the updated IDs. Running automations are unchanged.')
     } catch {

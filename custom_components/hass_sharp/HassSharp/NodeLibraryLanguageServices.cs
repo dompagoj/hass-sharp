@@ -96,10 +96,18 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
                     methods.AddRange(model!.GetMemberGroup(invocation.Expression,cancellationToken).OfType<IMethodSymbol>());
                 else if (expression is ObjectCreationExpressionSyntax creation && model!.GetTypeInfo(creation,cancellationToken).Type is INamedTypeSymbol type)
                     methods.AddRange(type.InstanceConstructors.Where(m=>m.DeclaredAccessibility==Accessibility.Public));
-                var signatures = methods.Distinct<IMethodSymbol>(SymbolEqualityComparer.Default).Select(m=>new LibrarySignature(
+                var candidates = methods.Distinct<IMethodSymbol>(SymbolEqualityComparer.Default).ToArray();
+                var signatures = candidates.Select(m=>new LibrarySignature(
                     m.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),m.GetDocumentationCommentXml(cancellationToken:cancellationToken) ?? "",
                     m.Parameters.Select(p=>p.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)).ToArray())).ToArray();
-                return new LibrarySignatureHelp(signatures,0,list.Arguments.GetSeparators().Count(s=>s.SpanStart<adjusted));
+                var activeParameter = list.Arguments.GetSeparators().Count(s=>s.SpanStart<adjusted);
+                var argument = list.Arguments.ElementAtOrDefault(activeParameter);
+                if (argument?.NameColon is {} named && candidates.FirstOrDefault() is {} signature)
+                {
+                    var parameter = signature.Parameters.FirstOrDefault(p=>p.Name==named.Name.Identifier.ValueText);
+                    if (parameter != null) activeParameter = parameter.Ordinal;
+                }
+                return new LibrarySignatureHelp(signatures,0,activeParameter);
             }
             case "format":
             {

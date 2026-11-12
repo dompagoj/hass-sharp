@@ -89,12 +89,32 @@ Open `tests/preview.html?view=visual&typed=1` for the checked-in source-derived 
 CLR catalog and its valid Read entity → Describe → Consume sample. Without `typed=1`,
 the new-draft preview uses that same saved catalog, including its custom palette.
 The fixture implements library catalog/list/read envelopes and real-shaped HA
-trigger metadata. Library source authoring/language operations belong to Task4b;
-unsupported fixture operations fail explicitly rather than returning empty language
-results. Preview graphs remain in-memory samples; they do not compile or execute C#.
+trigger metadata. Library authoring and language fixture operations are described below. Preview graphs remain in-memory samples; they do not compile or execute C#.
 
 Graph sessions refetch saved catalogs on window focus and the payload-free
 `hass-sharp-libraries-changed` event. A changed generation invalidates backend
 preview/source maps without creating an undo entry. If a library mutation rebuilt
 the opened saved graph, the session preserves its local draft and surfaces a revision
 conflict; export/reload resolves it. Save-time backend revision checks remain authoritative.
+
+
+Open `tests/preview.html?view=library` (optionally `&shadow=1`) for the node library
+screen with the real Monaco host, source-derived rich catalog, two files, typed
+cards and XML documentation. `visual-check.html?view=library&width=390&theme=dark`
+provides the narrow wrapper. The fixture supports revisioned create/save/rename/delete,
+coherent draft response identities, representative nonempty member completions,
+hover ranges, named-argument signatures, formatting and cross-file definition ranges.
+Add `MissingName` to either draft for an exact source diagnostic. `window.visualFixture`
+exposes `libraries`, graph `documents`, request `calls` and conflict/activation controls.
+These deterministic language responses demonstrate the UI contract; they do not run
+Roslyn or compile arbitrary edited source. Actual Roslyn behavior is covered by
+`NodeLibraryLanguageServicesTests` and root's live Home Assistant acceptance.
+
+`library-session.test.ts` checks coherent unsaved workspaces, previews, identity
+rejection, optimistic CRUD/revisions, activation reporting and edit/save/delete races.
+`NodeLibraryView.test.tsx` mounts the actual editor/session with only Monaco's host
+doubled; it checks source-derived cards/docs, file and definition draft preservation,
+exact cross-file diagnostic focus, save blocking, full screen model retention and
+completion recovery. `editor-actions.test.ts` additionally covers library transport,
+all provider invalidation, actual returned named-argument parameter identity,
+source fingerprints, hover mapping and readable XML signature documentation.

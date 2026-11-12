@@ -10,7 +10,8 @@ import visualAssistTheme from '../../visual-assist.json'
 import { useHass } from '../../context'
 import { useLocalStorage } from '../../hooks'
 import { useMutation } from '@tanstack/solid-query'
-import { useEditorActions } from './editor-actions'
+import { useEditorActions, libraryModelUri, type LibraryEditorContext } from './editor-actions'
+import type { LibraryRange } from '../../visual/library-api'
 import { Button, Icon, Status } from '../Controls'
 import { HelpDialog } from '../HelpDialog'
 import { Tabs } from '../Tabs'
@@ -24,6 +25,11 @@ interface Props {
   initial?: string
   onBackRef?: string
   renderRuns?: () => JSX.Element
+  library?: LibraryEditorContext
+  documentId?: string
+  onChange?: (source: string) => void
+  saveDisabled?: boolean
+  onNavigator?: (navigate: (range: LibraryRange) => void) => void
 }
 
 export const Editor = (props: Props) => {
@@ -44,11 +50,12 @@ export const Editor = (props: Props) => {
   const editorSettingsFont = () => editorSettings().fontSize ?? 16
   let monacoVimMode: VimAdapterInstance | undefined = undefined
 
-  const editorActions = useEditorActions(hass)
+  const editorActions = useEditorActions(hass, props.library)
 
   onMount(() => {
+    const initialModel = props.documentId ? monaco.editor.createModel(props.initial ?? '', 'csharp', libraryModelUri(props.documentId)) : undefined
     editor = monaco.editor.create(editorRef, {
-      value:
+      ...(initialModel ? { model: initialModel } : { value:
         props.initial ??
         `public class MyAutomation : Automation
 {
@@ -61,7 +68,7 @@ export const Editor = (props: Props) => {
         return Task.CompletedTask;
     }
 }`,
-      language: 'csharp',
+      language: 'csharp' }),
       inlayHints: {
         enabled: 'on',
       },
@@ -135,7 +142,56 @@ export const Editor = (props: Props) => {
     onCleanup(() => { themeObserver.disconnect(); darkQuery.removeEventListener('change', updateTheme) })
 
     const model = editor.getModel()
+    const models = new Map<string, monaco.editor.ITextModel>()
+    const viewStates = new Map<monaco.editor.ITextModel, monaco.editor.ICodeEditorViewState | null>()
+    if (props.documentId && model) models.set(props.documentId, model)
+    const changes = editor.onDidChangeModelContent(() => props.onChange?.(editor.getModel()?.getValue() ?? ''))
+    props.onNavigator?.(range => {
+      const selection = { startLineNumber: range.startLine, startColumn: range.startColumn, endLineNumber: range.endLine, endColumn: range.endColumn }
+      setTab('source'); editor.setSelection(selection); editor.revealRangeInCenter(selection); editor.focus()
+    })
     editorActions.register(editor, model => props.onSave(model), () => saveMut.mutateAsync())
+    const opener = props.library ? monaco.editor.registerEditorOpener({
+      openCodeEditor: (source, resource, selection) => {
+        if (source !== editor || resource.toString() === editor.getModel()?.uri.toString()) return false
+        const target = props.library?.documents?.().find(file => libraryModelUri(file.id).toString() === resource.toString())
+        if (!target || !props.library?.onDefinition) return false
+        const range = selection && 'startLineNumber' in selection ? { start: 0, length: 0, startLine: selection.startLineNumber, startColumn: selection.startColumn, endLine: selection.endLineNumber, endColumn: selection.endColumn }
+          : { start: 0, length: 0, startLine: selection?.lineNumber ?? 1, startColumn: selection?.column ?? 1, endLine: selection?.lineNumber ?? 1, endColumn: selection?.column ?? 1 }
+        props.library.onDefinition({ id: target.id, range })
+        return editor.getModel()?.uri.toString() === resource.toString()
+      },
+    }) : undefined
+    createEffect(() => {
+      for (const file of props.library?.documents?.() ?? []) {
+        let model = models.get(file.id)
+        if (!model) { model = monaco.editor.createModel(file.source, 'csharp', libraryModelUri(file.id)); models.set(file.id, model) }
+        // The active model is synchronized below through undoable editor edits.
+        if (model !== editor.getModel() && model.getValue() !== file.source) model.setValue(file.source)
+      }
+    })
+    createEffect(() => {
+      const id = props.documentId
+      if (!id) return
+      const source = props.initial ?? ''
+      let target = models.get(id)
+      if (!target) { target = monaco.editor.createModel(source, 'csharp', libraryModelUri(id)); models.set(id, target) }
+      if (target !== editor.getModel()) {
+        const previous = editor.getModel()
+        if (previous) viewStates.set(previous, editor.saveViewState())
+        editor.setModel(target)
+        const state = viewStates.get(target)
+        if (state) editor.restoreViewState(state)
+      }
+      if (target.getValue() !== source) {
+        editor.executeEdits('library-reload', [{ range: target.getFullModelRange(), text: source }])
+      }
+    })
+    createEffect(() => {
+      if (!props.library) return
+      props.library.context() // All file/generation changes invalidate semantic providers, even with an unchanged active model.
+      editorActions.invalidateContext()
+    })
     createEffect(() => { editor.updateOptions({ fontSize: editorSettingsFont() }) })
     createEffect(() => {
       if (editorSettings().vimEnabled) {
@@ -144,9 +200,10 @@ export const Editor = (props: Props) => {
       }
     })
     onCleanup(() => {
+      changes.dispose(); opener?.dispose()
       editorActions.dispose()
       editor.dispose()
-      model?.dispose()
+      for (const owned of new Set([model, ...models.values()])) owned?.dispose()
     })
   })
 
@@ -157,15 +214,15 @@ export const Editor = (props: Props) => {
       <header class="hs-editor-toolbar">
         <div class="hs-editor-heading">
           <Show when={props.onBackRef}><A class="hs-button hs-button--ghost hs-icon-button" href={props.onBackRef!} aria-label="Back to automations"><Icon name="arrow" /></A></Show>
-          <div class="hs-editor-title"><p class="hs-eyebrow">C# AUTOMATION</p><h1>{props.fileName}</h1></div>
+          <div class="hs-editor-title"><p class="hs-eyebrow">{props.library ? 'C# NODE LIBRARY' : 'C# AUTOMATION'}</p><h1>{props.fileName}</h1></div>
         </div>
-        <div class="hs-editor-actions"><HelpDialog mode="code" /><Show when={props.renderRuns}><Button onClick={() => setTab('runs')}>Run now…</Button></Show>
-        <Button data-save variant="primary" busy={saveMut.isPending} onClick={() => { void saveMut.mutateAsync().catch(() => {}) }} disabled={editorActions.saveDisabled()}>
+        <div class="hs-editor-actions"><Show when={!props.library}><HelpDialog mode="code" /></Show><Show when={props.renderRuns}><Button onClick={() => setTab('runs')}>Run now…</Button></Show>
+        <Button data-save variant="primary" busy={saveMut.isPending} onClick={() => { void saveMut.mutateAsync().catch(() => {}) }} disabled={editorActions.saveDisabled() || props.saveDisabled}>
           <Icon name="save" />{saveMut.isPending ? 'Saving…' : 'Save'}
         </Button></div>
       </header>
       <div class="hs-editor-subbar">
-        <Tabs id={tabId} label="Automation editor" value={tab()} onChange={setTab} items={[{ id: 'source', label: 'Source' }, ...(props.renderRuns ? [{ id: 'runs', label: 'Run history' }] : []), { id: 'settings', label: 'Editor settings' }]} />
+        <Tabs id={tabId} label={props.library ? 'Node library editor' : 'Automation editor'} value={tab()} onChange={setTab} items={[{ id: 'source', label: 'Source' }, ...(props.renderRuns ? [{ id: 'runs', label: 'Run history' }] : []), { id: 'settings', label: 'Editor settings' }]} />
         <span class="hs-save-hint">Ctrl / ⌘ S to save</span>
       </div>
       <Show when={saveMut.isError}><div class="hs-notice hs-notice--danger" role="alert">Save failed: {String(saveMut.error)}</div></Show>

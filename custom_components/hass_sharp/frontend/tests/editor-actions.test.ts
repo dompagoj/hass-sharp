@@ -233,3 +233,52 @@ it.each(['escape', 'cursor'])('does not reopen dismissed suggestions after %s', 
   expect(editor.triggers).toEqual([])
   response.resolve([])
 })
+
+describe('Library workspace language services', () => {
+  function librarySetup(handler: (r: any) => any) {
+    let workspaceVersion = '1'
+    let sourceGeneration: string | undefined
+    const context = () => ({ id: 'main', source: 'Lis', workspaceVersion, generation: 'saved', sources: [{ id: 'helper', source: 'unsaved helper' }] })
+    const callWS = vi.fn(async (message: any) => {
+      const r = message.request
+      return { version: 1, ok: true, result: { id: r.id, workspaceVersion: r.workspaceVersion, generation: r.generation, sourceGeneration: `source-${r.workspaceVersion}`, saved: false, data: await handler(r) } }
+    })
+    const editor = new FakeEditor({ value: 'Lis' })
+    let actions!: ReturnType<typeof useEditorActions>
+    createRoot(dispose => { cleanup = dispose; actions = useEditorActions({ callWS } as any, { context, sourceGeneration: () => sourceGeneration }); actions.register(editor as any, vi.fn()) })
+    return { editor, actions, callWS, setSourceGeneration: (value: string) => { sourceGeneration = value }, changeWorkspace: () => { workspaceVersion = '2'; actions.invalidateContext() } }
+  }
+  it('uses actual library transport for member edits, nullable signatures and cross-file definitions', async () => {
+    const { signatures, definitions, formats } = await import('./fake-monaco')
+    const { editor, callWS } = librarySetup(r => r.operation === 'completion' ? [completion] : r.operation === 'signature' ? { signatures: [{ label: 'Make(string? label, int count = 1)', documentation: '<summary>Factory</summary>', parameters: ['string? label', 'int count = 1'] }], activeSignature: 0, activeParameter: 1 }
+      : r.operation === 'definition' ? [{ id: 'helper', range: { start: 2, length: 4, startLine: 1, startColumn: 3, endLine: 1, endColumn: 7 } }] : r.operation === 'format' ? 'formatted' : { diagnostics: [], valid: true })
+    const result = await completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
+    expect(result.suggestions[0].insertText).toBe('List')
+    expect(callWS.mock.calls.at(-1)![0]).toMatchObject({ type: 'hass_sharp/node_library', request: { operation: 'completion', id: 'main', sources: [{ id: 'helper', source: 'unsaved helper' }] } })
+    const signature = await signatures[0].provideSignatureHelp(editor.model, position, noCancellation, {})
+    expect(signature.value.signatures[0].documentation.value).toBe('Factory'); expect(signature.value.activeParameter).toBe(1); expect(signature.value.signatures[0].parameters[1].label).toBe('int count = 1')
+    expect(definitions).toHaveLength(1); expect(formats).toHaveLength(1)
+  })
+  it('maps source-based hover ranges to Monaco without exposing XML signature markup', async () => {
+    const { editor } = librarySetup(r => r.operation === 'hover' ? { text: 'string State', range: { start: 0, length: 3, startLine: 1, startColumn: 1, endLine: 1, endColumn: 4 } } : { diagnostics: [], valid: true })
+    const hover = await hovers[0].provideHover(editor.model, position, noCancellation)
+    expect(hover.range).toMatchObject({ startLineNumber: 1, startColumn: 1, endColumn: 4 })
+    expect(hover.contents[0].value).toBe('string State')
+  })
+  it('rejects a response whose source fingerprint differs from the current preview', async () => {
+    const { editor, setSourceGeneration } = librarySetup(r => r.operation === 'completion' ? [completion] : { diagnostics: [], valid: true })
+    setSourceGeneration('current-preview')
+    const result = await completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
+    expect(result.suggestions).toEqual([])
+  })
+  it('settles every provider when other-file context changes without changing selected model version', async () => {
+    const { signatures, definitions, formats } = await import('./fake-monaco')
+    const reply = deferred<any>()
+    const { editor, changeWorkspace } = librarySetup(() => reply.promise)
+    const requests = [completions[0].provideCompletionItems(editor.model, position, {}, noCancellation), hovers[0].provideHover(editor.model, position, noCancellation), signatures[0].provideSignatureHelp(editor.model, position, noCancellation, {}), definitions[0].provideDefinition(editor.model, position, noCancellation), formats[0].provideDocumentFormattingEdits(editor.model, {}, noCancellation)]
+    changeWorkspace()
+    expect(await Promise.all(requests)).toEqual([{ suggestions: [] }, null, null, null, []])
+    reply.resolve([])
+    cleanup(); expect(signatures).toHaveLength(0); expect(definitions).toHaveLength(0); expect(formats).toHaveLength(0)
+  })
+})

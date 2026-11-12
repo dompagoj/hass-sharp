@@ -50,6 +50,19 @@ public class NodeLibraryLanguageServicesTests
         Assert.Contains("Lamp",(await Request("completion",[new("main",entity,1)],"main",entity.IndexOf("La }")+2)).ToJsonString());
     }
     [Fact]
+    public async Task Named_arguments_select_the_declared_parameter_in_reordered_calls()
+    {
+        const string source="public static class Factory { public static string Make(string? label, int count=1) => label ?? \"\"; public static void Run() { Make(count: 1, label: null); } }";
+        NodeLibrarySource[] sources=[new("main",source,1)];
+        var count=await Request("signature",sources,"main",source.IndexOf("count: 1")+8);
+        Assert.Equal(1,count["activeParameter"]!.GetValue<int>());
+        var label=await Request("signature",sources,"main",source.IndexOf("label: null")+10);
+        Assert.Equal(0,label["activeParameter"]!.GetValue<int>());
+        var positional=source.Replace("count: 1, label: null","null, 1");
+        var fallback=await Request("signature",[new("main",positional,1)],"main",positional.IndexOf("null, 1")+7);
+        Assert.Equal(1,fallback["activeParameter"]!.GetValue<int>());
+    }
+    [Fact]
     public void Preview_cancellation_prevents_compiling_an_unsaved_workspace()
     {
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();

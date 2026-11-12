@@ -2,6 +2,6 @@
 const params = new URLSearchParams(location.search)
 const frame = document.querySelector('#fixture')
 frame.style.width = `${params.get('width') === '390' ? 390 : 1440}px`
-frame.src = `./preview-app.html?view=${params.get('view') === 'code' ? 'code' : 'visual'}&revision=visual-api-2`
+frame.src = `./preview-app.html?view=${params.get('view') === 'code' ? 'code' : params.get('view') === 'library' ? 'library' : 'visual'}&revision=visual-api-2`
 frame.addEventListener('load', () => frame.contentWindow.setPreviewTheme(params.get('theme') === 'dark' ? 'dark' : 'light'))
 </script></body></html>
