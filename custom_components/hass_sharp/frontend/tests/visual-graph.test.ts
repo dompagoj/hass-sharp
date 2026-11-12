@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createRoot } from 'solid-js'
-import { addNode, connectNodes, createGraph, createGraphHistory, removeNode, updateNode, serializeGraph, visualRunClasses, visualActionLabels } from '../src/visual/graph'
+import { addNode, canConnect, connectNodes, createGraph, createGraphHistory, edgePort, outputPort, outputPorts, removeEdge, removeNode, updateNode, serializeGraph, visualRunClasses, visualActionLabels } from '../src/visual/graph'
 
 describe('visual draft graph', () => {
   it('updates position/config without mutating an earlier history snapshot', () => {
@@ -75,4 +75,46 @@ it('distinguishes same-label triggers in the manual action chooser', () => {
   })
   const renamed = updateNode(graph, 'evening', { label: 'Evening' })
   expect(visualActionLabels(renamed)['VisualAutomation::Run_6576656E696E67']).toBe('Evening')
+})
+
+describe('port-aware edges', () => {
+  const branching = () => addNode(addNode(createGraph('Branches'), 'delay', 'otherwise'), 'service', 'recover')
+  it('authors condition true, false and error branches with the backend port names', () => {
+    let graph = removeEdge(branching(), 'condition-1:true->service-1')
+    expect(branching().edges[1]).toEqual({ id: 'condition-1:true->service-1', source: 'condition-1', target: 'service-1', port: 'true' })
+    graph = connectNodes(graph, 'condition-1', 'service-1', 'true')
+    graph = connectNodes(graph, 'condition-1', 'otherwise', 'false')
+    graph = connectNodes(graph, 'condition-1', 'recover', 'error')
+    expect(graph.edges.filter(e => e.source === 'condition-1').map(e => [e.port, e.target])).toEqual([['true', 'service-1'], ['false', 'otherwise'], ['error', 'recover']])
+    expect(new Set(graph.edges.map(e => e.id)).size).toBe(graph.edges.length)
+  })
+  it('allows one outgoing edge per port, but next and error from the same step', () => {
+    let graph = connectNodes(branching(), 'service-1', 'otherwise')
+    expect(canConnect(graph, 'service-1', 'recover')).toBe(false)
+    expect(connectNodes(graph, 'service-1', 'recover', 'next')).toBe(graph)
+    graph = connectNodes(graph, 'service-1', 'recover', 'error')
+    expect(graph.edges.filter(e => e.source === 'service-1').map(e => edgePort(e))).toEqual(['next', 'error'])
+    expect(canConnect(removeEdge(graph, graph.edges.at(-1)!.id), 'service-1', 'recover', 'error')).toBe(true)
+  })
+  it('treats a legacy port-less condition edge as its true branch and keeps it unchanged', () => {
+    const legacy = { id: 'condition-1->service-1', source: 'condition-1', target: 'service-1' }
+    const graph = { ...branching(), edges: branching().edges.map(e => e.source === 'condition-1' ? legacy : e) }
+    expect(JSON.parse(serializeGraph(graph)).edges[1]).toEqual(legacy)
+    expect(canConnect(graph, 'condition-1', 'otherwise', 'true')).toBe(false)
+    expect(canConnect(graph, 'condition-1', 'otherwise', 'next')).toBe(false)
+    expect(canConnect(graph, 'condition-1', 'otherwise', 'false')).toBe(true)
+    expect(outputPort('condition', graph.edges.find(e => e.source === 'condition-1')!)).toBe('true')
+  })
+  it('rejects ports the backend does not accept for a node kind', () => {
+    const graph = branching()
+    expect(canConnect(graph, 'service-1', 'otherwise', 'false')).toBe(false)
+    expect(canConnect(graph, 'trigger-1', 'otherwise', 'error')).toBe(false)
+    expect(canConnect(graph, 'service-1', 'otherwise', 'bogus' as never)).toBe(false)
+    expect(outputPorts('condition')).toEqual(['true', 'false', 'error'])
+    expect(outputPorts('trigger')).toEqual(['next'])
+  })
+  it('still rejects cycles through any port', () => {
+    const graph = connectNodes(branching(), 'service-1', 'otherwise')
+    expect(canConnect(graph, 'otherwise', 'condition-1', 'error')).toBe(false)
+  })
 })

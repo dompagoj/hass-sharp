@@ -10,7 +10,9 @@ export interface GraphNode {
   size: { width: number; height: number }
   config: Record<string, string | boolean>
 }
-export interface GraphEdge { id: string; source: string; target: string }
+/** Backend edge ports. A missing port means `next`; on a condition that is its true branch. */
+export type EdgePort = 'next' | 'true' | 'false' | 'error'
+export interface GraphEdge { id: string; source: string; target: string; port?: EdgePort }
 export interface VisualGraph { version: 1 | 2; name: string; nodes: GraphNode[]; edges: GraphEdge[]; imports?: string; members?: string }
 
 /** The backend uses uppercase hexadecimal UTF-8, not UTF-16 code units. */
@@ -57,9 +59,21 @@ export function updateNode(graph: VisualGraph, id: string, patch: Partial<Omit<G
 export function removeNode(graph: VisualGraph, id: string): VisualGraph {
   return { ...graph, nodes: graph.nodes.filter(node => node.id !== id), edges: graph.edges.filter(edge => edge.source !== id && edge.target !== id) }
 }
-export function canConnect(graph: VisualGraph, source: string, target: string): boolean {
-  if (source === target || !graph.nodes.some(n => n.id === source) || !graph.nodes.some(n => n.id === target)) return false
-  if (graph.nodes.find(n => n.id === target)?.kind === 'trigger' || graph.edges.some(e => e.source === source && e.target === target)) return false
+export const edgePort = (edge: GraphEdge): EdgePort => edge.port ?? 'next'
+/** Ports a node offers as handles, in display order. Triggers have no body, so no error path. */
+export const outputPorts = (kind: NodeKind): EdgePort[] =>
+  kind === 'trigger' ? ['next'] : kind === 'condition' ? ['true', 'false', 'error'] : ['next', 'error']
+/** The handle an existing edge leaves from; legacy `next` on a condition is its true branch. */
+export const outputPort = (kind: NodeKind, edge: GraphEdge): EdgePort => kind === 'condition' && edgePort(edge) === 'next' ? 'true' : edgePort(edge)
+export const portLabels: Record<EdgePort, string> = { next: 'Next', true: 'If true', false: 'If false', error: 'On error' }
+const kindOf = (graph: VisualGraph, id: string) => graph.nodes.find(n => n.id === id)?.kind
+
+export function canConnect(graph: VisualGraph, source: string, target: string, port?: EdgePort): boolean {
+  const kind = kindOf(graph, source)
+  if (!kind || source === target || !kindOf(graph, target) || kindOf(graph, target) === 'trigger') return false
+  const handle = port === 'next' && kind === 'condition' ? 'true' : port ?? outputPorts(kind)[0]
+  // The backend accepts one edge per port, and `next` and `true` on one condition are the same branch.
+  if (!outputPorts(kind).includes(handle) || graph.edges.some(e => e.source === source && outputPort(kind, e) === handle)) return false
   const visited = new Set<string>()
   const reachesSource = (id: string): boolean => {
     if (id === source) return true
@@ -69,10 +83,16 @@ export function canConnect(graph: VisualGraph, source: string, target: string): 
   }
   return !reachesSource(target)
 }
-export function connectNodes(graph: VisualGraph, source: string, target: string): VisualGraph {
-  if (!canConnect(graph, source, target)) return graph
-  return { ...graph, edges: [...graph.edges, { id: `${source}->${target}`, source, target }] }
+export function connectNodes(graph: VisualGraph, source: string, target: string, port?: EdgePort): VisualGraph {
+  if (!canConnect(graph, source, target, port)) return graph
+  const kind = kindOf(graph, source)!
+  const resolved = port === 'next' && kind === 'condition' ? 'true' : port ?? outputPorts(kind)[0]
+  const base = resolved === 'next' ? `${source}->${target}` : `${source}:${resolved}->${target}`
+  let id = base
+  for (let n = 2; graph.edges.some(e => e.id === id); n++) id = `${base}#${n}`
+  return { ...graph, edges: [...graph.edges, resolved === 'next' ? { id, source, target } : { id, source, target, port: resolved }] }
 }
+export const removeEdge = (graph: VisualGraph, id: string): VisualGraph => ({ ...graph, edges: graph.edges.filter(edge => edge.id !== id) })
 export const serializeGraph = (graph: VisualGraph) => JSON.stringify(graph, null, 2)
 
 export function createGraphHistory(initial: VisualGraph) {

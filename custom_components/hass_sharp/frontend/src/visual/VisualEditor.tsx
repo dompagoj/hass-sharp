@@ -8,7 +8,7 @@ import { AutomationRuns } from '../components/AutomationRuns'
 import { Dialog } from '../components/Dialog'
 import { createVisualSession } from './session'
 import type { VisualDiagnostic, VisualDocument } from './api'
-import { addNode, canConnect, connectNodes, createGraph, palette, removeNode, serializeGraph, updateNode, visualRunClasses, visualActionLabels } from './graph'
+import { addNode, canConnect, connectNodes, createGraph, outputPort, outputPorts, palette, portLabels, removeEdge, removeNode, serializeGraph, updateNode, visualRunClasses, visualActionLabels, type EdgePort } from './graph'
 
 const configLabels: Record<string, string> = { entity: 'Entity ID', state: 'Required state', service: 'Service', seconds: 'Seconds', code: 'Custom C# section' }
 
@@ -42,13 +42,27 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
   const { graph, commit } = history
   const [selectedId, setSelectedId] = createSignal<string>('trigger-1')
   const [target, setTarget] = createSignal('')
+  const [port, setPort] = createSignal<EdgePort>()
   const [preview, setPreview] = createSignal<'code' | 'json'>('code')
   const selected = createMemo(() => graph().nodes.find(node => node.id === selectedId()))
   const edited = session.dirty
   const beforeUnload = (event: BeforeUnloadEvent) => { if (edited()) { event.preventDefault(); event.returnValue = '' } }
   onMount(() => window.addEventListener('beforeunload', beforeUnload))
   onCleanup(() => window.removeEventListener('beforeunload', beforeUnload))
-  const choose = (id: string) => { setSelectedId(id); setTarget(''); setSourceLine(undefined) }
+  const choose = (id: string) => { setSelectedId(id); setTarget(''); setPort(undefined); setSourceLine(undefined) }
+  // Default to the first free output so a fresh step connects without choosing a port.
+  const activePort = (id: string) => {
+    const kind = graph().nodes.find(n => n.id === id)?.kind
+    if (!kind) return undefined
+    const ports = outputPorts(kind)
+    const chosen = port()
+    if (chosen && ports.includes(chosen)) return chosen
+    return ports.find(p => !portUsed(id, p)) ?? ports[0]
+  }
+  const portUsed = (id: string, p: EdgePort) => {
+    const kind = graph().nodes.find(n => n.id === id)?.kind
+    return !!kind && graph().edges.some(e => e.source === id && outputPort(kind, e) === p)
+  }
   const focusSection = (id: string) => {
     if (id === '$imports' || id === '$members') queueMicrotask(() => editor.querySelector<HTMLTextAreaElement>(`[data-section-id="${id}"]`)?.focus())
   }
@@ -65,7 +79,7 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
       const nodeId = target.closest('.solid-flow__node')?.getAttribute('data-id')
       const edgeId = target.closest('.solid-flow__edge')?.getAttribute('data-id')
       if (nodeId) { event.preventDefault(); commit(removeNode(graph(), nodeId)) }
-      else if (edgeId) { event.preventDefault(); commit({ ...graph(), edges: graph().edges.filter(edge => edge.id !== edgeId) }) }
+      else if (edgeId) { event.preventDefault(); commit(removeEdge(graph(), edgeId)) }
     }
   }
   const download = () => {
@@ -81,7 +95,7 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
         <Show when={props.documentId}><Button disabled={session.loading() || session.saving()} onClick={reload}>Reload saved graph</Button></Show>
         <Button variant="primary" busy={session.saving()} disabled={!session.canSave()} onClick={() => void save()}>Save graph</Button></div>
     </header>
-    <p class="hs-visual-notice" role="note">{graph().version === 2 ? 'Multiple independent triggers can share downstream steps.' : 'Graph v1 supports one trigger.'} Graph edges cannot loop or fork in parallel. Use custom C# and helpers for loops, concurrent work and custom schedules. Saving activates the automation and may execute startup code.</p>
+    <p class="hs-visual-notice" role="note">{graph().version === 2 ? 'Multiple independent triggers can share downstream steps.' : 'Graph v1 supports one trigger.'} Each output connects to one step: conditions branch with If true and If false, and any step can route failures through On error. Graph edges cannot loop or fork in parallel. Use custom C# and helpers for loops, concurrent work and custom schedules. Saving activates the automation and may execute startup code.</p>
     <Show when={graph().version === 1}><div class="hs-visual-notice"><p>Upgrade to v2 to add triggers and C# imports or members. Trigger actions change from Run to individual actions after saving.</p><Button disabled={session.loading() || session.saving()} onClick={() => commit({ ...graph(), version: 2 })}>Upgrade to graph v2</Button></div></Show>
     <Field label="Automation name" aria-label="Automation name" value={graph().name} disabled={session.loading() || session.saving()} onInput={event => commit({ ...graph(), name: event.currentTarget.value })} />
     <Show when={session.loading()}><p role="status">Loading saved graph…</p></Show>
@@ -118,10 +132,13 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
               if (Number.isFinite(value) && value >= (dimension === 'width' ? 180 : 100)) commit(updateNode(graph(), node().id, { size: { width: node().size?.width ?? 220, height: node().size?.height ?? 112, [dimension]: value } }))
               else event.currentTarget.value = String(node().size?.[dimension] ?? (dimension === 'width' ? 220 : 112))
             }} />}</For></div>
+          <Show when={outputPorts(node().kind).length > 1}><div class="hs-field"><label for="hs-connect-port">Output</label><select id="hs-connect-port" class="hs-input" aria-label="Output" value={activePort(node().id)} onChange={event => { setPort(event.currentTarget.value as EdgePort); setTarget('') }}>
+            <For each={outputPorts(node().kind)}>{p => <option value={p} selected={activePort(node().id) === p}>{portLabels[p]}{portUsed(node().id, p) ? ' (used)' : ''}</option>}</For>
+          </select></div></Show>
           <div class="hs-field"><label for="hs-connect">Connect to</label><select id="hs-connect" class="hs-input" aria-label="Connect to" value={target()} onChange={event => setTarget(event.currentTarget.value)}>
-            <option value="">Choose next step</option><For each={graph().nodes.filter(n => canConnect(graph(), node().id, n.id))}>{next => <option value={next.id}>{next.label}</option>}</For>
+            <option value="">Choose next step</option><For each={graph().nodes.filter(n => canConnect(graph(), node().id, n.id, activePort(node().id)))}>{next => <option value={next.id}>{next.label}</option>}</For>
           </select></div>
-          <Button disabled={!canConnect(graph(), node().id, target())} onClick={() => { commit(connectNodes(graph(), node().id, target())); setTarget('') }}>Connect</Button>
+          <Button disabled={!canConnect(graph(), node().id, target(), activePort(node().id))} onClick={() => { commit(connectNodes(graph(), node().id, target(), activePort(node().id))); setTarget(''); setPort(undefined) }}>Connect</Button>
           <Button variant="danger" onClick={() => commit(removeNode(graph(), node().id))}>Delete step</Button>
         </div>}</Show>
       </aside>
@@ -141,8 +158,12 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
         <p class="hs-muted">Use the inspector to connect steps with a keyboard or touch.</p>
         <Show when={!graph().edges.length}><p class="hs-muted">No connections yet.</p></Show>
         <ul><For each={graph().edges}>{edge => {
-          const label = () => `${graph().nodes.find(n => n.id === edge.source)?.label ?? edge.source} → ${graph().nodes.find(n => n.id === edge.target)?.label ?? edge.target}`
-          return <li><span>{label()}</span><Button variant="ghost" aria-label={`Remove ${label()}`} onClick={() => commit({ ...graph(), edges: graph().edges.filter(e => e.id !== edge.id) })}>Remove</Button></li>
+          const label = () => {
+            const source = graph().nodes.find(n => n.id === edge.source)
+            const branch = source && outputPort(source.kind, edge) !== 'next' ? ` · ${portLabels[outputPort(source.kind, edge)]}` : ''
+            return `${source?.label ?? edge.source}${branch} → ${graph().nodes.find(n => n.id === edge.target)?.label ?? edge.target}`
+          }
+          return <li><span>{label()}</span><Button variant="ghost" aria-label={`Remove ${label()}`} onClick={() => commit(removeEdge(graph(), edge.id))}>Remove</Button></li>
         }}</For></ul>
       </section>
       <section class="hs-graph-preview" aria-label="Code preview">

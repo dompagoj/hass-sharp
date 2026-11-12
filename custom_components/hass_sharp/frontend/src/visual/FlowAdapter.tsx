@@ -1,9 +1,9 @@
-import { createEffect, on, onCleanup, onMount, untrack, type Component } from 'solid-js'
+import { createEffect, For, on, onCleanup, onMount, untrack, type Component } from 'solid-js'
 import { createStore, reconcile } from 'solid-js/store'
 import { Background, Controls, Handle, NodeResizer, Position, SolidFlow, useSolidFlow, type Node, type NodeProps, type Edge } from '@dschz/solid-flow'
 import flowStyles from '@dschz/solid-flow/styles?inline'
 import type { VisualDiagnostic } from './api'
-import { canConnect, connectNodes, updateNode, type VisualGraph } from './graph'
+import { canConnect, connectNodes, outputPort, outputPorts, portLabels, updateNode, type EdgePort, type VisualGraph } from './graph'
 
 interface Props {
   graph: VisualGraph
@@ -19,6 +19,8 @@ export const FlowAdapter: Component<Props> = props => {
   let touchDrag: { id: string; graph: VisualGraph } | undefined
   const [nodes, setNodes] = createStore<Node[]>([])
   const [edges, setEdges] = createStore<Edge[]>([])
+  // Source handle ids are backend edge ports; canConnect rejects any id the node does not offer.
+  const port = (handle?: string | null) => (handle ?? undefined) as EdgePort | undefined
   const commitGeometry = () => {
     const current = props.graph
     props.onChange({ ...current, nodes: current.nodes.map(node => {
@@ -101,17 +103,26 @@ export const FlowAdapter: Component<Props> = props => {
   }
   createEffect(on(() => [props.graph, props.selectedId, props.diagnostics] as const, ([graph, selectedId]) => untrack(() => {
     setNodes(reconcile(graph.nodes.map((node, index) => ({
-      id: node.id, type: 'automation', data: { label: node.label ?? node.kind, kind: node.kind, summary: String(Object.values(node.config)[0] ?? ''), errors: props.diagnostics?.filter(d => d.nodeId === node.id && d.severity === 3).length ?? 0 },
+      id: node.id, type: 'automation', data: { label: node.label ?? node.kind, kind: node.kind, summary: String(Object.values(node.config)[0] ?? ''), errors: props.diagnostics?.filter(d => d.nodeId === node.id && d.severity === 3).length ?? 0, ports: outputPorts(node.kind) },
       position: touchDrag?.graph === graph && touchDrag.id === node.id ? { ...nodes.find(n => n.id === node.id)!.position } : node.position ? { ...node.position } : { x: 60 + index * 300, y: 100 }, width: node.size?.width ?? 220, height: node.size?.height ?? 112,
       ariaLabel: `${node.label ?? node.kind}, ${node.kind}`, selected: node.id === selectedId,
     })), { key: 'id' }))
-    setEdges(reconcile(graph.edges.map(edge => ({ ...edge, sourceHandle: 'out', targetHandle: 'in', type: 'smoothstep' })), { key: 'id' }))
+    setEdges(reconcile(graph.edges.map(edge => {
+      const handle = outputPort(graph.nodes.find(n => n.id === edge.source)?.kind ?? 'service', edge)
+      return { id: edge.id, source: edge.source, target: edge.target, sourceHandle: handle, targetHandle: 'in', type: 'smoothstep', label: handle === 'next' ? undefined : portLabels[handle] }
+    }), { key: 'id' }))
   })))
   const AutomationNode = (node: NodeProps) => <>
     <NodeResizer visible={node.selected} minWidth={180} minHeight={100} onResizeEnd={commitGeometry} />
     {node.data.kind !== 'trigger' && <Handle type="target" position={Position.Left} id="in" />}
     <div class="hs-flow-card" classList={{ 'hs-flow-card--error': !!node.data.errors }}><span class="hs-flow-kind">{String(node.data.kind)}</span><strong>{String(node.data.label)}</strong><span>{String(node.data.summary)}</span>{!!node.data.errors && <span class="hs-error">{String(node.data.errors)} error(s)</span>}</div>
-    <Handle type="source" position={Position.Right} id="out" />
+    <For each={node.data.ports as EdgePort[]}>{(id, index) => {
+      const top = () => `${(index() + 1) * 100 / ((node.data.ports as EdgePort[]).length + 1)}%`
+      return <>
+        <Handle type="source" position={Position.Right} id={id} class={`hs-port hs-port--${id}`} style={{ top: top() }} title={portLabels[id]} />
+        {(node.data.ports as EdgePort[]).length > 1 && <span class="hs-port-label" style={{ top: top() }} aria-hidden="true">{portLabels[id]}</span>}
+      </>
+    }}</For>
   </>
   return <div ref={canvas} class="hs-flow" aria-label="Automation canvas"
     onFocusIn={event => { const id = (event.target as Element).closest('.solid-flow__node')?.getAttribute('data-id'); if (id) props.onSelect(id) }}
@@ -138,8 +149,8 @@ export const FlowAdapter: Component<Props> = props => {
       onNodeClick={({ node }) => props.onSelect(node.id)}
       onNodeDragStart={({ targetNode }) => { if (targetNode) props.onSelect(targetNode.id) }}
       onNodeDragStop={commitGeometry}
-      isValidConnection={connection => canConnect(props.graph, connection.source, connection.target)}
-      onConnect={connection => props.onChange(connectNodes(props.graph, connection.source, connection.target))}>
+      isValidConnection={connection => canConnect(props.graph, connection.source, connection.target, port(connection.sourceHandle))}
+      onConnect={connection => props.onChange(connectNodes(props.graph, connection.source, connection.target, port(connection.sourceHandle)))}>
       <TouchNodeDrag /><Background variant="dots" /><Controls showLock={false} />
     </SolidFlow>
   </div>

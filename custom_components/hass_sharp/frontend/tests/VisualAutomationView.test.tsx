@@ -243,3 +243,19 @@ it('locates import/member diagnostics and all ranges for the same trigger from b
   expect(root.querySelector('[data-source-line="4"]')?.getAttribute('aria-current')).toBe('true')
   expect(root.querySelector('[data-source-line="5"]')?.getAttribute('aria-current')).toBe('true')
 })
+
+it('renders a save-time validation rejection and a structural diagnostic without node or line', async () => {
+  const { root, fixture } = setup()
+  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
+  fixture.controls.invalid = true
+  button(root, 'Save graph').click()
+  await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain('Fix the graph errors before saving.'))
+  expect(root.querySelector('[aria-label="Graph diagnostics"]')?.textContent).toContain('Error: Invalid entity · line 3')
+  expect(button(root, 'Save graph').disabled).toBe(true)
+  expect(root.textContent).toContain('Not saved')
+  fixture.controls.preview = { valid: false, source: '', sourceMap: [], diagnostics: [{ nodeId: null, message: 'Only one outgoing edge per port is supported', severity: 3, startLine: null, startColumn: null }] }
+  edit(root, 'Changed')
+  await vi.waitFor(() => expect(root.querySelector('[aria-label="Graph diagnostics"]')?.textContent).toBe('Error: Only one outgoing edge per port is supported'))
+  button(root, 'Only one outgoing edge per port is supported').click()
+  expect(button(root, 'Save graph').disabled).toBe(true)
+})

@@ -25,6 +25,18 @@ Synthetic `$imports`/`$members` mappings navigate to the corresponding editor;
 node selection highlights every mapped range for that node. No backend files or
 existing scripts were migrated or changed.
 
+## Edge ports
+
+Edges carry the backend's optional `port`. Conditions offer **If true**, **If false**
+and **On error** handles; other non-trigger steps offer **Next** and **On error**;
+triggers offer only **Next**. New edges write `true`, `false` or `error` and omit the
+port for `next`. A stored port-less edge on a condition is its true branch and is
+kept byte-for-byte. Each output holds one edge, so a used output (on the canvas or
+in the inspector's **Output** picker) accepts no second edge, and `next` and `true`
+on one condition count as the same output. Cycles stay rejected through every port.
+Different outputs may lead to the same step. The inspector defaults to the first
+free output.
+
 ## Verification, 2026-11-12
 
 - Baseline: 77 frontend tests. Final: `bun run test`, 83 tests across 11 files pass.

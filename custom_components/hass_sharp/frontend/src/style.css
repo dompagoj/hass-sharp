@@ -205,6 +205,9 @@ ha-panel-hass-sharp-view > #app { height: 100%; }
 .hs-app .hs-flow-card > span:last-child { color: var(--hs-muted); font: 11px/1.5 monospace; overflow-wrap: anywhere; overflow: hidden; }
 .hs-app .hs-flow-kind { font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--hs-accent); }
 .hs-app .hs-flow .solid-flow__handle { width: 12px; height: 12px; background: var(--hs-accent); border: 2px solid var(--hs-surface); }
+.hs-app .hs-flow .hs-port--false { background: var(--hs-muted); }
+.hs-app .hs-flow .hs-port--error { background: var(--hs-danger); }
+.hs-app .hs-port-label { position: absolute; right: 10px; transform: translateY(-50%); font-size: 9px; letter-spacing: .04em; color: var(--hs-muted); pointer-events: none; }
 .hs-app .hs-visual-bottom { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(0, 2fr); gap: 20px; margin-top: 20px; }
 .hs-app .hs-connections, .hs-app .hs-graph-preview { padding: 20px; border: 1px solid var(--hs-line); border-radius: 10px; background: var(--hs-surface); min-width: 0; }
 .hs-app .hs-connections > p, .hs-app .hs-graph-preview > p { margin: 8px 0; font-size: 11px; }

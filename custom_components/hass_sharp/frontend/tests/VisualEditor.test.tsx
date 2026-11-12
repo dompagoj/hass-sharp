@@ -3,7 +3,7 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { VisualEditor as RealVisualEditor } from '../src/visual/VisualEditor'
 import { FlowAdapter } from '../src/visual/FlowAdapter'
-import { createGraph, createGraphHistory, updateNode } from '../src/visual/graph'
+import { addNode, connectNodes, createGraph, createGraphHistory, updateNode } from '../src/visual/graph'
 
 import { HassCtx } from '../src/context'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
@@ -208,7 +208,6 @@ it('allows node resizing from the keyboard-accessible inspector and rejects inva
   expect(JSON.parse(host.querySelector('pre')!.textContent!).nodes[0].size.width).toBe(310)
 })
 
-
 it('commits each complete touch gesture once, survives selection/diagnostic updates and supports undo/redo', async () => {
   vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(1)
   const host = root()
@@ -338,4 +337,86 @@ it.each(['touchend', 'touchcancel'])('keeps the primary drag active when an unre
   send(node, 'touchend', [], [touch(1, node, 200)])
   expect(commits).toHaveLength(1)
   expect(graph().nodes[0].position).toEqual({ x: 220, y: 100 })
+})
+
+const json = (host: Element) => { button(host, 'Graph JSON').click(); return JSON.parse(host.querySelector('pre[aria-label="Graph JSON"]')!.textContent!) }
+const focusNode = (host: Element, id: string) => host.querySelector(`[data-id="${id}"]`)!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+const options = (host: Element, label: string) => [...host.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!.options].map(o => o.textContent)
+it('authors condition false and error branches from the inspector and undoes them', () => {
+  const host = root()
+  dispose = render(() => <VisualEditor name="Heating" />, host)
+  button(host, 'Add Wait').click(); input(host, 'Node label', 'Otherwise')
+  button(host, 'Add Call service').click(); input(host, 'Node label', 'Recover')
+  focusNode(host, 'condition-1')
+  expect(options(host, 'Output')).toEqual(['If true (used)', 'If false', 'On error'])
+  expect(host.querySelector<HTMLSelectElement>('select[aria-label="Output"]')!.value).toBe('false')
+  input(host, 'Output', 'true')
+  expect(options(host, 'Connect to')).toEqual(['Choose next step'])
+  input(host, 'Output', 'false')
+  input(host, 'Connect to', json(host).nodes.find((n: any) => n.label === 'Otherwise').id)
+  button(host, 'Connect').click()
+  input(host, 'Output', 'error')
+  input(host, 'Connect to', json(host).nodes.find((n: any) => n.label === 'Recover').id)
+  button(host, 'Connect').click()
+  const connections = host.querySelector('[aria-label="Connections"]')!.textContent
+  expect(connections).toContain('State condition · If false → Otherwise')
+  expect(connections).toContain('State condition · On error → Recover')
+  expect(json(host).edges.filter((e: any) => e.source === 'condition-1').map((e: any) => e.port)).toEqual(['true', 'false', 'error'])
+  button(host, 'Undo').click()
+  expect(json(host).edges.filter((e: any) => e.source === 'condition-1').map((e: any) => e.port)).toEqual(['true', 'false'])
+})
+it('blocks a second outgoing edge on a used port in the inspector', () => {
+  const host = root()
+  dispose = render(() => <VisualEditor name="Heating" />, host)
+  button(host, 'Add Wait').click()
+  focusNode(host, 'service-1')
+  const wait = json(host).nodes.at(-1).id
+  input(host, 'Connect to', wait); button(host, 'Connect').click()
+  button(host, 'Add Call service').click()
+  focusNode(host, 'service-1')
+  expect(options(host, 'Output')).toEqual(['Next (used)', 'On error'])
+  input(host, 'Output', 'next')
+  expect(options(host, 'Connect to')).toEqual(['Choose next step'])
+  expect(button(host, 'Connect').disabled).toBe(true)
+  input(host, 'Output', 'error')
+  expect(options(host, 'Connect to')).toContain('Call service')
+})
+it('renders a source handle per backend port and labels branch edges', async () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function(this: HTMLElement) { return parseFloat(this.style.width) || 800 })
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function(this: HTMLElement) { return parseFloat(this.style.height) || 570 })
+  const host = root()
+  const [graph, setGraph] = createSignal(connectNodes(addNode(createGraph('Heating'), 'delay', 'otherwise'), 'condition-1', 'otherwise', 'false'))
+  dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, host)
+  const handles = (id: string) => [...host.querySelectorAll(`[data-id="${id}"] .solid-flow__handle.source`)].map(h => h.getAttribute('data-handleid'))
+  expect(handles('trigger-1')).toEqual(['next'])
+  expect(handles('condition-1')).toEqual(['true', 'false', 'error'])
+  expect(handles('service-1')).toEqual(['next', 'error'])
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge-labels')?.textContent).toContain('If false'))
+  expect(host.querySelector('.solid-flow__edge-labels')?.textContent).toContain('If true')
+})
+it('connects by dragging from a port handle and rejects a second edge on that port', async () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function(this: HTMLElement) { return parseFloat(this.style.width) || 800 })
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function(this: HTMLElement) { return parseFloat(this.style.height) || 570 })
+  const host = root()
+  const [graph, setGraph] = createSignal(addNode(addNode(createGraph('Heating'), 'delay', 'otherwise'), 'service', 'recover'))
+  dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, host)
+  const handle = (id: string, handleId: string) => host.querySelector<HTMLElement>(`[data-id="${id}"] [data-handleid="${handleId}"]`)!
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  // happy-dom has no layout, so report the drop target the way a browser hit test would.
+  let below: Element | null = null
+  vi.spyOn(document, 'elementFromPoint').mockImplementation(() => below)
+  const drag = (source: string, port: string, target: string) => {
+    below = handle(target, 'in')
+    handle(source, port).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+    document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 200, clientY: 200 }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 200, clientY: 200 }))
+  }
+  drag('condition-1', 'false', 'otherwise')
+  await vi.waitFor(() => expect(graph().edges.at(-1)).toMatchObject({ source: 'condition-1', target: 'otherwise', port: 'false' }))
+  drag('condition-1', 'false', 'recover')
+  drag('condition-1', 'true', 'recover')
+  drag('service-1', 'error', 'recover')
+  await vi.waitFor(() => expect(graph().edges.at(-1)).toMatchObject({ source: 'service-1', target: 'recover', port: 'error' }))
+  expect(graph().edges.filter(e => e.source === 'condition-1').map(e => [e.port, e.target])).toEqual([['true', 'service-1'], ['false', 'otherwise']])
+  expect(host.querySelectorAll('.solid-flow__edge')).toHaveLength(graph().edges.length)
 })
