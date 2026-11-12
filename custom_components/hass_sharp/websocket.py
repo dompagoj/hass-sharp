@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -5,8 +6,54 @@ from homeassistant.components import websocket_api
 import voluptuous as vol
 
 from . import dotnet_tasks, utils
+from .const import logger
 
 def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
+    @websocket_api.decorators.async_response
+    async def websocket_run_now(hass, connection, msg):
+        if not connection.user.is_admin:
+            connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        try:
+            result = await hass.async_add_executor_job(
+                hass_sharp.RunNow, msg["automationId"], msg["className"], msg["method"]
+            )
+            connection.send_result(msg["id"], json.loads(result))
+        except Exception:
+            logger.exception("Manual automation dispatch failed")
+            connection.send_error(msg["id"], "run_failed", "Could not dispatch automation; check integration logs")
+
+    @websocket_api.decorators.async_response
+    async def websocket_run_history(hass, connection, msg):
+        if not connection.user.is_admin:
+            connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        try:
+            result = await hass.async_add_executor_job(
+                hass_sharp.GetRunHistory, msg["automationId"], msg["offset"], msg["limit"]
+            )
+            connection.send_result(msg["id"], json.loads(result))
+        except Exception:
+            logger.exception("Run history read failed")
+            connection.send_error(msg["id"], "history_failed", "Could not read run history")
+
+    for command, handler, fields in (
+        ("run_now", websocket_run_now, {
+            vol.Required("className"): str, vol.Required("method"): str,
+        }),
+        ("run_history", websocket_run_history, {
+            vol.Optional("offset", default=0): vol.All(int, vol.Range(min=0)),
+            vol.Optional("limit", default=50): vol.All(int, vol.Range(min=1, max=100)),
+        }),
+    ):
+        websocket_api.async_register_command(
+            hass_outer, f"hass_sharp/{command}", handler,
+            vol.Schema({
+                vol.Required("id"): int, vol.Required("type"): f"hass_sharp/{command}",
+                vol.Required("automationId"): str, **fields,
+            })
+        )
+
     @websocket_api.decorators.async_response
     async def websocket_reload_entities(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
 

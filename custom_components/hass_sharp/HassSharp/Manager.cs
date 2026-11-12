@@ -6,12 +6,15 @@ public class HassSharpManager
 {
     readonly DiagnosticsProvider _diagnosticsProvider = new();
     readonly CodeCompiler _compiler;
-    readonly UserScriptManager _userScriptManager = new();
+    readonly UserScriptManager _userScriptManager;
+    readonly RunHistoryStore _history;
 
     public HassSharpManager(string hassConfigPath)
     {
         HassPath.HassConfiguration = hassConfigPath;
         _compiler = new(_diagnosticsProvider);
+        _history = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "runs.db"));
+        _userScriptManager = new() { History = _history };
     }
 
     public async Task Init(string[] hassEntityIds)
@@ -30,6 +33,16 @@ public class HassSharpManager
         await _userScriptManager.LoadUserScripts(assemblies);
         _userScriptManager.DependencyTracking.Debug();
     }
+
+    public string GetRunHistory(string automationId, int offset, int limit) =>
+        System.Text.Json.JsonSerializer.Serialize(new { version = 1, offset, limit,
+            runs = _history.Read(automationId, offset, limit) }, HistoryJson);
+
+    static readonly System.Text.Json.JsonSerializerOptions HistoryJson = new() { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase };
+
+    public string RunNow(string automationId, string className, string method) =>
+        System.Text.Json.JsonSerializer.Serialize(new { version = 1,
+            runId = _userScriptManager.DispatchManual(automationId, className, method) });
 
     public void Unload() => _userScriptManager.UnloadUserScripts();
 
@@ -98,7 +111,11 @@ public class HassSharpManager
 
             if (alreadyExists) throw new ArgumentException($"Script with name {name} already exists");
 
+            var oldPath = found.CompiledScript.FilePath;
+            var oldName = found.CompiledScript.FileName;
             found.CompiledScript.RenameOnDisk(normalizedName);
+            try { _history.Rename(oldPath, found.CompiledScript.FilePath); }
+            catch { found.CompiledScript.RenameOnDisk(oldName); throw; }
             return normalizedName;
         });
     }

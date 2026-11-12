@@ -41,12 +41,12 @@ class UserScriptClass
     internal void Start() => StartupCompletion = Task.WhenAll(
         _actions.Values.Where(a => a.Startup).Select(a => RunMethod(a.Method, InvocationCause.Startup)));
 
-    internal Task RunMethod(string method, InvocationCause cause = InvocationCause.Manual)
+    internal Task RunMethod(string method, InvocationCause cause = InvocationCause.Manual, string? runId = null)
     {
         var action = _actions[method];
         if (cause == InvocationCause.Manual && !action.Manual)
             throw new InvalidOperationException("Manual invocation is disabled");
-        return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method), action.Mode, cause);
+        return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method), action.Mode, cause, runId);
     }
 
     internal string GetConcatedMethodNameWithClass(string methodName) => $"{ClassName}::{methodName}";

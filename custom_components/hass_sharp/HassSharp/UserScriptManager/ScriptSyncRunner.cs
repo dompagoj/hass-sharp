@@ -41,10 +41,26 @@ class ScriptSyncRunner
         }
     }
 
-    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause)
+    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, string? runId = null)
     {
+        var record = new InvocationRecord
+        {
+            RunId = runId ?? Guid.NewGuid().ToString("N"),
+            AutomationId = scriptClass.Script.AutomationId, Revision = scriptClass.Script.Revision,
+            Action = scriptClass.GetConcatedMethodNameWithClass(methodInfo.Name), Cause = cause.ToString(),
+            Details = cause == InvocationCause.Entity ? UserScriptManager.CurrentTrigger.Value?.State.EntityId : null
+        };
+        void Save() => scriptClass.Script.ScriptManager.History?.Save(record);
+        // Fail closed before registering work if history is unavailable.
+        Save();
         var registration = TryRegister(scriptClass, methodInfo, mode);
-        if (registration == null) return;
+        if (registration == null)
+        {
+            record.Status = scriptClass.Script.LifetimeToken.IsCancellationRequested ? "Cancelled" : "Skipped";
+            record.EndUtc = DateTime.UtcNow;
+            Save();
+            return;
+        }
 
         try
         {
@@ -52,10 +68,32 @@ class ScriptSyncRunner
                 await registration.RestartCancellation;
 
             if (registration.Predecessor is not null) await registration.Predecessor;
-            await Task.Run(() => Execute(scriptClass, methodInfo, registration, cause));
+            await Task.Run(async () =>
+            {
+                record.StartUtc = DateTime.UtcNow;
+                record.Status = "Running";
+                Save();
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    await Execute(scriptClass, methodInfo, registration, cause);
+                    record.Status = "Succeeded";
+                }
+                catch (OperationCanceledException) when (registration.Run.Token.IsCancellationRequested)
+                { record.Status = "Cancelled"; record.Error = "Invocation cancelled"; }
+                catch (Exception ex)
+                { record.Status = "Failed"; record.Error = ex.GetBaseException().Message; }
+                finally { record.DurationMs = timer.Elapsed.TotalMilliseconds; }
+            });
+        }
+        catch (Exception ex)
+        {
+            record.Status = "Failed"; record.Error = ex.GetBaseException().Message;
+            throw;
         }
         finally
         {
+            record.EndUtc = DateTime.UtcNow;
             var cancellationTask = Unregister(scriptClass, methodInfo, registration);
             try
             {
@@ -65,6 +103,7 @@ class ScriptSyncRunner
             {
                 registration.Run.Cancellation.Dispose();
                 registration.Run.Completed.TrySetResult();
+                Save();
             }
         }
     }
@@ -126,33 +165,17 @@ class ScriptSyncRunner
         MethodInfo methodInfo,
         RunRegistration registration, InvocationCause cause)
     {
-        try
+        registration.Run.Token.ThrowIfCancellationRequested();
+        scriptClass.Instance._cancellationToken.Value = registration.Run.Token;
+        UserScriptManager.CurrentCause.Value = cause;
+        object? result;
+        try { result = methodInfo.Invoke(scriptClass.Instance, null); }
+        catch (TargetInvocationException ex) when (ex.InnerException != null)
         {
-            registration.Run.Token.ThrowIfCancellationRequested();
-            scriptClass.Instance._cancellationToken.Value = registration.Run.Token;
-
-            UserScriptManager.CurrentCause.Value = cause;
-
-            var result = methodInfo.Invoke(
-                scriptClass.Instance,
-                BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly,
-                null,
-                null,
-                null
-            );
-
-            if (result is Task task) await task;
-            if (result is ValueTask valueTask) await valueTask;
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+            throw;
         }
-        catch (OperationCanceledException)
-        {
-            // Task was canceled, ignore
-        }
-        catch (Exception ex)
-        {
-            var methodName = scriptClass.GetConcatedMethodNameWithClass(methodInfo.Name);
-            Logger.Error(
-                $"Error running automation {methodName} | {ex.Message} | {ex.InnerException?.Message} | {ex.StackTrace}");
-        }
+        if (result is Task task) await task;
+        if (result is ValueTask valueTask) await valueTask;
     }
 }

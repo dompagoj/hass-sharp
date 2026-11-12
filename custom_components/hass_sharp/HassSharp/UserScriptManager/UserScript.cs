@@ -2,6 +2,9 @@ namespace HassSharp;
 
 class UserScript
 {
+    public string AutomationId { get; init; } = Guid.NewGuid().ToString("N");
+    public string Revision => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(CompiledScript.SourceCode)));
+
     volatile CancellationTokenSource _lifetimeCancellation = new();
 
     public required UserScriptManager ScriptManager { get; init; }
@@ -31,6 +34,7 @@ class UserScript
         ClearFromTracking();
         Unload();
         CompiledScript.DeleteFromDisk();
+        ScriptManager.History?.Forget(CompiledScript.FilePath);
     }
 
     internal void ClearFromTracking()

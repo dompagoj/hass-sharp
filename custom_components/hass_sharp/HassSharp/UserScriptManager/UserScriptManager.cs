@@ -7,6 +7,31 @@ record TriggerContext(HasEntityState State);
 
 class UserScriptManager
 {
+    public RunHistoryStore? History { get; init; }
+
+    public Task RunNow(string automationId, string className, string method)
+    {
+        var script = _userScripts.Single(s => s.AutomationId == automationId);
+        return script.Classes.Single(c => c.ClassName == className).RunMethod(method, InvocationCause.Manual);
+    }
+
+    public string DispatchManual(string automationId, string className, string method)
+    {
+        var script = _userScripts.Single(s => s.AutomationId == automationId);
+        var klass = script.Classes.Single(c => c.ClassName == className);
+        var runId = Guid.NewGuid().ToString("N");
+        var task = klass.RunMethod(method, InvocationCause.Manual, runId);
+        if (task.IsCompleted) task.GetAwaiter().GetResult();
+        else _ = Observe(task);
+        return runId;
+    }
+
+    static async Task Observe(Task task)
+    {
+        try { await task; }
+        catch (Exception ex) { Logger.Error($"Invocation history failure: {ex.Message}"); }
+    }
+
     public static readonly AsyncLocal<InvocationCause> CurrentCause = new();
     public static readonly AsyncLocal<TriggerContext?> CurrentTrigger = new();
 
@@ -43,6 +68,7 @@ class UserScriptManager
 
         var userScript = new UserScript
         {
+            AutomationId = History?.Identity(compiledScript.FilePath) ?? compiledScript.FilePath,
             CompiledScript = compiledScript,
             Classes = null!,
             ScriptManager = this,

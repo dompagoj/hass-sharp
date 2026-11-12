@@ -99,7 +99,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
     )
 
     frontend.add_extra_js_url(hass, "/hass-sharp-static/hass-sharp.js")
-    hass_sharp = HassSharpManager(hass.config.path(""))
+    hass_sharp = await hass.async_add_executor_job(HassSharpManager, hass.config.path(""))
     utils.set_hass_sharp_manager(hass, hass_sharp)
 
     websocket.register_websocket_routes(hass, hass_sharp)
