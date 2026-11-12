@@ -37,7 +37,7 @@ function App(props: { hass: HomeAssistant }) {
           <Route path="/" component={() => <Navigate href="/automations" />} />
           <Route path="/automations" component={AutomationsListView} />
           <Route path="/automations/:id" component={AutomationView} />
-          <Route path="/visual/new" component={VisualAutomationView} />
+          <Route path="/visual/:id" component={VisualAutomationView} />
           <Route path="/devices" component={TODOView} />
           <Route path="/entities" component={TODOView} />
         </Router>

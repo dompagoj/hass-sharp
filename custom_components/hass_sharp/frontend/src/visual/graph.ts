@@ -65,6 +65,7 @@ export function createGraphHistory(initial: VisualGraph) {
   const [future, setFuture] = createSignal<VisualGraph[]>([])
   return {
     graph,
+    reset(next: VisualGraph) { setPast([]); setFuture([]); setGraph(next) },
     canUndo: () => past().length > 0,
     canRedo: () => future().length > 0,
     commit(next: VisualGraph) {

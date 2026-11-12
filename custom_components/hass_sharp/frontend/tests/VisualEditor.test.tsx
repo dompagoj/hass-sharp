@@ -1,9 +1,14 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
-import { VisualEditor } from '../src/visual/VisualEditor'
+import { VisualEditor as RealVisualEditor } from '../src/visual/VisualEditor'
 import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { createGraph, updateNode } from '../src/visual/graph'
+
+import { HassCtx } from '../src/context'
+import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
+import { visualFixture } from './visual-fixture'
+const VisualEditor = (props: { name: string }) => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={ { ...visualFixture(), user: { is_admin: true } } as any}><RealVisualEditor {...props} /></HassCtx.Provider></QueryClientProvider>
 
 let dispose: (() => void) | undefined
 afterEach(async () => {
@@ -35,7 +40,7 @@ it('renders same-count edits, resizing and undo positions through the real adapt
   expect(node.style.transform).toContain('60px, 100px')
 })
 
-it('offers palette, inspector, connection editing and undo/redo without calling a backend', async () => {
+it('offers palette, inspector, connection editing and undo/redo while requesting a server preview', async () => {
   const host = root()
   dispose = render(() => <VisualEditor name="Heating" />, host)
   button(host, 'Add Wait').click()
@@ -52,8 +57,8 @@ it('offers palette, inspector, connection editing and undo/redo without calling 
   button(host, 'Remove Wait for warmth → Call service').click()
   expect(host.querySelector('[aria-label="Connections"]')?.textContent).not.toContain('Wait for warmth → Call service')
   expect(host.textContent).toContain('Not saved')
-  expect(host.textContent).toContain('Sample C#')
-  expect(host.textContent).toContain('not generated from your graph')
+  expect(host.textContent).toContain('Generated C#')
+  expect(host.textContent).not.toContain('SAMPLE ONLY')
 })
 
 it('uses keyboard history only outside text controls, and keeps JSON available', () => {

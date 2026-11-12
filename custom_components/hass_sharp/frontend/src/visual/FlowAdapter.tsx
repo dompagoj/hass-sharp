@@ -2,11 +2,13 @@ import { createEffect, on, onCleanup, onMount, untrack, type Component } from 's
 import { createStore, reconcile } from 'solid-js/store'
 import { Background, Controls, Handle, NodeResizer, Position, SolidFlow, type Node, type NodeProps, type Edge } from '@dschz/solid-flow'
 import flowStyles from '@dschz/solid-flow/styles?inline'
+import type { VisualDiagnostic } from './api'
 import { canConnect, connectNodes, updateNode, type VisualGraph } from './graph'
 
 interface Props {
   graph: VisualGraph
   selectedId?: string
+  diagnostics?: VisualDiagnostic[]
   onSelect: (id: string) => void
   onChange: (graph: VisualGraph) => void
 }
@@ -22,7 +24,7 @@ export const FlowAdapter: Component<Props> = props => {
     props.onChange({ ...current, nodes: current.nodes.map(node => {
       const flowNode = nodes.find(n => n.id === node.id)
       return flowNode ? { ...node, position: { ...flowNode.position }, size: {
-        width: flowNode.width ?? node.size.width, height: flowNode.height ?? node.size.height,
+        width: flowNode.width ?? node.size?.width ?? 220, height: flowNode.height ?? node.size?.height ?? 112,
       } } : node
     }) })
   }
@@ -38,18 +40,18 @@ export const FlowAdapter: Component<Props> = props => {
     canvas.removeEventListener('touchend', finishTouch, true)
     canvas.removeEventListener('touchcancel', finishTouch, true)
   })
-  createEffect(on(() => [props.graph, props.selectedId] as const, ([graph, selectedId]) => untrack(() => {
-    setNodes(reconcile(graph.nodes.map(node => ({
-      id: node.id, type: 'automation', data: { label: node.label, kind: node.kind, summary: Object.values(node.config)[0] ?? '' },
-      position: { ...node.position }, width: node.size.width, height: node.size.height,
-      ariaLabel: `${node.label}, ${node.kind}`, selected: node.id === selectedId,
+  createEffect(on(() => [props.graph, props.selectedId, props.diagnostics] as const, ([graph, selectedId]) => untrack(() => {
+    setNodes(reconcile(graph.nodes.map((node, index) => ({
+      id: node.id, type: 'automation', data: { label: node.label ?? node.kind, kind: node.kind, summary: Object.values(node.config)[0] ?? '', errors: props.diagnostics?.filter(d => d.nodeId === node.id && d.severity === 3).length ?? 0 },
+      position: node.position ? { ...node.position } : { x: 60 + index * 300, y: 100 }, width: node.size?.width ?? 220, height: node.size?.height ?? 112,
+      ariaLabel: `${node.label ?? node.kind}, ${node.kind}`, selected: node.id === selectedId,
     })), { key: 'id' }))
     setEdges(reconcile(graph.edges.map(edge => ({ ...edge, sourceHandle: 'out', targetHandle: 'in', type: 'smoothstep' })), { key: 'id' }))
   })))
   const AutomationNode = (node: NodeProps) => <>
     <NodeResizer visible={node.selected} minWidth={180} minHeight={100} onResizeEnd={commitGeometry} />
     {node.data.kind !== 'trigger' && <Handle type="target" position={Position.Left} id="in" />}
-    <div class="hs-flow-card"><span class="hs-flow-kind">{String(node.data.kind)}</span><strong>{String(node.data.label)}</strong><span>{String(node.data.summary)}</span></div>
+    <div class="hs-flow-card" classList={{ 'hs-flow-card--error': !!node.data.errors }}><span class="hs-flow-kind">{String(node.data.kind)}</span><strong>{String(node.data.label)}</strong><span>{String(node.data.summary)}</span>{!!node.data.errors && <span class="hs-error">{String(node.data.errors)} error(s)</span>}</div>
     <Handle type="source" position={Position.Right} id="out" />
   </>
   return <div ref={canvas} class="hs-flow" aria-label="Automation canvas"
@@ -65,7 +67,7 @@ export const FlowAdapter: Component<Props> = props => {
       if (direction && node && props.selectedId === id) {
         event.preventDefault(); event.stopPropagation()
         const step = event.shiftKey ? 40 : 10
-        props.onChange(updateNode(props.graph, id, { position: { x: node.position.x + direction[0] * step, y: node.position.y + direction[1] * step } }))
+        props.onChange(updateNode(props.graph, id, { position: { x: (node.position?.x ?? 60) + direction[0] * step, y: (node.position?.y ?? 100) + direction[1] * step } }))
       }
     }}>
     {/* CSS never escapes the canvas into HA's light DOM. Requires CSS @scope support. */}

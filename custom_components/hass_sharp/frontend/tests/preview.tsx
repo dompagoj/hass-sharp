@@ -1,4 +1,5 @@
 // Development-only fixture. No backend or Home Assistant services are called.
+import { visualFixture as makeVisualFixture } from './visual-fixture'
 import { render } from 'solid-js/web'
 import App from '../src/App'
 import '../src/style.css'
@@ -39,6 +40,8 @@ const runs: AutomationRun[] = Array.from({ length: 23 }, (_, i) => ({
   document.documentElement.style.colorScheme = theme
 }
 ;(window as any).setPreviewTheme('light')
+const visualBackend = makeVisualFixture()
+;(window as any).visualFixture = visualBackend
 const visualFixture = new URLSearchParams(location.search).get('view') === 'visual'
 history.replaceState(null, '', visualFixture ? '/hass-sharp/visual/new?name=Motion%20lights' : '/hass-sharp/automations')
 const hass = {
@@ -55,6 +58,7 @@ const hass = {
     return { fileName }
   },
   async callWS(message: { type: string; source: string }) {
+    if (message.type === 'hass_sharp/visual') return visualBackend.callWS(message)
     if (message.type.endsWith('format_source')) return message.source
     if (message.type === 'hass_sharp/run_history') {
       if (fixture.historyError) throw { message: 'Example history connection error' }
@@ -63,7 +67,8 @@ const hass = {
     }
     if (message.type === 'hass_sharp/run_now') {
       if (fixture.dispatchError) throw { message: 'Example manual dispatch rejection' }
-      const run: AutomationRun = { ...runs[0], runId: `fixture-manual-${Date.now()}`, cause: 'Manual', details: null,
+      const request = message as any
+      const run: AutomationRun = { ...runs[0], automationId: request.automationId, action: `${request.className}::${request.method}`, runId: `fixture-manual-${Date.now()}`, cause: 'Manual', details: null,
         receivedUtc: new Date().toISOString(), startUtc: null, plannedUtc: null, endUtc: null, durationMs: null, status: 'Pending', error: null }
       runs.unshift(run)
       setTimeout(() => Object.assign(run, { status: fixture.result, startUtc: new Date().toISOString(), endUtc: new Date().toISOString(), durationMs: 1000 }), 1000)

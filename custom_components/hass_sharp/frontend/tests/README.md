@@ -38,9 +38,17 @@ runs. Its `window.runFixture` lets browser checks set `historyError`,
 Monaco worker bootstrap regression. Open a code automation, type, and switch
 Source/Run history: the real Monaco model must survive, with no worker error.
 
-The preview build is currently hosted under `/hass-sharp-static/run-check-9b24/`.
+The preview build uses `/hass-sharp-static/visual-api-check-baby/`.
 For a narrow code-editor iframe, open its `tests/visual-check.html` with
 `?view=code&width=390&theme=dark`. See `../docs/run-history-ui.md` for evidence and
 remaining live-HA verification. Copy preview output only to a unique temporary
 static subdirectory, leaving the live panel bundles untouched, and remove it after
 checking.
+
+`visual-fixture.ts` also supplies the in-memory visual API, exposed as
+`window.visualFixture` in the preview frame. Its controls simulate validation,
+preview failure, revision conflicts, deletion conflicts and activation failure.
+Use `VisualAutomationView.test.tsx` for editor/save/run behavior and
+`visual-session.test.ts` for debounce, in-flight results and revision handling.
+See `../docs/visual-api-integration.md` for browser evidence and the live sign-in
+blocker. Fixture results do not verify backend compilation or persistence.

@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/solid-query'
 import { Dialog } from '../components/Dialog'
 import { Button, Field, Icon, Status } from '../components/Controls'
 import { Menu } from '../components/Menu'
+import { visualApi, visualError, type VisualDocument } from '../visual/api'
 import { errorToHassError } from '../utils'
 
 interface AutomationNameResponse {
@@ -22,6 +23,8 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
   const [name, setName] = createSignal('')
   const [error, setError] = createSignal<string>()
   const [submitting, setSubmitting] = createSignal(false)
+  const visual = visualApi(hass)
+  const [deleteVisual, setDeleteVisual] = createSignal<VisualDocument>()
   const [deleteFile, setDeleteFile] = createSignal<string>()
   const [deleteError, setDeleteError] = createSignal<string>()
   const [deleting, setDeleting] = createSignal(false)
@@ -38,6 +41,8 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
     queryKey: ['automations'],
     queryFn: () => hass.callApi<UserScriptDTO[]>('GET', 'hass-sharp/automations'),
   }))
+
+  const visualQuery = useQuery(() => ({ queryKey: ['visual-automations'], queryFn: visual.list, staleTime: 0 }))
 
   const openNameDialog = (fileName?: string) => {
     setRenameFile(fileName)
@@ -93,24 +98,32 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
   const closeDeleteDialog = () => {
     if (deleting()) return
     setDeleteFile(undefined)
+    setDeleteVisual(undefined)
     setDeleteError(undefined)
   }
 
   const deleteAutomation = async () => {
     const fileName = deleteFile()
-    if (!fileName || deleting()) return
+    const document = deleteVisual()
+    if ((!fileName && !document) || deleting()) return
 
     setDeleting(true)
     setDeleteError(undefined)
 
     try {
-      await hass.callApi('DELETE', `hass-sharp/automations/${encodeURIComponent(fileName)}`)
+      if (document) {
+        await visual.delete(document.id, document.revision)
+        await queryClient.invalidateQueries({ queryKey: ['visual-automations'] })
+        setDeleteVisual(undefined)
+        return
+      }
+      await hass.callApi('DELETE', `hass-sharp/automations/${encodeURIComponent(fileName!)}`)
       queryClient.removeQueries({ queryKey: ['automations', fileName], exact: true })
       await queryClient.invalidateQueries({ queryKey: ['automations'] })
       setDeleteFile(undefined)
     } catch (err) {
       const hassError = errorToHassError(err as Error)
-      setDeleteError(hassError.body?.error ?? hassError.error ?? 'Unable to delete the automation.')
+      setDeleteError(document ? `${visualError(err)} Reload the list before deleting a changed graph.` : hassError.body?.error ?? hassError.error ?? 'Unable to delete the automation.')
     } finally {
       setDeleting(false)
     }
@@ -122,6 +135,12 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
     return (query.data ?? []).filter(file => [file.fileName, ...file.classes.map(klass => klass.name)].some(name => name.toLocaleLowerCase().includes(term)))
   })
 
+  const visualDocuments = createMemo(() => {
+    const term = search().trim().toLocaleLowerCase()
+    return (visualQuery.data ?? []).filter(document => document.graph.name.toLocaleLowerCase().includes(term))
+  })
+  const count = () => files().length + visualDocuments().length
+
   return (
     <section class="hs-page" aria-labelledby="automations-title">
       <header class="hs-page-heading">
@@ -130,21 +149,31 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
         <Button variant="primary" onClick={() => openNameDialog()}><Icon name="plus" />New automation</Button>
       </header>
       <div class="hs-list-toolbar">
-        <Field type="search" label="Search automations" placeholder="Search by file or class…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
-        <span class="hs-muted hs-count" aria-live="polite">{files().length} {files().length === 1 ? 'file' : 'files'}</span>
+        <Field type="search" label="Search automations" placeholder="Search by name, file or class…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
+        <span class="hs-muted hs-count" aria-live="polite">{count()} {count() === 1 ? 'automation' : 'automations'}</span>
       </div>
       <Show when={query.isPending}><div class="hs-empty" role="status">Loading automations…</div></Show>
       <Show when={query.isError}><div class="hs-notice hs-notice--danger" role="alert">
         <h2>Automations couldn’t load</h2><p>{errorToHassError(query.error!).body?.error ?? 'Check your connection and try again.'}</p>
         <Button onClick={() => void query.refetch()}>Try again</Button>
       </div></Show>
-      <Show when={query.isSuccess && !files().length}><div class="hs-empty" role="status">
+      <Show when={query.isSuccess && visualQuery.isSuccess && !count()}><div class="hs-empty" role="status">
         <span class="hs-empty-icon"><Icon name="code" /></span>
         <h2>No automations{search() ? ' found' : ' yet'}</h2>
         <p>{search() ? 'Try another file or class name.' : 'Create your first automation to get started.'}</p>
         <Show when={!search()}><Button variant="primary" onClick={() => openNameDialog()}>New automation</Button></Show>
       </div></Show>
+      <Show when={visualQuery.isPending}><p role="status">Loading visual automations…</p></Show>
+      <Show when={visualQuery.isError}><div class="hs-notice hs-notice--danger" role="alert"><h2>Visual automations couldn’t load</h2><p>{visualError(visualQuery.error)}</p><Button onClick={() => void visualQuery.refetch()}>Retry visual list</Button></div></Show>
       <ul class="hs-automation-list" aria-label="Automation files">
+        <For each={visualDocuments()}>{document => <li class="hs-automation-card"><div class="hs-file-row">
+          <span class="hs-file-icon"><Icon name="code" /></span>
+          <A class="hs-file-link" href={`/visual/${encodeURIComponent(document.id)}`}><h2>{document.graph.name}</h2><span class="hs-muted">Saved graph · revision {document.revision}</span></A>
+          <Status>Visual</Status><Menu label={`Actions for ${document.graph.name}`} disabled={submitting() || deleting()} items={[
+            { label: 'Edit / rename', onSelect: () => navigate(`/visual/${document.id}`) },
+            { label: 'Delete', danger: true, onSelect: () => { setDeleteError(undefined); setDeleteVisual(document) } },
+          ]} />
+        </div></li>}</For>
         <For each={files()}>{file => <li class="hs-automation-card">
           <div class="hs-file-row">
             <span class="hs-file-icon"><Icon name="code" /></span>
@@ -198,9 +227,9 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
         >
           <Show when={!renameFile()}><fieldset class="hs-authoring-choice"><legend>Author with</legend>
             <label><input type="radio" name="authoring-mode" value="code" checked={authoringMode() === 'code'} onChange={() => setAuthoringMode('code')} /><span><strong>C#</strong><small>Write and run C# automations</small></span></label>
-            <label><input type="radio" name="authoring-mode" value="visual" checked={authoringMode() === 'visual'} onChange={() => setAuthoringMode('visual')} /><span><strong>Visual</strong><small>Try the visual draft editor</small></span></label>
+            <label><input type="radio" name="authoring-mode" value="visual" checked={authoringMode() === 'visual'} onChange={() => setAuthoringMode('visual')} /><span><strong>Visual</strong><small>Build a graph with generated C#</small></span></label>
           </fieldset></Show>
-          <Show when={!renameFile() && authoringMode() === 'visual'}><p class="hs-muted">A local draft only. Saving and running visual automations are not available yet.</p></Show>
+          <Show when={!renameFile() && authoringMode() === 'visual'}><p class="hs-muted">Preview and save your graph in Home Assistant, then run it and inspect its history.</p></Show>
           <Field label="Automation name" type="text" name="name" autofocus required value={name()} disabled={submitting()}
             hint={authoringMode() === 'visual' && !renameFile() ? 'Give your visual draft a name.' : 'Choose a descriptive name. The .cs extension is added automatically.'}
             onInput={event => setName(event.currentTarget.value)} />
@@ -214,7 +243,7 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
         </form>
       </Dialog>
       <Dialog
-        open={deleteFile() !== undefined}
+        open={deleteFile() !== undefined || !!deleteVisual()}
         title="Delete Automation"
         width="small"
         preventClose={deleting()}
@@ -226,7 +255,7 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
             </Button>
             <Button
               variant="danger"
-              disabled={!deleteFile() || deleting()}
+              disabled={(!deleteFile() && !deleteVisual()) || deleting()}
               busy={deleting()}
               onClick={() => void deleteAutomation()}
             >
@@ -237,13 +266,14 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
       >
         <div class="hs-stack">
           <p>
-            Delete <strong>{deleteFile()}</strong>? This will remove the script and all its automations. This cannot be
+            Delete <strong>{deleteVisual()?.graph.name ?? deleteFile()}</strong>? This will remove the script and all its automations. This cannot be
             undone.
           </p>
           <Show when={deleteError()}>
             {message => (
               <div class="hs-error" role="alert">
                 {message()}
+                <Show when={deleteVisual()}><Button onClick={() => { closeDeleteDialog(); void visualQuery.refetch() }}>Reload visual list</Button></Show>
               </div>
             )}
           </Show>

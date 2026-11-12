@@ -4,6 +4,8 @@ import { MemoryRouter, Route } from '@solidjs/router'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
 import { VisualAutomationView } from '../src/views/VisualAutomationView'
+import { visualFixture } from './visual-fixture'
+import { createGraph } from '../src/visual/graph'
 import { AutomationsListView } from '../src/views/AutomationsListView'
 
 let dispose: (() => void) | undefined
@@ -13,7 +15,8 @@ const scripts = [{ fileName: 'Heating.cs', classes: [{ name: 'Home.Heating', met
 function setup(failWrites = false) {
   const root = document.createElement('div'); document.body.append(root)
   const calls: { method: string; path: string; data: unknown }[] = []
-  const hass = { callApi: async (method: string, path: string, data: unknown) => {
+  const fixture = visualFixture()
+  const hass = { ...fixture, callApi: async (method: string, path: string, data: unknown) => {
     calls.push({ method, path, data })
     if (method === 'GET') return scripts
     if (failWrites) throw { body: { error: 'Name already exists' } }
@@ -23,7 +26,7 @@ function setup(failWrites = false) {
   dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={hass as any}>
     <MemoryRouter><Route path="/" component={AutomationsListView} /><Route path="/visual/new" component={VisualAutomationView} /></MemoryRouter>
   </HassCtx.Provider></QueryClientProvider>, root)
-  return { root, calls }
+  return { root, calls, fixture }
 }
 const press = (element: Element, key: string) => element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
 it('filters by file and class, and keeps empty-class files reachable', async () => {
@@ -86,4 +89,36 @@ it('keeps C# creation on the existing backend endpoint', async () => {
   name.value = 'Warm house'; name.dispatchEvent(new Event('input', { bubbles: true }))
   root.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
   await vi.waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: 'hass-sharp/automations', data: { name: 'Warm house' } }))
+})
+
+it('merges saved visual documents with C# files and filters by graph name', async () => {
+  const { root, fixture } = setup()
+  await vi.waitFor(() => expect(client.getQueryState(['visual-automations'])?.status).toBe('success'))
+  fixture.documents.set('motion', { version: 1, id: 'motion', revision: 7, graph: createGraph('Hall motion'), source: 'server', sourceMap: [], automationId: 'visual:motion' })
+  await client.invalidateQueries({ queryKey: ['visual-automations'] })
+  await vi.waitFor(() => expect(root.querySelector('a[href="/visual/motion"]')?.textContent).toContain('Hall motion'))
+  expect(root.textContent).toContain('Lights.cs')
+  const search = root.querySelector<HTMLInputElement>('input[type="search"]')!
+  search.value = 'hall'; search.dispatchEvent(new Event('input', { bubbles: true }))
+  expect(root.textContent).toContain('Hall motion')
+  expect(root.textContent).not.toContain('Heating.cs')
+})
+it('deletes visual documents with their listed revision and preserves a conflict for review', async () => {
+  const { root, calls, fixture } = setup()
+  await vi.waitFor(() => expect(client.getQueryState(['visual-automations'])?.status).toBe('success'))
+  fixture.documents.set('motion', { version: 1, id: 'motion', revision: 7, graph: createGraph('Hall motion'), source: 'server', sourceMap: [], automationId: 'visual:motion' })
+  await client.invalidateQueries({ queryKey: ['visual-automations'] })
+  await vi.waitFor(() => expect(root.textContent).toContain('Hall motion'))
+  fixture.controls.deleteConflict = true
+  root.querySelector<HTMLButtonElement>('[aria-label="Actions for Hall motion"]')!.click()
+  ;[...root.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b => b.textContent === 'Delete')!.click()
+  const deleteButton = () => [...root.querySelectorAll<HTMLButtonElement>('dialog button')].find(b => b.textContent?.trim() === 'Delete')!
+  deleteButton().click()
+  await vi.waitFor(() => expect(root.querySelector('dialog [role="alert"]')?.textContent).toContain('Changed elsewhere'))
+  expect(fixture.documents.has('motion')).toBe(true)
+  expect(calls.filter(c => c.method === 'DELETE')).toEqual([])
+  expect(fixture.calls.find(c => c.request?.operation === 'delete').request).toEqual({ operation: 'delete', id: 'motion', expectedRevision: 7 })
+  fixture.controls.deleteConflict = false
+  deleteButton().click()
+  await vi.waitFor(() => expect(root.querySelector('a[href="/visual/motion"]')).toBeNull())
 })

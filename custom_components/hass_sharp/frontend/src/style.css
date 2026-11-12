@@ -280,3 +280,12 @@ ha-panel-hass-sharp-view > #app { height: 100%; }
   .hs-app .hs-run-action button { width: 100%; }
   .hs-app .hs-run-card { padding: 16px; }
 }
+
+.hs-flow-card--error { outline: 2px solid var(--error-color, #bf3048); outline-offset: 2px; }
+.hs-diagnostics { padding-inline-start: 1.2rem; }
+.hs-source-line { display: block; min-height: 1.5em; }
+.hs-source-line[aria-current="true"] { background: color-mix(in srgb, var(--primary-color) 18%, transparent); }
+.hs-source-number { display: inline-block; width: 3.5em; margin-right: 1em; color: var(--secondary-text-color); background: none; border: 0; font: inherit; cursor: pointer; text-align: right; }
+.hs-source-number:focus-visible { outline: 2px solid var(--primary-color); }
+.hs-app .hs-visual-actions { flex-wrap: wrap; flex-shrink: 1; justify-content: flex-start; }
+.hs-app .hs-visual-heading > div:first-child { min-width: 0; overflow-wrap: anywhere; }
