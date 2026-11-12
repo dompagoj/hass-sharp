@@ -95,8 +95,28 @@ class UserScriptManager
         return userScript;
     }
 
-    public Task LoadUserScripts(IEnumerable<CompiledUserScript> compiledScripts)
-        => Task.WhenAll(compiledScripts.Select(s => LoadUserScript(s).ConfigureAndStart()));
+    public async Task LoadUserScripts(IEnumerable<CompiledUserScript> compiledScripts)
+    {
+        foreach (var compiled in compiledScripts)
+        {
+            UserScript? script = null;
+            try
+            {
+                script = LoadUserScript(compiled, staged: true);
+                script.Prepare();
+                lock (ActivationGate) { script.Active = true; _userScripts.Add(script); }
+                script.Start();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Cannot activate script {compiled.FilePath}: {ex}");
+                try { script?.ClearFromTracking(); }
+                catch (Exception cleanup) { Logger.Error($"Cannot clean up script {compiled.FilePath}: {cleanup}"); }
+                finally { compiled.Unload(); }
+            }
+        }
+        await Task.CompletedTask;
+    }
 
 
     public void TrackEntityCall(string entityId, UserScriptClass scriptClass, string method) =>

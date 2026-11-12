@@ -85,6 +85,7 @@ PyInterop.CallService = (_, service, _, _, _) => turnedOff |= service == "turn_o
 await motion.Run();
 Check(turnedOff, "motion-off trigger must finish turn-off after restart");
 Console.WriteLine("PASS motion-off delay");
+await BackendReviewTests.Run();
 await HandoverTests.Run();
 await HistoryTests.Run();
 await ScheduleTests.Run();

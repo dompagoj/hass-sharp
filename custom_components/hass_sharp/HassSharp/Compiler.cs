@@ -46,38 +46,47 @@ public class CodeCompiler(
 
         var tasks = filePaths.Select(async path =>
         {
-            var source = await File.ReadAllTextAsync(path);
-            var hash = _cacheProvider.ComputeHash(path, source);
-            var cachedBytes = await _cacheProvider.GetFileCache(path, hash);
-
-            if (cachedBytes != null)
+            try
             {
-                Logger.Info($"No change detected in {Path.GetFileName(path)}, using cached dll");
+                var source = await File.ReadAllTextAsync(path);
+                var hash = _cacheProvider.ComputeHash(path, source);
+                var cachedBytes = await _cacheProvider.GetFileCache(path, hash);
+
+                if (cachedBytes != null)
+                {
+                    Logger.Info($"No change detected in {Path.GetFileName(path)}, using cached dll");
+                    return new CompiledUserScript
+                    {
+                        Assembly = LoadAssembly(cachedBytes),
+                        FilePath = path,
+                        FileName = Path.GetFileNameWithoutExtension(path),
+                        SourceCode = source,
+                        WrittenToDisk = true,
+                    };
+                }
+
+                Logger.Info($"Change detected in {Path.GetFileName(path)}, recompiling");
+                var assemblyBytes = CompileSingleFileToBytes(source, path);
+                await _cacheProvider.SetFileCache(path, hash, assemblyBytes);
                 return new CompiledUserScript
                 {
-                    Assembly = LoadAssembly(cachedBytes),
+                    Assembly = LoadAssembly(assemblyBytes),
                     FilePath = path,
                     FileName = Path.GetFileNameWithoutExtension(path),
                     SourceCode = source,
                     WrittenToDisk = true,
                 };
             }
-
-            Logger.Info($"Change detected in {Path.GetFileName(path)}, recompiling");
-            var assemblyBytes = CompileSingleFileToBytes(source, path);
-            await _cacheProvider.SetFileCache(path, hash, assemblyBytes);
-            return new CompiledUserScript
+            catch (Exception ex)
             {
-                Assembly = LoadAssembly(assemblyBytes),
-                FilePath = path,
-                FileName = Path.GetFileNameWithoutExtension(path),
-                SourceCode = source,
-                WrittenToDisk = true,
-            };
+                Logger.Error($"Cannot load script {path}: {ex}");
+                if (ex is CompilationErrorException compilation) Logger.Error(string.Join("\n", compilation.Errors));
+                return null;
+            }
         });
 
         var assemblies = await Task.WhenAll(tasks);
-        return [.. assemblies];
+        return assemblies.OfType<CompiledUserScript>().ToList();
     }
 
     static Assembly LoadAssembly(byte[] assemblyBytes)

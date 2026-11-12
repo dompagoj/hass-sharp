@@ -57,6 +57,7 @@ public partial class HassSharpManager
                         store.Delete(id, revision);
                         if (_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(id)))
                             _userScriptManager.DeleteScript(VisualRuntimePath(id));
+                        else _history.Forget(VisualRuntimePath(id));
                         result = new { deleted = true };
                     }
                     else throw new ArgumentException("Unknown visual operation");

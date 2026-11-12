@@ -31,8 +31,26 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
     }
     public VisualDocument[] List()
     {
-        lock (Gate) return Directory.Exists(directory) ? Directory.GetFiles(directory, "*.json").Order(StringComparer.Ordinal)
-            .Select(p => Read(Path.GetFileNameWithoutExtension(p))!).ToArray() : [];
+        lock (Gate)
+        {
+            var documents = new List<VisualDocument>();
+            if (!Directory.Exists(directory)) return [];
+            foreach (var path in Directory.GetFiles(directory, "*.json").Order(StringComparer.Ordinal))
+            {
+                try
+                {
+                    var id = Path.GetFileNameWithoutExtension(path);
+                    var document = Read(id);
+                    if (document == null || document.Version != 1 || document.Id != id ||
+                        document.Graph == null || document.Source == null || document.SourceMap == null || document.Revision < 1)
+                        throw new JsonException("Invalid visual document envelope");
+                    documents.Add(document);
+                }
+                catch (Exception ex) when (ex is JsonException or ArgumentException or IOException or UnauthorizedAccessException)
+                { Logger.Error($"Skipping visual document {path}: {ex}"); }
+            }
+            return documents.ToArray();
+        }
     }
     public VisualDocument Save(string id, JsonObject graph, long expectedRevision)
     {

@@ -22,7 +22,14 @@ public partial class HassSharpManager
         _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
         var assemblies = await _compiler.CompileFromUserScriptsFolder();
         foreach (var document in VisualDocuments.List())
-            assemblies.Add(await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), document.Source, true));
+        {
+            try { assemblies.Add(await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), document.Source, true)); }
+            catch (Exception ex)
+            {
+                Logger.Error($"Cannot load visual document {document.Id}: {ex}");
+                if (ex is CompilationErrorException compilation) Logger.Error(string.Join("\n", compilation.Errors));
+            }
+        }
 
         _userScriptManager.UnloadUserScripts(); // Just in case, shouldnt be needed
 
@@ -116,6 +123,7 @@ public partial class HassSharpManager
 
             if (alreadyExists) throw new ArgumentException($"Script with name {name} already exists");
 
+            RequireCodeScript(found.CompiledScript.FilePath);
             var oldPath = found.CompiledScript.FilePath;
             var oldName = found.CompiledScript.FileName;
             found.CompiledScript.RenameOnDisk(normalizedName);
@@ -131,5 +139,15 @@ public partial class HassSharpManager
     }
 
 
-    public void DeleteScript(string scriptPath) => _userScriptManager.DeleteScript(scriptPath);
+    static void RequireCodeScript(string path)
+    {
+        if (Path.GetDirectoryName(Path.GetFullPath(path)) != Path.GetFullPath(HassPath.UserScripts))
+            throw new ArgumentException("Use the visual API for visual documents");
+    }
+
+    public void DeleteScript(string scriptPath)
+    {
+        RequireCodeScript(scriptPath);
+        _userScriptManager.DeleteScript(scriptPath);
+    }
 }

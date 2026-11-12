@@ -41,6 +41,7 @@ internal sealed class HistoryContext(string path) : DbContext
         model.Entity<InvocationRecord>().Property(r => r.EndUtc).HasConversion(utc);
         model.Entity<InvocationRecord>().HasKey(r => r.RunId);
         model.Entity<InvocationRecord>().HasIndex(r => new { r.AutomationId, r.ReceivedUtc, r.RunId });
+        model.Entity<InvocationRecord>().HasIndex(r => new { r.ReceivedUtc, r.RunId }).HasDatabaseName("IX_Runs_Completed").HasFilter("EndUtc IS NOT NULL");
         model.Entity<AutomationIdentity>().HasKey(r => r.Path);
     }
 }
@@ -69,6 +70,15 @@ internal sealed class ScheduleOccurrences : Migration
 {
     protected override void Up(MigrationBuilder m) => m.Sql("CREATE TABLE ScheduleOccurrences (Id TEXT NOT NULL PRIMARY KEY)");
     protected override void Down(MigrationBuilder m) => m.DropTable("ScheduleOccurrences");
+}
+
+[DbContext(typeof(HistoryContext))]
+[Migration("202611120003_CompletedRetentionIndex")]
+internal sealed class CompletedRetentionIndex : Migration
+{
+    protected override void Up(MigrationBuilder m) =>
+        m.Sql("CREATE INDEX IX_Runs_Completed ON Runs (ReceivedUtc, RunId) WHERE EndUtc IS NOT NULL");
+    protected override void Down(MigrationBuilder m) => m.Sql("DROP INDEX IX_Runs_Completed");
 }
 
 /// <summary>One connection per operation, serialized writes; errors propagate to callers.</summary>

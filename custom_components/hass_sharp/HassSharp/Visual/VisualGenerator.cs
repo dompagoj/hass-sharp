@@ -76,7 +76,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 var rootId = Text(root, "id");
                 var config = root["config"] ?? new JsonObject(); current = rootId;
                 var mode = Text(config, "mode", "Single");
-                if (!Enum.TryParse<AutomationMode>(mode, out var parsed) || !Enum.IsDefined(parsed)) throw new ArgumentException("Unknown concurrency mode");
+                if (!Enum.GetNames<AutomationMode>().Contains(mode, StringComparer.Ordinal)) throw new ArgumentException("Unknown concurrency mode");
                 var triggerType = Text(config, "type", "entity");
                 var entities = "[]"; var schedules = "[]";
                 if (triggerType == "entity") entities = $"[{Quote(Required(config, "entity"))}]";

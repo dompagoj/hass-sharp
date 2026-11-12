@@ -87,13 +87,14 @@ class ScriptSyncRunner
                 catch (OperationCanceledException) when (registration.Run.Token.IsCancellationRequested)
                 { record.Status = "Cancelled"; record.Error = "Invocation cancelled"; }
                 catch (Exception ex)
-                { record.Status = "Failed"; record.Error = ex.GetBaseException().Message; }
+                { record.Status = "Failed"; record.Error = ex.GetBaseException().Message; Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}"); }
                 finally { record.DurationMs = timer.Elapsed.TotalMilliseconds; }
             });
         }
         catch (Exception ex)
         {
             record.Status = "Failed"; record.Error = ex.GetBaseException().Message;
+            Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}");
             throw;
         }
         finally
