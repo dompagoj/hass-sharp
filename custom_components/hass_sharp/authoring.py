@@ -1,7 +1,18 @@
-"""Shared administrator-only authoring boundary for WebSocket and future MCP adapters."""
+"""Shared administrator authoring services; managed gates/store remain authoritative."""
 import json
 
-from . import dotnet_tasks
+from . import dotnet_tasks, native_triggers
+
+
+def error(code, detail):
+    return {"version": 1, "ok": False, "error": {"code": code, "detail": detail}}
+
+
+def runnable_triggers(document):
+    return [{"triggerId": node["id"], "method": "Run_" + node["id"].encode().hex().upper(),
+             "manual": node.get("config", {}).get("manual", True),
+             "runnable": bool(document.get("currentRevisionActive") and node.get("config", {}).get("manual", True))}
+            for node in document.get("graph", {}).get("nodes", []) if node.get("kind") == "trigger"]
 
 
 class AuthoringService:
@@ -18,7 +29,45 @@ class AuthoringService:
         return json.loads(result)
 
     async def visual(self, request, *, is_admin):
-        return await self._request(self.manager.VisualRequest, request, is_admin=is_admin)
+        if not is_admin:
+            raise PermissionError("Administrator required")
+        # A JSON snapshot prevents caller edits during awaited HA validation from
+        # changing the document subsequently passed to the managed revision gate.
+        request = json.loads(json.dumps(request))
+        operation = request.get("operation")
+        if operation in ("preview", "save"):
+            graph = request.get("graph")
+            if not isinstance(graph, dict):
+                return error("invalid_request", "graph must be an object")
+            nodes = graph.get("nodes")
+            preview = await self._request(self.manager.VisualRequest, {"operation": "preview", "graph": graph}, is_admin=True)
+            if not preview.get("ok"):
+                return preview
+            if isinstance(nodes, list) and all(isinstance(n, dict) and isinstance(n.get("config", {}), dict) for n in nodes):
+                diagnostics = await native_triggers.async_validate_graph_triggers(self.hass, graph)
+                preview["result"]["diagnostics"].extend({**d, "severity": 3 if d.get("severity") == "error" else d.get("severity")} for d in diagnostics)
+            preview["result"]["valid"] = not any(d.get("severity") in (3, "error") for d in preview["result"]["diagnostics"])
+            if operation == "preview":
+                return preview
+            if not preview["result"]["valid"]:
+                return error("validation", preview["result"])
+        result = await self._request(self.manager.VisualRequest, request, is_admin=True)
+        if result.get("ok"):
+            data = result["result"]
+            documents = data if operation == "list" else [data] if operation == "read" else [data["document"]] if operation == "save" else []
+            for document in documents:
+                document["triggers"] = runnable_triggers(document)
+        return result
 
     async def node_library(self, request, *, is_admin):
         return await self._request(self.manager.NodeLibraryRequest, request, is_admin=is_admin)
+
+    async def run_now(self, automation_id, class_name, method, *, is_admin):
+        if not is_admin:
+            raise PermissionError("Administrator required")
+        return json.loads(await self.hass.async_add_executor_job(self.manager.RunNow, automation_id, class_name, method))
+
+    async def history(self, automation_id, offset, limit, *, is_admin):
+        if not is_admin:
+            raise PermissionError("Administrator required")
+        return json.loads(await self.hass.async_add_executor_job(self.manager.GetRunHistory, automation_id, offset, limit))

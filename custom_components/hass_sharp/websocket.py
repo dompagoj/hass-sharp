@@ -53,10 +53,8 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
             connection.send_error(msg["id"], "unauthorized", "Administrator required")
             return
         try:
-            result = await hass.async_add_executor_job(
-                hass_sharp.RunNow, msg["automationId"], msg["className"], msg["method"]
-            )
-            connection.send_result(msg["id"], json.loads(result))
+            result = await authoring.run_now(msg["automationId"], msg["className"], msg["method"], is_admin=connection.user.is_admin)
+            connection.send_result(msg["id"], result)
         except Exception:
             logger.exception("Manual automation dispatch failed")
             connection.send_error(msg["id"], "run_failed", "Could not dispatch automation; check integration logs")
@@ -67,10 +65,8 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
             connection.send_error(msg["id"], "unauthorized", "Administrator required")
             return
         try:
-            result = await hass.async_add_executor_job(
-                hass_sharp.GetRunHistory, msg["automationId"], msg["offset"], msg["limit"]
-            )
-            connection.send_result(msg["id"], json.loads(result))
+            result = await authoring.history(msg["automationId"], msg["offset"], msg["limit"], is_admin=connection.user.is_admin)
+            connection.send_result(msg["id"], result)
         except Exception:
             logger.exception("Run history read failed")
             connection.send_error(msg["id"], "history_failed", "Could not read run history")

@@ -10,7 +10,7 @@ def package_release(integration_dir: Path, output: Path, version: str) -> None:
     required = (
         "__init__.py", "manifest.json", "dotnet.runtimeconfig.json",
         "out/HassSharp.dll", "out/HassSharp.deps.json", "out/Python.Runtime.dll",
-        "www/hass-sharp.js",
+        "www/hass-sharp.js", "visual_node_catalog.json", "authoring_examples.json",
     )
     for name in required:
         if not (integration_dir / name).is_file():

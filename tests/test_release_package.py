@@ -24,6 +24,8 @@ class ReleasePackageTests(unittest.TestCase):
             "manifest.json": '{"domain": "hass_sharp", "version": "1.0.0"}',
             "dotnet.runtimeconfig.json": "{}",
             "strings.json": "{}",
+            "visual_node_catalog.json": "{}",
+            "authoring_examples.json": "[]",
             "translations/en.json": "{}",
             "out/HassSharp.dll": "compiled library",
             "out/HassSharp.deps.json": "{}",
@@ -63,7 +65,7 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertEqual(json.loads((self.integration / "manifest.json").read_text())["version"], "1.0.0")
 
     def test_refuses_an_unbuilt_integration(self):
-        for name in ("out/HassSharp.dll", "out/HassSharp.deps.json", "www/hass-sharp.js"):
+        for name in ("out/HassSharp.dll", "out/HassSharp.deps.json", "www/hass-sharp.js", "visual_node_catalog.json", "authoring_examples.json"):
             with self.subTest(missing=name):
                 (self.integration / name).unlink()
                 result = self.package()

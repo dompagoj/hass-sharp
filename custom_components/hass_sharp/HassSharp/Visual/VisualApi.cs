@@ -50,6 +50,16 @@ public partial class HassSharpManager
         return compiled;
     }
 
+    object DispatchVisual(VisualDocument document, string triggerId)
+    {
+        document = WithRuntimeIdentity(document);
+        if (!document.CurrentRevisionActive) throw new InvalidOperationException("The saved visual revision is not active");
+        var trigger = document.Graph["nodes"]!.AsArray().SingleOrDefault(n => n?["kind"]?.GetValue<string>() == "trigger" && n?["id"]?.GetValue<string>() == triggerId)?.AsObject()
+            ?? throw new ArgumentException("Trigger not found");
+        if (!(trigger["config"]?["manual"]?.GetValue<bool>() ?? true)) throw new InvalidOperationException("Trigger does not permit manual execution");
+        return new { version = 1, runId = _userScriptManager.DispatchManual(document.AutomationId!, "VisualAutomation", VisualNodeCatalog.EffectiveTriggerMethod(trigger)) };
+    }
+
     // Single JSON bridge keeps Python.NET calls and frontend versioning explicit.
     public async Task<string> VisualRequest(string requestJson)
     {
@@ -66,7 +76,8 @@ public partial class HassSharpManager
             else
             {
                 var id = request["id"]!.GetValue<string>();
-                if (operation == "read") result = WithRuntimeIdentity(store.Read(id) ?? throw new FileNotFoundException("Visual document not found"));
+                if (operation == "run") result = DispatchVisual(store.Read(id) ?? throw new FileNotFoundException("Visual document not found"), request["triggerId"]!.GetValue<string>());
+                else if (operation == "read") result = WithRuntimeIdentity(store.Read(id) ?? throw new FileNotFoundException("Visual document not found"));
                 else
                 {
                     var revision = request["expectedRevision"]!.GetValue<long>();

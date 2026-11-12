@@ -1,6 +1,6 @@
 > Runtime API changed: use [declarative automations](docs/runtime/declarative-automations.md).
 
-Start here: [C# automation guide](docs/writing-csharp-automations.md) · [Visual automation guide](docs/writing-visual-automations.md). These guides use the current declarative API; older runnable-class examples below describe the legacy API.
+Start here: [C# automation guide](docs/writing-csharp-automations.md) · [Visual automation guide](docs/writing-visual-automations.md) · [Custom node libraries](docs/node-libraries.md) · [MCP authoring](docs/mcp-authoring.md). These guides use the current declarative API; older runnable-class examples below describe the legacy API.
 > Lifecycle examples below using Initialize, InitGuard, RunnableClassScript or implicit triggers are historical and no longer compile.
 
 # HassSharp
@@ -46,7 +46,7 @@ HassSharp is a custom integration. Adding this URL under **Settings → Apps** r
 
 On older Home Assistant versions, add this URL in HACS as a custom repository with type **Integration**. For manual installation, extract a release's `hass_sharp.zip` into your Home Assistant configuration directory's `custom_components/hass_sharp` folder. Release packages include the compiled .NET library and frontend; source branches require building these first.
 
-Restart Home Assistant, add **HassSharp** under **Settings → Devices & services → Add integration**, and open **HassSharp** in the sidebar. First startup downloads the .NET SDK into the integration directory, so it needs internet access and may take longer than subsequent starts. The project currently targets .NET 10; `hacs.json` declares Home Assistant 2025.12.3 as the minimum version.
+Restart Home Assistant, add **HassSharp** under **Settings → Devices & services → Add integration**, and open **HassSharp** in the sidebar. First startup downloads the .NET SDK into the integration directory, so it needs internet access and may take longer than subsequent starts. The project currently targets .NET 10; `hacs.json` declares Home Assistant 2026.11.0 as the minimum version.
 
 Select **New Automation**, choose a name, and paste an example below. Replace its sample entities with entities from your installation, then save. Scripts are stored as `.cs` files under:
 

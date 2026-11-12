@@ -8,6 +8,8 @@ if (args.Contains("--write-node-library-fixture")) { File.WriteAllText("tests/fi
 
 if (args.Any(a => a.StartsWith("--node-library-ordering-review"))) { await NodeLibraryStoreTests.RunOrderingReview(args.First(a => a.StartsWith("--node-library-ordering-review")).Split('=').ElementAtOrDefault(1)); return; }
 
+if (args.Contains("--authoring-adapter")) { await AuthoringAdapterTests.Run(); return; }
+
 if (args.Contains("--node-library-store")) { await NodeLibraryStoreTests.Run(); return; }
 
 if (args.Contains("--node-library")) { await NodeLibraryTests.Run(); return; }
@@ -119,6 +121,7 @@ await VisualConversionReviewTests.Run();
 await NodeLibraryTests.Run();
 await VisualGraphV4Tests.Run();
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+await AuthoringAdapterTests.Run();
 await NodeLibraryStoreTests.Run();
 
 public class Probe : Automation

@@ -6,6 +6,6 @@ services:
     container_name: "hass"
     ports:
       - "5001:8123"
-    image: "homeassistant/home-assistant"
+    image: "homeassistant/home-assistant:2026.11.1"
     volumes:
       - "./custom_components/hass_sharp:/config/custom_components/hass_sharp"

@@ -65,9 +65,28 @@ public partial class HassSharpManager
 
     static readonly System.Text.Json.JsonSerializerOptions HistoryJson = new() { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase };
 
-    public string RunNow(string automationId, string className, string method) =>
-        System.Text.Json.JsonSerializer.Serialize(new { version = 1,
-            runId = _userScriptManager.DispatchManual(automationId, className, method) });
+    public string RunNow(string automationId, string className, string method)
+    {
+        _visualGate.Wait();
+        try
+        {
+            var script = _userScriptManager.GetUserScripts().FirstOrDefault(s => s.AutomationId == automationId);
+            if (script?.CompiledScript.VisualRevision != null)
+            {
+                // Identify visuals from the active compiled metadata, not a best-effort
+                // document listing: missing/corrupt saved files must fail closed.
+                var id = Path.GetFileNameWithoutExtension(script.CompiledScript.FilePath)["visual_".Length..];
+                var document = VisualDocuments.Read(id) ?? throw new InvalidOperationException("Saved visual document not found");
+                if (className != "VisualAutomation") throw new ArgumentException("Invalid visual class");
+                var trigger = document.Graph["nodes"]!.AsArray().FirstOrDefault(n => n?["kind"]?.GetValue<string>() == "trigger" && VisualNodeCatalog.EffectiveTriggerMethod(n!.AsObject()) == method)
+                    ?? throw new ArgumentException("Trigger not found");
+                return System.Text.Json.JsonSerializer.Serialize(DispatchVisual(document, trigger["id"]!.GetValue<string>()));
+            }
+            return System.Text.Json.JsonSerializer.Serialize(new { version = 1,
+                runId = _userScriptManager.DispatchManual(automationId, className, method) });
+        }
+        finally { _visualGate.Release(); }
+    }
 
     public void Unload() { _languageLifetime.Cancel(); _userScriptManager.UnloadUserScripts(); }
     public Task UnloadAsync() { _languageLifetime.Cancel(); return _userScriptManager.UnloadUserScriptsAsync(); }

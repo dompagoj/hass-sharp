@@ -20,7 +20,12 @@ class HistoryApi(unittest.IsolatedAsyncioTestCase):
             send_result=lambda *args: results.append(args), send_error=lambda *args: errors.append(args))
         async def executor(fn, *args):
             return fn(*args)
-        return env, types.SimpleNamespace(async_add_executor_job=executor), connection, results, errors
+        hass=types.SimpleNamespace(async_add_executor_job=executor)
+        service_tree=ast.parse(pathlib.Path("custom_components/hass_sharp/authoring.py").read_text())
+        service_tree.body=[n for n in service_tree.body if not isinstance(n,ast.ImportFrom)]
+        exec(compile(service_tree,"<authoring>","exec"),env)
+        env["authoring"]=env["AuthoringService"](hass,backend)
+        return env, hass, connection, results, errors
 
     async def test_dispatch_and_pagination(self):
         calls = []

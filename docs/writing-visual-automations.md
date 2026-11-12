@@ -1,167 +1,108 @@
 # Writing visual automations
 
-Choose **Automations → New automation → Visual**, enter a name, and create the
-draft. The starter graph contains an entity trigger, a state condition and a
-service call. Adapt their IDs and settings to your Home Assistant instance.
+HassSharp supports **graph version4 only**. Older graph formats must be recreated;
+there is no migration or backward-execution mode. Document and API envelope
+version1 is separate from the graph version.
 
-**Save graph** validates, compiles and activates the automation. A startup trigger
-can execute on save. Unsaved edits remain a draft. Use **Run now…** and run history
-after saving to test manual actions and inspect results.
+Choose **Automations → New automation → Visual**, enter a name, and edit the
+canvas. Drag steps from the palette, inspect their settings, and connect control
+and typed data ports. The inspector uses the same catalog as compiler validation
+and MCP. Custom library nodes appear after a successful library save.
 
-## Add, inspect and connect steps
+**Save graph** validates, compiles, persists and activates. Native trigger
+configuration is checked by Home Assistant before saving. Warnings remain visible;
+errors prevent persistence. Saving startup/scheduled/native triggers can cause
+external effects. Unsaved changes are drafts. Run now requires the exact saved
+revision to be active and the selected trigger to permit manual execution. If
+activation fails, an older runtime may remain active; the editor reports the
+failure and disables running the newer saved revision.
 
-- Click a palette item to read its description, configuration and connections in
-  **Step details**. This does not create a node.
-- Drag it onto the canvas to create a node at the drop position.
-- Click empty canvas to search for a step there. **Add step** opens the same
-  chooser at the viewport center. Type to filter, use arrows and Enter to select,
-  or Escape to cancel.
-- Drag an output to empty canvas to create and connect a compatible step. Undo
-  removes the new node and connection together.
-- To connect existing steps, drag an output handle to a target input, or select
-  a node and use **Output**, **Connect to**, and **Connect** in its inspector.
+## Control flow and typed data
 
-Each output has one connection. Several paths can enter the same non-trigger
-step. Triggers cannot receive connections. Graph connections cannot form cycles or parallel
-forks. Use Repeat for bounded loops. Conditions offer **If true**, **If false**, and **On error**; other action
-steps offer **Next** and **On error**. Triggers offer **Next** only.
+Control edges schedule execution. A control output has one destination; multiple
+paths may enter a non-trigger step. Triggers cannot receive control inputs.
+Connections cannot create cycles; use bounded Repeat, While or Foreach loops.
+Data edges supply typed values and **never execute their source nodes**. The
+producer must have executed on the chosen path before the consumer reads it.
+Missing producer output is a mapped runtime error, not an implicit default.
 
-## 1. Turn on a hallway light when motion starts
+Inputs can be literals, C# expressions, explicit unset values, or connected data
+ports. Types include booleans, numbers, strings, entity IDs, JSON values and the
+full CLR types exposed by custom nodes. Null and absence are distinct. Use the
+server catalog for assignability, nullability and literal choices; explicit
+conversion nodes perform checked conversions where supported.
 
-Configure the three starter nodes as follows, substituting IDs from your home:
+Read entity returns a detached `HassSharp.EntityStateSnapshot`. Use Entity field
+to extract a scalar state/attribute, or pass the snapshot directly to a typed
+custom method. Service nodes accept target/data objects and can expose responses.
+Select real services and entity IDs using Home Assistant discovery rather than
+guessing fields.
 
-| Node | Fields | Connection |
-| --- | --- | --- |
-| Entity changes | Trigger type: **Entity changes**; Entity ID: `binary_sensor.hall_motion`; Concurrency mode: **Single** | **Next → State condition** |
-| State condition | Entity ID: `binary_sensor.hall_motion`; Required state: `on` | **If true → Call service** |
-| Call service | Service: `light.turn_on`; Entity ID: `light.hall` | Leave outputs empty |
+If chooses True/False paths; actions also offer Error. Try/Catch/Finally, Sequence
+and bounded loops have structured scopes. Branch/body outputs do not automatically
+escape. Loop carry values retain state across sequential iterations; explicit
+exports publish selected values when the loop completes. Each declaration has a
+type and required initial operand. Foreach validates a declared item type, snapshots
+its input and exposes item/index only inside its body. A loop may lower its own
+iteration cap; the shared catalog defines global node/edge/nesting/step limits.
+Scope snapshots and unsupported live resources are described in
+[custom node libraries](node-libraries.md).
 
-The trigger starts a run when the entity changes. The condition matters: a motion
-sensor also changes when motion stops. Only the `on` branch turns the light on.
-The unconnected **If false** output ends that run without doing anything.
+## Harmless complete example
 
-## 2. Turn the light off after motion has been clear for one minute
+This complete graph writes a log only when manually run. Save it with a stable
+ID and expected revision0 to create it; use the current revision for later edits.
+Positions and sizes may be omitted on new graphs; the server fills only missing
+layout and preserves supplied coordinates.
 
-Create a separate visual automation with these steps:
+```json
+{
+  "version": 4,
+  "name": "Manual log",
+  "nodes": [
+    {"id":"start","kind":"trigger","config":{"type":"manual","manual":true}},
+    {"id":"log","kind":"log","config":{"value":{"kind":"literal","type":"string","value":"Hello from HassSharp"}}}
+  ],
+  "edges": [{"id":"flow","source":"start","target":"log","port":"next"}]
+}
+```
 
-| Node | Fields | Connection |
-| --- | --- | --- |
-| Entity changes | Entity ID: `binary_sensor.hall_motion`; Concurrency mode: **Restart** | **Next → State condition** |
-| State condition | Entity ID: `binary_sensor.hall_motion`; Required state: `off` | **If true → Wait** |
-| Wait | Seconds: `60` | **Next → Call service** |
-| Call service | Service: `light.turn_off`; Entity ID: `light.hall` | Leave outputs empty |
+Complete native-event, bounded-loop, custom-C# and typed-library examples are in
+[`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json).
+They are also returned by the MCP `get_capabilities` tool. The custom library
+example connects Read entity to a record-returning method, an interface consumer
+and a Log node. Substitute an installed entity before running it.
 
-Set **Allow manual runs** to **Disabled** if you only want motion changes to start
-this flow. `Restart` asks the previous invocation to cancel when the sensor changes
-again. The Wait step respects cancellation, so new motion interrupts the pending
-off action. Cancellation cannot undo a service already dispatched.
+## Triggers and concurrency
 
-## 3. Turn on a light every morning
+A Trigger supports manual, startup, entity changes, daily, once and native HA
+configuration. Native HA declarations use the usual `trigger`/`platform` and
+platform-specific fields. Discover installed trigger descriptions and preview the
+complete graph; validation never attaches a listener. Saving a valid declaration
+attaches it through Home Assistant. Disabled native declarations remain disabled.
+Manual eligibility is independently controlled by `manual`.
 
-Use a trigger and a service node. Remove the starter condition and reconnect the
-trigger directly to the service.
+Daily schedules require a local time and an explicit time zone. Once schedules
+require an ISO timestamp with an explicit offset or Z. Missed daily starts and
+DST gaps are skipped; repeated local times fire once. Startup is opt-in by trigger
+type or its override. Every trigger selects Single, Restart, Queued or Parallel
+for the whole invocation. Cancellation stops cooperative work; it cannot undo an
+already-dispatched service call.
 
-| Node | Fields | Connection |
-| --- | --- | --- |
-| Entity changes (rename it “Morning”) | Trigger type: **Daily**; Daily time: `07:30`; Time zone: `Europe/Zagreb`; Concurrency mode: **Single** | **Next → Call service** |
-| Call service | Service: `light.turn_on`; Entity ID: `light.hall` | Leave outputs empty |
+Trigger IDs remain stable through renames and layout changes. Generated methods
+are `Run_` plus uppercase UTF-8 hexadecimal of the node ID. MCP accepts the stable
+triggerId and resolves the method inside the managed revision gate.
 
-The palette's “Entity changes” building block can become any supported trigger
-through **Trigger type**. Daily schedules require an explicit time zone. Missed
-starts are skipped; daylight-saving gaps are skipped and repeated times fire once.
-For a single future run, choose **Once** and enter a timestamp with an offset, for
-example `2030-12-01T07:30:00+01:00`.
+## C# escape hatch
 
-## 4. Branch and handle an error
+Custom C# nodes run statements with `values`, `responses`, `lastError` and normal
+Automation members. For example, `Logger.Info("Hello from a C# node");` is a
+complete harmless node body. Graph `imports` and `members` provide shared imports
+and class members. Compiler errors map back to node/input/source positions.
+Custom code is trusted administrator code, and preview compiles it without
+executing it. Use [custom libraries](node-libraries.md) for reusable typed methods,
+and the [ordinary C# guide](writing-csharp-automations.md) for `.cs` automations.
 
-To mirror a switch's state to a light, use these connections:
-
-| Node | Fields | Connection |
-| --- | --- | --- |
-| Entity changes | Entity ID: `input_boolean.hall_light_enabled` | **Next → State condition** |
-| State condition | Same Entity ID; Required state: `on` | **If true → Turn light on**; **If false → Turn light off** |
-| Call service (label “Turn light on”) | Service: `light.turn_on`; Entity ID: `light.hall` | Optional **On error → Recovery step** |
-| Call service (label “Turn light off”) | Service: `light.turn_off`; Entity ID: `light.hall` | Leave outputs empty |
-| Call service (label “Recovery step”) | Service: `switch.turn_on`; Entity ID: `switch.backup_lamp` | Leave outputs empty |
-
-Use a real recovery action and entity that make sense in your home. An error
-output runs when that step fails; **If false** is a normal condition result, not
-an error. Picking or dragging a particular output preserves that branch. Used
-outputs cannot acquire another connection until you remove the existing one.
-
-## Entity suggestions
-
-Entity ID fields search by ID and friendly name, ignoring case. Selecting a
-suggestion writes the exact ID. You can retain a saved unavailable ID; choose a catalog result to change it. Suggestions
-refresh when the picker opens and include registered entities without a current
-state. Those entities may still be unavailable when the automation executes.
-
-Loading or connection errors do not erase your selection. Use **Retry** to fetch again.
-Administrators can also use **Refresh entity IDs** on the Automations page to
-refresh generated C# symbols and invalidate the picker cache. Refresh does not
-restart or run automations.
-
-## Editing and troubleshooting
-
-- Drag a node to move it; resize it with its handles or the Width/Height fields.
-- Undo and Redo apply to graph edits. Palette descriptions and canceled choosers
-  do not add history entries.
-- Use Graph JSON or Export graph to inspect or back up your draft.
-- Select a diagnostic to find the related node and generated source.
-- Graph v1 allows one trigger. **Upgrade to graph v2** enables more triggers and
-  C# imports/members. Palette descriptions remain available before upgrading.
-- In graph v2, trigger nodes can share downstream steps. Concurrency policies
-  apply per trigger action, not across every trigger in the graph.
-
-## Typed values and logic (graph v3)
-
-Both palettes group steps into **Hass**, **Logic**, **Flow**, **Data** and **Code**.
-Search includes category names; the chooser also has a category filter. Adding a
-new typed/flow node upgrades the graph to v3. Older graphs remain readable; adding
-one to v1 changes its single Run action to individual trigger actions when saved.
-
-A useful pipeline is **Read entity → Compare → If → Call service**:
-
-1. Read entity: select your temperature sensor, **State**, result type **Number**,
-   output name `temperature`. For an attribute instead, choose **Attribute** and
-   select a suggested attribute name (or enter an unavailable saved key).
-2. Compare: left operand **Value reference → temperature**, **Greater than**, right
-   operand **Literal → 24**, output name `too_warm`.
-3. If: **Value reference → too_warm**. Connect **If true** to a cooling service;
-   leave **If false** empty or connect another action.
-
-**And**, **Or**, **Xor** (exactly one true), and **Not** accept boolean inputs and
-produce a named boolean value. Inputs offer typed literals or existing value
-references. Names use letters/numbers/underscores, begin with a letter/underscore,
-and have at most 64 characters. A producing step must execute before a value is
-read; a producer on another branch does not supply a default. Missing values and
-conversion errors follow **On error**, or fail the invocation when unconnected.
-Reassigning a name requires the same result type. Each invocation has its own values.
-
-**Set value** assigns a value and explicitly converts its result type. Boolean
-conversion accepts true/false, on/off and 1/0; numeric conversion requires a finite
-number with an invariant decimal point. Attribute collections/null are rejected.
-Compare equality requires matching operand types; ordering requires numbers.
-**Log** writes a typed value to Home Assistant at the selected level. **Call service**
-accepts a JSON object in Service data; the selected target overrides `entity_id`.
-An optional response name is available to C# through `responses["name"]`.
-
-## Repeat, wait and stop
-
-**Repeat** runs a Body between 0 and 1,000 times. Connect **Body** to the first body
-step and leave the final body output unconnected: that returns to Repeat. Connect
-**Next** on Repeat to the continuation after all iterations. Body paths may branch
-and handle errors, but may not connect outside their scope or be entered from
-another scope. Put any shared continuation after Repeat, never inside Body.
-Nested repeats are limited to 8, with 100,000 dispatched steps per invocation.
-
-**Wait until** compares fresh entity state/attributes on every poll. Set a timeout
-of 0.01–86,400 seconds and polling interval of 0.01–3,600 seconds. Timeout follows
-**On error** or fails the run. It does not watch local variables, which would stay
-unchanged during the wait. **Wait** is a simple cancellable delay. **Stop** ends the
-whole invocation, including nested repeats. Cancellation bypasses error paths.
-
-Custom C# remains available for concurrent work and richer operations, or
-[write a C# automation](writing-csharp-automations.md). Custom nodes can read local
-values with `values.Get<double>("temperature", "my-step")`. A C# `return;` exits the
-current body; use Stop to end the entire invocation from within a Repeat.
+Editor and [MCP authoring](mcp-authoring.md) use the same revision-checked services.
+On a conflict, reload the current document and reconcile edits. Library changes
+advance every graph revision, so refresh open graphs after saving a library.

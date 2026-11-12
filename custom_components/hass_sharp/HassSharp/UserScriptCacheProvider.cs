@@ -22,6 +22,11 @@ public class UserScriptCacheProvider
     {
         using var sha = SHA256.Create();
 
+        // Assembly module IDs change with runtime/compiler builds, including API signatures.
+        // Delimit each build identity from the existing source and entity fingerprint.
+        var buildBytes = Encoding.UTF8.GetBytes(typeof(HassSharpManager).Module.ModuleVersionId + "\0" +
+            typeof(Microsoft.CodeAnalysis.CSharp.CSharpCompilation).Module.ModuleVersionId + "\0");
+        sha.TransformBlock(buildBytes, 0, buildBytes.Length, null, 0);
         var pathBytes = Encoding.UTF8.GetBytes(filePath);
         sha.TransformBlock(pathBytes, 0, pathBytes.Length, null, 0);
 

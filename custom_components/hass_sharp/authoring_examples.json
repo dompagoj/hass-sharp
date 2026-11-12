@@ -1,0 +1,257 @@
+{
+  "graphs": [
+    {
+      "version": 4,
+      "name": "Manual log",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "trigger",
+          "config": {
+            "type": "manual",
+            "manual": true
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Hello from HassSharp"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "flow",
+          "source": "start",
+          "target": "log",
+          "port": "next"
+        }
+      ]
+    },
+    {
+      "version": 4,
+      "name": "Native event log",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "trigger",
+          "config": {
+            "type": "ha",
+            "manual": true,
+            "trigger": {
+              "trigger": "event",
+              "event_type": "hass_sharp_example"
+            }
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Hello from HassSharp"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "flow",
+          "source": "start",
+          "target": "log",
+          "port": "next"
+        }
+      ]
+    },
+    {
+      "version": 4,
+      "name": "Bounded loop",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "trigger",
+          "config": {
+            "type": "manual",
+            "manual": true
+          }
+        },
+        {
+          "id": "repeat",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 3
+            }
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Hello from HassSharp"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "flow",
+          "source": "start",
+          "target": "repeat",
+          "port": "next"
+        },
+        {
+          "id": "body",
+          "source": "repeat",
+          "target": "log",
+          "port": "body"
+        }
+      ]
+    },
+    {
+      "version": 4,
+      "name": "CSharp log",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "trigger",
+          "config": {
+            "type": "manual",
+            "manual": true
+          }
+        },
+        {
+          "id": "code",
+          "kind": "custom",
+          "config": {
+            "code": "Logger.Info(\"Hello from a C# node\");"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "flow",
+          "source": "start",
+          "target": "code",
+          "port": "next"
+        }
+      ]
+    }
+  ],
+  "library": {
+    "id": "example",
+    "name": "Example.cs",
+    "source": "public interface IReading { string State { get; } }\npublic record Reading(string State) : IReading;\npublic static class Samples\n{\n    /// <summary>Describe a detached Home Assistant entity.</summary>\n    /// <param name=\"entity\">The current entity snapshot.</param>\n    /// <returns>A typed reading.</returns>\n    [Node(\"Describe\", Category = \"Examples\")]\n    [return: Port(\"Reading\")]\n    public static Reading Describe([Port(\"Entity state\")] EntityStateSnapshot entity) => new(entity.State);\n\n    /// <summary>Format a reading without changing devices.</summary>\n    [Node(\"Format reading\")]\n    public static string Format(IReading reading) => $\"State: {reading.State}\";\n}",
+    "graph": {
+      "version": 4,
+      "name": "Read entity through typed library",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "trigger",
+          "config": {
+            "type": "manual",
+            "manual": true
+          }
+        },
+        {
+          "id": "read",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "sensor.temperature"
+            }
+          }
+        },
+        {
+          "id": "describe",
+          "kind": "library:example:global%3A%3ANodeLib.Samples.Describe%28global%3A%3AHassSharp.EntityStateSnapshot%29",
+          "config": {
+            "arguments": {}
+          }
+        },
+        {
+          "id": "format",
+          "kind": "library:example:global%3A%3ANodeLib.Samples.Format%28global%3A%3ANodeLib.IReading%29",
+          "config": {
+            "arguments": {}
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "f1",
+          "source": "start",
+          "target": "read",
+          "port": "next"
+        },
+        {
+          "id": "f2",
+          "source": "read",
+          "target": "describe",
+          "port": "next"
+        },
+        {
+          "id": "f3",
+          "source": "describe",
+          "target": "format",
+          "port": "next"
+        },
+        {
+          "id": "f4",
+          "source": "format",
+          "target": "log",
+          "port": "next"
+        },
+        {
+          "id": "d1",
+          "kind": "data",
+          "source": "read",
+          "sourcePort": "value",
+          "target": "describe",
+          "targetPort": "entity"
+        },
+        {
+          "id": "d2",
+          "kind": "data",
+          "source": "describe",
+          "sourcePort": "result",
+          "target": "format",
+          "targetPort": "reading"
+        },
+        {
+          "id": "d3",
+          "kind": "data",
+          "source": "format",
+          "sourcePort": "result",
+          "target": "log",
+          "targetPort": "value"
+        }
+      ]
+    }
+  },
+  "ordinaryCSharp": "public class HarmlessExample : Automation\n{\n    public override AutomationConfiguration Configure() => new(\n        new AutomationAction(nameof(Run), Manual: true));\n    public void Run() => Logger.Info(\"Hello from C#\");\n}"
+}
