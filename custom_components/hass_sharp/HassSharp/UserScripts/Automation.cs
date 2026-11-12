@@ -14,6 +14,7 @@ public abstract class Automation : UserScriptClassBase
 {
     public virtual AutomationConfiguration Configure() => new();
     public InvocationCause Cause => UserScriptManager.CurrentCause.Value;
+    public System.Text.Json.JsonElement TriggerData => UserScriptManager.CurrentTriggerData.Value;
 
     internal readonly AsyncLocal<CancellationToken> _cancellationToken = new();
     public CancellationToken CancellationToken => _cancellationToken.Value;

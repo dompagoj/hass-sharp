@@ -50,7 +50,7 @@ public partial class HassSharpManager
                                 try { await loaded.ConfigureAndStart(); }
                                 catch
                                 {
-                                    loaded.ClearFromTracking();
+                                    await loaded.ClearFromTrackingAsync();
                                     loaded.Unload();
                                     throw;
                                 }
@@ -66,7 +66,7 @@ public partial class HassSharpManager
                     {
                         store.Delete(id, revision);
                         if (_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(id)))
-                            _userScriptManager.DeleteScript(VisualRuntimePath(id));
+                            await _userScriptManager.DeleteScriptAsync(VisualRuntimePath(id));
                         else _history.Forget(VisualRuntimePath(id));
                         _loadErrors.TryRemove(VisualRuntimePath(id), out _);
                         result = new { deleted = true };

@@ -12,7 +12,7 @@ from homeassistant.core import Event, EventStateChangedData, HomeAssistant, call
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
 
-from . import scheduling, dotnet_downloader, dotnet_tasks, http, utils, websocket
+from . import scheduling, dotnet_downloader, dotnet_tasks, http, native_triggers, utils, websocket
 from .const import logger
 
 os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "true"
@@ -219,6 +219,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         return Action(scheduling.register_ha(hass, rule_json, fire))
 
     from System.Threading.Tasks import Task
+    native_bridge = native_triggers.NativeTriggerBridge(hass)
+    hass.data.setdefault("hass_sharp_native_triggers", {})[entry.entry_id] = native_bridge
+
+    def register_native(generation, configuration_json, dispatch, success, error):
+        async def fire(payload):
+            await dotnet_tasks.async_run_dotnet_task(hass, dispatch, payload)
+        native_bridge.begin_register(generation, configuration_json, fire, success, error)
+
+    PyInterop.BeginRegisterHaTriggers = Action[String, String, Func[String, Task], Action[String], Action[String]](register_native)
+    PyInterop.BeginRemoveHaTriggers = Action[String, Action, Action[String]](native_bridge.begin_remove)
     PyInterop.RegisterSchedule = Func[String, Func[String, Task], Action](register_schedule)
     PyInterop.Log = Action[Int32, String](python_log)
     PyInterop.LogLevel = logger.level
@@ -231,7 +241,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     PyInterop.UnSubscribeAllFromEntityTracking = Action(unbsub_all)
     PyInterop.SubscribeToEntityTracking = Action[String](subscribe_to_entity_change)
 
-    await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.Init, utils.get_hass_entities(hass))
+    try:
+        await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.Init, utils.get_hass_entities(hass))
+    except BaseException:
+        native_bridge.close()
+        try:
+            await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync)
+        finally:
+            await native_bridge.async_shutdown()
+            hass.data["hass_sharp_native_triggers"].pop(entry.entry_id, None)
+        raise
 
     return True
 
@@ -239,7 +258,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass_sharp = utils.get_hass_sharp_manager(hass)
 
-    await hass.async_add_executor_job(hass_sharp.Unload)
+    native_bridge = hass.data.get("hass_sharp_native_triggers", {}).pop(entry.entry_id, None)
+    if native_bridge is not None:
+        native_bridge.close()
+    try:
+        await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync)
+    finally:
+        if native_bridge is not None:
+            await native_bridge.async_shutdown()
     frontend.async_remove_panel(hass, "hass-sharp")
 
     return True

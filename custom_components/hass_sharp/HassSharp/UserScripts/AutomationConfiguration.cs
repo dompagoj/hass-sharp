@@ -1,9 +1,9 @@
 namespace HassSharp;
 
-public enum InvocationCause { Startup, Entity, Manual, Schedule }
+public enum InvocationCause { Startup, Entity, Manual, Schedule, HomeAssistantTrigger }
 
 public sealed record AutomationAction(string Method, AutomationMode Mode = AutomationMode.Single,
-    bool Startup = false, bool Manual = true, IEntityReference[]? Entities = null, AutomationSchedule[]? Schedules = null);
+    bool Startup = false, bool Manual = true, IEntityReference[]? Entities = null, AutomationSchedule[]? Schedules = null, HomeAssistantTrigger[]? Triggers = null);
 
 public sealed class AutomationConfiguration(params AutomationAction[] actions)
 {
@@ -18,3 +18,6 @@ public sealed record AutomationSchedule(string Id, DateTimeOffset? AtUtc = null,
     public static AutomationSchedule Daily(string id, TimeOnly time, string timeZone) =>
         new(id, LocalTime: time.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture), TimeZone: timeZone);
 }
+
+/// <summary>A stable native HA trigger identity and its raw JSON configuration.</summary>
+public sealed record HomeAssistantTrigger(string Id, string ConfigurationJson);

@@ -173,6 +173,18 @@ public ref struct ErrorLogHandler
 /// </summary>
 public static class PyInterop
 {
+    public static Action<string, string, Func<string, Task>, Action<string>, Action<string>> BeginRegisterHaTriggers { get; set; } = null!;
+    public static Action<string, Action, Action<string>> BeginRemoveHaTriggers { get; set; } = null!;
+
+    public static Task<HomeAssistantTriggerLease> RegisterHaTriggersAsync(string generation, string configurationJson, Func<string, Task> dispatch)
+    {
+        var completion = new TaskCompletionSource<HomeAssistantTriggerLease>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try { BeginRegisterHaTriggers(generation, configurationJson,
+            dispatch, id => completion.TrySetResult(new(id)), message => completion.TrySetException(new InvalidOperationException(message))); }
+        catch (Exception error) { completion.TrySetException(error); }
+        return completion.Task;
+    }
+
     public static Func<string, Func<string, Task>, Action> RegisterSchedule { get; set; } = null!;
     public static Action<int, string> Log { get; set; } = null!;
     public static int LogLevel { get; set; }
@@ -185,4 +197,22 @@ public static class PyInterop
     public static Action<string> UnSubscribeFromEntityTracking { get; set; } = null!;
     public static Action<string> SubscribeToEntityTracking { get; set; } = null!;
     public static Action UnSubscribeAllFromEntityTracking { get; set; } = null!;
+}
+
+/// <summary>An entry-owned subscription; disposal waits for HA loop cleanup.</summary>
+public sealed class HomeAssistantTriggerLease(string id) : IAsyncDisposable
+{
+    Task? _cleanup;
+    readonly object _gate = new();
+    public ValueTask DisposeAsync()
+    {
+        lock (_gate) return new(_cleanup ??= RemoveAsync());
+    }
+    Task RemoveAsync()
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try { PyInterop.BeginRemoveHaTriggers(id, () => completion.TrySetResult(), message => completion.TrySetException(new InvalidOperationException(message))); }
+        catch (Exception error) { completion.TrySetException(error); }
+        return completion.Task;
+    }
 }

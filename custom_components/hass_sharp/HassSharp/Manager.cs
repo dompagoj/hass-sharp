@@ -43,13 +43,10 @@ public partial class HassSharpManager
             }
         }
 
-        _userScriptManager.UnloadUserScripts(); // Just in case, shouldnt be needed
+        await _userScriptManager.UnloadUserScriptsAsync(); // Just in case, shouldnt be needed
 
         if (assemblies.Count == 0)
-        {
             Logger.Info("No user scripts found on initialization");
-            return;
-        }
 
         await _userScriptManager.LoadUserScripts(assemblies, RecordLoadError);
         _userScriptManager.DependencyTracking.Debug();
@@ -66,6 +63,7 @@ public partial class HassSharpManager
             runId = _userScriptManager.DispatchManual(automationId, className, method) });
 
     public void Unload() => _userScriptManager.UnloadUserScripts();
+    public Task UnloadAsync() => _userScriptManager.UnloadUserScriptsAsync();
 
     public void GenerateHassEntities(string[] entityIds) => _diagnosticsProvider.GenerateHassEntities(entityIds);
 
@@ -187,11 +185,17 @@ public partial class HassSharpManager
             throw new ArgumentException("Use the visual API for visual documents");
     }
 
-    public void DeleteScript(string scriptPath)
+    public Task DeleteScript(string scriptPath)
+    {
+        RequireCodeScript(scriptPath);
+        return DeleteScriptAsync(scriptPath);
+    }
+
+    public async Task DeleteScriptAsync(string scriptPath)
     {
         RequireCodeScript(scriptPath);
         if (_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == scriptPath))
-            _userScriptManager.DeleteScript(scriptPath);
+            await _userScriptManager.DeleteScriptAsync(scriptPath);
         else
         {
             if (!File.Exists(scriptPath)) throw new FileNotFoundException("Script not found");

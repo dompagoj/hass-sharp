@@ -32,10 +32,12 @@ class ScriptSyncRunner
     public void Clear(IEnumerable<UserScript> scripts)
     {
         var scriptArray = scripts.ToArray();
+        List<Exception> errors = [];
         foreach (var script in scriptArray)
         {
             script.CancelLifetime();
-            foreach (var klass in script.Classes) klass.UnsubscribeSchedules();
+            foreach (var klass in script.Classes)
+                try { klass.UnsubscribeSchedules(); } catch (Exception error) { errors.Add(error); }
         }
 
         using var scope = _gate.EnterScope();
@@ -43,9 +45,10 @@ class ScriptSyncRunner
         {
             _methods.Remove(key);
         }
+        if (errors.Count > 0) throw new AggregateException(errors);
     }
 
-    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, string? runId = null, DateTime? plannedUtc = null, string? details = null)
+    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, string? runId = null, DateTime? plannedUtc = null, string? details = null, System.Text.Json.JsonElement triggerData = default)
     {
         var record = new InvocationRecord
         {
@@ -81,7 +84,7 @@ class ScriptSyncRunner
                 var timer = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
-                    await Execute(scriptClass, methodInfo, registration, cause);
+                    await Execute(scriptClass, methodInfo, registration, cause, triggerData);
                     record.Status = "Succeeded";
                 }
                 catch (OperationCanceledException) when (registration.Run.Token.IsCancellationRequested)
@@ -171,11 +174,12 @@ class ScriptSyncRunner
     static async Task Execute(
         UserScriptClass scriptClass,
         MethodInfo methodInfo,
-        RunRegistration registration, InvocationCause cause)
+        RunRegistration registration, InvocationCause cause, System.Text.Json.JsonElement triggerData)
     {
         registration.Run.Token.ThrowIfCancellationRequested();
         scriptClass.Instance._cancellationToken.Value = registration.Run.Token;
         UserScriptManager.CurrentCause.Value = cause;
+        UserScriptManager.CurrentTriggerData.Value = triggerData;
         object? result;
         try { result = methodInfo.Invoke(scriptClass.Instance, null); }
         catch (TargetInvocationException ex) when (ex.InnerException != null)

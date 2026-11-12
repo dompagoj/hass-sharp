@@ -20,7 +20,16 @@ public class CompiledUserScript
 
     public void SetDirty() => WrittenToDisk = false;
 
-    public Task WriteToDisk() => File.WriteAllTextAsync(FilePath, SourceCode);
+    public async Task WriteToDisk()
+    {
+        var temporary = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporary, SourceCode);
+            File.Move(temporary, FilePath, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
 
     public void RenameOnDisk(string newSlug)
     {

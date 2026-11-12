@@ -185,7 +185,7 @@ static class BackendReviewTests
                     var summary = api.GetScriptSummaries().SingleOrDefault(x => x.FileName == "repair");
                     Check(summary is { Active: false } && !string.IsNullOrEmpty(summary.ActivationError), "failed code not listed with error");
                     Check(api.GetUserScript("repair")?.Source == "invalid code for repair", "failed code cannot be opened");
-                    api.DeleteScript(path);
+                    await api.DeleteScript(path);
                     Check(!File.Exists(path) && api.GetUserScript("repair") == null, "failed code cannot be deleted");
                 } finally { api.Unload(); File.Delete(path); }
             });
@@ -307,7 +307,7 @@ static class BackendReviewTests
                     Check(api.GetUserScript("healthy") != null && api.GetUserScript("visual_healthy") != null, "healthy runtime missing");
                     Check(api.GetUserScript("visual_invalid") == null, "invalid saved graph activated");
                     Check(File.Exists(Path.Combine(HassPath.UserScripts,"broken.cs")), "broken source deleted");
-                    try { api.DeleteScript(Path.Combine(dir,"visual_healthy.cs")); throw new Exception("code delete accepted visual path"); }
+                    try { await api.DeleteScript(Path.Combine(dir,"visual_healthy.cs")); throw new Exception("code delete accepted visual path"); }
                     catch (ArgumentException) { }
                 } finally { api.Unload(); }
             });

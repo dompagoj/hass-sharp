@@ -89,6 +89,7 @@ Check(turnedOff, "motion-off trigger must finish turn-off after restart");
 Console.WriteLine("PASS motion-off delay");
 await BackendReviewTests.Run();
 await HandoverTests.Run();
+await NativeTriggerTests.Run();
 await HistoryTests.Run();
 await ScheduleTests.Run();
 await VisualTests.Run();
@@ -102,13 +103,16 @@ public class Probe : Automation
     public static ConcurrentQueue<int> Order = new();
     public static AutomationMode Mode;
     public static AutomationSchedule[]? Schedules;
+    public static HomeAssistantTrigger[]? Triggers;
+    public static ConcurrentQueue<System.Text.Json.JsonElement> TriggerPayloads = new();
     public static System.Threading.Channels.Channel<InvocationCause> Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
     public static ConcurrentBag<InvocationCause> Completed = new();
     public static TaskCompletionSource Release = new();
-    public override AutomationConfiguration Configure() { Configuring?.Invoke(); return new(new AutomationAction(nameof(Run), Mode, true, true, [new EntityRefWrapper<HaSensor>("sensor.test"), new EntityRefWrapper<HaSensor>("sensor.test")], Schedules)); }
+    public override AutomationConfiguration Configure() { Configuring?.Invoke(); return new(new AutomationAction(nameof(Run), Mode, true, true, [new EntityRefWrapper<HaSensor>("sensor.test"), new EntityRefWrapper<HaSensor>("sensor.test")], Schedules, Triggers)); }
     public async Task Run()
     {
         var cause = Cause;
+        if (Triggers != null) TriggerPayloads.Enqueue(TriggerData);
         Starts.Writer.TryWrite(cause);
         if (DelayedExit is { } exit) await exit.Task;
         await Release.Task.WaitAsync(CancellationToken);

@@ -147,8 +147,8 @@ class AutomationByIdView(HomeAssistantView):
             script_path = self.hass.config.path(
                 "custom_components", "hass_sharp", "user_scripts", f"{file_name}.cs"
             )
-            await self.hass.async_add_executor_job(
-                self.hass_sharp.DeleteScript, script_path
+            await dotnet_tasks.async_run_dotnet_task(
+                self.hass, self.hass_sharp.DeleteScriptAsync, script_path
             )
         except Exception as error:
             logger.exception("Failed to delete automation %s", file_name)
