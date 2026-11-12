@@ -29,3 +29,18 @@ browser acceptance. See `../docs/visual-editor-feasibility.md` for the local pat
 capability limits, and browser follow-up results.
 
 Run `bun run build:preview` to build the mock-data responsive fixture; see the feasibility report for the temporary local HA static-route workflow. This is not a real HA integration test.
+
+Run history checks are in `AutomationRuns.test.tsx` and `AutomationView.test.tsx`.
+The fixture's BathroomHeating automation has sample history and accepts mock manual
+runs. Its `window.runFixture` lets browser checks set `historyError`,
+`dispatchError`, or the terminal `result`; no real HA service/device is called.
+`window.previewErrors` collects page errors and rejected promises, including the
+Monaco worker bootstrap regression. Open a code automation, type, and switch
+Source/Run history: the real Monaco model must survive, with no worker error.
+
+The preview build is currently hosted under `/hass-sharp-static/run-check-9b24/`.
+For a narrow code-editor iframe, open its `tests/visual-check.html` with
+`?view=code&width=390&theme=dark`. See `../docs/run-history-ui.md` for evidence and
+remaining live-HA verification. Copy preview output only to a unique temporary
+static subdirectory, leaving the live panel bundles untouched, and remove it after
+checking.

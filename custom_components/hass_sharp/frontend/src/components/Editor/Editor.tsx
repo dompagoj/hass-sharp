@@ -1,7 +1,9 @@
-import { createEffect, createSignal, createUniqueId, onMount, onCleanup, Show } from 'solid-js'
+import { createEffect, createSignal, createUniqueId, onMount, onCleanup, Show, type JSX } from 'solid-js'
 import { A } from '@solidjs/router'
 import * as monaco from 'monaco-editor'
 import { initVimMode, type VimAdapterInstance } from 'monaco-vim'
+
+import './monaco-worker'
 
 import visualAssistTheme from '../../visual-assist.json'
 
@@ -20,12 +22,15 @@ interface Props {
   onSave: (model: monaco.editor.ITextModel) => Promise<any>
   initial?: string
   onBackRef?: string
+  renderRuns?: () => JSX.Element
 }
 
 export const Editor = (props: Props) => {
   const hass = useHass()
   const tabId = createUniqueId()
   const [tab, setTab] = createSignal('source')
+  const [runsOpened, setRunsOpened] = createSignal(false)
+  createEffect(() => { if (tab() === 'runs') setRunsOpened(true) })
   let editorRef: HTMLDivElement = undefined!
   let statusBarRef: HTMLDivElement = undefined!
   let editor: monaco.editor.IStandaloneCodeEditor
@@ -46,9 +51,13 @@ export const Editor = (props: Props) => {
         props.initial ??
         `public class MyAutomation : Automation
 {
-    public void ExampleAutomation()
-    {
+    public override AutomationConfiguration Configure() => new(
+        new AutomationAction(nameof(Execute), AutomationMode.Single, Manual: true));
 
+    public Task Execute()
+    {
+        Logger.Info("Manual automation started");
+        return Task.CompletedTask;
     }
 }`,
       language: 'csharp',
@@ -149,12 +158,13 @@ export const Editor = (props: Props) => {
           <Show when={props.onBackRef}><A class="hs-button hs-button--ghost hs-icon-button" href={props.onBackRef!} aria-label="Back to automations"><Icon name="arrow" /></A></Show>
           <div class="hs-editor-title"><p class="hs-eyebrow">C# AUTOMATION</p><h1>{props.fileName}</h1></div>
         </div>
+        <div class="hs-editor-actions"><Show when={props.renderRuns}><Button onClick={() => setTab('runs')}>Run now…</Button></Show>
         <Button data-save variant="primary" busy={saveMut.isPending} onClick={() => { void saveMut.mutateAsync().catch(() => {}) }} disabled={editorActions.saveDisabled()}>
           <Icon name="save" />{saveMut.isPending ? 'Saving…' : 'Save'}
-        </Button>
+        </Button></div>
       </header>
       <div class="hs-editor-subbar">
-        <Tabs id={tabId} label="Automation editor" value={tab()} onChange={setTab} items={[{ id: 'source', label: 'Source' }, { id: 'settings', label: 'Editor settings' }]} />
+        <Tabs id={tabId} label="Automation editor" value={tab()} onChange={setTab} items={[{ id: 'source', label: 'Source' }, ...(props.renderRuns ? [{ id: 'runs', label: 'Run history' }] : []), { id: 'settings', label: 'Editor settings' }]} />
         <span class="hs-save-hint">Ctrl / ⌘ S to save</span>
       </div>
       <Show when={saveMut.isError}><div class="hs-notice hs-notice--danger" role="alert">Save failed: {String(saveMut.error)}</div></Show>
@@ -165,6 +175,9 @@ export const Editor = (props: Props) => {
         <div class="hs-monaco" ref={editorRef} id="editor" />
         <footer class="hs-editor-status"><Status>C#</Status><span>Roslyn language services</span><div ref={statusBarRef} /></footer>
       </section>
+      <Show when={props.renderRuns}><section class="hs-editor-runs" role="tabpanel" id={`${tabId}-runs-panel`} aria-labelledby={`${tabId}-runs`} hidden={tab() !== 'runs'}>
+        <Show when={runsOpened()}>{props.renderRuns?.()}</Show>
+      </section></Show>
       <section class="hs-editor-settings" role="tabpanel" id={`${tabId}-settings-panel`} aria-labelledby={`${tabId}-settings`} hidden={tab() !== 'settings'}>
         <h2>Make yourself comfortable</h2><p class="hs-muted">Editor preferences are saved in this browser.</p>
         <div class="hs-setting-row"><label for={`${tabId}-font`}>Font size<span class="hs-muted">Change the size of your code.</span></label>

@@ -7,6 +7,7 @@ import solidPlugin from 'vite-plugin-solid'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
+  base: '/hass-sharp-static/',
   plugins: [solidPlugin(), tailwindcss()],
   resolve: {
     alias: [

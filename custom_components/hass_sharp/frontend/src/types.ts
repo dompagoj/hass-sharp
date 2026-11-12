@@ -357,6 +357,8 @@ export interface UserScriptClassDto {
 }
 
 export interface UserScriptDTO {
+  automationId?: string
+  revision?: string
   fileName: string
   classes: UserScriptClassDto[]
 }
@@ -370,4 +372,31 @@ export interface HassValueChangedEvent extends Event {
   detail: {
     value: string
   }
+}
+
+/** Version 1 of docs/backend/run-history.md. UTC strings are rendered in local time. */
+export interface AutomationRun {
+  runId: string
+  automationId: string
+  revision: string
+  action: string
+  cause: string
+  details: string | null
+  plannedUtc: string | null
+  receivedUtc: string
+  startUtc: string | null
+  endUtc: string | null
+  durationMs: number | null
+  status: 'Pending' | 'Running' | 'Succeeded' | 'Skipped' | 'Cancelled' | 'Failed' | 'Interrupted'
+  error: string | null
+}
+export interface RunHistoryResponse {
+  version: 1
+  offset: number
+  limit: number
+  runs: AutomationRun[]
+}
+export interface RunAcceptedResponse {
+  version: 1
+  runId: string
 }
