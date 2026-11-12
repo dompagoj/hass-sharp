@@ -32,13 +32,17 @@ public partial class HassSharpManager
             var libraries = SavedLibraries();
             _loadErrors.Clear();
             var assemblies = await _compiler.CompileFromUserScriptsFolder(RecordLoadError);
-            foreach (var document in VisualDocuments.List())
+            var store = VisualDocuments;
+            foreach (var document in store.List())
             {
                 try
                 {
                     var preview = new VisualGenerator(_diagnosticsProvider).Preview(document.Graph, libraries.Preview.Snapshot);
                     if (!preview.Valid) throw new VisualValidationException(preview);
                     assemblies.Add(await CompileVisualDocument(document with { Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = libraries.Generation }));
+                    // Store the regenerated source so the running revision is recognised as current.
+                    try { store.RefreshDerived(document.Id, document.Revision, preview.Source, preview.SourceMap, libraries.Generation); }
+                    catch (Exception ex) { Logger.Error($"Cannot refresh stored source of visual document {document.Id}: {ex}"); }
                 }
                 catch (Exception ex)
                 {

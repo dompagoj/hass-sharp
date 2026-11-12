@@ -76,16 +76,32 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
             if (!preview.Valid) throw new VisualValidationException(preview);
             var document = new VisualDocument(1, id, checked(expectedRevision + 1), snapshot, preview.Source, preview.SourceMap) { CatalogGeneration = catalogGeneration };
             Directory.CreateDirectory(directory);
-            var temporary = path + "." + Guid.NewGuid() + ".tmp";
-            try
-            {
-                using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                { JsonSerializer.Serialize(file, document, Json); file.Flush(true); }
-                File.Move(temporary, path, true);
-            }
-            finally { File.Delete(temporary); }
+            Write(path, document);
             return document;
         }
+    }
+    // Startup regeneration: derived fields follow the current generator without bumping the revision.
+    public bool RefreshDerived(string id, long expectedRevision, string source, List<VisualSourceMap> sourceMap, string? catalogGeneration)
+    {
+        lock (Gate)
+        {
+            var path = FilePath(id); var old = Read(id);
+            if (old == null || old.Revision != expectedRevision) return false;
+            if (old.Source == source && old.SourceMap.SequenceEqual(sourceMap) && old.CatalogGeneration == catalogGeneration) return false;
+            Write(path, new VisualDocument(1, id, old.Revision, old.Graph, source, sourceMap) { CatalogGeneration = catalogGeneration });
+            return true;
+        }
+    }
+    static void Write(string path, VisualDocument document)
+    {
+        var temporary = path + "." + Guid.NewGuid() + ".tmp";
+        try
+        {
+            using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            { JsonSerializer.Serialize(file, document, Json); file.Flush(true); }
+            File.Move(temporary, path, true);
+        }
+        finally { File.Delete(temporary); }
     }
     public void Delete(string id, long expectedRevision)
     {

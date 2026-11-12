@@ -60,7 +60,9 @@ static class BackendReviewTests
                         await api.Init(["binary_sensor.motion", "light.hall"]);
                         Check(api.GetUserScript("visual_" + id) != null, "saved v4 graph failed activation");
                         await completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
-                        Check(File.ReadAllText(path) == persisted, "startup rewrote the saved document");
+                        var stored = JsonNode.Parse(File.ReadAllText(path))!;
+                        Check(stored["revision"]!.GetValue<long>() == 1 && stored["graph"]!.ToJsonString() == graph.ToJsonString(), "startup changed the saved revision or graph");
+                        Check(stored["source"]!.GetValue<string>() == api.GetUserScript("visual_" + id)!.Source, "startup did not store the regenerated source");
                     } finally { api.Unload(); PyInterop.Log = oldLog; File.Delete(path); }
                 });
             }
@@ -268,28 +270,64 @@ static class BackendReviewTests
                     Check(logs.Any(x => x.Contains("System.InvalidOperationException") && x.Contains("Throwing.Run")), "exception diagnostics missing");
                 } finally { manager.UnloadUserScripts(); }
             });
-            await Test("v4 visual source regenerates on startup without changing saved revision", async () => {
+            await Test("stale visual source refreshes on startup at the same revision", async () => {
                 var directory = Path.Combine(root, ".storage", "hass_sharp", "visual");
                 var store = new VisualStore(directory, generator);
                 var saved = store.Save("v4", VisualTests.Graph(), 0);
-                var v4 = saved with { Source = "deliberately stale generated source" };
+                var v4 = saved with { Source = "deliberately stale generated source", SourceMap = [] };
                 var path = Path.Combine(directory, "v4.json");
                 File.WriteAllText(path, JsonSerializer.Serialize(v4, VisualStore.Json));
-                var persisted = File.ReadAllText(path);
                 var api = new HassSharpManager(root);
                 try {
                     await api.Init(["binary_sensor.motion", "light.hall"]);
                     Check(api.GetUserScript("visual_v4") != null, "v4 generated string source failed to activate");
+                    var running = api.GetUserScript("visual_v4")!.Source;
+                    Check(running.Contains("Entities:[Entities.BinarySensor.Motion]"), "runtime did not compile regenerated source");
                     var read = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"v4\"}"))!["result"]!;
-                    Check(api.GetUserScript("visual_v4")!.Source.Contains("Entities:[Entities.BinarySensor.Motion]"), "runtime did not compile regenerated source");
-                    Check(read["source"]!.GetValue<string>() == v4.Source, "read changed last-saved source provenance");
-                    Check(read["sourceMap"]!.ToJsonString() == JsonSerializer.SerializeToNode(v4.SourceMap, VisualStore.Json)!.ToJsonString(), "read changed last-saved source map provenance");
-                    Check(read["revision"]!.GetValue<long>() == saved.Revision && File.ReadAllText(path) == persisted, "startup rewrote saved revision/source");
+                    Check(read["currentRevisionActive"]!.GetValue<bool>(), "regenerated revision is not current after startup");
+                    Check(read["revision"]!.GetValue<long>() == saved.Revision, "startup changed the saved revision");
+                    Check(read["source"]!.GetValue<string>() == running, "read still returns stale source");
+                    Check(read["sourceMap"]!.AsArray().Count > 0 && read["catalogGeneration"]?.GetValue<string>() is { Length: > 0 }, "derived source map/catalog generation not refreshed");
+                    Check(read["graph"]!.ToJsonString() == saved.Graph.ToJsonString(), "startup changed the saved graph");
+                    var run = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"run\",\"id\":\"v4\",\"triggerId\":\"t\"}"))!;
+                    Check(run["ok"]!.GetValue<bool>() && run["result"]?["runId"] != null, "manual dispatch of refreshed revision rejected: " + run.ToJsonString());
+                    var refreshed = File.ReadAllText(path);
                     await api.Init(["light.hall"]);
                     Check(api.GetUserScript("visual_v4") == null, "missing trigger still active");
                     var missing = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"v4\"}"))!["result"]!;
                     Check(missing["activationError"]!.GetValue<string>().Contains("t: Unknown entity"), "missing entity omitted actionable graph node");
+                    Check(File.ReadAllText(path) == refreshed, "failed startup compile rewrote the saved document");
                 } finally { api.Unload(); store.Delete("v4", saved.Revision); }
+            });
+            await Test("visual that fails to compile on startup is left untouched", async () => {
+                var directory = Path.Combine(root, ".storage", "hass_sharp", "visual");
+                var store = new VisualStore(directory, generator);
+                var saved = store.Save("uncompiled", VisualTests.Graph(), 0);
+                saved.Graph["members"] = "this is not C#";
+                var path = Path.Combine(directory, "uncompiled.json");
+                File.WriteAllText(path, JsonSerializer.Serialize(saved with { Source = "stale" }, VisualStore.Json));
+                var persisted = File.ReadAllText(path);
+                var api = new HassSharpManager(root);
+                try {
+                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    Check(api.GetUserScript("visual_uncompiled") == null, "invalid saved graph activated");
+                    Check(File.ReadAllText(path) == persisted, "startup rewrote a document that failed to compile");
+                } finally { api.Unload(); store.Delete("uncompiled", saved.Revision); }
+            });
+            await Test("refresh derived rewrites only changed documents at the expected revision", () => {
+                var dir = Path.Combine(root, "refresh-derived"); var store = new VisualStore(dir, generator);
+                var saved = store.Save("hall", VisualTests.Graph(), 0);
+                var path = Path.Combine(dir, "hall.json"); var persisted = File.ReadAllText(path);
+                Check(!store.RefreshDerived("hall", saved.Revision, saved.Source, saved.SourceMap, saved.CatalogGeneration), "unchanged derived data reported a rewrite");
+                Check(!store.RefreshDerived("hall", saved.Revision + 1, "other", [], "generation"), "stale expected revision reported a rewrite");
+                Check(!store.RefreshDerived("missing", 1, "other", [], "generation") && !File.Exists(Path.Combine(dir, "missing.json")), "missing document was created");
+                Check(File.ReadAllText(path) == persisted, "no-op refresh touched the stored document");
+                Check(store.RefreshDerived("hall", saved.Revision, "fresh source", [new("t", 1, 2)], "generation"), "changed derived data not written");
+                var read = store.Read("hall")!;
+                Check(read.Revision == saved.Revision && read.Source == "fresh source" && read.SourceMap.SequenceEqual([new VisualSourceMap("t", 1, 2)]) && read.CatalogGeneration == "generation", "derived data not stored at the same revision");
+                Check(read.Graph.ToJsonString() == saved.Graph.ToJsonString(), "refresh changed the graph");
+                Check(Directory.GetFiles(dir).Length == 1, "temporary refresh file left behind");
+                return Task.CompletedTask;
             });
             await Test("startup isolates code and visual compilation errors", async () => {
                 Directory.CreateDirectory(HassPath.UserScripts);
