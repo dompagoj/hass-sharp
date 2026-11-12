@@ -3,7 +3,7 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { VisualEditor as RealVisualEditor } from '../src/visual/VisualEditor'
 import { FlowAdapter } from '../src/visual/FlowAdapter'
-import { createGraph, updateNode } from '../src/visual/graph'
+import { createGraph, createGraphHistory, updateNode } from '../src/visual/graph'
 
 import { HassCtx } from '../src/context'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
@@ -81,10 +81,12 @@ it('commits a completed mouse drag into graph JSON and restores it through undo'
   const node = host.querySelector<HTMLElement>('[data-id="trigger-1"]')!
   const before = JSON.stringify(graph())
   node.dispatchEvent(new MouseEvent('mousedown', { clientX: 80, clientY: 110, button: 0, bubbles: true, view: window }))
-  window.dispatchEvent(new MouseEvent('mousemove', { clientX: 140, clientY: 140, buttons: 1, bubbles: true, view: window }))
-  window.dispatchEvent(new MouseEvent('mousemove', { clientX: 200, clientY: 170, buttons: 1, bubbles: true, view: window }))
-  window.dispatchEvent(new MouseEvent('mouseup', { clientX: 200, clientY: 170, button: 0, bubbles: true, view: window }))
-  await vi.waitFor(() => expect(changed.nodes[0].position).not.toEqual({ x: 60, y: 100 }))
+  // The library establishes its origin on the first move past its drag threshold.
+  window.dispatchEvent(new MouseEvent('mousemove', { clientX: 83, clientY: 113, buttons: 1, bubbles: true, view: window }))
+  window.dispatchEvent(new MouseEvent('mousemove', { clientX: 143, clientY: 143, buttons: 1, bubbles: true, view: window }))
+  window.dispatchEvent(new MouseEvent('mousemove', { clientX: 203, clientY: 173, buttons: 1, bubbles: true, view: window }))
+  window.dispatchEvent(new MouseEvent('mouseup', { clientX: 203, clientY: 173, button: 0, bubbles: true, view: window }))
+  await vi.waitFor(() => expect(changed.nodes[0].position).toEqual({ x: 220, y: 180 }))
   expect(JSON.parse(before).nodes[0].position).toEqual({ x: 60, y: 100 })
   setGraph(JSON.parse(before))
   expect(node.style.transform).toContain('60px, 100px')
@@ -109,7 +111,7 @@ it('retains a single-touch drag in the versioned graph', async () => {
     const touch = (x: number, y: number) => new Touch({ identifier: 1, target: node, clientX: x, clientY: y })
     const send = (type: string, x: number, y: number) => node.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [touch(x, y)], changedTouches: [touch(x, y)] }))
     send('touchstart', 80, 110); send('touchmove', 140, 140); send('touchmove', 200, 170); send('touchend', 200, 170)
-    await vi.waitFor(() => expect(graph().nodes[0].position.x).toBeGreaterThan(60))
+    await vi.waitFor(() => expect(graph().nodes[0].position).toEqual({ x: 220, y: 180 }))
   } finally {
     if (descriptor) Object.defineProperty(navigator, 'maxTouchPoints', descriptor)
     else Reflect.deleteProperty(navigator, 'maxTouchPoints')
@@ -193,7 +195,7 @@ it('retains movement when a second finger interrupts a touch drag', async () => 
     touches: type === 'touchend' ? [] : [touch(x, y), ...(extra ? [touch(x + 10, y + 10, 2)] : [])], changedTouches: [touch(x, y)] }))
   send('touchstart', 80, 110); send('touchmove', 140, 140); send('touchmove', 200, 170)
   send('touchmove', 210, 180, true); send('touchend', 210, 180)
-  await vi.waitFor(() => expect(graph().nodes[0].position.x).toBeGreaterThan(60))
+  await vi.waitFor(() => expect(graph().nodes[0].position).toEqual({ x: 220, y: 180 }))
   expect(node.style.transform).toContain(`${graph().nodes[0].position.x}px`)
 })
 it('allows node resizing from the keyboard-accessible inspector and rejects invalid sizes', () => {
@@ -204,4 +206,112 @@ it('allows node resizing from the keyboard-accessible inspector and rejects inva
   expect(JSON.parse(host.querySelector('pre')!.textContent!).nodes[0].size).toEqual({ width: 310, height: 170 })
   input(host, 'Width', '-10')
   expect(JSON.parse(host.querySelector('pre')!.textContent!).nodes[0].size.width).toBe(310)
+})
+
+
+it('commits each complete touch gesture once, survives selection/diagnostic updates and supports undo/redo', async () => {
+  vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(1)
+  const host = root()
+  const history = createGraphHistory(createGraph('Heating'))
+  const [selectedId, setSelectedId] = createSignal('condition-1')
+  const [diagnostics, setDiagnostics] = createSignal<any[]>([])
+  const commits: unknown[] = []
+  dispose = render(() => <FlowAdapter graph={history.graph()} selectedId={selectedId()} diagnostics={diagnostics()} onSelect={setSelectedId}
+    onChange={next => { commits.push(next); history.commit(next) }} />, host)
+  const node = host.querySelector<HTMLElement>('[data-id="trigger-1"]')!
+  const send = (type: string, x: number, y: number) => {
+    const touch = new Touch({ identifier: 1, target: node, clientX: x, clientY: y })
+    node.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [touch], changedTouches: [touch] }))
+  }
+  send('touchstart', 80, 110); send('touchmove', 140, 140)
+  expect(selectedId()).toBe('trigger-1')
+  expect(node.style.transform).toContain('140px, 140px')
+  setDiagnostics([{ nodeId: 'trigger-1', message: 'Warning', severity: 2, startLine: null, startColumn: null }])
+  expect(node.style.transform).toContain('140px, 140px')
+  send('touchmove', 200, 170); send('touchend', 200, 170)
+  await vi.waitFor(() => expect(history.graph().nodes[0].position).toEqual({ x: 220, y: 180 }))
+  expect(commits).toHaveLength(1)
+  history.undo(); expect(history.graph().nodes[0].position).toEqual({ x: 60, y: 100 })
+  expect(history.canUndo()).toBe(false)
+  history.redo(); expect(node.style.transform).toContain('220px, 180px')
+  send('touchstart', 200, 170); send('touchmove', 230, 200); send('touchend', 230, 200)
+  await vi.waitFor(() => expect(history.graph().nodes[0].position).toEqual({ x: 260, y: 220 }))
+  expect(commits).toHaveLength(2)
+})
+
+it('keeps the last touch position on cancel, ignores remaining fingers and allows a fresh drag', async () => {
+  vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(1)
+  const host = root()
+  const [graph, setGraph] = createSignal(createGraph('Heating'))
+  const commits: unknown[] = []
+  dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={next => { commits.push(next); setGraph(next) }} />, host)
+  const node = host.querySelector<HTMLElement>('[data-id="trigger-1"]')!
+  const touch = (id: number, x: number) => new Touch({ identifier: id, target: node, clientX: x, clientY: 110 })
+  const send = (type: string, touches: Touch[], changed = touches) => node.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches, changedTouches: changed }))
+  send('touchstart', [touch(1, 80)]); send('touchmove', [touch(1, 140)]); send('touchmove', [touch(1, 200)])
+  send('touchstart', [touch(1, 200), touch(2, 220)], [touch(2, 220)])
+  expect(graph().nodes[0].position).toEqual({ x: 220, y: 100 })
+  send('touchend', [touch(1, 200)], [touch(2, 220)])
+  send('touchmove', [touch(1, 260)]); send('touchend', [], [touch(1, 260)])
+  expect(graph().nodes[0].position).toEqual({ x: 220, y: 100 })
+  expect(commits).toHaveLength(1)
+  send('touchstart', [touch(3, 200)]); send('touchmove', [touch(3, 230)]); send('touchcancel', [], [touch(3, 230)])
+  expect(graph().nodes[0].position).toEqual({ x: 260, y: 100 })
+  expect(commits).toHaveLength(2)
+})
+
+it('does not overwrite an external graph replacement when a touch gesture ends', () => {
+  vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(1)
+  const host = root()
+  const [graph, setGraph] = createSignal(createGraph('Heating'))
+  const commits: unknown[] = []
+  dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={next => { commits.push(next); setGraph(next) }} />, host)
+  const node = host.querySelector<HTMLElement>('[data-id="trigger-1"]')!
+  const send = (type: string, x: number) => {
+    const touch = new Touch({ identifier: 1, target: node, clientX: x, clientY: 110 })
+    node.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [touch], changedTouches: [touch] }))
+  }
+  send('touchstart', 80); send('touchmove', 140)
+  setGraph(updateNode(graph(), 'trigger-1', { position: { x: 300, y: 200 } }))
+  send('touchmove', 200); send('touchend', 200)
+  expect(commits).toHaveLength(0)
+  expect(graph().nodes[0].position).toEqual({ x: 300, y: 200 })
+  expect(node.style.transform).toContain('300px, 200px')
+})
+
+it('releases touch ownership when the last finger ends outside the canvas', () => {
+  vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(1)
+  const host = root()
+  const [graph, setGraph] = createSignal(createGraph('Heating'))
+  dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, host)
+  const node = host.querySelector<HTMLElement>('[data-id="trigger-1"]')!
+  const touch = (id: number, target: Element, x: number) => new Touch({ identifier: id, target, clientX: x, clientY: 110 })
+  const send = (target: Element, type: string, touches: Touch[], changed: Touch[]) => target.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches, changedTouches: changed }))
+  send(node, 'touchstart', [touch(1, node, 80)], [touch(1, node, 80)])
+  send(node, 'touchmove', [touch(1, node, 140)], [touch(1, node, 140)])
+  send(document.body, 'touchstart', [touch(1, node, 140), touch(2, document.body, 400)], [touch(2, document.body, 400)])
+  send(node, 'touchend', [touch(2, document.body, 400)], [touch(1, node, 140)])
+  send(document.body, 'touchend', [], [touch(2, document.body, 400)])
+  send(node, 'touchstart', [touch(3, node, 140)], [touch(3, node, 140)])
+  send(node, 'touchmove', [touch(3, node, 200)], [touch(3, node, 200)])
+  send(node, 'touchend', [], [touch(3, node, 200)])
+  expect(graph().nodes[0].position).toEqual({ x: 220, y: 100 })
+})
+
+it('allows a new touch drag after the touched node is removed externally', () => {
+  const host = root()
+  const [graph, setGraph] = createSignal(createGraph('Heating'))
+  dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, host)
+  const first = host.querySelector<HTMLElement>('[data-id="trigger-1"]')!
+  const send = (node: Element, type: string, x: number, id: number) => {
+    const touch = new Touch({ identifier: id, target: node, clientX: x, clientY: 110 })
+    node.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [touch], changedTouches: [touch] }))
+  }
+  send(first, 'touchstart', 80, 1); send(first, 'touchmove', 140, 1)
+  setGraph({ ...graph(), nodes: graph().nodes.filter(n => n.id !== 'trigger-1'), edges: [] })
+  expect(first.isConnected).toBe(false)
+  send(first, 'touchend', 140, 1)
+  const second = host.querySelector<HTMLElement>('[data-id="service-1"]')!
+  send(second, 'touchstart', 200, 2); send(second, 'touchmove', 260, 2); send(second, 'touchend', 260, 2)
+  expect(graph().nodes.find(n => n.id === 'service-1')?.position).toEqual({ x: 740, y: 100 })
 })

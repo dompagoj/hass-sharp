@@ -25,7 +25,7 @@ Visual editor shell coverage lives in `visual-graph.test.ts`, `VisualEditor.test
 and `VisualAutomationView.test.tsx`. Tests use the real pinned Solid Flow/D3
 implementation. Happy DOM has no layout engine; the resize/edge tests supply only
 measured DOM dimensions at that boundary. These tests do not replace desktop/mobile
-browser acceptance. See `../docs/visual-editor-feasibility.md` for the local patch,
+browser acceptance. See `../docs/visual-editor-feasibility.md` for the adapter touch handling,
 capability limits, and browser follow-up results.
 
 Run `bun run build:preview` to build the mock-data responsive fixture; see the feasibility report for the temporary local HA static-route workflow. This is not a real HA integration test.
@@ -60,3 +60,12 @@ triggers, C# sections, saved action dispatch, v1 upgrade and source mappings) an
 The fixture's `visualFixture.controls.preview` accepts an explicit backend preview
 response for inspecting real source and maps without authenticating to HA. This
 remains a fixture: it does not execute a real automation.
+
+
+Solid Flow is installed without Bun patches. Touch regression coverage checks the
+full final coordinates (rather than only movement), one-step undo/redo, repeated
+gestures, diagnostic/selection updates, second-finger interruption, cancellation,
+outside-finger release, and external graph replacement/removal. The real library
+remains mounted; only its node-body touch path is owned by the adapter. Native
+mouse/resize regressions still exercise D3. Physical touch hardware remains a
+separate acceptance check.
