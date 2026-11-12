@@ -100,3 +100,91 @@ and delete, concurrent writers, generated cancellation, failed activation cleanu
 and save/update/delete/reload through the backend bridge. Existing runtime tests exercise policy cancellation/history/scheduling.
 `python3 -m unittest discover -s tests/python` checks the WebSocket admin boundary.
 Live HA has not been tested from this branch (Docker socket permission denied).
+
+## Optional graph v2 (backend contract; frontend remains v1)
+
+The API and document envelope remain version 1. Set **graph.version** to 2 to use
+multiple trigger nodes. Existing v1 graphs keep their single `Run` action and
+existing node/edge behavior. No frontend changes or automatic upgrades are made.
+
+Each v2 trigger becomes an independent action, ordered by ordinal node ID, with
+its own mode, subscriptions, schedules, startup/manual flags and history action.
+Its public method is `Run_` plus uppercase hexadecimal UTF-8 bytes of its node ID
+(for example `a` → `Run_61`). Use that method for run-now. Keep trigger IDs stable:
+renaming the display name or reordering nodes preserves action identity; changing
+the ID changes it. Source maps include trigger configuration, action entry, and
+node body ranges. Multiple ranges may have the same NodeId.
+
+All nodes must be reachable from at least one trigger. Triggers cannot have
+incoming edges. Different triggers may share downstream nodes: each invocation
+executes that path independently, with separate responses/lastError locals.
+Two triggers for the same entity intentionally invoke two actions. Repeated entity
+IDs within one action are deduplicated by the existing runtime subscription layer.
+
+Additional optional v2 fields:
+
+| Location | Field | Meaning |
+|---|---|---|
+| graph | `imports` string | C# using directives before the generated class |
+| graph | `members` string | C# fields, properties, helper methods and nested types inside VisualAutomation |
+| trigger.config | `entitiesExpression` string | C# expression replacing the Entities argument, e.g. `["sensor.temperature", "input_boolean.enabled"]` |
+| trigger.config | `schedulesExpression` string | C# expression replacing Schedules, e.g. `[AutomationSchedule.Daily("morning", new TimeOnly(7, 0), "Europe/Zagreb")]` |
+| trigger.config | `startup` boolean | Overrides startup behavior derived from type |
+| trigger.config | `manual` boolean | Defaults true; false disables manual invocation |
+
+For fully custom subscriptions use `type:"manual"` plus the expression fields;
+the normal entity/daily/once types still validate their required fields before
+overrides. Expressions can call helpers defined in members. Preview compiles
+expressions but does not evaluate them: runtime-invalid schedules or throwing
+helpers are reported by save as activation errors. Import/member compiler errors
+map to synthetic IDs `$imports` and `$members`; expression errors map to the
+trigger. These synthetic IDs are diagnostic locations, not graph nodes.
+
+### C# escape hatch and execution semantics
+
+A custom node's `config.code` is an async C# statement body. Arbitrary conditions,
+expressions, sequential branches, loops, typed service calls and response handling
+can live there or in members. For example:
+
+```csharp
+if (Entity("sensor.bathroom").RawState == "cold"
+    && EntityUntracked("input_boolean.enabled").RawState == "on")
+{
+    for (var i = 0; i < 2; i++)
+    {
+        CancellationToken.ThrowIfCancellationRequested();
+        await Task.WhenAll(Heat(), Notify()); // concurrent, joined before next node
+    }
+}
+await Finish(); // explicitly sequential
+```
+
+Define Heat/Notify/Finish as private async Task helpers in members. Helpers inherit
+Cause, TriggeredBy(), CancellationToken and the normal Automation APIs. Pass the
+token to delays/I/O and await all child work. Cancellation from Restart/unload
+propagates through awaited helpers and bypasses graph error edges. Class fields
+are shared across concurrent invocations, so use synchronization for shared state.
+Use method locals for invocation-local values. A `return;` in a custom node ends
+that invocation; it does not execute its next edge.
+
+Tracked `Entity(...)` and `EntityUntracked(...)` APIs are available with the same
+semantics as handwritten code. The current declarative runtime does **not**
+discover subscriptions from either read: declare triggering entities explicitly.
+TriggeredBy() is the event snapshot and Cause preserves Entity/Startup/Manual/
+Schedule; helper execution does not create separate history records.
+
+Boundaries: graph edges remain acyclic and have one target per port. There are no
+new visual loop/fork/join widgets; custom C# provides those operations explicitly.
+Generated class name/base class/action signatures and Configure are reserved;
+do not redeclare them in members. This is parity for behavior expressible through
+the current Automation runtime, not arbitrary C# source-file round-tripping or
+arbitrary inheritance. C# snippets have the same privileges and reference set as
+code automations, not a sandbox. Cancellation remains cooperative, just as in
+handwritten code. Custom node preprocessor directives remain unsupported.
+Do not depend on generated locals such as step or private ExecuteGraph.
+
+Verification includes a compiled bathroom-heating-style fixture (tracked and
+untracked reads, event cause, shared action paths, loops and awaited concurrent
+helpers), duplicated triggers, deterministic output, member diagnostics, and
+generated Restart/Parallel executions cancelled on unload. This is a representative
+fixture, not a claim of testing a particular installation's devices or script.

@@ -9,7 +9,7 @@ public sealed record VisualDiagnostic(string? NodeId, string Message, int Severi
 public sealed record VisualSourceMap(string NodeId, int StartLine, int EndLine);
 public sealed record VisualPreview(bool Valid, string Source, List<VisualSourceMap> SourceMap, List<VisualDiagnostic> Diagnostics);
 
-/// <summary>Version 1 is the frontend domain graph, never a serialized canvas/library object.</summary>
+/// <summary>Versions 1 and 2 are domain graphs, never a serialized canvas/library object.</summary>
 public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
 {
     static string Text(JsonNode? node, string key, string fallback = "") => node?[key]?.GetValue<string>() ?? fallback;
@@ -26,7 +26,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         string? current = null;
         try
         {
-            if (graph["version"]?.GetValue<int>() != 1) throw new ArgumentException("Unsupported graph version");
+            var version = graph["version"]?.GetValue<int>();
+            if (version is not (1 or 2)) throw new ArgumentException("Unsupported graph version");
             Required(graph, "name");
             var nodes = graph["nodes"]!.AsArray(); var edges = graph["edges"]!.AsArray();
             if (nodes.Count is < 1 or > 256 || edges.Count > 512) throw new ArgumentException("Graph limit: 1–256 nodes, at most 512 edges");
@@ -40,9 +41,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 if (outgoing[from].Any(e => e.Port == port)) throw new ArgumentException("Only one outgoing edge per port is supported");
                 outgoing[from].Add((target, port));
             }
-            var roots = byId.Values.Where(n => Text(n, "kind") == "trigger").ToArray();
-            if (roots.Length != 1) throw new ArgumentException("Exactly one trigger is required");
-            var root = roots[0]; var rootId = Text(root, "id");
+            var roots = byId.Values.Where(n => Text(n, "kind") == "trigger").OrderBy(n => Text(n, "id"), StringComparer.Ordinal).ToArray();
+            if (roots.Length == 0 || (version == 1 && roots.Length != 1)) throw new ArgumentException("Version 1 requires one trigger; version 2 requires at least one");
             var visiting = new HashSet<string>(); var visited = new HashSet<string>();
             void Visit(string id)
             {
@@ -50,39 +50,77 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 if (!visited.Contains(id)) foreach (var edge in outgoing[id]) Visit(edge.Target);
                 visiting.Remove(id); visited.Add(id);
             }
-            Visit(rootId);
+            foreach (var root in roots) Visit(Text(root, "id"));
             if (visited.Count != byId.Count) throw new ArgumentException("Every node must be reachable from the trigger");
-            if (outgoing.Values.Any(es => es.Any(e => e.Target == rootId))) throw new ArgumentException("Trigger cannot have incoming edges");
+            if (outgoing.Values.Any(es => es.Any(e => roots.Any(r => Text(r, "id") == e.Target)))) throw new ArgumentException("Trigger cannot have incoming edges");
             var ids = byId.Keys.Order(StringComparer.Ordinal).ToArray();
             var index = ids.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i);
+            void Section(string key)
+            {
+                current = "$" + key;
+                var code = Text(graph, key);
+                if (version == 1 && code != "") throw new ArgumentException("C# sections require version 2");
+                if (code == "") return;
+                var first = lines.Count + 1;
+                lines.AddRange(code.Replace("\r\n", "\n").Split('\n'));
+                maps.Add(new(current, first, lines.Count));
+            }
+            Section("imports");
             lines.Add("public class VisualAutomation : Automation"); lines.Add("{");
-            var config = root["config"] ?? new JsonObject(); current = rootId;
-            var mode = Text(config, "mode", "Single");
-            if (!Enum.TryParse<AutomationMode>(mode, out var parsed) || !Enum.IsDefined(parsed)) throw new ArgumentException("Unknown concurrency mode");
-            var triggerType = Text(config, "type", "entity");
-            var entities = "[]"; var schedules = "[]";
-            if (triggerType == "entity") entities = $"[{Quote(Required(config, "entity"))}]";
-            else if (triggerType == "daily")
+            Section("members");
+            string Method(JsonNode root) => version == 1 ? "Run" : "Run_" + Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(Text(root, "id")));
+            lines.Add("public override AutomationConfiguration Configure() => new(");
+            var rootNumber = 0;
+            foreach (var root in roots)
             {
-                var time = TimeOnly.ParseExact(Required(config, "time"), "HH:mm", CultureInfo.InvariantCulture);
-                TimeZoneInfo.FindSystemTimeZoneById(Required(config, "timeZone"));
-                schedules = $"[AutomationSchedule.Daily({Quote(rootId)}, new TimeOnly({time.Hour}, {time.Minute}), {Quote(Text(config, "timeZone"))})]";
+                var rootId = Text(root, "id");
+                var config = root["config"] ?? new JsonObject(); current = rootId;
+                var mode = Text(config, "mode", "Single");
+                if (!Enum.TryParse<AutomationMode>(mode, out var parsed) || !Enum.IsDefined(parsed)) throw new ArgumentException("Unknown concurrency mode");
+                var triggerType = Text(config, "type", "entity");
+                var entities = "[]"; var schedules = "[]";
+                if (triggerType == "entity") entities = $"[{Quote(Required(config, "entity"))}]";
+                else if (triggerType == "daily")
+                {
+                    var time = TimeOnly.ParseExact(Required(config, "time"), "HH:mm", CultureInfo.InvariantCulture);
+                    TimeZoneInfo.FindSystemTimeZoneById(Required(config, "timeZone"));
+                    schedules = $"[AutomationSchedule.Daily({Quote(rootId)}, new TimeOnly({time.Hour}, {time.Minute}), {Quote(Text(config, "timeZone"))})]";
+                }
+                else if (triggerType == "once")
+                {
+                    var at = Required(config, "at");
+                    if (!Regex.IsMatch(at, @"(Z|[+-]\d{2}:\d{2})$")) throw new ArgumentException("at requires an explicit UTC offset");
+                    var instant = DateTimeOffset.Parse(at, CultureInfo.InvariantCulture);
+                    schedules = $"[AutomationSchedule.Once({Quote(rootId)}, DateTimeOffset.Parse({Quote(instant.ToString("O"))}))]";
+                }
+                else if (triggerType != "manual" && triggerType != "startup") throw new ArgumentException("Unknown trigger type");
+                if (version == 2)
+                {
+                    entities = Text(config, "entitiesExpression", entities);
+                    schedules = Text(config, "schedulesExpression", schedules);
+                }
+                var startup = triggerType == "startup";
+                var manual = true;
+                if (version == 2)
+                {
+                    startup = config["startup"]?.GetValue<bool>() ?? startup;
+                    manual = config["manual"]?.GetValue<bool>() ?? manual;
+                }
+                var start = lines.Count + 1;
+                lines.AddRange(($"new AutomationAction(nameof({Method(root)}), AutomationMode.{mode}, Startup: {(startup ? "true" : "false")}, Manual: {(manual ? "true" : "false")}, Entities: {entities}, Schedules: {schedules}){(++rootNumber < roots.Length ? "," : "")}").Replace("\r\n", "\n").Split('\n'));
+                maps.Add(new(rootId, start, lines.Count));
             }
-            else if (triggerType == "once")
+            lines.Add(");");
+            foreach (var root in roots)
             {
-                var at = Required(config, "at");
-                if (!Regex.IsMatch(at, @"(Z|[+-]\d{2}:\d{2})$")) throw new ArgumentException("at requires an explicit UTC offset");
-                var instant = DateTimeOffset.Parse(at, CultureInfo.InvariantCulture);
-                schedules = $"[AutomationSchedule.Once({Quote(rootId)}, DateTimeOffset.Parse({Quote(instant.ToString("O"))}))]";
+                var first = lines.Count + 1;
+                lines.Add($"public Task {Method(root)}() => ExecuteGraph({index[Text(root, "id")]});");
+                maps.Add(new(Text(root, "id"), first, lines.Count));
             }
-            else if (triggerType != "manual" && triggerType != "startup") throw new ArgumentException("Unknown trigger type");
-            var start = lines.Count + 1;
-            lines.Add($"public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Run), AutomationMode.{mode}, Startup: {(triggerType == "startup" ? "true" : "false")}, Manual: true, Entities: {entities}, Schedules: {schedules}));");
-            maps.Add(new(rootId, start, lines.Count));
-            lines.Add("public async Task Run()"); lines.Add("{");
+            lines.Add("private async Task ExecuteGraph(int step)"); lines.Add("{");
             lines.Add("var responses = new System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>();");
             lines.Add("Exception? lastError = null;");
-            lines.Add($"int step = {index[rootId]};"); lines.Add("while (step >= 0)"); lines.Add("{");
+            lines.Add("while (step >= 0)"); lines.Add("{");
             lines.Add("CancellationToken.ThrowIfCancellationRequested();"); lines.Add("switch (step)"); lines.Add("{");
             foreach (var id in ids)
             {
@@ -91,7 +129,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 if (outgoing[id].Any(e => !allowed.Contains(e.Port))) throw new ArgumentException("Unsupported edge port");
                 if (kind == "condition" && outgoing[id].Any(e => e.Port == "next") && outgoing[id].Any(e => e.Port == "true")) throw new ArgumentException("Use next or true, not both");
                 int Next(string port) => outgoing[id].Where(e => e.Port == port).Select(e => index[e.Target]).DefaultIfEmpty(-1).Single();
-                start = lines.Count + 1; lines.Add($"case {index[id]}:"); lines.Add("{"); lines.Add("try"); lines.Add("{");
+                var start = lines.Count + 1; lines.Add($"case {index[id]}:"); lines.Add("{"); lines.Add("try"); lines.Add("{");
                 switch (kind)
                 {
                     case "trigger": break;

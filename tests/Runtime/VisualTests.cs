@@ -53,6 +53,7 @@ static class VisualTests
         var fixtureRoot = Path.Combine(Path.GetTempPath(), "visual-fixtures-" + Guid.NewGuid());
         var previousPath = HassPath.HassConfiguration;
         HassPath.HassConfiguration = fixtureRoot;
+        Directory.CreateDirectory(fixtureRoot);
         try
         {
             var calls = 0;
@@ -70,6 +71,99 @@ static class VisualTests
                 }
                 finally { compiled.Unload(); }
             }
+            var multi = JsonNode.Parse("""
+            {"version":2,"name":"BathroomHeating","imports":"using System.Collections.Concurrent;",
+             "members":"public static ConcurrentQueue<string> Seen = new(); private async Task Heat() { await Task.Delay(1, CancellationToken); Seen.Enqueue(Cause + \":\" + TriggeredBy()?.RawState); }",
+             "nodes":[
+              {"id":"a","kind":"trigger","config":{"entity":"sensor.bathroom","mode":"Restart"}},
+              {"id":"b","kind":"trigger","config":{"entity":"sensor.bathroom","mode":"Parallel"}},
+              {"id":"heat","kind":"custom","config":{"code":"if (Entity(\"sensor.bathroom\").RawState == \"cold\" && EntityUntracked(\"sensor.enabled\").RawState == \"on\") { for (int i = 0; i < 2; i++) { CancellationToken.ThrowIfCancellationRequested(); await Task.WhenAll(Heat(), Heat()); } }"}}
+             ],"edges":[{"source":"a","target":"heat"},{"source":"b","target":"heat"}]}
+            """)!.AsObject();
+            multi["nodes"]![0]!["config"]!["entitiesExpression"] = "[\"sensor.bathroom\", \"sensor.bathroom\", \"sensor.extra\"]";
+            multi["nodes"]![1]!["config"]!["manual"] = false;
+            var multiPreview = generator.Preview(multi);
+            Check(multiPreview.Valid, "v2 multiple triggers and C# sections compile: " + System.Text.Json.JsonSerializer.Serialize(multiPreview.Diagnostics));
+            var brokenMembers = (JsonObject)multi.DeepClone();
+            brokenMembers["members"] = "invalid C# here;";
+            Check(generator.Preview(brokenMembers).Diagnostics.Any(d => d.NodeId == "$members" && d.Severity == 3), "member diagnostic mapping");
+            var multiline = (JsonObject)multi.DeepClone();
+            multiline["nodes"]![0]!["config"]!["entitiesExpression"] = "[\n\"sensor.bathroom\"\n]";
+            multiline["nodes"]![2]!["config"]!["code"] = "unknownHelper();";
+            Check(generator.Preview(multiline).Diagnostics.Any(d => d.NodeId == "heat" && d.Severity == 3), "multiline configuration preserves later node mappings");
+            multiline["nodes"]![0]!["config"]!["entitiesExpression"] = "[\nmissingEntity\n]";
+            Check(generator.Preview(multiline).Diagnostics.Any(d => d.NodeId == "a" && d.Message.Contains("missingEntity")), "multiline expression diagnostics map to trigger");
+            var reordered = (JsonObject)multi.DeepClone();
+            reordered["nodes"] = new JsonArray(reordered["nodes"]!.AsArray().Reverse().Select(n => n!.DeepClone()).ToArray());
+            Check(generator.Preview(reordered).Source == multiPreview.Source, "node ordering does not change source or action identity");
+            var multiCompiled = await compiler.CompileSingleFile(Path.Combine(fixtureRoot, "multi.cs"), multiPreview.Source, true);
+            var multiManager = new UserScriptManager();
+            try
+            {
+                PyInterop.Entity = id => new() { EntityId = id, State = id == "sensor.enabled" ? "on" : "cold" };
+                await multiManager.LoadUserScripts([multiCompiled]);
+                var type = multiCompiled.Assembly.GetType("VisualAutomation")!;
+                var instance = (Automation)Activator.CreateInstance(type)!;
+                var actions = instance.Configure().Actions;
+                Check(actions[0].Entities!.Length == 3 && !actions[1].Manual, "custom trigger configuration");
+                Check(actions.Count == 2 && actions[0].Mode == AutomationMode.Restart && actions[1].Mode == AutomationMode.Parallel, "independent actions and modes");
+                Check(multiManager.DependencyTracking.GetEntries("sensor.bathroom").Count == 2, "duplicate entity triggers retain both actions");
+                await multiManager.RunEntries("sensor.bathroom", new(new() { EntityId = "sensor.bathroom", State = "cold" }));
+                var seen = (System.Collections.Concurrent.ConcurrentQueue<string>)type.GetField("Seen")!.GetValue(null)!;
+                Check(seen.Count == 8 && seen.All(x => x == "Entity:cold"), "both paths execute loops and concurrent helpers with trigger cause");
+            }
+            finally { multiManager.UnloadUserScripts(); multiCompiled.Unload(); }
+            var configured = (JsonObject)multi.DeepClone();
+            configured["nodes"]![0]!["config"]!["startup"] = true;
+            configured["nodes"]![0]!["config"]!["schedulesExpression"] = "[AutomationSchedule.Once(\"custom\", DateTimeOffset.Parse(\"2030-01-01T00:00:00Z\"))]";
+            var configuredPreview = generator.Preview(configured);
+            Check(configuredPreview.Valid, "custom schedules compile");
+            var configuredCompiled = await compiler.CompileSingleFile(Path.Combine(fixtureRoot, "configured.cs"), configuredPreview.Source, true);
+            try
+            {
+                var instance = (Automation)Activator.CreateInstance(configuredCompiled.Assembly.GetType("VisualAutomation")!)!;
+                var action = instance.Configure().Actions[0];
+                Check(action.Startup && action.Schedules!.Single().Id == "custom", "startup and schedule expressions preserved");
+            }
+            finally { configuredCompiled.Unload(); }
+            var cyclic = (JsonObject)multi.DeepClone();
+            cyclic["edges"]!.AsArray().Add(JsonNode.Parse("""{"source":"heat","target":"a"}"""));
+            Check(!generator.Preview(cyclic).Valid, "v2 trigger cycles rejected");
+            Check(new[] { "a", "b", "heat" }.All(id => multiPreview.SourceMap.Any(m => m.NodeId == id)), "each action path has source mappings");
+            var concurrent = (JsonObject)multi.DeepClone();
+            concurrent["members"] = """
+                public static int Started, Cancelled, Completed;
+                public static TaskCompletionSource FirstReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                public static TaskCompletionSource CancelReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                public static TaskCompletionSource Ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                private async Task Heat() {
+                    var count = System.Threading.Interlocked.Increment(ref Started);
+                    if (count == 4) FirstReady.TrySetResult();
+                    if (count == 8) Ready.TrySetResult();
+                    try { await Task.Delay(60000, CancellationToken); System.Threading.Interlocked.Increment(ref Completed); }
+                    catch (OperationCanceledException) { if (System.Threading.Interlocked.Increment(ref Cancelled) == 2) CancelReady.TrySetResult(); throw; }
+                }
+                """;
+            var concurrentPreview = generator.Preview(concurrent);
+            Check(concurrentPreview.Valid, "concurrent fixture compiles");
+            var concurrentCompiled = await compiler.CompileSingleFile(Path.Combine(fixtureRoot, "concurrent.cs"), concurrentPreview.Source, true);
+            var concurrentManager = new UserScriptManager();
+            try
+            {
+                await concurrentManager.LoadUserScripts([concurrentCompiled]);
+                var type = concurrentCompiled.Assembly.GetType("VisualAutomation")!;
+                var first = concurrentManager.RunEntries("sensor.bathroom", new(new() { EntityId = "sensor.bathroom", State = "cold" }));
+                await ((TaskCompletionSource)type.GetField("FirstReady")!.GetValue(null)!).Task.WaitAsync(TimeSpan.FromSeconds(2));
+                var second = concurrentManager.RunEntries("sensor.bathroom", new(new() { EntityId = "sensor.bathroom", State = "cold" }));
+                await ((TaskCompletionSource)type.GetField("Ready")!.GetValue(null)!).Task.WaitAsync(TimeSpan.FromSeconds(2));
+                await ((TaskCompletionSource)type.GetField("CancelReady")!.GetValue(null)!).Task.WaitAsync(TimeSpan.FromSeconds(2));
+                Check((int)type.GetField("Cancelled")!.GetValue(null)! == 2, "Restart cancels its first two helpers while Parallel retains both runs");
+                concurrentManager.UnloadUserScripts();
+                await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(2));
+                Check((int)type.GetField("Cancelled")!.GetValue(null)! == 8 && (int)type.GetField("Completed")!.GetValue(null)! == 0, "unload cancels every concurrent helper");
+            }
+            finally { concurrentManager.UnloadUserScripts(); concurrentCompiled.Unload(); }
+            PyInterop.Entity = id => new() { EntityId = id, State = "on" };
             await Execute(Graph()); Check(calls == 1, "awaited entity-condition-service fixture executes");
             var branch = Graph(); branch["nodes"]![1]!["config"]!["state"] = "off";
             await Execute(branch); Check(calls == 1, "false condition stops effect");
