@@ -7,17 +7,24 @@ namespace HassSharp;
 /// <summary>Pure graph v4 validation. Does not compile, attach triggers, or execute data dependencies.</summary>
 public static class VisualGraphValidator
 {
-    public static List<VisualDiagnostic> Validate(JsonObject graph) => new Validation().Run(graph);
+    public static List<VisualDiagnostic> Validate(JsonObject graph, VisualCatalogSnapshot? snapshot = null) => new Validation(snapshot ?? VisualCatalogSnapshot.BuiltIn).Run(graph);
 
-    sealed class Validation
+    sealed class Validation(VisualCatalogSnapshot snapshot)
     {
+        JsonObject Root => snapshot.Root;
+        JsonObject? Spec(JsonObject node) => VisualNodeCatalog.Spec(node, snapshot);
+        string[] ExecutionPorts(JsonObject node) => VisualNodeCatalog.ExecutionPorts(node, snapshot);
+        JsonObject DataOutputs(JsonObject node) => VisualNodeCatalog.DataOutputs(node, snapshot);
+        JsonObject DataInputs(JsonObject node, JsonObject? owner = null) => VisualNodeCatalog.DataInputs(node, owner, snapshot);
+        bool CompatibleTypes(string source, string target) => snapshot.IsAssignable(source, target);
+        bool TryGetInputValue(JsonObject node, string port, out JsonNode? value) => VisualNodeCatalog.TryGetInputValue(node, port, out value, snapshot);
         readonly List<VisualDiagnostic> errors = [];
         readonly Dictionary<string, JsonObject> nodes = new(StringComparer.Ordinal);
         readonly Dictionary<string, List<JsonObject>> outgoing = new(StringComparer.Ordinal);
         readonly List<JsonObject> data = [];
         readonly Dictionary<string, (string Owner, string Port)[]> scopes = new(StringComparer.Ordinal);
         readonly Dictionary<(string Node, string Port), JsonObject> incoming = [];
-        static readonly string[] Types = Root["types"]!.AsObject().Select(p => p.Key).ToArray();
+        string[] Types => Root["types"]!.AsObject().Select(p => p.Key).ToArray();
         void Error(string? node, string message, string? input = null, string? port = null) => errors.Add(new(node, message, InputId: input, PortId: port));
         static bool Bool(JsonNode? node, string key, bool fallback = false) => node is JsonObject o && o[key] is JsonValue v && v.TryGetValue<bool>(out var result) ? result : fallback;
         static double? Number(JsonNode? value) => value is JsonValue v && v.TryGetValue<double>(out var number) && double.IsFinite(number) ? number : null;
@@ -27,7 +34,7 @@ public static class VisualGraphValidator
         static string Id(JsonObject node) => Text(node, "id");
         static JsonObject Config(JsonObject node) => node["config"] as JsonObject ?? [];
         static string FlowPort(JsonObject node, JsonObject edge) => Kind(node) == "condition" && Text(edge, "port", "next") == "next" ? "true" : Text(edge, "port", "next");
-        static bool ScopePort(JsonObject node, string port) => Strings(Spec(node)?["scopePorts"]).Contains(port) || Kind(node) == "parallel" && port.StartsWith("branch:", StringComparison.Ordinal);
+        bool ScopePort(JsonObject node, string port) => Strings(Spec(node)?["scopePorts"]).Contains(port) || Kind(node) == "parallel" && port.StartsWith("branch:", StringComparison.Ordinal);
         static bool Ancestor((string Owner, string Port)[] a, (string Owner, string Port)[] b) => a.Length <= b.Length && a.SequenceEqual(b.Take(a.Length));
         JsonObject? Owner(JsonObject node) => scopes.TryGetValue(Id(node), out var scope) && scope.LastOrDefault() is var last && last.Port == "body" ? nodes[last.Owner] : null;
         bool Visible(JsonObject source, JsonObject target, JsonNode port)
@@ -150,16 +157,7 @@ public static class VisualGraphValidator
             else if (Text(operand, "kind") == "literal")
             {
                 type = Text(operand, "type"); var value = operand["value"];
-                var valid = type switch
-                {
-                    "boolean" => value is JsonValue bv && bv.TryGetValue<bool>(out _),
-                    "number" => Number(value) != null,
-                    "string" => value is JsonValue sv && sv.TryGetValue<string>(out _),
-                    "entity_id" => value is JsonValue ev && ev.TryGetValue<string>(out var entity) && Match(entity, Text(Root["types"]?["entity_id"], "pattern")),
-                    "object" => value is JsonObject,
-                    "array" => value is JsonArray,
-                    _ => false
-                };
+                var valid = ValidLiteral(type, value, operand.ContainsKey("value"), snapshot);
                 if (!valid) Error(Id(node), $"Invalid {type} literal", port);
                 if (Number(value) is { } number && (Number(spec["min"]) is { } min && number < min || Number(spec["max"]) is { } max && number > max || Bool(spec, "integer") && Math.Truncate(number) != number))
                     Error(Id(node), $"Input must be {(Bool(spec, "integer") ? "an integer " : "")}between {spec["min"]?.ToString() ?? "-infinity"} and {spec["max"]?.ToString() ?? "infinity"}", port);
@@ -203,7 +201,8 @@ public static class VisualGraphValidator
                     _ => false
                 };
                 if (!valid) { Error(id, $"{field} must be {Text(rule, "type")}", field); continue; }
-                if (rule["enum"] is JsonArray choices && !choices.Any(v => JsonNode.DeepEquals(v, value))) Error(id, field + " must be one of " + string.Join(", ", choices), field);
+                var choices = Text(rule, "enumSource") == "types" ? new JsonArray(Types.Select(t => (JsonNode?)JsonValue.Create(t)).ToArray()) : rule["enum"] as JsonArray;
+                if (choices != null && !choices.Any(v => JsonNode.DeepEquals(v, value))) Error(id, field + " must be one of " + string.Join(", ", choices), field);
                 if (Number(value) is { } number && (Number(rule["min"]) is { } min && number < min || Number(rule["max"]) is { } max && number > max)) Error(id, $"{field} must be between {rule["min"]} and {rule["max"]}", field);
                 if (value is JsonValue text && text.TryGetValue<string>(out var str) && Text(rule, "pattern") is { Length: > 0 } pattern && !Match(str, pattern)) Error(id, field + " has invalid format", field);
                 if (value is JsonArray list && (Number(rule["minItems"]) is { } minItems && list.Count < minItems || Number(rule["maxItems"]) is { } maxItems && list.Count > maxItems)) Error(id, field + " item count is out of range", field);
@@ -233,7 +232,7 @@ public static class VisualGraphValidator
                 foreach (var field in required) if (!cfg.ContainsKey(field) || cfg[field] is JsonValue v && v.TryGetValue<string>(out var s) && s == "") Error(id, field + " is required", field);
                 if (type == "ha" && cfg["trigger"] is JsonObject trigger && string.IsNullOrWhiteSpace(Text(trigger, "trigger")) && string.IsNullOrWhiteSpace(Text(trigger, "platform"))) Error(id, "Native trigger requires a platform", "trigger");
             }
-            if (kind is "read_entity" or "wait_until" && Text(cfg, "field") == "attribute" && string.IsNullOrWhiteSpace(Text(cfg, "attribute"))) Error(id, "Attribute name is required", "attribute");
+            if (kind is "entity_field" or "wait_until" && Text(cfg, "field") == "attribute" && string.IsNullOrWhiteSpace(Text(cfg, "attribute"))) Error(id, "Attribute name is required", "attribute");
             if (kind == "get_field" && (cfg["pointer"] is not JsonValue pointer || !pointer.TryGetValue<string>(out var p) || !Match(p, "^(?:/(?:[^~]|~[01])*)*$"))) Error(id, "Invalid JSON pointer", "pointer");
             if (kind == "parallel" && cfg["branches"] is JsonArray branches)
             {

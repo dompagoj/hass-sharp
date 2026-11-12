@@ -47,3 +47,37 @@ it('replacing an invalid connection still rejects the same type error', () => {
   const graph = structuredClone(cases.find(c => c.name === 'incompatible data type')!.graph) as GraphV4
   expect(() => contract.connectData(graph, 'a', 'value', 'b', 'value')).toThrow(/type/)
 })
+it('read entity exposes a concrete snapshot without scalar configuration', () => {
+  const node = { id: 'r', kind: 'read_entity', config: {} }
+  expect(contract.dataOutputs(node).value.type).toBe('global::HassSharp.EntityStateSnapshot')
+  expect(contract.nodeCatalog.nodes.read_entity.config.type).toBeUndefined()
+})
+it('accepts explicit per-document catalogs without contaminating built-ins', () => {
+  const catalog = structuredClone(contract.nodeCatalog)
+  catalog.types['global::Example.Reading'] = { description: 'Reading', assignableTo: ['global::Example.IReading'], nullable: false }
+  catalog.types['global::Example.IReading'] = { description: 'IReading', assignableTo: [], nullable: false }
+  expect(contract.compatibleTypes('global::Example.Reading', 'global::Example.IReading', catalog)).toBe(true)
+  expect(contract.compatibleTypes('global::Example.Reading', 'global::Example.IReading')).toBe(false)
+  expect(contract.compatibleTypes('invented', 'invented', catalog)).toBe(false)
+})
+
+import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
+const richCatalog = rich.catalog as unknown as contract.VisualCatalogSnapshot
+for (const fixture of rich.cases) it(`shared CLR catalog: ${fixture.name}`, () => {
+  const errors = contract.validateGraphV4(fixture.graph, richCatalog)
+  expect(errors.length === 0, JSON.stringify(errors)).toBe(fixture.valid)
+  if (fixture.inputId) expect(errors.some(e => e.inputId === fixture.inputId)).toBe(true)
+})
+it('custom node creation and connections preserve reserved argument names', () => {
+  const original = rich.cases[0].graph as GraphV4
+  const consumer = original.nodes[3]
+  const connected = contract.connectData(original, 'describe', 'result', consumer.id, 'reading', richCatalog)
+  expect(connected.nodes[3].config.arguments).toMatchObject({ reading: { kind: 'unset' }, type: { value: 3 }, output: { value: null }, service: { value: 'light.turn_on' } })
+  expect(connected.nodes[3].config.type).toBeUndefined()
+  expect(contract.disconnectData(connected, consumer.id, 'reading', richCatalog).nodes[3].config.arguments).toMatchObject({ reading: { kind: 'unset' } })
+  const created = contract.addV4Node({ version: 4, name: 'Create', nodes: [], edges: [] }, consumer.kind, 'c', richCatalog).nodes[0]
+  expect(created.config.arguments).toMatchObject({ type: { value: 3 }, output: { value: null }, service: { value: 'light.turn_on' } })
+  expect(contract.validateGraphV4(original).some(d => d.message === 'Unknown node kind')).toBe(true)
+  expect(contract.validateGraphV4(original, richCatalog)).toEqual([])
+  expect(contract.validateGraphV4(original).some(d => d.message === 'Unknown node kind')).toBe(true)
+})

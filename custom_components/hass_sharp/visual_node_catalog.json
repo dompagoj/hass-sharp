@@ -11,24 +11,76 @@
   },
   "types": {
     "boolean": {
-      "description": "Boolean"
+      "description": "Boolean",
+      "clrType": "System.Boolean",
+      "nullable": false,
+      "category": "Boolean",
+      "assignableTo": [
+        "boolean"
+      ],
+      "literalKind": "boolean"
     },
     "number": {
-      "description": "Number"
+      "description": "Number",
+      "clrType": "System.Double",
+      "nullable": false,
+      "category": "Number",
+      "assignableTo": [
+        "number"
+      ],
+      "literalKind": "number"
     },
     "string": {
-      "description": "String"
+      "description": "String",
+      "clrType": "System.String",
+      "nullable": false,
+      "category": "String",
+      "assignableTo": [
+        "string"
+      ],
+      "literalKind": "string"
     },
     "object": {
-      "description": "Object"
+      "description": "Object",
+      "clrType": "System.Text.Json.Nodes.JsonObject",
+      "nullable": false,
+      "category": "Object",
+      "assignableTo": [
+        "object"
+      ],
+      "literalKind": "object"
     },
     "array": {
-      "description": "Array"
+      "description": "Array",
+      "clrType": "System.Text.Json.Nodes.JsonArray",
+      "nullable": false,
+      "category": "Array",
+      "assignableTo": [
+        "array"
+      ],
+      "literalKind": "array"
     },
     "entity_id": {
       "description": "Entity Id",
       "refines": "string",
-      "pattern": "^[a-z0-9_]+\\.[a-z0-9_]+$"
+      "pattern": "^[a-z0-9_]+\\.[a-z0-9_]+$",
+      "clrType": "System.String",
+      "nullable": false,
+      "category": "String",
+      "assignableTo": [
+        "entity_id",
+        "string"
+      ],
+      "literalKind": "string"
+    },
+    "global::HassSharp.EntityStateSnapshot": {
+      "description": "Detached Home Assistant entity state",
+      "clrType": "HassSharp.EntityStateSnapshot",
+      "nullable": false,
+      "category": "Object",
+      "assignableTo": [
+        "global::HassSharp.EntityStateSnapshot"
+      ]
     }
   },
   "operandKinds": [
@@ -535,12 +587,7 @@
       "inputs": {
         "left": {
           "types": [
-            "boolean",
-            "number",
-            "string",
-            "object",
-            "array",
-            "entity_id"
+            "$any"
           ],
           "required": true,
           "description": "First operand; both operands must have matching types.",
@@ -553,12 +600,7 @@
         },
         "right": {
           "types": [
-            "boolean",
-            "number",
-            "string",
-            "object",
-            "array",
-            "entity_id"
+            "$any"
           ],
           "required": true,
           "description": "Second operand; ordering comparisons require numbers.",
@@ -598,39 +640,9 @@
     "read_entity": {
       "label": "Read entity",
       "category": "Hass",
-      "description": "Read state or an attribute into the selected type.",
+      "description": "Read a detached, concrete Home Assistant entity-state snapshot.",
       "minGraphVersion": 4,
       "config": {
-        "field": {
-          "type": "string",
-          "enum": [
-            "state",
-            "attribute"
-          ],
-          "default": "state",
-          "description": "Choose entity state or an attribute.",
-          "label": "Field"
-        },
-        "attribute": {
-          "type": "string",
-          "description": "Attribute key, required when field is attribute.",
-          "label": "Attribute"
-        },
-        "type": {
-          "type": "string",
-          "required": true,
-          "enum": [
-            "boolean",
-            "number",
-            "string",
-            "object",
-            "array",
-            "entity_id"
-          ],
-          "default": "string",
-          "description": "Type produced by this node.",
-          "label": "Type"
-        },
         "output": {
           "type": "string",
           "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
@@ -654,9 +666,9 @@
       },
       "outputs": {
         "value": {
-          "type": "$type",
-          "description": "Selected entity state or attribute converted to the configured type.",
-          "label": "Value"
+          "type": "global::HassSharp.EntityStateSnapshot",
+          "description": "Detached entity ID, state, attributes and timestamps.",
+          "label": "Entity state"
         }
       },
       "execution": [
@@ -683,8 +695,9 @@
             "entity_id"
           ],
           "default": "string",
-          "description": "Type produced by this node.",
-          "label": "Type"
+          "description": "Registered declared C# type produced by this node.",
+          "label": "Type",
+          "enumSource": "types"
         },
         "output": {
           "type": "string",
@@ -695,12 +708,7 @@
       "inputs": {
         "value": {
           "types": [
-            "boolean",
-            "number",
-            "string",
-            "object",
-            "array",
-            "entity_id"
+            "$any"
           ],
           "required": true,
           "description": "Value assigned or explicitly converted to the selected result type.",
@@ -743,8 +751,9 @@
             "entity_id"
           ],
           "default": "string",
-          "description": "Type produced by this node.",
-          "label": "Type"
+          "description": "Registered declared C# type produced by this node.",
+          "label": "Type",
+          "enumSource": "types"
         },
         "output": {
           "type": "string",
@@ -755,12 +764,7 @@
       "inputs": {
         "value": {
           "types": [
-            "boolean",
-            "number",
-            "string",
-            "object",
-            "array",
-            "entity_id"
+            "$any"
           ],
           "required": true,
           "description": "Source value explicitly converted to the selected result type.",
@@ -818,12 +822,7 @@
       "inputs": {
         "value": {
           "types": [
-            "boolean",
-            "number",
-            "string",
-            "object",
-            "array",
-            "entity_id"
+            "$any"
           ],
           "required": true,
           "description": "Typed value formatted as text for the Home Assistant log.",
@@ -1496,6 +1495,71 @@
           "type": "object",
           "description": "The connected service response object.",
           "label": "Response"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "entity_field": {
+      "label": "Entity field",
+      "category": "Hass",
+      "description": "Extract state or an attribute from an entity snapshot into a scalar or JSON type.",
+      "minGraphVersion": 4,
+      "config": {
+        "field": {
+          "type": "string",
+          "enum": [
+            "state",
+            "attribute"
+          ],
+          "default": "state",
+          "description": "Choose entity state or an attribute.",
+          "label": "Field"
+        },
+        "attribute": {
+          "type": "string",
+          "description": "Attribute key, required when field is attribute.",
+          "label": "Attribute"
+        },
+        "type": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "default": "string",
+          "description": "Type produced by this node.",
+          "label": "Type"
+        },
+        "output": {
+          "type": "string",
+          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "label": "Output"
+        }
+      },
+      "inputs": {
+        "entity": {
+          "types": [
+            "global::HassSharp.EntityStateSnapshot"
+          ],
+          "required": true,
+          "label": "Entity state",
+          "description": "Detached entity snapshot to extract from."
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "$type",
+          "description": "Selected entity state or attribute converted to the configured type.",
+          "label": "Value"
         }
       },
       "execution": [

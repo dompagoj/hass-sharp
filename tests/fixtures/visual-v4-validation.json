@@ -768,9 +768,7 @@
               "kind": "literal",
               "type": "entity_id",
               "value": "bad id"
-            },
-            "field": "state",
-            "type": "string"
+            }
           }
         }
       ],

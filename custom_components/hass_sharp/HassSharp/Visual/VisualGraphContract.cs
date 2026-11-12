@@ -6,13 +6,17 @@ namespace HassSharp;
 /// <summary>Immutable authoring helpers for the v4 graph format.</summary>
 public static class VisualGraphContract
 {
-    public static JsonObject CreateNode(string kind, string id)
+    public static JsonObject CreateNode(string kind, string id, VisualCatalogSnapshot? snapshot = null)
     {
-        var spec = GetNode(kind) ?? throw new ArgumentException("Unknown node kind", nameof(kind));
+        var spec = GetNode(kind, snapshot) ?? throw new ArgumentException("Unknown node kind", nameof(kind));
         if (string.IsNullOrEmpty(id)) throw new ArgumentException("Node id is required", nameof(id));
         var config = new JsonObject();
         foreach (var group in new[] { "config", "inputs" }) foreach (var (key, value) in spec[group]!.AsObject())
-            if (value is JsonObject rule && rule.TryGetPropertyValue("default", out var fallback)) config[key] = fallback?.DeepClone();
+            if (value is JsonObject rule && rule.TryGetPropertyValue("default", out var fallback)) {
+                var storage = group == "inputs" && Text(spec, "argumentStorage") == "arguments"
+                    ? config["arguments"] as JsonObject ?? (JsonObject)(config["arguments"] = new JsonObject()) : config;
+                storage[key] = fallback?.DeepClone();
+            }
         return new() { ["id"] = id, ["kind"] = kind, ["label"] = Text(spec, "label"), ["config"] = config };
     }
     public static JsonObject FillMissingLayout(JsonObject graph)

@@ -1,6 +1,10 @@
 using HassSharp;
 using System.Collections.Concurrent;
 
+if (args.Contains("--write-node-library-fixture")) { File.WriteAllText("tests/fixtures/visual-rich-catalog.json", NodeLibraryFixture.Build().ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n"); return; }
+
+if (args.Contains("--node-library")) { await NodeLibraryTests.Run(); return; }
+
 if (args.Contains("--visual-v4")) { await VisualGraphV4Tests.Run(); return; }
 
 PyInterop.Log = (_, _) => {};
@@ -99,6 +103,7 @@ await HistoryTests.Run();
 await ScheduleTests.Run();
 await VisualTests.Run();
 await VisualValuesTests.Run();
+await NodeLibraryTests.Run();
 await VisualGraphV4Tests.Run();
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
 public class Probe : Automation
