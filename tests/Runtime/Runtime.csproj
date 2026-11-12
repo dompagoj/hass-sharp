@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AssemblyName>HassSharp.RuntimeTests</AssemblyName></PropertyGroup><ItemGroup><ProjectReference Include="../../custom_components/hass_sharp/HassSharp/HassSharp.csproj" /></ItemGroup></Project>

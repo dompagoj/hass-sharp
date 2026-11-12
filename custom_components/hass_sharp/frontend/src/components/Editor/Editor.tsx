@@ -1,7 +1,9 @@
-import { createEffect, Show } from 'solid-js'
+import { createEffect, createSignal, createUniqueId, onMount, onCleanup, Show, type JSX } from 'solid-js'
 import { A } from '@solidjs/router'
 import * as monaco from 'monaco-editor'
 import { initVimMode, type VimAdapterInstance } from 'monaco-vim'
+
+import './monaco-worker'
 
 import visualAssistTheme from '../../visual-assist.json'
 
@@ -9,6 +11,8 @@ import { useHass } from '../../context'
 import { useLocalStorage } from '../../hooks'
 import { useMutation } from '@tanstack/solid-query'
 import { useEditorActions } from './editor-actions'
+import { Button, Icon, Status } from '../Controls'
+import { Tabs } from '../Tabs'
 
 // @ts-ignore
 monaco.editor.defineTheme('visual-assist', visualAssistTheme)
@@ -18,10 +22,15 @@ interface Props {
   onSave: (model: monaco.editor.ITextModel) => Promise<any>
   initial?: string
   onBackRef?: string
+  renderRuns?: () => JSX.Element
 }
 
 export const Editor = (props: Props) => {
   const hass = useHass()
+  const tabId = createUniqueId()
+  const [tab, setTab] = createSignal('source')
+  const [runsOpened, setRunsOpened] = createSignal(false)
+  createEffect(() => { if (tab() === 'runs') setRunsOpened(true) })
   let editorRef: HTMLDivElement = undefined!
   let statusBarRef: HTMLDivElement = undefined!
   let editor: monaco.editor.IStandaloneCodeEditor
@@ -36,17 +45,19 @@ export const Editor = (props: Props) => {
 
   const editorActions = useEditorActions(hass)
 
-  createEffect(() => {
-    if (!editorRef) return
-
+  onMount(() => {
     editor = monaco.editor.create(editorRef, {
       value:
         props.initial ??
         `public class MyAutomation : Automation
 {
-    public void ExampleAutomation()
-    {
+    public override AutomationConfiguration Configure() => new(
+        new AutomationAction(nameof(Execute), AutomationMode.Single, Manual: true));
 
+    public Task Execute()
+    {
+        Logger.Info("Manual automation started");
+        return Task.CompletedTask;
     }
 }`,
       language: 'csharp',
@@ -60,7 +71,7 @@ export const Editor = (props: Props) => {
       domReadOnly: true,
       smoothScrolling: true,
       cursorSmoothCaretAnimation: 'on',
-      fontSize: editorSettingsFont(),
+      fontSize: 16,
       padding: {
         top: 25,
       },
@@ -103,91 +114,88 @@ export const Editor = (props: Props) => {
       },
     })
 
-    editorActions.register(editor)
-  })
+    // Follow HA's inherited theme, including changes while the panel stays mounted.
+    const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const updateTheme = () => {
+      const channels = getComputedStyle(editorRef).backgroundColor.match(/[\d.]+/g)?.map(Number)
+      const dark = channels && channels.length >= 3 && channels[3] !== 0
+        ? channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722 < 128
+        : darkQuery.matches
+      editor.updateOptions({ theme: dark ? 'visual-assist' : 'vs' })
+    }
+    updateTheme()
+    const themeObserver = new MutationObserver(updateTheme)
+    let ancestor: Node | null = editorRef.parentElement
+    while (ancestor) {
+      if (ancestor instanceof Element) themeObserver.observe(ancestor, { attributes: true, attributeFilter: ['class', 'style'] })
+      ancestor = ancestor.parentNode ?? (ancestor instanceof ShadowRoot ? ancestor.host : null)
+    }
+    darkQuery.addEventListener('change', updateTheme)
+    onCleanup(() => { themeObserver.disconnect(); darkQuery.removeEventListener('change', updateTheme) })
 
-  createEffect(() => {
-    if (editorRef && editorSettings().vimEnabled) {
-      monacoVimMode = initVimMode(editor, statusBarRef)
-    } else monacoVimMode?.dispose()
-  })
-
-  const onSaveWrapper = () => {
     const model = editor.getModel()
-    const markers = monaco.editor.getModelMarkers({ owner: 'csharp' })
+    editorActions.register(editor, model => props.onSave(model), () => saveMut.mutateAsync())
+    createEffect(() => { editor.updateOptions({ fontSize: editorSettingsFont() }) })
+    createEffect(() => {
+      if (editorSettings().vimEnabled) {
+        monacoVimMode = initVimMode(editor, statusBarRef)
+        onCleanup(() => { monacoVimMode?.dispose(); monacoVimMode = undefined })
+      }
+    })
+    onCleanup(() => {
+      editorActions.dispose()
+      editor.dispose()
+      model?.dispose()
+    })
+  })
 
-    if (markers.length) return Promise.resolve()
-
-    return props.onSave(model!)
-  }
-
-  const saveMut = useMutation(() => ({
-    mutationFn: onSaveWrapper,
-  }))
+  const saveMut = useMutation(() => ({ mutationFn: () => editorActions.save() }))
 
   return (
-    <>
-      <ha-card class="flex p-2 mb-2 grow items-center gap-2 rounded-none! border-none!">
-        <div class="flex grow items-center gap-2">
-          <Show when={!!props.onBackRef}>
-            <A href={props.onBackRef!}>
-              <ha-icon-button-arrow-prev class="text-sm" />
-            </A>
-          </Show>
-          <div class="border-l-[0.5px] border-solid h-10 flex items-center border-gray-500 pl-2 pr-4">
-            <span class="font-bold text-xl">{props.fileName}</span>
-          </div>
-          <ha-button
-            loading={saveMut.isPending}
-            raised
-            onClick={saveMut.mutateAsync}
-            disabled={editorActions.saveDisabled()}
-          >
-            <ha-icon icon="mdi:content-save-outline" slot="start"></ha-icon>
-            Save
-          </ha-button>
+    <section class="hs-editor" aria-label={`Edit ${props.fileName}`}>
+      <header class="hs-editor-toolbar">
+        <div class="hs-editor-heading">
+          <Show when={props.onBackRef}><A class="hs-button hs-button--ghost hs-icon-button" href={props.onBackRef!} aria-label="Back to automations"><Icon name="arrow" /></A></Show>
+          <div class="hs-editor-title"><p class="hs-eyebrow">C# AUTOMATION</p><h1>{props.fileName}</h1></div>
         </div>
-        <div class="flex items-center gap-2" style="--ha-textfield-input-width: 25px;">
-          <ha-icon icon="mdi:format-size" />
-          <span class="whitespace-nowrap">Font size</span>
-          <ha-combo-box
-            value={editorSettingsFont().toString()}
-            items={[8, 10, 14, 16, 18, 20, 24, 28]}
-            item-value-path=""
-            hide-clear-icon
-            item-label-path=""
-            item-id-path=""
-            hideClearIcon={true}
-            on:value-changed={e => {
-              const fontSize = parseInt(e.detail.value)
-              setEditorSettings(prev => {
-                prev.fontSize = fontSize
-                return prev
-              })
-              editor.updateOptions({
-                fontSize,
-              })
-            }}
-          />
-          <div class="border-l-[0.5px] border-solid h-10 flex items-center border-gray-500 pl-4 ml-2">
-            <span class="font-bold">VIM</span>
-          </div>
-          <ha-switch
-            checked={editorSettings().vimEnabled}
-            onChange={() => {
-              const vimEnabled = !editorSettings().vimEnabled
-              setEditorSettings(prev => {
-                return {
-                  fontSize: prev.fontSize,
-                  vimEnabled,
-                }
-              })
-            }}
-          />
+        <div class="hs-editor-actions"><Show when={props.renderRuns}><Button onClick={() => setTab('runs')}>Run now…</Button></Show>
+        <Button data-save variant="primary" busy={saveMut.isPending} onClick={() => { void saveMut.mutateAsync().catch(() => {}) }} disabled={editorActions.saveDisabled()}>
+          <Icon name="save" />{saveMut.isPending ? 'Saving…' : 'Save'}
+        </Button></div>
+      </header>
+      <div class="hs-editor-subbar">
+        <Tabs id={tabId} label="Automation editor" value={tab()} onChange={setTab} items={[{ id: 'source', label: 'Source' }, ...(props.renderRuns ? [{ id: 'runs', label: 'Run history' }] : []), { id: 'settings', label: 'Editor settings' }]} />
+        <span class="hs-save-hint">Ctrl / ⌘ S to save</span>
+      </div>
+      <Show when={saveMut.isError}><div class="hs-notice hs-notice--danger" role="alert">Save failed: {String(saveMut.error)}</div></Show>
+      <div class="hs-editor-feedback" role="status" aria-live="polite">
+        <Show when={saveMut.isPending}>Formatting, checking and saving…</Show>
+      </div>
+      <section class="hs-editor-source" role="tabpanel" id={`${tabId}-source-panel`} aria-labelledby={`${tabId}-source`} hidden={tab() !== 'source'}>
+        <div class="hs-monaco" ref={editorRef} id="editor" />
+        <footer class="hs-editor-status"><Status>C#</Status><span>Roslyn language services</span><div ref={statusBarRef} /></footer>
+      </section>
+      <Show when={props.renderRuns}><section class="hs-editor-runs" role="tabpanel" id={`${tabId}-runs-panel`} aria-labelledby={`${tabId}-runs`} hidden={tab() !== 'runs'}>
+        <Show when={runsOpened()}>{props.renderRuns?.()}</Show>
+      </section></Show>
+      <section class="hs-editor-settings" role="tabpanel" id={`${tabId}-settings-panel`} aria-labelledby={`${tabId}-settings`} hidden={tab() !== 'settings'}>
+        <h2>Make yourself comfortable</h2><p class="hs-muted">Editor preferences are saved in this browser.</p>
+        <div class="hs-setting-row"><label for={`${tabId}-font`}>Font size<span class="hs-muted">Change the size of your code.</span></label>
+          <select id={`${tabId}-font`} class="hs-input" value={editorSettingsFont()} onChange={event => {
+            const fontSize = Number(event.currentTarget.value)
+            setEditorSettings(prev => ({ ...prev, fontSize }))
+          }}><ForFontSizes /></select>
         </div>
-      </ha-card>
-      <div ref={statusBarRef} />
-      <div class="h-full" ref={editorRef} id="editor" />
-    </>
+        <div class="hs-setting-row"><label for={`${tabId}-vim`}>Vim mode<span class="hs-muted">Use Vim keyboard bindings in the editor.</span></label>
+          <input id={`${tabId}-vim`} type="checkbox" role="switch" class="hs-switch" checked={editorSettings().vimEnabled} onChange={event => {
+            const vimEnabled = event.currentTarget.checked
+            setEditorSettings(prev => ({ ...prev, vimEnabled }))
+          }} />
+        </div>
+        <p class="hs-muted hs-keyboard-tip">Use Ctrl+M (Control+Shift+M on Mac) to toggle whether Tab moves focus out of the code editor.</p>
+      </section>
+    </section>
   )
 }
+
+const ForFontSizes = () => <>{[8, 10, 12, 14, 16, 18, 20, 24, 28].map(size => <option value={size}>{size} px</option>)}</>

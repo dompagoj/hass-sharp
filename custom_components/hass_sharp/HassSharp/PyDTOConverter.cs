@@ -36,19 +36,23 @@ static class PyDTOConverter
     }
 
 
-    public static PyList UserScriptToDto(List<UserScript> userScripts)
+    public static PyList UserScriptToDto(List<UserScriptDTO> userScripts)
     {
         using var _ = Py.GIL();
         var pyList = new PyList();
         foreach (var script in userScripts)
         {
             var dict = new PyDict();
-            dict["fileName"] = new PyString(script.CompiledScript.FileName);
+            dict["automationId"] = (script.AutomationId == null ? PyObject.None : new PyString(script.AutomationId));
+            dict["revision"] = new PyString(script.Revision);
+            dict["active"] = script.Active.ToPython();
+            dict["activationError"] = script.ActivationError == null ? PyObject.None : new PyString(script.ActivationError);
+            dict["fileName"] = new PyString(script.FileName);
             dict["classes"] = script.Classes.Select(g =>
             {
                 var classDict = new PyDict();
-                classDict["name"] = new PyString(g.ClassName);
-                classDict["methods"] = g.Methods.Select(m => m.Name).EnumerableToPy();
+                classDict["name"] = new PyString(g.Name);
+                classDict["methods"] = g.Methods.EnumerableToPy();
                 return classDict;
             }).EnumerableToPy();
 

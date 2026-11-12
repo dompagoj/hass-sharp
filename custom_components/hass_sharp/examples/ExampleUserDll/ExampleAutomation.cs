@@ -1,18 +1,14 @@
-﻿namespace ExampleUserDll;
-
+namespace ExampleUserDll;
 using HassSharp;
 
 public class ExampleAutomation : Automation
 {
-    public void UserCustomDllAutomation()
+    public override AutomationConfiguration Configure() => new(
+        new AutomationAction(nameof(Run), Entities: ["input_button.test"]));
+
+    public async Task Run()
     {
-        var button = Entity("input_button.test");
-
-        InitGuard();
-
-        var inputNumber = EntityUntracked("input_number.test").As<HaInputNumber>();
-
-        Logger.Info("Setting number from user custom dll to 50");
-        inputNumber.SetValue(25);
+        CancellationToken.ThrowIfCancellationRequested();
+        await Entity("input_number.test").As<HaInputNumber>().SetValue(25).RunAsync();
     }
 }

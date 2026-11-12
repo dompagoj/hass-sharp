@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+
 
 namespace HassSharp;
 
@@ -10,45 +10,37 @@ readonly struct DependencyEntry
 
 class DependencyTracking
 {
+    readonly object _gate = new();
     readonly Dictionary<EntityId, List<DependencyEntry>> _dependencyTracking = new();
 
     public void Clear()
     {
-        _dependencyTracking.Clear();
-        PyInterop.UnSubscribeAllFromEntityTracking();
+        lock (_gate)
+        {
+            _dependencyTracking.Clear();
+            PyInterop.UnSubscribeAllFromEntityTracking();
+        }
     }
 
     public void TrackEntityCall(string entityId, UserScriptClass scriptClass, string method)
     {
-        ref var res = ref CollectionsMarshal.GetValueRefOrAddDefault(_dependencyTracking, entityId, out _);
-        if (res != null)
+        lock (_gate)
         {
-            if (!res.Exists(e => e.ScriptClass == scriptClass && e.MethodName == method))
+            if (!_dependencyTracking.TryGetValue(entityId, out var entries))
             {
-                res.Add(new()
-                {
-                    MethodName = method,
-                    ScriptClass = scriptClass
-                });
+                entries = [];
+                _dependencyTracking.Add(entityId, entries);
+                PyInterop.SubscribeToEntityTracking(entityId);
             }
-        }
-        else
-        {
-            res =
-            [
-                new()
-                {
-                    MethodName = method,
-                    ScriptClass = scriptClass,
-                }
-            ];
-            PyInterop.SubscribeToEntityTracking(entityId);
+            if (!entries.Any(e => e.ScriptClass == scriptClass && e.MethodName == method))
+                entries.Add(new() { ScriptClass = scriptClass, MethodName = method });
         }
     }
 
     public void RemoveScript(UserScript script)
     {
-        foreach (var (entityId, entries) in _dependencyTracking)
+        lock (_gate)
+        foreach (var (entityId, entries) in _dependencyTracking.ToArray())
         {
             entries.RemoveAll(e => e.ScriptClass.Script == script);
             if (entries.Count == 0)
@@ -75,5 +67,8 @@ class DependencyTracking
         Logger.Debug($"Currently tracking: {string.Join(',', str)}");
     }
 
-    public List<DependencyEntry> GetEntries(string entityId) => _dependencyTracking[entityId];
+    public List<DependencyEntry> GetEntries(string entityId)
+    {
+        lock (_gate) return _dependencyTracking.TryGetValue(entityId, out var entries) ? [..entries] : [];
+    }
 }

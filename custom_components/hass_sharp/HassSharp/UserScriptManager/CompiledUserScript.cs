@@ -57,6 +57,10 @@ public class CompiledUserScript
 
 public class UserScriptDTO
 {
+    public string? AutomationId { get; init; }
+    public string Revision { get; init; } = "";
+    public bool Active { get; init; }
+    public string? ActivationError { get; init; }
     public required string FileName { get; init; }
     public required UserScriptClassDto[] Classes { get; init; }
 }

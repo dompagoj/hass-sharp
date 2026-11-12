@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Visual editor responsive check</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;background:#dde1e9}iframe{display:block;border:0;height:100vh;background:white}</style></head><body><iframe id="fixture" title="Visual editor test fixture"></iframe><script type="module">
+const params = new URLSearchParams(location.search)
+const frame = document.querySelector('#fixture')
+frame.style.width = `${params.get('width') === '390' ? 390 : 1440}px`
+frame.src = `./preview-app.html?view=${params.get('view') === 'code' ? 'code' : 'visual'}&revision=visual-api-2`
+frame.addEventListener('load', () => frame.contentWindow.setPreviewTheme(params.get('theme') === 'dark' ? 'dark' : 'light'))
+</script></body></html>

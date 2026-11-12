@@ -14,6 +14,8 @@ public class DiagnosticsProvider
     readonly AdhocWorkspace _workspace;
     readonly ProjectId _baseProjectId;
 
+    readonly object _gate = new();
+    DocumentId? _entitiesDocumentId;
     SyntaxTree? _entitiesSyntaxTree;
 
     public const string GlobalUsings = """
@@ -64,7 +66,6 @@ public class DiagnosticsProvider
         return _entitiesSyntaxTree;
     }
 
-
     public DiagnosticModel[] GetDiagnostics(string source)
     {
         var syntaxTree = CSharpSyntaxTree.ParseText(GlobalUsings + source);
@@ -78,7 +79,8 @@ public class DiagnosticsProvider
         );
 
         return compilation.GetDiagnostics()
-            .Where(d => d.Location.GetLineSpan().StartLinePosition.Line >= GlobalUsingsLineCount)
+            .Where(d => d.Location.SourceTree == syntaxTree &&
+                        d.Location.GetLineSpan().StartLinePosition.Line >= GlobalUsingsLineCount)
             .Select(d =>
             {
                 var lineSpan = d.Location.GetLineSpan();
@@ -99,43 +101,73 @@ public class DiagnosticsProvider
             .ToArray();
     }
 
-    public async Task<IReadOnlyList<CompletionItem>> GetCompletions(string source, int position)
+    public async Task<IReadOnlyList<CompletionModel>> GetCompletions(string source, int position,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(position);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(position, source.Length);
         var fullSource = GlobalUsings + source;
         var adjustedPosition = GlobalUsings.Length + position;
 
-        var userScriptDocument = _workspace.AddDocument(_baseProjectId, "Script.cs", SourceText.From(fullSource));
+        var userScriptDocument = CreateDocument("Script.cs", fullSource);
 
         var completionService = CompletionService.GetService(userScriptDocument);
         if (completionService == null)
         {
-            _workspace.TryApplyChanges(userScriptDocument.Project.Solution.RemoveDocument(userScriptDocument.Id));
             return [];
         }
 
-        var filterText = source.Substring(0, position).Split(' ', '.', '(', '\n', '\r', '\t').LastOrDefault() ?? "";
         var lastChar = position > 0 ? source[position - 1] : '\0';
         var trigger = lastChar == '.' ? CompletionTrigger.CreateInsertionTrigger('.') : CompletionTrigger.Invoke;
 
-        var completions = await completionService.GetCompletionsAsync(userScriptDocument, adjustedPosition, trigger);
+        var completions = await completionService.GetCompletionsAsync(userScriptDocument, adjustedPosition, trigger, cancellationToken: cancellationToken);
 
+        if (completions is null) return [];
         var items = completions.ItemsList;
+        var filterText = fullSource.Substring(completions.Span.Start, adjustedPosition - completions.Span.Start);
         if (!string.IsNullOrEmpty(filterText))
         {
             items = completionService.FilterItems(userScriptDocument, [.. items], filterText);
         }
 
-        _workspace.TryApplyChanges(userScriptDocument.Project.Solution.RemoveDocument(userScriptDocument.Id));
+        var result = new List<CompletionModel>();
+        foreach (var item in items)
+        {
+            var change = await completionService.GetChangeAsync(userScriptDocument, item,
+                cancellationToken: cancellationToken);
+            var edits = change.TextChanges.IsDefaultOrEmpty ? [change.TextChange] : change.TextChanges;
+            var primary = edits.FirstOrDefault(e => e.Span.Start <= adjustedPosition && e.Span.End >= adjustedPosition);
+            // Do not expose edits to synthetic global usings as offsets into the user's file.
+            if (primary.NewText is null || edits.Any(e => e.Span.Start < GlobalUsings.Length)) continue;
+            result.Add(new CompletionModel
+            {
+                DisplayText = item.DisplayText,
+                DisplayTextPrefix = item.DisplayTextPrefix,
+                DisplayTextSuffix = item.DisplayTextSuffix,
+                FilterText = item.FilterText,
+                Tags = item.Tags.ToArray(),
+                TextEdit = ToEdit(primary),
+                AdditionalTextEdits = edits.Where(e => e != primary).Select(ToEdit).ToArray()
+            });
+        }
+        return result;
 
-        return items;
+        static CompletionTextEdit ToEdit(TextChange edit) => new()
+        {
+            Start = edit.Span.Start - GlobalUsings.Length,
+            Length = edit.Span.Length,
+            NewText = edit.NewText ?? ""
+        };
     }
 
     public string? GetHover(string source, int position)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(position);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(position, source.Length);
         var fullSource = GlobalUsings + source;
         var adjustedPosition = GlobalUsings.Length + position;
 
-        var userScriptDocument = _workspace.AddDocument(_baseProjectId, "Script.cs", SourceText.From(fullSource));
+        var userScriptDocument = CreateDocument("Script.cs", fullSource);
 
         var quickInfoService = QuickInfoService.GetService(userScriptDocument);
         if (quickInfoService == null) return null;
@@ -144,33 +176,42 @@ public class DiagnosticsProvider
             .GetResult();
         if (quickInfo == null) return null;
 
-        _workspace.TryApplyChanges(userScriptDocument.Project.Solution.RemoveDocument(userScriptDocument.Id));
-
-        return quickInfo.Sections.Select(s => s.Text).Aggregate((a, b) => a + "\n" + b);
+        return string.Join("\n", quickInfo.Sections.Select(s => s.Text));
     }
 
     public void GenerateHassEntities(string[] entityIds)
     {
-        if (_entityGenerator.EntitiesDocumentId is not null)
+        lock (_gate)
         {
-            var removed = _workspace.CurrentSolution.RemoveDocument(_entityGenerator.EntitiesDocumentId);
-            _workspace.TryApplyChanges(removed);
+            _entitiesSyntaxTree = _entityGenerator.GenerateEntities(entityIds);
+            var solution = _workspace.CurrentSolution;
+            if (_entitiesDocumentId is null)
+            {
+                _entitiesDocumentId = DocumentId.CreateNewId(_baseProjectId);
+                solution = solution.AddDocument(_entitiesDocumentId, "Entities.g.cs", _entitiesSyntaxTree.GetText());
+            }
+            else
+            {
+                solution = solution.WithDocumentText(_entitiesDocumentId, _entitiesSyntaxTree.GetText());
+            }
+            if (!_workspace.TryApplyChanges(solution))
+                throw new InvalidOperationException("Could not replace generated entities document.");
         }
+    }
 
-        _entitiesSyntaxTree = _entityGenerator.GenerateEntities(entityIds);
-        var entitiesDocumentId = DocumentId.CreateNewId(_baseProjectId);
-        var solution =
-            _workspace.CurrentSolution.AddDocument(entitiesDocumentId, "Entities.g.cs", _entitiesSyntaxTree.GetText());
-        _workspace.TryApplyChanges(solution);
+    // Documents belong only to an immutable request snapshot, never the shared workspace.
+    // Empty results, exceptions and overlapping requests therefore need no cleanup.
+    Document CreateDocument(string name, string source)
+    {
+        lock (_gate)
+            return _workspace.CurrentSolution.GetProject(_baseProjectId)!.AddDocument(name, SourceText.From(source));
     }
 
     public async Task<string> FormatCode(string source)
     {
-        var userScriptDocument = _workspace.AddDocument(_baseProjectId, "Format.cs", SourceText.From(source));
+        var userScriptDocument = CreateDocument("Format.cs", source);
         var formattedDocument = await Formatter.FormatAsync(userScriptDocument);
         var formattedText = (await formattedDocument.GetTextAsync()).ToString();
-
-        _workspace.TryApplyChanges(userScriptDocument.Project.Solution.RemoveDocument(userScriptDocument.Id));
 
         return formattedText;
     }
@@ -184,4 +225,22 @@ public class DiagnosticModel
     public int EndColumn { get; set; }
     public string Message { get; set; } = null!;
     public int Severity { get; set; }
+}
+
+public class CompletionModel
+{
+    public string DisplayText { get; init; } = "";
+    public string DisplayTextPrefix { get; init; } = "";
+    public string DisplayTextSuffix { get; init; } = "";
+    public string FilterText { get; init; } = "";
+    public string[] Tags { get; init; } = [];
+    public CompletionTextEdit TextEdit { get; init; } = new();
+    public CompletionTextEdit[] AdditionalTextEdits { get; init; } = [];
+}
+
+public class CompletionTextEdit
+{
+    public int Start { get; init; }
+    public int Length { get; init; }
+    public string NewText { get; init; } = "";
 }

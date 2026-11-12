@@ -1,4 +1,5 @@
-import { Show, type JSX } from 'solid-js'
+import { createEffect, createUniqueId, onCleanup, Show, type JSX } from 'solid-js'
+import { Button, Icon } from './Controls'
 
 export interface DialogProps {
   open: boolean
@@ -11,36 +12,46 @@ export interface DialogProps {
 }
 
 export const Dialog = (props: DialogProps) => {
-  const close = () => {
-    if (!props.preventClose) props.onClose()
-  }
+  const titleId = createUniqueId()
+  let dialog!: HTMLDialogElement
+  const close = () => { if (!props.preventClose) props.onClose() }
+  const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]'))
+  createEffect(() => {
+    if (!props.open) return
+    // Keep the dialog in the panel's theme tree; native modality makes the rest of HA inert.
+    const root = dialog.getRootNode() as Document | ShadowRoot
+    const previous = root.activeElement as HTMLElement | null
+    dialog.showModal()
+    queueMicrotask(() => {
+      if (dialog.open) (dialog.querySelector<HTMLElement>('[autofocus]') ?? focusable()[0] ?? dialog).focus()
+    })
+    onCleanup(() => { dialog.close(); previous?.focus() })
+  })
 
-  return (
-    <ha-dialog
-      prop:open={props.open}
-      header-title={props.title}
-      width={props.width ?? 'medium'}
-      prop:preventScrimClose={props.preventClose ?? false}
-      on:closed={close}
-    >
-      <ha-icon-button
-        slot="headerNavigationIcon"
-        label="Close"
-        prop:disabled={props.preventClose ?? false}
-        onClick={close}
-      >
-        <ha-icon icon="mdi:close" />
-      </ha-icon-button>
-      {/* HA's dialog also defines --spacing; restore Tailwind's unit for slotted content. */}
-      <div style="--spacing: 0.25rem;">{props.children}</div>
-      <Show when={props.footer}>
-        <ha-dialog-footer
-          slot="footer"
-          style="--spacing: 0.25rem; padding: 12px 24px 24px; box-sizing: border-box;"
-        >
-          {props.footer}
-        </ha-dialog-footer>
-      </Show>
-    </ha-dialog>
-  )
+  return <dialog ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId}
+    class={`hs-dialog hs-dialog-backdrop hs-dialog--${props.width ?? 'medium'}`}
+    onCancel={event => { event.preventDefault(); close() }}
+    onClick={event => {
+      if (event.target !== dialog) return
+      const rect = dialog.getBoundingClientRect()
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close()
+    }}
+    on:keydown={event => {
+      // HA's global shortcuts must not intercept modal interactions.
+      event.stopPropagation()
+      if (event.key === 'Escape') { event.preventDefault(); close() }
+      if (event.key !== 'Tab') return
+      const items = focusable()
+      const first = items[0], last = items.at(-1)
+      const active = (dialog.getRootNode() as Document | ShadowRoot).activeElement
+      if (!first) { event.preventDefault(); dialog.focus() }
+      else if (event.shiftKey && (active === first || active === dialog)) { event.preventDefault(); last?.focus() }
+      else if (!event.shiftKey && active === last) { event.preventDefault(); first.focus() }
+    }}>
+    <header class="hs-dialog-header"><h2 id={titleId}>{props.title}</h2>
+      <Button variant="ghost" class="hs-icon-button" aria-label="Close dialog" disabled={props.preventClose} onClick={close}><Icon name="close" /></Button>
+    </header>
+    <div class="hs-dialog-body">{props.children}</div>
+    <Show when={props.footer}><footer class="hs-dialog-footer">{props.footer}</footer></Show>
+  </dialog>
 }
