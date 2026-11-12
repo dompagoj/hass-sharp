@@ -8,6 +8,8 @@ if (args.Contains("--write-node-library-fixture")) { File.WriteAllText("tests/fi
 
 if (args.Contains("--node-library")) { await NodeLibraryTests.Run(); return; }
 
+if (args.Any(a=>a.StartsWith("--visual-conversion-review"))) { await VisualConversionReviewTests.Run(args.First(a=>a.StartsWith("--visual-conversion-review")).Split('=').ElementAtOrDefault(1)); return; }
+
 if (args.Contains("--visual-execution")) { await VisualExecutionTests.Run(); return; }
 
 if (args.Contains("--visual-v4")) { await VisualGraphV4Tests.Run(); return; }
@@ -109,6 +111,7 @@ await ScheduleTests.Run();
 await VisualTests.Run();
 await VisualValuesTests.Run();
 await VisualExecutionTests.Run();
+await VisualConversionReviewTests.Run();
 await NodeLibraryTests.Run();
 await VisualGraphV4Tests.Run();
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }

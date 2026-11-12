@@ -9,6 +9,14 @@ public static class VisualGraphValidator
 {
     public static List<VisualDiagnostic> Validate(JsonObject graph, VisualCatalogSnapshot? snapshot = null) => new Validation(snapshot ?? VisualCatalogSnapshot.BuiltIn).Run(graph);
 
+    // Generation consumes the types resolved by this same scope-aware validation pass.
+    internal static List<VisualDiagnostic> Validate(JsonObject graph, VisualCatalogSnapshot snapshot,
+        out IReadOnlyDictionary<(string Node,string Input),string> inputTypes)
+    {
+        var validation=new Validation(snapshot);var diagnostics=validation.Run(graph);
+        inputTypes=validation.InputTypes;return diagnostics;
+    }
+
     sealed class Validation(VisualCatalogSnapshot snapshot)
     {
         JsonObject Root => snapshot.Root;
@@ -18,6 +26,7 @@ public static class VisualGraphValidator
         JsonObject DataInputs(JsonObject node, JsonObject? owner = null) => VisualNodeCatalog.DataInputs(node, owner, snapshot);
         bool CompatibleTypes(string source, string target) => snapshot.IsAssignable(source, target);
         bool TryGetInputValue(JsonObject node, string port, out JsonNode? value) => VisualNodeCatalog.TryGetInputValue(node, port, out value, snapshot);
+        internal readonly Dictionary<(string Node,string Input),string> InputTypes=[];
         readonly List<VisualDiagnostic> errors = [];
         readonly Dictionary<string, JsonObject> nodes = new(StringComparer.Ordinal);
         readonly Dictionary<string, List<JsonObject>> outgoing = new(StringComparer.Ordinal);
@@ -213,6 +222,7 @@ public static class VisualGraphValidator
             {
                 var present = TryGetInputValue(node, port, out var value);
                 resolved[port] = Operand(node, port, value, rule!, present);
+                if(resolved[port] is {} type)InputTypes[(id,port)]=type;
             }
             if (spec["comparison"] is JsonObject comparison)
             {

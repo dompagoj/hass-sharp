@@ -14,13 +14,14 @@ public sealed class VisualSnapshot
 {
     readonly Dictionary<object,object> copies = new(ReferenceEqualityComparer.Instance);
     readonly HashSet<object> copyingErrors = new(ReferenceEqualityComparer.Instance);
+    readonly HashSet<object> copyingComparers = new(ReferenceEqualityComparer.Instance);
     public object? Copy(object? value)
     {
         if(value == null) return null;
         var type=value.GetType();
         if(type.IsPrimitive && type != typeof(IntPtr) && type != typeof(UIntPtr) || type.IsEnum || value is string or decimal or DateTime or DateTimeOffset or TimeSpan or Guid or DateOnly or TimeOnly or EntityStateSnapshot) return value;
         if(value is JsonElement json) return json.ValueKind==JsonValueKind.Undefined ? json : json.Clone();
-        if(copyingErrors.Contains(value))throw Cannot(type);
+        if(copyingErrors.Contains(value)||copyingComparers.Contains(value))throw Cannot(type);
         if(copies.TryGetValue(value,out var found)) return found;
         if(value is IVisualSnapshot custom) {
             var result=custom.CreateVisualSnapshot();
@@ -61,7 +62,13 @@ public sealed class VisualSnapshot
             var comparer=type.GetProperty("Comparer")!.GetValue(value);
             var comparerType=typeof(EqualityComparer<>).MakeGenericType(type.GetGenericArguments()[0]);
             var standard=comparerType.GetProperty("Default")!.GetValue(null);
-            if(!ReferenceEquals(comparer,standard) && comparer is not StringComparer)throw Cannot(type);
+            var immutable=ReferenceEquals(comparer,standard) || comparer is StringComparer && comparer.GetType().Assembly==typeof(StringComparer).Assembly;
+            if(!immutable) {
+                // Custom comparers are ordinary mutable values. Retain their scope aliases,
+                // but reject a comparer that recursively owns this not-yet-constructed map.
+                copyingComparers.Add(value);
+                try {comparer=Copy(comparer);}finally{copyingComparers.Remove(value);}
+            }
             var result=(IDictionary)Activator.CreateInstance(type,[comparer])!;copies[value]=result;
             foreach(DictionaryEntry item in (IDictionary)value)result.Add(Copy(item.Key)!,Copy(item.Value));return result;
         }
@@ -101,6 +108,8 @@ public sealed class VisualRuntime
     readonly Dictionary<string,Type> types;
     readonly JsonObject catalog;
     readonly Func<string,VisualScope,VisualRuntime,Task> custom;
+    readonly HashSet<string> compiledConversions;
+    readonly Dictionary<string,string> comparisonTypes;
     readonly JsonElement trigger;
     readonly Dictionary<string,string> variables=[];
     readonly CancellationToken external;
@@ -110,7 +119,9 @@ public sealed class VisualRuntime
     int steps;
     int stopped;
     readonly System.Collections.Concurrent.ConcurrentQueue<Exception> stopFailures = new();
-    public VisualRuntime(string graphJson,string catalogJson,Dictionary<string,Type> types,JsonElement trigger,CancellationToken cancellation,Func<string,VisualScope,VisualRuntime,Task> custom) {
+    public VisualRuntime(string graphJson,string catalogJson,Dictionary<string,Type> types,JsonElement trigger,CancellationToken cancellation,Func<string,VisualScope,VisualRuntime,Task> custom,HashSet<string>? compiledConversions=null,Dictionary<string,string>? comparisonTypes=null) {
+        this.comparisonTypes=comparisonTypes??[];
+        this.compiledConversions=compiledConversions??[];
         var graph=JsonNode.Parse(graphJson)!.AsObject();catalog=JsonNode.Parse(catalogJson)!.AsObject();this.types=types;this.custom=custom;this.trigger=trigger;external=cancellation;lifetime=new CancellationTokenSource();externalRegistration=cancellation.Register(()=>{externalCleanup=lifetime.CancelAsync();});
         nodes=graph["nodes"]!.AsArray().OfType<JsonObject>().ToDictionary(n=>Text(n,"id"));
         foreach(var n in nodes.Values)if(Text(n["config"],"output") is var name && name!="")variables[name]=Text(n,"id");
@@ -181,9 +192,23 @@ public sealed class VisualRuntime
         }
         if(value is JsonElement j) {
             if(j.ValueKind==JsonValueKind.Null)return Coerce(null,type,label,convert);
+            if(j.ValueKind==JsonValueKind.Number && IsNumber(target)) {
+                // Read the original token into its declared numeric type. A double
+                // intermediate corrupts Int64/decimal precision before type checking.
+                try {
+                    var number=JsonSerializer.Deserialize(j.GetRawText(),type);
+                    if(number is double d&&!double.IsFinite(d)||number is float f&&!float.IsFinite(f))throw new OverflowException();
+                    return number;
+                }catch(Exception error)when(error is JsonException or FormatException or OverflowException) {
+                    throw new InvalidOperationException($"Cannot materialize {label} as {type}: JSON number is invalid or outside its range.",error);
+                }
+            }
             value=j.ValueKind switch{JsonValueKind.String=>j.GetString(),JsonValueKind.Number=>j.GetDouble(),JsonValueKind.True=>true,JsonValueKind.False=>false,_=>value};
             if(type.IsInstanceOfType(value))return value;
         }
+        // C# char widening uses the UTF-16 code unit; IConvertible's char-to-double
+        // implementation does not implement that standard language conversion.
+        if(value is char character && IsNumber(target) && target!=typeof(char))value=(ushort)character;
         if(convert && target==typeof(bool))return VisualValues.ConvertValue(value,"boolean");
         if(convert && target==typeof(string))return VisualValues.ConvertValue(value,"string");
         if(value is IConvertible && (convert || IsNumber(value.GetType())&&IsNumber(target))) {
@@ -191,7 +216,7 @@ public sealed class VisualRuntime
         }
         throw new InvalidOperationException($"{label} requires {type}, got {value?.GetType()}.");
     }
-    static bool IsNumber(Type t)=>Type.GetTypeCode(t) is >=TypeCode.SByte and <=TypeCode.Decimal;
+    static bool IsNumber(Type t)=>Type.GetTypeCode(t) is TypeCode.Char or >=TypeCode.SByte and <=TypeCode.Decimal;
     object? ConvertTo(object? value,string type,string label,bool convert=true) {
         var result=Coerce(value,types[type],label,convert);
         if(result==null && catalog["types"]?[type]?["nullable"]?.GetValue<bool>()!=true)throw new InvalidOperationException($"{label} requires non-null {type}, got null.");
@@ -216,8 +241,10 @@ public sealed class VisualRuntime
                     case "condition":next=Next(id,ReadEntity(Input<string>(scope,id,"entity")).State==Text(cfg,"state")?"true":"false");break;
                     case "and":case "or":case "xor":var left=Input<bool>(scope,id,"left");var right=Input<bool>(scope,id,"right");Output(scope,id,kind=="and"?left&&right:kind=="or"?left||right:left^right);break;
                     case "not":Output(scope,id,!Input<bool>(scope,id,"value"));break;
-                    case "compare":Output(scope,id,Compare(Get("left"),Get("right"),Text(cfg,"operator","eq")));break;
-                    case "set_value":case "convert":Output(scope,id,ConvertTo(Get("value"),Text(cfg,"type"),id+".value"));break;
+                    case "compare":
+                        if(!comparisonTypes.TryGetValue(id,out var common))throw new InvalidOperationException($"Node {id}: compiled comparison type is missing.");
+                        Output(scope,id,Compare(Coerce(Get("left"),types[common],id+".left",false),Coerce(Get("right"),types[common],id+".right",false),Text(cfg,"operator","eq")));break;
+                    case "set_value":case "convert":if(compiledConversions.Contains(id))await custom(id,scope,this);else Output(scope,id,ConvertTo(Get("value"),Text(cfg,"type"),id+".value"));break;
                     case "read_entity":Output(scope,id,ReadEntity(Input<string>(scope,id,"entity")));break;
                     case "entity_field":Output(scope,id,EntityField(Input<EntityStateSnapshot>(scope,id,"entity"),cfg,id));break;
                     case "delay":await Task.Delay(TimeSpan.FromSeconds(Number("seconds",0,4294967.294)),scope.CancellationToken);break;

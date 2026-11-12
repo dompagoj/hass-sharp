@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace HassSharp;
 
@@ -15,6 +16,38 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
 {
     static string Text(JsonNode? n,string key,string fallback="")=>VisualNodeCatalog.Text(n,key,fallback);
     static string Q(string value)=>JsonSerializer.Serialize(value);
+    // A dispatch expression must never acquire dynamic overload resolution.
+    static string ClrExpression(ITypeSymbol symbol)
+    {
+        if(symbol.SpecialType==SpecialType.System_Void)return "void";
+        var syntax=SyntaxFactory.ParseTypeName(NodeLibraryCompiler.TypeIdentity(symbol));
+        var dynamicNames=syntax.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>()
+            .Where(n=>n.Identifier.Text=="dynamic" && n.Parent is not QualifiedNameSyntax and not AliasQualifiedNameSyntax);
+        return syntax.ReplaceNodes(dynamicNames,(_,_)=>SyntaxFactory.ParseName("global::System.Object")).ToString();
+    }
+    static string DefaultExpression(NodeParameterDescriptor parameter)
+    {
+        var type=ClrExpression(parameter.Symbol.Type);var value=parameter.DefaultValue;
+        if(value==null)return $"default({type})";
+        var literal=value switch {
+            string text=>Q(text), char character=>Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(character,true),
+            bool flag=>flag?"true":"false",
+            double number when double.IsNaN(number)=>"global::System.Double.NaN",
+            double number when double.IsPositiveInfinity(number)=>"global::System.Double.PositiveInfinity",
+            double number when double.IsNegativeInfinity(number)=>"global::System.Double.NegativeInfinity",
+            double number=>number.ToString("R",CultureInfo.InvariantCulture)+"D",
+            float number when float.IsNaN(number)=>"global::System.Single.NaN",
+            float number when float.IsPositiveInfinity(number)=>"global::System.Single.PositiveInfinity",
+            float number when float.IsNegativeInfinity(number)=>"global::System.Single.NegativeInfinity",
+            float number=>number.ToString("R",CultureInfo.InvariantCulture)+"F",
+            decimal number=>number.ToString(CultureInfo.InvariantCulture)+"M",
+            long number when number==long.MinValue=>"global::System.Int64.MinValue",
+            long number=>number.ToString(CultureInfo.InvariantCulture)+"L",
+            ulong number=>number.ToString(CultureInfo.InvariantCulture)+"UL",
+            _=>Convert.ToString(value,CultureInfo.InvariantCulture)!
+        };
+        return $"({type})({literal})";
+    }
     public VisualPreview Preview(JsonObject graph)=>Preview(graph,new NodeLibraryCompiler(diagnostics).Preview([]).Snapshot);
     public VisualPreview Preview(JsonObject graph,IEnumerable<NodeLibrarySource> sources) {
         var libraries=new NodeLibraryCompiler(diagnostics).Preview(sources);
@@ -27,12 +60,23 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         if(snapshot.LibraryDiagnostics.Any(d=>d.Severity==3))return new(false,"",[],snapshot.LibraryDiagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
         var libraryErrors=snapshot.Compilation.GetDiagnostics().Where(d=>d.Severity==DiagnosticSeverity.Error).ToArray();
         if(libraryErrors.Length>0)return new(false,"",[],libraryErrors.Select(d=>new VisualDiagnostic("$library:"+d.Location.SourceTree?.FilePath,d.GetMessage())).ToList());
-        var errors=VisualGraphValidator.Validate(graph,snapshot);if(errors.Any(e=>e.Severity==3))return new(false,"",[],errors);
+        var errors=VisualGraphValidator.Validate(graph,snapshot,out var inputTypes);if(errors.Any(e=>e.Severity==3))return new(false,"",[],errors);
         var lines=new List<string>();var maps=new List<VisualSourceMap>();string? current=null;
         void Add(string source)=>lines.AddRange(source.Replace("\r\n","\n").Split('\n'));
         void Section(string id,string source){var start=lines.Count+1;Add(source);maps.Add(new(id,start,lines.Count));}
         try {
             var nodes=graph["nodes"]!.AsArray().OfType<JsonObject>().ToArray();
+            string InputType(JsonObject node,string port)=>inputTypes[(Text(node,"id"),port)];
+            var comparisonTypes=nodes.Where(n=>Text(n,"kind")=="compare").ToDictionary(n=>Text(n,"id"),n=> {
+                var left=InputType(n,"left");var right=InputType(n,"right");
+                return snapshot.IsAssignable(left,right)?right:left;
+            });
+            var compiledConversions=new Dictionary<string,(string Source,string Target)>();
+            foreach(var node in nodes.Where(n=>Text(n,"kind") is "convert" or "set_value")) {
+                var sourceType=InputType(node,"value");var target=Text(node["config"],"type");
+                if(snapshot.Types.TryGetValue(sourceType,out var from)&&snapshot.Types.TryGetValue(target,out var to) && snapshot.Compilation.ClassifyConversion(from.Symbol,to.Symbol).IsUserDefined)
+                    compiledConversions.Add(Text(node,"id"),(ClrExpression(from.Symbol),ClrExpression(to.Symbol)));
+            }
             var roots=nodes.Where(n=>Text(n,"kind")=="trigger").OrderBy(n=>Text(n,"id"),StringComparer.Ordinal).ToArray();
             // Internal identifiers are deterministic and cannot shadow authored identifiers.
             var authored=graph.ToJsonString()+string.Join("\n",snapshot.Sources.Select(s=>s.Source));var prefix="__visual_";while(authored.Contains(prefix,StringComparison.Ordinal))prefix+="x";
@@ -49,10 +93,16 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 var startup=cfg["startup"]?.GetValue<bool>()??kind=="startup";var manual=cfg["manual"]?.GetValue<bool>()??true;
                 Section(current,$"new global::HassSharp.AutomationAction(nameof({VisualNodeCatalog.EffectiveTriggerMethod(root)}),global::HassSharp.AutomationMode.{Text(cfg,"mode","Single")},Startup:{startup.ToString().ToLowerInvariant()},Manual:{manual.ToString().ToLowerInvariant()},Entities:{entities},Schedules:{schedules},Triggers:{triggers}){(i+1<roots.Length?",":"")}");
             }
-            Add(");");foreach(var root in roots)Section(Text(root,"id"),$"public global::System.Threading.Tasks.Task {VisualNodeCatalog.EffectiveTriggerMethod(root)}() => {run}({Q(Text(root,"id"))});");
+            Add(");");
+            var delegates=nodes.Select(n=>Text(n,"kind")).Distinct().Where(snapshot.Methods.ContainsKey).Select((kind,index)=>(kind,name:prefix+"method_"+index)).ToDictionary(p=>p.kind,p=>p.name);
+            foreach(var (kind,name) in delegates) {
+                var method=snapshot.Methods[kind];
+                Add($"private delegate {ClrExpression(method.Method.ReturnType)} {name}({string.Join(",",method.Parameters.Select(p=>ClrExpression(p.Symbol.Type)+" @"+p.Name))});");
+            }
+            foreach(var root in roots)Section(Text(root,"id"),$"public global::System.Threading.Tasks.Task {VisualNodeCatalog.EffectiveTriggerMethod(root)}() => {run}({Q(Text(root,"id"))});");
             Add($"private global::System.Threading.Tasks.Task {run}(string {nodeId}) => new global::HassSharp.VisualRuntime({Q(graph.ToJsonString())},{Q(snapshot.Catalog.ToJsonString())},new global::System.Collections.Generic.Dictionary<string,global::System.Type> {{");
             foreach(var type in snapshot.Types.Values.OrderBy(t=>t.Id,StringComparer.Ordinal))Add($"[{Q(type.Id)}]=typeof({(type.Symbol.TypeKind==TypeKind.Dynamic ? "global::System.Object" : type.Symbol.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))}),");
-            Add($"}},TriggerData,CancellationToken,{handler}).RunAsync({nodeId});");
+            Add($"}},TriggerData,CancellationToken,{handler},new global::System.Collections.Generic.HashSet<string>{{{string.Join(",",compiledConversions.Keys.Select(Q))}}},new global::System.Collections.Generic.Dictionary<string,string>{{{string.Join(",",comparisonTypes.Select(p=>"["+Q(p.Key)+"]="+Q(p.Value)))}}}).RunAsync({nodeId});");
             Add($"private async global::System.Threading.Tasks.Task {handler}(string {nodeId},global::HassSharp.VisualScope {scope},global::HassSharp.VisualRuntime {engine}) {{");
             var authoredNames = CSharpSyntaxTree.ParseText("class Authored {"+Text(graph,"members")+"}").GetRoot().DescendantTokens().Where(t=>t.IsKind(SyntaxKind.IdentifierToken)).Select(t=>t.ValueText).ToHashSet(StringComparer.Ordinal);
             if(!authoredNames.Contains("values"))Add($"var values={scope}.Values;");
@@ -62,19 +112,22 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             Add("await global::System.Threading.Tasks.Task.CompletedTask;");
             Add($"try {{ switch({nodeId}) {{");
             foreach(var node in nodes) {
-                var kind=Text(node,"kind");var id=Text(node,"id");current=id;if(kind!="custom"&&!snapshot.Methods.ContainsKey(kind))continue;
+                var kind=Text(node,"kind");var id=Text(node,"id");current=id;if(kind!="custom"&&!snapshot.Methods.ContainsKey(kind)&&!compiledConversions.ContainsKey(id))continue;
                 var start=lines.Count+1;Add($"case {Q(id)}: {{");
                 if(kind=="custom")Add(Text(node["config"],"code"));
+                else if(compiledConversions.TryGetValue(id,out var conversion))
+                    Add($"{engine}.Output({scope},{Q(id)},({conversion.Target}){engine}.Input<{conversion.Source}>({scope},{Q(id)},\"value\"));");
                 else {
                     var method=snapshot.Methods[kind];var args=new List<string>();
+                    Add($"{delegates[kind]} {prefix}selected = {method.InvocationType}.{method.MethodName};");
                     foreach(var parameter in method.Parameters) {
                         var connected=graph["edges"]!.AsArray().Any(e=>Text(e,"kind")=="data"&&Text(e,"target")==id&&Text(e,"targetPort")==parameter.Name);
                         var value=VisualNodeCatalog.InputValue(node,parameter.Name,snapshot);
-                        if(!parameter.IsCancellationToken&&!connected&&(value==null||Text(value,"kind")=="unset")&&parameter.HasDefaultValue)continue;
-                        var expression=parameter.IsCancellationToken?"CancellationToken":!connected&&(value==null||Text(value,"kind")=="unset")?$"default({parameter.TypeExpression})":$"{engine}.Input<{parameter.TypeExpression}>({scope},{Q(id)},{Q(parameter.Name)})";
+                        var absent=!connected&&(value==null||Text(value,"kind")=="unset");
+                        var expression=parameter.IsCancellationToken?"CancellationToken":absent&&parameter.HasDefaultValue?DefaultExpression(parameter):absent?$"default({ClrExpression(parameter.Symbol.Type)})":$"{engine}.Input<{ClrExpression(parameter.Symbol.Type)}>({scope},{Q(id)},{Q(parameter.Name)})";
                         args.Add("@"+parameter.Name+": "+expression);
                     }
-                    var call=(method.AwaitResult?"await ":"")+method.InvocationType+"."+method.MethodName+"("+string.Join(",",args)+")";
+                    var call=(method.AwaitResult?"await ":"")+prefix+"selected("+string.Join(",",args)+")";
                     Add(method.ResultType==null?call+";":$"{engine}.Output({scope},{Q(id)},{call},\"result\");");
                 }
                 Add("break; }");maps.Add(new(id,start,lines.Count));
