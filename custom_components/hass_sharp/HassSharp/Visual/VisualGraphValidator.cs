@@ -217,6 +217,8 @@ public static class VisualGraphValidator
                 if (value is JsonArray list && (Number(rule["minItems"]) is { } minItems && list.Count < minItems || Number(rule["maxItems"]) is { } maxItems && list.Count > maxItems)) Error(id, field + " item count is out of range", field);
             }
             foreach (var port in Strings(spec["requiredExecution"])) if (!outgoing[id].Any(e => FlowPort(node, e) == port)) Error(id, "Execution connection is required", port, port);
+            if (Text(spec, "argumentStorage") == "arguments" && cfg["arguments"] is JsonObject arguments)
+                foreach (var (name, _) in arguments) if (!DataInputs(node, Owner(node)).ContainsKey(name)) Error(id, "Unknown custom argument", name);
             var resolved = new Dictionary<string, string?>();
             foreach (var (port, rule) in DataInputs(node, Owner(node)))
             {

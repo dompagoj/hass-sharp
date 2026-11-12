@@ -6,6 +6,8 @@ if (args.Any(a => a.StartsWith("--node-library-review"))) { await NodeLibraryTes
 
 if (args.Contains("--write-node-library-fixture")) { File.WriteAllText("tests/fixtures/visual-rich-catalog.json", NodeLibraryFixture.Build().ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n"); return; }
 
+if (args.Contains("--node-library-store")) { await NodeLibraryStoreTests.Run(); return; }
+
 if (args.Contains("--node-library")) { await NodeLibraryTests.Run(); return; }
 
 if (args.Any(a=>a.StartsWith("--visual-conversion-review"))) { await VisualConversionReviewTests.Run(args.First(a=>a.StartsWith("--visual-conversion-review")).Split('=').ElementAtOrDefault(1)); return; }
@@ -115,6 +117,8 @@ await VisualConversionReviewTests.Run();
 await NodeLibraryTests.Run();
 await VisualGraphV4Tests.Run();
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+await NodeLibraryStoreTests.Run();
+
 public class Probe : Automation
 {
     public static Action? Configuring;

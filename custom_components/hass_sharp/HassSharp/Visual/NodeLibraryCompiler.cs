@@ -27,8 +27,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
             .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path)))
         .DistinctBy(reference => reference.Display, StringComparer.Ordinal).ToImmutableArray());
 
-    public NodeLibraryPreview Preview(IEnumerable<NodeLibrarySource> librarySources)
+    public NodeLibraryPreview Preview(IEnumerable<NodeLibrarySource> librarySources, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var sources = librarySources.ToImmutableArray();
         var errors = new List<NodeLibraryDiagnostic>();
         var trees = new Dictionary<SyntaxTree, NodeLibrarySource>();
@@ -36,11 +37,11 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
         {
             if (string.IsNullOrWhiteSpace(source.Id) || sources.Count(s => s.Id == source.Id) > 1)
                 errors.Add(new(source.Id, 1, 1, 1, 1, "Library source IDs must be nonempty and unique", 3));
-            var tree = CSharpSyntaxTree.ParseText(WrapSource(source.Source), new CSharpParseOptions(LanguageVersion.Latest, documentationMode: DocumentationMode.Diagnose), path: source.Id);
+            var tree = CSharpSyntaxTree.ParseText(WrapSource(source.Source), new CSharpParseOptions(LanguageVersion.Latest, documentationMode: DocumentationMode.Diagnose), path: source.Id, cancellationToken: cancellationToken);
             trees.Add(tree, source);
         }
         var syntaxTrees = trees.Keys.ToList();
-        syntaxTrees.Add(CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings));
+        syntaxTrees.Add(CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings, cancellationToken: cancellationToken));
         if (diagnostics.HassEntitiesSyntaxTreeNullable() is { } entities) syntaxTrees.Add(entities);
         var compilation = CSharpCompilation.Create("HassSharpNodeLibrary", syntaxTrees, FrameworkReferences(),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true, nullableContextOptions: NullableContextOptions.Enable));
@@ -53,20 +54,21 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
         }
         foreach (var (tree, source) in trees)
         {
-            var rootSyntax = (CompilationUnitSyntax)tree.GetRoot();
+            var rootSyntax = (CompilationUnitSyntax)tree.GetRoot(cancellationToken);
             if (rootSyntax.Members.Count != 1 || rootSyntax.Members[0] is not NamespaceDeclarationSyntax ns || ns.Name.ToString() != "NodeLib" || ns.CloseBraceToken.SpanStart != WrapperPrefix.Length + source.Source.Length + 1)
-                Report(tree.GetRoot().GetLocation(), "Library source must stay inside the generated NodeLib namespace wrapper");
+                Report(tree.GetRoot(cancellationToken).GetLocation(), "Library source must stay inside the generated NodeLib namespace wrapper");
         }
         var frameworkAssembly = compilation.SourceModule.ReferencedAssemblySymbols.Single(a => a.Identity.Name == typeof(NodeAttribute).Assembly.GetName().Name);
         var nodeAttribute = frameworkAssembly.GetTypeByMetadataName("HassSharp.NodeAttribute");
         var portAttribute = frameworkAssembly.GetTypeByMetadataName("HassSharp.PortAttribute");
         string? PortLabel(ImmutableArray<AttributeData> attributes) => attributes.FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, portAttribute))?.ConstructorArguments.FirstOrDefault().Value as string;
-        foreach (var diagnostic in compilation.GetDiagnostics().Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning))
+        foreach (var diagnostic in compilation.GetDiagnostics(cancellationToken).Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning))
             Report(diagnostic.Location, diagnostic.GetMessage(), (int)diagnostic.Severity);
         var root = VisualNodeCatalog.GetCatalog();
         var typeSymbols = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
         void Register(ITypeSymbol type)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var id = TypeIdentity(type);
             if (!typeSymbols.TryAdd(id, type)) return;
             if (type is IArrayTypeSymbol array) Register(array.ElementType);
@@ -84,9 +86,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
         foreach (var (tree, source) in trees)
         {
             var model = compilation.GetSemanticModel(tree);
-            foreach (var declaration in tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>())
+            foreach (var declaration in tree.GetRoot(cancellationToken).DescendantNodes().OfType<MethodDeclarationSyntax>())
             {
-                if (model.GetDeclaredSymbol(declaration) is not IMethodSymbol method) continue;
+                if (model.GetDeclaredSymbol(declaration, cancellationToken) is not IMethodSymbol method) continue;
                 var attribute = method.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, nodeAttribute));
                 if (attribute == null) continue;
                 if (!ValidMethod(method)) { Report(declaration.Identifier.GetLocation(), "Node methods must be public static, closed, non-ref, non-pointer signatures; async void, abstract/virtual methods and ref-like types are not supported"); continue; }
@@ -102,7 +104,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
                 // Include signature types so overloads remain distinct; never include a generated assembly name or revision.
                 var identity = TypeIdentity(method.ContainingType) + "." + method.Name + "(" + string.Join(",", parameters.Select(p => p.TypeId)) + ")";
                 var kind = "library:" + Uri.EscapeDataString(source.Id) + ":" + Uri.EscapeDataString(identity);
-                var doc = Documentation(method);
+                var doc = Documentation(method, cancellationToken);
                 var input = new JsonObject();
                 foreach (var parameter in parameters.Where(p => !p.IsCancellationToken))
                 {
@@ -139,6 +141,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
         var types = root["types"]!.AsObject();
         foreach (var (id, symbol) in typeSymbols)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var type = types[id] as JsonObject ?? new JsonObject();
             if (!types.ContainsKey(id)) types[id] = type;
             type["label"] = symbol.ToDisplayString(); type["description"] ??= symbol.ToDisplayString();
@@ -180,9 +183,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
             if (type.DeclaredAccessibility != Accessibility.Public || type.IsGenericType) return false;
         return true;
     }
-    static XElement? Documentation(IMethodSymbol method)
+    static XElement? Documentation(IMethodSymbol method, CancellationToken cancellationToken)
     {
-        try { return XElement.Parse(method.GetDocumentationCommentXml() ?? "<member/>"); } catch (System.Xml.XmlException) { return null; }
+        try { return XElement.Parse(method.GetDocumentationCommentXml(cancellationToken: cancellationToken) ?? "<member/>"); } catch (System.Xml.XmlException) { return null; }
     }
     static string DocText(XElement? element) => element == null ? "" : string.Join(" ", element.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     static string Category(ITypeSymbol type) => LiteralKind(type) switch { "boolean" => "Boolean", "number" or "integer" => "Number", "string" or "enum" => "String", "array" => "Array", _ => type is IArrayTypeSymbol ? "Array" : "Object" };

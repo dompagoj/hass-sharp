@@ -6,6 +6,10 @@ namespace HassSharp;
 public class CompiledUserScript
 {
     bool _unloaded;
+    // Explicit metadata for visual artifacts; ordinary source files retain multi-class activation.
+    public string? DesignatedRootType { get; set; }
+    public long? VisualRevision { get; set; }
+    public string? CatalogGeneration { get; set; }
 
     public required string FilePath { get; set; }
     public required string FileName { get; set; }

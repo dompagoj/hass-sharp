@@ -88,3 +88,12 @@ it('nullable non-finite compiler defaults remain omitted when creating custom no
   expect(node.config.arguments).toEqual({})
   for (const input of Object.values(richCatalog.nodes[kind].inputs)) expect(Object.hasOwn(input, 'default')).toBe(false)
 })
+
+it('rejects stale literal arguments after an optional custom parameter rename', () => {
+  const graph = structuredClone(rich.cases[0].graph) as GraphV4
+  const consumer = graph.nodes[3]
+  ;(consumer.config.arguments as Record<string, unknown>).removedParameter = { kind: 'literal', type: 'string', value: 'old value' }
+  expect(contract.validateGraphV4(graph, richCatalog)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ nodeId: consumer.id, inputId: 'removedParameter', message: 'Unknown custom argument' }),
+  ]))
+})

@@ -128,7 +128,8 @@ class UserScriptManager
             ScriptManager = this,
         };
         var userScriptClasses = compiledScript.Assembly.GetTypes()
-            .Where(t => baseType.IsAssignableFrom(t) && !t.IsAbstract)
+            .Where(t => baseType.IsAssignableFrom(t) && !t.IsAbstract &&
+                (compiledScript.DesignatedRootType == null || t.FullName == compiledScript.DesignatedRootType))
             .Select(t => new UserScriptClass(t, userScript))
             .ToArray();
 

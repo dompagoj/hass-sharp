@@ -239,6 +239,8 @@ export function validateGraphV4(value: unknown, catalog: VisualCatalogSnapshot =
       if (Array.isArray(v) && ((rule.minItems !== undefined && v.length < rule.minItems) || (rule.maxItems !== undefined && v.length > rule.maxItems))) error(node.id, `${field} item count is out of range`, field)
     }
     for (const port of spec.requiredExecution ?? []) if (!outgoing.get(node.id)!.some(e => flowPort(node, e) === port)) error(node.id, 'Execution connection is required', port, port)
+    if (spec.argumentStorage === 'arguments' && record(node.config.arguments))
+      for (const name of Object.keys(node.config.arguments)) if (!Object.hasOwn(dataInputs(node, ownerOf(node)), name)) error(node.id, 'Unknown custom argument', name)
     const resolved: Record<string, string | undefined> = {}
     for (const [port, rule] of Object.entries(dataInputs(node, ownerOf(node)))) resolved[port] = operand(node, port, inputValue(node, port, catalog), rule)
     if (spec.comparison) {

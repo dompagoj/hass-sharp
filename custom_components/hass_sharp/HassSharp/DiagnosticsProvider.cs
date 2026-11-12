@@ -222,6 +222,16 @@ public class DiagnosticsProvider
             return _workspace.CurrentSolution.GetProject(_baseProjectId)!.AddDocument(name, SourceText.From(source));
     }
 
+    internal Project CreateLibraryProject()
+    {
+        lock (_gate)
+            return _workspace.CurrentSolution.GetProject(_baseProjectId)!
+                .WithMetadataReferences(NodeLibraryCompiler.FrameworkReferences())
+                .WithCompilationOptions(new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
+                    allowUnsafe: true, nullableContextOptions: NullableContextOptions.Enable))
+                .AddDocument("GlobalUsings.g.cs", SourceText.From(GlobalUsings)).Project;
+    }
+
     public async Task<string> FormatCode(string source)
     {
         var userScriptDocument = CreateDocument("Format.cs", source);

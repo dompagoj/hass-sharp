@@ -9,6 +9,10 @@ public sealed class VisualValidationException(VisualPreview preview) : Exception
 public sealed record VisualDocument(int Version, string Id, long Revision, JsonObject Graph, string Source, List<VisualSourceMap> SourceMap)
 {
     public string? AutomationId { get; init; }
+    public long? ActiveRevision { get; init; }
+    public string? ActiveSourceHash { get; init; }
+    public bool CurrentRevisionActive { get; init; }
+    public string? CatalogGeneration { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public bool? Active { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
@@ -20,7 +24,7 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
     public static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     static readonly ConcurrentDictionary<string, object> Gates = new();
     object Gate => Gates.GetOrAdd(Path.GetFullPath(directory), _ => new());
-    string FilePath(string id)
+    internal string FilePath(string id)
     {
         if (!Regex.IsMatch(id, "^[a-z0-9][a-z0-9_-]{0,79}$")) throw new ArgumentException("Invalid visual ID");
         return Path.Combine(directory, id + ".json");
@@ -38,7 +42,7 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
             return document;
         }
     }
-    public VisualDocument[] List()
+    public VisualDocument[] List(bool strict = false)
     {
         lock (Gate)
         {
@@ -56,21 +60,21 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
                     documents.Add(document);
                 }
                 catch (Exception ex) when (ex is JsonException or ArgumentException or IOException or UnauthorizedAccessException)
-                { Logger.Error($"Skipping visual document {path}: {ex}"); }
+                { if (strict) throw; Logger.Error($"Skipping visual document {path}: {ex}"); }
             }
             return documents.ToArray();
         }
     }
-    public VisualDocument Save(string id, JsonObject graph, long expectedRevision)
+    public VisualDocument Save(string id, JsonObject graph, long expectedRevision, VisualCatalogSnapshot? catalog = null, string? catalogGeneration = null)
     {
         lock (Gate)
         {
             var path = FilePath(id); var old = Read(id);
             if ((old?.Revision ?? 0) != expectedRevision) throw new VisualConflictException();
             var snapshot = VisualGraphContract.FillMissingLayout(graph);
-            var preview = generator.Preview(snapshot);
+            var preview = catalog == null ? generator.Preview(snapshot) : generator.Preview(snapshot, catalog);
             if (!preview.Valid) throw new VisualValidationException(preview);
-            var document = new VisualDocument(1, id, checked(expectedRevision + 1), snapshot, preview.Source, preview.SourceMap);
+            var document = new VisualDocument(1, id, checked(expectedRevision + 1), snapshot, preview.Source, preview.SourceMap) { CatalogGeneration = catalogGeneration };
             Directory.CreateDirectory(directory);
             var temporary = path + "." + Guid.NewGuid() + ".tmp";
             try

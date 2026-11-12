@@ -24,32 +24,39 @@ public partial class HassSharpManager
 
     public async Task Init(string[] hassEntityIds)
     {
-        _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
-        _loadErrors.Clear();
-        var assemblies = await _compiler.CompileFromUserScriptsFolder(RecordLoadError);
-        foreach (var document in VisualDocuments.List())
+        await _visualGate.WaitAsync();
+        try
         {
-            try
+            if (_languageLifetime.IsCancellationRequested) _languageLifetime = new();
+            _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
+            var libraries = SavedLibraries();
+            _loadErrors.Clear();
+            var assemblies = await _compiler.CompileFromUserScriptsFolder(RecordLoadError);
+            foreach (var document in VisualDocuments.List())
             {
-                var preview = new VisualGenerator(_diagnosticsProvider).Preview(document.Graph);
-                if (!preview.Valid) throw new VisualValidationException(preview);
-                assemblies.Add(await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), preview.Source, true));
+                try
+                {
+                    var preview = new VisualGenerator(_diagnosticsProvider).Preview(document.Graph, libraries.Preview.Snapshot);
+                    if (!preview.Valid) throw new VisualValidationException(preview);
+                    assemblies.Add(await CompileVisualDocument(document with { Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = libraries.Generation }));
+                }
+                catch (Exception ex)
+                {
+                    RecordLoadError(VisualRuntimePath(document.Id), ex);
+                    Logger.Error($"Cannot load visual document {document.Id}: {ex}");
+                    if (ex is CompilationErrorException compilation) Logger.Error(string.Join("\n", compilation.Errors));
+                }
             }
-            catch (Exception ex)
-            {
-                RecordLoadError(VisualRuntimePath(document.Id), ex);
-                Logger.Error($"Cannot load visual document {document.Id}: {ex}");
-                if (ex is CompilationErrorException compilation) Logger.Error(string.Join("\n", compilation.Errors));
-            }
+
+            await _userScriptManager.UnloadUserScriptsAsync(); // Just in case, shouldnt be needed
+
+            if (assemblies.Count == 0)
+                Logger.Info("No user scripts found on initialization");
+
+            await _userScriptManager.LoadUserScripts(assemblies, RecordLoadError);
+            _userScriptManager.DependencyTracking.Debug();
         }
-
-        await _userScriptManager.UnloadUserScriptsAsync(); // Just in case, shouldnt be needed
-
-        if (assemblies.Count == 0)
-            Logger.Info("No user scripts found on initialization");
-
-        await _userScriptManager.LoadUserScripts(assemblies, RecordLoadError);
-        _userScriptManager.DependencyTracking.Debug();
+        finally { _visualGate.Release(); }
     }
 
     public string GetRunHistory(string automationId, int offset, int limit) =>
@@ -62,10 +69,15 @@ public partial class HassSharpManager
         System.Text.Json.JsonSerializer.Serialize(new { version = 1,
             runId = _userScriptManager.DispatchManual(automationId, className, method) });
 
-    public void Unload() => _userScriptManager.UnloadUserScripts();
-    public Task UnloadAsync() => _userScriptManager.UnloadUserScriptsAsync();
+    public void Unload() { _languageLifetime.Cancel(); _userScriptManager.UnloadUserScripts(); }
+    public Task UnloadAsync() { _languageLifetime.Cancel(); return _userScriptManager.UnloadUserScriptsAsync(); }
 
-    public void GenerateHassEntities(string[] entityIds) => _diagnosticsProvider.GenerateHassEntities(entityIds);
+    public void GenerateHassEntities(string[] entityIds)
+    {
+        _visualGate.Wait();
+        try { _diagnosticsProvider.GenerateHassEntities(entityIds); }
+        finally { _visualGate.Release(); }
+    }
 
     public Task OnTrackedEntityChange(string entityId, HasEntityState newState, HasEntityState? oldState)
     {

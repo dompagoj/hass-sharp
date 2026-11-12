@@ -18,6 +18,10 @@ class VisualApiTests(unittest.IsolatedAsyncioTestCase):
             return '{"version":1,"ok":true,"result":[]}'
         env = {'json': json, 'logger': Mock(), 'hass_sharp': types.SimpleNamespace(VisualRequest=object()),
                'dotnet_tasks': types.SimpleNamespace(async_run_dotnet_task=run)}
+        service_tree = ast.parse(pathlib.Path('custom_components/hass_sharp/authoring.py').read_text())
+        service_tree.body = [n for n in service_tree.body if not isinstance(n, ast.ImportFrom)]
+        exec(compile(service_tree, '<authoring>', 'exec'), env)
+        env['authoring'] = env['AuthoringService'](None, env['hass_sharp'])
         exec(compile(ast.Module(body=[handler], type_ignores=[]), '<visual>', 'exec'), env)
         for admin in (False, True):
             results, errors = [], []

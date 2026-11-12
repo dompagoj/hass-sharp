@@ -11,11 +11,43 @@ public partial class HassSharpManager
     VisualDocument WithRuntimeIdentity(VisualDocument document)
     {
         var path = VisualRuntimePath(document.Id);
-        var active = _userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == path && s.Active);
-        // Source/maps are the last-saved artifact. Live generation belongs to preview,
-        // save and startup; listing documents must not compile every graph.
+        var running = _userScriptManager.GetUserScripts().FirstOrDefault(s => s.CompiledScript.FilePath == path && s.Active);
+        var active = running != null;
         return document with { AutomationId = _history.Identity(path), Active = active,
+            ActiveRevision = running?.CompiledScript.VisualRevision, ActiveSourceHash = running?.Revision,
+            CurrentRevisionActive = running?.CompiledScript.VisualRevision == document.Revision && running?.CompiledScript.SourceCode == document.Source && !_loadErrors.ContainsKey(path),
             ActivationError = _loadErrors.TryGetValue(path, out var error) ? error : active ? null : "Not active" };
+    }
+
+    async Task<object> ActivateVisualDocument(VisualDocument document)
+    {
+        string? activationError = null;
+        try
+        {
+            var compiled = await CompileVisualDocument(document);
+            if (!_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(document.Id)))
+            {
+                UserScript loaded;
+                try { loaded = _userScriptManager.LoadUserScript(compiled, staged: true); }
+                catch { compiled.Unload(); throw; }
+                try { await loaded.ConfigureAndStart(); }
+                catch { try { await loaded.ClearFromTrackingAsync(); } finally { loaded.Unload(); } throw; }
+            }
+            else await _userScriptManager.UpdateUserScript(compiled);
+        }
+        catch (Exception ex) { RecordLoadError(VisualRuntimePath(document.Id), ex); activationError = _loadErrors[VisualRuntimePath(document.Id)]; }
+        if (activationError == null) _loadErrors.TryRemove(VisualRuntimePath(document.Id), out _);
+        document = WithRuntimeIdentity(document);
+        return new { id = document.Id, saved = true, document, active = document.CurrentRevisionActive, activationError };
+    }
+
+    async Task<CompiledUserScript> CompileVisualDocument(VisualDocument document)
+    {
+        var compiled = await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), document.Source, true);
+        compiled.DesignatedRootType = "VisualAutomation";
+        compiled.VisualRevision = document.Revision;
+        compiled.CatalogGeneration = document.CatalogGeneration;
+        return compiled;
     }
 
     // Single JSON bridge keeps Python.NET calls and frontend versioning explicit.
@@ -28,7 +60,8 @@ public partial class HassSharpManager
             var operation = request["operation"]!.GetValue<string>();
             object result;
             var store = VisualDocuments;
-            if (operation == "preview") result = new VisualGenerator(_diagnosticsProvider).Preview(request["graph"]!.AsObject());
+            var libraries = SavedLibraries();
+            if (operation == "preview") result = new VisualGenerator(_diagnosticsProvider).Preview(request["graph"]!.AsObject(), libraries.Preview.Snapshot);
             else if (operation == "list") result = store.List().Select(WithRuntimeIdentity).ToArray();
             else
             {
@@ -39,28 +72,8 @@ public partial class HassSharpManager
                     var revision = request["expectedRevision"]!.GetValue<long>();
                     if (operation == "save")
                     {
-                        var document = WithRuntimeIdentity(store.Save(id, request["graph"]!.AsObject(), revision));
-                        string? activationError = null;
-                        try
-                        {
-                            var compiled = await _compiler.CompileSingleFile(VisualRuntimePath(id), document.Source, true);
-                            if (!_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(id)))
-                            {
-                                var loaded = _userScriptManager.LoadUserScript(compiled);
-                                try { await loaded.ConfigureAndStart(); }
-                                catch
-                                {
-                                    await loaded.ClearFromTrackingAsync();
-                                    loaded.Unload();
-                                    throw;
-                                }
-                            }
-                            else await _userScriptManager.UpdateUserScript(compiled);
-                        }
-                        catch (Exception ex) { activationError = ex.Message; RecordLoadError(VisualRuntimePath(id), ex); }
-                        if (activationError == null) _loadErrors.TryRemove(VisualRuntimePath(id), out _);
-                        document = WithRuntimeIdentity(document);
-                        result = new { document, active = activationError == null, activationError };
+                        var document = store.Save(id, request["graph"]!.AsObject(), revision, libraries.Preview.Snapshot, libraries.Generation);
+                        result = await ActivateVisualDocument(document);
                     }
                     else if (operation == "delete")
                     {
@@ -74,6 +87,8 @@ public partial class HassSharpManager
             }
             return JsonSerializer.Serialize(new { version = 1, ok = true, result }, VisualStore.Json);
         }
+        catch (IOException ex) when (ex is not FileNotFoundException) { return Error("storage", ex.Message); }
+        catch (UnauthorizedAccessException ex) { return Error("storage", ex.Message); }
         catch (VisualValidationException ex) { return Error("validation", ex.Preview); }
         catch (VisualConflictException ex) { return Error("conflict", ex.Message); }
         catch (FileNotFoundException ex) { return Error("not_found", ex.Message); }
