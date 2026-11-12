@@ -331,9 +331,24 @@ export interface CompletionItem {
   displayTextPrefix: string
   displayTextSuffix: string
   filterText: string
-  inlineDescription: string
-  isComplexTextEdit: boolean
   tags: string[]
+  textEdit: CompletionTextEdit
+  additionalTextEdits: CompletionTextEdit[]
+}
+
+export interface CompletionTextEdit {
+  start: number
+  length: number
+  newText: string
+}
+
+export interface Diagnostic {
+  startLine: number
+  startColumn: number
+  endLine: number
+  endColumn: number
+  message: string
+  severity: number
 }
 
 export interface UserScriptClassDto {

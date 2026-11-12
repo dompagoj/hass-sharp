@@ -45,6 +45,11 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
               "displayTextSuffix": c.DisplayTextSuffix,
               "filterText": c.FilterText,
               "tags": [t for t in c.Tags],
+              "textEdit": {"start": c.TextEdit.Start, "length": c.TextEdit.Length, "newText": c.TextEdit.NewText},
+              "additionalTextEdits": [
+                  {"start": e.Start, "length": e.Length, "newText": e.NewText}
+                  for e in c.AdditionalTextEdits
+              ],
             } for c in completions]
 
       connection.send_result(msg["id"], completions_py)

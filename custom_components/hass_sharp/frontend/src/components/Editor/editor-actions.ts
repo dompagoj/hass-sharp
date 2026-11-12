@@ -1,5 +1,5 @@
 import * as monaco from 'monaco-editor'
-import type { CompletionItem, HomeAssistant } from '../../types'
+import type { CompletionItem, CompletionTextEdit, Diagnostic, HomeAssistant } from '../../types'
 import type { MessageBase } from 'home-assistant-js-websocket'
 import { createSignal, onCleanup } from 'solid-js'
 
@@ -33,206 +33,215 @@ function tagsToKind(tags: string[]) {
   const first = tags[0]
   const found = tagToKindMap[first]
 
-  if (found) return found
+  if (found !== undefined) return found
 
   console.warn('Unknown tag: ', first)
   return monaco.languages.CompletionItemKind.Snippet
 }
 
+// Each registration owns its requests and providers; responses are tied to the exact model revision.
 export const useEditorActions = (hass: HomeAssistant) => {
-  let completionTimeout: number
+  const [validating, setValidating] = createSignal(true)
+  const [hasErrors, setHasErrors] = createSignal(false)
+  const [saving, setSaving] = createSignal(false)
+  let disposeRegistration: (() => void) | undefined
+  let saveCommand: () => Promise<void> = async () => {}
 
-  let diposer: () => void
+  const register = (
+    editor: monaco.editor.IStandaloneCodeEditor,
+    onSave: (model: monaco.editor.ITextModel) => Promise<unknown>,
+    runSave: () => Promise<unknown> = () => saveCommand(),
+  ) => {
+    disposeRegistration?.()
+    let disposed = false
+    let validationTimer: ReturnType<typeof setTimeout> | undefined
+    let savingPromise: Promise<void> | undefined
+    let markedModel = editor.getModel()
+    const pending = new Map<string, () => void>()
+    const latest = new Map<string, number>()
+    let nextRequest = 0
+    let epoch = 0
+    type Reply<T> = { value: T; isCurrent: () => boolean }
 
-  const [saveDisabled, setSaveDisabled] = createSignal(false)
-
-  const onScriptSave = async (e: KeyboardEvent, editor: monaco.editor.IStandaloneCodeEditor) => {
-    e.preventDefault()
-    const model = editor.getModel()
-    if (!model) return
-    try {
-      setSaveDisabled(true)
-
-      const message: MessageBase = {
-        type: 'hass_sharp/format_source',
-        source: model.getValue(),
-      }
-      const formatted = await hass.callWS<string>(message)
-
-      const currPos = editor.getPosition()
-      let textToRight = ''
-      if (currPos) {
-        const lineContent = model.getLineContent(currPos.lineNumber)
-        textToRight = lineContent
-          .substring(currPos.column - 1)
-          .trimStart()
-          .substring(0, 10)
-      }
-
-      editor.executeEdits('format', [
-        {
-          range: model.getFullModelRange(),
-          text: formatted,
-        },
-      ])
-
-      if (currPos && textToRight) {
-        const newLineContent = model.getLineContent(currPos.lineNumber)
-        const newColumn = newLineContent.indexOf(textToRight)
-        if (newColumn !== -1) {
-          editor.setPosition({ lineNumber: currPos.lineNumber, column: newColumn + 1 })
-        } else {
-          const firstCol = model.getLineFirstNonWhitespaceColumn(currPos.lineNumber)
-          editor.setPosition({ lineNumber: currPos.lineNumber, column: firstCol || 1 })
-        }
-      }
-      editor.focus()
-    } finally {
-      setSaveDisabled(false)
+    const invalidate = () => {
+      epoch++
+      for (const cancel of pending.values()) cancel()
+      pending.clear()
     }
-  }
+    const owns = (model: monaco.editor.ITextModel) =>
+      !disposed && !model.isDisposed() && editor.getModel() === model
 
-  const register = (editor: monaco.editor.IStandaloneCodeEditor) => {
-    const disposeCompletionProvider = monaco.languages.registerCompletionItemProvider('csharp', {
+    // callWS has no transport abort API. Cancellation settles the consumer immediately;
+    // the late server reply is ignored, including after model changes or disposal.
+    const request = <T>(kind: string, model: monaco.editor.ITextModel, fields: object = {}, token?: monaco.CancellationToken) => {
+      pending.get(kind)?.()
+      if (!owns(model) || token?.isCancellationRequested) return Promise.resolve<Reply<T> | null>(null)
+      const version = model.getVersionId()
+      const requestEpoch = epoch
+      const requestId = ++nextRequest
+      latest.set(kind, requestId)
+      const isCurrent = () => owns(model) && model.getVersionId() === version && epoch === requestEpoch
+        && latest.get(kind) === requestId && !token?.isCancellationRequested
+      return new Promise<Reply<T> | null>((resolve, reject) => {
+        let settled = false
+        let subscription: monaco.IDisposable | undefined
+        const finish = (value: Reply<T> | null, error?: unknown) => {
+          if (settled) return
+          settled = true
+          subscription?.dispose()
+          if (pending.get(kind) === cancel) pending.delete(kind)
+          if (error) reject(error)
+          else resolve(value)
+        }
+        const cancel = () => finish(null)
+        pending.set(kind, cancel)
+        subscription = token?.onCancellationRequested(cancel)
+        if (settled) { subscription?.dispose(); return }
+        const message: MessageBase = {
+          type: `hass_sharp/${kind}`,
+          source: model.getValue(),
+          modelUri: model.uri.toString(),
+          modelVersion: version,
+          ...fields,
+        }
+        hass.callWS<T>(message).then(
+          value => finish(isCurrent() ? { value, isCurrent } : null),
+          error => finish(null, isCurrent() ? error : undefined),
+        )
+      })
+    }
+
+    const validate = async (): Promise<boolean> => {
+      clearTimeout(validationTimer)
+      const model = editor.getModel()
+      if (!model || !owns(model)) return false
+      setValidating(true)
+      try {
+        const diagnostics = await request<Diagnostic[]>('get_diagnostics', model)
+        if (!diagnostics?.isCurrent()) return false
+        const markers: monaco.editor.IMarkerData[] = diagnostics.value.map(d => ({
+          startLineNumber: d.startLine,
+          startColumn: d.startColumn,
+          endLineNumber: d.endLine,
+          endColumn: d.endColumn,
+          message: d.message,
+          origin: 'Compiler',
+          severity: d.severity === 3 ? monaco.MarkerSeverity.Error
+            : d.severity === 2 ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Info,
+        }))
+        monaco.editor.setModelMarkers(model, 'csharp', markers)
+        const errors = markers.some(m => m.severity === monaco.MarkerSeverity.Error)
+        setHasErrors(errors)
+        setValidating(false)
+        return !errors
+      } catch (error) {
+        if (owns(model)) { setHasErrors(true); setValidating(false) }
+        console.error('Failed to get diagnostics', error)
+        return false
+      }
+    }
+
+    saveCommand = () => {
+      if (savingPromise) return savingPromise
+      const model = editor.getModel()
+      if (!model || !owns(model)) return Promise.resolve()
+      setSaving(true)
+      savingPromise = (async () => {
+        const version = model.getVersionId()
+        if (!await validate() || !owns(model) || model.getVersionId() !== version) return
+        const formatted = await request<string>('format_source', model)
+        if (!formatted?.isCurrent()) return
+        editor.pushUndoStop()
+        editor.executeEdits('format', [{ range: model.getFullModelRange(), text: formatted.value }])
+        editor.pushUndoStop()
+        const formattedVersion = model.getVersionId()
+        if (!await validate() || !owns(model) || model.getVersionId() !== formattedVersion) return
+        await onSave(model)
+      })().finally(() => { savingPromise = undefined; setSaving(false) })
+      return savingPromise
+    }
+
+    const completionProvider = monaco.languages.registerCompletionItemProvider('csharp', {
       triggerCharacters: ['.'],
-      provideCompletionItems: (model, position) => {
-        return new Promise(resolve => {
-          clearTimeout(completionTimeout)
-          completionTimeout = setTimeout(async () => {
-            const source = model.getValue()
-            const offset = model.getOffsetAt(position)
-
-            const word = model.getWordUntilPosition(position)
-            const range = {
-              startLineNumber: position.lineNumber,
-              endLineNumber: position.lineNumber,
-              startColumn: word.startColumn,
-              endColumn: word.endColumn,
+      provideCompletionItems: async (model, position, _context, token) => {
+        if (!owns(model)) return null
+        try {
+          const items = await request<CompletionItem[]>('get_completions', model,
+            { position: model.getOffsetAt(position) }, token)
+          if (!items?.isCurrent()) return { suggestions: [] }
+          return { suggestions: items.value.map(item => {
+            const toRange = (edit: CompletionTextEdit) => {
+              const start = model.getPositionAt(edit.start)
+              const end = model.getPositionAt(edit.start + edit.length)
+              return { startLineNumber: start.lineNumber, startColumn: start.column,
+                endLineNumber: end.lineNumber, endColumn: end.column }
             }
-
-            try {
-              const message: MessageBase = {
-                type: 'hass_sharp/get_completions',
-                source: source,
-                position: offset,
-              }
-
-              const completions = await hass.callWS<CompletionItem[]>(message)
-
-              resolve({
-                suggestions: completions.map(item => {
-                  const label = itemToLabel(item)
-                  return {
-                    label,
-                    kind: tagsToKind(item.tags),
-                    insertText: label,
-                    range,
-                  }
-                }),
-              })
-            } catch (e) {
-              console.error('Failed to get completions', e)
-              resolve({ suggestions: [] })
+            return {
+              label: itemToLabel(item),
+              filterText: item.filterText,
+              kind: tagsToKind(item.tags),
+              insertText: item.textEdit.newText,
+              range: toRange(item.textEdit),
+              additionalTextEdits: item.additionalTextEdits.map(edit => ({ range: toRange(edit), text: edit.newText })),
             }
-          }, 150)
-        })
+          }) }
+        } catch (error) {
+          console.error('Failed to get completions', error)
+          return { suggestions: [] }
+        }
       },
     })
-
-    const keydownCallback = async (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') onScriptSave(e, editor)
-
-      e.stopPropagation()
-    }
-
-    document.addEventListener('keydown', keydownCallback)
-
-    const validate = async () => {
-      const model = editor.getModel()
-      if (!model) return
-
-      try {
-        const diagnostics = await hass.callWS<any[]>({
-          type: 'hass_sharp/get_diagnostics',
-          source: model.getValue(),
-        })
-
-        if (diagnostics.length) console.error(diagnostics)
-
-        const markers = diagnostics.map(d => {
-          return {
-            startLineNumber: d.startLine,
-            startColumn: d.startColumn,
-            endLineNumber: d.endLine,
-            endColumn: d.endColumn,
-            message: d.message,
-            origin: 'Compiler',
-            severity:
-              d.severity === 3
-                ? monaco.MarkerSeverity.Error
-                : d.severity === 2
-                  ? monaco.MarkerSeverity.Warning
-                  : monaco.MarkerSeverity.Info,
-          } as monaco.editor.IMarkerData
-        })
-
-        monaco.editor.setModelMarkers(model, 'csharp', markers)
-
-        setSaveDisabled(!!markers.length)
-      } catch (e) {
-        console.error('Failed to get diagnostics', e)
-        setSaveDisabled(false)
-      }
-    }
-
-    let timeoutId: number
-    editor.onDidChangeModelContent(() => {
-      setSaveDisabled(true)
-      clearTimeout(timeoutId)
-      timeoutId = setTimeout(validate, 500)
-    })
-
-    const disposeHoverProvider = monaco.languages.registerHoverProvider('csharp', {
-      provideHover: async (model, position) => {
-        const source = model.getValue()
-        const offset = model.getOffsetAt(position)
-
+    const hoverProvider = monaco.languages.registerHoverProvider('csharp', {
+      provideHover: async (model, position, token) => {
+        if (!owns(model)) return null
         try {
-          const hoverText = await hass.callWS<string | null>({
-            type: 'hass_sharp/get_hover',
-            source: source,
-            position: offset,
-          })
-
-          if (!hoverText) return null
-
-          return {
-            contents: [{ value: hoverText }],
-          }
-        } catch (e) {
-          console.error('Failed to get hover', e)
+          const text = await request<string | null>('get_hover', model,
+            { position: model.getOffsetAt(position) }, token)
+          return text?.isCurrent() && text.value ? { contents: [{ value: text.value }] } : null
+        } catch (error) {
+          console.error('Failed to get hover', error)
           return null
         }
       },
     })
-
-    // Initial validation
-    validate()
-
-    diposer?.()
-    diposer = () => {
-      disposeHoverProvider.dispose()
-      disposeCompletionProvider.dispose()
-      document.removeEventListener('keydown', keydownCallback)
+    const contentSubscription = editor.onDidChangeModelContent(() => {
+      invalidate()
+      setValidating(true)
+      clearTimeout(validationTimer)
+      validationTimer = setTimeout(() => { void validate() }, 500)
+    })
+    const modelSubscription = editor.onDidChangeModel(() => {
+      invalidate()
+      if (markedModel && !markedModel.isDisposed()) monaco.editor.setModelMarkers(markedModel, 'csharp', [])
+      markedModel = editor.getModel()
+      void validate()
+    })
+    const saveAction = editor.addAction({
+      id: 'hass-sharp.save', label: 'Save automation', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+      run: async () => {
+        try { await runSave() } catch (error) { console.error('Failed to save automation', error) }
+      },
+    })
+    void validate()
+    disposeRegistration = () => {
+      if (disposed) return
+      disposed = true
+      clearTimeout(validationTimer)
+      invalidate()
+      completionProvider.dispose()
+      hoverProvider.dispose()
+      contentSubscription.dispose()
+      modelSubscription.dispose()
+      saveAction.dispose()
+      if (markedModel && !markedModel.isDisposed()) monaco.editor.setModelMarkers(markedModel, 'csharp', [])
     }
   }
 
-  onCleanup(() => {
-    diposer?.()
-  })
-
+  onCleanup(() => disposeRegistration?.())
   return {
     register,
-    saveDisabled,
+    save: () => saveCommand(),
+    dispose: () => disposeRegistration?.(),
+    saveDisabled: () => validating() || hasErrors() || saving(),
   }
 }

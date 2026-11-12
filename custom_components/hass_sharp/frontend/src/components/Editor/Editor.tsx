@@ -1,4 +1,4 @@
-import { createEffect, Show } from 'solid-js'
+import { createEffect, onMount, onCleanup, Show } from 'solid-js'
 import { A } from '@solidjs/router'
 import * as monaco from 'monaco-editor'
 import { initVimMode, type VimAdapterInstance } from 'monaco-vim'
@@ -36,9 +36,7 @@ export const Editor = (props: Props) => {
 
   const editorActions = useEditorActions(hass)
 
-  createEffect(() => {
-    if (!editorRef) return
-
+  onMount(() => {
     editor = monaco.editor.create(editorRef, {
       value:
         props.initial ??
@@ -60,7 +58,7 @@ export const Editor = (props: Props) => {
       domReadOnly: true,
       smoothScrolling: true,
       cursorSmoothCaretAnimation: 'on',
-      fontSize: editorSettingsFont(),
+      fontSize: 16,
       padding: {
         top: 25,
       },
@@ -103,27 +101,23 @@ export const Editor = (props: Props) => {
       },
     })
 
-    editorActions.register(editor)
-  })
-
-  createEffect(() => {
-    if (editorRef && editorSettings().vimEnabled) {
-      monacoVimMode = initVimMode(editor, statusBarRef)
-    } else monacoVimMode?.dispose()
-  })
-
-  const onSaveWrapper = () => {
     const model = editor.getModel()
-    const markers = monaco.editor.getModelMarkers({ owner: 'csharp' })
+    editorActions.register(editor, model => props.onSave(model), () => saveMut.mutateAsync())
+    createEffect(() => { editor.updateOptions({ fontSize: editorSettingsFont() }) })
+    createEffect(() => {
+      if (editorSettings().vimEnabled) {
+        monacoVimMode = initVimMode(editor, statusBarRef)
+        onCleanup(() => { monacoVimMode?.dispose(); monacoVimMode = undefined })
+      }
+    })
+    onCleanup(() => {
+      editorActions.dispose()
+      editor.dispose()
+      model?.dispose()
+    })
+  })
 
-    if (markers.length) return Promise.resolve()
-
-    return props.onSave(model!)
-  }
-
-  const saveMut = useMutation(() => ({
-    mutationFn: onSaveWrapper,
-  }))
+  const saveMut = useMutation(() => ({ mutationFn: () => editorActions.save() }))
 
   return (
     <>
@@ -140,7 +134,7 @@ export const Editor = (props: Props) => {
           <ha-button
             loading={saveMut.isPending}
             raised
-            onClick={saveMut.mutateAsync}
+            onClick={() => { void saveMut.mutateAsync().catch(() => {}) }}
             disabled={editorActions.saveDisabled()}
           >
             <ha-icon icon="mdi:content-save-outline" slot="start"></ha-icon>
@@ -161,11 +155,7 @@ export const Editor = (props: Props) => {
             on:value-changed={e => {
               const fontSize = parseInt(e.detail.value)
               setEditorSettings(prev => {
-                prev.fontSize = fontSize
-                return prev
-              })
-              editor.updateOptions({
-                fontSize,
+                return { ...prev, fontSize }
               })
             }}
           />
@@ -186,6 +176,9 @@ export const Editor = (props: Props) => {
           />
         </div>
       </ha-card>
+      <Show when={saveMut.isError}>
+        <div role="alert">Save failed: {String(saveMut.error)}</div>
+      </Show>
       <div ref={statusBarRef} />
       <div class="h-full" ref={editorRef} id="editor" />
     </>

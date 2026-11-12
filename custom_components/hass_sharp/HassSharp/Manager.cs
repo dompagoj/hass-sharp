@@ -1,4 +1,3 @@
-using Microsoft.CodeAnalysis.Completion;
 using Python.Runtime;
 
 namespace HassSharp;
@@ -58,7 +57,7 @@ public class HassSharpManager
 
     public DiagnosticModel[] GetCompilationDiagnostics(string source) => _diagnosticsProvider.GetDiagnostics(source);
 
-    public Task<IReadOnlyList<CompletionItem>> GetCodeCompletions(string source, int position) =>
+    public Task<IReadOnlyList<CompletionModel>> GetCodeCompletions(string source, int position) =>
         _diagnosticsProvider.GetCompletions(source, position);
 
     public Task<string> FormatCode(string source) => _diagnosticsProvider.FormatCode(source);
