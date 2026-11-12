@@ -79,7 +79,7 @@ const LibraryWorkspace = (props: { onDirtyChange?: (dirty: boolean) => void }) =
         <Editor fileName={session.selected()!.name} documentId={session.selectedId()} initial={session.selected()!.source}
           library={{ context: session.context, sourceGeneration: session.sourceGeneration, documents: session.files, onDefinition: locate }}
           onChange={session.edit} onNavigator={navigate => { navigateRange = navigate }} saveDisabled={!session.canSave()}
-          onSave={async () => { await session.validatePreview(); await session.save() }} />
+          onSave={session.validateAndSave} />
       </Show></main>
       <LibraryPreview catalog={session.preview()?.catalog} sourceId={session.selectedId() ?? ''} pending={session.previewing()} />
     </div>

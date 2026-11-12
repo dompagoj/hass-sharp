@@ -11,7 +11,7 @@ let dispose: () => void
 let host: HTMLDivElement
 let requests: any[]
 const documents = () => [{ version: 1, id: 'shared', name: 'Shared.cs', source: rich.source, revision: 1 }, { version: 1, id: 'helper', name: 'Helper.cs', source: 'public class Helper {}', revision: 1 }]
-function mount(invalid = false) {
+function mount(invalid = false, response?: (request: any, result: any) => any) {
   requests = []
   const callWS = async (message: any) => {
     const r = message.request; requests.push(r)
@@ -21,7 +21,7 @@ function mount(invalid = false) {
       : { id: r.id, workspaceVersion: r.workspaceVersion, generation: r.generation, sourceGeneration: `source-${r.workspaceVersion}`, saved: false,
           data: r.operation === 'preview' ? { valid: !invalid, catalog: rich.catalog, diagnostics: invalid ? [{ sourceId: 'helper', startLine: 1, startColumn: 3, endLine: 1, endColumn: 8, severity: 3, message: 'Helper error' }] : [] }
           : r.operation === 'format' ? r.source : r.operation === 'definition' ? [{ id: 'helper', range: { start: 13, length: 6, startLine: 1, startColumn: 14, endLine: 1, endColumn: 20 } }] : [] }
-    return { version: 1, ok: true, result }
+    return { version: 1, ok: true, result: await response?.(r, result) ?? result }
   }
   dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS, user: { is_admin: true } } as any}><NodeLibraryEditor /></HassCtx.Provider></QueryClientProvider>, host)
 }
@@ -81,4 +81,26 @@ it('restores each file cursor and selection when switching back to its draft', a
   editor.setSelection(original); button('Helper.cs').click()
   editor.setSelection({ startLineNumber: 1, startColumn: 3, endLineNumber: 1, endColumn: 9 })
   button('Shared.cs').click(); expect(editor.selection).toEqual(original)
+})
+
+it('does not save a different file after the final save preview returns across navigation', async () => {
+  let savingPreviews = 0, armed = false
+  let resolve!: (value: any) => void
+  let delayed: any
+  mount(false, (request, result) => {
+    if (armed && request.operation === 'preview' && request.id === 'shared' && ++savingPreviews === 3) {
+      delayed = result
+      return new Promise(done => { resolve = done })
+    }
+  })
+  await vi.advanceTimersByTimeAsync(900)
+  editors[0].change('draft A'); await vi.advanceTimersByTimeAsync(900)
+  armed = true
+  host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
+  expect(delayed).toBeDefined()
+  button('Helper.cs').click(); editors[0].change('draft B'); await vi.advanceTimersByTimeAsync(900)
+  resolve(delayed); await vi.advanceTimersByTimeAsync(0)
+  expect(requests.filter(request => request.operation === 'save')).toEqual([])
+  expect(editors[0].getModel().getValue()).toBe('draft B')
+  button('Shared.cs').click(); expect(editors[0].getModel().getValue()).toBe('draft A')
 })

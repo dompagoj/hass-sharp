@@ -110,3 +110,62 @@ it('defers a refresh requested during save so an old list cannot roll back the c
   expect(calls.filter(c => c.operation === 'list')).toHaveLength(2)
   expect(session.selected()?.revision).toBe(2); expect(session.generation()).toBe('g2')
 })
+
+it('discards a confirmed externally deleted draft and excludes it from the remaining workspace', async () => {
+  let deleted = false
+  const { calls } = setup(r => r.operation === 'list' ? { documents: deleted ? [doc('other', 'public class Other {}')] : [doc(), doc('other', 'public class Other {}')], generation: deleted ? 'g2' : 'g1' }
+    : r.operation === 'read' && deleted && r.id === 'shared' ? { ok: false, error: { code: 'not_found', detail: 'Library missing' } } : undefined)
+  await flush(); session.edit('deleted draft'); session.select('other'); session.edit('keep other draft'); session.select('shared')
+  deleted = true; await session.refresh(); await flush()
+  expect(session.conflict()).toBe(true)
+  expect(session.context()?.sources).toContainEqual({ id: 'other', source: 'keep other draft' })
+  await session.reload('shared'); await flush()
+  expect(session.files().map(file => file.id)).toEqual(['other'])
+  expect(session.selected()?.source).toBe('keep other draft'); expect(session.dirty()).toBe(true)
+  expect(session.error()).toBeUndefined(); expect(session.context()?.sources).toEqual([])
+  expect(calls.filter(r => r.operation === 'preview').at(-1)).toMatchObject({ id: 'other', source: 'keep other draft', sources: [] })
+})
+it.each(['edit', 'switch'])('ignores delayed not-found reloads after a subsequent %s', async change => {
+  let resolve!: (value: any) => void
+  setup(r => r.operation === 'read' ? new Promise(done => { resolve = done }) : undefined)
+  await flush(); session.edit('confirmed draft')
+  const reloading = session.reload('shared')
+  if (change === 'edit') session.edit('newer draft')
+  else { session.select('other'); session.edit('other work') }
+  resolve({ ok: false, error: { code: 'not_found', detail: 'Library missing' } }); await reloading; await flush()
+  expect(session.files().some(file => file.id === 'shared')).toBe(true)
+  expect(session.selected()?.source).toBe(change === 'edit' ? 'newer draft' : 'other work')
+  expect(session.error()).toBeUndefined()
+})
+it.each(['same-file edit', 'other-file edit and return'])('binds validated save to its original workspace across %s', async change => {
+  let resolve!: (value: any) => void; let delayed: any; let armed = false
+  const { calls } = setup(r => {
+    if (armed && !delayed && r.operation === 'preview') { delayed = r; return new Promise(done => { resolve = done }) }
+  })
+  await flush(); session.edit('draft A'); await flush(); armed = true
+  const saving = session.validateAndSave(); await flush(0)
+  if (change === 'same-file edit') session.edit('newer A')
+  else { session.select('other'); session.edit('newer B'); session.select('shared') }
+  await flush()
+  resolve(preview(delayed)); await saving
+  expect(calls.filter(r => r.operation === 'save')).toEqual([])
+  expect(session.selected()?.source).toBe(change === 'same-file edit' ? 'newer A' : 'draft A')
+})
+it('does not resurrect a discarded absent file from an older pending file list', async () => {
+  let deleted = false, delayList = false
+  let resolve!: (value: any) => void
+  const { calls } = setup(r => {
+    if (r.operation === 'read' && deleted) return { ok: false, error: { code: 'not_found', detail: 'Library missing' } }
+    if (r.operation === 'list') {
+      if (delayList) { delayList = false; return new Promise(done => { resolve = done }) }
+      return { documents: deleted ? [doc('other', 'public class Other {}')] : [doc(), doc('other', 'public class Other {}')], generation: deleted ? 'g2' : 'g1' }
+    }
+  })
+  await flush(); session.edit('discard me'); session.select('other'); session.edit('preserve me'); session.select('shared')
+  delayList = true; const oldList = session.refresh()
+  deleted = true; await session.reload('shared')
+  resolve({ documents: [doc(), doc('other', 'public class Other {}')], generation: 'g1' }); await oldList; await flush()
+  expect(session.files().map(file => file.id)).toEqual(['other'])
+  expect(session.selected()?.source).toBe('preserve me'); expect(session.generation()).toBe('g2')
+  expect(calls.filter(r => r.operation === 'preview').at(-1).sources).toEqual([])
+})

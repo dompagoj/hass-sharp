@@ -37,15 +37,17 @@ export function createLibrarySession(api: LibraryApi) {
   const accepts = <T,>(reply: LibraryReply<T>, c: LibraryContext) => current(c) && reply.saved === false && reply.id === c.id && reply.workspaceVersion === c.workspaceVersion && reply.generation === c.generation && typeof reply.sourceGeneration === 'string' && (!sourceGeneration() || sourceGeneration() === reply.sourceGeneration)
   const runPreview = async () => {
     clearTimeout(timer)
-    const c = context(); if (!c || !generation()) { setPreviewing(false); return }
+    const c = context(); if (!c || !generation()) { setPreviewing(false); return false }
     setPreviewing(true)
     try {
       const reply = await api.preview(c)
-      if (!accepts(reply, c)) return
+      if (!accepts(reply, c)) return false
       batch(() => { setPreview(reply.data); setSourceGeneration(reply.sourceGeneration); setPreviewing(false) })
+      return true
     } catch (e) {
-      if (!current(c)) return
+      if (!current(c)) return false
       batch(() => { setError(String(e)); setPreviewing(false); if (e instanceof LibraryApiError && e.code === 'conflict') setFiles(list => list.map(f => f.id === c.id ? { ...f, conflict: true } : f)) })
+      return false
     }
   }
   const invalidate = () => {
@@ -102,6 +104,13 @@ export function createLibrarySession(api: LibraryApi) {
     } catch (e) { if (!disposed) mutationError(e, submitted.id) }
     finally { if (!disposed) { setSaving(false); if (refreshQueued) { refreshQueued = false; void refresh() } } }
   }
+  const validateAndSave = async () => {
+    const intended = selected()
+    const captured = context()
+    if (!intended || !captured) return
+    if (!await runPreview() || !current(captured) || selected()?.revision !== intended.revision) return
+    await save()
+  }
   const remove = async () => {
     const f = selected(); if (!f || saving()) return
     if (!f.revision) { setFiles(list => list.filter(d => d.id !== f.id)); setSelectedId(files()[0]?.id); invalidate(); return }
@@ -121,11 +130,27 @@ export function createLibrarySession(api: LibraryApi) {
   }
   const reload = async (id: string) => {
     const requestVersion = workspaceVersion()
+    const isCurrent = () => !disposed && workspaceVersion() === requestVersion
+    const applyReload = async (document?: LibraryDocument) => {
+      ++loadRequest // Ignore older file lists that could resurrect the discarded draft.
+      batch(() => {
+        setFiles(list => document ? list.map(f => f.id === id ? { ...document, baseline: document } : f) : list.filter(f => f.id !== id))
+        if (!selected()) setSelectedId(files()[0]?.id)
+        invalidate()
+      })
+      await refresh()
+    }
     try {
       const document = await api.read(id)
-      if (disposed || workspaceVersion() !== requestVersion) return
-      setFiles(list => list.map(f => f.id === id ? { ...document, baseline: document } : f)); await refresh(); invalidate()
-    } catch (e) { if (!disposed && workspaceVersion() === requestVersion) setError(String(e)) }
+      if (!isCurrent()) return
+      await applyReload(document)
+    } catch (e) {
+      if (!isCurrent()) return
+      // Reload is the confirmed per-file discard action. Authoritative absence
+      // discards that draft as well; later edits/navigation revoke the confirmation.
+      if (e instanceof LibraryApiError && e.code === 'not_found') await applyReload()
+      else setError(String(e))
+    }
   }
   const create = (name = 'Nodes.cs') => {
     const document: LibraryDocument = { version: 1, id: `library-${crypto.randomUUID()}`, name, revision: 0, source: libraryTemplate }
@@ -137,6 +162,6 @@ export function createLibrarySession(api: LibraryApi) {
   window.addEventListener('focus', onFocus)
   onCleanup(() => { disposed = true; ++loadRequest; clearTimeout(timer); window.removeEventListener('hass-sharp-libraries-changed', onChanged); window.removeEventListener('focus', onFocus) })
   void refresh()
-  return { files, selected, selectedId, select, edit, rename, create, remove, save, reload, refresh, invalidate, dirty, dirtyFile, conflict, canSave, preview, previewing, validatePreview: runPreview, diagnostics: () => validation()?.diagnostics ?? preview()?.diagnostics ?? [], validation, error, loading, saving, activations, workspaceVersion, generation, sourceGeneration, context, accepts }
+  return { files, selected, selectedId, select, edit, rename, create, remove, save, validateAndSave, reload, refresh, invalidate, dirty, dirtyFile, conflict, canSave, preview, previewing, validatePreview: runPreview, diagnostics: () => validation()?.diagnostics ?? preview()?.diagnostics ?? [], validation, error, loading, saving, activations, workspaceVersion, generation, sourceGeneration, context, accepts }
 }
 export type LibrarySession = ReturnType<typeof createLibrarySession>
