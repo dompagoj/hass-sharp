@@ -1,0 +1,1598 @@
+{
+  "version": 1,
+  "graphVersion": 4,
+  "runtimeSupport": "contract; execution supplied by the v4 runtime",
+  "limits": {
+    "nodes": 256,
+    "edges": 512,
+    "nesting": 8,
+    "executionSteps": 100000,
+    "loopIterations": 1000
+  },
+  "types": {
+    "boolean": {
+      "description": "Boolean"
+    },
+    "number": {
+      "description": "Number"
+    },
+    "string": {
+      "description": "String"
+    },
+    "object": {
+      "description": "Object"
+    },
+    "array": {
+      "description": "Array"
+    },
+    "entity_id": {
+      "description": "Entity Id",
+      "refines": "string",
+      "pattern": "^[a-z0-9_]+\\.[a-z0-9_]+$"
+    }
+  },
+  "operandKinds": [
+    "literal",
+    "variable",
+    "unset"
+  ],
+  "nodes": {
+    "trigger": {
+      "label": "Trigger",
+      "category": "Hass",
+      "description": "Start an invocation from HA, a legacy trigger, or manual run.",
+      "minGraphVersion": 4,
+      "config": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "entity",
+            "daily",
+            "once",
+            "manual",
+            "startup",
+            "ha"
+          ],
+          "default": "entity",
+          "description": "Trigger platform selector.",
+          "label": "Type"
+        },
+        "entity": {
+          "type": "string",
+          "description": "Home Assistant entity ID.",
+          "label": "Entity"
+        },
+        "time": {
+          "type": "string",
+          "description": "Daily local time in HH:mm format.",
+          "label": "Time"
+        },
+        "timeZone": {
+          "type": "string",
+          "description": "Explicit IANA/system time zone for daily scheduling.",
+          "label": "Time zone"
+        },
+        "trigger": {
+          "type": "object",
+          "description": "Native Home Assistant trigger declaration, with trigger or platform and platform-specific options.",
+          "label": "Trigger"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "Single",
+            "Restart",
+            "Queued",
+            "Parallel"
+          ],
+          "default": "Single",
+          "description": "Whole-invocation concurrency policy: Single, Restart, Queued or Parallel.",
+          "label": "Mode"
+        },
+        "manual": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this trigger exposes a manual run action.",
+          "label": "Manual"
+        },
+        "startup": {
+          "type": "boolean",
+          "description": "Optional override of startup behavior; when omitted, follows the trigger type.",
+          "label": "Startup"
+        },
+        "entitiesExpression": {
+          "type": "string",
+          "description": "Optional C# expression overriding legacy entity subscriptions.",
+          "label": "Entities expression"
+        },
+        "schedulesExpression": {
+          "type": "string",
+          "description": "Optional C# expression overriding legacy schedules.",
+          "label": "Schedules expression"
+        },
+        "at": {
+          "type": "string",
+          "description": "Once-only ISO timestamp with explicit UTC offset or Z.",
+          "label": "At"
+        }
+      },
+      "inputs": {},
+      "outputs": {
+        "data": {
+          "type": "object",
+          "description": "Snapshot of the native or legacy trigger payload for this invocation.",
+          "label": "Trigger data"
+        }
+      },
+      "execution": [
+        "next"
+      ],
+      "runtimeVersions": []
+    },
+    "condition": {
+      "label": "State condition",
+      "category": "Hass",
+      "description": "Branch on an entity state.",
+      "minGraphVersion": 4,
+      "config": {
+        "state": {
+          "type": "string",
+          "required": true,
+          "description": "Expected raw entity state string.",
+          "label": "State"
+        }
+      },
+      "inputs": {
+        "entity": {
+          "types": [
+            "entity_id"
+          ],
+          "required": true,
+          "description": "Entity whose state is compared with the configured state.",
+          "label": "Entity"
+        }
+      },
+      "outputs": {},
+      "execution": [
+        "true",
+        "false",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "service": {
+      "label": "Call service",
+      "category": "Hass",
+      "description": "Call a service with typed target and data; capture its response.",
+      "minGraphVersion": 4,
+      "config": {
+        "service": {
+          "type": "string",
+          "required": true,
+          "pattern": "^[a-z0-9_]+\\.[a-z0-9_]+$",
+          "description": "Service identifier in domain.service form.",
+          "label": "Service"
+        },
+        "response": {
+          "type": "string",
+          "description": "Optional legacy response dictionary key for custom C# access via responses.",
+          "label": "Response"
+        },
+        "entity": {
+          "type": "string",
+          "description": "Home Assistant entity ID.",
+          "label": "Entity"
+        }
+      },
+      "inputs": {
+        "target": {
+          "types": [
+            "object"
+          ],
+          "required": false,
+          "description": "Home Assistant service target object, such as entity_id, device_id or area_id.",
+          "default": {
+            "kind": "literal",
+            "type": "object",
+            "value": {}
+          },
+          "label": "Target"
+        },
+        "data": {
+          "types": [
+            "object"
+          ],
+          "required": false,
+          "description": "Parameters passed to the selected service.",
+          "default": {
+            "kind": "literal",
+            "type": "object",
+            "value": {}
+          },
+          "label": "Service data"
+        }
+      },
+      "outputs": {
+        "response": {
+          "type": "object",
+          "description": "Home Assistant service response object after the call completes.",
+          "label": "Response"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "delay": {
+      "label": "Delay",
+      "category": "Flow",
+      "description": "Wait for the given seconds.",
+      "minGraphVersion": 4,
+      "config": {},
+      "inputs": {
+        "seconds": {
+          "types": [
+            "number"
+          ],
+          "required": true,
+          "description": "Duration to wait before continuing.",
+          "min": 0,
+          "max": 4294967.294,
+          "default": {
+            "kind": "literal",
+            "type": "number",
+            "value": 60
+          },
+          "label": "Seconds"
+        }
+      },
+      "outputs": {},
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "custom": {
+      "label": "Custom C#",
+      "category": "Code",
+      "description": "Execute C# with values, responses and lastError available.",
+      "minGraphVersion": 4,
+      "config": {
+        "code": {
+          "type": "string",
+          "required": true,
+          "default": "// Add your C# here",
+          "description": "C# statements with values, responses, lastError and normal Automation members available.",
+          "label": "Code"
+        }
+      },
+      "inputs": {},
+      "outputs": {},
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "if": {
+      "label": "If",
+      "category": "Logic",
+      "description": "Choose a branch using a Boolean input.",
+      "minGraphVersion": 4,
+      "config": {},
+      "inputs": {
+        "value": {
+          "types": [
+            "boolean"
+          ],
+          "required": true,
+          "description": "True selects the True execution branch; false selects False.",
+          "default": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": true
+          },
+          "label": "Condition"
+        }
+      },
+      "outputs": {},
+      "execution": [
+        "true",
+        "false",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "and": {
+      "label": "And",
+      "category": "Logic",
+      "description": "Combine two Boolean values.",
+      "minGraphVersion": 4,
+      "config": {
+        "output": {
+          "type": "string",
+          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "label": "Output"
+        }
+      },
+      "inputs": {
+        "left": {
+          "types": [
+            "boolean"
+          ],
+          "required": true,
+          "description": "First Boolean operand.",
+          "default": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": true
+          },
+          "label": "Left"
+        },
+        "right": {
+          "types": [
+            "boolean"
+          ],
+          "required": true,
+          "description": "Second Boolean operand.",
+          "default": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": false
+          },
+          "label": "Right"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "boolean",
+          "description": "True if both Boolean inputs are true.",
+          "label": "Result"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "or": {
+      "label": "Or",
+      "category": "Logic",
+      "description": "Combine two Boolean values.",
+      "minGraphVersion": 4,
+      "config": {
+        "output": {
+          "type": "string",
+          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "label": "Output"
+        }
+      },
+      "inputs": {
+        "left": {
+          "types": [
+            "boolean"
+          ],
+          "required": true,
+          "description": "First Boolean operand.",
+          "default": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": true
+          },
+          "label": "Left"
+        },
+        "right": {
+          "types": [
+            "boolean"
+          ],
+          "required": true,
+          "description": "Second Boolean operand.",
+          "default": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": false
+          },
+          "label": "Right"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "boolean",
+          "description": "True if at least one Boolean input is true.",
+          "label": "Result"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "xor": {
+      "label": "Xor",
+      "category": "Logic",
+      "description": "Combine two Boolean values.",
+      "minGraphVersion": 4,
+      "config": {
+        "output": {
+          "type": "string",
+          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "label": "Output"
+        }
+      },
+      "inputs": {
+        "left": {
+          "types": [
+            "boolean"
+          ],
+          "required": true,
+          "description": "First Boolean operand.",
+          "default": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": true
+          },
+          "label": "Left"
+        },
+        "right": {
+          "types": [
+            "boolean"
+          ],
+          "required": true,
+          "description": "Second Boolean operand.",
+          "default": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": false
+          },
+          "label": "Right"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "boolean",
+          "description": "True if exactly one Boolean input is true.",
+          "label": "Result"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "not": {
+      "label": "Not",
+      "category": "Logic",
+      "description": "Invert a Boolean value.",
+      "minGraphVersion": 4,
+      "config": {
+        "output": {
+          "type": "string",
+          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "label": "Output"
+        }
+      },
+      "inputs": {
+        "value": {
+          "types": [
+            "boolean"
+          ],
+          "required": true,
+          "description": "Boolean value to invert.",
+          "default": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": true
+          },
+          "label": "Value"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "boolean",
+          "description": "Logical inverse of the input Boolean.",
+          "label": "Result"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "compare": {
+      "label": "Compare",
+      "category": "Logic",
+      "description": "Compare operands with matching types; ordering requires numbers.",
+      "minGraphVersion": 4,
+      "config": {
+        "operator": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "eq",
+            "ne",
+            "lt",
+            "le",
+            "gt",
+            "ge"
+          ],
+          "default": "eq",
+          "description": "Equality or numeric ordering comparison operator.",
+          "label": "Operator"
+        },
+        "output": {
+          "type": "string",
+          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "label": "Output"
+        }
+      },
+      "inputs": {
+        "left": {
+          "types": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "required": true,
+          "description": "First operand; both operands must have matching types.",
+          "default": {
+            "kind": "literal",
+            "type": "number",
+            "value": 0
+          },
+          "label": "Left"
+        },
+        "right": {
+          "types": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "required": true,
+          "description": "Second operand; ordering comparisons require numbers.",
+          "default": {
+            "kind": "literal",
+            "type": "number",
+            "value": 0
+          },
+          "label": "Right"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "boolean",
+          "description": "Boolean result of the selected comparison.",
+          "label": "Result"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "read_entity": {
+      "label": "Read entity",
+      "category": "Hass",
+      "description": "Read state or an attribute into the selected type.",
+      "minGraphVersion": 4,
+      "config": {
+        "field": {
+          "type": "string",
+          "enum": [
+            "state",
+            "attribute"
+          ],
+          "default": "state",
+          "description": "Choose entity state or an attribute.",
+          "label": "Field"
+        },
+        "attribute": {
+          "type": "string",
+          "description": "Attribute key, required when field is attribute.",
+          "label": "Attribute"
+        },
+        "type": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "default": "string",
+          "description": "Type produced by this node.",
+          "label": "Type"
+        },
+        "output": {
+          "type": "string",
+          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "label": "Output"
+        }
+      },
+      "inputs": {
+        "entity": {
+          "types": [
+            "entity_id"
+          ],
+          "required": true,
+          "description": "Entity ID to read from the invocation state snapshot.",
+          "default": {
+            "kind": "literal",
+            "type": "entity_id",
+            "value": "sensor.temperature"
+          },
+          "label": "Entity"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "$type",
+          "description": "Selected entity state or attribute converted to the configured type.",
+          "label": "Value"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "set_value": {
+      "label": "Set value",
+      "category": "Data",
+      "description": "Explicitly convert an input to the selected type.",
+      "minGraphVersion": 4,
+      "config": {
+        "type": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "default": "string",
+          "description": "Type produced by this node.",
+          "label": "Type"
+        },
+        "output": {
+          "type": "string",
+          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "label": "Output"
+        }
+      },
+      "inputs": {
+        "value": {
+          "types": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "required": true,
+          "description": "Value assigned or explicitly converted to the selected result type.",
+          "default": {
+            "kind": "literal",
+            "type": "string",
+            "value": ""
+          },
+          "label": "Value"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "$type",
+          "description": "Assigned value after explicit conversion to the configured type.",
+          "label": "Value"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "convert": {
+      "label": "Convert",
+      "category": "Data",
+      "description": "Explicitly convert an input to the selected type.",
+      "minGraphVersion": 4,
+      "config": {
+        "type": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "default": "string",
+          "description": "Type produced by this node.",
+          "label": "Type"
+        },
+        "output": {
+          "type": "string",
+          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "label": "Output"
+        }
+      },
+      "inputs": {
+        "value": {
+          "types": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "required": true,
+          "description": "Source value explicitly converted to the selected result type.",
+          "default": {
+            "kind": "literal",
+            "type": "string",
+            "value": ""
+          },
+          "label": "Value"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "$type",
+          "description": "Input converted to the configured result type.",
+          "label": "Value"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "stop": {
+      "label": "Stop",
+      "category": "Flow",
+      "description": "End the invocation.",
+      "minGraphVersion": 4,
+      "config": {},
+      "inputs": {},
+      "outputs": {},
+      "execution": [],
+      "runtimeVersions": []
+    },
+    "log": {
+      "label": "Log",
+      "category": "Data",
+      "description": "Log any typed value.",
+      "minGraphVersion": 4,
+      "config": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "Debug",
+            "Info",
+            "Warn",
+            "Error"
+          ],
+          "default": "Info",
+          "description": "Home Assistant logging severity.",
+          "label": "Level"
+        }
+      },
+      "inputs": {
+        "value": {
+          "types": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "required": true,
+          "description": "Typed value formatted as text for the Home Assistant log.",
+          "default": {
+            "kind": "literal",
+            "type": "string",
+            "value": ""
+          },
+          "label": "Message"
+        }
+      },
+      "outputs": {},
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "repeat": {
+      "label": "Repeat",
+      "category": "Flow",
+      "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
+      "minGraphVersion": 4,
+      "config": {
+        "maxIterations": {
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 1000,
+          "description": "Maximum iterations for this loop; may only lower the global 1000-iteration limit.",
+          "label": "Maximum iterations"
+        },
+        "carry": {
+          "type": "array",
+          "default": [],
+          "description": "Named typed values with required initial operands, retained across sequential iterations.",
+          "label": "Carry",
+          "itemsStructure": "loopDeclaration"
+        },
+        "exports": {
+          "type": "array",
+          "default": [],
+          "description": "Named typed values with required initial operands, published only after loop completion.",
+          "label": "Exports",
+          "itemsStructure": "loopDeclaration"
+        }
+      },
+      "inputs": {
+        "count": {
+          "types": [
+            "number"
+          ],
+          "required": true,
+          "description": "Whole number of sequential body iterations, bounded by the loop limit.",
+          "min": 0,
+          "max": 1000,
+          "integer": true,
+          "default": {
+            "kind": "literal",
+            "type": "number",
+            "value": 3
+          },
+          "label": "Count"
+        }
+      },
+      "outputs": {},
+      "execution": [
+        "body",
+        "next",
+        "error"
+      ],
+      "scopePorts": [
+        "body"
+      ],
+      "dynamicOutputs": "loop",
+      "requiredExecution": [
+        "body"
+      ],
+      "runtimeVersions": []
+    },
+    "while": {
+      "label": "While",
+      "category": "Flow",
+      "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
+      "minGraphVersion": 4,
+      "config": {
+        "maxIterations": {
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 1000,
+          "description": "Maximum iterations for this loop; may only lower the global 1000-iteration limit.",
+          "label": "Maximum iterations"
+        },
+        "carry": {
+          "type": "array",
+          "default": [],
+          "description": "Named typed values with required initial operands, retained across sequential iterations.",
+          "label": "Carry",
+          "itemsStructure": "loopDeclaration"
+        },
+        "exports": {
+          "type": "array",
+          "default": [],
+          "description": "Named typed values with required initial operands, published only after loop completion.",
+          "label": "Exports",
+          "itemsStructure": "loopDeclaration"
+        }
+      },
+      "inputs": {},
+      "outputs": {},
+      "execution": [
+        "condition",
+        "body",
+        "next",
+        "error"
+      ],
+      "scopePorts": [
+        "condition",
+        "body"
+      ],
+      "dynamicOutputs": "loop",
+      "requiredExecution": [
+        "body",
+        "condition"
+      ],
+      "runtimeVersions": []
+    },
+    "until": {
+      "label": "Until",
+      "category": "Flow",
+      "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
+      "minGraphVersion": 4,
+      "config": {
+        "maxIterations": {
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 1000,
+          "description": "Maximum iterations for this loop; may only lower the global 1000-iteration limit.",
+          "label": "Maximum iterations"
+        },
+        "carry": {
+          "type": "array",
+          "default": [],
+          "description": "Named typed values with required initial operands, retained across sequential iterations.",
+          "label": "Carry",
+          "itemsStructure": "loopDeclaration"
+        },
+        "exports": {
+          "type": "array",
+          "default": [],
+          "description": "Named typed values with required initial operands, published only after loop completion.",
+          "label": "Exports",
+          "itemsStructure": "loopDeclaration"
+        }
+      },
+      "inputs": {},
+      "outputs": {},
+      "execution": [
+        "condition",
+        "body",
+        "next",
+        "error"
+      ],
+      "scopePorts": [
+        "condition",
+        "body"
+      ],
+      "dynamicOutputs": "loop",
+      "requiredExecution": [
+        "body",
+        "condition"
+      ],
+      "runtimeVersions": []
+    },
+    "foreach": {
+      "label": "Foreach",
+      "category": "Flow",
+      "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
+      "minGraphVersion": 4,
+      "config": {
+        "maxIterations": {
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 1000,
+          "description": "Maximum iterations for this loop; may only lower the global 1000-iteration limit.",
+          "label": "Maximum iterations"
+        },
+        "carry": {
+          "type": "array",
+          "default": [],
+          "description": "Named typed values with required initial operands, retained across sequential iterations.",
+          "label": "Carry",
+          "itemsStructure": "loopDeclaration"
+        },
+        "exports": {
+          "type": "array",
+          "default": [],
+          "description": "Named typed values with required initial operands, published only after loop completion.",
+          "label": "Exports",
+          "itemsStructure": "loopDeclaration"
+        },
+        "itemType": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "default": "object",
+          "description": "Required type for every foreach item; heterogeneous arrays fail if an item does not match.",
+          "label": "Item type"
+        }
+      },
+      "inputs": {
+        "items": {
+          "types": [
+            "array"
+          ],
+          "required": true,
+          "description": "Array snapshotted at loop entry; later source changes cannot alter iteration.",
+          "default": {
+            "kind": "literal",
+            "type": "array",
+            "value": []
+          },
+          "label": "Items"
+        }
+      },
+      "outputs": {
+        "item": {
+          "type": "$itemType",
+          "description": "Current snapshot element, validated against itemType; visible only in the body.",
+          "visibility": "body",
+          "label": "Item"
+        },
+        "index": {
+          "type": "number",
+          "description": "Zero-based current array index; visible only in the body.",
+          "visibility": "body",
+          "label": "Index"
+        }
+      },
+      "execution": [
+        "body",
+        "next",
+        "error"
+      ],
+      "scopePorts": [
+        "body"
+      ],
+      "dynamicOutputs": "loop",
+      "requiredExecution": [
+        "body"
+      ],
+      "runtimeVersions": []
+    },
+    "parallel": {
+      "label": "Parallel",
+      "category": "Flow",
+      "description": "Run isolated stable branches; next runs after all branches join.",
+      "minGraphVersion": 4,
+      "config": {
+        "branches": {
+          "type": "array",
+          "required": true,
+          "default": [
+            "a",
+            "b"
+          ],
+          "minItems": 1,
+          "maxItems": 32,
+          "description": "Ordered stable branch IDs; each creates branch:<id>, isolated from siblings; next is the joined continuation.",
+          "label": "Branches",
+          "itemsStructure": "branchId"
+        }
+      },
+      "inputs": {},
+      "outputs": {},
+      "execution": [
+        "next",
+        "error"
+      ],
+      "dynamicExecution": "branches",
+      "runtimeVersions": []
+    },
+    "condition_result": {
+      "label": "Condition result",
+      "category": "Flow",
+      "description": "Return a Boolean from the nearest while/until condition scope.",
+      "minGraphVersion": 4,
+      "config": {},
+      "inputs": {
+        "value": {
+          "types": [
+            "boolean"
+          ],
+          "required": true,
+          "description": "Boolean result of this condition evaluation; while continues on true, until stops on true.",
+          "default": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": true
+          },
+          "label": "Condition"
+        }
+      },
+      "outputs": {},
+      "execution": [],
+      "runtimeVersions": []
+    },
+    "loop_result": {
+      "label": "Loop result",
+      "category": "Flow",
+      "description": "Finish one iteration, atomically updating named carry and exports.",
+      "minGraphVersion": 4,
+      "config": {
+        "values": {
+          "type": "object",
+          "default": {},
+          "description": "Optional carry:<name> and export:<name> updates applied atomically at iteration completion; omitted values are retained.",
+          "label": "Values"
+        }
+      },
+      "inputs": {},
+      "outputs": {},
+      "execution": [],
+      "dynamicInputs": "loop",
+      "runtimeVersions": []
+    },
+    "wait_until": {
+      "label": "Wait until",
+      "category": "Hass",
+      "description": "Poll live entity state or attribute until comparison succeeds.",
+      "minGraphVersion": 4,
+      "config": {
+        "field": {
+          "type": "string",
+          "enum": [
+            "state",
+            "attribute"
+          ],
+          "default": "state",
+          "description": "Choose entity state or an attribute.",
+          "label": "Field"
+        },
+        "attribute": {
+          "type": "string",
+          "description": "Attribute key, required when field is attribute.",
+          "label": "Attribute"
+        },
+        "type": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "default": "string",
+          "description": "Type produced by this node.",
+          "label": "Type"
+        },
+        "operator": {
+          "type": "string",
+          "enum": [
+            "eq",
+            "ne",
+            "lt",
+            "le",
+            "gt",
+            "ge"
+          ],
+          "default": "eq",
+          "description": "Equality or numeric ordering comparison operator.",
+          "label": "Operator"
+        }
+      },
+      "inputs": {
+        "entity": {
+          "types": [
+            "entity_id"
+          ],
+          "required": true,
+          "description": "Entity refreshed on each poll.",
+          "label": "Entity"
+        },
+        "right": {
+          "types": [
+            "$type"
+          ],
+          "required": true,
+          "description": "Value compared with the current state or attribute.",
+          "label": "Expected value"
+        },
+        "timeout": {
+          "types": [
+            "number"
+          ],
+          "required": true,
+          "description": "Maximum wait in seconds before following the error path.",
+          "min": 0.001,
+          "max": 86400,
+          "default": {
+            "kind": "literal",
+            "type": "number",
+            "value": 60
+          },
+          "label": "Timeout"
+        },
+        "interval": {
+          "types": [
+            "number"
+          ],
+          "required": true,
+          "description": "Seconds between fresh entity reads.",
+          "min": 0.001,
+          "max": 3600,
+          "default": {
+            "kind": "literal",
+            "type": "number",
+            "value": 1
+          },
+          "label": "Poll interval"
+        }
+      },
+      "outputs": {},
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "object": {
+      "label": "Object",
+      "category": "Data",
+      "description": "Produce a JSON literal.",
+      "minGraphVersion": 4,
+      "config": {},
+      "inputs": {
+        "value": {
+          "types": [
+            "object"
+          ],
+          "required": true,
+          "description": "JSON object literal produced when this node executes.",
+          "default": {
+            "kind": "literal",
+            "type": "object",
+            "value": {}
+          },
+          "label": "Object"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "object",
+          "description": "The configured JSON object.",
+          "label": "Object"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "array": {
+      "label": "Array",
+      "category": "Data",
+      "description": "Produce a JSON literal.",
+      "minGraphVersion": 4,
+      "config": {},
+      "inputs": {
+        "value": {
+          "types": [
+            "array"
+          ],
+          "required": true,
+          "description": "JSON array literal produced when this node executes.",
+          "default": {
+            "kind": "literal",
+            "type": "array",
+            "value": []
+          },
+          "label": "Array"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "array",
+          "description": "The configured JSON array.",
+          "label": "Array"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "object_create": {
+      "label": "Create object",
+      "category": "Data",
+      "description": "Build an object from named typed fields.",
+      "minGraphVersion": 4,
+      "config": {
+        "fields": {
+          "type": "object",
+          "default": {},
+          "description": "Object mapping field names to typed operands; each field exposes a field:<name> input.",
+          "label": "Fields"
+        }
+      },
+      "inputs": {},
+      "outputs": {
+        "value": {
+          "type": "object",
+          "description": "Object containing the resolved named field inputs.",
+          "label": "Object"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "dynamicInputs": "fields",
+      "runtimeVersions": []
+    },
+    "array_create": {
+      "label": "Create array",
+      "category": "Data",
+      "description": "Build an array from ordered typed items.",
+      "minGraphVersion": 4,
+      "config": {
+        "items": {
+          "type": "array",
+          "default": [],
+          "description": "Ordered typed operands; each array entry exposes an item:<index> input.",
+          "label": "Items"
+        }
+      },
+      "inputs": {},
+      "outputs": {
+        "value": {
+          "type": "array",
+          "description": "Array containing the resolved item inputs in order.",
+          "label": "Array"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "dynamicInputs": "items",
+      "runtimeVersions": []
+    },
+    "get_field": {
+      "label": "Get field",
+      "category": "Data",
+      "description": "Extract a typed value using an RFC 6901 JSON pointer.",
+      "minGraphVersion": 4,
+      "config": {
+        "pointer": {
+          "type": "string",
+          "required": true,
+          "default": "",
+          "description": "RFC 6901 JSON pointer; empty selects the entire input, ~0 escapes tilde and ~1 escapes slash.",
+          "label": "Pointer"
+        },
+        "type": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "boolean",
+            "number",
+            "string",
+            "object",
+            "array",
+            "entity_id"
+          ],
+          "default": "string",
+          "description": "Type produced by this node.",
+          "label": "Type"
+        }
+      },
+      "inputs": {
+        "value": {
+          "types": [
+            "object",
+            "array"
+          ],
+          "required": true,
+          "description": "Object or array traversed by the JSON pointer.",
+          "label": "Source"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "$type",
+          "description": "Extracted JSON value checked against the configured result type.",
+          "label": "Value"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "trigger_data": {
+      "label": "Trigger data",
+      "category": "Hass",
+      "description": "Read the current invocation trigger payload.",
+      "minGraphVersion": 4,
+      "config": {},
+      "inputs": {},
+      "outputs": {
+        "value": {
+          "type": "object",
+          "description": "The current invocation trigger payload snapshot.",
+          "label": "Trigger data"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    },
+    "service_response": {
+      "label": "Service response",
+      "category": "Hass",
+      "description": "Read a connected service response.",
+      "minGraphVersion": 4,
+      "config": {},
+      "inputs": {
+        "response": {
+          "types": [
+            "object"
+          ],
+          "required": true,
+          "description": "Object received from a service node response output.",
+          "label": "Response"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "object",
+          "description": "The connected service response object.",
+          "label": "Response"
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": []
+    }
+  },
+  "edgeKinds": {
+    "execution": {
+      "required": [
+        "id",
+        "source",
+        "target"
+      ],
+      "optional": [
+        "kind",
+        "port"
+      ],
+      "defaultKind": "execution",
+      "defaultPort": "next",
+      "description": "Schedules the next node; condition next aliases true."
+    },
+    "data": {
+      "required": [
+        "id",
+        "kind",
+        "source",
+        "target",
+        "sourcePort",
+        "targetPort"
+      ],
+      "schedulesDependencies": false,
+      "maxSourcesPerInput": 1,
+      "maxConsumersPerOutput": null,
+      "description": "Reads an already-produced value from the current scope snapshot; never executes its source."
+    }
+  },
+  "structures": {
+    "loopDeclaration": {
+      "name": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
+        "required": true
+      },
+      "type": {
+        "type": "string",
+        "enum": [
+          "boolean",
+          "number",
+          "string",
+          "object",
+          "array",
+          "entity_id"
+        ],
+        "required": true
+      },
+      "initial": {
+        "types": [
+          "$type"
+        ],
+        "required": true,
+        "description": "Initial value required even for zero iterations."
+      }
+    },
+    "branchId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$",
+      "unique": true
+    },
+    "operand": {
+      "literal": {
+        "required": [
+          "kind",
+          "type",
+          "value"
+        ],
+        "types": [
+          "boolean",
+          "number",
+          "string",
+          "object",
+          "array",
+          "entity_id"
+        ]
+      },
+      "variable": {
+        "required": [
+          "kind",
+          "name"
+        ],
+        "scope": "same or ancestor snapshot"
+      },
+      "unset": {
+        "required": [
+          "kind"
+        ],
+        "description": "No active literal or reference; connecting and disconnecting never restores an old literal."
+      }
+    }
+  },
+  "scopeContract": {
+    "maxDepth": 8,
+    "conditionPorts": [
+      "condition"
+    ],
+    "bodyPorts": [
+      "body"
+    ],
+    "parallelPortPrefix": "branch:",
+    "continuationPort": "next",
+    "ancestorReads": "execution snapshot",
+    "siblingReads": false,
+    "bodyOutputsEscape": false,
+    "conditionTerminal": "condition_result",
+    "iterationTerminal": "loop_result",
+    "loopOutputs": {
+      "carry:<name>": "own body or condition descendants",
+      "export:<name>": "outside own body and condition; initialized for zero iterations"
+    },
+    "parallelJoin": "All branch executions complete before next. Branch values, responses and lastError are isolated and never implicitly merged."
+  }
+}

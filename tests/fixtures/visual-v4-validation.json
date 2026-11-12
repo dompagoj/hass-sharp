@@ -1,0 +1,3434 @@
+[
+  {
+    "name": "typed data edge supplies required unset input",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "boolean",
+            "output": "flag",
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        },
+        {
+          "id": "a:value:b:value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "unset input is precise",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "boolean",
+            "output": "flag",
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "required"
+  },
+  {
+    "name": "incompatible data type",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "output": "flag",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        },
+        {
+          "id": "a:value:b:value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "type"
+  },
+  {
+    "name": "one source per input",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "boolean",
+            "output": "flag",
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        },
+        {
+          "id": "a:value:b:value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "duplicate",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "one"
+  },
+  {
+    "name": "execution port cannot be data",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "boolean",
+            "output": "flag",
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        },
+        {
+          "id": "a:value:b:value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "next",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "a",
+    "contains": "port"
+  },
+  {
+    "name": "data properties cannot be execution",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "boolean",
+            "output": "flag",
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next",
+          "sourcePort": "value"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        },
+        {
+          "id": "a:value:b:value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "t",
+    "contains": "mix"
+  },
+  {
+    "name": "data cycles rejected",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "not",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "not",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": false
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        },
+        {
+          "id": "a:value:b:value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "b:value:a:value",
+          "kind": "data",
+          "source": "b",
+          "target": "a",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "cycle"
+  },
+  {
+    "name": "object array literals and json pointer",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "o",
+          "kind": "object",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "object",
+              "value": {
+                "a": [
+                  1
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": "f",
+          "kind": "get_field",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "object",
+              "value": {
+                "a": [
+                  1
+                ]
+              }
+            },
+            "pointer": "/a/0",
+            "type": "number"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "array",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "array",
+              "value": [
+                1,
+                "a"
+              ]
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:o",
+          "source": "t",
+          "target": "o",
+          "port": "next"
+        },
+        {
+          "id": "o:next:f",
+          "source": "o",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:next:a",
+          "source": "f",
+          "target": "a",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "malformed object literal",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "o",
+          "kind": "object",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "object",
+              "value": []
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:o",
+          "source": "t",
+          "target": "o",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "o",
+    "inputId": "value",
+    "contains": "literal"
+  },
+  {
+    "name": "json pointer validates escapes",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "get_field",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "object",
+              "value": {}
+            },
+            "pointer": "/a~2",
+            "type": "string"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "f",
+    "inputId": "pointer",
+    "contains": "pointer"
+  },
+  {
+    "name": "native platform declaration preserved",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "ha",
+            "trigger": {
+              "trigger": "mqtt",
+              "topic": "home/test"
+            }
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "native trigger declaration required",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "ha"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "trigger",
+    "contains": "required"
+  },
+  {
+    "name": "variable operands preserved",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "boolean",
+            "output": "flag",
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "variable",
+              "name": "flag"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "unknown variable rejected",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "variable",
+              "name": "missing"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:b",
+          "source": "t",
+          "target": "b",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "variable"
+  },
+  {
+    "name": "entity refinement rejects malformed ID",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "e",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "bad id"
+            },
+            "field": "state",
+            "type": "string"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:e",
+          "source": "t",
+          "target": "e",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "e",
+    "inputId": "entity",
+    "contains": "literal"
+  },
+  {
+    "name": "entity ID is a string subtype",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "e",
+          "kind": "set_value",
+          "config": {
+            "type": "entity_id",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.kitchen"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": ""
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:e",
+          "source": "t",
+          "target": "e",
+          "port": "next"
+        },
+        {
+          "id": "e:next:l",
+          "source": "e",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "e:value:l:value",
+          "kind": "data",
+          "source": "e",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "parallel stable branches and continuation",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              "left",
+              "right"
+            ]
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "joined"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:p",
+          "source": "t",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:left:a",
+          "source": "p",
+          "target": "a",
+          "port": "branch:left"
+        },
+        {
+          "id": "p:branch:right:b",
+          "source": "p",
+          "target": "b",
+          "port": "branch:right"
+        },
+        {
+          "id": "p:next:after",
+          "source": "p",
+          "target": "after",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "parallel siblings isolated",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              "left",
+              "right"
+            ]
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "joined"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:p",
+          "source": "t",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:left:a",
+          "source": "p",
+          "target": "a",
+          "port": "branch:left"
+        },
+        {
+          "id": "p:branch:right:b",
+          "source": "p",
+          "target": "b",
+          "port": "branch:right"
+        },
+        {
+          "id": "p:next:after",
+          "source": "p",
+          "target": "after",
+          "port": "next"
+        },
+        {
+          "id": "a:value:b:value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "scope"
+  },
+  {
+    "name": "body outputs cannot escape",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              "left",
+              "right"
+            ]
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "joined"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:p",
+          "source": "t",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:left:a",
+          "source": "p",
+          "target": "a",
+          "port": "branch:left"
+        },
+        {
+          "id": "p:branch:right:b",
+          "source": "p",
+          "target": "b",
+          "port": "branch:right"
+        },
+        {
+          "id": "p:next:after",
+          "source": "p",
+          "target": "after",
+          "port": "next"
+        },
+        {
+          "id": "a:value:after:value",
+          "kind": "data",
+          "source": "a",
+          "target": "after",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "after",
+    "inputId": "value",
+    "contains": "scope"
+  },
+  {
+    "name": "external execution cannot enter body",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              "left",
+              "right"
+            ]
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "joined"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:p",
+          "source": "t",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:left:a",
+          "source": "p",
+          "target": "a",
+          "port": "branch:left"
+        },
+        {
+          "id": "p:branch:right:b",
+          "source": "p",
+          "target": "b",
+          "port": "branch:right"
+        },
+        {
+          "id": "p:next:after",
+          "source": "p",
+          "target": "after",
+          "port": "next"
+        },
+        {
+          "id": "after:next:a",
+          "source": "after",
+          "target": "a",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "scope"
+  },
+  {
+    "name": "while condition Boolean terminal",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "while",
+          "config": {
+            "maxIterations": 1000
+          }
+        },
+        {
+          "id": "result",
+          "kind": "condition_result",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "body",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "body"
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "stop",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:condition:result",
+          "source": "w",
+          "target": "result",
+          "port": "condition"
+        },
+        {
+          "id": "w:body:body",
+          "source": "w",
+          "target": "body",
+          "port": "body"
+        },
+        {
+          "id": "w:next:after",
+          "source": "w",
+          "target": "after",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "condition paths must return Boolean",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "while",
+          "config": {
+            "maxIterations": 1000
+          }
+        },
+        {
+          "id": "result",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "wrong"
+            }
+          }
+        },
+        {
+          "id": "body",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "body"
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "stop",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:condition:result",
+          "source": "w",
+          "target": "result",
+          "port": "condition"
+        },
+        {
+          "id": "w:body:body",
+          "source": "w",
+          "target": "body",
+          "port": "body"
+        },
+        {
+          "id": "w:next:after",
+          "source": "w",
+          "target": "after",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "w",
+    "inputId": "condition",
+    "contains": "condition_result"
+  },
+  {
+    "name": "condition result rejects string",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "while",
+          "config": {
+            "maxIterations": 1000
+          }
+        },
+        {
+          "id": "result",
+          "kind": "condition_result",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "true"
+            }
+          }
+        },
+        {
+          "id": "body",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "body"
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "stop",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:condition:result",
+          "source": "w",
+          "target": "result",
+          "port": "condition"
+        },
+        {
+          "id": "w:body:body",
+          "source": "w",
+          "target": "body",
+          "port": "body"
+        },
+        {
+          "id": "w:next:after",
+          "source": "w",
+          "target": "after",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "result",
+    "inputId": "value",
+    "contains": "type"
+  },
+  {
+    "name": "loop limits only downward",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "while",
+          "config": {
+            "maxIterations": 1001
+          }
+        },
+        {
+          "id": "result",
+          "kind": "condition_result",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "body",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "body"
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "stop",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:condition:result",
+          "source": "w",
+          "target": "result",
+          "port": "condition"
+        },
+        {
+          "id": "w:body:body",
+          "source": "w",
+          "target": "body",
+          "port": "body"
+        },
+        {
+          "id": "w:next:after",
+          "source": "w",
+          "target": "after",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "w",
+    "inputId": "maxIterations",
+    "contains": "1000"
+  },
+  {
+    "name": "loop limits positive",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "while",
+          "config": {
+            "maxIterations": 0
+          }
+        },
+        {
+          "id": "result",
+          "kind": "condition_result",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "body",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "body"
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "stop",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:condition:result",
+          "source": "w",
+          "target": "result",
+          "port": "condition"
+        },
+        {
+          "id": "w:body:body",
+          "source": "w",
+          "target": "body",
+          "port": "body"
+        },
+        {
+          "id": "w:next:after",
+          "source": "w",
+          "target": "after",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "w",
+    "inputId": "maxIterations",
+    "contains": "1"
+  },
+  {
+    "name": "foreach array snapshot item index and carry",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "foreach",
+          "config": {
+            "items": {
+              "kind": "literal",
+              "type": "array",
+              "value": [
+                1,
+                2
+              ]
+            },
+            "itemType": "number",
+            "carry": [
+              {
+                "name": "sum",
+                "type": "number",
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              }
+            ],
+            "exports": [
+              {
+                "name": "total",
+                "type": "number",
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "r",
+          "kind": "loop_result",
+          "config": {
+            "values": {
+              "carry:sum": {
+                "kind": "literal",
+                "type": "number",
+                "value": 2
+              },
+              "export:total": {
+                "kind": "literal",
+                "type": "number",
+                "value": 2
+              }
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:body:r",
+          "source": "f",
+          "target": "r",
+          "port": "body"
+        },
+        {
+          "id": "f:next:after",
+          "source": "f",
+          "target": "after",
+          "port": "next"
+        },
+        {
+          "id": "f:export:total:after:value",
+          "kind": "data",
+          "source": "f",
+          "target": "after",
+          "sourcePort": "export:total",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "foreach item cannot escape body",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "foreach",
+          "config": {
+            "items": {
+              "kind": "literal",
+              "type": "array",
+              "value": [
+                1,
+                2
+              ]
+            },
+            "itemType": "number",
+            "carry": [
+              {
+                "name": "sum",
+                "type": "number",
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              }
+            ],
+            "exports": [
+              {
+                "name": "total",
+                "type": "number",
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "r",
+          "kind": "loop_result",
+          "config": {
+            "values": {
+              "carry:sum": {
+                "kind": "literal",
+                "type": "number",
+                "value": 2
+              },
+              "export:total": {
+                "kind": "literal",
+                "type": "number",
+                "value": 2
+              }
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:body:r",
+          "source": "f",
+          "target": "r",
+          "port": "body"
+        },
+        {
+          "id": "f:next:after",
+          "source": "f",
+          "target": "after",
+          "port": "next"
+        },
+        {
+          "id": "f:export:total:after:value",
+          "kind": "data",
+          "source": "f",
+          "target": "after",
+          "sourcePort": "item",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "after",
+    "inputId": "value",
+    "contains": "scope"
+  },
+  {
+    "name": "flow cycles rejected",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "a"
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "b"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        },
+        {
+          "id": "b:next:a",
+          "source": "b",
+          "target": "a",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "cycle"
+  },
+  {
+    "name": "data does not make execution reachable",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "boolean",
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:value:b:value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "contains": "reachable"
+  },
+  {
+    "name": "conversion permits unlike input",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "convert",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "12"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:c",
+          "source": "t",
+          "target": "c",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "v3 graph format is rejected",
+    "graph": {
+      "version": 3,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "contains": "version"
+  },
+  {
+    "name": "nesting bounded at eight",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r0",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "r1",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "r2",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "r3",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "r4",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "r5",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "r6",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "r7",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "r8",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "end",
+          "kind": "stop",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r0",
+          "source": "t",
+          "target": "r0",
+          "port": "next"
+        },
+        {
+          "id": "r0:body:r1",
+          "source": "r0",
+          "target": "r1",
+          "port": "body"
+        },
+        {
+          "id": "r1:body:r2",
+          "source": "r1",
+          "target": "r2",
+          "port": "body"
+        },
+        {
+          "id": "r2:body:r3",
+          "source": "r2",
+          "target": "r3",
+          "port": "body"
+        },
+        {
+          "id": "r3:body:r4",
+          "source": "r3",
+          "target": "r4",
+          "port": "body"
+        },
+        {
+          "id": "r4:body:r5",
+          "source": "r4",
+          "target": "r5",
+          "port": "body"
+        },
+        {
+          "id": "r5:body:r6",
+          "source": "r5",
+          "target": "r6",
+          "port": "body"
+        },
+        {
+          "id": "r6:body:r7",
+          "source": "r6",
+          "target": "r7",
+          "port": "body"
+        },
+        {
+          "id": "r7:body:r8",
+          "source": "r7",
+          "target": "r8",
+          "port": "body"
+        },
+        {
+          "id": "r8:body:end",
+          "source": "r8",
+          "target": "end",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "8"
+  },
+  {
+    "name": "required missing literal must not use palette default",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:b",
+          "source": "t",
+          "target": "b",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "required"
+  },
+  {
+    "name": "null loop declaration rejects without crashing",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              null
+            ]
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "r",
+    "inputId": "carry",
+    "contains": "declaration"
+  },
+  {
+    "name": "missing export initial rejected for zero iterations",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            },
+            "exports": [
+              {
+                "name": "n",
+                "type": "number"
+              }
+            ]
+          }
+        },
+        {
+          "id": "b",
+          "kind": "loop_result",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:body:b",
+          "source": "r",
+          "target": "b",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "r",
+    "inputId": "exports.n.initial",
+    "contains": "required"
+  },
+  {
+    "name": "object constructor typed fields and array elements",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "o",
+          "kind": "object_create",
+          "config": {
+            "fields": {
+              "on": {
+                "kind": "literal",
+                "type": "boolean",
+                "value": true
+              }
+            }
+          }
+        },
+        {
+          "id": "a",
+          "kind": "array_create",
+          "config": {
+            "items": [
+              {
+                "kind": "literal",
+                "type": "object",
+                "value": {
+                  "x": 1
+                }
+              },
+              {
+                "kind": "literal",
+                "type": "number",
+                "value": 2
+              }
+            ]
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:o",
+          "source": "t",
+          "target": "o",
+          "port": "next"
+        },
+        {
+          "id": "o:next:a",
+          "source": "o",
+          "target": "a",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "constructor unset dynamic input has precise port",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "o",
+          "kind": "object_create",
+          "config": {
+            "fields": {
+              "on": {
+                "kind": "unset"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:o",
+          "source": "t",
+          "target": "o",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "o",
+    "inputId": "field:on",
+    "contains": "required"
+  },
+  {
+    "name": "ancestor snapshot can feed branch",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "outer",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 5
+            }
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              "left",
+              "right"
+            ]
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "joined"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:outer",
+          "source": "t",
+          "target": "outer",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:left:a",
+          "source": "p",
+          "target": "a",
+          "port": "branch:left"
+        },
+        {
+          "id": "p:branch:right:b",
+          "source": "p",
+          "target": "b",
+          "port": "branch:right"
+        },
+        {
+          "id": "p:next:after",
+          "source": "p",
+          "target": "after",
+          "port": "next"
+        },
+        {
+          "id": "outer:next:p",
+          "source": "outer",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "outer:value:b:value",
+          "kind": "data",
+          "source": "outer",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "condition missing branch cannot return implicitly",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "w",
+          "kind": "while",
+          "config": {
+            "maxIterations": 1000
+          }
+        },
+        {
+          "id": "result",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "body",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "body"
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "stop",
+          "config": {}
+        },
+        {
+          "id": "yes",
+          "kind": "condition_result",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:w",
+          "source": "t",
+          "target": "w",
+          "port": "next"
+        },
+        {
+          "id": "w:condition:result",
+          "source": "w",
+          "target": "result",
+          "port": "condition"
+        },
+        {
+          "id": "w:body:body",
+          "source": "w",
+          "target": "body",
+          "port": "body"
+        },
+        {
+          "id": "w:next:after",
+          "source": "w",
+          "target": "after",
+          "port": "next"
+        },
+        {
+          "id": "result:true:yes",
+          "source": "result",
+          "target": "yes",
+          "port": "true"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "w",
+    "inputId": "condition",
+    "contains": "condition_result"
+  },
+  {
+    "name": "loop carry output readable inside body",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            },
+            "carry": [
+              {
+                "name": "sum",
+                "type": "number",
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "b",
+          "kind": "loop_result",
+          "config": {
+            "values": {
+              "carry:sum": {
+                "kind": "unset"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:body:b",
+          "source": "r",
+          "target": "b",
+          "port": "body"
+        },
+        {
+          "id": "r:carry:sum:b:carry:sum",
+          "kind": "data",
+          "source": "r",
+          "target": "b",
+          "sourcePort": "carry:sum",
+          "targetPort": "carry:sum"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "variables cannot bypass branch isolation",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              "left",
+              "right"
+            ]
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "output": "inside"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "variable",
+              "name": "inside"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:p",
+          "source": "t",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:left:a",
+          "source": "p",
+          "target": "a",
+          "port": "branch:left"
+        },
+        {
+          "id": "p:branch:right:b",
+          "source": "p",
+          "target": "b",
+          "port": "branch:right"
+        },
+        {
+          "id": "p:next:after",
+          "source": "p",
+          "target": "after",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "after",
+    "inputId": "value",
+    "contains": "variable"
+  },
+  {
+    "name": "multiple consumers per output",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "boolean",
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "c",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        },
+        {
+          "id": "b:true:c",
+          "source": "b",
+          "target": "c",
+          "port": "true"
+        },
+        {
+          "id": "a:value:b:value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "a:value:c:value",
+          "kind": "data",
+          "source": "a",
+          "target": "c",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "parallel sibling variables never resolve",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "boolean",
+            "output": "branch_value",
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "variable",
+              "name": "branch_value"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:p",
+          "source": "t",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:a:a",
+          "source": "p",
+          "target": "a",
+          "port": "branch:a"
+        },
+        {
+          "id": "p:branch:b:b",
+          "source": "p",
+          "target": "b",
+          "port": "branch:b"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "variable"
+  },
+  {
+    "name": "constructor wire replaces only matching field",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "o",
+          "kind": "object_create",
+          "config": {
+            "fields": {
+              "n": {
+                "kind": "unset"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:o",
+          "source": "a",
+          "target": "o",
+          "port": "next"
+        },
+        {
+          "id": "a:value:o:field:n",
+          "kind": "data",
+          "source": "a",
+          "target": "o",
+          "sourcePort": "value",
+          "targetPort": "field:n"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "invalid carry entries do not crash output resolution",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              null
+            ]
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:body:b",
+          "source": "r",
+          "target": "b",
+          "port": "body"
+        },
+        {
+          "id": "r:carry:n:b:value",
+          "kind": "data",
+          "source": "r",
+          "target": "b",
+          "sourcePort": "carry:n",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "r",
+    "inputId": "carry",
+    "contains": "declaration"
+  },
+  {
+    "name": "startup trigger is supported",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "startup"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "once trigger is supported",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "once",
+            "at": "2027-01-01T12:00:00Z"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": true
+  },
+  {
+    "name": "Warn log level is supported",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "level": "Warn",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "message"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "required config type cannot use palette default",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "set_value",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:s",
+          "source": "t",
+          "target": "s",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "type",
+    "contains": "required"
+  },
+  {
+    "name": "repeat requires body edge",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "r",
+    "inputId": "body",
+    "contains": "required"
+  },
+  {
+    "name": "unknown prototype-named node kind rejected",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "x",
+          "kind": "constructor",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:x",
+          "source": "t",
+          "target": "x",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "x",
+    "contains": "Unknown"
+  },
+  {
+    "name": "unknown prototype-named data port rejected",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "boolean",
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        },
+        {
+          "id": "a:constructor:b:value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "constructor",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "a",
+    "contains": "port"
+  },
+  {
+    "name": "malformed execution port rejected",
+    "graph": {
+      "version": 4,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              "left",
+              "right"
+            ]
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "joined"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:p",
+          "source": "t",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:left:a",
+          "source": "p",
+          "target": "a",
+          "port": 5
+        },
+        {
+          "id": "p:branch:right:b",
+          "source": "p",
+          "target": "b",
+          "port": "branch:right"
+        },
+        {
+          "id": "p:next:after",
+          "source": "p",
+          "target": "after",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "p",
+    "contains": "port"
+  }
+]

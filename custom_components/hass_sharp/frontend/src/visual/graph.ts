@@ -172,3 +172,6 @@ export function createGraphHistory(initial: VisualGraph) {
     },
   }
 }
+
+// Shared v4 contract types for the v4 editor integration.
+export type { GraphV4, V4Node, V4Edge, V4Operand, DataType } from './graphV4'

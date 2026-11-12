@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace HassSharp;
 
-public sealed record VisualDiagnostic(string? NodeId, string Message, int Severity = 3, int? StartLine = null, int? StartColumn = null);
+public sealed record VisualDiagnostic(string? NodeId, string Message, int Severity = 3, int? StartLine = null, int? StartColumn = null, string? InputId = null, string? PortId = null);
 public sealed record VisualSourceMap(string NodeId, int StartLine, int EndLine);
 public sealed record VisualPreview(bool Valid, string Source, List<VisualSourceMap> SourceMap, List<VisualDiagnostic> Diagnostics);
 

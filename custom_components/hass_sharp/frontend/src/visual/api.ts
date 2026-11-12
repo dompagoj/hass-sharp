@@ -3,6 +3,8 @@ import type { VisualGraph } from './graph'
 
 export interface SourceRange { nodeId: string; startLine: number; endLine: number }
 export interface VisualDiagnostic {
+  inputId?: string | null
+  portId?: string | null
   nodeId: string | null
   message: string
   severity: number

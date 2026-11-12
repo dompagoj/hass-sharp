@@ -91,6 +91,7 @@ await HistoryTests.Run();
 await ScheduleTests.Run();
 await VisualTests.Run();
 await VisualValuesTests.Run();
+await VisualGraphV4Tests.Run();
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
 public class Probe : Automation
 {
