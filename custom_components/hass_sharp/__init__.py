@@ -98,7 +98,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
         True,
     )
 
-    frontend.add_extra_js_url(hass, "/hass-sharp-static/hass-sharp.js")
+    # HA and browsers cache this fixed URL across local frontend builds.
+    frontend_asset = os.path.join(ROOT_DIR, "www", "hass-sharp.js")
+    frontend.add_extra_js_url(
+        hass, f"/hass-sharp-static/hass-sharp.js?v={os.stat(frontend_asset).st_mtime_ns}"
+    )
     hass_sharp = await hass.async_add_executor_job(HassSharpManager, hass.config.path(""))
     utils.set_hass_sharp_manager(hass, hass_sharp)
 
