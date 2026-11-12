@@ -38,7 +38,7 @@ runs. Its `window.runFixture` lets browser checks set `historyError`,
 Monaco worker bootstrap regression. Open a code automation, type, and switch
 Source/Run history: the real Monaco model must survive, with no worker error.
 
-The preview build uses `/hass-sharp-static/visual-api-check-baby/`.
+The preview build uses `/hass-sharp-static/visual-v2-check-baby/`.
 For a narrow code-editor iframe, open its `tests/visual-check.html` with
 `?view=code&width=390&theme=dark`. See `../docs/run-history-ui.md` for evidence and
 remaining live-HA verification. Copy preview output only to a unique temporary
@@ -52,3 +52,11 @@ Use `VisualAutomationView.test.tsx` for editor/save/run behavior and
 `visual-session.test.ts` for debounce, in-flight results and revision handling.
 See `../docs/visual-api-integration.md` for browser evidence and the live sign-in
 blocker. Fixture results do not verify backend compilation or persistence.
+
+
+Graph v2 authoring is covered by `VisualAutomationView.test.tsx` (multiple
+triggers, C# sections, saved action dispatch, v1 upgrade and source mappings) and
+`visual-graph.test.ts` (UTF-8 action IDs and duplicate-label disambiguation).
+The fixture's `visualFixture.controls.preview` accepts an explicit backend preview
+response for inspecting real source and maps without authenticating to HA. This
+remains a fixture: it does not execute a real automation.

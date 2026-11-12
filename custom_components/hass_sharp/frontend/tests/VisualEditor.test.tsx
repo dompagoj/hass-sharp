@@ -71,7 +71,7 @@ it('uses keyboard history only outside text controls, and keeps JSON available',
   host.querySelector('[aria-label="Visual automation editor"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))
   expect(button(host, 'Redo').disabled).toBe(false)
   button(host, 'Graph JSON').click()
-  expect(host.querySelector('pre[aria-label="Graph JSON"]')?.textContent).toContain('"version": 1')
+  expect(host.querySelector('pre[aria-label="Graph JSON"]')?.textContent).toContain('"version": 2')
 })
 it('commits a completed mouse drag into graph JSON and restores it through undo', async () => {
   const host = root()

@@ -8,12 +8,28 @@ export interface GraphNode {
   label: string
   position: { x: number; y: number }
   size: { width: number; height: number }
-  config: Record<string, string>
+  config: Record<string, string | boolean>
 }
 export interface GraphEdge { id: string; source: string; target: string }
-export interface VisualGraph { version: 1; name: string; nodes: GraphNode[]; edges: GraphEdge[] }
+export interface VisualGraph { version: 1 | 2; name: string; nodes: GraphNode[]; edges: GraphEdge[]; imports?: string; members?: string }
 
-export const palette: { kind: NodeKind; label: string; description: string; config: Record<string, string> }[] = [
+/** The backend uses uppercase hexadecimal UTF-8, not UTF-16 code units. */
+export const triggerMethod = (id: string) => 'Run_' + Array.from(new TextEncoder().encode(id), byte => byte.toString(16).padStart(2, '0').toUpperCase()).join('')
+export function visualRunClasses(graph: VisualGraph) {
+  return [{ name: 'VisualAutomation', methods: graph.version === 1 ? ['Run'] : graph.nodes
+    .filter(node => node.kind === 'trigger' && node.config.manual !== false)
+    .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0).map(node => triggerMethod(node.id)) }]
+}
+export function visualActionLabels(graph: VisualGraph): Record<string, string> {
+  const triggers = graph.nodes.filter(node => node.kind === 'trigger')
+  return Object.fromEntries(triggers.map(node => {
+    const label = node.label || node.id
+    const duplicate = triggers.some(other => other.id !== node.id && (other.label || other.id) === label)
+    return [`VisualAutomation::${graph.version === 1 ? 'Run' : triggerMethod(node.id)}`, duplicate ? `${label} · ${node.id}` : label]
+  }))
+}
+
+export const palette: { kind: NodeKind; label: string; description: string; config: Record<string, string | boolean> }[] = [
   { kind: 'trigger', label: 'Entity changes', description: 'Start with a state change', config: { entity: 'binary_sensor.motion' } },
   { kind: 'condition', label: 'State condition', description: 'Check an entity’s state', config: { entity: 'binary_sensor.motion', state: 'on' } },
   { kind: 'service', label: 'Call service', description: 'Ask Home Assistant to act', config: { service: 'light.turn_on', entity: 'light.hall' } },
@@ -27,7 +43,7 @@ export function addNode(graph: VisualGraph, kind: NodeKind, id: string = crypto.
   return { ...graph, nodes: [...graph.nodes, { id, kind, label: item.label, config: { ...item.config }, position: { x: 60 + offset, y: 240 + offset }, size: { width: 220, height: 112 } }] }
 }
 export function createGraph(name: string): VisualGraph {
-  let graph: VisualGraph = { version: 1, name, nodes: [], edges: [] }
+  let graph: VisualGraph = { version: 2, name, nodes: [], edges: [] }
   for (const [i, kind] of (['trigger', 'condition', 'service'] as const).entries()) {
     const id = `${kind}-1`
     graph = addNode(graph, kind, id)

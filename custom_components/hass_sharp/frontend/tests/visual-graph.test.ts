@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createRoot } from 'solid-js'
-import { addNode, connectNodes, createGraph, createGraphHistory, removeNode, updateNode, serializeGraph } from '../src/visual/graph'
+import { addNode, connectNodes, createGraph, createGraphHistory, removeNode, updateNode, serializeGraph, visualRunClasses, visualActionLabels } from '../src/visual/graph'
 
 describe('visual draft graph', () => {
   it('updates position/config without mutating an earlier history snapshot', () => {
@@ -13,7 +13,7 @@ describe('visual draft graph', () => {
   it('keeps JSON versioned and excludes canvas/library state', () => {
     const graph = updateNode(createGraph('Heating'), 'trigger-1', { size: { width: 300, height: 180 } })
     const value = JSON.parse(serializeGraph(graph))
-    expect(value).toMatchObject({ version: 1, name: 'Heating', nodes: [{ id: 'trigger-1', size: { width: 300, height: 180 } }, {}, {}] })
+    expect(value).toMatchObject({ version: 2, name: 'Heating', nodes: [{ id: 'trigger-1', size: { width: 300, height: 180 } }, {}, {}] })
     expect(value.nodes[0]).not.toHaveProperty('selected')
     expect(value).not.toHaveProperty('generatedSource')
   })
@@ -53,3 +53,26 @@ it('undoes and redoes entire edits, clears redo on a new edit, and ignores no-op
   expect(history.canRedo()).toBe(false)
   dispose()
 }))
+
+
+it('derives stable v2 actions from UTF-8 trigger IDs and omits manual-disabled actions', () => {
+  let graph = addNode(createGraph('Two triggers'), 'trigger', 'č🔥')
+  graph = updateNode(graph, 'trigger-1', { label: 'Renamed', config: { type: 'startup', manual: false } })
+  expect(visualRunClasses(graph)).toEqual([{ name: 'VisualAutomation', methods: ['Run_C48DF09F94A5'] }])
+  graph = updateNode(graph, 'trigger-1', { config: { type: 'manual' } })
+  expect(visualRunClasses({ ...graph, nodes: [...graph.nodes].reverse() })).toEqual([
+    { name: 'VisualAutomation', methods: ['Run_747269676765722D31', 'Run_C48DF09F94A5'] },
+  ])
+  expect(visualRunClasses({ ...graph, version: 1 })).toEqual([{ name: 'VisualAutomation', methods: ['Run'] }])
+})
+
+
+it('distinguishes same-label triggers in the manual action chooser', () => {
+  const graph = addNode(createGraph('Multiple'), 'trigger', 'evening')
+  expect(visualActionLabels(graph)).toEqual({
+    'VisualAutomation::Run_747269676765722D31': 'Entity changes · trigger-1',
+    'VisualAutomation::Run_6576656E696E67': 'Entity changes · evening',
+  })
+  const renamed = updateNode(graph, 'evening', { label: 'Evening' })
+  expect(visualActionLabels(renamed)['VisualAutomation::Run_6576656E696E67']).toBe('Evening')
+})

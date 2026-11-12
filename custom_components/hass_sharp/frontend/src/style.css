@@ -289,3 +289,11 @@ ha-panel-hass-sharp-view > #app { height: 100%; }
 .hs-source-number:focus-visible { outline: 2px solid var(--primary-color); }
 .hs-app .hs-visual-actions { flex-wrap: wrap; flex-shrink: 1; justify-content: flex-start; }
 .hs-app .hs-visual-heading > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+
+/* Graph-level C# uses the same native text editing as custom nodes. */
+.hs-app .hs-graph-sections { padding: 20px; margin-top: 16px; border: 1px solid var(--hs-line); border-radius: 12px; }
+.hs-app .hs-graph-section-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.hs-app .hs-graph-section-fields > * { min-width: 0; }
+.hs-app .hs-code-input { font-family: monospace; resize: vertical; tab-size: 4; }
+.hs-app .hs-code-section--selected { outline: 2px solid var(--hs-accent); outline-offset: 4px; }
+@media (max-width: 800px) { .hs-app .hs-graph-section-fields { grid-template-columns: 1fr; } }

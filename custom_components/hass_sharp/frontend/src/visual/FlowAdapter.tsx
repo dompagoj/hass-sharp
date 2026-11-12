@@ -42,7 +42,7 @@ export const FlowAdapter: Component<Props> = props => {
   })
   createEffect(on(() => [props.graph, props.selectedId, props.diagnostics] as const, ([graph, selectedId]) => untrack(() => {
     setNodes(reconcile(graph.nodes.map((node, index) => ({
-      id: node.id, type: 'automation', data: { label: node.label ?? node.kind, kind: node.kind, summary: Object.values(node.config)[0] ?? '', errors: props.diagnostics?.filter(d => d.nodeId === node.id && d.severity === 3).length ?? 0 },
+      id: node.id, type: 'automation', data: { label: node.label ?? node.kind, kind: node.kind, summary: String(Object.values(node.config)[0] ?? ''), errors: props.diagnostics?.filter(d => d.nodeId === node.id && d.severity === 3).length ?? 0 },
       position: node.position ? { ...node.position } : { x: 60 + index * 300, y: 100 }, width: node.size?.width ?? 220, height: node.size?.height ?? 112,
       ariaLabel: `${node.label ?? node.kind}, ${node.kind}`, selected: node.id === selectedId,
     })), { key: 'id' }))

@@ -1,13 +1,14 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
 import { Button, Field, Status } from '../components/Controls'
 import { FlowAdapter } from './FlowAdapter'
+import { TriggerConfig } from './TriggerConfig'
 import { useHass } from '../context'
 import { useQueryClient } from '@tanstack/solid-query'
 import { AutomationRuns } from '../components/AutomationRuns'
 import { Dialog } from '../components/Dialog'
 import { createVisualSession } from './session'
 import type { VisualDiagnostic, VisualDocument } from './api'
-import { addNode, canConnect, connectNodes, createGraph, palette, removeNode, serializeGraph, updateNode } from './graph'
+import { addNode, canConnect, connectNodes, createGraph, palette, removeNode, serializeGraph, updateNode, visualRunClasses, visualActionLabels } from './graph'
 
 const configLabels: Record<string, string> = { entity: 'Entity ID', state: 'Required state', service: 'Service', seconds: 'Seconds', code: 'Custom C# section' }
 
@@ -32,7 +33,7 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
   const reload = () => { if (session.dirty()) setReloadDialog(true); else if (props.documentId) void session.load(props.documentId) }
   const locate = (diagnostic: VisualDiagnostic) => {
     const nodeId = diagnostic.nodeId ?? session.preview()?.sourceMap.find(range => diagnostic.startLine != null && diagnostic.startLine >= range.startLine && diagnostic.startLine <= range.endLine)?.nodeId
-    if (nodeId) choose(nodeId)
+    if (nodeId) { choose(nodeId); focusSection(nodeId) }
     setPreview('code')
     setSourceLine(diagnostic.startLine ?? session.preview()?.sourceMap.find(range => range.nodeId === nodeId)?.startLine)
     queueMicrotask(() => editor.querySelector<HTMLElement>(`[data-source-line="${sourceLine()}"]`)?.scrollIntoView?.({ block: 'nearest' }))
@@ -47,7 +48,10 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
   const beforeUnload = (event: BeforeUnloadEvent) => { if (edited()) { event.preventDefault(); event.returnValue = '' } }
   onMount(() => window.addEventListener('beforeunload', beforeUnload))
   onCleanup(() => window.removeEventListener('beforeunload', beforeUnload))
-  const choose = (id: string) => { setSelectedId(id); setTarget(''); setSourceLine(session.preview()?.sourceMap.find(range => range.nodeId === id)?.startLine) }
+  const choose = (id: string) => { setSelectedId(id); setTarget(''); setSourceLine(undefined) }
+  const focusSection = (id: string) => {
+    if (id === '$imports' || id === '$members') queueMicrotask(() => editor.querySelector<HTMLTextAreaElement>(`[data-section-id="${id}"]`)?.focus())
+  }
   const keyboard = (event: KeyboardEvent) => {
     event.stopPropagation()
     // Preserve native text undo and do not leak editor shortcuts to Home Assistant.
@@ -77,7 +81,8 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
         <Show when={props.documentId}><Button disabled={session.loading() || session.saving()} onClick={reload}>Reload saved graph</Button></Show>
         <Button variant="primary" busy={session.saving()} disabled={!session.canSave()} onClick={() => void save()}>Save graph</Button></div>
     </header>
-    <p class="hs-visual-notice" role="note">One trigger, sequential steps and condition branches. No graph loops, parallel branches or weekly/monthly/cron schedules. Saving activates the automation and may execute startup code.</p>
+    <p class="hs-visual-notice" role="note">{graph().version === 2 ? 'Multiple independent triggers can share downstream steps.' : 'Graph v1 supports one trigger.'} Graph edges cannot loop or fork in parallel. Use custom C# and helpers for loops, concurrent work and custom schedules. Saving activates the automation and may execute startup code.</p>
+    <Show when={graph().version === 1}><div class="hs-visual-notice"><p>Upgrade to v2 to add triggers and C# imports or members. Trigger actions change from Run to individual actions after saving.</p><Button disabled={session.loading() || session.saving()} onClick={() => commit({ ...graph(), version: 2 })}>Upgrade to graph v2</Button></div></Show>
     <Field label="Automation name" aria-label="Automation name" value={graph().name} disabled={session.loading() || session.saving()} onInput={event => commit({ ...graph(), name: event.currentTarget.value })} />
     <Show when={session.loading()}><p role="status">Loading saved graph…</p></Show>
     <Show when={session.error()}><div class="hs-notice hs-notice--danger" role="alert">{session.error()}
@@ -92,7 +97,7 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
     </div>
     <div class="hs-visual-workspace">
       <aside class="hs-palette" aria-label="Node palette"><h2>Add a step</h2><p class="hs-muted">Choose a building block</p>
-        <For each={palette}>{item => <Button class="hs-palette-item" aria-label={`Add ${item.label}`} onClick={() => {
+        <For each={palette}>{item => <Button class="hs-palette-item" disabled={item.kind === 'trigger' && graph().version === 1 && graph().nodes.some(node => node.kind === 'trigger')} aria-label={`Add ${item.label}`} onClick={() => {
           const next = addNode(graph(), item.kind); commit(next); choose(next.nodes.at(-1)!.id)
         }}><span class={`hs-node-dot hs-node-dot--${item.kind}`} /><span><strong>{item.label}</strong><small>{item.description}</small></span><span aria-hidden="true">+</span></Button>}</For>
       </aside>
@@ -101,8 +106,10 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
         <Show when={selected()} fallback={<p class="hs-muted">Select a step on the canvas to edit it.</p>}>{node => <div class="hs-stack">
           <Status>{node().kind}</Status>
           <Field label="Label" aria-label="Node label" value={node().label ?? node().kind} onInput={event => commit(updateNode(graph(), node().id, { label: event.currentTarget.value }))} />
-          <For each={Object.keys(node().config)}>{key => key === 'code' ? <div class="hs-field"><label for="hs-custom-code">Custom C# section</label><textarea id="hs-custom-code" class="hs-input" rows="6" value={node().config[key]} onInput={event => commit(updateNode(graph(), node().id, { config: { ...node().config, [key]: event.currentTarget.value } }))} /></div>
-            : <Field label={configLabels[key] ?? key} aria-label={configLabels[key] ?? key} value={node().config[key]} onInput={event => commit(updateNode(graph(), node().id, { config: { ...node().config, [key]: event.currentTarget.value } }))} />}</For>
+          <Show when={node().kind === 'trigger'} fallback={<For each={Object.keys(node().config)}>{key => key === 'code' ? <div class="hs-field"><label for="hs-custom-code">Custom C# section</label><textarea id="hs-custom-code" aria-label="Custom C# section" class="hs-input hs-code-input" rows="6" value={String(node().config[key])} onInput={event => commit(updateNode(graph(), node().id, { config: { ...node().config, [key]: event.currentTarget.value } }))} /></div>
+            : <Field label={configLabels[key] ?? key} aria-label={configLabels[key] ?? key} value={String(node().config[key])} onInput={event => commit(updateNode(graph(), node().id, { config: { ...node().config, [key]: event.currentTarget.value } }))} />}</For>}>
+            <TriggerConfig node={node()} version={graph().version} onChange={config => commit(updateNode(graph(), node().id, { config }))} />
+          </Show>
           <div class="hs-size-fields"><For each={['width', 'height'] as const}>{dimension => <Field
             label={dimension === 'width' ? 'Width' : 'Height'} aria-label={dimension === 'width' ? 'Width' : 'Height'}
             type="number" min={dimension === 'width' ? 180 : 100} value={node().size?.[dimension] ?? (dimension === 'width' ? 220 : 112)}
@@ -119,6 +126,16 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
         </div>}</Show>
       </aside>
     </div>
+    <Show when={graph().version === 2}><section class="hs-graph-sections" aria-label="Graph C# sections">
+      <h2>C# imports and members</h2>
+      <p class="hs-muted">Imports appear before the generated class. Members are fields, properties and helper methods inside it. Fields are shared across invocations; await child work and pass CancellationToken to delays and I/O. The generated class, Configure and action signatures are reserved.</p>
+      <div class="hs-graph-section-fields"><For each={['imports', 'members'] as const}>{key => <div class="hs-field" classList={{ 'hs-code-section--selected': selectedId() === `$${key}` }}>
+        <label for={`hs-graph-${key}`}>{key === 'imports' ? 'C# imports' : 'C# members'}</label>
+        <textarea id={`hs-graph-${key}`} data-section-id={`$${key}`} aria-label={key === 'imports' ? 'C# imports' : 'C# members'} aria-invalid={session.preview()?.diagnostics.some(d => d.nodeId === `$${key}` && d.severity === 3) || undefined}
+          class="hs-input hs-code-input" rows={key === 'imports' ? 3 : 6} value={graph()[key] ?? ''}
+          onInput={event => commit({ ...graph(), [key]: event.currentTarget.value })} />
+      </div>}</For></div>
+    </section></Show>
     <div class="hs-visual-bottom">
       <section class="hs-connections" aria-label="Connections"><h2>Connections <span class="hs-muted">({graph().edges.length})</span></h2>
         <p class="hs-muted">Use the inspector to connect steps with a keyboard or touch.</p>
@@ -140,12 +157,12 @@ export function VisualEditor(props: { name: string; documentId?: string; onDirty
           const range = () => result().sourceMap.find(range => index() + 1 >= range.startLine && index() + 1 <= range.endLine)
           const selected = () => sourceLine() === index() + 1 || (sourceLine() == null && range()?.nodeId === selectedId())
           return <span class="hs-source-line" data-source-line={index() + 1} aria-current={selected() ? 'true' : undefined}>
-            <button class="hs-source-number" aria-label={`Select source line ${index() + 1}`} disabled={!range()} onClick={() => { if (range()) choose(range()!.nodeId); setSourceLine(index() + 1) }}>{index() + 1}</button>{line}{'\n'}</span>
+            <button class="hs-source-number" aria-label={`Select source line ${index() + 1}`} disabled={!range()} onClick={() => { if (range()) { choose(range()!.nodeId); focusSection(range()!.nodeId) } setSourceLine(index() + 1) }}>{index() + 1}</button>{line}{'\n'}</span>
         }}</For></code></pre>}</Show>}><pre tabindex="0" aria-label="Graph JSON"><code>{serializeGraph(graph())}</code></pre></Show>
       </section>
     </div>
     </div>
-    <Show when={session.document()}>{doc => <AutomationRuns automationId={doc().automationId} classes={[{ name: 'VisualAutomation', methods: ['Run'] }]} />}</Show>
+    <Show when={session.document()}>{doc => <AutomationRuns automationId={doc().automationId} classes={visualRunClasses(doc().graph)} actionLabels={visualActionLabels(doc().graph)} />}</Show>
     <Dialog open={reloadDialog()} title="Discard local changes?" width="small" onClose={() => setReloadDialog(false)} footer={<>
       <Button onClick={() => setReloadDialog(false)}>Keep editing</Button><Button variant="danger" onClick={() => { setReloadDialog(false); if (props.documentId) void session.load(props.documentId) }}>Reload and discard</Button>
     </>}><p>Reloading replaces your local graph with the saved revision. Export your graph first to keep a copy.</p></Dialog>

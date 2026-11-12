@@ -16,15 +16,15 @@ const Timestamp = (props: { value: string | null }) => <Show when={props.value} 
   <time dateTime={value()} title={value()}>{new Date(value()).toLocaleString()}</time>
 }</Show>
 
-export const AutomationRuns = (props: { automationId: string; classes: UserScriptClassDto[] }) => {
+export const AutomationRuns = (props: { automationId: string; classes: UserScriptClassDto[]; actionLabels?: Record<string, string> }) => {
   const hass = useHass()
   // Identity, rather than filename, owns pagination and dispatch feedback.
   return <Show when={hass.user?.is_admin} fallback={<p class="hs-notice">Administrator access is required to run automations and view history.</p>}>
-    <Show when={props.automationId} keyed>{id => <RunPanel automationId={id} classes={props.classes} />}</Show>
+    <Show when={props.automationId} keyed>{id => <RunPanel automationId={id} classes={props.classes} actionLabels={props.actionLabels} />}</Show>
   </Show>
 }
 
-const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[] }) => {
+const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[]; actionLabels?: Record<string, string> }) => {
   const hass = useHass()
   const selectId = createUniqueId()
   const [offset, setOffset] = createSignal(0)
@@ -66,10 +66,10 @@ const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[] }
   return <div class="hs-runs">
     <section class="hs-run-controls" aria-label="Run automation">
       <div><h2>Run now</h2><p class="hs-muted">Runs the last saved version. Unsaved editor changes are not included.</p></div>
-      <Show when={actions().length} fallback={<p class="hs-muted">No declared actions. Add an AutomationAction in Configure and save to run it.</p>}>
+      <Show when={actions().length} fallback={<p class="hs-muted">No actions available for manual runs in the saved automation.</p>}>
         <div class="hs-run-action"><label for={selectId}>Action</label>
           <select id={selectId} class="hs-input" value={selected()?.key} disabled={dispatch.isPending} onChange={event => setSelection(event.currentTarget.value)}>
-            <For each={actions()}>{action => <option value={action.key}>{action.className} · {action.method}</option>}</For>
+            <For each={actions()}>{action => <option value={action.key}>{props.actionLabels?.[action.key] ?? `${action.className} · ${action.method}`}</option>}</For>
           </select>
           <Button variant="primary" busy={dispatch.isPending} onClick={runNow}>{dispatch.isPending ? 'Requesting…' : 'Run now'}</Button>
         </div>

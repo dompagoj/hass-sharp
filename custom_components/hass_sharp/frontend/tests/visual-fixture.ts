@@ -4,7 +4,7 @@ import type { VisualGraph } from '../src/visual/graph'
 export function visualFixture() {
   const documents = new Map<string, VisualDocument>()
   const calls: any[] = []
-  const controls = { conflict: false, active: true, previewError: false, invalid: false, deleteConflict: false }
+  const controls = { conflict: false, active: true, previewError: false, invalid: false, deleteConflict: false, preview: undefined as VisualPreview | undefined }
   const makePreview = (_graph: VisualGraph): VisualPreview => ({
     valid: !controls.invalid, source: 'class VisualAutomation\n{\n  // generated on server\n}',
     sourceMap: [{ nodeId: 'trigger-1', startLine: 1, endLine: 4 }],
@@ -19,7 +19,7 @@ export function visualFixture() {
     const fail = (code: string, detail: unknown) => ({ version: 1, ok: false, error: { code, detail } })
     if (req.operation === 'preview') {
       if (controls.previewError) throw new Error('Preview offline')
-      result = makePreview(req.graph)
+      result = controls.preview ?? makePreview(req.graph)
     } else if (req.operation === 'list') result = [...documents.values()]
     else if (req.operation === 'read') {
       if (!documents.has(req.id)) return fail('not_found', 'Document missing')

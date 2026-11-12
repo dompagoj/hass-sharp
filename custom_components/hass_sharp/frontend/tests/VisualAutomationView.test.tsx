@@ -53,7 +53,7 @@ it('saves server generated source, opens persisted identity and exposes run/hist
   await vi.waitFor(() => expect(root.textContent).toContain('No runs yet'))
   button(root, 'Run now').click()
   await vi.waitFor(() => expect(root.textContent).toContain('Request accepted'))
-  expect(fixture.calls).toContainEqual({ type: 'hass_sharp/run_now', automationId: `visual:${doc.id}`, className: 'VisualAutomation', method: 'Run' })
+  expect(fixture.calls).toContainEqual({ type: 'hass_sharp/run_now', automationId: `visual:${doc.id}`, className: 'VisualAutomation', method: 'Run_747269676765722D31' })
   root.querySelector<HTMLAnchorElement>('a')!.click(); await Promise.resolve()
   expect(root.textContent).toContain('Elsewhere')
 })
@@ -122,4 +122,124 @@ it('opens valid API graphs without optional canvas metadata and preserves their 
   button(root, 'Save graph').click()
   await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 5'))
   expect(fixture.documents.get('motion')?.graph.nodes[0]).toMatchObject({ id: 'trigger-1', config: { entity: 'binary_sensor.motion' } })
+})
+
+
+const control = (root: Element, label: string) => root.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[aria-label="${label}"]`)!
+function setControl(root: Element, label: string, value: string) {
+  const field = control(root, label)
+  expect(field, label).not.toBeNull()
+  field.value = value
+  field.dispatchEvent(new Event(field.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }))
+}
+function json(root: Element) {
+  button(root, 'Graph JSON').click()
+  return JSON.parse(root.querySelector('[aria-label="Graph JSON"]')!.textContent!)
+}
+
+it('authors two v2 triggers and C# sections, saves/reloads them, then dispatches either saved action', async () => {
+  const { root, fixture } = setup()
+  setControl(root, 'C# imports', 'using System.Globalization;')
+  setControl(root, 'C# members', 'private string Prefix() => "Heating";')
+  setControl(root, 'Trigger type', 'daily')
+  setControl(root, 'Daily time', '07:30')
+  setControl(root, 'Time zone', 'Europe/Zagreb')
+  setControl(root, 'Concurrency mode', 'Restart')
+  button(root, 'Add Entity changes').click()
+  setControl(root, 'Node label', 'Manual evening')
+  setControl(root, 'Trigger type', 'manual')
+  setControl(root, 'Connect to', 'service-1')
+  button(root, 'Connect').click()
+  const draft = json(root)
+  const second = draft.nodes.at(-1)
+  expect(draft).toMatchObject({ version: 2, imports: 'using System.Globalization;', members: 'private string Prefix() => "Heating";' })
+  expect(draft.nodes[0]).toMatchObject({ id: 'trigger-1', config: { type: 'daily', time: '07:30', timeZone: 'Europe/Zagreb', mode: 'Restart' } })
+  expect(second).toMatchObject({ kind: 'trigger', config: { type: 'manual' } })
+  expect(draft.edges).toContainEqual({ id: `${second.id}->service-1`, source: second.id, target: 'service-1' })
+  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
+  button(root, 'Save graph').click()
+  await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 1'))
+  const saved = [...fixture.documents.values()][0]
+  expect(saved.graph).toEqual(draft)
+  setControl(root, 'C# members', 'unsaved member')
+  button(root, 'Reload saved graph').click(); button(root, 'Reload and discard').click()
+  await vi.waitFor(() => expect(control(root, 'C# members').value).toBe('private string Prefix() => "Heating";'))
+  expect(json(root)).toEqual(draft)
+  const actions = root.querySelector<HTMLSelectElement>('.hs-run-action select')!
+  expect(actions.options).toHaveLength(2)
+  for (const option of Array.from(actions.options)) {
+    actions.value = option.value; actions.dispatchEvent(new Event('change', { bubbles: true }))
+    button(root, 'Run now').click()
+    await vi.waitFor(() => expect(button(root, 'Run now').disabled).toBe(false))
+  }
+  const methods = fixture.calls.filter(c => c.type === 'hass_sharp/run_now').map(c => c.method)
+  expect(methods).toContain('Run_747269676765722D31')
+  // UUIDs are ASCII; independently derive the request expectation from the persisted ID.
+  expect(methods).toContain('Run_' + Array.from(second.id as string, c => c.charCodeAt(0).toString(16).toUpperCase()).join(''))
+  // Unsaved trigger changes must not change the list of runnable saved actions.
+  button(root, 'Add Entity changes').click()
+  expect(root.querySelectorAll('.hs-run-action option')).toHaveLength(2)
+})
+
+it('edits all trigger kinds, boolean overrides and expressions without changing its ID or custom code', () => {
+  const { root } = setup()
+  for (const type of ['once', 'startup', 'manual', 'entity', 'daily']) {
+    setControl(root, 'Trigger type', type)
+    if (type === 'once') setControl(root, 'Once timestamp', '2026-12-01T07:30:00+01:00')
+    if (type === 'entity') setControl(root, 'Entity ID', 'sensor.temperature')
+  }
+  for (const mode of ['Single', 'Restart', 'Queued', 'Parallel']) {
+    setControl(root, 'Concurrency mode', mode)
+    expect(json(root).nodes[0].config.mode).toBe(mode)
+  }
+  setControl(root, 'Startup override', 'true')
+  setControl(root, 'Allow manual runs', 'false')
+  setControl(root, 'Entities expression', '["sensor.temperature"]')
+  setControl(root, 'Schedules expression', '[]')
+  expect(json(root).nodes[0]).toMatchObject({ id: 'trigger-1', config: {
+    type: 'daily', startup: true, manual: false, entitiesExpression: '["sensor.temperature"]', schedulesExpression: '[]',
+    at: '2026-12-01T07:30:00+01:00', entity: 'sensor.temperature',
+  } })
+  button(root, 'Add Custom C#').click()
+  setControl(root, 'Custom C# section', 'await Task.Delay(10, CancellationToken);')
+  expect(json(root).nodes.at(-1).config.code).toBe('await Task.Delay(10, CancellationToken);')
+})
+
+it('keeps v1 editing and Run, and upgrades only when explicitly chosen', async () => {
+  const { root, fixture } = setup(true)
+  fixture.documents.get('motion')!.graph.version = 1
+  await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Saved motion'))
+  expect(control(root, 'C# imports')).toBeNull()
+  expect(button(root, 'Add Entity changes').disabled).toBe(true)
+  edit(root, 'Legacy trigger')
+  expect(json(root).version).toBe(1)
+  button(root, 'Run now').click()
+  await vi.waitFor(() => expect(fixture.calls).toContainEqual({ type: 'hass_sharp/run_now', automationId: 'visual:motion', className: 'VisualAutomation', method: 'Run' }))
+  button(root, 'Upgrade to graph v2').click()
+  expect(json(root).version).toBe(2)
+  expect(json(root).nodes[0].id).toBe('trigger-1')
+  expect(button(root, 'Add Entity changes').disabled).toBe(false)
+  // The saved v1 action remains available until the upgrade is saved.
+  expect(root.querySelector('.hs-run-action option')?.getAttribute('value')).toBe('VisualAutomation::Run')
+})
+
+it('locates import/member diagnostics and all ranges for the same trigger from backend mappings', async () => {
+  const { root, fixture } = setup()
+  // Replace only the external preview response; the editor/adapter/session stay real.
+  fixture.controls.preview = {
+    valid: false, source: 'using Missing;\nclass VisualAutomation {\n int x = nope;\n void Configure() {}\n void Run_61() {}\n}',
+    sourceMap: [{ nodeId: '$imports', startLine: 1, endLine: 1 }, { nodeId: '$members', startLine: 3, endLine: 3 },
+      { nodeId: 'trigger-1', startLine: 4, endLine: 4 }, { nodeId: 'trigger-1', startLine: 5, endLine: 5 }],
+    diagnostics: [{ nodeId: '$members', message: 'Unknown member', severity: 3, startLine: 3, startColumn: 10 }],
+  }
+  await vi.waitFor(() => expect(root.textContent).toContain('Unknown member'))
+  button(root, 'Unknown member · line 3').click()
+  expect(control(root, 'C# members').getAttribute('aria-invalid')).toBe('true')
+  await vi.waitFor(() => expect(document.activeElement).toBe(control(root, 'C# members')))
+  expect(root.querySelector('[data-source-line="3"]')?.getAttribute('aria-current')).toBe('true')
+  button(root, 'Select source line 1').click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(control(root, 'C# imports')))
+  root.querySelector('[data-id="trigger-1"]')!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+  expect(root.querySelector('[data-source-line="4"]')?.getAttribute('aria-current')).toBe('true')
+  expect(root.querySelector('[data-source-line="5"]')?.getAttribute('aria-current')).toBe('true')
 })
