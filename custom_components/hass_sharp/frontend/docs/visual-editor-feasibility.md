@@ -122,3 +122,16 @@ HA setting change, real service call, main-checkout edit, push or PR was perform
 Physical touch devices and the signed-in HA panel remain unverified: browser
 inputs here are synthetic events through the real frontend and library, backed
 by the native-event DOM tests, not a physical phone acceptance run.
+
+
+### Touch ownership correction
+
+Document `touchend`/`touchcancel` events are ignored while a primary gesture is
+active unless `changedTouches` includes its tracked identifier. An unrelated
+finger ending outside the canvas does not commit or interrupt the primary drag.
+After explicit multi-touch cancellation, the final release still clears ownership.
+Two real-library regressions (touchend and touchcancel) failed on premature commit
+before this correction; both now require continued movement and exactly one
+commit on primary release. Final frontend suite: 90 tests across 11 files pass;
+TypeScript and production build pass. This follow-up uses DOM tests; the browser
+visual evidence above predates this ownership correction.

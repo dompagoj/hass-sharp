@@ -72,6 +72,9 @@ export const FlowAdapter: Component<Props> = props => {
     }
     const end = (event: TouchEvent) => {
       if (!claimed) return
+      // Document events also include fingers that never belonged to this drag.
+      // Once multi-touch has canceled it, any final release can clear ownership.
+      if (gesture && !Array.from(event.changedTouches).some(touch => touch.identifier === gesture!.identifier)) return
       if (canvas.contains(event.target as HTMLElement)) consume(event)
       finish()
       if (!event.touches.length) claimed = false

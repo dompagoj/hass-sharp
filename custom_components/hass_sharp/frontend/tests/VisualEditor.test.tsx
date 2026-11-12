@@ -315,3 +315,27 @@ it('allows a new touch drag after the touched node is removed externally', () =>
   send(second, 'touchstart', 200, 2); send(second, 'touchmove', 260, 2); send(second, 'touchend', 260, 2)
   expect(graph().nodes.find(n => n.id === 'service-1')?.position).toEqual({ x: 740, y: 100 })
 })
+
+it.each(['touchend', 'touchcancel'])('keeps the primary drag active when an unrelated finger emits %s', type => {
+  const host = root()
+  const [graph, setGraph] = createSignal(createGraph('Heating'))
+  const commits: unknown[] = []
+  dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={next => { commits.push(next); setGraph(next) }} />, host)
+  const node = host.querySelector<HTMLElement>('[data-id="trigger-1"]')!
+  const touch = (id: number, target: Element, x: number) => new Touch({ identifier: id, target, clientX: x, clientY: 110 })
+  const send = (target: Element, eventType: string, touches: Touch[], changed: Touch[]) => target.dispatchEvent(new TouchEvent(eventType, { bubbles: true, cancelable: true, touches, changedTouches: changed }))
+  send(node, 'touchstart', [touch(1, node, 80)], [touch(1, node, 80)])
+  send(node, 'touchmove', [touch(1, node, 140)], [touch(1, node, 140)])
+  // The second finger starts and ends outside the canvas, with no multi-touch
+  // node move/start to cancel the primary gesture.
+  send(document.body, 'touchstart', [touch(1, node, 140), touch(2, document.body, 400)], [touch(2, document.body, 400)])
+  send(document.body, type, [touch(1, node, 140)], [touch(2, document.body, 400)])
+  expect(commits).toHaveLength(0)
+  expect(node.style.transform).toContain('140px, 100px')
+  send(node, 'touchmove', [touch(1, node, 200)], [touch(1, node, 200)])
+  expect(node.style.transform).toContain('220px, 100px')
+  expect(commits).toHaveLength(0)
+  send(node, 'touchend', [], [touch(1, node, 200)])
+  expect(commits).toHaveLength(1)
+  expect(graph().nodes[0].position).toEqual({ x: 220, y: 100 })
+})
