@@ -6,6 +6,8 @@ if (args.Any(a => a.StartsWith("--node-library-review"))) { await NodeLibraryTes
 
 if (args.Contains("--write-node-library-fixture")) { File.WriteAllText("tests/fixtures/visual-rich-catalog.json", NodeLibraryFixture.Build().ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n"); return; }
 
+if (args.Any(a => a.StartsWith("--node-library-ordering-review"))) { await NodeLibraryStoreTests.RunOrderingReview(args.First(a => a.StartsWith("--node-library-ordering-review")).Split('=').ElementAtOrDefault(1)); return; }
+
 if (args.Contains("--node-library-store")) { await NodeLibraryStoreTests.Run(); return; }
 
 if (args.Contains("--node-library")) { await NodeLibraryTests.Run(); return; }
