@@ -1,12 +1,12 @@
 # MCP and typed automations verification
 
-Verified locally on 2026-11-12 on `feat/mcp-typed-automations`. Backend acceptance build: `6c19321`; final spacing build: `36fa6fd`. Home Assistant 2026.11.1 in the repository Compose container, Linux .NET 10.0.101, Python.NET 3.1.0. The host SDK is an installed .NET 11 preview targeting net10; its preview-SDK informational message is expected. No remote Home Assistant deployment was performed.
+Verified locally on 2026-11-12 on `feat/mcp-typed-automations`. Final implementation and published build: `546663d`. The full MCP workflow initially passed on `6c19321`, with final trigger/schema regressions repeated on `546663d`; the spacing correction is included from `36fa6fd`. Home Assistant 2026.11.1 in the repository Compose container, Linux .NET 10.0.101, Python.NET 3.1.0. The host SDK is an installed .NET 11 preview targeting net10; its preview-SDK informational message is expected. No remote Home Assistant deployment was performed.
 
 ## Automated checks
 
-- Full .NET runtime harness passed, including every built-in node kind, typed entity/custom class/record/interface execution, exact Int64 values, response-driven service target/data, all loop forms, initialized zero-iteration exports, stale output rejection, scope/type errors, shared execution limits, parallel isolation/cancellation/Stop cleanup, native attachment/replacement, library dependency transactions/recovery, cache identity, and atomic visual dispatch. Includes 80 shared v4 and 21 rich catalog validation fixtures.
+- Full .NET runtime harness passed, including every built-in node kind, typed entity/custom class/record/interface execution, exact Int64 values, response-driven service target/data, all loop forms, initialized zero-iteration exports, stale output rejection, scope/type errors, shared execution limits, parallel isolation/cancellation/Stop cleanup, native attachment/replacement, library dependency transactions/recovery, cache identity, and atomic visual dispatch. The final validation run covers 98 shared v4 and 21 rich catalog fixtures.
 - Roslyn editor suite: 18 passed, 0 skipped. Completion, diagnostics, hover, signature help including named arguments, formatting and cross-file definitions use real compiler workspaces.
-- Frontend: 312 tests in 22 files passed. Includes catalog/port labels, typed connection rejection, errors/focus, touch and keyboard controls, Option/Alt single-edge undo/redo, library drafts/revisions/stale requests and external deletion recovery.
+- Frontend: 330 tests in 22 files passed on the final implementation. Includes catalog/port labels, typed connection rejection, errors/focus, touch and keyboard controls, Option/Alt single-edge undo/redo, library drafts/revisions/stale requests and external deletion recovery.
 - Python: 38 tests passed without skips in a separate process inside actual HA2026.11.1. The old host HA suite passed with 8 expected feature/version skips and is not counted as2026.11 verification.
 - Release packager: 3 tests passed. Fresh production frontend build and RID-neutral .NET publish passed. The final archive includes catalog/examples and all native runtime directories; no user scripts, development sources or preview fixtures.
 - Actual Python.NET packaging smokes passed: Linux-musl-arm64 SQLite loading, architecture assets, migrations/persistence/schedule deduplication; native trigger Task registration/dispatch/removal/failure; managed-worker scalar normalization and entity snapshot→custom class→custom record execution.
@@ -31,7 +31,11 @@ Only graph v4 is supported. Old visual graphs must be recreated; the document/AP
 
 The requested spacing correction passed TypeScript, 33 focused tests and production build. Independent review found no issues. Actual desktop, 393px device viewport, empty/populated state and normal/full-screen checks confirmed gutters, horizontal navigation, stacked narrow columns and usable controls. A temporary unsaved example was discarded; no library was persisted. This follow-up was visually checked in the current dark theme; no light-theme preference was changed. Physical touch hardware was not tested.
 
-The final whole-branch review is recorded separately after all implementation tasks.
+The whole-branch review found two trigger defects and three catalog/UI/documentation mismatches. All five were fixed in `546663d` and closed by one independent scoped re-review, with no new findings. The full runtime harness passed during this fix wave; the final minute-precision refinement additionally passed compiled `Configure()` checks for seven timestamps across UTC, Zagreb and New York, all 98 shared validator fixtures, and the 21 rich catalog cases. Final frontend tests passed 330/330.
+
+Final actual MCP checks confirmed that an omitted trigger type subscribes and executes on a synthetic entity change; offset-free, malformed and impossible-calendar timestamps reject; Z and signed offsets work both with seconds and at minute precision. A read-only library preview exposed a custom CLR loop type and integer/enum literals while excluding object JSON for a non-null rich class. No preview source was saved. Temporary graph/state cleanup and entity-symbol restoration passed.
+
+All three Python.NET smoke checks passed again on the final published assembly. The fresh production build and final archive were checked by hash against the published assets: 182 files, 21 native runtime assets, 33,578,556 bytes ZIP and 93,104,434 bytes unpacked. The local archive is `/tmp/hass-sharp-mcp-acceptance.zip`. Expected HA custom-integration warnings and intentional failure-test logging remain visible; the final review classified the earlier build/test notices as nonblocking verification noise.
 
 ## Implementation decisions
 
@@ -44,3 +48,5 @@ The chronological decisions from the implementation ledger are retained here, in
 5. Revalidate/recompile every saved visual graph on a library mutation because generated artifacts embed all saved library sources, including indirect C# references. This avoids missing dependencies; the cost is extra compilation and revision conflicts even for apparently unrelated graphs.
 6. Fold the deferred named-argument signature correction into the custom-library editor task. It is now covered by real Roslyn tests and actual Monaco signature help; the cost was a small backend extension to that UI task.
 
+
+7. Keep the final review within the approved scope: no old-graph migration, malicious administrator-code sandbox, atomic multi-file library save, or exhaustive physical-device/third-party-platform testing. This matches the approved design and harmless acceptance workflow; those capabilities are not claimed.
