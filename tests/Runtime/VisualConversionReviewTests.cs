@@ -30,12 +30,21 @@ static class VisualConversionReviewTests
           public static void Use(int value)=>throw new Exception("unannotated int overload executed");
           [Node("Defaults")]public static void Defaults(int value=7){if(value!=7)throw new Exception("default lost");Logger.Info("selected optional method");}
           public static void Defaults()=>throw new Exception("unannotated parameterless overload executed");
+          [Node("Date default")] public static void Date(
+            [System.Runtime.InteropServices.Optional,
+             System.Runtime.CompilerServices.DateTimeConstant(637134336000000000L)] DateTime value) {
+            if(value.Ticks!=637134336000000000L || value.Kind!=DateTimeKind.Unspecified)throw new Exception("Date metadata default lost");
+            Logger.Info("selected DateTime metadata default");
+          }
+          public static void Date()=>throw new Exception("unannotated date overload executed");
         }
         """);
         var messages=new List<string>();var logger=PyInterop.Log;PyInterop.Log=(_,m)=>messages.Add(m);
         try {
             var g=G(N("make",k("Make"),new{arguments=new{}}),N("use",k("Use"),new{arguments=new{}}));g["edges"]!.AsArray().Add(D("make","use","value","result"));await Execute(g,s);Assert(messages.Contains("selected dynamic method"),"selected dynamic method executes without user conversion");
             await Execute(G(N("defaults",k("Defaults"),new{arguments=new{}})),s);Assert(messages.Contains("selected optional method"),"exact selected optional method retains 7");
+            await Execute(G(N("date",k("Date"),new{arguments=new{}})),s);
+            Assert(messages.Contains("selected DateTime metadata default"),"omitted DateTimeConstant reaches exact selected method with preserved ticks and kind");
         }finally{PyInterop.Log=logger;}
     }
     static async Task Operators() {

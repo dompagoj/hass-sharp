@@ -41,6 +41,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             float number when float.IsNegativeInfinity(number)=>"global::System.Single.NegativeInfinity",
             float number=>number.ToString("R",CultureInfo.InvariantCulture)+"F",
             decimal number=>number.ToString(CultureInfo.InvariantCulture)+"M",
+            DateTime date=>$"new global::System.DateTime({date.Ticks.ToString(CultureInfo.InvariantCulture)}L)",
             long number when number==long.MinValue=>"global::System.Int64.MinValue",
             long number=>number.ToString(CultureInfo.InvariantCulture)+"L",
             ulong number=>number.ToString(CultureInfo.InvariantCulture)+"UL",
