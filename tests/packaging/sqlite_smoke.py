@@ -40,5 +40,5 @@ with tempfile.TemporaryDirectory() as folder:
     assert reopened.Identity('smoke.cs') == identity
     assert not reopened.ClaimOccurrence('smoke-occurrence')
     with sqlite3.connect(database) as connection:
-        assert connection.execute('SELECT count(*) FROM __EFMigrationsHistory').fetchone()[0] == 2
+        assert connection.execute('SELECT count(*) FROM __EFMigrationsHistory').fetchone()[0] == 3
 print(f'PASS: packaged SQLite load, migrations, identity persistence, occurrence deduplication ({RuntimeInformation.RuntimeIdentifier})')
