@@ -25,6 +25,11 @@ jobs:
       - name: Publish HassSharp C# Library
         run: |
           dotnet publish -c Release ./custom_components/hass_sharp/HassSharp -o ./custom_components/hass_sharp/out
+      - name: Verify packaged SQLite through Python.NET
+        run: |
+          python -m venv /tmp/hass-sharp-packaging
+          /tmp/hass-sharp-packaging/bin/pip install pythonnet==3.1.0
+          /tmp/hass-sharp-packaging/bin/python tests/packaging/sqlite_smoke.py custom_components/hass_sharp
       - name: Build Vite Frontend
         run: |
           cd ./custom_components/hass_sharp/frontend

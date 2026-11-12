@@ -79,3 +79,23 @@ image updates, or `up --force-recreate`), back up `/config` with
 `docker compose cp hass:/config /tmp/hass-sharp-config-backup` to a fresh destination.
 That data includes onboarding, users, and integration configuration; keep backups
 out of version control.
+
+## SQLite packaging regression check
+
+Keep the RID-neutral publish output's `runtimes/` directory in releases; it contains
+separate SQLite binaries for glibc/musl and x64/ARM64/ARM. Python.NET does not apply
+HassSharp's deps.json native probing paths, so `SqliteNative` resolves the matching
+runtime asset before history opens its first connection. Do not flatten one host's
+native binary into a multi-architecture release.
+
+After publishing, run with Python.NET installed (the release workflow does this):
+
+```sh
+python tests/packaging/sqlite_smoke.py custom_components/hass_sharp
+# Against the existing local Alpine HA container, without touching its database:
+docker exec -i hass python - /config/custom_components/hass_sharp /config/custom_components/hass_sharp/dotnet < tests/packaging/sqlite_smoke.py
+```
+
+This checks Linux ELF architectures and uses a temporary database to verify actual
+Python.NET native loading, migrations, persistence, and schedule deduplication.
+Pass the .NET root as the optional second argument when it is not discoverable.

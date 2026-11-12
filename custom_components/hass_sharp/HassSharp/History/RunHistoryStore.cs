@@ -80,6 +80,7 @@ public sealed class RunHistoryStore
     public RunHistoryStore(string path, int retention = 10000)
     {
         if (retention < 1) throw new ArgumentOutOfRangeException(nameof(retention));
+        SqliteNative.Initialize();
         this.path = path;
         this.retention = retention;
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
