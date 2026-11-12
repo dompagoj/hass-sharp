@@ -39,10 +39,11 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
     identityGeneration = 0,
     disposed = false
   let catalogRequest = 0
+  // A catalog reply does not prove the opened document revision was checked.
+  let checkedDocument: { id: string; revision: number; generation: string } | undefined
   const refreshCatalog = async () => {
     const request = ++catalogRequest
-    const opened = document(),
-      previousGeneration = catalogGeneration()
+    const opened = document()
     try {
       const result = await api.catalog()
       if (disposed || request !== catalogRequest) return
@@ -55,19 +56,20 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
         setCatalogReady(true)
         setCatalogError(undefined)
       })
-      if (opened && previousGeneration !== undefined && previousGeneration !== result.generation) {
+      if (
+        opened &&
+        (checkedDocument?.id !== opened.id ||
+          checkedDocument.revision !== opened.revision ||
+          checkedDocument.generation !== result.generation)
+      ) {
         const latest = await api.read(opened.id)
-        if (
-          !disposed &&
-          request === catalogRequest &&
-          document()?.id === opened.id &&
-          document()?.revision === opened.revision &&
-          latest.revision !== opened.revision
-        ) {
-          batch(() => {
-            setConflict(true)
-            setError('Node library changed this saved graph. Your local graph is preserved; reload the saved revision to continue.')
-          })
+        if (!disposed && request === catalogRequest && document()?.id === opened.id && document()?.revision === opened.revision) {
+          checkedDocument = { id: opened.id, revision: opened.revision, generation: result.generation }
+          if (latest.revision !== opened.revision)
+            batch(() => {
+              setConflict(true)
+              setError('Node library changed this saved graph. Your local graph is preserved; reload the saved revision to continue.')
+            })
         }
       }
     } catch (err) {

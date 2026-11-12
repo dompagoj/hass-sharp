@@ -1,7 +1,7 @@
 {
   "sourceId": "shared",
   "revision": 2,
-  "source": "public interface IReading { }\npublic record Reading(string State) : IReading;\npublic enum Mode { Off, On }\npublic static class Samples\n{\n    /// \u003Csummary\u003ERead a typed state.\u003C/summary\u003E\n    /// \u003Cparam name=\u0022entity\u0022\u003EA detached snapshot.\u003C/param\u003E\n    /// \u003Creturns\u003EThe reading.\u003C/returns\u003E\n    [Node(\u0022Describe\u0022, Category = \u0022Fixture\u0022)]\n    public static Reading Describe([Port(\u0022Entity state\u0022)] EntityStateSnapshot entity) =\u003E new(entity.State);\n    [Node(\u0022Consume\u0022)]\n    public static void Consume(IReading reading, int type = 3, string? output = null, string service = \u0022light.turn_on\u0022, Mode mode = Mode.On) {}\n    [Node(\u0022Nullable\u0022)] public static Reading? Nullable() =\u003E null;\n    [Node(\u0022Required\u0022)] public static void Required(Reading reading) {}\n    [Node(\u0022Factory\u0022)] public static int Factory() =\u003E 4;\n    [Node(\u0022Widen\u0022)] public static void Widen(double number) {}\n    [Node(\u0022Nullable elements\u0022)] public static string?[] NullableElements() =\u003E new string?[] { null };\n    [Node(\u0022Required elements\u0022)] public static string[] RequiredElements() =\u003E new[] { \u0022text\u0022 };\n    [Node(\u0022Nullable array\u0022)] public static string[]? NullableArray() =\u003E null;\n    [Node(\u0022Required enumerable\u0022)] public static void RequiredEnumerable(IEnumerable\u003Cstring\u003E items) {}\n    [Node(\u0022Required readonly list\u0022)] public static void RequiredReadOnlyList(IReadOnlyList\u003Cstring\u003E items) {}\n    [Node(\u0022Required list\u0022)] public static void RequiredList(IList\u003Cstring\u003E items) {}\n    [Node(\u0022Nullable enumerable\u0022)] public static void NullableEnumerable(IEnumerable\u003Cstring?\u003E items) {}\n    [Node(\u0022Nonfinite defaults\u0022)] public static void NonfiniteDefaults(double? nan = double.NaN, float? positive = float.PositiveInfinity, double? negative = double.NegativeInfinity) {}\n}",
+  "source": "public interface IReading { }\npublic record Reading(string State) : IReading;\npublic enum Mode { Off, On }\npublic static class Samples\n{\n    /// \u003Csummary\u003ERead a typed state.\u003C/summary\u003E\n    /// \u003Cparam name=\u0022entity\u0022\u003EA detached snapshot.\u003C/param\u003E\n    /// \u003Creturns\u003EThe reading.\u003C/returns\u003E\n    [Node(\u0022Describe\u0022, Category = \u0022Fixture\u0022)]\n    public static Reading Describe([Port(\u0022Entity state\u0022)] EntityStateSnapshot entity) =\u003E new(entity.State);\n    [Node(\u0022Consume\u0022)]\n    public static void Consume(IReading reading, int type = 3, string? output = null, string service = \u0022light.turn_on\u0022, Mode mode = Mode.On) {}\n    [Node(\u0022Nullable\u0022)] public static Reading? Nullable() =\u003E null;\n    [Node(\u0022Required\u0022)] public static void Required(Reading reading) {}\n    [Node(\u0022Factory\u0022)] public static int Factory() =\u003E 4;\n    [Node(\u0022Widen\u0022)] public static void Widen(double number) {}\n    [Node(\u0022Is on\u0022)] public static bool IsOn(IReading reading) =\u003E true;\n    [Node(\u0022Nullable elements\u0022)] public static string?[] NullableElements() =\u003E new string?[] { null };\n    [Node(\u0022Required elements\u0022)] public static string[] RequiredElements() =\u003E new[] { \u0022text\u0022 };\n    [Node(\u0022Nullable array\u0022)] public static string[]? NullableArray() =\u003E null;\n    [Node(\u0022Required enumerable\u0022)] public static void RequiredEnumerable(IEnumerable\u003Cstring\u003E items) {}\n    [Node(\u0022Required readonly list\u0022)] public static void RequiredReadOnlyList(IReadOnlyList\u003Cstring\u003E items) {}\n    [Node(\u0022Required list\u0022)] public static void RequiredList(IList\u003Cstring\u003E items) {}\n    [Node(\u0022Nullable enumerable\u0022)] public static void NullableEnumerable(IEnumerable\u003Cstring?\u003E items) {}\n    [Node(\u0022Nonfinite defaults\u0022)] public static void NonfiniteDefaults(double? nan = double.NaN, float? positive = float.PositiveInfinity, double? negative = double.NegativeInfinity) {}\n}",
   "catalog": {
     "version": 1,
     "graphVersion": 4,
@@ -4710,6 +4710,47 @@
           }
         },
         "outputs": {},
+        "execution": [
+          "next",
+          "error"
+        ]
+      },
+      "library:shared:global%3A%3ANodeLib.Samples.IsOn%28global%3A%3ANodeLib.IReading%29": {
+        "label": "Is on",
+        "category": "Custom",
+        "description": "",
+        "minGraphVersion": 4,
+        "runtimeVersions": [
+          4
+        ],
+        "sourceId": "shared",
+        "argumentStorage": "arguments",
+        "config": {
+          "arguments": {
+            "type": "object",
+            "default": {},
+            "description": "Typed method arguments"
+          }
+        },
+        "inputs": {
+          "reading": {
+            "types": [
+              "global::NodeLib.IReading"
+            ],
+            "required": true,
+            "label": "reading",
+            "description": "",
+            "nullable": false,
+            "hasDefaultValue": false
+          }
+        },
+        "outputs": {
+          "result": {
+            "type": "global::System.Boolean",
+            "label": "Result",
+            "description": ""
+          }
+        },
         "execution": [
           "next",
           "error"

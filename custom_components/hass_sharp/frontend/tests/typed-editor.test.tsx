@@ -439,12 +439,17 @@ it('preserves full branch/carry/export identifiers through native handles and ke
 
 import richCatalogFixture from '../../../../tests/fixtures/visual-rich-catalog.json'
 import type { GraphV4 } from '../src/visual/graphV4'
-it('uses source-derived merged catalog display labels for unlabeled saved nodes and built-in aliases', () => {
+it('preserves declared input labels when source-derived custom CLR Boolean outputs connect to unlabeled built-in nodes', () => {
   const el = host(),
     catalog = richCatalogFixture.catalog as unknown as VisualCatalogSnapshot
   let graph = structuredClone(richCatalogFixture.cases[0].graph) as GraphV4
+  const predicateKind = Object.entries(catalog.nodes).find(([, spec]) => spec.label === 'Is on')![0]
+  graph = addNode(graph, predicateKind, 'predicate', catalog)
   graph = addNode(graph, 'if', 'if', catalog)
-  graph = connectNodes(graph, 'consume', 'if', undefined, catalog)
+  graph = connectNodes(graph, 'consume', 'predicate', undefined, catalog)
+  graph = connectNodes(graph, 'predicate', 'if', undefined, catalog)
+  graph = connectData(graph, 'describe', 'result', 'predicate', 'reading', catalog)
+  graph = connectData(graph, 'predicate', 'result', 'if', 'value', catalog)
   graph = { ...graph, nodes: graph.nodes.map(({ label, ...node }) => node) }
   dispose = render(
     () => (
@@ -472,6 +477,13 @@ it('uses source-derived merged catalog display labels for unlabeled saved nodes 
   expect(el.querySelector('[data-id="r"] .hs-flow-card strong')?.textContent).toBe('Read entity')
   expect(el.querySelector('[data-id="if"]')?.getAttribute('aria-label')).toContain('If')
   expect(el.textContent).toContain('Condition · Boolean · Required')
+  expect(el.querySelector('[data-id="if"] .target[data-handleid="data:value"]')?.getAttribute('aria-label')).toBe(
+    'Condition · Boolean input',
+  )
+  expect(el.querySelector('[data-id="predicate"] .source[data-handleid="data:result"]')?.getAttribute('aria-label')).toBe(
+    'Result · bool output',
+  )
+  expect(el.textContent).toContain('From Is on')
   expect(el.textContent).toContain('From Read entity')
   expect(el.textContent).toContain('To Consume')
   expect(el.querySelector('[data-id="describe"] .hs-flow-card')?.textContent).not.toContain('library:')

@@ -174,3 +174,40 @@ it('ignores in-flight old catalogs and cleans up library/focus listeners',async(
  expect(pending).toHaveLength(2)
  listeners.mockRestore();removed.mockRestore()
 })
+
+it('does not lose a pending rebuilt-revision check when a same-generation catalog refresh overlaps it', async () => {
+  let savedGeneration = 'one', savedRevision = 2
+  let finishFirstRead: ((value: unknown) => void) | undefined
+  const hass = {
+    callWS: async (message: any) => {
+      if (message.type === 'hass_sharp/node_library')
+        return ok({ catalog: structuredClone(nodeCatalog), generation: savedGeneration, saved: true, valid: true, diagnostics: [] })
+      if (message.request.operation === 'read') {
+        const result = ok({ ...document(savedRevision), catalogGeneration: savedGeneration })
+        if (savedGeneration === 'two' && !finishFirstRead)
+          return new Promise(resolve => { finishFirstRead = resolve })
+        return result
+      }
+      return ok(preview())
+    },
+  } as any
+  const session = createRoot(d => { dispose = d; return createVisualSession(hass, graph()) })
+  await flush(); await session.load('motion'); await flush()
+  const local = updateNode(session.history.graph(), 'trigger-1', { label: 'Keep my dirty graph' })
+  session.history.commit(local)
+  await vi.waitFor(() => expect(session.canSave()).toBe(true))
+  savedGeneration = 'two'; savedRevision = 3
+  const first = session.refreshCatalog()
+  await flush()
+  expect(session.catalogGeneration()).toBe('two')
+  expect(finishFirstRead).toBeDefined()
+  await session.refreshCatalog()
+  finishFirstRead!(ok({ ...document(3), catalogGeneration: 'two' }))
+  await first
+  await vi.waitFor(() => expect(session.preview()?.valid).toBe(true))
+  expect(session.conflict()).toBe(true)
+  expect(session.error()).toContain('Node library changed this saved graph')
+  expect(session.document()?.revision).toBe(2)
+  expect(session.history.graph()).toEqual(local)
+  expect(session.canSave()).toBe(false)
+})

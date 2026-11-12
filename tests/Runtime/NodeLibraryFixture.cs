@@ -22,6 +22,7 @@ public static class NodeLibraryFixture
             [Node("Required")] public static void Required(Reading reading) {}
             [Node("Factory")] public static int Factory() => 4;
             [Node("Widen")] public static void Widen(double number) {}
+            [Node("Is on")] public static bool IsOn(IReading reading) => true;
             [Node("Nullable elements")] public static string?[] NullableElements() => new string?[] { null };
             [Node("Required elements")] public static string[] RequiredElements() => new[] { "text" };
             [Node("Nullable array")] public static string[]? NullableArray() => null;

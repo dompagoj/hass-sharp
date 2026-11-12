@@ -213,6 +213,8 @@ export function inputType(
   input: InputSpec,
   catalog: VisualCatalogSnapshot = nodeCatalog,
 ): string | undefined {
+  // Fixed ports present their declared contract; only unions choose the bound value's type.
+  if (input.types.length === 1) return input.types[0]
   const edge = graph.edges.find(e => e.kind === 'data' && e.target === node.id && e.targetPort === port)
   if (edge?.kind === 'data') {
     const source = graph.nodes.find(n => n.id === edge.source)
@@ -226,7 +228,7 @@ export function inputType(
       if (producer) return dataOutputs(producer, catalog).value?.type
     }
   }
-  return input.types.length === 1 ? input.types[0] : undefined
+  return undefined
 }
 /** Explain the same immutable typed connection operation used by every interaction. */
 export function dataConnectionError(
