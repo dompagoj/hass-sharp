@@ -1,3 +1,6 @@
+> Runtime API changed: use [declarative automations](docs/runtime/declarative-automations.md).
+> Lifecycle examples below using Initialize, InitGuard, RunnableClassScript or implicit triggers are historical and no longer compile.
+
 # HassSharp
 
 HassSharp is a Home Assistant custom integration for writing automations in C#. It runs .NET inside Home Assistant through Python.NET, compiles your C# scripts with Roslyn, and connects them to Home Assistant entity changes and services.

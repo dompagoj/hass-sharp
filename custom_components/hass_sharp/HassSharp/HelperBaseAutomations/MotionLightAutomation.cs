@@ -1,6 +1,6 @@
 namespace HassSharp.HelperBaseAutomations;
 
-public abstract class MotionLightAutomation : RunnableClassScript
+public abstract class MotionLightAutomation : Automation
 {
     public EntityRefWrapper<HaBinarySensor> MotionSensor { get; set; } = null!;
     public EntityRefWrapper<HaLight> Light { get; set; } = null!;
@@ -15,55 +15,23 @@ public abstract class MotionLightAutomation : RunnableClassScript
     EntityRef<HaLight> _light;
     EntityRef<HaMotionSensor> _motion;
 
-    public override Task Initialize()
-    {
-        if (MotionSensor is null || Light is null)
-        {
-            throw new Exception("MotionSensor or Light not initialized");
-        }
+    public override AutomationConfiguration Configure() => new(
+        new AutomationAction(nameof(Run), AutomationMode.Restart, Entities: [MotionSensor.EntityId]));
 
+    public async Task Run()
+    {
         _motion = Entity(MotionSensor).AsMotion();
-        _light = EntityUntracked(Light);
-
-        return Task.CompletedTask;
-    }
-
-    Task ScheduleTurnOff()
-    {
-        return Task.Run(async () =>
-        {
-            await Task.Delay(TurnOffDelay, CancellationToken);
-            if (_motion.Refresh().IsMotionDetected())
-            {
-                Logger.Debug("Motion stil on, not turning off light");
-                _ = ScheduleTurnOff();
-                return;
-            }
-
-            if (ShouldTurnOffCallback is { } cb && !await cb())
-            {
-                Logger.Debug("User provided callback canceled light turn off");
-
-                return;
-            }
-
-            Logger.Debug($"Turning off Light {_light.EntityId}");
-            if (LightOffOptions is not null) _light.TurnOff(LightOffOptions).Run();
-            else _light.TurnOff().Run();
-        }, CancellationToken);
-    }
-
-    [Mode(AutomationMode.Restart)]
-    public override Task Run()
-    {
+        _light = Entity(Light);
         if (_motion.IsMotionDetected())
         {
-            Logger.Debug("Motion detected!");
             if (LightOnOptions is not null) _light.TurnOn(LightOnOptions).Run();
             else _light.TurnOn().Run();
-            ScheduleTurnOff();
         }
-
-        return Task.CompletedTask;
+        do { await Task.Delay(TurnOffDelay, CancellationToken); }
+        while (_motion.Refresh().IsMotionDetected());
+        if (ShouldTurnOffCallback is { } cb && !await cb()) return;
+        CancellationToken.ThrowIfCancellationRequested();
+        if (LightOffOptions is not null) _light.TurnOff(LightOffOptions).Run();
+        else _light.TurnOff().Run();
     }
 }

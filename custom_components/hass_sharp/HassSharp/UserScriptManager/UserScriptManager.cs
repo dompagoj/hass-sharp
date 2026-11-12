@@ -7,6 +7,7 @@ record TriggerContext(HasEntityState State);
 
 class UserScriptManager
 {
+    public static readonly AsyncLocal<InvocationCause> CurrentCause = new();
     public static readonly AsyncLocal<TriggerContext?> CurrentTrigger = new();
 
     readonly List<UserScript> _userScripts = new();
@@ -21,10 +22,9 @@ class UserScriptManager
     public void UnloadUserScripts()
     {
         var scripts = _userScripts.ToArray();
-        PyInterop.UnSubscribeAllFromEntityTracking();
+        SyncRunner.Clear(scripts);
         DependencyTracking.Clear();
         _userScripts.Clear();
-        SyncRunner.Clear(scripts);
 
         foreach (var script in scripts)
         {
@@ -58,7 +58,7 @@ class UserScriptManager
     }
 
     public Task LoadUserScripts(IEnumerable<CompiledUserScript> compiledScripts)
-        => Task.WhenAll(compiledScripts.Select(s => LoadUserScript(s).Initialize()));
+        => Task.WhenAll(compiledScripts.Select(s => LoadUserScript(s).ConfigureAndStart()));
 
 
     public void TrackEntityCall(string entityId, UserScriptClass scriptClass, string method) =>
@@ -76,7 +76,7 @@ class UserScriptManager
         CurrentTrigger.Value = trigger;
         try
         {
-            await entry.ScriptClass.RunMethod(entry.MethodName);
+            await entry.ScriptClass.RunMethod(entry.MethodName, InvocationCause.Entity);
         }
         finally
         {
@@ -105,7 +105,7 @@ class UserScriptManager
             loadedScript = LoadUserScript(compiled);
 
             Logger.Info("Initializing newly loaded scripts");
-            await loadedScript.Initialize();
+            await loadedScript.ConfigureAndStart();
             await loadedScript
                 .WriteIfDirty(); // TODO maybe make this a single call? its easy to forget not to write to disk
             found.Unload();
@@ -123,7 +123,7 @@ class UserScriptManager
             found.RenewLifetime();
             if (!_userScripts.Contains(found))
                 _userScripts.Add(found);
-            await found.Initialize();
+            await found.ConfigureAndStart();
             await found.WriteToDisk();
             throw;
         }
@@ -181,7 +181,7 @@ class UserScriptManager
         {
             compiled = await compiler.CompileFromUserScriptFile(slug, emptyScriptSource, true);
             loadedScript = LoadUserScript(compiled);
-            await loadedScript.Initialize();
+            await loadedScript.ConfigureAndStart();
         }
         catch
         {

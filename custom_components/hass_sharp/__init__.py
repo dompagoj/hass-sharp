@@ -193,10 +193,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass.add_job(call_and_callback())
 
     def unsub_from_entity(entity_id: str):
-        unsubs.pop(entity_id)()
+        unsub = unsubs.pop(entity_id, None)
+        if unsub is not None:
+            unsub()
 
     def unbsub_all():
-        for unsub in unsubs.values():
+        callbacks = list(unsubs.values())
+        unsubs.clear()
+        for unsub in callbacks:
             unsub()
 
     def subscribe_to_entity_change(entity_id: str):

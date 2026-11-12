@@ -14,7 +14,13 @@ class UserScript
     public Task WriteToDisk() => CompiledScript.WriteToDisk();
     public ValueTask WriteIfDirty() => CompiledScript.WriteIfDirty();
 
-    internal Task Initialize() => Task.WhenAll(Classes.Select(c => c.Initialize()));
+    internal Task ConfigureAndStart()
+    {
+        foreach (var klass in Classes) klass.Configure();
+        foreach (var klass in Classes) klass.Subscribe();
+        foreach (var klass in Classes) klass.Start();
+        return Task.CompletedTask;
+    }
 
     internal void CancelLifetime() => _lifetimeCancellation.Cancel();
 

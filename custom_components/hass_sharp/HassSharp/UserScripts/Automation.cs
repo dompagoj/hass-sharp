@@ -10,21 +10,18 @@ public enum AutomationMode
     Parallel
 }
 
-[AttributeUsage(AttributeTargets.Method)]
-public class ModeAttribute(AutomationMode mode) : Attribute
-{
-    public AutomationMode Mode { get; } = mode;
-}
-
 public abstract class Automation : UserScriptClassBase
 {
+    public virtual AutomationConfiguration Configure() => new();
+    public InvocationCause Cause => UserScriptManager.CurrentCause.Value;
+
     internal readonly AsyncLocal<CancellationToken> _cancellationToken = new();
     public CancellationToken CancellationToken => _cancellationToken.Value;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     HasEntityState? GetEntityValueTracked(string entityId, string method)
     {
-        UserScriptClass.Script.ScriptManager.TrackEntityCall(entityId, UserScriptClass, method);
+
 
         var trigger = UserScriptManager.CurrentTrigger.Value;
         if (trigger != null && trigger.State.EntityId == entityId)
