@@ -68,3 +68,11 @@ Fable independently passed the first commit's runtime/Python suites, and confirm
 that HTTP code paths already confine delete/rename to user_scripts; the additional
 runtime guard is defense in depth. The synchronous rename HTTP bridge issue reported
 by inspection predates this work and remains outside these fixes.
+
+Fable's second review independently passed the full runtime suite and eight Python
+tests at 576717d, including corrupt-cache variants and repaired configuration
+failures. A final HTTP regression now checks that open/save reject invalid script
+names with 400 before accessing the backend (nine Python tests total). The possible
+delete-versus-save race remains unverified and unchanged; lifecycle serialization
+across those operations would need a separate focused fix. Live HA/Python.NET and
+frontend rendering remain unverified.

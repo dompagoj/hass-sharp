@@ -62,6 +62,11 @@ class AutomationByIdView(HomeAssistantView):
 
     @require_admin
     async def get(self, _request, file_name: str):
+        if not file_name or not file_name.strip() or file_name in (".", "..") or any(
+            character in file_name for character in ("/", "\\", "\0")
+        ):
+            return self.json({"error": "Invalid automation file name"}, 400)
+
         user_script = await self.hass.async_add_executor_job(
             self.hass_sharp.GetUserScript, file_name
         )
@@ -75,6 +80,11 @@ class AutomationByIdView(HomeAssistantView):
 
     @require_admin
     async def post(self, request: Request, file_name: str):
+        if not file_name or not file_name.strip() or file_name in (".", "..") or any(
+            character in file_name for character in ("/", "\\", "\0")
+        ):
+            return self.json({"error": "Invalid automation file name"}, 400)
+
         data = await request.json()
         (success, error) = await dotnet_tasks.async_run_dotnet_task(
             self.hass,
