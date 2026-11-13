@@ -2,7 +2,7 @@ import { createEffect, createSignal, createUniqueId, For, Index, on, Show, type 
 import type { JsonValue } from '../contract'
 import { Chips, DraftField, dragSession, textPlaceholder, type WidgetProps } from './common'
 import { displayValue, jsonEqual } from './json'
-import { durationParts, durationSeconds, durationValue, valueKind, type ValueKind, type WidgetKind, type WidgetOption } from './model'
+import { durationParts, durationSeconds, durationValue, valueKind, type ValueKind, type Widget, type WidgetKind, type WidgetOption } from './model'
 
 const numberText = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/
 /** Parse a typed number; undefined for empty text, NaN for anything that is not a finite number. */
@@ -172,20 +172,23 @@ export function ColorWidget(props: WidgetProps) {
   </span>
 }
 
-/** Editor for lists and objects. Parse errors are shown and the text is kept. */
+/** Editor for lists and objects. Parse errors are shown and the text is kept; `structured` also refuses a single value. */
 export function JsonWidget(props: WidgetProps) {
   return <DraftField id={props.id} label={props.label} multiline class="hs-code-input" text={props.value === undefined ? '' : JSON.stringify(props.value, null, 2)}
     placeholder="Not set" shortcutHint={!props.compact} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
     commit={text => {
       if (text.trim() === '') { props.commit(undefined); return }
-      try { props.commit(JSON.parse(text) as JsonValue) }
+      let value: JsonValue
+      try { value = JSON.parse(text) as JsonValue }
       catch (error) { return `Not valid JSON: ${error instanceof Error ? error.message : String(error)}` }
+      if (props.widget.structured && (value === null || typeof value !== 'object')) return 'Enter a list [ … ] or an object { … }.'
+      props.commit(value)
     }} />
 }
 
 const kindLabels: Record<ValueKind, string> = { text: 'Text', number: 'Number', boolean: 'Yes/No', json: 'List or object' }
 const widgetKinds: Record<ValueKind, WidgetKind> = { text: 'text', number: 'number', boolean: 'toggle', json: 'json' }
-/** A value converted to another kind, when that is lossless. */
+/** The value read as `kind` when that reading is unambiguous ("1" and 1, "true" and true); otherwise undefined. */
 function convert(value: JsonValue | undefined, kind: ValueKind): JsonValue | undefined {
   if (value === undefined || valueKind(value) === kind) return value
   if (kind === 'text' && (typeof value === 'number' || typeof value === 'boolean')) return String(value)
@@ -204,13 +207,26 @@ export function MixedWidget(props: WidgetProps) {
   createEffect(on(() => props.value, value => { const k = valueKind(value); if (k) setKind(k) }, { defer: true }))
   const commit = (value: JsonValue | undefined, options?: { coalesce?: string }) =>
     props.commit(value, value === undefined ? options : { ...options, kind: kind() })
+  // What a kind starts from when the value does not convert: the widget then shows exactly what is stored.
+  const start = (next: ValueKind): JsonValue | undefined => {
+    const { min, max } = props.widget
+    if (next === 'boolean') return false
+    if (next === 'number') return min !== undefined && min > 0 ? min : max !== undefined && max < 0 ? max : 0
+    return undefined
+  }
   const switchTo = (next: ValueKind) => {
-    const converted = convert(props.value, next)
     setKind(next)
-    if (converted !== undefined && !jsonEqual(converted, props.value)) props.commit(converted, { kind: next })
+    if (props.value === undefined) return
+    const value = convert(props.value, next) ?? start(next)
+    if (value === undefined) props.commit(undefined)
+    else if (!jsonEqual(value, props.value)) props.commit(value, { kind: next })
   }
   const shown = () => valueKind(props.value) === kind() ? props.value : undefined
-  const child = (): WidgetProps => ({ ...props, value: shown(), commit, widget: { kind: widgetKinds[kind()], multiple: false } })
+  const child = (): WidgetProps => {
+    const { min, max, step, unit } = props.widget, k = kind()
+    const widget: Widget = k === 'number' ? { kind: 'number', multiple: false, min, max, step, unit } : { kind: widgetKinds[k], multiple: false, structured: k === 'json' }
+    return { ...props, value: shown(), commit, widget }
+  }
   return <span class="hs-mixed" classList={{ 'hs-mixed--block': kind() === 'json' }}>
     <Show when={kinds().length > 1}>
       <select class="hs-input hs-kind-switch" aria-label={`${props.label} kind`} disabled={props.disabled} onChange={event => switchTo(event.currentTarget.value as ValueKind)}>

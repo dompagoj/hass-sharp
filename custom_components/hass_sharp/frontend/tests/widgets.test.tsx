@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import servicesFixture from '../../../../tests/fixtures/visual-services.json'
 import { HassCtx } from '../src/context'
 import type { EntityInfo } from '../src/entities'
+import { createRegistry } from '../src/registry'
 import { EntityAutocomplete } from '../src/components/EntityAutocomplete'
 import { CatalogPicker } from '../src/components/CatalogPicker'
 import { createGraph, updateNode } from '../src/visual/graph'
@@ -12,7 +13,7 @@ import { dataInputs, nodeCatalog, validateGraph, validLiteral, type GraphNode, t
 import { InputEditor } from '../src/visual/InputEditor'
 import { typeLabel } from '../src/visual/typeLabels'
 import {
-  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, targetValue, valueSummary, widgetFor,
+  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, registryNames, targetValue, valueSummary, widgetFor,
   type ValueKind, type Widget,
 } from '../src/visual/widgets'
 
@@ -167,12 +168,28 @@ describe('values', () => {
   })
   it('summarises values too large for a node card', () => {
     const target = widgetFor(spec(['target', 'entity_id']))
-    expect(valueSummary(target, { entity_id: ['light.a', 'light.b'], area_id: 'hall' })).toBe('2 entities, 1 area')
+    expect(valueSummary(target, { entity_id: ['light.a', 'light.b'], area_id: 'hall' })).toBe('light.a, light.b, hall')
+    expect(valueSummary(target, { entity_id: ['light.a', 'light.b', 'light.c'], area_id: 'hall' })).toBe('3 entities, 1 area')
     expect(valueSummary(target, 'light.a')).toBe('light.a')
+    expect(valueSummary(target, {})).toBe('No target')
     expect(valueSummary(widgetFor(selector(['number', 'object'], { duration: { enable_day: true } })), { days: 1, hours: 2, minutes: 0, seconds: 5 })).toBe('1 d 2 h 5 s')
     expect(valueSummary(widgetFor(selector(['string'], { text: { multiline: true } })), 'first\nsecond')).toBe('first …')
     expect(valueSummary({ kind: 'color', multiple: false }, [255, 0, 0])).toBe('RGB 255, 0, 0')
     expect(valueSummary({ kind: 'json', multiple: false }, undefined)).toBe('Not set')
+    expect(valueSummary({ kind: 'json', multiple: false }, [30, 60])).toBe('30, 60')
+    expect(valueSummary({ kind: 'json', multiple: false }, { a: 1, b: 2 })).toBe('Object, 2 fields')
+    expect(valueSummary({ kind: 'json', multiple: false }, { a: 1 })).toBe('Object, 1 field')
+    expect(valueSummary({ kind: 'select', multiple: true, options: [{ value: 'a', label: 'Apple' }, { value: 'b', label: 'Banana' }] }, ['a', 'b'])).toBe('Apple, Banana')
+  })
+  it('names registry items in a summary, falling back to the id', () => {
+    const names = registryNames(createRegistry(registry))
+    const target = widgetFor(spec(['target', 'entity_id']))
+    expect(valueSummary(target, { entity_id: ['light.hall', 'light.gone'], area_id: 'hall' }, names)).toBe('Hall lamp, light.gone, Hall')
+    expect(valueSummary(target, { device_id: 'dev1', floor_id: 'ground', label_id: ['night'] }, names)).toBe('Hub, Ground, Night')
+    expect(valueSummary({ kind: 'area', multiple: true }, ['hall', 'attic'], names)).toBe('Hall, Attic')
+    expect(valueSummary({ kind: 'entity', multiple: false }, 'switch.fan', names)).toBe('Fan')
+    expect(valueSummary({ kind: 'device', multiple: false }, 'dev2', names)).toBe('dev2')
+    expect(valueSummary({ kind: 'label', multiple: false }, 'night', registryNames(undefined))).toBe('night')
   })
   it('names types for people', () => {
     expect(['string', 'number', 'boolean', 'object', 'array', 'entity_id', 'entity_id:light', 'entity_id:binary_sensor', 'target', 'global::HassSharp.EntityStateSnapshot']
@@ -232,7 +249,9 @@ it('every fixture service field accepts the value its widget emits', () => {
       const key = `${id}.${name}: ${label}`
       checked.push(key)
       if (errors.length) rejected.push(key)
-      if (errors.length && !expectedRejections.includes(key)) expect.fail(`${key} ${JSON.stringify(operand)} was rejected: ${errors.map(e => e.message).join('; ')}`)
+      // The exception holds only while the validator rejects it by its enum rule, not for some other reason.
+      if (errors.length && expectedRejections.includes(key)) expect(errors.map(e => e.message), key).toEqual(['Input must be one of the allowed values'])
+      else if (errors.length) expect.fail(`${key} ${JSON.stringify(operand)} was rejected: ${errors.map(e => e.message).join('; ')}`)
     }
   }
   expect(checked.length).toBeGreaterThan(30)
@@ -262,16 +281,41 @@ describe('pickers', () => {
     const [value, setValue] = createSignal('')
     const widget = widgetFor(spec(['entity_id:light']))
     expect(manualEntityError(widget)('light.attic')).toBeUndefined()
-    expect(manualEntityError(widgetFor(selector(['entity_id'], { entity: { domain: ['switch', 'binary_sensor'] } })))('light.x')).toBe('light.x cannot be used here: only switch or binary sensor entities fit.')
+    expect(manualEntityError(widgetFor(selector(['entity_id'], { entity: { domain: ['switch', 'binary_sensor'] } })))('light.x')).toBe('Only switch or binary sensor entities fit here.')
     const { host } = mount(() => <EntityAutocomplete value={value()} onChange={setValue} label="Lamp" filter={entityPredicate(widget)} manualError={manualEntityError(widget)} />)
     host.querySelector<HTMLButtonElement>('.hs-picker-field')!.click()
+    const status = host.querySelector('.hs-picker-rejected')!
+    await vi.waitFor(() => expect(host.querySelectorAll('dialog[open] [role="option"]').length).toBeGreaterThan(0))
+    // One polite region, present before anything is typed, so a message is announced when it changes, not per keystroke.
+    expect(status.getAttribute('role')).toBe('status')
+    expect(status.textContent).toBe('')
     const search = host.querySelector<HTMLInputElement>('input[aria-label="Search entities"]')!
     search.value = 'switch.unlisted'; search.dispatchEvent(new Event('input', { bubbles: true }))
-    expect(host.querySelector('[role="alert"]')!.textContent).toBe('switch.unlisted cannot be used here: only light entities fit.')
+    expect(status.textContent).toBe('Only light entities fit here.')
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    // The rejection replaces the "enter an exact ID" advice it would contradict.
+    expect(host.textContent).not.toContain('No matching')
+    search.value = 'switch.unlisted2'; search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(host.querySelector('.hs-picker-rejected')).toBe(status)
+    expect(status.textContent).toBe('Only light entities fit here.')
     expect([...host.querySelectorAll('button')].some(b => b.textContent?.startsWith('Use ID'))).toBe(false)
     search.value = 'light.unlisted'; search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(status.textContent).toBe('')
+    expect(host.textContent).toContain('No matching entities. Enter an exact ID to retain an unavailable item.')
     ;[...host.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Use ID: light.unlisted')!.click()
     expect(value()).toBe('light.unlisted')
+  })
+  it('judges a typed ID of a listed entity by the whole selector filter, as the picker does', () => {
+    const widget = widgetFor(selector(['entity_id:light'], { entity: { domain: 'light', supported_features: 4 } }))
+    const known = [entity('light.a', { supported_features: 4 }), entity('light.b')]
+    const error = manualEntityError(widget, known), accepts = entityPredicate(widget)
+    expect(known.map(e => [accepts(e), error(e.entity_id)])).toEqual([[true, undefined], [false, 'This entity does not fit here.']])
+    // An unlisted entity's features are unknown, so only its domain is judged.
+    expect(error('light.unlisted')).toBeUndefined()
+    expect(error('switch.unlisted')).toBe('Only light entities fit here.')
+    // The type's domains and the selector's must both allow it.
+    const both = manualEntityError(widgetFor(selector(['entity_id:light', 'entity_id:switch'], { entity: { domain: ['switch', 'fan'] } })))
+    expect([both('light.x'), both('switch.x'), both('fan.x')]).toEqual(['Only switch entities fit here.', undefined, 'Only switch entities fit here.'])
   })
   it('respects the selector filter (device class, features) as well as domains', () => {
     const accepts = entityPredicate(widgetFor(selector(['entity_id'], { entity: { domain: 'light', supported_features: 4 } })))
@@ -324,5 +368,21 @@ describe('pickers', () => {
     box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     expect(changes).toEqual([{ kind: 'literal', type: 'string', value: 'attic' }])
     expect(jsonEqual({ a: 1, b: 2 }, { b: 2, a: 1 })).toBe(true)
+  })
+  it('moves up from no active option to the last one, names its group and keeps focus on a listbox press', async () => {
+    const { host } = mount(() => <InputEditor input={selector(['string'], { area: {} })} value={undefined} onChange={() => {}} variant="panel" label="Area" />)
+    const box = host.querySelector<HTMLInputElement>('input[role="combobox"][aria-label="Area"]')!
+    const group = box.closest('.hs-search-select')!
+    expect(group.getAttribute('role')).toBe('group')
+    expect(host.querySelector(`[id="${group.getAttribute('aria-labelledby')}"]`)!.textContent).toBe('Area')
+    await vi.waitFor(() => { box.click(); expect(host.querySelectorAll('[role="option"]')).toHaveLength(2) })
+    expect(box.hasAttribute('aria-activedescendant')).toBe(false)
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+    const options = [...host.querySelectorAll('[role="option"]')]
+    expect(box.getAttribute('aria-activedescendant')).toBe(options.at(-1)!.id)
+    expect(options.at(-1)!.textContent).toBe('Attic')
+    const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    host.querySelector('[role="listbox"]')!.dispatchEvent(press)
+    expect(press.defaultPrevented).toBe(true)
   })
 })

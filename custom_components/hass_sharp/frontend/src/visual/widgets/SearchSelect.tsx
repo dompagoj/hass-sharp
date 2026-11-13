@@ -17,7 +17,7 @@ export function SearchSelect(props: {
   disabled?: boolean
   clearOnSelect?: boolean
 }) {
-  const listId = createUniqueId()
+  const listId = createUniqueId(), labelId = `${listId}-label`
   const selected = () => props.value === undefined ? '' : props.options.find(o => o.value === props.value)?.label ?? props.value
   const [query, setQuery] = createSignal<string>()
   const [open, setOpen] = createSignal(false)
@@ -35,7 +35,8 @@ export function SearchSelect(props: {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
       if (!open()) { setOpen(true); setActive(event.key === 'ArrowDown' ? 0 : count - 1); return }
-      if (count) setActive(i => (i + (event.key === 'ArrowDown' ? 1 : -1) + count) % count)
+      // From no active option, Down goes to the first and Up to the last.
+      if (count) setActive(i => i < 0 ? (event.key === 'ArrowDown' ? 0 : count - 1) : (i + (event.key === 'ArrowDown' ? 1 : -1) + count) % count)
       ;(event.currentTarget.getRootNode() as Document | ShadowRoot).getElementById?.(optionId(active()))?.scrollIntoView?.({ block: 'nearest' })
     } else if (event.key === 'Enter' && !event.isComposing && open() && matches()[active()]) {
       event.preventDefault(); choose(matches()[active()].value)
@@ -43,7 +44,8 @@ export function SearchSelect(props: {
       event.preventDefault(); event.stopPropagation(); close()
     }
   }
-  return <div class="hs-autocomplete hs-search-select">
+  return <div class="hs-autocomplete hs-search-select" role="group" aria-labelledby={labelId}>
+    <span id={labelId} class="hs-visually-hidden">{props.label}</span>
     <input id={props.id} class="hs-input" role="combobox" aria-label={props.label} aria-autocomplete="list" aria-expanded={open()} aria-controls={listId}
       aria-activedescendant={open() && active() >= 0 && active() < matches().length ? optionId(active()) : undefined}
       aria-describedby={props.describedBy} aria-invalid={props.invalid || undefined} disabled={props.disabled}
@@ -52,7 +54,7 @@ export function SearchSelect(props: {
       onKeyDown={keydown} onBlur={close}
       onClick={() => { if (!open()) { setOpen(true); setActive(-1) } }} />
     <Show when={open()}>
-      <div class="hs-suggestions" role="listbox" id={listId} aria-label={`${props.label} options`}>
+      <div class="hs-suggestions" role="listbox" id={listId} aria-label={`${props.label} options`} onMouseDown={event => event.preventDefault()}>
         <Show when={matches().length} fallback={<p class="hs-muted" role="status">No match</p>}>
           <For each={matches()}>{(option, i) => <>
             <Show when={option.group && option.group !== matches()[i() - 1]?.group}><div class="hs-search-group" role="presentation">{option.group}</div></Show>

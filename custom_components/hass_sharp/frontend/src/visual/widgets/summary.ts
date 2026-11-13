@@ -1,28 +1,59 @@
 import type { JsonValue } from '../contract'
-import { displayValue } from './json'
+import { displayValue, jsonEqual, record, strings } from './json'
 import { durationParts, durationSeconds, type Widget } from './model'
 import { targetIds } from './pickers'
 
+/** The registry kinds whose ids a summary names. */
+export type NamedKind = 'entity' | 'device' | 'area' | 'floor' | 'label'
+/** A person-facing name for a registry id; undefined falls back to the id. */
+export type NameResolver = (kind: NamedKind, id: string) => string | undefined
+
 const count = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`
 const clip = (text: string, max = 40) => text.length > max ? text.slice(0, max - 1) + '…' : text
-/** A one-line description of a value, shown on a node card for a widget that is too large to edit there. */
-export function valueSummary(widget: Widget, value: JsonValue | undefined): string {
+/** Lists read "30, 60"; objects read "Object, 2 fields". */
+function plain(value: JsonValue): string {
+  if (Array.isArray(value)) return value.map(item => record(item) || Array.isArray(item) ? JSON.stringify(item) : displayValue(item)).join(', ')
+  if (record(value)) return `Object, ${count(Object.keys(value).length, 'field')}`
+  return displayValue(value)
+}
+/** Whether a summary of this widget names registry items (and so wants a `NameResolver`). */
+export const namesRegistryItems = (widget: Widget) => ['target', 'entity', 'device', 'area', 'floor', 'label'].includes(widget.kind)
+
+/**
+ * A one-line description of a value, shown on a node card for a widget that is too large to edit there.
+ * Registry ids are named through `names` (entity friendly names, device, area, floor and label names), else shown as ids.
+ */
+export function valueSummary(widget: Widget, value: JsonValue | undefined, names?: NameResolver): string {
   if (value === undefined) return 'Not set'
   if (value === '') return 'Empty text'
+  const name = (kind: NamedKind, id: string) => names?.(kind, id) || id
   switch (widget.kind) {
     case 'target': {
       const ids = targetIds(value)
-      if (ids.entity_id.length === 1 && Object.values(ids).flat().length === 1) return ids.entity_id[0]
+      const named = [...ids.entity_id.map(id => name('entity', id)), ...ids.device_id.map(id => name('device', id)), ...ids.area_id.map(id => name('area', id)),
+        ...ids.floor_id.map(id => name('floor', id)), ...ids.label_id.map(id => name('label', id))]
+      if (!named.length) return 'No target'
+      if (named.length <= 3) return clip(named.join(', '))
       return [count(ids.entity_id.length, 'entity', 'entities'), count(ids.device_id.length, 'device'), count(ids.area_id.length, 'area'),
         count(ids.floor_id.length, 'floor'), count(ids.label_id.length, 'label')].filter(text => !text.startsWith('0 ')).join(', ')
+    }
+    case 'entity': case 'device': case 'area': case 'floor': case 'label':
+      return clip(strings(value).map(id => name(widget.kind as NamedKind, id)).join(', ') || plain(value))
+    case 'select': case 'state': {
+      const label = (item: JsonValue) => widget.options?.find(o => jsonEqual(o.value, item))?.label ?? displayValue(item)
+      return clip(Array.isArray(value) ? value.map(label).join(', ') : label(value))
     }
     case 'duration': {
       const parts = durationParts(widget, durationSeconds(value) ?? 0)
       const text = ([['days', 'd'], ['hours', 'h'], ['minutes', 'min'], ['seconds', 's']] as const).filter(([k]) => parts[k]).map(([k, u]) => `${parts[k]} ${u}`).join(' ')
       return text || '0 s'
     }
-    case 'color': return Array.isArray(value) ? `RGB ${value.join(', ')}` : clip(displayValue(value))
-    case 'text': return Array.isArray(value) ? clip(value.map(displayValue).join(', ')) : clip(displayValue(value).split('\n')[0] + (displayValue(value).includes('\n') ? ' …' : ''))
-    default: return Array.isArray(value) && widget.multiple ? clip(value.map(displayValue).join(', ')) : clip(displayValue(value))
+    case 'color': return Array.isArray(value) ? `RGB ${value.join(', ')}` : clip(plain(value))
+    case 'text': {
+      if (Array.isArray(value)) return clip(plain(value))
+      const text = displayValue(value)
+      return clip(text.split('\n')[0] + (text.includes('\n') ? ' …' : ''))
+    }
+    default: return clip(plain(value))
   }
 }

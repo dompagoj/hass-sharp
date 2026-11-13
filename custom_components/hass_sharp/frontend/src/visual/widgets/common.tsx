@@ -1,4 +1,4 @@
-import { createEffect, createSignal, createUniqueId, For, on, Show, type JSX } from 'solid-js'
+import { createEffect, createSignal, createUniqueId, For, on, onCleanup, Show, type JSX } from 'solid-js'
 import type { JsonValue } from '../contract'
 import type { ValueKind, Widget } from './model'
 
@@ -48,7 +48,7 @@ export function DraftField(props: {
   disabled?: boolean
   /** Empty the field after each accepted commit (an "add item" field). */
   clearOnCommit?: boolean
-  /** Show the "Ctrl+Enter to apply" hint of a multiline field. */
+  /** Show the "Ctrl+Enter to apply" hint of a multiline field ("⌘+Enter" on Apple platforms). */
   shortcutHint?: boolean
 }) {
   const [draft, setDraft] = createSignal(props.text)
@@ -86,12 +86,17 @@ export function DraftField(props: {
     <Show when={props.multiline} fallback={<input {...shared()} type={props.type ?? 'text'} step={props.step} inputmode={props.inputmode} list={props.list} value={draft()} />}>
       <textarea {...shared()} rows="4" aria-keyshortcuts="Control+Enter Meta+Enter" value={draft()} />
     </Show>
-    <Show when={hint()}><small id={hintId()} class="hs-field-hint">Ctrl+Enter to apply</small></Show>
+    <Show when={hint()}><small id={hintId()} class="hs-field-hint">{applyShortcut()} to apply</small></Show>
     <Show when={error()}><small id={errorId()} class="hs-error">{error()}</small></Show>
   </>
 }
 
 /** The placeholder of a text value: "Not set" without a value, "Empty text" for an empty string. */
+/** The apply shortcut of a multiline field as this platform writes it. */
+export const applyShortcut = () => {
+  const nav = typeof navigator === 'undefined' ? undefined : navigator
+  return /Mac|iPhone|iPad/.test(`${nav?.platform ?? ''} ${nav?.userAgent ?? ''}`) ? '⌘+Enter' : 'Ctrl+Enter'
+}
 export const textPlaceholder = (value: JsonValue | undefined) => value === '' ? 'Empty text' : value === undefined ? 'Not set' : undefined
 
 /**
@@ -117,15 +122,32 @@ export interface Chip { key: string; label: string; title?: string; /** A catego
  */
 export function Chips(props: { label: string; items: Chip[]; onRemove(key: string): void; disabled?: boolean; fallbackFocusId?: string }) {
   let host!: HTMLDivElement
+  let stop: (() => void) | undefined
+  onCleanup(() => stop?.())
+  const buttons = () => Array.from(host.querySelectorAll<HTMLButtonElement>('.hs-chip-remove'))
   const remove = (key: string, index: number) => {
-    props.onRemove(key)
-    queueMicrotask(() => {
-      const buttons = Array.from(host.querySelectorAll<HTMLButtonElement>('.hs-chip-remove'))
-      const next = buttons[index] ?? buttons[index - 1]
-      if (next) { next.focus(); return }
+    stop?.()
+    const before = buttons().length
+    let done = false
+    // The parent may apply the change later (a store, an undo history), so wait until the chip is really gone.
+    const settle = () => {
+      const rest = buttons()
+      if (done || rest.length >= before) return
+      done = true
+      stop?.()
       const root = host.getRootNode() as Document | ShadowRoot
-      if (props.fallbackFocusId) root.getElementById(props.fallbackFocusId)?.focus()
-    })
+      const active = root.activeElement
+      // Focus moved on by the person meanwhile is left alone.
+      if (active && active !== host.ownerDocument.body && !host.contains(active)) return
+      const next = rest[index] ?? rest[index - 1] ?? (props.fallbackFocusId ? root.getElementById(props.fallbackFocusId) : null)
+      next?.focus()
+    }
+    const observer = new MutationObserver(() => { settle() })
+    const timer = setTimeout(() => stop?.(), 1000)
+    stop = () => { done = true; observer.disconnect(); clearTimeout(timer); stop = undefined }
+    observer.observe(host, { childList: true, subtree: true })
+    props.onRemove(key)
+    queueMicrotask(settle)
   }
   return <div ref={host} class="hs-chips-host">
     <Show when={props.items.length}>

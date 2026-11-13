@@ -2,7 +2,8 @@ import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js'
 import { Menu, type MenuItem } from '../components/Menu'
 import { isAssignable, nodeCatalog, type InputSpec, type JsonValue, type Operand, type VisualCatalogSnapshot } from './contract'
 import { typeLabel } from './typeLabels'
-import { commitLiteral, fitsWidget, initialValue, inlineWidget, jsonEqual, literalFor, valueKind, valueSummary, WidgetControl, widgetFor, type CommitOptions, type Widget } from './widgets'
+import { commitLiteral, fitsWidget, initialValue, inlineWidget, jsonEqual, literalFor, valueKind, namesRegistryItems, registryNames, valueSummary, WidgetControl, widgetFor, type CommitOptions, type Widget } from './widgets'
+import { useRegistry } from '../registry'
 
 /** A named variable visible to the input (D7), with the type of its producer. */
 export interface EditorVariable { name: string; type: string }
@@ -39,6 +40,13 @@ const jsonWidget: Widget = { kind: 'json', multiple: false }
 const same = (a: Operand, b: Operand) => a.kind === b.kind && (a.kind !== 'literal' || (b.kind === 'literal' && a.type === b.type && jsonEqual(a.value, b.value)))
   && (a.kind !== 'variable' || (b.kind === 'variable' && a.name === b.name))
 
+/** The inline summary of a value; registry ids are named once the registry has loaded. */
+function Summary(props: { widget: Widget; value: JsonValue | undefined }) {
+  const Line = (p: { text: string }) => <span class="hs-input-editor__summary" title={p.text}>{p.text}</span>
+  const Named = () => { const registry = useRegistry(); return <Line text={valueSummary(props.widget, props.value, registryNames(registry.data))} /> }
+  return <Show when={namesRegistryItems(props.widget)} fallback={<Line text={valueSummary(props.widget, props.value)} />}><Named /></Show>
+}
+
 /** Edits one operand of one input with the widget its type and selector call for, plus a Value / Variable… / Clear menu. */
 export function InputEditor(props: InputEditorProps) {
   const id = createUniqueId(), labelId = `${id}-label`, hintId = `${id}-hint`, errorsId = `${id}-errors`, variableId = `${id}-variable`
@@ -54,10 +62,11 @@ export function InputEditor(props: InputEditorProps) {
   // A list or object typed into a kind switch is as large as the JSON editor.
   const light = () => inlineWidget(shown()) && !(shown().kind === 'mixed' && valueKind(literal()) === 'json')
   const summary = () => props.variant === 'inline' && view() === 'value' && widget().kind !== 'none' && !light()
-  // Whether the value view has a control carrying the descriptions; otherwise the group carries them.
-  const control = () => view() === 'value' && widget().kind !== 'none' && !summary()
   const variableName = () => { const o = operand(); return o.kind === 'variable' ? o.name : '' }
   const variables = () => (props.variables ?? []).filter(v => props.input.types.some(t => isAssignable(v.type, t, catalog())))
+  const choosingVariable = () => view() === 'variable' && (picking() || !variableName()) && variables().length > 0
+  // The id of the control carrying the label and descriptions (the widget or the variable select); without one the group carries them.
+  const control = () => view() === 'value' && widget().kind !== 'none' && !summary() ? id : choosingVariable() ? variableId : undefined
   const errors = () => props.errors ?? []
   const hint = () => props.variant === 'panel' ? props.input.description : ''
   const describedBy = () => [errors().length && errorsId, hint() && hintId].filter(Boolean).join(' ') || undefined
@@ -89,14 +98,16 @@ export function InputEditor(props: InputEditorProps) {
     { label: 'Clear', onSelect: () => { setPicking(false); emit({ kind: 'unset' }) } },
   ]
   const menu = () => <Menu label={`${props.label} mode`} items={items()} disabled={props.disabled} />
-  const cancelPicking = (event: KeyboardEvent) => { if (event.key === 'Escape' && picking()) { event.preventDefault(); event.stopPropagation(); setPicking(false) } }
+  // Leaving the variable chooser returns focus to the mode menu it was opened from.
+  const stopPicking = () => { setPicking(false); queueMicrotask(() => root.querySelector<HTMLElement>('button[aria-haspopup="menu"]')?.focus()) }
+  const cancelPicking = (event: KeyboardEvent) => { if (event.key === 'Escape' && picking()) { event.preventDefault(); event.stopPropagation(); stopPicking() } }
 
   const content = () => <>
     <Show when={view() === 'value'}>
       <Show when={widget().kind !== 'none'} fallback={<span class="hs-input-editor__state hs-muted">
         {props.variant === 'inline' ? 'Connect an output' : `Connect an output of type ${typeNames()}.`}
       </span>}>
-        <Show when={!summary()} fallback={<span class="hs-input-editor__summary" title={valueSummary(shown(), literal())}>{valueSummary(shown(), literal())}</span>}>
+        <Show when={!summary()} fallback={<Summary widget={shown()} value={literal()} />}>
           <WidgetControl widget={shown()} value={literal()} commit={commit} id={id} label={props.label} describedBy={describedBy()} required={props.input.required}
             invalid={errors().length > 0} disabled={!!props.disabled} compact={props.variant === 'inline'} context={props.context} />
         </Show>
@@ -114,7 +125,7 @@ export function InputEditor(props: InputEditorProps) {
             <For each={variables()}>{v => <option value={v.name} selected={v.name === variableName()}>{v.name} ({typeLabel(v.type, catalog())})</option>}</For>
           </select>
         </Show>
-        <Show when={picking()}><button type="button" class="hs-button hs-button--ghost" onClick={() => setPicking(false)}>Cancel</button></Show>
+        <Show when={picking()}><button type="button" class="hs-button hs-button--ghost" onClick={stopPicking}>Cancel</button></Show>
       </Show>
     </Show>
   </>
@@ -124,7 +135,7 @@ export function InputEditor(props: InputEditorProps) {
     aria-describedby={control() ? undefined : describedBy()}>
     <Show when={props.variant === 'panel'}>
       <div class="hs-input-editor__head">
-        <label id={labelId} for={control() ? id : undefined}>{props.label}</label>
+        <label id={labelId} for={control()}>{props.label}</label>
         {menu()}
       </div>
     </Show>

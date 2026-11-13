@@ -9,6 +9,7 @@ import { ListWidget, SelectWidget, TextWidget } from './basic'
 import { record, strings } from './json'
 import type { Widget, WidgetOption } from './model'
 import { SearchSelect, type SearchOption } from './SearchSelect'
+import type { NameResolver } from './summary'
 
 /** Entities an entity or target widget offers: the input's `entity_id:<d>` domains and its selector filter. */
 export function entityPredicate(widget: Widget): (entity: EntityInfo) => boolean {
@@ -25,18 +26,42 @@ function selectorDomains(selector: unknown): string[] {
   return !domains.length || domains.some(d => !d.length) ? [] : [...new Set(domains.flat())]
 }
 /**
- * Why a typed entity ID cannot be used: picked and typed IDs pass the same domain rule (the input's domains,
- * else the selector's). Device class and feature filters cannot be checked for an entity that is not listed.
+ * Why a typed entity ID cannot be used. A listed entity is judged by `entityPredicate`, exactly as the picker
+ * offers it. An unlisted one is judged by the domains both the input type and the selector allow, since its
+ * device class and features are unknown. The message never repeats the ID, so it reads the same while typing.
  */
-export function manualEntityError(widget: Widget): (id: string) => string | undefined {
-  const domains = widget.domains?.length ? widget.domains : selectorDomains(widget.filter)
+export function manualEntityError(widget: Widget, entities: readonly EntityInfo[] = []): (id: string) => string | undefined {
+  const accepts = entityPredicate(widget)
+  const typeDomains = widget.domains ?? [], filterDomains = selectorDomains(widget.filter)
+  const domains = typeDomains.length && filterDomains.length ? typeDomains.filter(d => filterDomains.includes(d)) : typeDomains.length ? typeDomains : filterDomains
+  const restricted = typeDomains.length > 0 || filterDomains.length > 0
   const words = domains.map(d => domainWords(d).toLowerCase()).join(' or ')
-  return id => !domains.length || domains.includes(id.slice(0, id.indexOf('.'))) ? undefined : `${id} cannot be used here: only ${words} entities fit.`
+  const domainError = domains.length ? `Only ${words} entities fit here.` : 'No entity fits here.'
+  return id => {
+    const domain = id.slice(0, id.indexOf('.'))
+    if (restricted && !domains.includes(domain)) return domainError
+    const known = entities.find(e => e.entity_id === id)
+    return !known || accepts(known) ? undefined : 'This entity does not fit here.'
+  }
+}
+/** Names registry ids for `valueSummary`: entity friendly names, device, area, floor and label names. */
+export function registryNames(registry: Registry | undefined): NameResolver {
+  return (kind, id) => {
+    if (!registry) return undefined
+    switch (kind) {
+      case 'entity': return registry.entities.find(e => e.entity_id === id)?.name ?? undefined
+      case 'device': return registry.device(id)?.name ?? undefined
+      case 'area': return registry.area(id)?.name
+      case 'floor': return registry.floor(id)?.name
+      case 'label': return registry.label(id)?.name
+    }
+  }
 }
 
 export function EntityWidget(props: WidgetProps) {
+  const entities = useEntities()
   const accepts = createMemo(() => entityPredicate(props.widget))
-  const manual = createMemo(() => manualEntityError(props.widget))
+  const manual = createMemo(() => manualEntityError(props.widget, entities.data))
   return <Show when={props.widget.multiple} fallback={<EntityAutocomplete id={props.id} label={props.label} hideLabel filter={accepts()} manualError={manual()}
     value={typeof props.value === 'string' ? props.value : ''} onChange={id => props.commit(id || undefined)}
     describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled} />}>
@@ -112,7 +137,7 @@ export function targetValue(previous: JsonValue | undefined, ids: TargetIds, ent
 export function TargetWidget(props: WidgetProps) {
   const registry = useRegistry()
   const accepts = createMemo(() => entityPredicate(props.widget))
-  const manual = createMemo(() => manualEntityError(props.widget))
+  const manual = createMemo(() => manualEntityError(props.widget, registry.data?.entities))
   const ids = () => targetIds(props.value)
   const set = (key: TargetKey, list: string[]) => props.commit(targetValue(props.value, { ...ids(), [key]: list }, props.widget.entityString === true))
   const name = (key: TargetKey, id: string) => {

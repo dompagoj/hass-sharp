@@ -42,6 +42,8 @@ export interface Widget {
   /** mixed: the kinds the input accepts, and the kind a new value starts with. */
   kinds?: ValueKind[]
   defaultKind?: ValueKind
+  /** json: only a list or an object is accepted (the "List or object" kind of a mixed value). */
+  structured?: boolean
 }
 
 const num = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : undefined
@@ -93,7 +95,10 @@ function mixed(input: InputSpec, catalog: VisualCatalogSnapshot, defaultKind?: V
   const kinds = kindOrder.filter(kind => input.types.some(t => typeKind(t, catalog) === kind))
   if (!kinds.length) return { kind: 'none', multiple: false }
   if (kinds.length === 1 && kinds[0] === 'json') return { kind: 'json', multiple: false }
-  return { kind: 'mixed', multiple: false, kinds, defaultKind: defaultKind && kinds.includes(defaultKind) ? defaultKind : kinds.includes('text') ? 'text' : kinds[0] }
+  // The number kind keeps the input's range, step and unit.
+  const { min, max, step, unit } = numberWidget(input, undefined, false)
+  return Object.assign({ kind: 'mixed', multiple: false, kinds, defaultKind: defaultKind && kinds.includes(defaultKind) ? defaultKind : kinds.includes('text') ? 'text' : kinds[0] } as Widget,
+    min !== undefined && { min }, max !== undefined && { max }, step !== undefined && { step }, unit !== undefined && { unit })
 }
 const acceptsKind = (input: InputSpec, kind: ValueKind, catalog: VisualCatalogSnapshot) => input.types.some(t => typeKind(t, catalog) === kind)
 

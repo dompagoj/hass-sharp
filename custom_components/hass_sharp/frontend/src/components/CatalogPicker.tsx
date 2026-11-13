@@ -121,10 +121,11 @@ export function CatalogPicker(props: CatalogPickerProps) {
           <For each={domains()}>{item => <option value={item}>{item}</option>}</For>
         </select>
       </div>
-      <Show when={rejected()}><p class="hs-error" role="alert">{rejected()}</p></Show>
+      {/* Always present, so a polite announcement follows a change of message rather than each keystroke. */}
+      <p class="hs-picker-rejected" classList={{ 'hs-error': !!rejected() }} role="status">{rejected() ?? ''}</p>
       <Show when={props.loading}><p role="status">Loading {props.kind}…</p></Show>
       <Show when={props.error}><p role="alert">Could not load {props.kind}. <Button onClick={() => void props.refresh()}>Retry</Button></p></Show>
-      <Show when={!props.loading && !props.error && !matches().length}>
+      <Show when={!props.loading && !props.error && !matches().length && !rejected()}>
         <p role="status">No matching {props.kind}. Enter an exact ID to retain an unavailable item.</p>
       </Show>
       <div class="hs-picker-results" role="listbox" id={`${id}-list`} aria-label={`${label()} results`} aria-multiselectable={props.multiple || undefined}>

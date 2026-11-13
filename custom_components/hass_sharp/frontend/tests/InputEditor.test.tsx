@@ -185,6 +185,32 @@ it('closes the variable chooser with Escape even when no variable fits', async (
   expect(document.activeElement).toBe(none)
   key(none, 'Escape')
   expect(host.querySelector('input[role="switch"]')).not.toBeNull()
+  // Focus goes back to the mode menu the chooser was opened from.
+  await Promise.resolve()
+  expect(document.activeElement).toBe(q(host, 'button[aria-label="Enabled mode"]'))
+})
+
+it('describes the variable select once, and Escape or Cancel returns to the mode menu', async () => {
+  const variables = [{ name: 'flag', type: 'boolean' }]
+  const { host } = mount({ input: spec(['boolean'], { description: 'Turns it on.' }), label: 'Enabled', variables, errors: ['Input is required'] })
+  const root = q(host, '.hs-input-editor'), trigger = q<HTMLButtonElement>(host, 'button[aria-label="Enabled mode"]')
+  openMenu(host, 'Enabled mode'); menuItem(host, 'Variable…').click()
+  const select = q<HTMLSelectElement>(host, 'select[aria-label="Enabled variable"]')
+  expect(described(host, select)).toEqual(['Input is required', 'Turns it on.'])
+  expect(root.hasAttribute('aria-describedby')).toBe(false)
+  expect(host.querySelectorAll('[aria-describedby]')).toHaveLength(1)
+  expect(q<HTMLLabelElement>(host, 'label').htmlFor).toBe(select.id)
+  key(select, 'Escape'); await Promise.resolve()
+  expect(host.querySelector('select[aria-label="Enabled variable"]')).toBeNull()
+  expect(document.activeElement).toBe(trigger)
+  openMenu(host, 'Enabled mode'); menuItem(host, 'Variable…').click()
+  ;[...host.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Cancel')!.click()
+  await Promise.resolve()
+  expect(document.activeElement).toBe(trigger)
+  // Showing a chosen variable, the group carries the descriptions instead.
+  const chosen = remount({ input: spec(['boolean']), label: 'Enabled', variables, errors: ['Input is required'] }, { kind: 'variable', name: 'flag' })
+  expect(chosen.host.querySelectorAll('[aria-describedby]')).toHaveLength(1)
+  expect(described(chosen.host, q(chosen.host, '.hs-input-editor'))).toEqual(['Input is required'])
 })
 
 it('brings back the value kept under a connection when Value is chosen', () => {
@@ -210,13 +236,19 @@ it('renders the inline variant compactly with the mode menu closed', () => {
   expect(q<HTMLInputElement>(host, 'input[aria-label="Message"]').value).toBe('Hi')
 })
 
-it('summarises a value too large for a node card in the inline variant', () => {
+it('summarises a value too large for a node card in the inline variant, naming registry items', async () => {
   const { host } = mount({ input: serviceInputs('light.turn_on').target, label: 'Target', variant: 'inline' },
     { kind: 'literal', type: 'target', value: { entity_id: ['light.hall', 'light.porch'], area_id: ['hall'] } })
-  expect(q(host, '.hs-input-editor__summary').textContent).toBe('2 entities, 1 area')
+  // Ids stand in until the registry has loaded; then the area reads by its name.
+  expect(q(host, '.hs-input-editor__summary').textContent).toBe('light.hall, light.porch, hall')
+  await vi.waitFor(() => expect(q(host, '.hs-input-editor__summary').textContent).toBe('light.hall, light.porch, Hall'))
+  expect(q(host, '.hs-input-editor__summary').title).toBe('light.hall, light.porch, Hall')
   expect(host.querySelector('.hs-chip')).toBeNull()
+  const many = remount({ input: serviceInputs('light.turn_on').target, label: 'Target', variant: 'inline' },
+    { kind: 'literal', type: 'target', value: { entity_id: ['light.hall', 'light.porch', 'switch.fan'], area_id: ['hall'] } })
+  expect(q(many.host, '.hs-input-editor__summary').textContent).toBe('3 entities, 1 area')
   const json = remount({ input: field('light.turn_on', 'hs_color'), label: 'HS colour', variant: 'inline' }, { kind: 'literal', type: 'array', value: [30, 60] })
-  expect(q(json.host, '.hs-input-editor__summary').textContent).toBe('[30,60]')
+  expect(q(json.host, '.hs-input-editor__summary').textContent).toBe('30, 60')
 })
 
 it('labels the panel control and associates validation messages with it once', () => {
@@ -261,16 +293,40 @@ it('types a value of several kinds by the kind switch', () => {
   expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'number', value: 1 })
   expect(q<HTMLInputElement>(host, 'input[aria-label="Value"]').value).toBe('1')
   chose(q<HTMLSelectElement>(host, 'select[aria-label="Value kind"]'), 'boolean')
-  expect(changes).toHaveLength(2)
+  // 1 is not a yes/no value: the switch starts from No, and that is what is stored.
+  expect(changes).toHaveLength(3)
+  expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'boolean', value: false })
+  expect(q<HTMLInputElement>(host, 'input[role="switch"]').checked).toBe(false)
   q<HTMLInputElement>(host, 'input[role="switch"]').click()
   expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'boolean', value: true })
   chose(q<HTMLSelectElement>(host, 'select[aria-label="Value kind"]'), 'json')
+  // Nothing converts a yes/no value to a list or object, so the value is cleared rather than kept out of sight.
+  expect(changes.at(-1)!.operand).toEqual({ kind: 'unset' })
   const area = q<HTMLTextAreaElement>(host, 'textarea[aria-label="Value"]')
+  expect(area.value).toBe('')
+  type(area, '5'); blur(area)
+  expect(q(host, '.hs-error').textContent).toBe('Enter a list [ … ] or an object { … }.')
+  expect(changes.at(-1)!.operand).toEqual({ kind: 'unset' })
   type(area, '{"a": 1}'); blur(area)
   expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'object', value: { a: 1 } })
+  chose(q<HTMLSelectElement>(host, 'select[aria-label="Value kind"]'), 'text')
+  expect(changes.at(-1)!.operand).toEqual({ kind: 'unset' })
+  expect(q<HTMLInputElement>(host, 'input[aria-label="Value"]').placeholder).toBe('Not set')
   // A stored value sets the switch.
   const stored = remount({ input: spec(['string', 'number']), label: 'Value' }, { kind: 'literal', type: 'number', value: 5 })
   expect(q<HTMLSelectElement>(stored.host, 'select[aria-label="Value kind"]').value).toBe('number')
+})
+
+it('keeps the range and unit of a number typed by the kind switch', () => {
+  const { host, changes } = mount({ input: spec(['string', 'number'], { min: 10, max: 20, unit: '%' }), label: 'Level' },
+    { kind: 'literal', type: 'string', value: 'high' })
+  chose(q<HTMLSelectElement>(host, 'select[aria-label="Level kind"]'), 'number')
+  // "high" is not a number: the number starts inside the range.
+  expect(changes).toEqual([{ operand: { kind: 'literal', type: 'number', value: 10 } }])
+  const input = q<HTMLInputElement>(host, 'input[aria-label="Level"]')
+  expect(input.value).toBe('10')
+  expect(input.getAttribute('inputmode')).toBe('decimal')
+  expect(q(host, '.hs-unit').textContent).toBe('%')
 })
 
 it('shows a connected input read-only and lets the mode menu replace the connection', () => {
@@ -332,6 +388,35 @@ it('moves focus to the next chip, then the previous one, then the add control af
   expect(document.activeElement?.getAttribute('aria-label')).toBe('Remove b')
   remove('b'); await Promise.resolve()
   expect(document.activeElement).toBe(host.querySelector('input[aria-label="Add to Tags"]'))
+})
+
+it('moves chip focus once a parent that applies changes later has removed the chip', async () => {
+  const { host, value } = mount({ input: spec(['array'], { selector: { text: { multiple: true } } }), label: 'Tags' },
+    { kind: 'literal', type: 'array', value: ['a', 'b', 'c'] }, 5)
+  const remove = (label: string) => q<HTMLButtonElement>(host, `button[aria-label="Remove ${label}"]`).click()
+  remove('a')
+  await Promise.resolve()
+  // The chip is still there until the parent applies the change.
+  expect(host.querySelector('button[aria-label="Remove a"]')).not.toBeNull()
+  await vi.waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Remove b'))
+  expect(value()).toEqual({ kind: 'literal', type: 'array', value: ['b', 'c'] })
+  remove('c')
+  await vi.waitFor(() => expect(host.querySelector('button[aria-label="Remove c"]')).toBeNull())
+  expect(document.activeElement?.getAttribute('aria-label')).toBe('Remove b')
+  remove('b')
+  await vi.waitFor(() => expect(document.activeElement).toBe(host.querySelector('input[aria-label="Add to Tags"]')))
+})
+
+it('shows the apply shortcut as this platform writes it', () => {
+  const platform = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator), 'platform')
+  try {
+    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+    const { host } = mount({ input: spec(['object', 'array']), label: 'Data' })
+    expect(q(host, '.hs-field-hint').textContent).toBe('⌘+Enter to apply')
+  } finally { delete (navigator as { platform?: string }).platform }
+  expect(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator), 'platform')).toEqual(platform)
+  const other = remount({ input: spec(['object', 'array']), label: 'Data' })
+  expect(q(other.host, '.hs-field-hint').textContent).toBe('Ctrl+Enter to apply')
 })
 
 it('keeps the stored duration shape and writes new values in the object form', () => {
