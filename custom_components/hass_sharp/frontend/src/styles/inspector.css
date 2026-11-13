@@ -117,7 +117,7 @@
 .hs-app .hs-insp-declare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; }
 
 /* Nothing selected, several selected, a wire. */
-.hs-app .hs-insp-overview, .hs-app .hs-insp-many, .hs-app .hs-insp-wire, .hs-app .hs-insp-palette { display: grid; gap: 12px; }
+.hs-app .hs-insp-overview, .hs-app .hs-insp-many, .hs-app .hs-insp-wire { display: grid; gap: 12px; }
 .hs-app .hs-insp-many__count { margin: 0; font-size: 16px; font-weight: 650; }
 .hs-app .hs-insp-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .hs-app .hs-insp-triggers { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }

@@ -2,7 +2,8 @@ import { batch, createMemo, createSignal, createUniqueId, For, onCleanup, Show }
 import { A } from '@solidjs/router'
 import { useQuery, useMutation } from '@tanstack/solid-query'
 import { useHass } from '../context'
-import type { AutomationRun, RunAcceptedResponse, RunHistoryResponse, RunStatus, UserScriptClassDto } from '../types'
+import type { AutomationRun, RunHistoryResponse, RunStatus, UserScriptClassDto } from '../types'
+import { acceptedRun, dispatchRun, forgetAcceptedRun, runErrorMessage as errorMessage, type RunAction } from './runDispatch'
 import { Button, Icon } from './Controls'
 import { JsonTree } from './JsonTree'
 import { summarizeTrigger, TriggerSummary } from './TriggerSummary'
@@ -13,10 +14,6 @@ const CAUSES: Record<string, string> = {
   HomeAssistantTrigger: 'Home Assistant trigger', Entity: 'Entity change', Schedule: 'Schedule', Manual: 'Manual run', Startup: 'Startup',
 }
 const active = (run: AutomationRun) => run.status === 'Pending' || run.status === 'Running'
-const errorMessage = (error: unknown) => {
-  const e = error as { message?: string; body?: { error?: string }; error?: string }
-  return e?.body?.error ?? e?.message ?? e?.error ?? 'Check your connection and try again.'
-}
 const duration = (ms: number | null) => ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} s`
 // Rows recorded before run history v2 carry only the method name and no trigger summary.
 const runLabel = (run: AutomationRun) => run.actionLabel ?? run.action
@@ -35,22 +32,32 @@ const Timestamp = (props: { value: string | null }) => <Show when={props.value} 
   <time dateTime={value()} title={value()}>{new Date(value()).toLocaleString()}</time>
 }</Show>
 
-export const AutomationRuns = (props: { automationId: string; classes: UserScriptClassDto[]; actionLabels?: Record<string, string> }) => {
+interface RunsProps {
+  automationId: string
+  classes: UserScriptClassDto[]
+  actionLabels?: Record<string, string>
+  /** History only: the page starts runs elsewhere (the visual editor's top bar). */
+  hideRunControls?: boolean
+}
+export const AutomationRuns = (props: RunsProps) => {
   const hass = useHass()
   // Identity, rather than filename, owns pagination and dispatch feedback.
   return <Show when={hass.user?.is_admin} fallback={<p class="hs-notice">Administrator access is required to run automations and view history.</p>}>
-    <Show when={props.automationId} keyed>{id => <RunPanel automationId={id} classes={props.classes} actionLabels={props.actionLabels} />}</Show>
+    <Show when={props.automationId} keyed>{id => <RunPanel automationId={id} classes={props.classes} actionLabels={props.actionLabels} hideRunControls={props.hideRunControls} />}</Show>
   </Show>
 }
 
-const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[]; actionLabels?: Record<string, string> }) => {
+const RunPanel = (props: RunsProps) => {
   const hass = useHass()
   const selectId = createUniqueId()
   const filterId = createUniqueId()
   const [offset, setOffset] = createSignal(0)
   const [statusFilter, setStatusFilter] = createSignal<RunStatus | ''>('')
   const [selection, setSelection] = createSignal('')
-  const [accepted, setAccepted] = createSignal<{ runId: string; at: number }>()
+  // Shared with every place that starts a run of this automation, so a run started elsewhere is polled here too.
+  const accepted = () => acceptedRun(props.automationId)
+  // Leaving the page forgets it: a run accepted before is not awaited when the list opens again.
+  onCleanup(() => forgetAcceptedRun(props.automationId))
   // Expansion is keyed by run ID so a row stays open while polling replaces its record.
   const [expanded, setExpanded] = createSignal<ReadonlySet<string>>(new Set())
   const [now, setNow] = createSignal(Date.now())
@@ -81,11 +88,8 @@ const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[]; 
     },
   }))
   const dispatch = useMutation(() => ({
-    mutationFn: (action: { className: string; method: string }) => hass.callWS<RunAcceptedResponse>({
-      type: 'hass_sharp/run_now', automationId: props.automationId, className: action.className, method: action.method,
-    }),
-    onSuccess: response => {
-      setAccepted({ runId: response.runId, at: Date.now() })
+    mutationFn: (action: RunAction) => dispatchRun(hass, props.automationId, action),
+    onSuccess: () => {
       // Return to the newest, unfiltered records so an accepted attempt is never hidden.
       if (offset() || statusFilter()) batch(() => { setOffset(0); setStatusFilter('') })
       else void history.refetch()
@@ -94,12 +98,11 @@ const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[]; 
   const runNow = () => {
     const action = selected()
     if (!action || dispatch.isPending) return
-    setAccepted(undefined)
     dispatch.mutate(action)
   }
   const filter = (value: RunStatus | '') => batch(() => { setStatusFilter(value); setOffset(0) })
   return <div class="hs-runs">
-    <section class="hs-run-controls" aria-label="Run automation">
+    <Show when={!props.hideRunControls}><section class="hs-run-controls" aria-label="Run automation">
       <div><h2>Run now</h2><p class="hs-muted">Runs the last saved version. Unsaved editor changes are not included.</p></div>
       <Show when={actions().length} fallback={<p class="hs-muted">No actions available for manual runs in the saved automation.</p>}>
         <div class="hs-run-action"><label for={selectId}>Action</label>
@@ -112,7 +115,7 @@ const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[]; 
       </Show>
       <Show when={accepted()}>{request => <p class="hs-run-feedback" role="status">Request accepted · <code>{request().runId}</code>. Check its status below for the result.</p>}</Show>
       <Show when={dispatch.isError}><p class="hs-error" role="alert">Run request failed: {errorMessage(dispatch.error)}</p></Show>
-    </section>
+    </section></Show>
     <section aria-label="Run history" class="hs-run-history">
       <header class="hs-history-heading"><div><h2>Run history</h2><p class="hs-muted">Newest first · times in your local time zone. Pages may shift when new runs arrive.</p></div>
         <div class="hs-history-tools">

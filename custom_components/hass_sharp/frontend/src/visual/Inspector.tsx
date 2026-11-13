@@ -6,7 +6,8 @@ import type { VisualDiagnostic } from './api'
 import { copySteps, pasteSteps } from './clipboard'
 import { dataOutputs, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { execLabel, nodeTitle } from './flow/flowModel'
-import { catalogPalette, nodeInputs, outputPort, portLabel, removeNode, updateNode, type VisualGraph } from './graph'
+import { nodeInputs, outputPort, removeNode, updateNode, type VisualGraph } from './graph'
+import { focusSoon as focusWhenShown } from './soon'
 import { icons, nodeIdentity } from './icons'
 import { applyLayout, tidyLayout } from './layout'
 import { nodeSummary, serviceFieldLabel } from './nodeSummary'
@@ -17,8 +18,6 @@ type Options = { coalesce?: string }
 export interface InspectorLastRun { status: string; when?: string; ok?: boolean }
 
 export interface InspectorProps {
-  /** A palette node the user clicked for its description; shown instead of the selection. */
-  description?: ReturnType<typeof catalogPalette>[number]
   /** The one selected node (the canvas' primary selection). */
   selected?: GraphNode
   /** Every selected node; two or more show the selection view. */
@@ -31,14 +30,16 @@ export interface InspectorProps {
   commit(graph: VisualGraph, options?: Options): void
   /** Select a node (or nothing) on the canvas. */
   onSelect?(id?: string): void
-  /** Shows the problems list; without it the page's diagnostics list is focused. */
+  /** Shows the problems list (the overview's problem count links to it). */
   onShowProblems?(): void
   lastRun?: InspectorLastRun
   /**
-   * Below 900px (and floating over a full-screen canvas) the inspector is a sheet in two stages: a peek bar naming
-   * the selection, and the panel. `open` is the page's choice of the panel (default: while something is selected,
-   * until closed); with something selected and `open` false, the peek bar shows.
+   * Docked: a side panel beside the canvas, always shown, with the overview when nothing is selected. Otherwise
+   * (below 900px, or floating over a full-screen canvas) it is a sheet in two stages: a peek bar naming the
+   * selection, and the panel; `open` is then the page's choice of the panel (default: while something is selected,
+   * until closed).
    */
+  docked?: boolean
   open?: boolean
   onClose?(): void
   /** The peek bar was tapped: the page opens the panel. */
@@ -48,8 +49,7 @@ export interface InspectorProps {
 }
 
 /**
- * The right-hand panel. In order of precedence: a palette node's description, several selected nodes, the
- * selected node ({@link NodeConfig}), a selected wire (read only) or, with nothing selected, an overview of the
+ * The right-hand panel. In order of precedence: several selected nodes, the selected node ({@link NodeConfig}), a selected wire (read only) or, with nothing selected, an overview of the
  * automation (its triggers, problem count and last run).
  */
 export function Inspector(props: InspectorProps) {
@@ -60,31 +60,17 @@ export function Inspector(props: InspectorProps) {
   const [status, setStatus] = createSignal('')
   const [dismissed, setDismissed] = createSignal(false)
   // A new selection brings the sheet back.
-  createEffect(on(() => [props.selected?.id, props.selectedEdgeId, ids().join(' '), props.description?.kind], () => setDismissed(false), { defer: true }))
-  const hasContent = () => !!(props.description || props.selected || many() || edge())
-  const open = () => (props.open === undefined ? hasContent() && !dismissed() : props.open && hasContent())
-  const peek = () => hasContent() && !open()
+  createEffect(on(() => [props.selected?.id, props.selectedEdgeId, ids().join(' ')], () => setDismissed(false), { defer: true }))
+  const hasContent = () => !!(props.selected || many() || edge())
+  // Docked, the panel is always there (the overview when nothing is selected).
+  const open = () => !!props.docked || (props.open === undefined ? hasContent() && !dismissed() : props.open && hasContent())
+  const peek = () => !props.docked && hasContent() && !open()
   const workspace = (): ParentNode => aside.closest('.hs-visual-workspace') ?? aside.parentElement ?? document
   const card = (id: string | undefined) =>
     id ? [...workspace().querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.getAttribute('data-id') === id) : undefined
   const canvas = () => workspace().querySelector<HTMLElement>('.hs-flow')
-  const focused = () => (aside.getRootNode() as Document | ShadowRoot).activeElement
-  /**
-   * Focuses what `find` returns once the update that shows it has been rendered (it may take a frame), unless the
-   * user has put focus somewhere else meanwhile.
-   */
-  const focusSoon = (find: () => HTMLElement | null | undefined) => {
-    let tries = 0
-    const start = focused()
-    const attempt = () => {
-      const now = focused()
-      if (now !== start && now instanceof HTMLElement && now !== aside.ownerDocument.body && now.isConnected) return
-      const target = find()
-      if (target?.isConnected) { target.focus(); target.scrollIntoView?.({ block: 'nearest' }); return }
-      if (++tries < 3) setTimeout(attempt, 0)
-    }
-    queueMicrotask(attempt)
-  }
+  /** Focuses what `find` returns once it has been rendered, unless the user has put focus somewhere else meanwhile. */
+  const focusSoon = (find: () => HTMLElement | null | undefined) => focusWhenShown(find, aside)
   const title = (id: string) => () =>
     [...aside.querySelectorAll<HTMLElement>('.hs-insp-node')].find(el => el.dataset.nodeId === id)?.querySelector<HTMLElement>('input[aria-label="Node label"]')
   /** Selects a step and moves focus to its title in the panel, so focus never falls to the page. */
@@ -135,13 +121,7 @@ export function Inspector(props: InspectorProps) {
     props.commit(next)
     setStatus('Tidied')
   }
-  const showProblems = () => {
-    if (props.onShowProblems) return props.onShowProblems()
-    const list = (aside.closest('.hs-visual-editor, .hs-visual') ?? document).querySelector<HTMLElement>('.hs-diagnostics')
-    const first = list?.querySelector<HTMLElement>('button')
-    first?.scrollIntoView?.({ block: 'nearest' })
-    first?.focus()
-  }
+  const showProblems = () => props.onShowProblems?.()
 
   return (
     <aside ref={aside} class="hs-inspector" aria-label="Node inspector" data-open={open() ? 'true' : 'false'} data-peek={peek() ? 'true' : undefined}>
@@ -155,58 +135,44 @@ export function Inspector(props: InspectorProps) {
         </button>
       </div>
       <p class="hs-visually-hidden" role="status">{status()}</p>
-      <Show when={props.description} fallback={
-        <Show when={many()} fallback={
-          <Show when={props.selected?.id} keyed fallback={
-            <Show when={edge()} fallback={<Overview />}>{current => <WireView edge={current()} />}</Show>
-          }>
-            {id => {
-              // Keyed on the id, not the node: an edit of the step gives a new node object, and the panel (its
-              // focus, open sections, drags and subscriptions) must survive it. Everything reads the latest node.
-              let last = props.selected!
-              const node = createMemo(() => { const current = props.selected; if (current?.id === id) last = current; return last })
-              return (
-                <NodeConfig node={node()} graph={props.graph} catalog={props.catalog} diagnostics={props.diagnostics}
-                  onChange={(config, options) => props.commit(updateNode(props.graph, id, { config }), options)}
-                  onGraphChange={props.commit} onSelect={selectAndFocus}
-                  onDuplicate={() => duplicate([id])} onDelete={() => remove([id])} />
-              )
-            }}
-          </Show>
+      <Show when={many()} fallback={
+        <Show when={props.selected?.id} keyed fallback={
+          <Show when={edge()} fallback={<Overview />}>{current => <WireView edge={current()} />}</Show>
         }>
-          <section class="hs-insp-many" aria-label="Selection">
-            <h2 class="hs-insp-many__count">{ids().length} steps selected</h2>
-            <div class="hs-insp-actions">
-              <button type="button" class="hs-button hs-button--secondary" onClick={() => duplicate(ids())}>Duplicate</button>
-              <button type="button" class="hs-button hs-button--secondary" onClick={() => tidy(ids())}>Tidy selection</button>
-              <button type="button" class="hs-button hs-button--danger" onClick={() => remove(ids())}>Delete</button>
-            </div>
-            <ul class="hs-insp-list">
-              <For each={ids()}>
-                {id => {
-                  const node = () => props.graph.nodes.find(n => n.id === id)
-                  return (
-                    <li>
-                      <button type="button" class="hs-insp-link" onClick={() => selectAndFocus(id)}>{nodeTitle(node(), props.catalog)}</button>
-                    </li>
-                  )
-                }}
-              </For>
-            </ul>
-          </section>
+          {id => {
+            // Keyed on the id, not the node: an edit of the step gives a new node object, and the panel (its
+            // focus, open sections, drags and subscriptions) must survive it. Everything reads the latest node.
+            let last = props.selected!
+            const node = createMemo(() => { const current = props.selected; if (current?.id === id) last = current; return last })
+            return (
+              <NodeConfig node={node()} graph={props.graph} catalog={props.catalog} diagnostics={props.diagnostics}
+                onChange={(config, options) => props.commit(updateNode(props.graph, id, { config }), options)}
+                onGraphChange={props.commit} onSelect={selectAndFocus}
+                onDuplicate={() => duplicate([id])} onDelete={() => remove([id])} />
+            )
+          }}
         </Show>
       }>
-        {item => (
-          <section class="hs-insp-palette" aria-label={item().label}>
-            <h2 class="hs-insp-many__count">{item().label}</h2>
-            <p class="hs-insp-desc hs-insp-desc--open">{item().description}</p>
-            <p class="hs-insp-meta">
-              Inputs: {Object.entries(item().inputs).map(([id, input]) => input.label ?? id).join(', ') || 'None'}
-            </p>
-            <p class="hs-insp-meta">Outputs: {item().execution.map(portLabel).join(', ')}</p>
-            <p class="hs-muted">Drag this step onto the canvas, or use Add step.</p>
-          </section>
-        )}
+        <section class="hs-insp-many" aria-label="Selection">
+          <h2 class="hs-insp-many__count">{ids().length} steps selected</h2>
+          <div class="hs-insp-actions">
+            <button type="button" class="hs-button hs-button--secondary" onClick={() => duplicate(ids())}>Duplicate</button>
+            <button type="button" class="hs-button hs-button--secondary" onClick={() => tidy(ids())}>Tidy selection</button>
+            <button type="button" class="hs-button hs-button--danger" onClick={() => remove(ids())}>Delete</button>
+          </div>
+          <ul class="hs-insp-list">
+            <For each={ids()}>
+              {id => {
+                const node = () => props.graph.nodes.find(n => n.id === id)
+                return (
+                  <li>
+                    <button type="button" class="hs-insp-link" onClick={() => selectAndFocus(id)}>{nodeTitle(node(), props.catalog)}</button>
+                  </li>
+                )
+              }}
+            </For>
+          </ul>
+        </section>
       </Show>
     </aside>
   )
@@ -216,10 +182,9 @@ export function Inspector(props: InspectorProps) {
    * shown (CSS) where the inspector is a sheet or floats; the side panel never collapses to it.
    */
   function PeekBar() {
-    const node = () => (many() || props.description ? undefined : props.selected)
+    const node = () => (many() ? undefined : props.selected)
     const identity = () => { const current = node(); return current ? nodeIdentity(current.kind, props.catalog) : undefined }
     const title = () => {
-      if (props.description) return props.description.label
       if (many()) return `${ids().length} steps selected`
       const current = node()
       if (current) return nodeTitle(current, props.catalog)

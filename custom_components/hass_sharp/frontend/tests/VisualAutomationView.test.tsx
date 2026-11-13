@@ -26,11 +26,13 @@ function setup(saved = false, minimal = false) {
 }
 const button = (root: Element, text: string) => [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === text || b.getAttribute('aria-label') === text)!
 const edit = (root: Element, text: string) => { const input = root.querySelector<HTMLInputElement>('[aria-label="Node label"]')!; input.value = text; input.dispatchEvent(new Event('input', { bubbles: true })) }
-const chip = (root: Element) => root.querySelector('.hs-save-chip')!
+const chip = (root: Element) => root.querySelector('.hs-save-chip__text')!
+/** The save chip's explanation (its tooltip and hidden text). */
+const chipTip = (root: Element) => root.querySelector('.hs-save-chip')!.getAttribute('title')
 /** Waits for the save state "Saved" at `revision` (the revision is in the chip's tooltip, not its text). */
 const saved = async (root: Element, revision: number) => vi.waitFor(() => {
   expect(chip(root).textContent).toBe('Saved')
-  expect(chip(root).getAttribute('title')).toBe(`Saved revision ${revision}`)
+  expect(chipTip(root)).toBe(`Saved revision ${revision}`)
 })
 /** Picks an item of the top bar's "⋯" menu. */
 const more = (root: Element, item: string) => {
@@ -172,6 +174,8 @@ it('reads and renames a saved graph without changing its automation identity', a
   await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Saved motion'))
   const name = root.querySelector<HTMLInputElement>('[aria-label="Automation name"]')!
   name.value = 'Renamed motion'; name.dispatchEvent(new Event('input', { bubbles: true }))
+  // The name is committed when the field is left (or on Enter).
+  name.dispatchEvent(new FocusEvent('blur'))
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   button(root, 'Save').click()
   await saved(root, 5)
@@ -188,7 +192,7 @@ it('creates a fresh draft when navigating from a saved visual graph to new', asy
   expect(chip(root).textContent).toBe('Not saved')
   tab(root, 'Runs')
   expect(root.querySelector('[aria-label="Run history"]')).toBeNull()
-  expect(root.textContent).toContain('Save this automation to run it')
+  expect(root.textContent).toContain('Save this automation to see its runs here')
   expect(button(root, 'Undo').disabled).toBe(true)
 })
 
@@ -262,25 +266,33 @@ it('authors two triggers, saves/reloads them, then dispatches either saved actio
   setControl(root, 'Node label', 'unsaved label')
   more(root, 'Reload saved graph'); button(root, 'Reload and discard').click()
   await vi.waitFor(() => expect(json(root)).toEqual(draft))
-  // With two triggers to choose from, Run now in the top bar opens the Runs tab at its choice of action.
-  root.querySelector<HTMLButtonElement>('.hs-topbar__run')!.click()
-  await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-run-action select')))
-  expect(fixture.calls.filter(c => c.type === 'hass_sharp/run_now')).toHaveLength(0)
-  const actions = root.querySelector<HTMLSelectElement>('.hs-run-action select')!
-  const run = root.querySelector<HTMLButtonElement>('.hs-run-action button')!
-  expect(actions.options).toHaveLength(2)
-  for (const option of Array.from(actions.options)) {
-    actions.value = option.value; actions.dispatchEvent(new Event('change', { bubbles: true }))
-    run.click()
-    await vi.waitFor(() => expect(run.disabled).toBe(false))
+  // With two triggers that allow manual runs, Run now opens a menu of them (label and summary).
+  const runNow = root.querySelector<HTMLButtonElement>('.hs-topbar__run')!
+  expect(runNow.getAttribute('aria-haspopup')).toBe('menu')
+  const items = () => [...root.querySelectorAll<HTMLButtonElement>('[role="menu"][aria-label="Run which trigger"] [role="menuitem"]')]
+  for (const index of [0, 1]) {
+    runNow.click()
+    expect(items().map(item => item.querySelector('strong')!.textContent)).toEqual(['Entity changes', 'Manual evening'])
+    expect(items()[0].querySelector('small')!.textContent).toContain('07:30')
+    expect(document.activeElement).toBe(items()[0])
+    items()[index].click()
+    expect(items()).toHaveLength(0)
+    await vi.waitFor(() => expect(root.querySelector('.hs-topbar__notice')?.textContent).toMatch(/^Run of (Entity changes|Manual evening) started/))
+    await vi.waitFor(() => expect(runNow.disabled).toBe(false))
   }
+  // The Runs tab shows history only.
+  tab(root, 'Runs')
+  await vi.waitFor(() => expect(root.querySelector('[aria-label="Run history"]')).not.toBeNull())
+  expect(root.querySelector('.hs-drawer [aria-label="Run automation"], .hs-run-action')).toBeNull()
   const methods = fixture.calls.filter(c => c.type === 'hass_sharp/run_now').map(c => c.method)
   expect(methods).toContain('Run_747269676765722D31')
   // UUIDs are ASCII; independently derive the request expectation from the persisted ID.
   expect(methods).toContain('Run_' + Array.from(second.id as string, c => c.charCodeAt(0).toString(16).toUpperCase()).join(''))
   // Unsaved trigger changes must not change the list of runnable saved actions.
   button(root, 'Add step').click(); button(root, 'Create Trigger').click()
-  expect(root.querySelectorAll('.hs-run-action option')).toHaveLength(2)
+  runNow.click()
+  expect(items()).toHaveLength(2)
+  expect(runNow.title).toBe('Runs the last saved version; unsaved changes are not included')
 })
 
 it('edits all trigger kinds, boolean overrides and expressions without changing its ID or custom code', () => {
@@ -357,7 +369,7 @@ it('renders a save-time validation rejection and a structural diagnostic without
   expect(problem.textContent).toBe('Invalid entityLine 3')
   expect(problem.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('Error')
   expect(button(root, 'Save').disabled).toBe(true)
-  expect(chip(root).getAttribute('title')).toBe('Not saved yet')
+  expect(chipTip(root)).toBe('Not saved yet')
   fixture.controls.preview = { valid: false, source: '', sourceMap: [], diagnostics: [{ nodeId: null, message: 'Only one outgoing edge per port is supported', severity: 3, startLine: null, startColumn: null }] }
   edit(root, 'Changed')
   await vi.waitFor(() => expect(root.querySelector('.hs-problems')?.textContent).toContain('Only one outgoing edge per port is supported'))

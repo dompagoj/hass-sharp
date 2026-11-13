@@ -37,7 +37,7 @@ const fixture = { historyError: false, dispatchError: false, result: 'Succeeded'
 // Run history v2 samples: the action's plain label, the trigger summary, and which runs have a trace.
 const statuses: AutomationRun['status'][] = ['Failed', 'Skipped', 'Succeeded', 'Stopped', 'Cancelled', 'Succeeded', 'Interrupted']
 const errors: Partial<Record<AutomationRun['status'], string>> = {
-  Failed: 'Example error detail\nSecond line (fixture only).', Stopped: 'Stopped by a Stop step: nobody is home', Cancelled: 'Replaced by a newer run (mode Restart)', Interrupted: 'Home Assistant restarted during the run',
+  Failed: 'Example error detail\nSecond line (fixture only).', Stopped: 'Stopped by a Stop step: nobody is home', Cancelled: 'Restarted by a newer trigger', Interrupted: 'Home Assistant restarted during the run',
 }
 const scriptRun = (i: number): AutomationRun => {
   const status = i < statuses.length ? statuses[i] : 'Succeeded', kind = i % 3 === 0 ? 'schedule' : i % 3 === 1 ? 'entity' : 'manual'

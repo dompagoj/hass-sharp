@@ -430,7 +430,11 @@ it('categorizes every catalog node and groups and filters the quick-add palette'
   dispose = render(() => <QuickAdd x={0} y={0} title="Add a step" allowed={() => true} onClose={() => {}} onChoose={kind => (chosen = kind)} />, root)
   expect(new Set(catalogPalette().map(item => item.category))).toEqual(new Set(catalogCategories()))
   const groups = [...root.querySelectorAll('[role="group"]')]
-  expect(groups.map(group => group.querySelector('.hs-quick-add__category')!.textContent)).toEqual(catalogCategories().filter(c => catalogPalette().some(n => n.category === c)))
+  // Headings use the plain category names ("Home Assistant", not the catalog's "Hass").
+  const plain: Record<string, string> = { Hass: 'Home Assistant' }
+  expect(groups.map(group => group.querySelector('.hs-quick-add__category')!.textContent))
+    .toEqual(catalogCategories().filter(c => catalogPalette().some(n => n.category === c)).map(c => plain[c] ?? c))
+  expect(groups[0].querySelector('.hs-quick-add__category')!.textContent).toBe('Home Assistant')
   const logic = groups.find(group => group.querySelector('.hs-quick-add__category')!.textContent === 'Logic')!
   expect(logic.querySelectorAll('[role="option"]')).toHaveLength(catalogPalette().filter(n => n.category === 'Logic').length)
   const search = root.querySelector<HTMLInputElement>('[aria-label="Search steps"]')!
@@ -723,6 +727,13 @@ it('closing the sheet focuses the selected step\'s card and leaves its peek bar,
   // Keys and clicks on the card leave it closed: the editor page decides when it opens (Enter on the card itself).
   card()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
   card()!.click()
+  expect(aside.getAttribute('data-open')).toBe('false')
+  // Nor do keys and clicks in an input of the card's own editor (carried item A: no listener reopens the panel).
+  const inline = card()!.querySelector<HTMLInputElement>('.hs-card-editor input')!
+  expect(inline).not.toBeNull()
+  for (const key of [' ', 'Enter']) inline.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+  inline.click()
+  await Promise.resolve()
   expect(aside.getAttribute('data-open')).toBe('false')
   expect(aside.getAttribute('data-peek')).toBe('true')
   button(aside, 'Edit Delay')!.click()

@@ -10,6 +10,7 @@ import { useRegistry } from '../../registry'
 import { connectData, nodeCatalog, setInput as writeInput, type Operand, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeEdge, removeNode, updateNode, type NodeKind, type VisualGraph } from '../graph'
 import { connectionIndex } from '../connectionIndex'
+import { NODE_DRAG_TYPE } from '../nodeDrag'
 import { copySteps, pasteSteps, readSteps, writeSteps, type StepClipboard } from '../clipboard'
 import { applyLayout, tidyLayout } from '../layout'
 import type { SummaryNames } from '../nodeSummary'
@@ -68,6 +69,8 @@ export interface FlowControls {
   placeAtCentre(): { x: number; y: number }
   /** Pans, if needed, so the step's card is visible above `bottom` (a client y, such as the top of a bottom sheet). */
   reveal(id: string, bottom: number): void
+  /** Shows a message in the canvas's notice (why a step could not be added, for example). */
+  notify(text: string): void
 }
 
 type Point = { x: number; y: number }
@@ -809,6 +812,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   props.controls?.({
     duplicate: duplicateSteps,
     placeAtCentre: () => placeNew(toFlow(centre())),
+    notify,
     reveal: (id, bottom) => {
       const card = [...canvas.querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.getAttribute('data-id') === id)
       if (!card || !flow) return
@@ -992,6 +996,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     const command = event.ctrlKey || event.metaKey
     const key = event.key.length === 1 ? event.key.toLowerCase() : event.key
     if (event.key === 'Escape') {
+      // Escape during a keyboard connection from a pin cancels it, and nothing else (full screen) takes the key.
+      if (activeHandle()) event.preventDefault()
       pending = undefined
       setActiveHandle(undefined)
       setDragFrom(undefined)
@@ -1068,7 +1074,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
         }}
         on:pointerleave={() => (lastPointer = undefined)}
         onDragOver={event => {
-          if (!readOnly() && event.dataTransfer?.types.includes('application/x-hass-sharp-node')) {
+          if (!readOnly() && event.dataTransfer?.types.includes(NODE_DRAG_TYPE)) {
             event.preventDefault()
             event.dataTransfer.dropEffect = 'copy'
           }
@@ -1076,7 +1082,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
         onDrop={event => {
           event.preventDefault()
           if (readOnly()) return
-          const kind = event.dataTransfer?.getData('application/x-hass-sharp-node') as NodeKind
+          const kind = event.dataTransfer?.getData(NODE_DRAG_TYPE) as NodeKind
           if (!palette().some(item => item.kind === kind)) return
           const next = createNodeAt(graph(), kind, placeNew(toFlow({ x: event.clientX, y: event.clientY })), undefined, catalog())
           if (next === graph()) return

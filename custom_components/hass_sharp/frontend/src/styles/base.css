@@ -1,13 +1,20 @@
 /* The panel uses light DOM inside HA. Keep our reset inside this root. */
 ha-panel-hass-sharp-view { display: block; height: 100%; }
 ha-panel-hass-sharp-view > #app { height: 100%; }
+/*
+ * The scheme (scrollbars, form controls) comes from the page, as the app theme does: Home Assistant sets it with its
+ * color-scheme meta tag for the theme it applies, not for the operating system's setting. `light dark` here would
+ * follow the operating system and draw dark scrollbars in a light theme. Scrollbars are thin, in the theme's colours.
+ */
 .hs-app {
-  color-scheme: light dark;
+  color-scheme: inherit;
+  scrollbar-color: color-mix(in srgb, var(--hs-muted) 45%, transparent) transparent;
   color: var(--hs-text); background: var(--hs-bg);
   font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   height: 100%; min-height: 0; display: flex; flex-direction: column;
 }
 .hs-app *, .hs-app *::before, .hs-app *::after { box-sizing: border-box; }
+.hs-app, .hs-app * { scrollbar-width: thin; }
 .hs-app p { margin: 0; }
 .hs-app h1 { margin: 0; font-size: clamp(24px, 3vw, 32px); line-height: 1.2; letter-spacing: -.035em; font-weight: 700; overflow-wrap: anywhere; }
 .hs-app h2 { margin: 0; font-size: 16px; font-weight: 650; line-height: 1.4; }

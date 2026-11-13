@@ -3,9 +3,9 @@ import { Glyph } from './Glyph'
 import { catalogPalette, type NodeKind } from './graph'
 import { nodeIdentity } from './icons'
 import { nodeCatalog, type VisualCatalogSnapshot } from './contract'
+import { NODE_DRAG_TYPE } from './nodeDrag'
 
 /** The type a step dragged from the library carries; the canvas adds that kind where it is dropped. */
-export const NODE_DRAG_TYPE = 'application/x-hass-sharp-node'
 const chevron = { left: ['M15 5l-7 7 7 7'], right: ['M9 5l7 7-7 7'] }
 const plus = ['M12 5v14', 'M5 12h14']
 

@@ -45,7 +45,7 @@
 .hs-app .hs-switch:checked { background: var(--hs-action); }
 .hs-app .hs-switch:checked::before { transform: translateX(18px); background: var(--hs-on-action); }
 
-/* Suggestion lists and the node chooser share one popover look. */
+/* Suggestion lists: a popover of options. */
 .hs-app .hs-autocomplete { position: relative; }
 .hs-app .hs-suggestions { border: 1px solid var(--hs-line); border-radius: 10px; background: var(--hs-surface); color: var(--hs-text); box-shadow: 0 8px 28px #0003; padding: 8px; z-index: 30; position: absolute; top: 100%; left: 0; right: 0; min-width: 0; max-height: 280px; overflow: auto; }
 .hs-app .hs-suggestions [role="option"] { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }

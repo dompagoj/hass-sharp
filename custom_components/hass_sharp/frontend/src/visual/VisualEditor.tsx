@@ -1,8 +1,8 @@
 import { batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, Show } from 'solid-js'
 import { delegateEvents } from 'solid-js/web'
 import { useQuery, useQueryClient } from '@tanstack/solid-query'
-import { Button, Icon } from '../components/Controls'
-import { Menu, type MenuItem } from '../components/Menu'
+import { Button } from '../components/Controls'
+import type { MenuItem } from '../components/Menu'
 import { HelpDialog } from '../components/HelpDialog'
 import { AutomationRuns } from '../components/AutomationRuns'
 import { Dialog } from '../components/Dialog'
@@ -10,7 +10,6 @@ import { useEntities } from '../entities'
 import { useHass } from '../context'
 import type { RunHistoryResponse } from '../types'
 import { FlowAdapter, type FlowControls } from './flow/FlowAdapter'
-import { ToolButton } from './flow/CanvasToolbar'
 import { Inspector, type InspectorLastRun } from './Inspector'
 import { focusRow } from './InputRow'
 import { NodeLibraryPanel } from './NodeLibraryPanel'
@@ -18,14 +17,15 @@ import { BottomDrawer, CodePanel, ProblemsPanel } from './BottomDrawer'
 import { createFullscreen, FullscreenButton } from './fullscreen'
 import { createVisualSession } from './session'
 import type { VisualDiagnostic, VisualDocument } from './api'
-import { createGraph, createNodeAt, serializeGraph, visualActionLabels, visualRunClasses, type NodeKind } from './graph'
+import { createGraph, createNodeAt, serializeGraph, visualActionLabels, type NodeKind } from './graph'
+import { RunNowButton } from './RunNow'
+import { soon } from './soon'
+import { createNotice, TopBar } from './TopBar'
 
 type DrawerTab = 'problems' | 'code' | 'runs'
-const historyIcons = { undo: ['M9 14 4 9l5-5', 'M4 9h10.5a5.5 5.5 0 0 1 0 11H11'], redo: ['M15 14l5-5-5-5', 'M20 9H9.5a5.5 5.5 0 0 0 0 11H13'] }
 /** Focus is where keys mean text or a choice in a list: the page's shortcuts leave those keys alone. */
 const typing = (target: Element) =>
   !!target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="menu"], [role="listbox"], .hs-card-editor, .hs-quick-add, dialog')
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
 const failedStatuses = new Set(['Failed', 'Interrupted'])
 
 /** A media query as a signal (false where `matchMedia` is missing). */
@@ -38,18 +38,9 @@ function media(query: string) {
   return matches
 }
 
-/** Runs `attempt` once the update that shows its target has rendered: now, else on the next few turns. */
-function soon(attempt: () => boolean) {
-  let tries = 0
-  const run = () => {
-    if (!attempt() && ++tries < 4) setTimeout(run, 0)
-  }
-  queueMicrotask(run)
-}
-
 /**
- * The visual editor page: a slim top bar (back, the name edited in place, save state, Undo, Redo, Run now, Save and
- * a "⋯" menu), the step library, the canvas, the inspector and a bottom drawer with Problems, Generated C# and Runs.
+ * The visual editor page: the top bar ({@link TopBar}), the step library, the canvas, the inspector and a bottom
+ * drawer with Problems, Generated C# and Runs.
  * The page root is the keyboard boundary: keys never leave it for Home Assistant's shortcuts, and everything
  * focusable (menus, dialogs, the floating inspector) is rendered inside it. The canvas can go full screen.
  */
@@ -128,11 +119,32 @@ export function VisualEditor(props: {
   }
   const narrow = media('(max-width: 899px)')
   const fullscreen = createFullscreen(() => editor)
-  /** The inspector is a sheet or floats over the canvas, so it opens and closes. */
+  /**
+   * The inspector is a sheet (below 900px) or floats over a full-screen canvas: it opens and closes. Otherwise it is
+   * the side panel, always shown.
+   */
   const floating = () => narrow() || fullscreen.active()
   // A sheet starts as its peek bar (never open on load); a floating panel opens when a step is selected.
   const [panelOpen, setPanelOpen] = createSignal(!narrow())
-  createEffect(on(() => [selectedId(), selection().ids.join(' '), selection().edge].join('|'), () => setPanelOpen(!narrow()), { defer: true }))
+  // A selection made inside the panel (a "From …" pill, a wire end, a listed step, Duplicate) keeps it open, and
+  // the panel focuses the new step's title; one made on the canvas folds a sheet back to its peek bar.
+  let selectingInPanel = false
+  const inPanel = <T,>(action: () => T): T => {
+    selectingInPanel = true
+    setTimeout(() => (selectingInPanel = false))
+    return action()
+  }
+  createEffect(
+    on(
+      () => [selectedId(), selection().ids.join(' '), selection().edge].join('|'),
+      () => {
+        if (!(selectingInPanel && panelOpen())) setPanelOpen(!narrow())
+      },
+      { defer: true },
+    ),
+  )
+  // Crossing 900px: the sheet comes back as its peek bar (never expanded); wider, the side panel shows.
+  createEffect(on(narrow, wide => setPanelOpen(!wide), { defer: true }))
   /** Opens the sheet or panel; a sheet moves the canvas so the step stays visible above it, and takes focus. */
   const openPanel = (focus = true) => {
     const wasOpen = panelOpen()
@@ -149,7 +161,7 @@ export function VisualEditor(props: {
         const target = panel?.querySelector<HTMLElement>('.hs-insp-node input[aria-label="Node label"]') ?? panel?.querySelector<HTMLElement>('.hs-insp-sheet-bar ~ * button, .hs-insp-sheet-bar ~ * input')
         target?.focus()
         return !!target && activeElement() === target
-      })
+      }, editor)
   }
 
   // ---- Step library, and adding a step.
@@ -157,7 +169,11 @@ export function VisualEditor(props: {
   const [quickAddRequest, setQuickAddRequest] = createSignal(0)
   const addStep = (kind: NodeKind) => {
     const next = createNodeAt(graph(), kind, flow?.placeAtCentre() ?? { x: 60, y: 100 }, undefined, session.catalog())
-    if (next === graph()) return
+    if (next === graph()) {
+      const label = session.catalog().nodes[kind]?.label ?? kind
+      flow?.notify(`Cannot add ${label}: this Home Assistant does not offer that step.`)
+      return
+    }
     commit(next)
     choose(next.nodes.at(-1)!.id)
   }
@@ -191,7 +207,7 @@ export function VisualEditor(props: {
       first?.focus()
       first?.scrollIntoView?.({ block: 'nearest' })
       return !!first
-    })
+    }, editor)
   }
   /** A problem: select its step and focus the field it is about (else its card); the shared C# shows its line. */
   const locate = (diagnostic: VisualDiagnostic) => {
@@ -207,45 +223,20 @@ export function VisualEditor(props: {
     const port = diagnostic.inputId ?? diagnostic.portId
     if (port) {
       openPanel(false)
-      soon(() => focusRow(inspector() ?? undefined, port))
-    } else soon(() => { const target = card(nodeId); target?.focus(); return !!target })
+      soon(() => focusRow(inspector() ?? undefined, port), editor)
+    } else focusCard(nodeId)
   }
+  const focusCard = (id: string) => soon(() => { const target = card(id); target?.focus(); return !!target }, editor)
 
-  // ---- Runs: Run now in the top bar, the last run in the overview.
-  const runMethods = () => {
+  // ---- Runs: Run now in the top bar (RunNow.tsx), the last run in the overview.
+  const [runNotice, showRunNotice] = createNotice()
+  /** Why the saved version cannot be run now, if so. */
+  const runUnavailable = () => {
     const doc = session.document()
-    if (!doc || !doc.currentRevisionActive || session.conflict() || session.catalogError()) return []
-    return visualRunClasses(doc.graph).flatMap(klass => klass.methods.map(method => ({ className: klass.name, method })))
-  }
-  const [running, setRunning] = createSignal(false)
-  const [runNotice, setRunNotice] = createSignal<{ text: string; error?: boolean }>()
-  let noticeTimer: ReturnType<typeof setTimeout> | undefined
-  onCleanup(() => clearTimeout(noticeTimer))
-  const notice = (text: string, error = false) => {
-    clearTimeout(noticeTimer)
-    setRunNotice({ text, error })
-    if (!error) noticeTimer = setTimeout(() => setRunNotice(undefined), 6000)
-  }
-  const runNow = async () => {
-    const doc = session.document(), actions = runMethods()
-    if (!doc || !actions.length || running()) return
-    // Several triggers can be started by hand: the Runs tab asks which one.
-    if (actions.length > 1) {
-      openDrawer('runs')
-      soon(() => { const choice = editor.querySelector<HTMLElement>('.hs-run-action select'); choice?.focus(); return !!choice })
-      return
-    }
-    setRunning(true)
-    try {
-      await hass.callWS({ type: 'hass_sharp/run_now', automationId: doc.automationId, ...actions[0] })
-      notice('Run started. Its result is under Runs.')
-      void queryClient.invalidateQueries({ queryKey: ['run-history', doc.automationId] })
-    } catch (error) {
-      const e = error as { message?: string; body?: { error?: string }; error?: string }
-      notice(`Run request failed: ${e?.body?.error ?? e?.message ?? e?.error ?? 'check your connection and try again.'}`, true)
-    } finally {
-      setRunning(false)
-    }
+    if (!doc) return
+    if (session.conflict()) return 'The saved automation changed elsewhere; reload it first'
+    if (session.catalogError()) return 'The node catalog could not be loaded'
+    if (!doc.currentRevisionActive) return 'The saved version is not active'
   }
   const automationId = () => session.document()?.automationId
   // The same query (and cache) as the first page of the Runs tab.
@@ -309,7 +300,7 @@ export function VisualEditor(props: {
     }
     if (!command && !event.altKey && key === 'f') {
       event.preventDefault()
-      toggleFullscreen()
+      if (!event.repeat) toggleFullscreen()
       return
     }
     // Escape leaves the maximised fallback only when nothing on the way (a menu, the drawer, the canvas) used it.
@@ -340,26 +331,7 @@ export function VisualEditor(props: {
     { label: 'Help', onSelect: () => setHelpOpen(true) },
   ]
 
-  // ---- The name, edited in place: one undo step per edit; Escape puts back the name it had.
-  let nameBefore = ''
-  const rename = (name: string) => commit({ ...graph(), name }, { coalesce: 'automation-name' })
   const busy = () => session.loading() || session.saving()
-  const saveState = () => {
-    if (session.saving()) return { text: 'Saving…', tone: 'busy' }
-    if (errorCount()) return { text: plural(errorCount(), 'problem'), tone: 'danger' }
-    if (session.dirty()) return { text: 'Unsaved changes', tone: 'dirty' }
-    return session.document() ? { text: 'Saved', tone: 'saved' } : { text: 'Not saved', tone: 'dirty' }
-  }
-  const saveTip = () => {
-    const doc = session.document()
-    const where = doc ? `Saved revision ${doc.revision}` : 'Not saved yet'
-    return session.dirty() ? `${where}; there are unsaved changes` : where
-  }
-  const runTip = () => {
-    if (!session.document()) return 'Save the automation to run it'
-    if (!runMethods().length) return 'Add a trigger that can be started with Run now, then save'
-    return session.dirty() ? 'Runs the last saved version; unsaved changes are not included' : 'Run the saved automation now'
-  }
 
   return (
     <section
@@ -375,68 +347,29 @@ export function VisualEditor(props: {
       on:keydown={keyboard}
       on:keyup={event => event.stopPropagation()}
     >
-      <header class="hs-topbar">
-        <Show when={props.onBack}>
-          <button type="button" class="hs-topbar__icon hs-fs-hide" aria-label="Back to automations" title="Back to automations" onClick={() => props.onBack?.()}>
-            <Icon name="arrow" />
-          </button>
-        </Show>
-        <h1 class="hs-visually-hidden">{graph().name}</h1>
-        <div class="hs-topbar__title">
-          <input
-            class="hs-topbar__name"
-            aria-label="Automation name"
-            title="Automation name"
-            spellcheck={false}
-            autocomplete="off"
-            value={graph().name}
-            disabled={busy()}
-            onFocus={event => (nameBefore = event.currentTarget.value)}
-            onInput={event => rename(event.currentTarget.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter') event.preventDefault()
-              if (event.key === 'Escape' && event.currentTarget.value !== nameBefore) {
-                event.preventDefault()
-                event.currentTarget.value = nameBefore
-                rename(nameBefore)
-              }
-            }}
-            onBlur={event => {
-              if (!event.currentTarget.value.trim()) rename(nameBefore.trim() || props.name)
-            }}
-          />
-        </div>
-        <span class={`hs-save-chip hs-save-chip--${saveState().tone}`} role="status" title={saveTip()}>
-          {saveState().text}
-        </span>
-        <div class="hs-topbar__actions">
-          <ToolButton label="Undo" shortcut="Control+Z" icon={historyIcons.undo} disabled={!history.canUndo()} onClick={history.undo} />
-          <ToolButton label="Redo" shortcut="Control+Y" icon={historyIcons.redo} disabled={!history.canRedo()} onClick={history.redo} />
-          <Show when={admin()}>
-            <Button class="hs-topbar__run hs-fs-hide" busy={running()} disabled={!runMethods().length || busy()} title={runTip()} onClick={() => void runNow()}>
-              Run now
-            </Button>
-          </Show>
-          <Button variant="primary" class="hs-topbar__save" busy={session.saving()} disabled={!session.canSave()} onClick={() => void save()}>
-            Save
-          </Button>
-          <Show when={fullscreen.active()}>
-            <Button class="hs-topbar__exit" onClick={() => void fullscreen.exit()}>
-              Exit full screen
-            </Button>
-          </Show>
-          <div class="hs-fs-hide hs-topbar__more">
-            <Menu label="More actions" items={menuItems()} />
-          </div>
-        </div>
-      </header>
-      <Show when={runNotice()}>
-        {current => (
-          <p class="hs-topbar__notice" classList={{ 'hs-error': !!current().error }} role={current().error ? 'alert' : 'status'}>
-            {current().text}
-          </p>
-        )}
-      </Show>
+      <TopBar
+        name={graph().name}
+        onRename={name => commit({ ...graph(), name })}
+        onBack={props.onBack}
+        save={{ saving: session.saving(), dirty: session.dirty(), errors: errorCount(), revision: session.document()?.revision }}
+        busy={busy()}
+        canUndo={history.canUndo()}
+        canRedo={history.canRedo()}
+        onUndo={history.undo}
+        onRedo={history.redo}
+        canSave={session.canSave()}
+        onSave={() => void save()}
+        run={
+          admin() ? (
+            <RunNowButton document={session.document()} catalog={session.catalog()} unavailable={runUnavailable()} dirty={session.dirty()} busy={busy()}
+              onNotice={showRunNotice} />
+          ) : undefined
+        }
+        notice={runNotice()}
+        fullscreen={fullscreen.active()}
+        onExitFullscreen={() => void fullscreen.exit()}
+        menu={menuItems()}
+      />
       <Show when={session.loading()}>
         <p class="hs-visual-alert hs-visual-alert--quiet" role="status">Loading saved graph…</p>
       </Show>
@@ -488,17 +421,18 @@ export function VisualEditor(props: {
           selected={selected()}
           selectedIds={selection().ids}
           selectedEdgeId={selection().edge}
-          onSelect={choose}
+          onSelect={id => inPanel(() => choose(id))}
           graph={graph()}
           catalog={session.catalog()}
           diagnostics={session.diagnostics()}
           commit={commit}
           onShowProblems={showProblems}
           lastRun={lastRun()}
+          docked={!floating()}
           open={panelOpen()}
           onClose={() => setPanelOpen(false)}
           onOpen={() => openPanel()}
-          onDuplicate={ids => flow?.duplicate(ids) ?? []}
+          onDuplicate={ids => inPanel(() => flow?.duplicate(ids) ?? [])}
         />
       </div>
       <BottomDrawer
@@ -514,7 +448,7 @@ export function VisualEditor(props: {
             get tone() { return errorCount() ? 'error' as const : 'warning' as const },
             content: () => (
               <ProblemsPanel diagnostics={session.diagnostics()} graph={graph()} catalog={session.catalog()} onLocate={locate}
-                onSelectStep={id => { choose(id); soon(() => { const target = card(id); target?.focus(); return !!target }) }} onShowLine={showLine} />
+                onSelectStep={id => { choose(id); focusCard(id) }} onShowLine={showLine} />
             ),
           },
           {
@@ -535,13 +469,9 @@ export function VisualEditor(props: {
             label: 'Runs',
             lazy: true,
             content: () => (
-              <Show when={session.document()} fallback={<p class="hs-drawer__empty">Save this automation to run it and to see its runs here.</p>}>
+              <Show when={session.document()} fallback={<p class="hs-drawer__empty">Save this automation to see its runs here.</p>}>
                 {doc => (
-                  <AutomationRuns
-                    automationId={doc().automationId}
-                    classes={doc().currentRevisionActive && !session.conflict() && !session.catalogError() ? visualRunClasses(doc().graph) : []}
-                    actionLabels={visualActionLabels(doc().graph, session.catalog())}
-                  />
+                  <AutomationRuns automationId={doc().automationId} classes={[]} actionLabels={visualActionLabels(doc().graph, session.catalog())} hideRunControls />
                 )}
               </Show>
             ),

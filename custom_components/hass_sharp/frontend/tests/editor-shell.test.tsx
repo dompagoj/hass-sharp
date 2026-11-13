@@ -3,7 +3,9 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { VisualEditor as RealVisualEditor } from '../src/visual/VisualEditor'
 import { FlowAdapter } from '../src/visual/FlowAdapter'
-import { addNode, connectNodes, createGraph, createGraphHistory, updateNode } from '../src/visual/graph'
+import { addNode, connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
+import { connectData } from '../src/visual/contract'
+import { soon } from '../src/visual/soon'
 
 import { HassCtx } from '../src/context'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
@@ -75,21 +77,40 @@ function more(root: Element, item: string) {
   expect(choice, item).toBeDefined(); choice!.click()
 }
 const drawerTab = (root: Element, name: string) => [...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith(name))!
-const chip = (root: Element) => root.querySelector('.hs-save-chip')!
+const chip = (root: Element) => root.querySelector('.hs-save-chip__text')!
+/** The save chip's explanation (its tooltip and hidden text). */
+const chipTip = (root: Element) => root.querySelector('.hs-save-chip')!.getAttribute('title')
 const editorRoot = (root: Element) => root.querySelector<HTMLElement>('[aria-label="Visual automation editor"]')!
 const key = (target: Element, key: string, init: KeyboardEventInit = {}) => {
   const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }); target.dispatchEvent(event); return event
 }
 /** Mounts the editor with its own fixture (and optionally a callWS in front of it). */
-function mount(name = 'Heating', options: { callWS?: (message: any, fixture: ReturnType<typeof visualFixture>) => unknown } = {}) {
+function mount(name = 'Heating', options: { callWS?: (message: any, fixture: ReturnType<typeof visualFixture>) => unknown; saved?: VisualGraph } = {}) {
   const host = root(), fixture = visualFixture()
+  if (options.saved) fixture.documents.set('saved', {
+    version: 1, id: 'saved', revision: 1, graph: options.saved, source: '// fixture', sourceMap: [], automationId: 'visual:saved', currentRevisionActive: true, catalogGeneration: 'saved-fixture',
+  })
   const callWS = (message: any) => options.callWS?.(message, fixture) ?? fixture.callWS(message)
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={{ ...fixture, callWS, user: { is_admin: true } } as any}>
-    <RealVisualEditor name={name} />
+    <RealVisualEditor name={name} documentId={options.saved ? 'saved' : undefined} />
   </HassCtx.Provider></QueryClientProvider>, host)
-  return { host, fixture }
+  return { host, fixture, client }
 }
+/** A viewport whose width can cross 900px during a test. */
+function resizableScreen(narrow: boolean) {
+  const lists: { matches: boolean; listeners: Set<() => void> }[] = []
+  vi.stubGlobal('matchMedia', (query: string) => {
+    const list = { matches: query.includes('max-width') && narrow, media: query, listeners: new Set<() => void>(),
+      addEventListener(_: string, listener: () => void) { this.listeners.add(listener) }, removeEventListener(_: string, listener: () => void) { this.listeners.delete(listener) } }
+    if (query.includes('max-width')) lists.push(list)
+    return list
+  })
+  return (next: boolean) => { for (const list of lists) { list.matches = next; list.listeners.forEach(listener => listener()) } }
+}
+const inspectorOf = (host: Element) => host.querySelector<HTMLElement>('aside[aria-label="Node inspector"]')!
+const titleInput = (host: Element, id: string) => inspectorOf(host).querySelector<HTMLInputElement>(`.hs-insp-node[data-node-id="${id}"] input[aria-label="Node label"]`)
+const settle = () => new Promise(resolve => setTimeout(resolve, 0))
 /** A viewport narrower than 900 px, where the inspector is a two-stage sheet. */
 const narrowScreen = () => vi.stubGlobal('matchMedia', (query: string) => ({
   matches: query.includes('max-width'), media: query, addEventListener() {}, removeEventListener() {},
@@ -159,25 +180,40 @@ it('runs an inspector "⋯" menu with arrows and Escape inside the editor while 
   } finally { disposeMenu(); document.removeEventListener('keydown', documentKeys) }
 })
 
-it('renames the automation in place as one undo step, and Escape puts the name back', () => {
+it('renames the automation in place: one undo step per edit, Enter commits, Escape and an empty name restore it', () => {
   const { host } = mount('Heating')
   const name = host.querySelector<HTMLInputElement>('input[aria-label="Automation name"]')!
+  const type = (value: string) => { name.value = value; name.dispatchEvent(new Event('input', { bubbles: true })) }
   expect(chip(host).textContent).toBe('Not saved')
-  name.focus()
-  for (const value of ['Kit', 'Kitchen']) { name.value = value; name.dispatchEvent(new Event('input', { bubbles: true })) }
+  // Typed text is a draft until Enter or leaving the field: one undo step for the whole edit.
+  name.focus(); type('Kit'); type('Kitchen')
+  expect(json(host).name).toBe('Heating')
+  expect(key(name, 'Enter').defaultPrevented).toBe(true)
+  expect(document.activeElement).not.toBe(name)
   expect(chip(host).textContent).toBe('Unsaved changes')
-  expect(chip(host).getAttribute('title')).toBe('Not saved yet; there are unsaved changes')
+  expect(chipTip(host)).toBe('Not saved yet; there are unsaved changes')
   expect(host.querySelector('h1')!.textContent).toBe('Kitchen')
   expect(json(host).name).toBe('Kitchen')
   button(host, 'Undo').click()
   expect(name.value).toBe('Heating')
+  expect(button(host, 'Undo').disabled).toBe(true)
   button(host, 'Redo').click()
+  expect(name.value).toBe('Kitchen')
+  // Escape puts back the name it had and leaves no history.
+  name.focus(); type('Hallway')
   expect(key(name, 'Escape').defaultPrevented).toBe(true)
+  expect(name.value).toBe('Kitchen')
+  name.dispatchEvent(new FocusEvent('blur'))
+  expect(json(host).name).toBe('Kitchen')
+  expect(button(host, 'Redo').disabled).toBe(true)
+  button(host, 'Undo').click()
+  expect(json(host).name).toBe('Heating')
+  expect(button(host, 'Undo').disabled).toBe(true)
+  // An empty name is not kept.
+  name.focus(); type('  '); name.dispatchEvent(new FocusEvent('blur'))
   expect(name.value).toBe('Heating')
   expect(json(host).name).toBe('Heating')
-  // An empty name is not kept.
-  name.focus(); name.value = ''; name.dispatchEvent(new Event('input', { bubbles: true })); name.dispatchEvent(new FocusEvent('blur'))
-  expect(json(host).name).toBe('Heating')
+  expect(button(host, 'Undo').disabled).toBe(true)
 })
 
 it('keeps the drawer closed on load, switches its tabs without losing their state, and closes on Escape', async () => {
@@ -191,7 +227,7 @@ it('keeps the drawer closed on load, switches its tabs without losing their stat
   button(host, 'Graph JSON').click()
   drawerTab(host, 'Runs').click()
   expect(drawerTab(host, 'Runs').getAttribute('aria-selected')).toBe('true')
-  expect(host.querySelector('.hs-drawer__panel:not([hidden])')!.textContent).toContain('Save this automation to run it')
+  expect(host.querySelector('.hs-drawer__panel:not([hidden])')!.textContent).toContain('Save this automation to see its runs here')
   drawerTab(host, 'Generated C#').click()
   expect(button(host, 'Graph JSON').getAttribute('aria-pressed')).toBe('true')
   // Arrow keys move between tabs.
@@ -218,7 +254,10 @@ it('selects the step of a problem and focuses the field it is about', async () =
   } as any
   host.querySelector<HTMLInputElement>('input[aria-label="Node label"]')!.value = 'Motion'
   host.querySelector<HTMLInputElement>('input[aria-label="Node label"]')!.dispatchEvent(new Event('input', { bubbles: true }))
-  await vi.waitFor(() => expect(chip(host).textContent).toBe('1 problem'))
+  // Problems and unsaved changes are both shown; the explanation is in the chip's text for screen readers too.
+  await vi.waitFor(() => expect(chip(host).textContent).toBe('1 problem · Unsaved changes'))
+  expect(host.querySelector('.hs-save-chip')!.getAttribute('tabindex')).toBe('0')
+  expect(host.querySelector('.hs-save-chip .hs-visually-hidden')!.textContent).toBe('. Not saved yet; there are unsaved changes')
   expect(drawerTab(host, 'Problems').textContent).toBe('Problems1')
   drawerTab(host, 'Problems').click()
   const message = button(host, 'Choose what to turn on.')
@@ -386,7 +425,7 @@ it('duplicates from the panel where the canvas duplicate places the copy', () =>
 it('shows the last run and the problem count in the overview, and the count opens Problems', async () => {
   const { host, fixture } = mount('Runs', {
     callWS: message => message.type === 'hass_sharp/run_history'
-      ? { version: 2, offset: 0, limit: 20, total: 1, runs: [{ runId: 'r1', automationId: message.automationId, status: 'Failed', receivedUtc: '2026-11-12T08:00:00Z', triggerKind: 'manual', hasTrace: true }] }
+      ? { version: 2, offset: 0, limit: 20, total: 1, runs: [{ runId: 'r1', automationId: message.automationId, revision: 'r', action: 'VisualAutomation::Run_x', actionLabel: 'Entity changes', triggerNodeId: 'trigger-1', visualId: 'saved', visualRevision: 1, cause: 'Manual', trigger: { kind: 'manual' }, plannedUtc: null, receivedUtc: '2026-11-12T08:00:00Z', startUtc: null, endUtc: null, durationMs: null, status: 'Failed', error: 'Boom', hasTrace: true }] }
       : undefined,
   })
   await vi.waitFor(() => expect(button(host, 'Save').disabled).toBe(false))
@@ -400,10 +439,182 @@ it('shows the last run and the problem count in the overview, and the count open
   label.value = 'Motion'; label.dispatchEvent(new Event('input', { bubbles: true }))
   key(host.querySelector('.solid-flow__node[data-id="trigger-1"]')!, 'Escape')
   const overview = () => host.querySelector('[aria-label="Automation overview"]')
+  // Beside the canvas (900px and wider, not full screen) the panel is shown with nothing selected: the overview.
+  expect(editorRoot(host).classList.contains('hs-visual--floating')).toBe(false)
+  expect(inspectorOf(host).dataset.open).toBe('true')
+  expect(inspectorOf(host).dataset.peek).toBeUndefined()
   await vi.waitFor(() => expect(overview()?.textContent).toContain('Last run: Failed'))
   expect(overview()!.querySelector('.hs-error')!.textContent).toBe('Failed')
   await vi.waitFor(() => expect(overview()!.textContent).toContain('1 warning'))
   button(overview()!, '1 warning').click()
   expect(drawerTab(host, 'Problems').getAttribute('aria-selected')).toBe('true')
   await vi.waitFor(() => expect(document.activeElement?.textContent).toBe('This light may be off.'))
+})
+
+it('keeps the side panel through a resize across 900px, and comes back narrow as the peek bar', async () => {
+  const resize = resizableScreen(true)
+  const { host } = mount()
+  const panel = inspectorOf(host)
+  expect(editorRoot(host).classList.contains('hs-visual--floating')).toBe(true)
+  expect(panel.dataset.peek).toBe('true')
+  // Narrow to wide with a step selected: the side panel with that step.
+  resize(false)
+  expect(editorRoot(host).classList.contains('hs-visual--floating')).toBe(false)
+  expect(panel.dataset.open).toBe('true')
+  expect(panel.dataset.peek).toBeUndefined()
+  expect(titleInput(host, 'trigger-1')).not.toBeNull()
+  // Wide to narrow: the peek bar, never the expanded sheet.
+  resize(true)
+  expect(panel.dataset.open).toBe('false')
+  expect(panel.dataset.peek).toBe('true')
+  // Nothing selected, wide: the overview is shown.
+  resize(false)
+  key(host.querySelector('.solid-flow__node[data-id="trigger-1"]')!, 'Escape')
+  expect(panel.dataset.open).toBe('true')
+  expect(panel.querySelector('[aria-label="Automation overview"]')).not.toBeNull()
+})
+
+it('keeps a narrow screen\'s sheet open for a selection made inside it, and focuses the new step\'s title', async () => {
+  narrowScreen()
+  const saved = connectData(createGraph('Pills'), 'trigger-1', 'entity_id', 'condition-1', 'entity')
+  const { host } = mount('Pills', { saved })
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__node[data-id="condition-1"]')).not.toBeNull())
+  const panel = inspectorOf(host)
+  focusNode(host, 'condition-1')
+  button(host, 'Edit State condition').click()
+  await vi.waitFor(() => expect(panel.dataset.open).toBe('true'))
+  // The "From …" pill selects the step it comes from.
+  const pill = panel.querySelector<HTMLButtonElement>('.hs-insp-pill')!
+  expect(pill.textContent).toContain('Entity changes')
+  pill.focus(); pill.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(titleInput(host, 'trigger-1')))
+  expect(panel.dataset.open).toBe('true')
+  await settle()
+  expect(document.activeElement).toBe(titleInput(host, 'trigger-1'))
+  // The panel's Duplicate selects the copy and keeps the sheet open on it.
+  button(panel, 'Node actions').click()
+  ;[...panel.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')].find(b => b.textContent === 'Duplicate')!.click()
+  const copy = json(host).nodes.at(-1).id
+  expect(copy).not.toBe('trigger-1')
+  await vi.waitFor(() => expect(document.activeElement).toBe(titleInput(host, copy)))
+  expect(panel.dataset.open).toBe('true')
+  await settle()
+  expect(document.activeElement).toBe(titleInput(host, copy))
+  expect(document.activeElement).not.toBe(document.body)
+  // A selection made on the canvas folds it back to the peek bar.
+  focusNode(host, 'service-1')
+  expect(panel.dataset.open).toBe('false')
+  expect(panel.dataset.peek).toBe('true')
+})
+
+it('leaves a narrow screen\'s sheet closed for keys and clicks in a card\'s own inputs; Enter on the card opens it (item A)', async () => {
+  narrowScreen()
+  const { host } = mount()
+  button(host, 'Add Delay').click()
+  const id = json(host).nodes.at(-1).id
+  const panel = inspectorOf(host)
+  expect(panel.dataset.open).toBe('false')
+  const card = host.querySelector<HTMLElement>(`.solid-flow__node[data-id="${id}"]`)!
+  const input = card.querySelector<HTMLInputElement>('.hs-card-editor input')!
+  expect(input).not.toBeNull()
+  key(input, ' '); key(input, 'Enter'); input.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await settle()
+  expect(panel.dataset.open).toBe('false')
+  key(card, 'Enter')
+  await vi.waitFor(() => expect(panel.dataset.open).toBe('true'))
+  await vi.waitFor(() => expect(document.activeElement).toBe(titleInput(host, id)))
+})
+
+it('runs the one trigger that allows manual runs from the top bar, and the Runs tab (history only) polls for its result', async () => {
+  let accepted: string | undefined, reads = 0
+  const { host } = mount('Run', {
+    callWS: message => {
+      if (message.type === 'hass_sharp/run_now') { accepted = 'run-1'; return Promise.resolve({ version: 1, runId: 'run-1' }) }
+      if (message.type !== 'hass_sharp/run_history') return undefined
+      if (accepted) reads++
+      // The accepted run is not recorded yet on the first read after it: the list keeps polling for it anyway.
+      const runs = accepted && reads > 1 ? [{ runId: accepted, automationId: message.automationId, revision: 'r', action: 'a', actionLabel: 'Entity changes', triggerNodeId: 'trigger-1', visualId: 'x', visualRevision: 1, cause: 'Manual', trigger: { kind: 'manual' }, plannedUtc: null, receivedUtc: new Date().toISOString(), startUtc: null, endUtc: null, durationMs: null, status: reads > 3 ? 'Succeeded' : 'Running', error: null, hasTrace: false }] : []
+      return Promise.resolve({ version: 2, offset: 0, limit: 20, runs })
+    },
+  })
+  const runNow = host.querySelector<HTMLButtonElement>('.hs-topbar__run')!
+  expect(runNow.disabled).toBe(true)
+  expect(runNow.title).toBe('Save the automation to run it')
+  await vi.waitFor(() => expect(button(host, 'Save').disabled).toBe(false))
+  button(host, 'Save').click()
+  await vi.waitFor(() => expect(runNow.disabled).toBe(false))
+  expect(runNow.title).toBe('Run the saved automation now')
+  expect(runNow.getAttribute('aria-haspopup')).toBeNull()
+  drawerTab(host, 'Runs').click()
+  expect(host.querySelector('.hs-drawer [aria-label="Run automation"], .hs-run-action')).toBeNull()
+  runNow.click()
+  await vi.waitFor(() => expect(host.querySelector('.hs-topbar__notice')?.textContent).toBe('Run started. Its result is under Runs.'))
+  await vi.waitFor(() => expect(host.querySelector('.hs-run-list')?.textContent).toContain('Running'), { timeout: 5000 })
+  await vi.waitFor(() => expect(host.querySelector('.hs-run-list')?.textContent).toContain('Succeeded'), { timeout: 8000 })
+}, 15000)
+
+it('disables Run now when no trigger allows manual runs, and says why', async () => {
+  const saved = updateNode(createGraph('Manual off'), 'trigger-1', { config: { type: 'entity', entity: 'binary_sensor.motion', manual: false, mode: 'Single' } })
+  const { host } = mount('Manual off', { saved })
+  const runNow = () => host.querySelector<HTMLButtonElement>('.hs-topbar__run')!
+  await vi.waitFor(() => expect(runNow().title).toBe('No trigger allows manual runs'))
+  expect(runNow().disabled).toBe(true)
+})
+
+it('falls back to the maximised page when the browser refuses full screen', async () => {
+  const original = HTMLElement.prototype.requestFullscreen
+  HTMLElement.prototype.requestFullscreen = vi.fn(() => Promise.reject(new TypeError('Permissions check failed'))) as any
+  try {
+    const { host } = mount()
+    host.querySelector<HTMLButtonElement>('.hs-flow button[aria-label="Full screen"]')!.click()
+    await vi.waitFor(() => expect(editorRoot(host).classList.contains('hs-visual--maximised')).toBe(true))
+    expect(HTMLElement.prototype.requestFullscreen).toHaveBeenCalledOnce()
+    // F held down toggles once.
+    const card = host.querySelector('.solid-flow__node[data-id="trigger-1"]')!
+    key(card, 'f', { repeat: true })
+    expect(editorRoot(host).classList.contains('hs-visual--maximised')).toBe(true)
+  } finally { HTMLElement.prototype.requestFullscreen = original }
+})
+
+it('cancels a keyboard connection with Escape without leaving the maximised page', async () => {
+  const original = HTMLElement.prototype.requestFullscreen
+  ;(HTMLElement.prototype as any).requestFullscreen = undefined
+  try {
+    const { host } = mount()
+    key(host.querySelector('.solid-flow__node[data-id="trigger-1"]')!, 'f')
+    await vi.waitFor(() => expect(editorRoot(host).classList.contains('hs-visual--maximised')).toBe(true))
+    const pin = host.querySelector<HTMLElement>('[data-id="condition-1"] [data-handleid="false"]')!
+    key(pin, 'Enter')
+    expect(host.querySelector('.hs-flow')!.textContent).toContain('Choose a pin to connect to')
+    const escape = key(pin, 'Escape')
+    expect(escape.defaultPrevented).toBe(true)
+    await settle(); await settle()
+    expect(editorRoot(host).classList.contains('hs-visual--maximised')).toBe(true)
+  } finally { HTMLElement.prototype.requestFullscreen = original }
+})
+
+it('places a step added from the library below a card at the centre of the view', () => {
+  const { host } = mount()
+  button(host, 'Add Delay').click()
+  const first = json(host).nodes.at(-1)
+  button(host, 'Add Delay').click()
+  const second = json(host).nodes.at(-1)
+  expect(second.id).not.toBe(first.id)
+  expect(second.position.x).toBe(first.position.x)
+  expect(second.position.y).toBeGreaterThan(first.position.y)
+})
+
+it('gives up a pending focus once focus has moved elsewhere (item B)', async () => {
+  const host = root()
+  const moved = host.appendChild(document.createElement('button'))
+  const late = host.appendChild(document.createElement('input'))
+  let tries = 0
+  soon(() => { tries++; return false }, host)
+  moved.focus()
+  await settle(); await settle()
+  expect(tries).toBe(0)
+  // Without a move it retries until the target is there.
+  soon(() => { tries++; if (tries < 2) return false; late.focus(); return true }, host)
+  await vi.waitFor(() => expect(document.activeElement).toBe(late))
+  expect(tries).toBe(2)
 })

@@ -24,7 +24,8 @@ still require the local instance described in the repository's AGENTS.md.
 Visual editor page coverage lives in `editor-shell.test.tsx` (the top bar's in-place
 rename and "⋯" menu, the bottom drawer's tabs, a problem selecting its step and field,
 the step library's search and click-to-add, full screen with and without the Fullscreen
-API, the narrow-screen peek bar and sheet, the panel's Duplicate, and the keyboard
+API, the side panel and the narrow-screen peek bar and sheet across resizes, Run now
+in the top bar and the history-only Runs tab, the panel's Duplicate, and the keyboard
 boundary) and `VisualAutomationView.test.tsx` (save state, Run now, Runs, Problems and
 Generated C# against the in-memory API, and the unsaved-changes guard). `matchMedia` is
 stubbed for the narrow layout; Happy DOM has no CSS, so the layout itself is a browser

@@ -1,9 +1,7 @@
 /* Visual canvas: Solid Flow host, node cards, pins, wires, trace looks and canvas overlays. */
 .hs-app .hs-flow-toolbar { display: flex; align-items: center; gap: 8px; padding: 16px 0; flex-wrap: wrap; }
 .hs-app .hs-flow-toolbar .hs-muted { margin-left: auto; font-size: 11px; }
-.hs-app .hs-canvas-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .hs-app .hs-flow { height: 100%; min-height: 0; min-width: 0; position: relative; background: var(--hs-bg); }
-.hs-app .hs-canvas-column .hs-flow { flex: 1; min-height: 240px; }
 .hs-app .hs-flow .solid-flow { --xy-background-color: var(--hs-bg); --xy-background-pattern-color: color-mix(in oklab, var(--hs-text) 22%, var(--hs-bg)); --xy-node-color: var(--hs-text); --xy-edge-stroke: var(--hs-muted); --xy-controls-button-background-color: var(--hs-surface); --xy-controls-button-color: var(--hs-text); --xy-controls-button-background-color-hover: var(--hs-soft); --xy-controls-button-color-hover: var(--hs-text); --xy-controls-button-border-color: var(--hs-line); --xy-attribution-background-color: var(--hs-surface); --xy-edge-label-background-color: var(--hs-surface); --xy-edge-label-color: var(--hs-muted); }
 .hs-app .hs-flow .solid-flow__controls-button { width: 44px; height: 44px; }
 .hs-app .hs-flow .solid-flow__attribution { color: var(--hs-muted); }
@@ -266,10 +264,4 @@
   .hs-app .hs-tool { width: 44px; height: 44px; }
   .hs-app .hs-wire-delete { width: 44px; height: 44px; }
   .hs-app .hs-tool[data-tip]::after { display: none; }
-}
-.hs-diagnostics { padding-inline-start: 1.2rem; }
-.hs-app .hs-canvas-column .hs-diagnostics { flex: none; max-height: 150px; overflow: auto; margin: 0; padding: 4px 10px; border-top: 1px solid var(--hs-line); list-style: none; background: var(--hs-surface); font-size: 11px; }
-.hs-app .hs-diagnostics .hs-button { padding: 5px 2px; text-align: left; white-space: normal; }
-@media (max-width: 700px) {
-  .hs-app .hs-canvas-column { min-height: 360px; }
 }

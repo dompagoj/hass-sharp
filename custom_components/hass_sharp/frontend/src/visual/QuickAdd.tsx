@@ -127,7 +127,7 @@ export function QuickAdd(props: {
             <div role="group" aria-labelledby={`${id}-group-${index()}`} class="hs-quick-add__group" style={{ '--hs-cat': group.identity.color }}>
               <div id={`${id}-group-${index()}`} class="hs-quick-add__category">
                 <Glyph paths={group.identity.icon} />
-                {group.category}
+                {group.identity.label}
               </div>
               <For each={group.entries}>
                 {item => {
