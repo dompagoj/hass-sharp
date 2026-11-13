@@ -9,9 +9,12 @@ interface ValidationCase {
   warning?: string; warningInputId?: string; noDiagnostics?: boolean; services?: boolean; maxValidationMs?: number; catalogPatch?: Record<string, unknown>
   /** Every diagnostic message, sorted by code unit: both validators word them byte for byte alike. */
   messages?: string[]
+  /** The code of every diagnostic that has one, sorted: both validators classify structural problems alike. */
+  codes?: string[]
 }
 /** Messages are one short sentence for people: no full stop, no validator vocabulary, no CLR type names. */
-const jargon = /\b(?:literal|unset|operand|payload)\b|global::|System\.|\.$/i
+/** Also no port ids (`field:`, `data:`), GUIDs or "type-checked". */
+const jargon = /\b(?:literal|unset|operand|payload)\b|global::|System\.|\.$|\b(?:field|data):|type-checked|\b[0-9a-f]{32}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i
 const cases = fixtureCases as ValidationCase[]
 // The golden services section (tests/fixtures/visual-services.json), attached to the snapshot of cases that opt in.
 const services = servicesFixture as unknown as contract.ServicesSection
@@ -48,7 +51,9 @@ describe('shared visual graph validation contract', () => {
     if (warning !== undefined) expect(diagnostics.some(d => d.severity === 2 && d.message.toLowerCase().includes(warning.toLowerCase()) &&
       (fixture.warningInputId === undefined || d.inputId === fixture.warningInputId)), `expected warning "${warning}", got ${JSON.stringify(diagnostics)}`).toBe(true)
     if (fixture.noDiagnostics) expect(diagnostics).toEqual([])
-    if (fixture.messages) expect(diagnostics.map(d => d.message).sort()).toEqual([...fixture.messages].sort())
+    // A case without `messages` expects none: a warning only one validator raises cannot pass by omission.
+    expect(diagnostics.map(d => d.message).sort()).toEqual([...(fixture.messages ?? [])].sort())
+    expect(diagnostics.flatMap(d => d.code ? [d.code] : []).sort()).toEqual([...(fixture.codes ?? [])].sort())
     for (const d of diagnostics) expect(d.message, 'message wording').not.toMatch(jargon)
   })
 })
@@ -83,7 +88,7 @@ it('graph creation rejects other versions and consumes catalog defaults', () => 
 })
 it('replacing an invalid connection still rejects the same type error', () => {
   const graph = structuredClone(cases.find(c => c.name === 'incompatible data type')!.graph) as Graph
-  expect(() => contract.connectData(graph, 'a', 'value', 'b', 'value')).toThrow('Condition must be a yes/no value, not a number')
+  expect(() => contract.connectData(graph, 'a', 'value', 'b', 'value')).toThrow('Condition accepts Yes/No, not Number')
 })
 it('resolves parametric types and decides refinement before root assignability', () => {
   expect(contract.resolveTypeSpec('entity_id:light')).toMatchObject({ refines: 'entity_id', pattern: '^light\\.[a-z0-9_]+$', label: 'Light entity', clrType: 'System.String', literalKind: 'string', category: 'String' })
@@ -219,9 +224,9 @@ describe('service node ports (C5)', () => {
     expect(contract.dataOutputs(node({ service: 'weather.get_forecasts', returnResponse: true })).response).toMatchObject({ type: 'object', when: 'returnResponse' })
     expect(Object.keys(contract.dataOutputs(node({ service: 'weather.get_forecasts', returnResponse: 'yes' })))).toEqual([])
   })
-  it('copies a service field default (C4, a plain value) into its input spec, as the C# catalog does', () => {
+  it('copies a service field default (C4) into its input spec as an operand, as the C# catalog does', () => {
     const inputs = contract.dataInputs(node({ service: 'hass_sharp_test.sectioned', fields: { level: { kind: 'unset' }, speed: { kind: 'unset' } } }), undefined, withServices)
-    expect(inputs['field:level'].default).toBe(3)
+    expect(inputs['field:level'].default).toEqual({ kind: 'literal', type: 'number', value: 3 })
     expect(inputs['field:speed']).not.toHaveProperty('default')
   })
 })
@@ -247,4 +252,36 @@ it('blocks a connection only on cycle and scope errors themselves, not on a name
   ], edges: [{ id: 'ta', source: 't', target: 'a' }, { id: 'al', source: 'a', target: 'l' }, { id: 'ld', source: 'l', target: 'd' }] }
   expect(contract.validateGraph(graph).map(d => d.message)).toEqual(['Message uses variable cycle_scope, which no earlier step provides with a single type'])
   expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).not.toThrow()
+})
+describe('blocking a new connection by diagnostic code (fix round 1)', () => {
+  const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
+  const trigger = { id: 't', kind: 'trigger', config: { type: 'manual' } }
+  const producer = { id: 'a', kind: 'set_value', config: { type: 'number', value: lit('number', 1) } }
+  const delay = { id: 'd', kind: 'delay', config: { seconds: lit('number', 2) } }
+  const base = (extra: object[], edges: object[]) => ({ version: 5 as const, name: 'Blocking', nodes: [trigger, producer, delay, ...extra],
+    edges: [{ id: 'ta', source: 't', target: 'a' }, { id: 'ad', source: 'a', target: 'd' }, ...edges] })
+  it('rejects any connection while the graph already has an execution cycle', () => {
+    const graph = base([{ id: 'x', kind: 'log', config: { value: lit('string', 'x') } }, { id: 'y', kind: 'log', config: { value: lit('string', 'y') } }],
+      [{ id: 'dx', source: 'd', target: 'x' }, { id: 'xy', source: 'x', target: 'y' }, { id: 'yx', source: 'y', target: 'x' }])
+    expect(contract.validateGraph(graph).filter(contract.blockingDiagnostic).map(d => d.code)).toContain('cycle.execution')
+    expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).toThrow('Execution cycle is forbidden')
+  })
+  it('rejects any connection while the graph already has a scope error', () => {
+    const graph = base([{ id: 'r', kind: 'condition_result', config: { value: lit('boolean', true) } }], [{ id: 'dr', source: 'd', target: 'r' }])
+    expect(contract.validateGraph(graph).map(d => d.code)).toContain('scope.conditionResult')
+    expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).toThrow('A Condition result step must be inside the condition of a While or Until loop')
+    const loop = base([{ id: 'r', kind: 'loop_result', config: { values: {} } }], [{ id: 'dr', source: 'd', target: 'r' }])
+    expect(() => contract.connectData(loop, 'a', 'value', 'd', 'seconds')).toThrow('A Loop result step must be inside the body of a loop')
+  })
+  it('does not block on a node whose id merely reads like a code', () => {
+    const graph = base([{ id: 'cycle_count', kind: 'log', config: { value: { kind: 'variable', name: 'scope.data' } } }], [{ id: 'dc', source: 'd', target: 'cycle_count' }])
+    expect(contract.validateGraph(graph).some(contract.blockingDiagnostic)).toBe(false)
+    expect(contract.validateGraph(graph)).not.toEqual([])
+    expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).not.toThrow()
+  })
+  it('gives every structural diagnostic a declared code', () => {
+    for (const d of contract.validateGraph({ version: 5, name: 'Codes', nodes: [trigger, { id: 'q', kind: 'nope', config: {} }], edges: [] }))
+      if (d.code) expect(contract.diagnosticCodes).toContain(d.code)
+    expect(contract.validateGraph({ version: 5, name: 'Codes', nodes: [trigger, { id: 'q', kind: 'nope', config: {} }], edges: [] }).map(d => d.code)).toContain('node.unknownKind')
+  })
 })

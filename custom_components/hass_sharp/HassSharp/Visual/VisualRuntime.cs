@@ -256,7 +256,7 @@ public sealed class VisualRuntime
         var root=chain[^1];var result=Coerce(value,clr,label,convert);
         if(result==null && VisualTypes.Resolve(catalog,type)?["nullable"]?.GetValue<bool>()!=true)throw new InvalidOperationException($"{label} requires non-null {type}, got null.");
         // A refinement narrows only when the value satisfies every pattern in its chain.
-        foreach(var id in chain)if(VisualTypes.Resolve(catalog,id)?["pattern"] is JsonValue pattern && result!=null && (result is not string s || !System.Text.RegularExpressions.Regex.IsMatch(s,pattern.GetValue<string>(),System.Text.RegularExpressions.RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1))))throw new InvalidOperationException($"Cannot convert {label} to {type}.");
+        foreach(var id in chain)if(VisualTypes.Resolve(catalog,id)?["pattern"] is JsonValue pattern && result!=null && (result is not string s || !VisualTypes.Matches(s,pattern.GetValue<string>())))throw new InvalidOperationException($"Cannot convert {label} to {type}.");
         if(root=="object" && result is not JsonObject || root=="array" && result is not JsonArray)throw new InvalidOperationException($"{label} requires JSON {type}.");
         if(root=="number"&&result is double number&&!double.IsFinite(number))throw new InvalidOperationException($"{label} requires finite number.");return result;
     }
@@ -364,9 +364,14 @@ public sealed class VisualRuntime
         foreach(var (name,operand) in cfg["fields"] as JsonObject??[])if(Supplied(id,"field:"+name,operand))payload[name]=Json(Input(scope,id,"field:"+name));
         if(Supplied(id,"target",cfg["target"])) {
             var target=Json(Input(scope,id,"target"));
+            // A target object holds only the five target keys (the validators say the same of a target value); a field
+            // with one of them is a validation error, so the collision check below is only a defence.
             void Set(string name,JsonNode? value){if(payload.ContainsKey(name))throw new InvalidOperationException($"{Text(cfg,"service")} sets {name} both as a field and in the target");payload[name]=value;}
             if(target is JsonValue entity && entity.TryGetValue<string>(out var entityId))Set("entity_id",entityId);
-            else if(target is JsonObject properties)foreach(var (name,value) in properties)Set(name,value?.DeepClone());
+            else if(target is JsonObject properties)foreach(var (name,value) in properties) {
+                if(!VisualGraphValidator.TargetKeys.Contains(name))throw new InvalidOperationException(VisualGraphValidator.TargetKeyMessage(name));
+                Set(name,value?.DeepClone());
+            }
             else throw new InvalidOperationException($"Input {id}.target requires an entity id or a target object.");
         }
         var service=Text(cfg,"service").Split('.');

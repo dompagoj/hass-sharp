@@ -73,6 +73,11 @@ static class VisualTypesTests
         var mismatch = Narrow("switch.kitchen"); mismatch["edges"]!.AsArray().Add(D("s", "c", "value"));
         try { await Execute(mismatch); throw new Exception("pattern mismatch narrowed"); }
         catch (InvalidOperationException error) when (error.Message.Contains("Cannot convert c.value to entity_id:light")) { }
+        // Run time matches type patterns as the validators do (JavaScript dialect): $ ends the text, so a trailing
+        // newline does not slip past it as it would with .NET's Regex.IsMatch.
+        var newline = Narrow("light.kitchen\n"); newline["edges"]!.AsArray().Add(D("s", "c", "value"));
+        try { await Execute(newline); throw new Exception("a trailing newline narrowed to entity_id:light"); }
+        catch (InvalidOperationException error) when (error.Message.Contains("Cannot convert c.value to entity_id:light")) { }
         Console.WriteLine("PASS visual types: parametric resolution, refinement before Roslyn, library root wires and runtime narrowing");
     }
 }

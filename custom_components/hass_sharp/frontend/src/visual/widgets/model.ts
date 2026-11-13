@@ -226,10 +226,9 @@ export function durationValue(widget: Widget, previous: JsonValue | undefined, s
 
 /** The value a newly chosen "Value" mode starts with, or undefined when the user must enter one first. */
 export function initialValue(widget: Widget, input: InputSpec, catalog: VisualCatalogSnapshot = nodeCatalog): JsonValue | undefined {
-  // A catalog input's default is an operand; a service field's default is a plain value, used when the input accepts it.
-  const fallback = input.default, operand = record(fallback) && typeof fallback.kind === 'string'
-  if (operand && fallback.kind === 'literal' && fallback.value !== undefined) return structuredClone(fallback.value as JsonValue)
-  if (!operand && fallback !== undefined && fallback !== null && validForInput(input, fallback as JsonValue, catalog)) return structuredClone(fallback as JsonValue)
+  // A default is an operand for catalog inputs and service fields alike; its value is used when the input accepts it.
+  const fallback = input.default
+  if (record(fallback) && fallback.kind === 'literal' && fallback.value !== undefined && validForInput(input, fallback.value as JsonValue, catalog)) return structuredClone(fallback.value as JsonValue)
   switch (widget.kind) {
     case 'toggle': return false
     case 'number': return Math.min(Math.max(0, widget.min ?? 0), widget.max ?? Number.POSITIVE_INFINITY)

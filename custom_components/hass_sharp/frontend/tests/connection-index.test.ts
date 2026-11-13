@@ -33,7 +33,7 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below.
-const GRAPHS = 188, PAIRS = 629, ACCEPTED = 222, BY_VALIDATION = 131, SERVICES_ACCEPTED = 181, SERVICES_BY_VALIDATION = 135
+const GRAPHS = 203, PAIRS = 657, ACCEPTED = 238, BY_VALIDATION = 135, SERVICES_ACCEPTED = 189, SERVICES_BY_VALIDATION = 142
 const RICH: Totals = { graphs: 21, pairs: 190, accepted: 38, rejected: 152, byValidation: 0, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 

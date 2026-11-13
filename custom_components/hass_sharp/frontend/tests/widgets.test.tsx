@@ -162,8 +162,10 @@ describe('values', () => {
   })
   it('starts from a valid service default and ignores an invalid one', () => {
     const level = field('hass_sharp_test.sectioned', 'level')
-    expect(initialValue(widgetFor(level), { ...level, default: 3 })).toBe(3)
-    expect(initialValue(widgetFor(level), { ...level, default: 30 })).toBe(1)
+    // The resolved field carries its C4 default as an operand, the shape of catalog inputs.
+    expect(level.default).toEqual({ kind: 'literal', type: 'number', value: 3 })
+    expect(initialValue(widgetFor(level), level)).toBe(3)
+    expect(initialValue(widgetFor(level), { ...level, default: { kind: 'literal', type: 'number', value: 30 } })).toBe(1)
     expect(initialValue(widgetFor(spec(['boolean'])), spec(['boolean'], { default: { kind: 'literal', type: 'boolean', value: true } }))).toBe(true)
   })
   it('summarises values too large for a node card', () => {

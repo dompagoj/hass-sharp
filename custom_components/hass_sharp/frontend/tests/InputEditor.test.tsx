@@ -218,7 +218,7 @@ it('brings back the value kept under a connection when Value is chosen', () => {
   openMenu(host, 'Level mode'); menuItem(host, 'Value').click()
   expect(changes).toEqual([{ operand: { kind: 'literal', type: 'number', value: 7 } }])
   // Without a kept value, the service field's default (3) is the start.
-  const fresh = remount({ input: { ...field('hass_sharp_test.sectioned', 'level'), default: 3 }, label: 'Level', wiredFrom: 'Counter · Value' })
+  const fresh = remount({ input: { ...field('hass_sharp_test.sectioned', 'level'), default: { kind: 'literal', type: 'number', value: 3 } }, label: 'Level', wiredFrom: 'Counter · Value' })
   openMenu(fresh.host, 'Level mode'); menuItem(fresh.host, 'Value').click()
   expect(fresh.changes).toEqual([{ operand: { kind: 'literal', type: 'number', value: 3 } }])
 })

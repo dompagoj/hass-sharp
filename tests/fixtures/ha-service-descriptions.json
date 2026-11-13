@@ -784,6 +784,15 @@
               "multiple": true
             }
           }
+        },
+        "pair": {
+          "name": "Pair",
+          "selector": {
+            "constant": {
+              "value": [1, 2],
+              "label": "Both"
+            }
+          }
         }
       }
     },

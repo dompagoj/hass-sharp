@@ -23,13 +23,13 @@ public static class ServiceNodeTests
         Defaults();
     }
 
-    // A service field's default (C4, a plain value) reaches its input spec in both languages, for the editor's first value.
+    // A service field's default (C4, a plain value) reaches its input spec as an operand, the shape catalog inputs use.
     static void Defaults()
     {
         var snapshot = VisualCatalogSnapshot.BuiltIn.WithServices(ServiceSchemaCatalog.Parse(Fixture("ha-service-descriptions.json"), _ => { }));
         var node = Service("s", "hass_sharp_test.sectioned", new JsonObject { ["level"] = Unset(), ["speed"] = Unset() });
         var inputs = VisualNodeCatalog.DataInputs(node, null, snapshot);
-        Check(JsonNode.DeepEquals(inputs["field:level"]?["default"], JsonValue.Create(3)), "a service field default is copied: " + inputs.ToJsonString());
+        Check(JsonNode.DeepEquals(inputs["field:level"]?["default"], JsonNode.Parse("""{"kind":"literal","type":"number","value":3}""")), "a service field default is an operand: " + inputs.ToJsonString());
         Check(inputs["field:speed"]!.AsObject().ContainsKey("default") == false, "a field without a default has none: " + inputs["field:speed"]!.ToJsonString());
         Console.WriteLine("PASS service node field defaults");
     }
@@ -82,16 +82,17 @@ public static class ServiceNodeTests
             var unwired = (JsonObject)graph.DeepClone(); unwired["nodes"]![1]!["config"]!["returnResponse"] = false;
             var preview = new VisualGenerator(Diagnostics).Preview(unwired);
             Check(!preview.Valid && preview.Diagnostics.Any(d => d.NodeId == "first" && d.Message == "Unknown data output port"), "response output exists only with returnResponse: " + JsonSerializer.Serialize(preview.Diagnostics));
-            // A target that brings a key a field already set is an error, never a silent overwrite. The validator rejects
-            // every target key it can know of; this connected target object also carries a brightness key.
+            // A target object holds only the five target keys: one that carries anything else (here brightness, which a
+            // field also sets) fails the call with the validators' sentence, never a silent overwrite. A node with a set
+            // target cannot have a field named like a target key, so the remaining collision is caught before run time.
             var twice = G(N("value", "set_value", new { type = "target", value = Lit("target", new { entity_id = "light.a", brightness = 5 }) }),
                 Service("s", "light.turn_on", new JsonObject { ["brightness"] = Lit("number", 1) }, Unset()));
             twice["edges"]!.AsArray().Add(D("value", "s", "target"));
             var failure = await Record(() => Execute(twice));
-            Check(failure?.Message.Contains("light.turn_on sets brightness both as a field and in the target") == true && calls.Count == 0,
-                "a target key a field already set fails the call: " + failure + $" after {calls.Count} call(s)");
+            Check(failure?.Message == VisualGraphValidator.TargetKeyMessage("brightness") && failure.Message == "Target can only contain entity_id, device_id, area_id, floor_id and label_id; found brightness" && calls.Count == 0,
+                "a target object key that is not a target key fails the call: " + failure + $" after {calls.Count} call(s)");
             calls.Clear();
-            Console.WriteLine("PASS service node payloads: literal and wired fields, unset fields omitted, string and object targets, field named target, returnResponse, target key collision");
+            Console.WriteLine("PASS service node payloads: literal and wired fields, unset fields omitted, string and object targets, field named target, returnResponse, target object keys");
         }
         finally
         {

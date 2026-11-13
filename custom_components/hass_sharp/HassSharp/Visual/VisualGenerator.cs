@@ -7,7 +7,12 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace HassSharp;
 
-public sealed record VisualDiagnostic(string? NodeId, string Message, int Severity = 3, int? StartLine = null, int? StartColumn = null, string? InputId = null, string? PortId = null);
+/// <param name="Code">
+/// A stable machine-readable kind for structural diagnostics (see <see cref="VisualGraphValidator.Codes"/>), the
+/// same in both validators; null for the rest. A code starting with <c>cycle.</c> or <c>scope.</c> blocks connections.
+/// </param>
+public sealed record VisualDiagnostic(string? NodeId, string Message, int Severity = 3, int? StartLine = null, int? StartColumn = null, string? InputId = null, string? PortId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Code = null);
 public sealed record VisualSourceMap(string NodeId, int StartLine, int EndLine);
 public sealed record VisualPreview(bool Valid, string Source, List<VisualSourceMap> SourceMap, List<VisualDiagnostic> Diagnostics)
 {

@@ -181,9 +181,9 @@
     "valid": false,
     "nodeId": "b",
     "inputId": "value",
-    "contains": "Condition must be a yes/no value, not a number",
+    "contains": "Condition accepts Yes/No, not Number",
     "messages": [
-      "Condition must be a yes/no value, not a number"
+      "Condition accepts Yes/No, not Number"
     ]
   },
   {
@@ -259,6 +259,9 @@
     "contains": "one",
     "messages": [
       "Only one data source per input"
+    ],
+    "codes": [
+      "port.inputTaken"
     ]
   },
   {
@@ -325,6 +328,9 @@
     "contains": "port",
     "messages": [
       "Unknown data output port"
+    ],
+    "codes": [
+      "port.unknownOutput"
     ]
   },
   {
@@ -389,9 +395,12 @@
     },
     "valid": false,
     "nodeId": "t",
-    "contains": "mix",
+    "contains": "This step order wire names value pins; connect step order pins to step order pins",
     "messages": [
-      "Do not mix data and execution ports"
+      "This step order wire names value pins; connect step order pins to step order pins"
+    ],
+    "codes": [
+      "edge.orderWirePins"
     ]
   },
   {
@@ -465,6 +474,9 @@
     "contains": "cycle",
     "messages": [
       "Data cycle is forbidden"
+    ],
+    "codes": [
+      "cycle.data"
     ]
   },
   {
@@ -589,7 +601,7 @@
     "inputId": "value",
     "contains": "Object is not a valid object",
     "messages": [
-      "Object is not a valid object"
+      "Object is not a valid Object value"
     ]
   },
   {
@@ -816,7 +828,7 @@
     "inputId": "entity",
     "contains": "Entity is not a valid entity",
     "messages": [
-      "Entity is not a valid entity"
+      "Entity is not a valid Entity value"
     ]
   },
   {
@@ -1064,9 +1076,12 @@
     "valid": false,
     "nodeId": "b",
     "inputId": "value",
-    "contains": "scope",
+    "contains": "Message cannot use this value here: it is on the other side of a loop or parallel branch boundary",
     "messages": [
-      "Data cannot cross this structured scope"
+      "Message cannot use this value here: it is on the other side of a loop or parallel branch boundary"
+    ],
+    "codes": [
+      "scope.data"
     ]
   },
   {
@@ -1165,9 +1180,12 @@
     "valid": false,
     "nodeId": "after",
     "inputId": "value",
-    "contains": "scope",
+    "contains": "Message cannot use this value here: it is on the other side of a loop or parallel branch boundary",
     "messages": [
-      "Data cannot cross this structured scope"
+      "Message cannot use this value here: it is on the other side of a loop or parallel branch boundary"
+    ],
+    "codes": [
+      "scope.data"
     ]
   },
   {
@@ -1262,9 +1280,12 @@
       ]
     },
     "valid": false,
-    "contains": "scope",
+    "contains": "A wire cannot go into or out of a loop or parallel branch from outside it",
     "messages": [
-      "Execution edge crosses a structured scope"
+      "A wire cannot go into or out of a loop or parallel branch from outside it"
+    ],
+    "codes": [
+      "scope.execution"
     ]
   },
   {
@@ -1505,9 +1526,9 @@
     "valid": false,
     "nodeId": "result",
     "inputId": "value",
-    "contains": "Condition must be a yes/no value, not text",
+    "contains": "Condition accepts Yes/No, not Text",
     "messages": [
-      "Condition must be a yes/no value, not text"
+      "Condition accepts Yes/No, not Text"
     ]
   },
   {
@@ -1899,9 +1920,12 @@
     "valid": false,
     "nodeId": "after",
     "inputId": "value",
-    "contains": "scope",
+    "contains": "Message cannot use this value here: it is on the other side of a loop or parallel branch boundary",
     "messages": [
-      "Data cannot cross this structured scope"
+      "Message cannot use this value here: it is on the other side of a loop or parallel branch boundary"
+    ],
+    "codes": [
+      "scope.data"
     ]
   },
   {
@@ -1965,6 +1989,9 @@
     "contains": "cycle",
     "messages": [
       "Execution cycle is forbidden"
+    ],
+    "codes": [
+      "cycle.execution"
     ]
   },
   {
@@ -2023,8 +2050,12 @@
     "nodeId": "b",
     "contains": "reachable",
     "messages": [
-      "Data cannot cross this structured scope",
+      "Condition cannot use this value here: it is on the other side of a loop or parallel branch boundary",
       "Every node must be reachable by execution from a trigger"
+    ],
+    "codes": [
+      "node.unreachable",
+      "scope.data"
     ]
   },
   {
@@ -2084,6 +2115,9 @@
     "contains": "version",
     "messages": [
       "Expected graph version 5"
+    ],
+    "codes": [
+      "graph.version"
     ]
   },
   {
@@ -2272,6 +2306,10 @@
     "messages": [
       "Every node must be reachable by execution from a trigger",
       "Structured nesting limit is 8"
+    ],
+    "codes": [
+      "limit.nesting",
+      "node.unreachable"
     ]
   },
   {
@@ -2350,10 +2388,10 @@
     "valid": false,
     "nodeId": "r",
     "inputId": "carry",
-    "contains": "declaration",
+    "contains": "Each carried value of this loop needs a name and a type",
     "messages": [
-      "Execution connection is required",
-      "Invalid loop declaration"
+      "Each carried value of this loop needs a name and a type",
+      "Execution connection is required"
     ]
   },
   {
@@ -2518,7 +2556,7 @@
     "inputId": "field:on",
     "contains": "on needs a value",
     "messages": [
-      "on needs a value"
+      "On needs a value"
     ]
   },
   {
@@ -3185,10 +3223,13 @@
     "valid": false,
     "nodeId": "r",
     "inputId": "carry",
-    "contains": "declaration",
+    "contains": "Each carried value of this loop needs a name and a type",
     "messages": [
-      "Invalid loop declaration",
+      "Each carried value of this loop needs a name and a type",
       "Unknown data output port"
+    ],
+    "codes": [
+      "port.unknownOutput"
     ]
   },
   {
@@ -3382,6 +3423,9 @@
     "contains": "Unknown",
     "messages": [
       "Unknown node kind"
+    ],
+    "codes": [
+      "node.unknownKind"
     ]
   },
   {
@@ -3447,6 +3491,9 @@
     "contains": "port",
     "messages": [
       "Unknown data output port"
+    ],
+    "codes": [
+      "port.unknownOutput"
     ]
   },
   {
@@ -3536,10 +3583,14 @@
     },
     "valid": false,
     "nodeId": "p",
-    "contains": "port",
+    "contains": "This step order wire leaves from a pin without a valid name",
     "messages": [
       "Every node must be reachable by execution from a trigger",
-      "Execution port must be a string"
+      "This step order wire leaves from a pin without a valid name"
+    ],
+    "codes": [
+      "edge.orderPinName",
+      "node.unreachable"
     ]
   },
   {
@@ -4319,9 +4370,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:brightness_pct",
-    "contains": "light.turn_on: brightness_pct has an invalid value",
+    "contains": "light.turn_on: Brightness pct has an invalid value",
     "messages": [
-      "light.turn_on: brightness_pct has an invalid value"
+      "light.turn_on: Brightness pct has an invalid value"
     ]
   },
   {
@@ -4421,7 +4472,7 @@
     "inputId": "carry:sum",
     "contains": "sum has an invalid value",
     "messages": [
-      "sum has an invalid value"
+      "Sum has an invalid value"
     ]
   },
   {
@@ -4540,7 +4591,7 @@
     "inputId": "type",
     "contains": "number",
     "messages": [
-      "Less-than and greater-than comparisons need a number"
+      "Less-than and greater-than comparisons need Number values"
     ]
   },
   {
@@ -4599,7 +4650,7 @@
     "inputId": "type",
     "contains": "number",
     "messages": [
-      "Less-than and greater-than comparisons need a number"
+      "Less-than and greater-than comparisons need Number values"
     ]
   },
   {
@@ -4690,6 +4741,9 @@
     "contains": "kind",
     "messages": [
       "Unknown node kind"
+    ],
+    "codes": [
+      "node.unknownKind"
     ]
   },
   {
@@ -4806,9 +4860,9 @@
     "valid": false,
     "nodeId": "w",
     "inputId": "carry",
-    "contains": "declaration",
+    "contains": "The carried values of this loop need unique names and known types",
     "messages": [
-      "Loop declarations require unique names and valid types"
+      "The carried values of this loop need unique names and known types"
     ]
   },
   {
@@ -4872,9 +4926,9 @@
     "valid": false,
     "nodeId": "w",
     "inputId": "carry",
-    "contains": "declaration",
+    "contains": "The carried values of this loop need unique names and known types",
     "messages": [
-      "Loop declarations require unique names and valid types"
+      "The carried values of this loop need unique names and known types"
     ]
   },
   {
@@ -6676,9 +6730,9 @@
     "valid": false,
     "nodeId": "lr",
     "inputId": "carry:x",
-    "contains": "x must be a light entity, not an entity",
+    "contains": "X accepts Light entity, not Entity",
     "messages": [
-      "x must be a light entity, not an entity"
+      "X accepts Light entity, not Entity"
     ]
   },
   {
@@ -6742,9 +6796,9 @@
     "valid": false,
     "nodeId": "r",
     "inputId": "entity",
-    "contains": "Entity must be an entity, not text",
+    "contains": "Entity accepts Entity, not Text",
     "messages": [
-      "Entity must be an entity, not text"
+      "Entity accepts Entity, not Text"
     ]
   },
   {
@@ -6834,9 +6888,9 @@
     "valid": false,
     "nodeId": "lr",
     "inputId": "carry:x",
-    "contains": "x must be a switch entity, not a light entity",
+    "contains": "X accepts Switch entity, not Light entity",
     "messages": [
-      "x must be a switch entity, not a light entity"
+      "X accepts Switch entity, not Light entity"
     ]
   },
   {
@@ -6926,9 +6980,9 @@
     "valid": false,
     "nodeId": "lr",
     "inputId": "carry:x",
-    "contains": "x must be a target, not an object",
+    "contains": "X accepts Target, not Object",
     "messages": [
-      "x must be a target, not an object"
+      "X accepts Target, not Object"
     ]
   },
   {
@@ -6971,7 +7025,7 @@
     "inputId": "value",
     "contains": "Value is not a valid light entity",
     "messages": [
-      "Value is not a valid light entity"
+      "Value is not a valid Light entity value"
     ]
   },
   {
@@ -7079,6 +7133,9 @@
     "contains": "graph version 5",
     "messages": [
       "Expected graph version 5"
+    ],
+    "codes": [
+      "graph.version"
     ]
   },
   {
@@ -7134,7 +7191,7 @@
     "inputId": "value",
     "contains": "Message must be one of a or b",
     "messages": [
-      "Message must be one of a or b"
+      "Message must be one of A or B"
     ]
   },
   {
@@ -7785,9 +7842,9 @@
     "valid": false,
     "nodeId": "lr",
     "inputId": "carry:x",
-    "contains": "x must be a switch entity, not a light entity",
+    "contains": "X accepts Switch entity, not Light entity",
     "messages": [
-      "x must be a switch entity, not a light entity"
+      "X accepts Switch entity, not Light entity"
     ]
   },
   {
@@ -7860,9 +7917,9 @@
     "valid": false,
     "nodeId": "lr",
     "inputId": "carry:x",
-    "contains": "x must be a switch entity, not a light entity",
+    "contains": "X accepts Switch entity, not Light entity",
     "messages": [
-      "x must be a switch entity, not a light entity"
+      "X accepts Switch entity, not Light entity"
     ]
   },
   {
@@ -8088,9 +8145,9 @@
     "valid": false,
     "nodeId": "lr",
     "inputId": "carry:x",
-    "contains": "x must be a light entity, not an entity",
+    "contains": "X accepts Light entity, not Entity",
     "messages": [
-      "x must be a light entity, not an entity"
+      "X accepts Light entity, not Entity"
     ]
   },
   {
@@ -8140,6 +8197,9 @@
     "contains": "Unknown data output port",
     "messages": [
       "Unknown data output port"
+    ],
+    "codes": [
+      "port.unknownOutput"
     ]
   },
   {
@@ -8175,6 +8235,9 @@
     "contains": "Unknown node kind",
     "messages": [
       "Unknown node kind"
+    ],
+    "codes": [
+      "node.unknownKind"
     ]
   },
   {
@@ -8409,9 +8472,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:brightness_pct",
-    "contains": "light.turn_on: Brightness must be a number, not text",
+    "contains": "light.turn_on: Brightness accepts Number, not Text",
     "messages": [
-      "light.turn_on: Brightness must be a number, not text"
+      "light.turn_on: Brightness accepts Number, not Text"
     ]
   },
   {
@@ -8515,9 +8578,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:type",
-    "contains": "weather.get_forecasts: type must be one of daily, hourly or twice_daily",
+    "contains": "weather.get_forecasts: Type must be one of Daily, Hourly or Twice daily",
     "messages": [
-      "weather.get_forecasts: type must be one of daily, hourly or twice_daily"
+      "weather.get_forecasts: Type must be one of Daily, Hourly or Twice daily"
     ]
   },
   {
@@ -8583,9 +8646,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "light.turn_on: Target must be a target or a light entity, not a switch entity",
+    "contains": "light.turn_on: Target accepts Target or Light entity, not Switch entity",
     "messages": [
-      "light.turn_on: Target must be a target or a light entity, not a switch entity"
+      "light.turn_on: Target accepts Target or Light entity, not Switch entity"
     ]
   },
   {
@@ -8690,9 +8753,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "light.turn_on: Target must be a target or a light entity, not a switch entity",
+    "contains": "light.turn_on: Target accepts Target or Light entity, not Switch entity",
     "messages": [
-      "light.turn_on: Target must be a target or a light entity, not a switch entity"
+      "light.turn_on: Target accepts Target or Light entity, not Switch entity"
     ]
   },
   {
@@ -8776,9 +8839,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "climate.set_hvac_mode only accepts climate entities; light.hall is a light",
+    "contains": "climate.set_hvac_mode only accepts climate entities; light.hall is not one",
     "messages": [
-      "climate.set_hvac_mode only accepts climate entities; light.hall is a light"
+      "climate.set_hvac_mode only accepts climate entities; light.hall is not one"
     ]
   },
   {
@@ -8826,9 +8889,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "climate.set_hvac_mode only accepts climate entities; light.hall is a light",
+    "contains": "climate.set_hvac_mode only accepts climate entities; light.hall is not one",
     "messages": [
-      "climate.set_hvac_mode only accepts climate entities; light.hall is a light"
+      "climate.set_hvac_mode only accepts climate entities; light.hall is not one"
     ]
   },
   {
@@ -9325,10 +9388,10 @@
       ]
     },
     "valid": true,
-    "warning": "Unknown service foo.bar; fields are not type-checked",
+    "warning": "foo.bar is not available in this Home Assistant, so its fields cannot be checked",
     "warningInputId": "service",
     "messages": [
-      "Unknown service foo.bar; fields are not type-checked"
+      "foo.bar is not available in this Home Assistant, so its fields cannot be checked"
     ]
   },
   {
@@ -9478,6 +9541,9 @@
     "contains": "Unknown data output port",
     "messages": [
       "Unknown data output port"
+    ],
+    "codes": [
+      "port.unknownOutput"
     ]
   },
   {
@@ -9582,9 +9648,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:status",
-    "contains": "todo.get_items: Status may only contain needs_action or completed",
+    "contains": "todo.get_items: Status may only contain Needs action or Completed",
     "messages": [
-      "todo.get_items: Status may only contain needs_action or completed"
+      "todo.get_items: Status may only contain Needs action or Completed"
     ]
   },
   {
@@ -10223,9 +10289,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "light.turn_on sets entity_id both as a field and in the target",
+    "contains": "light.turn_on has a target, so it cannot also have a field named entity_id",
     "messages": [
-      "light.turn_on sets entity_id both as a field and in the target"
+      "light.turn_on has a target, so it cannot also have a field named entity_id"
     ]
   },
   {
@@ -10273,9 +10339,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "light.turn_on sets entity_id both as a field and in the target",
+    "contains": "light.turn_on has a target, so it cannot also have a field named entity_id",
     "messages": [
-      "light.turn_on sets entity_id both as a field and in the target"
+      "light.turn_on has a target, so it cannot also have a field named entity_id"
     ]
   },
   {
@@ -10348,13 +10414,13 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "light.turn_on sets area_id both as a field and in the target",
+    "contains": "light.turn_on has a target, so it cannot also have a field named area_id",
     "messages": [
-      "light.turn_on sets area_id both as a field and in the target"
+      "light.turn_on has a target, so it cannot also have a field named area_id"
     ]
   },
   {
-    "name": "service field with a target key the entity id target does not bring is accepted",
+    "name": "service field with a target key rejected whatever the target holds",
     "graph": {
       "version": 5,
       "name": "Service node",
@@ -10418,8 +10484,13 @@
         }
       ]
     },
-    "valid": true,
-    "noDiagnostics": true
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "light.turn_on has a target, so it cannot also have a field named area_id",
+    "messages": [
+      "light.turn_on has a target, so it cannot also have a field named area_id"
+    ]
   },
   {
     "name": "service field with a target key and no target is accepted",
@@ -10465,7 +10536,7 @@
     "noDiagnostics": true
   },
   {
-    "name": "service field with a target key that is not set is accepted",
+    "name": "service field with a target key rejected even when the field is not set",
     "graph": {
       "version": 5,
       "name": "Service node",
@@ -10506,11 +10577,16 @@
         }
       ]
     },
-    "valid": true,
-    "noDiagnostics": true
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "light.turn_on has a target, so it cannot also have a field named entity_id",
+    "messages": [
+      "light.turn_on has a target, so it cannot also have a field named entity_id"
+    ]
   },
   {
-    "name": "service entity of the wrong domain names both domains",
+    "name": "service entity of the wrong domain names the domain it needs",
     "services": true,
     "graph": {
       "version": 5,
@@ -10557,9 +10633,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "climate.set_hvac_mode only accepts climate entities; switch.kitchen is a switch",
+    "contains": "climate.set_hvac_mode only accepts climate entities; switch.kitchen is not one",
     "messages": [
-      "climate.set_hvac_mode only accepts climate entities; switch.kitchen is a switch"
+      "climate.set_hvac_mode only accepts climate entities; switch.kitchen is not one"
     ]
   },
   {
@@ -10659,9 +10735,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:light",
-    "contains": "hass_sharp_test.selectors: Light must be a light entity, not a switch entity",
+    "contains": "hass_sharp_test.selectors: Light accepts Light entity, not Switch entity",
     "messages": [
-      "hass_sharp_test.selectors: Light must be a light entity, not a switch entity"
+      "hass_sharp_test.selectors: Light accepts Light entity, not Switch entity"
     ]
   },
   {
@@ -11056,7 +11132,7 @@
     "inputId": "value",
     "contains": "Message must be on",
     "messages": [
-      "Message must be on"
+      "Message must be On"
     ]
   },
   {
@@ -11172,9 +11248,9 @@
     "valid": false,
     "nodeId": "l",
     "inputId": "value",
-    "contains": "Message must be one of 1, 2.5 or true",
+    "contains": "Message must be one of 1, 2.5 or Yes",
     "messages": [
-      "Message must be one of 1, 2.5 or true"
+      "Message must be one of 1, 2.5 or Yes"
     ]
   },
   {
@@ -11214,9 +11290,799 @@
     "valid": false,
     "nodeId": "b",
     "inputId": "value",
-    "contains": "Condition must be a yes/no value, not a light entity",
+    "contains": "Condition accepts Yes/No, not Light entity",
     "messages": [
-      "Condition must be a yes/no value, not a light entity"
+      "Condition accepts Yes/No, not Light entity"
+    ]
+  },
+  {
+    "name": "service constant list field accepts its list",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "pair": {
+                "kind": "literal",
+                "type": "array",
+                "value": [
+                  1,
+                  2
+                ]
+              }
+            },
+            "returnResponse": false,
+            "target": {
+              "kind": "unset"
+            },
+            "service": "hass_sharp_test.selectors"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "service constant list field rejects a different list",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "pair": {
+                "kind": "literal",
+                "type": "array",
+                "value": [
+                  2,
+                  1
+                ]
+              }
+            },
+            "returnResponse": false,
+            "target": {
+              "kind": "unset"
+            },
+            "service": "hass_sharp_test.selectors"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "field:pair",
+    "contains": "hass_sharp_test.selectors: Pair must be Both",
+    "messages": [
+      "hass_sharp_test.selectors: Pair must be Both"
+    ]
+  },
+  {
+    "name": "service variable target with an entity_id field rejected",
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "e",
+          "kind": "set_value",
+          "config": {
+            "type": "target",
+            "value": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.kitchen"
+              }
+            },
+            "output": "chosen"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "entity_id": {
+                "kind": "literal",
+                "type": "entity_id",
+                "value": "light.hall"
+              }
+            },
+            "returnResponse": false,
+            "target": {
+              "kind": "variable",
+              "name": "chosen"
+            },
+            "service": "light.turn_on"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "e"
+        },
+        {
+          "id": "e:next",
+          "source": "e",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "light.turn_on has a target, so it cannot also have a field named entity_id",
+    "messages": [
+      "light.turn_on has a target, so it cannot also have a field named entity_id"
+    ]
+  },
+  {
+    "name": "service connected entity_id field with a target value rejected",
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "e",
+          "kind": "set_value",
+          "config": {
+            "type": "entity_id",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "entity_id": {
+                "kind": "unset"
+              }
+            },
+            "returnResponse": false,
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.kitchen"
+              }
+            },
+            "service": "light.turn_on"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "e"
+        },
+        {
+          "id": "e:next",
+          "source": "e",
+          "target": "s"
+        },
+        {
+          "id": "e:value:s:field:entity_id",
+          "kind": "data",
+          "source": "e",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "field:entity_id"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "light.turn_on has a target, so it cannot also have a field named entity_id",
+    "messages": [
+      "light.turn_on has a target, so it cannot also have a field named entity_id"
+    ]
+  },
+  {
+    "name": "service target value with a key that is not a target key rejected",
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {},
+            "returnResponse": false,
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.kitchen",
+                "brightness": 5
+              }
+            },
+            "service": "light.turn_on"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "Target can only contain entity_id, device_id, area_id, floor_id and label_id; found brightness",
+    "messages": [
+      "Target can only contain entity_id, device_id, area_id, floor_id and label_id; found brightness"
+    ]
+  },
+  {
+    "name": "service entity of the text domain is named without an article",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "hvac_mode": {
+                "kind": "literal",
+                "type": "string",
+                "value": "heat"
+              }
+            },
+            "returnResponse": false,
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "text.foo"
+              }
+            },
+            "service": "climate.set_hvac_mode"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "climate.set_hvac_mode only accepts climate entities; text.foo is not one",
+    "messages": [
+      "climate.set_hvac_mode only accepts climate entities; text.foo is not one"
+    ]
+  },
+  {
+    "name": "service multiple entity field rejects an entity of another domain",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "lights": {
+                "kind": "literal",
+                "type": "array",
+                "value": [
+                  "light.a",
+                  "switch.x"
+                ]
+              }
+            },
+            "returnResponse": false,
+            "target": {
+              "kind": "unset"
+            },
+            "service": "hass_sharp_test.selectors"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "field:lights",
+    "contains": "hass_sharp_test.selectors: Lights may only contain Light entity values",
+    "messages": [
+      "hass_sharp_test.selectors: Lights may only contain Light entity values"
+    ]
+  },
+  {
+    "name": "message wording: a small minimum",
+    "catalogPatch": {
+      "nodes": {
+        "log": {
+          "inputs": {
+            "value": {
+              "min": 0.00001
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "contains": "Message must be at least 0.00001",
+    "messages": [
+      "Message must be at least 0.00001"
+    ]
+  },
+  {
+    "name": "message wording: a tiny minimum in exponent form",
+    "catalogPatch": {
+      "nodes": {
+        "log": {
+          "inputs": {
+            "value": {
+              "min": 1e-7
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "contains": "Message must be at least 1e-7",
+    "messages": [
+      "Message must be at least 1e-7"
+    ]
+  },
+  {
+    "name": "message wording: a large maximum",
+    "catalogPatch": {
+      "nodes": {
+        "log": {
+          "inputs": {
+            "value": {
+              "max": 1e+21
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2e+21
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "contains": "Message must be at most 1e+21",
+    "messages": [
+      "Message must be at most 1e+21"
+    ]
+  },
+  {
+    "name": "message wording: a large whole maximum",
+    "catalogPatch": {
+      "nodes": {
+        "log": {
+          "inputs": {
+            "value": {
+              "max": 123456789012345680000
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 200000000000000000000
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "contains": "Message must be at most 123456789012345680000",
+    "messages": [
+      "Message must be at most 123456789012345680000"
+    ]
+  },
+  {
+    "name": "input format rule that cannot be compiled is reported",
+    "catalogPatch": {
+      "nodes": {
+        "log": {
+          "inputs": {
+            "value": {
+              "pattern": "("
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "contains": "Message has a format rule that cannot be checked",
+    "messages": [
+      "Message has a format rule that cannot be checked"
+    ]
+  },
+  {
+    "name": "input format rule \\D accepts non-ASCII digits in both validators",
+    "catalogPatch": {
+      "nodes": {
+        "log": {
+          "inputs": {
+            "value": {
+              "pattern": "^\\D+$"
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "١٢"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "condition result outside a loop condition rejected",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "condition_result",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "r",
+    "contains": "A Condition result step must be inside the condition of a While or Until loop",
+    "messages": [
+      "A Condition result step must be inside the condition of a While or Until loop"
+    ],
+    "codes": [
+      "scope.conditionResult"
+    ]
+  },
+  {
+    "name": "loop result outside a loop body rejected",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "loop_result",
+          "config": {
+            "values": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "r",
+    "contains": "A Loop result step must be inside the body of a loop",
+    "messages": [
+      "A Loop result step must be inside the body of a loop"
+    ],
+    "codes": [
+      "scope.loopResult"
     ]
   }
 ]

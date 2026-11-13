@@ -1,6 +1,7 @@
 import {
   analyzeGraph,
   blockingDiagnostic,
+  inputSubject,
   comparisonDiagnostics,
   connectData,
   dataInputs,
@@ -9,6 +10,7 @@ import {
   isAssignable,
   nodeCatalog,
   serviceTargetDiagnostics,
+  words,
   type DiagnosticOrigin,
   type Graph,
   type GraphAnalysis,
@@ -58,7 +60,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
   const { diagnostics, origins } = analysis
   const old = new Set(diagnostics.map(d => JSON.stringify(d)))
   // Diagnostics that can reject a candidate on their own: by message, or by the node input/port they name.
-  const blockingAll = diagnostics.flatMap((d, i) => (blocking.test(d.message) ? [i] : []))
+  const blockingAll = diagnostics.flatMap((d, i) => (blocking(d) ? [i] : []))
   const byInput = new Map<string, number[]>(), byPort = new Map<string, number[]>()
   const add = (map: Map<string, number[]>, key: string, i: number) => map.set(key, [...(map.get(key) ?? []), i])
   diagnostics.forEach((d, i) => {
@@ -121,7 +123,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     const limited = !graph.nodes.length || graph.nodes.length > catalog.limits.nodes
     if (!analysis.complete) {
       // Both validations stop at the same limit diagnostic, so nothing is added; anything else needs the full check.
-      if (!diagnostics.some(d => d.message.startsWith('Graph limit'))) return full()
+      if (!diagnostics.some(d => d.code === 'graph.limit')) return full()
       return limited || edgeCount > catalog.limits.edges ? { fallback: false } : full()
     }
     if (edgeCount > catalog.limits.edges) return { message: 'Graph limit: 1–256 nodes and at most 512 edges', fallback: false }
@@ -142,10 +144,10 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     const output = dataOutputs(source, catalog)[sourcePort]
     const input = dataInputs(target, analysis.ownerOf(target), catalog)[targetPort]
     if (!output) messages.add('Unknown data output port')
-    if (!input) messages.add('Unknown data input port')
+    if (!input) messages.add(words.unknownInput(targetPort))
     if (output && input) {
       if (!input.types.some(t => index.assignable(output.type, t))) messages.add(incompatibleInput(target, input, targetPort, output.type, catalog))
-      if (!analysis.visible(source, target, output)) messages.add('Data cannot cross this structured scope')
+      if (!analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
     }
     if (sourceId === targetId || (hasDataCycle ? dataCycleAfter(analysis, sourceId, targetId, targetPort) : reach(targetId).has(sourceId))) messages.add('Data cycle is forbidden')
     if (spec.comparison && input) {
@@ -157,8 +159,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     // repeats a key the target brings. They name the target input, so only a wire into it, or a new one, rejects.
     if (spec.dynamicInputs === 'service' && (targetPort === 'target' || targetPort.startsWith('field:'))) {
       const connected = (port: string) => port === targetPort || analysis.data.some(e => e.target === targetId && e.targetPort === port)
-      const targetType = targetPort === 'target' ? output?.type : analysis.resolved.get(targetId)?.target
-      for (const d of serviceTargetDiagnostics(target, connected, targetType, catalog))
+      for (const d of serviceTargetDiagnostics(target, connected, catalog))
         if (d.inputId === targetPort || !old.has(JSON.stringify(d))) messages.add(d.message)
     }
     return messages.size ? { message: [...messages].join('; '), fallback: false } : { fallback: false }

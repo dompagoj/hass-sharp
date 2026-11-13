@@ -64,9 +64,13 @@ public static class VisualNodeCatalog
         var domains = filters.Select(f => (f["domain"] as JsonArray ?? []).OfType<JsonValue>().Select(d => d.TryGetValue<string>(out var s) ? s : "").Where(s => s != "").ToArray()).ToArray();
         return domains.Length == 0 || domains.Any(d => d.Length == 0) ? [] : domains.SelectMany(d => d).Distinct().ToArray();
     }
-    static readonly string[] ServiceFieldConstraints = ["min", "max", "integer", "enum", "enumLabels", "pattern", "minItems", "maxItems", "step", "unit", "selector", "advanced", "section", "example", "default"];
-    /// <summary>A known service field as an input spec, so catalog literal constraints (C2) apply to it.</summary>
-    static JsonObject ServiceFieldInput(string key, JsonObject field)
+    static readonly string[] ServiceFieldConstraints = ["min", "max", "integer", "enum", "enumLabels", "pattern", "minItems", "maxItems", "step", "unit", "selector", "advanced", "section", "example"];
+    /// <summary>
+    /// A known service field as an input spec, so catalog literal constraints (C2) apply to it. Its C4 default (a
+    /// plain value) becomes an operand, the shape catalog inputs use: a literal of the first field type it is a valid
+    /// value of; a default no field type accepts is left out.
+    /// </summary>
+    static JsonObject ServiceFieldInput(string key, JsonObject field, JsonObject catalog)
     {
         var port = new JsonObject
         {
@@ -74,6 +78,9 @@ public static class VisualNodeCatalog
             ["label"] = Text(field, "label", key), ["description"] = Text(field, "description") is { Length: > 0 } description ? description : "Service field " + key
         };
         foreach (var name in ServiceFieldConstraints) if (field[name] is { } value) port[name] = value.DeepClone();
+        if (field["default"] is { } fallback && (field["types"] as JsonArray ?? []).OfType<JsonValue>().Select(t => t.TryGetValue<string>(out var s) ? s : "")
+                .FirstOrDefault(t => t != "" && VisualTypes.ValidLiteral(catalog, t, fallback, true)) is { } type)
+            port["default"] = new JsonObject { ["kind"] = "literal", ["type"] = type, ["value"] = fallback.DeepClone() };
         return port;
     }
     /// <summary>
@@ -133,7 +140,7 @@ public static class VisualNodeCatalog
             var schema = ServiceSchema(node, snapshot);
             if (node["config"]?["fields"] is JsonObject serviceFields)
                 foreach (var (key, _) in serviceFields)
-                    ports["field:" + key] = schema?["fields"]?[key] is JsonObject field ? ServiceFieldInput(key, field) : Input(all, false, "Service field " + key);
+                    ports["field:" + key] = schema?["fields"]?[key] is JsonObject field ? ServiceFieldInput(key, field, snapshot?.Root ?? Root) : Input(all, false, "Service field " + key);
             if (schema != null && ports["target"] is JsonObject target)
             {
                 string[] types = ServiceTargetDomains(schema) is { Length: > 0 } domains ? ["target", .. domains.Select(d => "entity_id:" + d)] : ["target", "entity_id"];

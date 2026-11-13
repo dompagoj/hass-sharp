@@ -143,7 +143,18 @@ exempt). Unknown fields, missing required fields (present but unset and unwired
 counts as missing), a target on a service without one, `returnResponse` on a
 service that returns none, and no `returnResponse` on a service that only returns
 one are errors. An unknown service is a single warning and its fields accept every
-type. Without a services section there is no service diagnostic at all.
+type. Without a services section there is no schema diagnostic, but the target-key
+rule below still applies.
+
+Whatever the services section holds, a target value may only contain `entity_id`,
+`device_id`, `area_id`, `floor_id` and `label_id`, and a node whose target is set
+(a value, a connection or a variable) may not also have a field with one of those
+names; a node with no target may. At run time a target object with any other key
+fails with the same sentence the validators use.
+
+Breaking change: a stored graph that sets a target and also has a field named
+`entity_id`, `device_id`, `area_id`, `floor_id` or `label_id`, or whose target
+object holds another key, no longer validates; move those ids into the target.
 
 Service schemas are attached only to authoring validation of one graph (visual
 preview and save) and to the library `service_ports` operation; the `services`

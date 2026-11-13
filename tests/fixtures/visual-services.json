@@ -1,5 +1,5 @@
 {
-  "servicesGeneration": "85f9da0abbf9371d1e180c17fad03ba9e420b9791ab97ca619e9b0b889b05724",
+  "servicesGeneration": "54006c50550326938244d9f3a2fc9df7cf3c2c60ea413f9ce7d15989393921e8",
   "items": {
     "climate.set_hvac_mode": {
       "domain": "climate",
@@ -555,6 +555,46 @@
           "example": null,
           "selector": {
             "datetime": {}
+          },
+          "filter": null
+        },
+        "pair": {
+          "label": "Pair",
+          "description": "",
+          "types": [
+            "array"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 11,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": [
+            [
+              1,
+              2
+            ]
+          ],
+          "enumLabels": [
+            "Both"
+          ],
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "constant": {
+              "label": "Both",
+              "value": [
+                1,
+                2
+              ]
+            }
           },
           "filter": null
         },

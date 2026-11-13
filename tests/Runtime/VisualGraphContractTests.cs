@@ -30,11 +30,16 @@ public static class VisualGraphContractTests
             if (fixture["noDiagnostics"]?.GetValue<bool>() == true && diagnostics.Count > 0)
                 throw new Exception($"Visual graph {name}: expected no diagnostics, got {string.Join("; ", diagnostics)}");
             // Both validators word every message byte for byte alike; the case lists them sorted by code unit.
-            if (fixture["messages"] is JsonArray expected)
+            // A case without "messages" expects none, so a warning only one validator raises cannot pass by omission.
             {
-                var want = expected.Select(m => m!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray();
+                var want = (fixture["messages"] as JsonArray ?? []).Select(m => m!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray();
                 var got = diagnostics.Select(d => d.Message).Order(StringComparer.Ordinal).ToArray();
                 if (!want.SequenceEqual(got)) throw new Exception($"Visual graph {name}: expected messages [{string.Join(" | ", want)}], got [{string.Join(" | ", got)}]");
+                // Structural problems carry the same codes in both validators.
+                var wantCodes = (fixture["codes"] as JsonArray ?? []).Select(m => m!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray();
+                var gotCodes = diagnostics.Where(d => d.Code != null).Select(d => d.Code!).Order(StringComparer.Ordinal).ToArray();
+                if (!wantCodes.SequenceEqual(gotCodes)) throw new Exception($"Visual graph {name}: expected codes [{string.Join(" | ", wantCodes)}], got [{string.Join(" | ", gotCodes)}]");
+                foreach (var code in gotCodes) if (!VisualGraphValidator.Codes.Contains(code)) throw new Exception($"Visual graph {name}: undeclared code {code}");
             }
             foreach (var d in diagnostics) if (Jargon.IsMatch(d.Message)) throw new Exception($"Visual graph {name}: message is not worded for people: {d.Message}");
         }
@@ -53,7 +58,7 @@ public static class VisualGraphContractTests
     }
 
     /// <summary>Messages are one short sentence for people: no full stop, no validator vocabulary, no CLR type names.</summary>
-    static readonly System.Text.RegularExpressions.Regex Jargon = new(@"\b(?:literal|unset|operand|payload)\b|global::|System\.|\.$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    static readonly System.Text.RegularExpressions.Regex Jargon = new(@"\b(?:literal|unset|operand|payload)\b|global::|System\.|\.$|\b(?:field|data):|type-checked|\b[0-9a-f]{32}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     // A case may extend the built-in catalog, e.g. with input constraints no built-in node declares yet.
     static VisualCatalogSnapshot Patched(JsonObject patch)

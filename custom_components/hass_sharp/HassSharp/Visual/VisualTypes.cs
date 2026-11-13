@@ -19,10 +19,16 @@ public static class VisualTypes
     /// A catalog or service pattern tested the way JavaScript's <c>RegExp.test</c> does, so both validators agree.
     /// .NET's <c>$</c> also matches before a final newline, so each unescaped <c>$</c> outside a character class
     /// becomes <c>\z</c>, which is JavaScript's <c>$</c> without the m flag; and .NET's <c>\d</c> and <c>\w</c> also
-    /// match non-ASCII digits and letters, so they become JavaScript's ASCII classes.
+    /// match non-ASCII digits and letters, so they become JavaScript's ASCII classes (<c>\D</c> and <c>\W</c> too,
+    /// outside a character class). A pattern that cannot be compiled matches nothing.
     /// </summary>
-    public static bool Matches(string text, string pattern) =>
-        Regex.IsMatch(text, JavaScriptPatterns.GetOrAdd(pattern, JavaScriptPattern), RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+    public static bool Matches(string text, string pattern) => TryMatches(text, pattern) ?? false;
+    /// <summary>Whether the text matches, as <see cref="Matches"/>; null when the pattern cannot be compiled (or runs out of time).</summary>
+    public static bool? TryMatches(string text, string pattern)
+    {
+        try { return Regex.IsMatch(text, JavaScriptPatterns.GetOrAdd(pattern, JavaScriptPattern), RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)); }
+        catch (Exception error) when (error is ArgumentException or RegexMatchTimeoutException) { return null; }
+    }
     static string JavaScriptPattern(string pattern)
     {
         var result = new System.Text.StringBuilder(pattern.Length + 4); var inClass = false;
@@ -32,7 +38,11 @@ public static class VisualTypes
             if (c == '\\' && i + 1 < pattern.Length)
             {
                 var escaped = pattern[++i];
-                result.Append(escaped switch { 'd' => inClass ? "0-9" : "[0-9]", 'w' => inClass ? "a-zA-Z0-9_" : "[a-zA-Z0-9_]", _ => "\\" + escaped });
+                result.Append(escaped switch
+                {
+                    'd' => inClass ? "0-9" : "[0-9]", 'w' => inClass ? "a-zA-Z0-9_" : "[a-zA-Z0-9_]",
+                    'D' when !inClass => "[^0-9]", 'W' when !inClass => "[^a-zA-Z0-9_]", _ => "\\" + escaped,
+                });
                 continue;
             }
             if (inClass) { if (c == ']') inClass = false; result.Append(c); continue; }

@@ -17,8 +17,24 @@ public static class VisualGraphValidator
         inputTypes=validation.InputTypes;return diagnostics;
     }
 
-    /// <summary>Keys a service target is flattened into; a field with one of them would be sent twice.</summary>
-    static readonly string[] TargetKeys = ["entity_id", "device_id", "area_id", "floor_id", "label_id"];
+    /// <summary>The keys a service target may hold; a node with a target may not also have a field with one of them.</summary>
+    internal static readonly string[] TargetKeys = ["entity_id", "device_id", "area_id", "floor_id", "label_id"];
+    /// <summary>The message for a target object holding another key; the runtime throws the same sentence.</summary>
+    internal static string TargetKeyMessage(string key) => $"Target can only contain entity_id, device_id, area_id, floor_id and label_id; found {key}";
+
+    /// <summary>
+    /// The codes of structural diagnostics, identical in <c>contract.ts</c>. A code starting with <c>cycle.</c> or
+    /// <c>scope.</c> also rejects any new connection (<see cref="Blocking"/>).
+    /// </summary>
+    public static readonly string[] Codes =
+    [
+        "graph.version", "graph.name", "graph.shape", "graph.limit", "graph.noTrigger",
+        "node.invalid", "node.duplicate", "node.unknownKind", "node.unreachable", "limit.nesting",
+        "edge.invalid", "edge.duplicate", "edge.endpoint", "edge.unknownKind", "edge.valueWirePins", "edge.orderWirePins", "edge.orderPinName",
+        "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
+        "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult",
+    ];
+    public static bool Blocking(VisualDiagnostic diagnostic) => diagnostic.Code is { } code && (code.StartsWith("cycle.", StringComparison.Ordinal) || code.StartsWith("scope.", StringComparison.Ordinal));
 
     /// <summary>
     /// The wording of validator messages, which people read on node cards and under fields. Byte-identical to
@@ -39,6 +55,8 @@ public static class VisualGraphValidator
         static string Capital(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
         /// <summary><c>binary_sensor</c> → <c>Binary sensor</c>.</summary>
         internal static string DomainWords(string domain) => Capital(domain.Replace('_', ' '));
+        /// <summary>A key or value people did not name, in words: <c>needs_action</c> → <c>Needs action</c>; never empty.</summary>
+        internal static string KeyWords(string key) => DomainWords(key) is { Length: > 0 } words && words.Trim().Length > 0 ? words : "Unnamed";
         static string ClrWords(string id)
         {
             var trimmed = Regex.Replace(Regex.Replace(Regex.Replace(id, "^global::", ""), "<.*$", "", RegexOptions.Singleline), @"[?[\]]+$", "");
@@ -62,28 +80,51 @@ public static class VisualGraphValidator
             if (Text(spec, "label") is { Length: > 0 } label && !Regex.IsMatch(label, @"[.:<>?[\]]") && !Keywords.Contains(label)) return label;
             return ClrWords(id);
         }
-        /// <summary>A label as a noun inside a sentence: <c>Light entity</c> → <c>light entity</c>; words with more capitals stay.</summary>
-        internal static string Noun(string label) => label == "Yes/No" ? "yes/no value" : string.Join(' ', label.Split(' ').Select(w => Regex.IsMatch(w, "^[A-Z][^A-Z]*$") ? w.ToLowerInvariant() : w));
-        /// <summary>The noun with its article; "text" takes none.</summary>
-        internal static string Article(string noun) => noun == "text" ? noun : (Regex.IsMatch(noun, "^[aeiouAEIOU]") ? "an " : "a ") + noun;
-        internal static string AType(JsonObject catalog, string id) => Article(Noun(TypeLabel(catalog, id)));
         internal static string Or(IEnumerable<string> items)
         {
             var list = items.ToList();
             return list.Count <= 1 ? string.Concat(list) : string.Join(", ", list.Take(list.Count - 1)) + " or " + list[^1];
         }
-        internal static string Number(double value) => Math.Floor(value) == value && Math.Abs(value) < 1e15
-            ? ((long)value).ToString(System.Globalization.CultureInfo.InvariantCulture) : value.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        /// <summary>
+        /// A number as JavaScript's <c>String(n)</c> writes it, so both validators print it alike: plain digits from
+        /// 1e-7 up to 1e21, exponent form (<c>1e-7</c>, <c>1.5e+21</c>) outside that range.
+        /// </summary>
+        internal static string Number(double value)
+        {
+            if (value == 0) return "0";
+            if (double.IsNaN(value)) return "NaN";
+            if (double.IsInfinity(value)) return value > 0 ? "Infinity" : "-Infinity";
+            var sign = value < 0 ? "-" : "";
+            var shortest = Math.Abs(value).ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            var exponent = 0; var e = shortest.IndexOfAny(['E', 'e']);
+            if (e >= 0) { exponent = int.Parse(shortest[(e + 1)..], System.Globalization.CultureInfo.InvariantCulture); shortest = shortest[..e]; }
+            var dot = shortest.IndexOf('.');
+            var whole = dot < 0 ? shortest : shortest[..dot]; var fraction = dot < 0 ? "" : shortest[(dot + 1)..];
+            var digits = whole + fraction; var point = whole.Length + exponent;
+            var lead = digits.Length - digits.TrimStart('0').Length; digits = digits[lead..].TrimEnd('0'); point -= lead;
+            int k = digits.Length, n = point;
+            if (k <= n && n <= 21) return sign + digits + new string('0', n - k);
+            if (0 < n && n <= 21) return sign + digits[..n] + "." + digits[n..];
+            if (-6 < n && n <= 0) return sign + "0." + new string('0', -n) + digits;
+            var power = (n - 1 >= 0 ? "+" : "-") + Math.Abs(n - 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return sign + (k == 1 ? digits : digits[..1] + "." + digits[1..]) + "e" + power;
+        }
+        /// <summary>A value in words: text as words (<c>twice_daily</c> → <c>Twice daily</c>), numbers as JavaScript writes them, Yes or No.</summary>
         internal static string Show(JsonNode? value) => value switch
         {
-            null => "null",
-            JsonValue text when text.TryGetValue<string>(out var s) => s,
-            JsonValue flag when flag.TryGetValue<bool>(out var b) => b ? "true" : "false",
+            null => "Nothing",
+            JsonValue text when text.TryGetValue<string>(out var s) => s.Length == 0 ? "Empty text" : KeyWords(s),
+            JsonValue flag when flag.TryGetValue<bool>(out var b) => b ? "Yes" : "No",
             JsonValue number when number.GetValueKind() == System.Text.Json.JsonValueKind.Number => Number(double.Parse(number.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture)),
             _ => value.ToJsonString(),
         };
-        /// <summary>The allowed values: one, a short list, or a reference to the listed options.</summary>
-        internal static string Choices(JsonArray values, string many) => values.Count == 1 ? Show(values[0]) : values.Count <= 6 ? many + Or(values.Select(Show)) : many + "the listed options";
+        /// <summary>The allowed values by their labels where the input has them, else in words: one, a short list, or a reference to the listed options.</summary>
+        internal static string Choices(JsonArray values, JsonNode? labels, string many)
+        {
+            var named = labels is JsonArray list && list.Count == values.Count && list.All(l => l is JsonValue v && v.TryGetValue<string>(out var s) && s.Length > 0)
+                ? list.Select(l => l!.GetValue<string>()).ToList() : values.Select(Show).ToList();
+            return named.Count == 1 ? named[0] : named.Count <= 6 ? many + Or(named) : many + "the listed options";
+        }
         internal static string Range(double? min, double? max, bool integer) => (min, max) switch
         {
             ({ } a, { } b) => (integer ? "a whole number between " : "between ") + Number(a) + " and " + Number(b),
@@ -104,20 +145,26 @@ public static class VisualGraphValidator
         internal static string ConfigKind(string type) => type switch
         {
             "array" => "a list", "object" => "an object", "integer" => "a whole number", "number" => "a number",
-            "string" => "text", "boolean" => "yes or no", _ => Article(type),
+            "string" => "text", "boolean" => "yes or no", _ => "the right kind of value",
         };
-        /// <summary>The label people see for an input: its spec label, else a name derived from the port id.</summary>
-        internal static string PortLabel(JsonNode? spec, string port) => Text(spec, "label") is { Length: > 0 } label ? label
-            : port.StartsWith("field:", StringComparison.Ordinal) ? port[6..]
-            : port.StartsWith("item:", StringComparison.Ordinal) ? "Item " + port[5..]
-            : port.StartsWith("carry:", StringComparison.Ordinal) ? port[6..]
-            : port.StartsWith("export:", StringComparison.Ordinal) ? port[7..] : port;
+        /// <summary>
+        /// The label people see for an input: its spec label, else (or when the label is only the key) the key in
+        /// words. List items count from 1.
+        /// </summary>
+        internal static string PortLabel(JsonNode? spec, string port)
+        {
+            if (port.StartsWith("item:", StringComparison.Ordinal))
+                return int.TryParse(port[5..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var index) ? "Item " + (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) : "Item";
+            var key = port.StartsWith("field:", StringComparison.Ordinal) || port.StartsWith("carry:", StringComparison.Ordinal) ? port[6..]
+                : port.StartsWith("export:", StringComparison.Ordinal) ? port[7..] : port;
+            return Text(spec, "label") is { Length: > 0 } label && label != key && label.Trim().Length > 0 ? label : KeyWords(key);
+        }
         /// <summary>A type mismatch: the accepted types (named, at most four) and the one given, unless that is unknown.</summary>
         internal static string Incompatible(JsonObject catalog, string subject, string type, IEnumerable<string> expected)
         {
             if (VisualTypes.Chain(catalog, type).Count == 0) return $"{subject} is connected to a value of unknown type";
-            var names = expected.Select(t => AType(catalog, t)).Distinct().ToList();
-            return names.Count is > 0 and <= 4 ? $"{subject} must be {Or(names)}, not {AType(catalog, type)}" : $"{subject} cannot take {AType(catalog, type)}";
+            var names = expected.Select(t => TypeLabel(catalog, t)).Distinct().ToList();
+            return names.Count is > 0 and <= 4 ? $"{subject} accepts {Or(names)}, not {TypeLabel(catalog, type)}" : $"{subject} does not accept {TypeLabel(catalog, type)}";
         }
     }
 
@@ -138,15 +185,22 @@ public static class VisualGraphValidator
         readonly Dictionary<string, (string Owner, string Port)[]> scopes = new(StringComparer.Ordinal);
         readonly Dictionary<(string Node, string Port), JsonObject> incoming = [];
         bool KnownType(string type) => VisualTypes.Chain(Root, type).Count > 0;
-        void Error(string? node, string message, string? input = null, string? port = null) => errors.Add(new(node, message, InputId: input, PortId: port));
+        void Error(string? node, string message, string? input = null, string? port = null, string? code = null) => errors.Add(new(node, message, InputId: input, PortId: port, Code: code));
         static bool Bool(JsonNode? node, string key, bool fallback = false) => node is JsonObject o && o[key] is JsonValue v && v.TryGetValue<bool>(out var result) ? result : fallback;
         static double? Number(JsonNode? value) => value is JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.Number && double.TryParse(v.ToJsonString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) ? number : null;
         static string[] Strings(JsonNode? value) => (value as JsonArray ?? []).OfType<JsonValue>().Select(v => v.TryGetValue<string>(out var s) ? s : "").ToArray();
         static bool Match(string text, string pattern) => VisualTypes.Matches(text, pattern);
+        /// <summary>Checks a value against an input's format rule; a rule that cannot be compiled is reported once, not thrown.</summary>
+        bool Formatted(string? node, string subject, string text, string pattern, string? input)
+        {
+            if (VisualTypes.TryMatches(text, pattern) is { } matched) return matched;
+            Error(node, $"{subject} has a format rule that cannot be checked", input);
+            return true;
+        }
         /// <summary>The service a service node calls, named in its messages; null for other nodes or without a service id.</summary>
         string? ServiceName(JsonObject node) => Text(Spec(node), "dynamicInputs") == "service" && Text(Config(node), "service") is { Length: > 0 } service ? service : null;
         string Prefix(JsonObject node) => ServiceName(node) is { } service ? service + ": " : "";
-        string ConfigLabel(JsonNode? rule, string field) => Text(rule, "label") is { Length: > 0 } label ? label : field;
+        string ConfigLabel(JsonNode? rule, string field) => Text(rule, "label") is { Length: > 0 } label && label.Trim().Length > 0 ? label : Words.KeyWords(field);
         static string Kind(JsonObject node) => Text(node, "kind");
         static string Id(JsonObject node) => Text(node, "id");
         static JsonObject Config(JsonObject node) => node["config"] as JsonObject ?? [];
@@ -166,62 +220,64 @@ public static class VisualGraphValidator
                 _ => true
             };
         }
+        /// <summary>A wire whose value is not visible where it arrives.</summary>
+        internal static string ScopeData(string subject) => $"{subject} cannot use this value here: it is on the other side of a loop or parallel branch boundary";
         public List<VisualDiagnostic> Run(JsonObject graph)
         {
             var version = Number(Root["graphVersion"]);
-            if (Number(graph["version"]) != version) { Error(null, $"Expected graph version {version}"); return errors; }
-            if (string.IsNullOrWhiteSpace(Text(graph, "name"))) Error(null, "Graph name is required");
-            if (graph["nodes"] is not JsonArray ns || graph["edges"] is not JsonArray es) { Error(null, "Nodes and edges arrays are required"); return errors; }
-            if (ns.Count is < 1 or > 256 || es.Count > 512) { Error(null, "Graph limit: 1–256 nodes and at most 512 edges"); return errors; }
+            if (Number(graph["version"]) != version) { Error(null, $"Expected graph version {version}", code: "graph.version"); return errors; }
+            if (string.IsNullOrWhiteSpace(Text(graph, "name"))) Error(null, "Graph name is required", code: "graph.name");
+            if (graph["nodes"] is not JsonArray ns || graph["edges"] is not JsonArray es) { Error(null, "Nodes and edges arrays are required", code: "graph.shape"); return errors; }
+            if (ns.Count is < 1 or > 256 || es.Count > 512) { Error(null, "Graph limit: 1–256 nodes and at most 512 edges", code: "graph.limit"); return errors; }
             foreach (var raw in ns)
             {
-                if (raw is not JsonObject node || Id(node) == "" || node["config"] is not JsonObject) { Error(null, "Each node requires id and config"); continue; }
-                if (!nodes.TryAdd(Id(node), node)) Error(Id(node), "Duplicate node id");
-                if (Spec(node) == null) Error(Id(node), "Unknown node kind");
+                if (raw is not JsonObject node || Id(node) == "" || node["config"] is not JsonObject) { Error(null, "Each node requires id and config", code: "node.invalid"); continue; }
+                if (!nodes.TryAdd(Id(node), node)) Error(Id(node), "Duplicate node id", code: "node.duplicate");
+                if (Spec(node) == null) Error(Id(node), "Unknown node kind", code: "node.unknownKind");
             }
             foreach (var id in nodes.Keys) outgoing[id] = [];
             var edgeIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var raw in es)
             {
-                if (raw is not JsonObject edge || Id(edge) == "") { Error(null, "Edge id is required"); continue; }
+                if (raw is not JsonObject edge || Id(edge) == "") { Error(null, "Edge id is required", code: "edge.invalid"); continue; }
                 var source = Text(edge, "source"); var target = Text(edge, "target");
-                if (!edgeIds.Add(Id(edge))) Error(source, "Duplicate edge id");
-                if (!nodes.ContainsKey(source) || !nodes.ContainsKey(target)) { Error(null, "Edge endpoint missing"); continue; }
+                if (!edgeIds.Add(Id(edge))) Error(source, "Duplicate edge id", code: "edge.duplicate");
+                if (!nodes.ContainsKey(source) || !nodes.ContainsKey(target)) { Error(null, "Edge endpoint missing", code: "edge.endpoint"); continue; }
                 if (Kind(edge) == "data")
                 {
-                    if (edge.ContainsKey("port") || Text(edge, "sourcePort") == "" || Text(edge, "targetPort") == "") Error(source, "Do not mix execution and data ports");
+                    if (edge.ContainsKey("port") || Text(edge, "sourcePort") == "" || Text(edge, "targetPort") == "") Error(source, "This value wire does not join two value pins; connect value pins to value pins", code: "edge.valueWirePins");
                     else data.Add(edge);
                 }
                 else if (!edge.ContainsKey("kind") || Kind(edge) == "execution")
                 {
-                    if (edge.ContainsKey("sourcePort") || edge.ContainsKey("targetPort")) Error(source, "Do not mix data and execution ports");
-                    if (edge.ContainsKey("port") && (edge["port"] is not JsonValue pv || !pv.TryGetValue<string>(out _))) { Error(source, "Execution port must be a string"); continue; }
+                    if (edge.ContainsKey("sourcePort") || edge.ContainsKey("targetPort")) Error(source, "This step order wire names value pins; connect step order pins to step order pins", code: "edge.orderWirePins");
+                    if (edge.ContainsKey("port") && (edge["port"] is not JsonValue pv || !pv.TryGetValue<string>(out _))) { Error(source, "This step order wire leaves from a pin without a valid name", code: "edge.orderPinName"); continue; }
                     var node = nodes[source]; var port = FlowPort(node, edge);
-                    if (!ExecutionPorts(node).Contains(port)) Error(source, "Unknown execution port", port: port);
-                    if (outgoing[source].Any(e => FlowPort(node, e) == port)) Error(source, "Only one execution edge per port", port: port);
-                    if (Kind(nodes[target]) == "trigger") Error(target, "Trigger cannot have incoming execution edges");
+                    if (!ExecutionPorts(node).Contains(port)) Error(source, "Unknown execution port", port: port, code: "port.unknownExecution");
+                    if (outgoing[source].Any(e => FlowPort(node, e) == port)) Error(source, "Only one execution edge per port", port: port, code: "port.executionTaken");
+                    if (Kind(nodes[target]) == "trigger") Error(target, "Trigger cannot have incoming execution edges", code: "trigger.incoming");
                     outgoing[source].Add(edge);
                 }
-                else Error(source, "Unknown edge kind");
+                else Error(source, "This wire is neither a step order wire nor a value wire", code: "edge.unknownKind");
             }
             Cycles(outgoing.Values.SelectMany(e => e).ToList(), "Execution"); Cycles(data, "Data");
             var roots = nodes.Values.Where(n => Kind(n) == "trigger").ToArray();
-            if (roots.Length == 0) Error(null, "At least one trigger is required");
+            if (roots.Length == 0) Error(null, "At least one trigger is required", code: "graph.noTrigger");
             foreach (var root in roots) Scope(Id(root), []);
-            foreach (var id in nodes.Keys) if (!scopes.ContainsKey(id)) Error(id, "Every node must be reachable by execution from a trigger");
+            foreach (var id in nodes.Keys) if (!scopes.ContainsKey(id)) Error(id, "Every node must be reachable by execution from a trigger", code: "node.unreachable");
             foreach (var edge in data)
             {
                 var source = nodes[Text(edge, "source")]; var target = nodes[Text(edge, "target")];
                 var sp = Text(edge, "sourcePort"); var tp = Text(edge, "targetPort");
                 var output = DataOutputs(source)[sp]; var input = DataInputs(target, Owner(target))[tp];
-                if (output == null) Error(Id(source), "Unknown data output port", port: sp);
-                if (input == null) Error(Id(target), "Unknown data input port", tp, tp);
-                if (!incoming.TryAdd((Id(target), tp), edge)) Error(Id(target), "Only one data source per input", tp, tp);
+                if (output == null) Error(Id(source), "Unknown data output port", port: sp, code: "port.unknownOutput");
+                if (input == null) Error(Id(target), $"This value wire goes into {Words.PortLabel(null, tp)}, which this step does not have", tp, tp, "port.unknownInput");
+                if (!incoming.TryAdd((Id(target), tp), edge)) Error(Id(target), "Only one data source per input", tp, tp, "port.inputTaken");
                 if (output != null && input != null)
                 {
                     var type = Text(output, "type"); var expected = Strings(input["types"]);
                     if (!expected.Any(t => CompatibleTypes(type, t))) Error(Id(target), Words.Incompatible(Root, Prefix(target) + Words.PortLabel(input, tp), type, expected), tp, tp);
-                    if (!Visible(source, target, output)) Error(Id(target), "Data cannot cross this structured scope", tp, tp);
+                    if (!Visible(source, target, output)) Error(Id(target), ScopeData(Prefix(target) + Words.PortLabel(input, tp)), tp, tp, "scope.data");
                 }
             }
             foreach (var node in nodes.Values) ValidateNode(node);
@@ -232,7 +288,7 @@ public static class VisualGraphValidator
             var active = new HashSet<string>(); var done = new HashSet<string>();
             void Visit(string id)
             {
-                if (active.Contains(id)) { Error(id, label + " cycle is forbidden"); return; }
+                if (active.Contains(id)) { Error(id, label + " cycle is forbidden", code: label == "Data" ? "cycle.data" : "cycle.execution"); return; }
                 if (done.Contains(id)) return;
                 active.Add(id);
                 foreach (var edge in edges.Where(e => Text(e, "source") == id)) Visit(Text(edge, "target"));
@@ -242,8 +298,8 @@ public static class VisualGraphValidator
         }
         void Scope(string id, (string Owner, string Port)[] path)
         {
-            if (path.Length > 8) { Error(id, "Structured nesting limit is 8"); return; }
-            if (scopes.TryGetValue(id, out var old)) { if (!old.SequenceEqual(path)) Error(id, "Execution edge crosses a structured scope"); return; }
+            if (path.Length > 8) { Error(id, "Structured nesting limit is 8", code: "limit.nesting"); return; }
+            if (scopes.TryGetValue(id, out var old)) { if (!old.SequenceEqual(path)) Error(id, "A wire cannot go into or out of a loop or parallel branch from outside it", code: "scope.execution"); return; }
             scopes[id] = path;
             var node = nodes[id];
             foreach (var edge in outgoing[id])
@@ -277,20 +333,31 @@ public static class VisualGraphValidator
             {
                 type = Text(operand, "type", "unknown"); var value = operand["value"];
                 var valid = ValidLiteral(type, value, operand.ContainsKey("value"), snapshot);
-                if (!valid) Error(Id(node), operand["type"] is not JsonValue tv || !tv.TryGetValue<string>(out _) ? $"{subject} has a value without a type"
-                    : !KnownType(type) ? $"{subject} has a value of unknown type {type}"
-                    : Words.Noun(Words.TypeLabel(Root, type)) is "text" ? $"{subject} is not valid text" : $"{subject} is not a valid {Words.Noun(Words.TypeLabel(Root, type))}", port);
+                if (!valid) Error(Id(node), operand["type"] is not JsonValue tv || !tv.TryGetValue<string>(out var named) || named.Length == 0 ? $"{subject} has a value without a type"
+                    : !KnownType(type) ? $"{subject} has a value of unknown type {type}" : $"{subject} is not a valid {Words.TypeLabel(Root, type)} value", port);
                 if (Number(value) is { } number && (Number(spec["min"]) is { } min && number < min || Number(spec["max"]) is { } max && number > max || Bool(spec, "integer") && Math.Truncate(number) != number))
                     Error(Id(node), $"{subject} must be {Words.Range(Number(spec["min"]), Number(spec["max"]), Bool(spec, "integer"))}", port);
-                // Input constraints restrict authored values only; a wire is constrained by its type. A list, where the
-                // input accepts one, is checked item by item (a multiple select); anything else is one value.
-                if (spec["enum"] is JsonArray allowed)
+                // Input constraints restrict authored values only; a wire is constrained by its type. A value equal to an
+                // allowed value is accepted (a constant list); otherwise a list, where the input accepts one, is checked
+                // item by item (a multiple select), and anything else is one value.
+                var types = Strings(spec["types"]);
+                if (spec["enum"] is JsonArray allowed && !allowed.Any(v => JsonNode.DeepEquals(v, value)))
                 {
-                    if (value is JsonArray items && Strings(spec["types"]).Contains("array"))
-                    { if (!items.All(item => allowed.Any(v => JsonNode.DeepEquals(v, item)))) Error(Id(node), $"{subject} may only contain {Words.Choices(allowed, "")}", port); }
-                    else if (!allowed.Any(v => JsonNode.DeepEquals(v, value))) Error(Id(node), $"{subject} must be {Words.Choices(allowed, "one of ")}", port);
+                    var labels = spec["enumLabels"];
+                    if (value is JsonArray items && types.Contains("array"))
+                    {
+                        if (!items.All(item => allowed.Any(v => JsonNode.DeepEquals(v, item))))
+                            Error(Id(node), allowed.Any(v => v is JsonArray) ? $"{subject} must be {Words.Choices(allowed, labels, "one of ")}" : $"{subject} may only contain {Words.Choices(allowed, labels, "")}", port);
+                    }
+                    else Error(Id(node), $"{subject} must be {Words.Choices(allowed, labels, "one of ")}", port);
                 }
-                if (Text(spec, "pattern") is { Length: > 0 } pattern && value is JsonValue sv && sv.TryGetValue<string>(out var str) && !Match(str, pattern)) Error(Id(node), $"{subject} is not in the expected format", port);
+                // Items of a list of entities (an input taking entity ids or a list of them, as a multiple entity
+                // selector does) must be entity ids of an accepted domain.
+                var entityTypes = types.Where(t => t != "array").ToArray();
+                if (value is JsonArray entities && types.Contains("array") && entityTypes.Length > 0 && entityTypes.All(t => VisualTypes.Refines(Root, t, "entity_id")) &&
+                    !entities.All(item => entityTypes.Any(t => ValidLiteral(t, item, true, snapshot))))
+                    Error(Id(node), $"{subject} may only contain {Words.Or(entityTypes.Select(t => Words.TypeLabel(Root, t)).Distinct())} values", port);
+                if (Text(spec, "pattern") is { Length: > 0 } pattern && value is JsonValue sv && sv.TryGetValue<string>(out var str) && !Formatted(Id(node), subject, str, pattern, port)) Error(Id(node), $"{subject} is not in the expected format", port);
                 if (value is JsonArray list && (Number(spec["minItems"]) is { } minItems && list.Count < minItems || Number(spec["maxItems"]) is { } maxItems && list.Count > maxItems))
                     Error(Id(node), $"{subject} must have {Words.Items(Number(spec["minItems"]), Number(spec["maxItems"]))}", port);
             }
@@ -321,7 +388,7 @@ public static class VisualGraphValidator
         void Service(JsonObject node, JsonObject spec, JsonObject cfg, string id)
         {
             if (snapshot.Services is not { } services || cfg["service"] is not JsonValue sv || !sv.TryGetValue<string>(out var service) || !Match(service, Text(spec["config"]?["service"], "pattern"))) return;
-            if (services.Items[service] is not JsonObject schema) { errors.Add(new(id, $"Unknown service {service}; fields are not type-checked", 2, InputId: "service")); return; }
+            if (services.Items[service] is not JsonObject schema) { errors.Add(new(id, $"{service} is not available in this Home Assistant, so its fields cannot be checked", 2, InputId: "service")); return; }
             var known = schema["fields"] as JsonObject ?? [];
             var fields = cfg["fields"] as JsonObject ?? [];
             foreach (var (key, _) in fields) if (!known.ContainsKey(key)) Error(id, $"{service} has no field {key}", "field:" + key);
@@ -337,27 +404,27 @@ public static class VisualGraphValidator
             var accepted = Words.Or(domains.Select(d => Words.DomainWords(d).ToLowerInvariant()));
             foreach (var entity in entities)
                 if (entity is JsonValue ev && ev.TryGetValue<string>(out var entityId) && entityId is not ("all" or "none") && !domains.Contains(entityId.Split('.')[0]))
-                    Error(id, $"{service} only accepts {accepted} entities; " + (entityId.IndexOf('.') > 0 ? $"{entityId} is {Words.Article(Words.DomainWords(entityId.Split('.')[0]).ToLowerInvariant())}" : $"{entityId} is not an entity"), "target");
+                    Error(id, $"{service} only accepts {accepted} entities; {entityId} is not " + (entityId.IndexOf('.') > 0 ? "one" : "an entity"), "target");
         }
         /// <summary>
-        /// A target the service does not take (with services only), then the collision rule. The runtime flattens the target into the call next to the fields and rejects a key sent twice, so a field
-        /// must not repeat a key the target brings: entity_id for an entity id, the object's keys for a target value,
-        /// and every target key for a wired or variable target object. As at run time, a field or target counts when it
-        /// is connected or set. It depends on the node alone, so it applies with or without services.
+        /// The target rules of a service node, with or without services. A target the service does not take is an
+        /// error (with services only). A target object holds only <see cref="TargetKeys"/>, as the runtime enforces.
+        /// A node whose target is set in any form (a value, a connection or a variable) may not also have a field named
+        /// like a target key; a node without a target may (homeassistant.update_entity takes entity_id as a field).
         /// </summary>
-        void TargetCollisions(JsonObject node, JsonObject spec, JsonObject cfg, string id, string? targetType)
+        void TargetRules(JsonObject node, JsonObject spec, JsonObject cfg, string id)
         {
-            bool Supplied(string port, JsonNode? operand) => incoming.ContainsKey((id, port)) || operand is JsonObject && Text(operand, "kind") != "unset";
             var wired = incoming.ContainsKey((id, "target"));
+            var targetSet = wired || cfg["target"] is JsonObject set && Text(set, "kind") != "unset";
             if (snapshot.Services is { } services && ServiceName(node) is { } named && Match(named, Text(spec["config"]?["service"], "pattern")) &&
-                services.Items[named] is JsonObject schema && schema["target"] is not JsonObject && Supplied("target", cfg["target"]))
+                services.Items[named] is JsonObject schema && schema["target"] is not JsonObject && targetSet)
                 Error(id, $"{named} does not take a target", "target");
-            if (!Supplied("target", cfg["target"]) || cfg["fields"] is not JsonObject fields) return;
-            var keys = !wired && Text(cfg["target"], "kind") == "literal"
-                ? cfg["target"]!["value"] switch { JsonValue v when v.TryGetValue<string>(out _) => ["entity_id"], JsonObject o => o.Select(p => p.Key).ToArray(), _ => [] }
-                : targetType != null && VisualTypes.Refines(Root, targetType, "string") ? ["entity_id"] : TargetKeys;
+            if (!targetSet) return;
+            if (!wired && cfg["target"] is JsonObject operand && Text(operand, "kind") == "literal" && operand["value"] is JsonObject value)
+                foreach (var (key, _) in value) if (!TargetKeys.Contains(key)) Error(id, TargetKeyMessage(key), "target");
             var service = ServiceName(node) ?? "This service";
-            foreach (var (key, operand) in fields) if (keys.Contains(key) && Supplied("field:" + key, operand)) Error(id, $"{service} sets {key} both as a field and in the target", "target");
+            if (cfg["fields"] is JsonObject fields)
+                foreach (var (key, _) in fields) if (TargetKeys.Contains(key)) Error(id, $"{service} has a target, so it cannot also have a field named {key}", "target");
         }
         void ValidateNode(JsonObject node)
         {
@@ -383,12 +450,12 @@ public static class VisualGraphValidator
                 if (kind == "trigger" && field == "at" && TriggerType(node, snapshot) != "once") continue;
                 // Type choices accept every resolvable id, so a parametric type can be selected for narrowing.
                 if (Text(rule, "enumSource") == "types") { if (value is not JsonValue tv || !tv.TryGetValue<string>(out var typeId) || !KnownType(typeId)) Error(id, $"{label} must be a known type", field); }
-                else if (rule["enum"] is JsonArray choices && !choices.Any(v => JsonNode.DeepEquals(v, value))) Error(id, $"{label} must be {Words.Choices(choices, "one of ")}", field);
+                else if (rule["enum"] is JsonArray choices && !choices.Any(v => JsonNode.DeepEquals(v, value))) Error(id, $"{label} must be {Words.Choices(choices, rule["enumLabels"], "one of ")}", field);
                 if (Number(value) is { } number && (Number(rule["min"]) is { } min && number < min || Number(rule["max"]) is { } max && number > max)) Error(id, $"{label} must be {Words.Range(Number(rule["min"]), Number(rule["max"]), false)}", field);
-                if (value is JsonValue text && text.TryGetValue<string>(out var str) && Text(rule, "pattern") is { Length: > 0 } pattern && !Match(str, pattern)) Error(id, $"{label} is not in the expected format", field);
+                if (value is JsonValue text && text.TryGetValue<string>(out var str) && Text(rule, "pattern") is { Length: > 0 } pattern && !Formatted(id, label, str, pattern, field)) Error(id, $"{label} is not in the expected format", field);
                 // A value already out of format is not also judged as a date (JavaScript's Date.parse accepts 24:00).
                 if (value is JsonValue date && date.TryGetValue<string>(out var timestamp) && Text(rule, "format") == "date-time-offset" &&
-                    (Text(rule, "pattern") is not { Length: > 0 } format || Match(timestamp, format)) &&
+                    (Text(rule, "pattern") is not { Length: > 0 } format || VisualTypes.TryMatches(timestamp, format) != false) &&
                     !DateTimeOffset.TryParse(timestamp, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
                     Error(id, $"{label} must be a date and time with a time zone offset or Z", field);
                 if (value is JsonArray list && (Number(rule["minItems"]) is { } minItems && list.Count < minItems || Number(rule["maxItems"]) is { } maxItems && list.Count > maxItems))
@@ -412,9 +479,9 @@ public static class VisualGraphValidator
                 if (!string.IsNullOrEmpty(left) && !string.IsNullOrEmpty(right) && !CompatibleTypes(left, right) && !CompatibleTypes(right, left)) Error(id, "Both sides of the comparison must have the same type", rightInput);
                 var orderingType = Text(comparison, "orderingType");
                 if (Strings(comparison["orderingOperators"]).Contains(Text(cfg, Text(comparison, "operatorConfig"))) && left != orderingType)
-                    Error(id, $"Less-than and greater-than comparisons need {Words.AType(Root, orderingType)}", leftInput != "" ? leftInput : typeConfig);
+                    Error(id, $"Less-than and greater-than comparisons need {Words.TypeLabel(Root, orderingType)} values", leftInput != "" ? leftInput : typeConfig);
             }
-            if (Text(spec, "dynamicInputs") == "service") { Service(node, spec, cfg, id); TargetCollisions(node, spec, cfg, id, resolved.GetValueOrDefault("target")); }
+            if (Text(spec, "dynamicInputs") == "service") { Service(node, spec, cfg, id); TargetRules(node, spec, cfg, id); }
             if (cfg.ContainsKey("output") && !Match(Text(cfg, "output"), "^[A-Za-z_][A-Za-z0-9_]{0,63}$")) Error(id, $"{ConfigLabel(spec["config"]?["output"], "output")} must use only letters, digits and underscores and not start with a digit", "output");
             if (kind == "trigger")
             {
@@ -435,11 +502,11 @@ public static class VisualGraphValidator
                 foreach (var group in new[] { "carry", "exports" })
                 {
                     var names = new HashSet<string>();
-                    if (cfg[group] is JsonArray declarations && declarations.Any(d => d is not JsonObject)) Error(id, "Invalid loop declaration", group);
+                    if (cfg[group] is JsonArray declarations && declarations.Any(d => d is not JsonObject)) Error(id, $"Each {(group == "carry" ? "carried" : "exported")} value of this loop needs a name and a type", group);
                     foreach (var decl in Declarations(node, group))
                     {
                         var name = Text(decl, "name"); var type = Text(decl, "type");
-                        if (!Match(name, Text(Root["structures"]?["loopDeclaration"]?["name"], "pattern")) || !names.Add(name) || !KnownType(type)) { Error(id, "Loop declarations require unique names and valid types", group); continue; }
+                        if (!Match(name, Text(Root["structures"]?["loopDeclaration"]?["name"], "pattern")) || !names.Add(name) || !KnownType(type)) { Error(id, $"The {(group == "carry" ? "carried" : "exported")} values of this loop need unique names and known types", group); continue; }
                         Operand(node, $"{group}.{name}.initial", decl["initial"], new JsonObject { ["types"] = new JsonArray(type), ["required"] = true, ["label"] = "Initial " + name });
                     }
                 }
@@ -454,12 +521,12 @@ public static class VisualGraphValidator
             if (kind == "condition_result")
             {
                 var last = scopes.GetValueOrDefault(id)?.LastOrDefault();
-                if (last == null || last.Value.Port != "condition" || Kind(nodes[last.Value.Owner]) is not ("while" or "until")) Error(id, "A Condition result step must be inside the condition of a While or Until loop");
+                if (last == null || last.Value.Port != "condition" || Kind(nodes[last.Value.Owner]) is not ("while" or "until")) Error(id, "A Condition result step must be inside the condition of a While or Until loop", code: "scope.conditionResult");
             }
             if (kind == "loop_result")
             {
                 var owner = Owner(node);
-                if (owner == null || Text(Spec(owner), "dynamicOutputs") != "loop") Error(id, "A Loop result step must be inside the body of a loop");
+                if (owner == null || Text(Spec(owner), "dynamicOutputs") != "loop") Error(id, "A Loop result step must be inside the body of a loop", code: "scope.loopResult");
                 if (cfg["values"] is JsonObject values) foreach (var (name, _) in values) if (!DataInputs(node, owner).ContainsKey(name)) Error(id, $"Unknown loop value {name}", name);
             }
         }
