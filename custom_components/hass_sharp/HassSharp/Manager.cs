@@ -92,6 +92,37 @@ public partial class HassSharpManager
         finally { _visualGate.Release(); }
     }
 
+    sealed record ServiceDescriptionsState(long Sequence, ServiceSchemaCatalog Catalog);
+    ServiceDescriptionsState _serviceDescriptions = new(0, ServiceSchemaCatalog.Empty);
+    long _serviceDescriptionsSequence;
+    internal ServiceSchemaCatalog ServiceSchemas => Volatile.Read(ref _serviceDescriptions).Catalog;
+
+    /// <summary>
+    /// Receives HA's raw <c>{domain: {service: description}}</c> from a Python executor thread, at any
+    /// time: before or during <see cref="Init"/>, repeatedly, or after unload. Normalises outside every
+    /// lock, then swaps the immutable result in; a later push always wins over an earlier one that
+    /// finishes after it. Malformed input is logged and the previous schemas stay; it never throws.
+    /// </summary>
+    public void SetServiceDescriptions(string json)
+    {
+        var sequence = Interlocked.Increment(ref _serviceDescriptionsSequence);
+        ServiceDescriptionsState next;
+        // Logging crosses into Python; the caller must not see a failure from it either.
+        try { next = new(sequence, ServiceSchemaCatalog.Parse(json)); }
+        catch (Exception ex)
+        {
+            try { Logger.Error($"Ignoring Home Assistant service descriptions, keeping the previous ones: {ex.Message}"); } catch { }
+            return;
+        }
+        for (var current = Volatile.Read(ref _serviceDescriptions); current.Sequence < sequence;)
+        {
+            var seen = Interlocked.CompareExchange(ref _serviceDescriptions, next, current);
+            if (ReferenceEquals(seen, current)) break;
+            current = seen;
+        }
+        try { Logger.Debug($"Received {next.Catalog.Count} Home Assistant service descriptions"); } catch { }
+    }
+
     public void Unload() { _languageLifetime.Cancel(); _userScriptManager.UnloadUserScripts(); }
     public Task UnloadAsync() { _languageLifetime.Cancel(); return _userScriptManager.UnloadUserScriptsAsync(); }
 

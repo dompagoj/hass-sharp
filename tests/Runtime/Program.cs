@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 
 if (args.Contains("--write-node-library-fixture")) { File.WriteAllText("tests/fixtures/visual-rich-catalog.json", NodeLibraryFixture.Build().ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n"); return 0; }
+if (args.Contains("--write-services-fixture")) { File.WriteAllText("tests/fixtures/visual-services.json", ServiceSchemaTests.Golden(File.ReadAllText("tests/fixtures/ha-service-descriptions.json"))); return 0; }
 
 var suites = typeof(RuntimeSuiteAttribute).Assembly.GetTypes()
     .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly))
@@ -13,7 +14,7 @@ var suites = typeof(RuntimeSuiteAttribute).Assembly.GetTypes()
 if (suites.GroupBy(entry => entry.Suite.Flag).FirstOrDefault(group => group.Count() > 1) is { } duplicate) throw new Exception($"Duplicate runtime suite flag {duplicate.Key}");
 if (args.Where(arg => !suites.Any(entry => Matches(arg, entry.Suite.Flag))).ToList() is { Count: > 0 } unknown)
 {
-    Console.Error.WriteLine($"Unknown runtime suite flag: {string.Join(", ", unknown)}. Known flags: {string.Join(", ", suites.Select(entry => entry.Suite.Flag).Order(StringComparer.Ordinal))}, --write-node-library-fixture");
+    Console.Error.WriteLine($"Unknown runtime suite flag: {string.Join(", ", unknown)}. Known flags: {string.Join(", ", suites.Select(entry => entry.Suite.Flag).Order(StringComparer.Ordinal))}, --write-node-library-fixture, --write-services-fixture");
     return 1;
 }
 

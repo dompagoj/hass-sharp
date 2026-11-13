@@ -1,0 +1,1573 @@
+{
+  "servicesGeneration": "27aa05bd430818757d768103496a27c143cfc610d75733a8a72387dc4143b039",
+  "items": {
+    "climate.set_hvac_mode": {
+      "domain": "climate",
+      "service": "set_hvac_mode",
+      "name": "set_hvac_mode",
+      "description": "",
+      "target": {
+        "entity": [
+          {
+            "domain": [
+              "climate"
+            ],
+            "deviceClass": [],
+            "supportedFeatures": []
+          }
+        ],
+        "device": []
+      },
+      "response": "none",
+      "fields": {
+        "hvac_mode": {
+          "label": "hvac_mode",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "state": {
+              "hide_states": [
+                "unavailable",
+                "unknown"
+              ],
+              "multiple": false
+            }
+          },
+          "filter": null
+        }
+      }
+    },
+    "hass_sharp_test.filtered": {
+      "domain": "hass_sharp_test",
+      "service": "filtered",
+      "name": "filtered",
+      "description": "",
+      "target": {
+        "entity": [
+          {
+            "domain": [
+              "fan"
+            ],
+            "deviceClass": [
+              "ceiling"
+            ],
+            "supportedFeatures": [
+              1
+            ]
+          }
+        ],
+        "device": [
+          {
+            "integration": "zha",
+            "manufacturer": null,
+            "model": "Ceiling fan",
+            "modelId": null
+          }
+        ]
+      },
+      "response": "none",
+      "fields": {
+        "percentage": {
+          "label": "percentage",
+          "description": "",
+          "types": [
+            "number"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": 0,
+          "max": 100,
+          "integer": false,
+          "step": 1,
+          "unit": "%",
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "number": {
+              "max": 100,
+              "min": 0,
+              "unit_of_measurement": "%"
+            }
+          },
+          "filter": {
+            "supportedFeatures": [
+              16
+            ],
+            "attribute": {
+              "preset_modes": [
+                "auto",
+                "sleep"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "hass_sharp_test.partly_malformed": {
+      "domain": "hass_sharp_test",
+      "service": "partly_malformed",
+      "name": "partly_malformed",
+      "description": "",
+      "target": null,
+      "response": "none",
+      "fields": {
+        "kept": {
+          "label": "kept",
+          "description": "",
+          "types": [
+            "boolean"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "boolean": {}
+          },
+          "filter": null
+        }
+      }
+    },
+    "hass_sharp_test.respond_optionally": {
+      "domain": "hass_sharp_test",
+      "service": "respond_optionally",
+      "name": "respond_optionally",
+      "description": "",
+      "target": null,
+      "response": "optional",
+      "fields": {}
+    },
+    "hass_sharp_test.sectioned": {
+      "domain": "hass_sharp_test",
+      "service": "sectioned",
+      "name": "Sectioned",
+      "description": "Fields grouped into sections are flattened.",
+      "target": null,
+      "response": "none",
+      "fields": {
+        "level": {
+          "label": "Level",
+          "description": "",
+          "types": [
+            "number"
+          ],
+          "required": true,
+          "advanced": false,
+          "section": null,
+          "min": 1,
+          "max": 10,
+          "integer": true,
+          "step": 1,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": 3,
+          "example": null,
+          "selector": {
+            "number": {
+              "max": 10,
+              "min": 1,
+              "mode": "box",
+              "step": 1
+            }
+          },
+          "filter": null
+        },
+        "note": {
+          "label": "note",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "extras",
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "text": {
+              "multiline": true
+            }
+          },
+          "filter": null
+        },
+        "speed": {
+          "label": "speed",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": true,
+          "section": "advanced_options",
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": [
+            "slow",
+            "fast"
+          ],
+          "enumLabels": [
+            "Slow",
+            "fast"
+          ],
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "fast",
+          "selector": {
+            "select": {
+              "custom_value": false,
+              "multiple": false,
+              "options": [
+                {
+                  "label": "Slow",
+                  "value": "slow"
+                },
+                "fast"
+              ]
+            }
+          },
+          "filter": null
+        }
+      }
+    },
+    "homeassistant.turn_on": {
+      "domain": "homeassistant",
+      "service": "turn_on",
+      "name": "turn_on",
+      "description": "",
+      "target": {
+        "entity": [],
+        "device": []
+      },
+      "response": "none",
+      "fields": {}
+    },
+    "light.turn_off": {
+      "domain": "light",
+      "service": "turn_off",
+      "name": "turn_off",
+      "description": "",
+      "target": {
+        "entity": [
+          {
+            "domain": [
+              "light"
+            ],
+            "deviceClass": [],
+            "supportedFeatures": []
+          }
+        ],
+        "device": []
+      },
+      "response": "none",
+      "fields": {
+        "flash": {
+          "label": "flash",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "additional_fields",
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": [
+            "long",
+            "short"
+          ],
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "select": {
+              "custom_value": false,
+              "multiple": false,
+              "options": [
+                "long",
+                "short"
+              ],
+              "sort": false,
+              "translation_key": "flash"
+            }
+          },
+          "filter": {
+            "supportedFeatures": [
+              8
+            ]
+          }
+        },
+        "transition": {
+          "label": "transition",
+          "description": "",
+          "types": [
+            "number"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": 0,
+          "max": 300,
+          "integer": true,
+          "step": 1,
+          "unit": "seconds",
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "number": {
+              "max": 300,
+              "min": 0,
+              "mode": "slider",
+              "step": 1,
+              "unit_of_measurement": "seconds"
+            }
+          },
+          "filter": {
+            "supportedFeatures": [
+              32
+            ]
+          }
+        }
+      }
+    },
+    "light.turn_on": {
+      "domain": "light",
+      "service": "turn_on",
+      "name": "turn_on",
+      "description": "",
+      "target": {
+        "entity": [
+          {
+            "domain": [
+              "light"
+            ],
+            "deviceClass": [],
+            "supportedFeatures": []
+          }
+        ],
+        "device": []
+      },
+      "response": "none",
+      "fields": {
+        "brightness": {
+          "label": "brightness",
+          "description": "",
+          "types": [
+            "number"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "additional_fields",
+          "min": 0,
+          "max": 255,
+          "integer": true,
+          "step": 1,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "number": {
+              "max": 255,
+              "min": 0,
+              "mode": "slider",
+              "step": 1
+            }
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "brightness",
+                "color_temp",
+                "hs",
+                "xy",
+                "rgb",
+                "rgbw",
+                "rgbww"
+              ]
+            }
+          }
+        },
+        "brightness_pct": {
+          "label": "brightness_pct",
+          "description": "",
+          "types": [
+            "number"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": 0,
+          "max": 100,
+          "integer": true,
+          "step": 1,
+          "unit": "%",
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "number": {
+              "max": 100,
+              "min": 0,
+              "mode": "slider",
+              "step": 1,
+              "unit_of_measurement": "%"
+            }
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "brightness",
+                "color_temp",
+                "hs",
+                "xy",
+                "rgb",
+                "rgbw",
+                "rgbww"
+              ]
+            }
+          }
+        },
+        "brightness_step": {
+          "label": "brightness_step",
+          "description": "",
+          "types": [
+            "number"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "additional_fields",
+          "min": -225,
+          "max": 255,
+          "integer": true,
+          "step": 1,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "number": {
+              "max": 255,
+              "min": -225,
+              "mode": "slider",
+              "step": 1
+            }
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "brightness",
+                "color_temp",
+                "hs",
+                "xy",
+                "rgb",
+                "rgbw",
+                "rgbww"
+              ]
+            }
+          }
+        },
+        "brightness_step_pct": {
+          "label": "brightness_step_pct",
+          "description": "",
+          "types": [
+            "number"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": -100,
+          "max": 100,
+          "integer": true,
+          "step": 1,
+          "unit": "%",
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "number": {
+              "max": 100,
+              "min": -100,
+              "mode": "slider",
+              "step": 1,
+              "unit_of_measurement": "%"
+            }
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "brightness",
+                "color_temp",
+                "hs",
+                "xy",
+                "rgb",
+                "rgbw",
+                "rgbww"
+              ]
+            }
+          }
+        },
+        "color_name": {
+          "label": "color_name",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "additional_fields",
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": [
+            "homeassistant",
+            "aliceblue",
+            "antiquewhite",
+            "aqua",
+            "aquamarine",
+            "azure",
+            "beige",
+            "bisque",
+            "blanchedalmond",
+            "blue",
+            "blueviolet",
+            "brown",
+            "burlywood",
+            "cadetblue",
+            "chartreuse",
+            "chocolate",
+            "coral",
+            "cornflowerblue",
+            "cornsilk",
+            "crimson",
+            "cyan",
+            "darkblue",
+            "darkcyan",
+            "darkgoldenrod",
+            "darkgray",
+            "darkgreen",
+            "darkgrey",
+            "darkkhaki",
+            "darkmagenta",
+            "darkolivegreen",
+            "darkorange",
+            "darkorchid",
+            "darkred",
+            "darksalmon",
+            "darkseagreen",
+            "darkslateblue",
+            "darkslategray",
+            "darkslategrey",
+            "darkturquoise",
+            "darkviolet",
+            "deeppink",
+            "deepskyblue",
+            "dimgray",
+            "dimgrey",
+            "dodgerblue",
+            "firebrick",
+            "floralwhite",
+            "forestgreen",
+            "fuchsia",
+            "gainsboro",
+            "ghostwhite",
+            "gold",
+            "goldenrod",
+            "gray",
+            "green",
+            "greenyellow",
+            "grey",
+            "honeydew",
+            "hotpink",
+            "indianred",
+            "indigo",
+            "ivory",
+            "khaki",
+            "lavender",
+            "lavenderblush",
+            "lawngreen",
+            "lemonchiffon",
+            "lightblue",
+            "lightcoral",
+            "lightcyan",
+            "lightgoldenrodyellow",
+            "lightgray",
+            "lightgreen",
+            "lightgrey",
+            "lightpink",
+            "lightsalmon",
+            "lightseagreen",
+            "lightskyblue",
+            "lightslategray",
+            "lightslategrey",
+            "lightsteelblue",
+            "lightyellow",
+            "lime",
+            "limegreen",
+            "linen",
+            "magenta",
+            "maroon",
+            "mediumaquamarine",
+            "mediumblue",
+            "mediumorchid",
+            "mediumpurple",
+            "mediumseagreen",
+            "mediumslateblue",
+            "mediumspringgreen",
+            "mediumturquoise",
+            "mediumvioletred",
+            "midnightblue",
+            "mintcream",
+            "mistyrose",
+            "moccasin",
+            "navajowhite",
+            "navy",
+            "navyblue",
+            "oldlace",
+            "olive",
+            "olivedrab",
+            "orange",
+            "orangered",
+            "orchid",
+            "palegoldenrod",
+            "palegreen",
+            "paleturquoise",
+            "palevioletred",
+            "papayawhip",
+            "peachpuff",
+            "peru",
+            "pink",
+            "plum",
+            "powderblue",
+            "purple",
+            "red",
+            "rosybrown",
+            "royalblue",
+            "saddlebrown",
+            "salmon",
+            "sandybrown",
+            "seagreen",
+            "seashell",
+            "sienna",
+            "silver",
+            "skyblue",
+            "slateblue",
+            "slategray",
+            "slategrey",
+            "snow",
+            "springgreen",
+            "steelblue",
+            "tan",
+            "teal",
+            "thistle",
+            "tomato",
+            "turquoise",
+            "violet",
+            "wheat",
+            "white",
+            "whitesmoke",
+            "yellow",
+            "yellowgreen"
+          ],
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "select": {
+              "custom_value": false,
+              "multiple": false,
+              "options": [
+                "homeassistant",
+                "aliceblue",
+                "antiquewhite",
+                "aqua",
+                "aquamarine",
+                "azure",
+                "beige",
+                "bisque",
+                "blanchedalmond",
+                "blue",
+                "blueviolet",
+                "brown",
+                "burlywood",
+                "cadetblue",
+                "chartreuse",
+                "chocolate",
+                "coral",
+                "cornflowerblue",
+                "cornsilk",
+                "crimson",
+                "cyan",
+                "darkblue",
+                "darkcyan",
+                "darkgoldenrod",
+                "darkgray",
+                "darkgreen",
+                "darkgrey",
+                "darkkhaki",
+                "darkmagenta",
+                "darkolivegreen",
+                "darkorange",
+                "darkorchid",
+                "darkred",
+                "darksalmon",
+                "darkseagreen",
+                "darkslateblue",
+                "darkslategray",
+                "darkslategrey",
+                "darkturquoise",
+                "darkviolet",
+                "deeppink",
+                "deepskyblue",
+                "dimgray",
+                "dimgrey",
+                "dodgerblue",
+                "firebrick",
+                "floralwhite",
+                "forestgreen",
+                "fuchsia",
+                "gainsboro",
+                "ghostwhite",
+                "gold",
+                "goldenrod",
+                "gray",
+                "green",
+                "greenyellow",
+                "grey",
+                "honeydew",
+                "hotpink",
+                "indianred",
+                "indigo",
+                "ivory",
+                "khaki",
+                "lavender",
+                "lavenderblush",
+                "lawngreen",
+                "lemonchiffon",
+                "lightblue",
+                "lightcoral",
+                "lightcyan",
+                "lightgoldenrodyellow",
+                "lightgray",
+                "lightgreen",
+                "lightgrey",
+                "lightpink",
+                "lightsalmon",
+                "lightseagreen",
+                "lightskyblue",
+                "lightslategray",
+                "lightslategrey",
+                "lightsteelblue",
+                "lightyellow",
+                "lime",
+                "limegreen",
+                "linen",
+                "magenta",
+                "maroon",
+                "mediumaquamarine",
+                "mediumblue",
+                "mediumorchid",
+                "mediumpurple",
+                "mediumseagreen",
+                "mediumslateblue",
+                "mediumspringgreen",
+                "mediumturquoise",
+                "mediumvioletred",
+                "midnightblue",
+                "mintcream",
+                "mistyrose",
+                "moccasin",
+                "navajowhite",
+                "navy",
+                "navyblue",
+                "oldlace",
+                "olive",
+                "olivedrab",
+                "orange",
+                "orangered",
+                "orchid",
+                "palegoldenrod",
+                "palegreen",
+                "paleturquoise",
+                "palevioletred",
+                "papayawhip",
+                "peachpuff",
+                "peru",
+                "pink",
+                "plum",
+                "powderblue",
+                "purple",
+                "red",
+                "rosybrown",
+                "royalblue",
+                "saddlebrown",
+                "salmon",
+                "sandybrown",
+                "seagreen",
+                "seashell",
+                "sienna",
+                "silver",
+                "skyblue",
+                "slateblue",
+                "slategray",
+                "slategrey",
+                "snow",
+                "springgreen",
+                "steelblue",
+                "tan",
+                "teal",
+                "thistle",
+                "tomato",
+                "turquoise",
+                "violet",
+                "wheat",
+                "white",
+                "whitesmoke",
+                "yellow",
+                "yellowgreen"
+              ],
+              "sort": false,
+              "translation_key": "color_name"
+            }
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "hs",
+                "xy",
+                "rgb",
+                "rgbw",
+                "rgbww"
+              ]
+            }
+          }
+        },
+        "color_temp_kelvin": {
+          "label": "color_temp_kelvin",
+          "description": "",
+          "types": [
+            "number"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "color_temp": {
+              "max": 6500,
+              "min": 2000,
+              "unit": "kelvin"
+            }
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "color_temp",
+                "hs",
+                "xy",
+                "rgb",
+                "rgbw",
+                "rgbww"
+              ]
+            }
+          }
+        },
+        "effect": {
+          "label": "effect",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "state": {
+              "attribute": "effect",
+              "multiple": false
+            }
+          },
+          "filter": {
+            "supportedFeatures": [
+              4
+            ]
+          }
+        },
+        "flash": {
+          "label": "flash",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "additional_fields",
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": [
+            "long",
+            "short"
+          ],
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "select": {
+              "custom_value": false,
+              "multiple": false,
+              "options": [
+                "long",
+                "short"
+              ],
+              "sort": false,
+              "translation_key": "flash"
+            }
+          },
+          "filter": {
+            "supportedFeatures": [
+              8
+            ]
+          }
+        },
+        "hs_color": {
+          "label": "hs_color",
+          "description": "",
+          "types": [
+            "object",
+            "array",
+            "string",
+            "number",
+            "boolean"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "additional_fields",
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "[300, 70]",
+          "selector": {
+            "object": {
+              "multiple": false
+            }
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "hs",
+                "xy",
+                "rgb",
+                "rgbw",
+                "rgbww"
+              ]
+            }
+          }
+        },
+        "profile": {
+          "label": "profile",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "additional_fields",
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "relax",
+          "selector": {
+            "text": {
+              "multiline": false,
+              "multiple": false
+            }
+          },
+          "filter": null
+        },
+        "rgb_color": {
+          "label": "rgb_color",
+          "description": "",
+          "types": [
+            "array"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": 3,
+          "maxItems": 3,
+          "default": null,
+          "example": "[255, 100, 100]",
+          "selector": {
+            "color_rgb": {}
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "hs",
+                "xy",
+                "rgb",
+                "rgbw",
+                "rgbww"
+              ]
+            }
+          }
+        },
+        "rgbw_color": {
+          "label": "rgbw_color",
+          "description": "",
+          "types": [
+            "object",
+            "array",
+            "string",
+            "number",
+            "boolean"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "additional_fields",
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "[255, 100, 100, 50]",
+          "selector": {
+            "object": {
+              "multiple": false
+            }
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "hs",
+                "xy",
+                "rgb",
+                "rgbw",
+                "rgbww"
+              ]
+            }
+          }
+        },
+        "rgbww_color": {
+          "label": "rgbww_color",
+          "description": "",
+          "types": [
+            "object",
+            "array",
+            "string",
+            "number",
+            "boolean"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "additional_fields",
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "[255, 100, 100, 50, 70]",
+          "selector": {
+            "object": {
+              "multiple": false
+            }
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "hs",
+                "xy",
+                "rgb",
+                "rgbw",
+                "rgbww"
+              ]
+            }
+          }
+        },
+        "transition": {
+          "label": "transition",
+          "description": "",
+          "types": [
+            "number"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": 0,
+          "max": 300,
+          "integer": true,
+          "step": 1,
+          "unit": "seconds",
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "number": {
+              "max": 300,
+              "min": 0,
+              "mode": "slider",
+              "step": 1,
+              "unit_of_measurement": "seconds"
+            }
+          },
+          "filter": {
+            "supportedFeatures": [
+              32
+            ]
+          }
+        },
+        "white": {
+          "label": "white",
+          "description": "",
+          "types": [
+            "boolean"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "additional_fields",
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": [
+            true
+          ],
+          "enumLabels": [
+            "Enabled"
+          ],
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "constant": {
+              "label": "Enabled",
+              "value": true
+            }
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "white"
+              ]
+            }
+          }
+        },
+        "xy_color": {
+          "label": "xy_color",
+          "description": "",
+          "types": [
+            "object",
+            "array",
+            "string",
+            "number",
+            "boolean"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": "additional_fields",
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "[0.52, 0.43]",
+          "selector": {
+            "object": {
+              "multiple": false
+            }
+          },
+          "filter": {
+            "attribute": {
+              "supported_color_modes": [
+                "hs",
+                "xy",
+                "rgb",
+                "rgbw",
+                "rgbww"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "notify.notify": {
+      "domain": "notify",
+      "service": "notify",
+      "name": "notify",
+      "description": "",
+      "target": null,
+      "response": "none",
+      "fields": {
+        "data": {
+          "label": "data",
+          "description": "",
+          "types": [
+            "object",
+            "array",
+            "string",
+            "number",
+            "boolean"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "platform specific",
+          "selector": {
+            "object": {
+              "multiple": false
+            }
+          },
+          "filter": null
+        },
+        "message": {
+          "label": "message",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": true,
+          "advanced": false,
+          "section": null,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "The garage door has been open for 10 minutes.",
+          "selector": {
+            "text": {
+              "multiline": false,
+              "multiple": false
+            }
+          },
+          "filter": null
+        },
+        "target": {
+          "label": "target",
+          "description": "",
+          "types": [
+            "object",
+            "array",
+            "string",
+            "number",
+            "boolean"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "platform specific",
+          "selector": {
+            "object": {
+              "multiple": false
+            }
+          },
+          "filter": null
+        },
+        "title": {
+          "label": "title",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "Your Garage Door Friend",
+          "selector": {
+            "text": {
+              "multiline": false,
+              "multiple": false
+            }
+          },
+          "filter": null
+        }
+      }
+    },
+    "script.turn_on": {
+      "domain": "script",
+      "service": "turn_on",
+      "name": "turn_on",
+      "description": "",
+      "target": {
+        "entity": [
+          {
+            "domain": [
+              "script"
+            ],
+            "deviceClass": [],
+            "supportedFeatures": []
+          }
+        ],
+        "device": []
+      },
+      "response": "none",
+      "fields": {}
+    },
+    "weather.get_forecasts": {
+      "domain": "weather",
+      "service": "get_forecasts",
+      "name": "get_forecasts",
+      "description": "",
+      "target": {
+        "entity": [
+          {
+            "domain": [
+              "weather"
+            ],
+            "deviceClass": [],
+            "supportedFeatures": [
+              1,
+              2,
+              4
+            ]
+          }
+        ],
+        "device": []
+      },
+      "response": "only",
+      "fields": {
+        "type": {
+          "label": "type",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": true,
+          "advanced": false,
+          "section": null,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": [
+            "daily",
+            "hourly",
+            "twice_daily"
+          ],
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "select": {
+              "custom_value": false,
+              "multiple": false,
+              "options": [
+                "daily",
+                "hourly",
+                "twice_daily"
+              ],
+              "sort": false,
+              "translation_key": "forecast_type"
+            }
+          },
+          "filter": null
+        }
+      }
+    }
+  }
+}

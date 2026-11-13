@@ -24,6 +24,8 @@ public sealed class VisualCatalogSnapshot
     public ImmutableArray<NodeLibrarySource> Sources { get; }
     public ImmutableDictionary<string, NodeMethodDescriptor> Methods { get; }
     public ImmutableDictionary<string, NodeTypeDescriptor> Types { get; }
+    /// <summary>Home Assistant service schemas for validation only; never part of <see cref="Root"/> (D2).</summary>
+    public ServiceSchemaCatalog? Services { get; private init; }
     public static VisualCatalogSnapshot BuiltIn { get; } = new(VisualNodeCatalog.Root, [], [], [], null);
 
     internal VisualCatalogSnapshot(JsonObject catalog, IEnumerable<NodeLibrarySource> sources,
@@ -36,6 +38,15 @@ public sealed class VisualCatalogSnapshot
         Compilation = compilation;
         LibraryDiagnostics = libraryDiagnostics?.ToImmutableArray() ?? [];
     }
+
+    // Shares the immutable catalog and compilation; only the attached services differ.
+    VisualCatalogSnapshot(VisualCatalogSnapshot other)
+    {
+        catalog = other.catalog; Sources = other.Sources; Methods = other.Methods; Types = other.Types;
+        Compilation = other.Compilation; LibraryDiagnostics = other.LibraryDiagnostics;
+    }
+
+    public VisualCatalogSnapshot WithServices(ServiceSchemaCatalog? services) => new(this) { Services = services };
 
     // Refinement is decided first; Roslyn only ever compares two root types.
     public bool IsAssignable(string source, string target) => VisualTypes.IsAssignable(catalog, source, target, (root, to) =>

@@ -14,8 +14,6 @@ DEBOUNCE_SECONDS = 2
 
 async def async_push(hass, manager):
     """Send `{domain: {service: description}}` as JSON; failures are logged, never raised."""
-    if not hasattr(manager, "SetServiceDescriptions"):
-        return
     try:
         descriptions = await async_get_all_descriptions(hass)
         payload = json.dumps(descriptions, cls=JSONEncoder)

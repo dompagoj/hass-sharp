@@ -61,15 +61,6 @@ class ServiceDescriptions(unittest.IsolatedAsyncioTestCase):
             'brightness_pct': {'selector': {'number': {'min': 0, 'max': 100}}}}}}})
         self.assertEqual(executed, [manager.SetServiceDescriptions])
 
-    async def test_missing_manager_method_is_skipped_quietly(self):
-        env, hass, _, _, executed = load_services()
-        await env['async_push'](hass, NS(Init=object()))
-        env['async_get_all_descriptions'].assert_not_awaited()
-        self.assertEqual(executed, [])
-        env['logger'].exception.assert_not_called()
-        env['logger'].error.assert_not_called()
-        env['logger'].warning.assert_not_called()
-
     async def test_push_failure_is_logged_without_leaking(self):
         env, hass, _, _, _ = load_services()
         manager = NS(SetServiceDescriptions=Mock(side_effect=RuntimeError('managed failure')))
