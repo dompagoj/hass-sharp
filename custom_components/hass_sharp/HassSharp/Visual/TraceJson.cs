@@ -43,8 +43,9 @@ static class TraceJson
     /// <summary>
     /// How values of a type are written: not at all (its type name), as items, as a map, or as its readable members
     /// (public fields and auto-properties by field); <c>Partial</c> when it also has public properties that are not read.
+    /// <c>Name</c> is its C# type name, and <c>Formats</c> whether it is a dictionary key the base library formats.
     /// </summary>
-    sealed record Shape(Walk Walk, (string Name, FieldInfo Field)[] Members, bool Partial);
+    sealed record Shape(Walk Walk, (string Name, FieldInfo Field)[] Members, bool Partial, string Name, bool Formats);
 
     /// <summary>A property, dictionary key or port name whose value is never recorded.</summary>
     internal static bool Secret(string name)
@@ -114,7 +115,7 @@ static class TraceJson
         JsonArray => "array",
         JsonValue v => v.GetValueKind() switch { JsonValueKind.String => "string", JsonValueKind.Number => "number", JsonValueKind.True or JsonValueKind.False => "boolean", _ => "null" },
         _ when Number(value) => "number",
-        _ => TypeName(value.GetType()),
+        _ => ShapeOf(value.GetType()).Name,
     };
 
     static readonly Dictionary<Type, string> aliases = new()
@@ -186,26 +187,33 @@ static class TraceJson
         return (buffer.WrittenSpan.ToArray(), cut);
     }
 
-    static readonly Shape opaque = new(Walk.Opaque, [], true);
-
     static Shape ShapeOf(Type type) => shapes.GetValue(type, t =>
     {
-        // Python.NET objects are enumerable but must not be touched without the GIL.
-        if (t.Namespace?.StartsWith("Python", StringComparison.Ordinal) == true) return opaque;
-        if (t.IsArray) return new(Walk.Items, [], false);
+        var name = TypeName(t);
         var framework = Framework(t.Assembly);
-        // Only the base library's own collections are known to hold their items and to run no automation code
-        // while enumerated. Wrappers over another collection (System.Collections.ObjectModel) are not among them.
-        if (framework && t.Namespace is { } ns && collectionNamespaces.Contains(ns))
+        var formats = typeof(IFormattable).IsAssignableFrom(t) && (t.IsEnum || framework);
+        Shape Opaque() => new(Walk.Opaque, [], true, name, formats);
+        Shape Of(Walk walk) => new(walk, [], false, name, formats);
+        // Python.NET objects are enumerable but must not be touched without the GIL.
+        if (t.Namespace?.StartsWith("Python", StringComparison.Ordinal) == true) return Opaque();
+        if (t.IsArray) return Of(Walk.Items);
+        // Only the base library's own top-level collections are known to hold their items and to run no automation
+        // code while enumerated. Excluded: wrappers and views over another collection, which are nested types
+        // (ArrayList.Adapter, the ReadOnly and Synchronized wrappers, SortedSet views, Dictionary key and value
+        // collections), System.Collections.ObjectModel, and BlockingCollection over any producer-consumer collection.
+        if (framework && !t.IsNested && t.Namespace is { } ns && collectionNamespaces.Contains(ns)
+            && !(t.IsGenericType && t.GetGenericTypeDefinition() == typeof(System.Collections.Concurrent.BlockingCollection<>)))
         {
-            if (typeof(IDictionary).IsAssignableFrom(t)) return new(Walk.Map, [], false);
+            if (typeof(IDictionary).IsAssignableFrom(t)) return Of(Walk.Map);
             if (typeof(ICollection).IsAssignableFrom(t) || t.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() is var d && (d == typeof(ICollection<>) || d == typeof(IReadOnlyCollection<>))))
-                return new(Walk.Items, [], false);
+                return Of(Walk.Items);
         }
+        // Tuples and key-value pairs, by their items: the base library's own fields, so no getter runs.
+        if (framework && t.IsGenericType && Pair(t) is { } pair) return new(Walk.Members, pair, false, name, formats);
         if (typeof(IEnumerable).IsAssignableFrom(t) || framework || t.Namespace?.StartsWith("System", StringComparison.Ordinal) == true || t.Namespace?.StartsWith("Microsoft", StringComparison.Ordinal) == true)
-            return opaque;
+            return Opaque();
         var members = new List<(string, FieldInfo)>(); var names = new HashSet<string>(StringComparer.Ordinal); var partial = false;
-        void Add(string name, FieldInfo field) { if (names.Add(name)) members.Add((name, field)); else partial = true; }
+        void Add(string member, FieldInfo field) { if (names.Add(member)) members.Add((member, field)); else partial = true; }
         // Most derived first, so a hiding (new) member wins and the hidden one only marks the value partial.
         foreach (var property in t.GetProperties(BindingFlags.Instance | BindingFlags.Public).OrderBy(p => Distance(t, p.DeclaringType)))
         {
@@ -216,8 +224,29 @@ static class TraceJson
             else partial = true;
         }
         foreach (var field in t.GetFields(BindingFlags.Instance | BindingFlags.Public).OrderBy(f => Distance(t, f.DeclaringType))) Add(field.Name, field);
-        return members.Count == 0 && partial ? opaque : new(Walk.Members, [.. members], partial);
+        return members.Count == 0 && partial ? Opaque() : new(Walk.Members, [.. members], partial, name, formats);
     });
+
+    // ValueTuple's public Item fields, Tuple's m_Item fields, KeyValuePair's key and value; null for any other type
+    // or when a field is not where expected.
+    static (string Name, FieldInfo Field)[]? Pair(Type type)
+    {
+        var definition = type.GetGenericTypeDefinition();
+        (string Name, string Field)[] fields;
+        if (definition == typeof(KeyValuePair<,>)) fields = [("Key", "key"), ("Value", "value")];
+        else if (definition.FullName?.StartsWith("System.ValueTuple`", StringComparison.Ordinal) == true)
+            fields = [.. type.GetFields(BindingFlags.Instance | BindingFlags.Public).Select(f => (f.Name, f.Name))];
+        else if (definition.FullName?.StartsWith("System.Tuple`", StringComparison.Ordinal) == true)
+            fields = [.. type.GetProperties(BindingFlags.Instance | BindingFlags.Public).Where(p => p.Name.StartsWith("Item", StringComparison.Ordinal) || p.Name == "Rest").Select(p => (p.Name, "m_" + p.Name))];
+        else return null;
+        var found = new (string, FieldInfo)[fields.Length];
+        for (var i = 0; i < fields.Length; i++)
+        {
+            if (type.GetField(fields[i].Field, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) is not { } field) return null;
+            found[i] = (fields[i].Name, field);
+        }
+        return found.Length == 0 ? null : found;
+    }
 
     static int Distance(Type type, Type? declaring)
     {
@@ -259,7 +288,7 @@ static class TraceJson
         public bool Root(object? value) { Value(value, 0); return cut; }
 
         // Something that is not walked: its type name, marked as cut.
-        void Opaque(Type type) { cut = true; String(TypeName(type)); }
+        void Opaque(Shape shape) { cut = true; String(shape.Name); }
 
         void Value(object? value, int depth)
         {
@@ -304,7 +333,7 @@ static class TraceJson
                 case Walk.Map: Guarded(((IDictionary)value).GetEnumerator, items => Object(Entries(items), depth)); return;
                 case Walk.Items: Guarded(((IEnumerable)value).GetEnumerator, items => Array(items, depth)); return;
                 case Walk.Members: if (shape.Partial) cut = true; Object(Members(value, shape), depth); return;
-                default: Opaque(type); return;
+                default: Opaque(shape); return;
             }
         }
 
@@ -432,7 +461,12 @@ static class TraceJson
                     var name = Cut(key, MaxChars, long.MaxValue);
                     if (name.Length < key.Length) cut = true;
                     // Distinct keys can format alike (1 and "1", or a key cut short): later ones get their position.
-                    if (!(names ??= new(StringComparer.Ordinal)).Add(name)) { name = Cut(name, MaxChars - 8, long.MaxValue) + "#" + count; names.Add(name); cut = true; }
+                    if (!(names ??= new(StringComparer.Ordinal)).Add(name))
+                    {
+                        var stem = Cut(name, MaxChars - 12, long.MaxValue);
+                        for (var position = count; !names.Add(name = stem + "#" + position); position++) { }
+                        cut = true;
+                    }
                     if (!Fits(Length(name) + 1)) break;
                     w.WritePropertyName(name);
                     if (Secret(key)) String(Redacted); else Value(items.Current.Value, depth + 1);
@@ -492,9 +526,12 @@ static class TraceJson
                 {
                     var entry = entries.Entry;
                     var key = entry.Key as string;
-                    if (key == null && entry.Key is IFormattable f && (f.GetType().IsEnum || Framework(f.GetType().Assembly)))
-                        key = f.ToString(null, CultureInfo.InvariantCulture);
-                    if (key == null) { key = (entry.Key?.GetType().Name ?? "null") + "#" + index; cut = true; }
+                    if (key == null && entry.Key != null && ShapeOf(entry.Key.GetType()) is var shape)
+                    {
+                        if (shape.Formats) key = ((IFormattable)entry.Key).ToString(null, CultureInfo.InvariantCulture);
+                        else { key = shape.Name + "#" + index; cut = true; }
+                    }
+                    if (key == null) { key = "null#" + index; cut = true; }
                     yield return new(key, entry.Value);
                 }
             }

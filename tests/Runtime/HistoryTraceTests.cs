@@ -464,6 +464,9 @@ sealed class ManualTime : TimeProvider
     readonly List<ManualTimer> timers = [];
     DateTimeOffset now = new(2026, 11, 13, 0, 0, 0, TimeSpan.Zero);
     public override DateTimeOffset GetUtcNow() { lock (gate) return now; }
+    // The monotonic clock moves with Advance too (RunTraceSink measures its interval on it).
+    public override long GetTimestamp() { lock (gate) return now.UtcTicks; }
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
     public int Pending { get { lock (gate) return timers.Count(t => !t.Disposed); } }
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
     {

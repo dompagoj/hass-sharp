@@ -268,13 +268,20 @@ static class VisualTraceTests
                 Check(!materialisedCut && Same(JsonNode.Parse(materialised), """{"list":[1,2],"set":["a"],"array":[3],"Monday":{"Friday":5},"queue":[1.5],"sorted":{"2":"b"},"readings":[{"Name":"hall","Value":1}]}"""), "materialised collections: " + System.Text.Encoding.UTF8.GetString(materialised));
                 // Keys the base library cannot format get their type and position, so they stay distinct; 1 and "1" too.
                 var (keys, keysCut) = TraceJson.Value(new Dictionary<Key, int> { [new Key()] = 1, [new Key()] = 2 }, TraceJson.MaxValueBytes);
-                Check(keysCut && Key.Formatted == 0 && Same(JsonNode.Parse(keys), """{"Key#0":1,"Key#1":2}"""), "user keys: " + System.Text.Encoding.UTF8.GetString(keys));
+                Check(keysCut && Key.Formatted == 0 && Same(JsonNode.Parse(keys), """{"global::VisualTraceTests.Key#0":1,"global::VisualTraceTests.Key#1":2}"""), "user keys: " + System.Text.Encoding.UTF8.GetString(keys));
                 var (alike, alikeCut) = TraceJson.Value(new Dictionary<object, int> { [1] = 1, ["1"] = 2 }, TraceJson.MaxValueBytes);
                 Check(alikeCut && Same(JsonNode.Parse(alike), """{"1":1,"1#1":2}"""), "keys that format alike: " + System.Text.Encoding.UTF8.GetString(alike));
+                var (again, againCut) = TraceJson.Value(new Dictionary<object, int> { ["1"] = 1, ["1#2"] = 2, [1] = 3 }, TraceJson.MaxValueBytes);
+                Check(againCut && Same(JsonNode.Parse(again), """{"1":1,"1#2":2,"1#3":3}"""), "a renamed key that is taken: " + System.Text.Encoding.UTF8.GetString(again));
+                // Tuples and key-value pairs by their items, also as values of a dictionary; a tuple key is named by its type.
+                var (tuples, tuplesCut) = TraceJson.Value(new object[] { (1, "a"), Tuple.Create(2, "b"), new KeyValuePair<string, int>("k", 3), (1, 2, 3, 4, 5, 6, 7, 8, 9), (Name: "n", Reading: new Reading("hall", 1)) }, TraceJson.MaxValueBytes);
+                Check(!tuplesCut && Same(JsonNode.Parse(tuples), """[{"Item1":1,"Item2":"a"},{"Item1":2,"Item2":"b"},{"Key":"k","Value":3},{"Item1":1,"Item2":2,"Item3":3,"Item4":4,"Item5":5,"Item6":6,"Item7":7,"Rest":{"Item1":8,"Item2":9}},{"Item1":"n","Item2":{"Name":"hall","Value":1}}]"""), "tuples: " + System.Text.Encoding.UTF8.GetString(tuples));
+                var (tupleKey, tupleKeyCut) = TraceJson.Value(new Dictionary<(int, string), int> { [(1, "a")] = 1 }, TraceJson.MaxValueBytes);
+                Check(tupleKeyCut && Same(JsonNode.Parse(tupleKey), """{"global::System.ValueTuple<int, string>#0":1}"""), "tuple key: " + System.Text.Encoding.UTF8.GetString(tupleKey));
 
                 // A user-defined collection is never enumerated, nor is a base-library wrapper over one.
                 var list = new UserList();
-                foreach (var user in new object[] { list, new UserMap { ["a"] = 1 }, new System.Collections.ObjectModel.ReadOnlyCollection<int>(list) })
+                foreach (var user in new object[] { list, new UserMap { ["a"] = 1 }, new System.Collections.ObjectModel.ReadOnlyCollection<int>(list), System.Collections.ArrayList.Adapter(list), System.Collections.ArrayList.ReadOnly(new System.Collections.ArrayList { 1 }), System.Collections.Hashtable.Synchronized(new System.Collections.Hashtable { [1] = 1 }), new System.Collections.Concurrent.BlockingCollection<int>(), new SortedSet<int> { 1, 2, 3 }.GetViewBetween(1, 2), new Dictionary<string, int> { ["a"] = 1 }.Keys })
                 {
                     var (opaque, opaqueCut) = TraceJson.Value(user, TraceJson.MaxValueBytes);
                     Check(opaqueCut && JsonNode.Parse(opaque)!.GetValue<string>() == TraceJson.Kind(user) && list.Calls == 0, $"user collection {user.GetType().Name}: {list.Calls} calls, {System.Text.Encoding.UTF8.GetString(opaque)}");
@@ -288,6 +295,24 @@ static class VisualTraceTests
                 Check(!linq.Contains("Version=") && !linq.Contains('`') && !linq.Contains("[["), "LINQ type name: " + linq);
 
                 // Failures inside the walk shorten the value instead of failing.
+                var (unset, unsetCut) = TraceJson.Value(default(System.Collections.Immutable.ImmutableArray<int>), TraceJson.MaxValueBytes);
+                Check(unsetCut && Same(JsonNode.Parse(unset), "null"), "a throwing GetEnumerator: " + System.Text.Encoding.UTF8.GetString(unset));
+                {
+                    // Through the recorder: the value is cut, recording goes on.
+                    var unsetSink = new Sink(); var prior = InvocationContext.Current;
+                    InvocationContext.Current = new InvocationContext("run-unset", InvocationCause.Manual, null, TriggerPayload.Manual()) { TraceSink = unsetSink };
+                    VisualTrace recorder;
+                    try { recorder = VisualTrace.Create("n", ["n"], (_, _) => null, (_, _) => null)!; }
+                    finally { InvocationContext.Current = prior; }
+                    var started = recorder.Start("", "n")!;
+                    recorder.Input(started, "n", "value", default(System.Collections.Immutable.ImmutableArray<int>), null);
+                    recorder.Output(started, "n", "value", 1);
+                    recorder.End(started, "ok", "next", null); recorder.Complete();
+                    var unsetDoc = unsetSink.Final;
+                    Check(!unsetDoc["truncated"]!.GetValue<bool>() && Same(One(unsetDoc, "n")["inputs"], """{"value":{"type":"global::System.Collections.Immutable.ImmutableArray<int>","v":null,"trunc":true}}""") && Same(One(unsetDoc, "n")["outputs"], """{"value":{"type":"number","v":1}}"""), "a throwing GetEnumerator through the recorder: " + unsetDoc.ToJsonString());
+                }
+                var (filled, filledCut) = TraceJson.Value(System.Collections.Immutable.ImmutableArray.Create(1, 2), TraceJson.MaxValueBytes);
+                Check(!filledCut && Same(JsonNode.Parse(filled), "[1,2]"), "an immutable array: " + System.Text.Encoding.UTF8.GetString(filled));
                 var (message, messageCut) = TraceJson.Value(new BrokenMessage(), TraceJson.MaxValueBytes);
                 Check(messageCut && Same(JsonNode.Parse(message), """{"type":"BrokenMessage","message":""}"""), "a throwing Exception.Message: " + System.Text.Encoding.UTF8.GetString(message));
                 foreach (var odd in new JsonNode?[] { JsonValue.Create(double.NaN), JsonValue.Create(double.PositiveInfinity), JsonValue.Create(12.5m), JsonValue.Create(7L), JsonValue.Create(DateTime.UnixEpoch), new JsonObject { ["nan"] = double.NaN } })
@@ -466,6 +491,21 @@ static class VisualTraceTests
                 time.Advance(TimeSpan.FromMilliseconds(100));
                 sink.Write("{\"n\":4}", 4, false, false);
                 Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":4}", "the interval restarts at the immediate write");
+                // The interval is measured on the monotonic clock: stepping the wall clock back an hour holds a write no longer.
+                var clock = new Clock();
+                IRunTraceSink stepped = new RunTraceSink(store, run.RunId, TimeSpan.FromSeconds(1), clock);
+                stepped.Write("{\"n\":5}", 5, false, false);
+                clock.Wall(TimeSpan.FromHours(-1));
+                clock.Advance(TimeSpan.FromMilliseconds(300));
+                stepped.Write("{\"n\":6}", 6, false, false);
+                Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":5}" && clock.Pending == 1, "a write inside the interval after a clock step");
+                clock.Advance(TimeSpan.FromMilliseconds(699));
+                Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":5}", "the held write was stored before the interval ended");
+                clock.Advance(TimeSpan.FromMilliseconds(1));
+                Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":6}" && clock.Pending == 0, "after a clock step back the held write was not stored when the interval ended");
+                clock.Advance(TimeSpan.FromSeconds(1));
+                stepped.Write("{\"n\":7}", 7, false, false);
+                Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":7}", "a write a second later is not stored at once after a clock step");
                 return Task.CompletedTask;
             });
 
@@ -654,8 +694,15 @@ static class VisualTraceTests
         public string ToString(string? format, IFormatProvider? provider) { Formatted++; return "formatted"; }
     }
     /// <summary>A user collection whose enumeration has a side effect: tracing must never call it.</summary>
-    public sealed class UserList : IList<int>, System.Collections.ICollection
+    public sealed class UserList : IList<int>, System.Collections.IList
     {
+        object? System.Collections.IList.this[int index] { get { Calls++; return 1; } set { } }
+        bool System.Collections.IList.IsFixedSize => true;
+        int System.Collections.IList.Add(object? value) => -1;
+        bool System.Collections.IList.Contains(object? value) { Calls++; return false; }
+        int System.Collections.IList.IndexOf(object? value) { Calls++; return -1; }
+        void System.Collections.IList.Insert(int index, object? value) { }
+        void System.Collections.IList.Remove(object? value) { }
         public int Calls;
         IEnumerable<int> Items() { Calls++; yield return 1; }
         public IEnumerator<int> GetEnumerator() => Items().GetEnumerator();

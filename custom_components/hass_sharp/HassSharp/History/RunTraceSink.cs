@@ -26,7 +26,8 @@ public sealed class RunTraceSink : IRunTraceSink
     readonly Lock gate = new();
     (string Json, int Count, bool Truncated)? pending;
     ITimer? timer;
-    DateTimeOffset? last;
+    // A monotonic timestamp (TimeProvider.GetTimestamp), so a change to the system time cannot hold writes back.
+    long? last;
     bool closed;
 
     public RunTraceSink(RunHistoryStore store, string runId) : this(store, runId, Interval, TimeProvider.System) { }
@@ -40,8 +41,9 @@ public sealed class RunTraceSink : IRunTraceSink
         lock (gate)
         {
             if (closed) return;
-            var now = time.GetUtcNow();
-            if (final || immediate || last == null || now - last.Value >= interval)
+            var now = time.GetTimestamp();
+            var since = last is { } stored ? time.GetElapsedTime(stored, now) : (TimeSpan?)null;
+            if (final || immediate || since == null || since.Value >= interval)
             {
                 closed = final;
                 pending = null;
@@ -50,7 +52,7 @@ public sealed class RunTraceSink : IRunTraceSink
                 return;
             }
             pending = (json, eventCount, truncated);
-            timer ??= time.CreateTimer(_ => Flush(), null, last.Value + interval - now, Timeout.InfiniteTimeSpan);
+            timer ??= time.CreateTimer(_ => Flush(), null, interval - since.Value, Timeout.InfiniteTimeSpan);
         }
     }
 
@@ -61,11 +63,11 @@ public sealed class RunTraceSink : IRunTraceSink
             timer?.Dispose(); timer = null;
             if (closed || pending is not { } held) return;
             pending = null;
-            Store(held.Json, held.Count, held.Truncated, time.GetUtcNow());
+            Store(held.Json, held.Count, held.Truncated, time.GetTimestamp());
         }
     }
 
-    void Store(string json, int eventCount, bool truncated, DateTimeOffset now)
+    void Store(string json, int eventCount, bool truncated, long now)
     {
         last = now;
         try { store.SaveTrace(runId, json, eventCount, truncated); }

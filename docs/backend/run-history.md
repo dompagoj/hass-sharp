@@ -100,12 +100,26 @@ are already materialised are walked:
 
 - JSON values, strings, numbers, booleans, dates and times, entity states, and
   exceptions (type and message).
-- Arrays, and collections and dictionaries whose concrete type comes from the
-  .NET base library (such as `List<T>`, `HashSet<T>`, `Dictionary<K,V>`, queues,
-  and concurrent, immutable and frozen collections). A user-defined collection
-  type, including a subclass of a base-library collection, is not enumerated, and
-  neither is a base-library wrapper over another collection (such as
-  `ReadOnlyCollection<T>`).
+- Arrays.
+- Collections and dictionaries that meet all of these conditions:
+  - They are top-level (not nested) types from the .NET base library.
+  - They are in `System.Collections`, `System.Collections.Generic`,
+    `.Concurrent`, `.Immutable`, `.Frozen` or `.Specialized`.
+  - They implement `ICollection`, `ICollection<T>`, `IReadOnlyCollection<T>` or
+    `IDictionary`.
+
+  Examples are `List<T>`, `HashSet<T>`, `Dictionary<K,V>`, `Queue<T>`,
+  `SortedDictionary<K,V>`, `ImmutableArray<T>` and `ConcurrentDictionary<K,V>`.
+  None of the following is enumerated:
+  - a user-defined collection type, including a subclass of a base-library
+    collection
+  - wrappers and views over another collection, which are nested types
+    (`ArrayList.Adapter`, the `ReadOnly` and `Synchronized` wrappers, `SortedSet`
+    views, a dictionary's `Keys` and `Values`)
+  - anything in `System.Collections.ObjectModel` (such as `ReadOnlyCollection<T>`)
+  - `BlockingCollection<T>`
+- Tuples (`ValueTuple`, `Tuple`) by their items (`Item1`, …, `Rest`), and
+  `KeyValuePair` as `Key` and `Value`.
 - The public fields and compiler-generated auto-properties of other objects,
   such as records, plain classes and anonymous types. They are read from their
   fields, so no getter runs. A computed property is left out and the object is
@@ -115,13 +129,15 @@ are already materialised are walked:
 A value with nothing readable is recorded as its C# type name (such as
 `global::System.Collections.ObjectModel.ReadOnlyCollection<int>`) with
 `trunc: true`. This applies to lazy sequences such as LINQ queries or iterators
-(never enumerated), user-defined collections, objects with only computed
+(never enumerated), collections that are not walked, objects with only computed
 properties, and Python objects. Dictionary keys are strings, or are formatted by
 the base library (numbers, dates, enums). A key of any other type is written as
-its type name and position, such as `Key#0`, with `trunc`. A key that repeats
-after formatting gets its position appended. If a base-library enumerator or an
-exception's message throws, the value is shortened (the rest of the collection,
-or the message, is left out) and marked `trunc`.
+its type name and position, such as `global::System.ValueTuple<int, string>#0`,
+with `trunc`. A key that repeats after formatting gets its position appended, or
+the next free position. If a base-library enumerator or an exception's message
+throws, the value is shortened and marked `trunc`: an enumerator that cannot
+start gives `null`, the rest of the collection is left out, or the message is
+empty.
 
 Caps:
 
@@ -163,9 +179,10 @@ is going, the trace is stored at most once per second. When a node starts waitin
 (delay, wait until, service calls, and asynchronous custom or library nodes), it
 is stored as soon as 500 ms have passed since the last store, or at once if
 nothing has been stored yet. A running run's trace can therefore be read while it
-waits, and many short waits cost at most two stores a second. The gaps are
-measured on a monotonic clock, so a change to the system time does not delay
-them. The run's end stores the complete document, and nothing is stored after it.
+waits, and many short waits cost at most two stores a second. The gaps, both the
+recorder's and the store's one-second throttle, are measured on a monotonic clock,
+so a change to the system time does not delay them. The run's end stores the
+complete document, and nothing is stored after it.
 
 Recording never fails a run. A recorder error is logged once and stops
 recording. Events already listed still get their final status, and the stored
