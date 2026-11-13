@@ -47,7 +47,7 @@ public static class VisualNodeCatalog
         var ports = (spec?["outputs"]?.DeepClone() as JsonObject) ?? [];
         foreach (var (_, value) in ports) if (value is JsonObject port) port["type"] = ResolveType(Text(port, "type"), node);
         if (Text(spec, "dynamicOutputs") == "loop") foreach (var key in new[] { "carry", "exports" }) foreach (var item in Declarations(node, key))
-            ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = new JsonObject { ["type"] = Text(item, "type"), ["description"] = $"{key} value {Text(item, "name")}", ["visibility"] = key == "carry" ? "loop" : "outside" };
+            ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = new JsonObject { ["type"] = Text(item, "type"), ["description"] = (key == "carry" ? "Kept between iterations: " : "Available after the loop: ") + Text(item, "name"), ["visibility"] = key == "carry" ? "loop" : "outside" };
         if (Text(spec, "dynamicOutputs") == "trigger") foreach (var (key, value) in TriggerOutputs(node, snapshot?.Root ?? Root)) ports[key] = value?.DeepClone();
         // An output with "when" exists only while that boolean config is true (D3, D9).
         foreach (var key in ports.Where(p => Text(p.Value, "when") is { Length: > 0 } when && !((node["config"] as JsonObject)?[when] is JsonValue on && on.TryGetValue<bool>(out var enabled) && enabled)).Select(p => p.Key).ToArray())
@@ -75,8 +75,9 @@ public static class VisualNodeCatalog
         var port = new JsonObject
         {
             ["types"] = field["types"]?.DeepClone() ?? new JsonArray(), ["required"] = field["required"] is JsonValue r && r.TryGetValue<bool>(out var required) && required,
-            ["label"] = Text(field, "label", key), ["description"] = Text(field, "description") is { Length: > 0 } description ? description : "Service field " + key
+            ["label"] = Text(field, "label", key)
         };
+        if (Text(field, "description") is { Length: > 0 } description) port["description"] = description;
         foreach (var name in ServiceFieldConstraints) if (field[name] is { } value) port[name] = value.DeepClone();
         if (field["default"] is { } fallback && (field["types"] as JsonArray ?? []).OfType<JsonValue>().Select(t => t.TryGetValue<string>(out var s) ? s : "")
                 .FirstOrDefault(t => t != "" && VisualTypes.ValidLiteral(catalog, t, fallback, true)) is { } type)
@@ -129,18 +130,24 @@ public static class VisualNodeCatalog
             itemsPort["types"] = new JsonArray(new[] { "array" }.Concat((snapshot?.Root ?? Root)["types"]!.AsObject()
                 .Where(p => p.Value?["nullable"]?.GetValue<bool>() != true && p.Value?["elementType"] is JsonValue element && CompatibleTypes(element.GetValue<string>(), Text(node["config"],"itemType"), snapshot)).Select(p=>p.Key))
                 .Select(t=>(JsonNode?)JsonValue.Create(t)).ToArray());
-        JsonObject Input(IEnumerable<string> types, bool required, string description) => new() { ["types"] = new JsonArray(types.Select(t => JsonValue.Create(t)).ToArray<JsonNode?>()), ["required"] = required, ["description"] = description };
+        // A port without a description (an unknown service field) has none rather than one that repeats its label.
+        JsonObject Input(IEnumerable<string> types, bool required, string? description)
+        {
+            var port = new JsonObject { ["types"] = new JsonArray(types.Select(t => JsonValue.Create(t)).ToArray<JsonNode?>()), ["required"] = required };
+            if (description != null) port["description"] = description;
+            return port;
+        }
         var all = (snapshot?.Root ?? Root)["types"]!.AsObject().Select(p => p.Key).ToArray();
         var dynamic = Text(spec, "dynamicInputs");
         if (dynamic == "fields" && node["config"]?["fields"] is JsonObject fields)
-            foreach (var (key, _) in fields) ports["field:" + key] = Input(all, true, "Object field " + key);
+            foreach (var (key, _) in fields) ports["field:" + key] = Input(all, true, "Field " + key);
         if (dynamic == "service")
         {
             // Ports are the keys of config.fields (D3); a known service only refines their types and the target's.
             var schema = ServiceSchema(node, snapshot);
             if (node["config"]?["fields"] is JsonObject serviceFields)
                 foreach (var (key, _) in serviceFields)
-                    ports["field:" + key] = schema?["fields"]?[key] is JsonObject field ? ServiceFieldInput(key, field, snapshot?.Root ?? Root) : Input(all, false, "Service field " + key);
+                    ports["field:" + key] = schema?["fields"]?[key] is JsonObject field ? ServiceFieldInput(key, field, snapshot?.Root ?? Root) : Input(all, false, null);
             if (schema != null && ports["target"] is JsonObject target)
             {
                 string[] types = ServiceTargetDomains(schema) is { Length: > 0 } domains ? ["target", .. domains.Select(d => "entity_id:" + d)] : ["target", "entity_id"];
@@ -149,10 +156,10 @@ public static class VisualNodeCatalog
         }
         if (dynamic == "items" && node["config"]?["items"] is JsonArray items)
             // Labelled as in contract.ts: list items count from 1.
-            for (var i = 0; i < items.Count; i++) { var item = Input(all, true, "Array item " + (i + 1)); item["label"] = "Item " + (i + 1); ports["item:" + i] = item; }
+            for (var i = 0; i < items.Count; i++) { var item = Input(all, true, "Item " + (i + 1)); item["label"] = "Item " + (i + 1); ports["item:" + i] = item; }
         if (dynamic == "loop" && loopOwner != null) foreach (var key in new[] { "carry", "exports" }) foreach (var item in Declarations(loopOwner, key))
         {
-            var port = Input([Text(item, "type")], false, "Next " + key + " value"); port["label"] = Text(item, "name");
+            var port = Input([Text(item, "type")], false, "New value for " + Text(item, "name")); port["label"] = Text(item, "name");
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = port;
         }
         return ports;

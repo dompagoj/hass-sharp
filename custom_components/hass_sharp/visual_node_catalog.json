@@ -147,7 +147,7 @@
         },
         "trigger": {
           "type": "object",
-          "description": "A Home Assistant trigger as written in a YAML automation, such as {\"trigger\": \"state\", \"entity_id\": \"light.hall\"}.",
+          "description": "A Home Assistant trigger as in a YAML automation, written as JSON, such as {\"trigger\": \"state\", \"entity_id\": \"light.hall\"}.",
           "label": "Trigger"
         },
         "mode": {
@@ -323,14 +323,14 @@
     "custom": {
       "label": "Custom C#",
       "category": "Code",
-      "description": "Run your own C# code, which can read the trigger's data and earlier steps' values.",
+      "description": "Run your own C# code; it can read the trigger's data and values steps exposed to C#.",
       "minGraphVersion": 5,
       "config": {
         "code": {
           "type": "string",
           "required": true,
           "default": "// Add your C# here",
-          "description": "The C# statements to run. They can use TriggerData, values (what earlier steps exposed by name) and lastError.",
+          "description": "The C# statements to run. They can use TriggerData, values (what earlier steps exposed to C#), lastError and anything an automation can.",
           "label": "Code"
         }
       },
@@ -384,7 +384,7 @@
         "output": {
           "type": "string",
           "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Output"
+          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -437,7 +437,7 @@
         "output": {
           "type": "string",
           "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Output"
+          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -490,7 +490,7 @@
         "output": {
           "type": "string",
           "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Output"
+          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -543,7 +543,7 @@
         "output": {
           "type": "string",
           "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Output"
+          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -599,7 +599,7 @@
         "output": {
           "type": "string",
           "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Output"
+          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -666,7 +666,7 @@
         "output": {
           "type": "string",
           "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Output"
+          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -724,7 +724,7 @@
         "output": {
           "type": "string",
           "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Output"
+          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -782,7 +782,7 @@
         "output": {
           "type": "string",
           "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Output"
+          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -1075,7 +1075,7 @@
             "entity_id"
           ],
           "default": "object",
-          "description": "The type every item must have; the loop stops with an error at an item of another type.",
+          "description": "The type every item must have; if any item has another type, the loop fails before it starts.",
           "label": "Item type",
           "enumSource": "types"
         }
@@ -1186,13 +1186,13 @@
     "loop_result": {
       "label": "Loop result",
       "category": "Flow",
-      "description": "Finish this iteration of the loop, setting the values it keeps and passes on.",
+      "description": "Finish this iteration, setting Kept between iterations and Available after the loop.",
       "minGraphVersion": 5,
       "config": {
         "values": {
           "type": "object",
           "default": {},
-          "description": "New values for the loop to keep or pass on; a value left out keeps what it had.",
+          "description": "New values for Kept between iterations and Available after the loop; a value left out keeps what it had.",
           "label": "Values"
         }
       },
@@ -1457,14 +1457,14 @@
     "get_field": {
       "label": "Get field",
       "category": "Data",
-      "description": "Take one value out of an object or list, such as an attribute from the trigger data.",
+      "description": "Take one value out of an object or list, such as a field of a service response.",
       "minGraphVersion": 5,
       "config": {
         "pointer": {
           "type": "string",
           "required": true,
           "default": "",
-          "description": "Where the value is, such as /brightness or /items/0. Leave empty for the whole value.",
+          "description": "Where the value is, such as /to_state/attributes/brightness or /items/0. Leave empty for the whole value.",
           "label": "Path"
         },
         "type": {
@@ -1548,7 +1548,7 @@
         "output": {
           "type": "string",
           "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Output"
+          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -1788,7 +1788,7 @@
           "target"
         ],
         "constraintsSource": "types",
-        "description": "A value written into the step. A value other than null must fit its type and every type that type refines: the kind of JSON value, pattern, number range, single character and allowed values. null needs a type that allows it; a C# type with no JSON form takes only null, and a C# class never takes a JSON object."
+        "description": "A value written into the step."
       },
       "variable": {
         "required": [

@@ -64,26 +64,40 @@ public static class VisualGraphContractTests
     [RuntimeSuite("--catalog-wording", Order = 11)]
     public static Task CatalogWording()
     {
+        // The patterns themselves: implementation words and raw port ids fail, ordinary prose does not.
+        foreach (var text in new[] { "A typed value.", "Reads field:brightness.", "Exposes item:<index>.", "Uses ~1 for a slash.", "A Boolean." })
+            if (!BannedWording.IsMatch(text)) throw new Exception($"Catalog wording: the check misses \"{text}\"");
+        foreach (var text in new[] { "The text you typed.", "Each item: its own input.", "The field: brightness." })
+            if (BannedWording.IsMatch(text)) throw new Exception($"Catalog wording: the check rejects plain \"{text}\"");
         var descriptions = new List<(string Path, string Text)>();
+        var labels = new List<(string Path, string Text)>();
         void Collect(JsonNode? node, string path)
         {
             if (node is JsonObject obj)
                 foreach (var (key, value) in obj)
-                    if (key == "description" && value is JsonValue text && text.TryGetValue<string>(out var description)) descriptions.Add((path, description));
+                    if (key is "description" or "label" && value is JsonValue text && text.TryGetValue<string>(out var words))
+                    {
+                        if (key == "description") descriptions.Add((path, words));
+                        else if (path.StartsWith("/nodes/", StringComparison.Ordinal)) labels.Add((path, words));
+                    }
                     else Collect(value, path + "/" + key);
             else if (node is JsonArray list)
                 for (var i = 0; i < list.Count; i++) Collect(list[i], path + "/" + i);
         }
         Collect(VisualNodeCatalog.GetCatalog(), "");
-        if (descriptions.Count < 100) throw new Exception($"Catalog wording: expected the catalog's descriptions, found {descriptions.Count}");
-        var problems = descriptions.Where(d => BannedWording.IsMatch(d.Text)).Select(d => $"{d.Path}: \"{BannedWording.Match(d.Text).Value}\" in {d.Text}").ToList();
-        if (problems.Count > 0) throw new Exception("Catalog wording: descriptions use words people do not use:\n" + string.Join("\n", problems));
-        Console.WriteLine($"PASS catalog wording: {descriptions.Count} catalog descriptions use plain words");
+        if (descriptions.Count < 100 || labels.Count < 100) throw new Exception($"Catalog wording: expected the catalog's descriptions and labels, found {descriptions.Count} and {labels.Count}");
+        var problems = descriptions.Where(d => BannedWording.IsMatch(d.Text)).Select(d => $"{d.Path}: \"{BannedWording.Match(d.Text).Value}\" in {d.Text}")
+            .Concat(labels.Where(l => BannedLabels.Contains(l.Text.Trim())).Select(l => $"{l.Path}/label: {l.Text}")).ToList();
+        if (problems.Count > 0) throw new Exception("Catalog wording: descriptions or labels use words people do not use:\n" + string.Join("\n", problems));
+        Console.WriteLine($"PASS catalog wording: {descriptions.Count} catalog descriptions and {labels.Count} step labels use plain words");
         return Task.CompletedTask;
     }
+    // "typed" counts unless it is something a person did ("you typed"); a port id is a word, a colon and an id or <…>.
     static readonly System.Text.RegularExpressions.Regex BannedWording = new(
-        @"\b(?:operands?|literals?|payloads?|invocations?|snapshot(?:s|ted)?|detached|concrete|CLR|typed|atomically|RFC|booleans?|strings?|legacy)\b|scope isolation|~[01]|\b(?:branch|field|item|carry|export):|\b[a-z_]+:<",
+        @"\b(?:operands?|literals?|payloads?|invocations?|snapshot(?:s|ted)?|detached|concrete|CLR|atomically|RFC|booleans?|strings?|legacy)\b|(?<!\b(?:you|they|we|I|is|was|were|are|be|been|have|has|had) )\btyped\b|scope isolation|~[01]|\b(?:branch|field|item|carry|export):(?:<|[A-Za-z0-9_])|\b[a-z_]+:<",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    /// <summary>Step and port labels that are jargon or squashed words; "Payload" stays, as MQTT's own term.</summary>
+    static readonly HashSet<string> BannedLabels = new(["Xor", "Foreach", "Left", "Right", "Pointer", "Carry", "Exports", "Array"], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Messages are one short sentence for people: no full stop, no validator vocabulary, no CLR type names.</summary>
     static readonly System.Text.RegularExpressions.Regex Jargon = new(@"\b(?:literal|unset|operand|payload)\b|global::|System\.|\.$|\b(?:field|data):|type-checked|\b[0-9a-f]{32}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);

@@ -33,7 +33,7 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below.
-const GRAPHS = 225, PAIRS = 739, ACCEPTED = 307, BY_VALIDATION = 133, SERVICES_ACCEPTED = 254, SERVICES_BY_VALIDATION = 142
+const GRAPHS = 226, PAIRS = 741, ACCEPTED = 308, BY_VALIDATION = 133, SERVICES_ACCEPTED = 255, SERVICES_BY_VALIDATION = 142
 // The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit).
 const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config']
 const RICH: Totals = { graphs: 21, pairs: 190, accepted: 38, rejected: 152, byValidation: 0, fallbacks: [], skipped: [] }

@@ -15,12 +15,12 @@ export interface GraphDiagnostic { nodeId: string | null; message: string; sever
 export interface ConfigSpec { label?: string; description?: string; type: string; required?: boolean; default?: unknown; enum?: unknown[]; enumSource?: 'types'; min?: number; max?: number; pattern?: string; format?: 'date-time-offset'; minItems?: number; maxItems?: number }
 /** Constraints (enum, pattern, minItems, maxItems, min, max, integer) apply to literal operands only; wires are constrained by type. */
 export interface InputSpec {
-  nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description: string; default?: unknown; min?: number; max?: number; integer?: boolean
+  nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description?: string; default?: unknown; min?: number; max?: number; integer?: boolean
   enum?: JsonValue[]; enumLabels?: string[]; pattern?: string; minItems?: number; maxItems?: number; step?: number; unit?: string
   selector?: Record<string, unknown>; advanced?: boolean; section?: string | null; example?: JsonValue
 }
 /** `when` names a boolean config key; the output exists only while it is true. */
-export interface OutputSpec { label?: string; type: string; description: string; visibility?: string; pointer?: string; refineFrom?: string; when?: string }
+export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; pointer?: string; refineFrom?: string; when?: string }
 export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 export interface TypeSpec { clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[] }
 export interface ParametricTypeSpec { param: string; valuePattern: string; label: string }
@@ -99,7 +99,7 @@ export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = no
   const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.outputs ?? {}).map(([key, value]) => [key, { ...value, type: configuredType(value.type, node) }]))) as Record<string, OutputSpec>
   if (spec?.dynamicOutputs === 'loop') for (const key of ['carry', 'exports'] as const) for (const item of declarations(node, key)) {
     if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
-    ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { type: item.type, label: item.name, description: `${key} value ${item.name}`, visibility: key === 'carry' ? 'loop' : 'outside' }
+    ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { type: item.type, label: item.name, description: `${key === 'carry' ? 'Kept between iterations' : 'Available after the loop'}: ${item.name}`, visibility: key === 'carry' ? 'loop' : 'outside' }
   }
   if (spec?.dynamicOutputs === 'trigger') Object.assign(ports, triggerOutputs(node, catalog))
   // An output with `when` exists only while that boolean config is true (D3, D9).
@@ -124,7 +124,7 @@ const serviceFieldConstraints = ['min', 'max', 'integer', 'enum', 'enumLabels', 
  * of; a default no field type accepts is left out. Mirrored by `VisualNodeCatalog.ServiceFieldInput`.
  */
 function serviceFieldInput(key: string, field: ServiceFieldSchema, catalog: VisualCatalogSnapshot): InputSpec {
-  const port: InputSpec = { types: [...(field.types ?? [])], required: field.required === true, label: text(field.label, key), description: text(field.description) || `Service field ${key}` }
+  const port: InputSpec = { types: [...(field.types ?? [])], required: field.required === true, label: text(field.label, key), ...(text(field.description) ? { description: text(field.description) } : {}) }
   for (const name of serviceFieldConstraints) if (field[name] !== null && field[name] !== undefined) Object.assign(port, { [name]: structuredClone(field[name]) })
   const fallback = field.default
   const type = fallback === null || fallback === undefined ? undefined : port.types.find(t => validLiteral(t, fallback, catalog))
@@ -166,23 +166,23 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
   if (node.kind === 'foreach' && ports.items) ports.items.types = ['array', ...Object.entries(catalog.types).filter(([, type]) => !type.nullable && type.elementType && isAssignable(type.elementType, text(node.config.itemType), catalog)).map(([id]) => id)]
   const types = Object.keys(catalog.types)
   const dynamic = spec?.dynamicInputs
-  if (dynamic === 'fields' && record(node.config.fields)) for (const key of Object.keys(node.config.fields)) ports[`field:${key}`] = { types, required: true, label: key, description: `Object field ${key}` }
+  if (dynamic === 'fields' && record(node.config.fields)) for (const key of Object.keys(node.config.fields)) ports[`field:${key}`] = { types, required: true, label: key, description: `Field ${key}` }
   if (dynamic === 'service') {
     // Ports are the keys of config.fields (D3); a known service only refines their types and the target's.
     const schema = serviceSchema(node, catalog)
     if (record(node.config.fields)) for (const key of Object.keys(node.config.fields)) {
       const field = schema && record(schema.fields) && Object.hasOwn(schema.fields, key) ? schema.fields[key] : undefined
-      ports[`field:${key}`] = record(field) ? serviceFieldInput(key, field, catalog) : { types, required: false, label: key, description: `Service field ${key}` }
+      ports[`field:${key}`] = record(field) ? serviceFieldInput(key, field, catalog) : { types, required: false, label: key }
     }
     if (schema && ports.target) {
       const domains = serviceTargetDomains(schema)
       ports.target.types = ['target', ...(domains.length ? domains.map(d => `entity_id:${d}`) : ['entity_id'])]
     }
   }
-  if (dynamic === 'items' && Array.isArray(node.config.items)) node.config.items.forEach((_, i) => { ports[`item:${i}`] = { types, required: true, label: `Item ${i + 1}`, description: `Array item ${i + 1}` } })
+  if (dynamic === 'items' && Array.isArray(node.config.items)) node.config.items.forEach((_, i) => { ports[`item:${i}`] = { types, required: true, label: `Item ${i + 1}`, description: `Item ${i + 1}` } })
   if (dynamic === 'loop' && loopOwner) for (const key of ['carry', 'exports'] as const) for (const item of declarations(loopOwner, key)) {
     if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
-    ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { types: [item.type], required: false, label: item.name, description: `Next ${key} value` }
+    ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { types: [item.type], required: false, label: item.name, description: `New value for ${item.name}` }
   }
   return ports
 }
@@ -539,7 +539,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (edge) return dataOutputs(nodes.get(edge.source)!)[edge.sourcePort]?.type
     if (raw === undefined && !spec.required) return
     const label = words.portLabel(spec, port), subject = inputSubject(node, spec, port, catalog), service = serviceName(node, catalog)
-    if (!record(raw) || raw.kind === 'unset') { if (spec.required) error(node.id, service ? `${service} needs a value for ${label}` : `${label} needs a value`, port, port); else if (raw !== undefined && !record(raw)) error(node.id, `${subject} has an invalid value`, port, port); return }
+    if (!record(raw) || raw.kind === 'unset') { if (spec.required) error(node.id, service ? `${service} needs a value for ${label}` : `${label} is required`, port, port); else if (raw !== undefined && !record(raw)) error(node.id, `${subject} has an invalid value`, port, port); return }
     let type: string | undefined
     if (raw.kind === 'variable') {
       if (typeof raw.name !== 'string' || !matches(raw.name, catalog.structures.loopDeclaration.name.pattern)) { error(node.id, `${subject} uses a variable without a valid name`, port, port); return }
@@ -626,7 +626,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     for (const [field, rule] of Object.entries(spec.config)) {
       const v = node.config[field]
       const label = configLabel(rule, field)
-      if (v === undefined) { if (rule.required) error(node.id, `${label} needs a value`, field); continue }
+      if (v === undefined) { if (rule.required) error(node.id, `${label} is required`, field); continue }
       const valid = rule.type === 'array' ? Array.isArray(v) : rule.type === 'object' ? record(v) : rule.type === 'integer' ? typeof v === 'number' && Number.isInteger(v) : typeof v === rule.type
       if (!valid) { error(node.id, `${label} must be ${words.configKind(rule.type)}`, field); continue }
       // Trigger type changes retain inactive fields so drafts and overrides are not lost.
@@ -662,11 +662,13 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (node.kind === 'trigger') {
       const type = node.config.type ?? spec.config.type.default
       const required = type === 'ha' ? ['trigger'] : type === 'entity' ? ['entity'] : type === 'daily' ? ['time','timeZone'] : type === 'once' ? ['at'] : []
-      for (const field of required) if (node.config[field] === undefined || node.config[field] === '') error(node.id, `${configLabel(spec.config[field], field)} needs a value`, field)
+      for (const field of required) if (node.config[field] === undefined || node.config[field] === '') error(node.id, `${configLabel(spec.config[field], field)} is required`, field)
       if (type === 'ha' && record(node.config.trigger) && ![node.config.trigger.trigger, node.config.trigger.platform].some(p => typeof p === 'string' && p.trim())) error(node.id, 'Home Assistant trigger needs a platform', 'trigger')
     }
-    if (['entity_field','wait_until'].includes(node.kind) && node.config.field === 'attribute' && (typeof node.config.attribute !== 'string' || !node.config.attribute.trim())) error(node.id, 'Attribute needs a value', 'attribute')
-    if (node.kind === 'get_field' && (typeof node.config.pointer !== 'string' || !/^(?:\/(?:[^~]|~[01])*)*$/.test(node.config.pointer))) error(node.id, 'Pointer must be a JSON pointer such as /state', 'pointer')
+    if (['entity_field','wait_until'].includes(node.kind) && node.config.field === 'attribute' && (typeof node.config.attribute !== 'string' || !node.config.attribute.trim())) error(node.id, 'Attribute is required', 'attribute')
+    // A path that starts with / can still be wrong in one way: a ~ that is not ~0 (a ~ in a key) or ~1 (a / in a key).
+    if (node.kind === 'get_field' && (typeof node.config.pointer !== 'string' || !/^(?:\/(?:[^~]|~[01])*)*$/.test(node.config.pointer)))
+      error(node.id, typeof node.config.pointer === 'string' && node.config.pointer.startsWith('/') ? 'Path can use ~ only as ~0 for a ~ or ~1 for a / in a name' : 'Path must start with /, such as /state', 'pointer')
     if (node.kind === 'parallel' && Array.isArray(node.config.branches)) {
       const ids = new Set<string>()
       for (const branch of node.config.branches) {
@@ -681,7 +683,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         for (const decl of declarations(node, group)) {
           if (!record(decl) || typeof decl.name !== 'string' || !matches(decl.name, catalog.structures.loopDeclaration.name.pattern) || names.has(decl.name) || typeof decl.type !== 'string' || !knownType(decl.type)) { error(node.id, `The ${group === 'carry' ? 'carried' : 'exported'} values of this loop need unique names and known types`, group); continue }
           names.add(decl.name)
-          operand(node, `${group}.${decl.name}.initial`, decl.initial, { types: [decl.type], required: true, description: 'Initial value', label: `Initial ${decl.name}` })
+          operand(node, `${group}.${decl.name}.initial`, decl.initial, { types: [decl.type], required: true, description: 'Starting value', label: `Initial ${decl.name}` })
         }
       }
       if (['while','until'].includes(node.kind)) {

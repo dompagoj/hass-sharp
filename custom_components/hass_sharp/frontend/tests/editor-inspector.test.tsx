@@ -91,6 +91,15 @@ it('shows a wire selected on the canvas read only in the inspector', async () =>
  wire.querySelectorAll<HTMLButtonElement>('.hs-insp-wire__end')[1].click()
  await vi.waitFor(()=>expect(host.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Node label"]')?.placeholder).toBe('State condition'))
 })
+it('finds library steps by their kind id as well as their name', () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const search = host.querySelector<HTMLInputElement>('input[aria-label="Search nodes"]')!
+  for (const [query, label] of [['xor', 'Exclusive or'], ['foreach', 'For each']]) {
+    search.value = query
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect([...host.querySelectorAll('.hs-palette-item')].map(item => item.getAttribute('aria-label'))).toEqual([`About ${label}`])
+  }
+})
 it('palette clicks describe configuration and connections without editing history', () => {
   const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
   const before = json(host)

@@ -319,15 +319,15 @@ it('keeps local/backend errors beneath the canvas and focuses exact typed input 
   const node = el.querySelector<HTMLElement>('[data-id="branch"]')!,
     port = node.querySelector<HTMLElement>('.target[data-handleid="data:value"]')!
   expect(node.querySelector('.hs-flow-card--error')).not.toBeNull()
-  expect(port.getAttribute('title')).toContain('Condition needs a value')
+  expect(port.getAttribute('title')).toContain('Condition is required')
   const tooltip = node.querySelector('[role="tooltip"]')!
-  expect(tooltip.textContent).toContain('Condition needs a value')
+  expect(tooltip.textContent).toContain('Condition is required')
   expect(port.getAttribute('aria-describedby')).toBe(tooltip.id)
   node.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
   port.focus()
   expect(node.querySelector('.hs-flow-card--error')).not.toBeNull()
   ;[...list.querySelectorAll<HTMLButtonElement>('button')]
-    .find(b => b.textContent === 'Condition needs a value')!
+    .find(b => b.textContent === 'Condition is required')!
     .click()
   await Promise.resolve()
   const row = [...el.querySelectorAll<HTMLElement>('.hs-inspector [data-input-id]')].find(r => r.dataset.inputId === 'value')!
@@ -335,7 +335,7 @@ it('keeps local/backend errors beneath the canvas and focuses exact typed input 
   expect(node.classList.contains('selected')).toBe(true)
   fixtureBackend.controls.preview = { valid: true, source: 'current', sourceMap: [], diagnostics: [] }
   row.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()
-  expect(list.textContent).not.toContain('Condition needs a value')
+  expect(list.textContent).not.toContain('Condition is required')
   expect(list.textContent).not.toContain('Home Assistant: entity_id is required')
   expect(node.querySelector('.hs-flow-card--error')).toBeNull()
   client.clear()

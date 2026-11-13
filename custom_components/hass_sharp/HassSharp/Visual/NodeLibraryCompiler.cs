@@ -121,7 +121,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
                 root["nodes"]![kind] = new JsonObject {
                     ["label"] = title, ["category"] = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Category").Value.Value as string ?? "Custom",
                     ["description"] = DocText(doc?.Element("summary")), ["minGraphVersion"] = graphVersion, ["runtimeVersions"] = new JsonArray(graphVersion),
-                    ["sourceId"] = source.Id, ["argumentStorage"] = "arguments", ["config"] = new JsonObject { ["arguments"] = new JsonObject { ["type"] = "object", ["default"] = new JsonObject(), ["description"] = "Typed method arguments" } },
+                    ["sourceId"] = source.Id, ["argumentStorage"] = "arguments", ["config"] = new JsonObject { ["arguments"] = new JsonObject { ["type"] = "object", ["default"] = new JsonObject(), ["description"] = "The values this step takes" } },
                     ["inputs"] = input, ["outputs"] = result == null ? new JsonObject() : new JsonObject { ["result"] = new JsonObject { ["type"] = TypeIdentity(result), ["label"] = PortLabel(method.GetReturnTypeAttributes()) ?? "Result", ["description"] = DocText(doc?.Element("returns")) } },
                     ["execution"] = new JsonArray("next", "error") };
                 if (methods.Any(m => m.Kind == kind)) { Report(declaration.Identifier.GetLocation(), "Duplicate node method signature"); continue; }

@@ -337,7 +337,7 @@ public static class VisualGraphValidator
             var label = Words.PortLabel(spec, port); var subject = Prefix(node) + label;
             if (raw is not JsonObject operand || Text(raw, "kind") == "unset")
             {
-                if (required) Error(Id(node), ServiceName(node) is { } service ? $"{service} needs a value for {label}" : $"{label} needs a value", port, port);
+                if (required) Error(Id(node), ServiceName(node) is { } service ? $"{service} needs a value for {label}" : $"{label} is required", port, port);
                 else if (present && raw is not JsonObject) Error(Id(node), $"{subject} has an invalid value", port, port);
                 return null;
             }
@@ -456,7 +456,7 @@ public static class VisualGraphValidator
             {
                 var rule = rawRule!; var value = cfg[field];
                 var label = ConfigLabel(rule, field);
-                if (value == null && !cfg.ContainsKey(field)) { if (Bool(rule, "required")) Error(id, $"{label} needs a value", field); continue; }
+                if (value == null && !cfg.ContainsKey(field)) { if (Bool(rule, "required")) Error(id, $"{label} is required", field); continue; }
                 var valid = Text(rule, "type") switch
                 {
                     "array" => value is JsonArray,
@@ -509,11 +509,13 @@ public static class VisualGraphValidator
             {
                 var type = TriggerType(node, snapshot);
                 string[] required = type switch { "ha" => ["trigger"], "entity" => ["entity"], "daily" => ["time", "timeZone"], "once" => ["at"], _ => [] };
-                foreach (var field in required) if (!cfg.ContainsKey(field) || cfg[field] is JsonValue v && v.TryGetValue<string>(out var s) && s == "") Error(id, $"{ConfigLabel(spec["config"]?[field], field)} needs a value", field);
+                foreach (var field in required) if (!cfg.ContainsKey(field) || cfg[field] is JsonValue v && v.TryGetValue<string>(out var s) && s == "") Error(id, $"{ConfigLabel(spec["config"]?[field], field)} is required", field);
                 if (type == "ha" && cfg["trigger"] is JsonObject trigger && string.IsNullOrWhiteSpace(Text(trigger, "trigger")) && string.IsNullOrWhiteSpace(Text(trigger, "platform"))) Error(id, "Home Assistant trigger needs a platform", "trigger");
             }
-            if (kind is "entity_field" or "wait_until" && Text(cfg, "field") == "attribute" && string.IsNullOrWhiteSpace(Text(cfg, "attribute"))) Error(id, "Attribute needs a value", "attribute");
-            if (kind == "get_field" && (cfg["pointer"] is not JsonValue pointer || !pointer.TryGetValue<string>(out var p) || !Match(p, "^(?:/(?:[^~]|~[01])*)*$"))) Error(id, "Pointer must be a JSON pointer such as /state", "pointer");
+            if (kind is "entity_field" or "wait_until" && Text(cfg, "field") == "attribute" && string.IsNullOrWhiteSpace(Text(cfg, "attribute"))) Error(id, "Attribute is required", "attribute");
+            // A path that starts with / can still be wrong in one way: a ~ that is not ~0 (a ~ in a key) or ~1 (a / in a key).
+            if (kind == "get_field" && (cfg["pointer"] is not JsonValue pointer || !pointer.TryGetValue<string>(out var p) || !Match(p, "^(?:/(?:[^~]|~[01])*)*$")))
+                Error(id, cfg["pointer"] is JsonValue path && path.TryGetValue<string>(out var text) && text.StartsWith('/') ? "Path can use ~ only as ~0 for a ~ or ~1 for a / in a name" : "Path must start with /, such as /state", "pointer");
             if (kind == "parallel" && cfg["branches"] is JsonArray branches)
             {
                 var ids = new HashSet<string>();

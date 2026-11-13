@@ -39,7 +39,7 @@ export function QuickAdd(props: {
   const items = createMemo(() => {
     const words = search().toLocaleLowerCase().split(/\s+/).filter(Boolean)
     return offered().filter(item => {
-      const text = `${item.label} ${item.category} ${item.description}`.toLocaleLowerCase()
+      const text = `${item.label} ${item.kind} ${item.category} ${item.description}`.toLocaleLowerCase()
       return words.every(word => text.includes(word))
     })
   })

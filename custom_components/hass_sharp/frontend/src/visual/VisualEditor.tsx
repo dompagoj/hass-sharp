@@ -261,7 +261,7 @@ export function VisualEditor(props: {
                     each={palette().filter(
                       item =>
                         item.category === category &&
-                        `${item.label} ${item.description}`.toLowerCase().includes(librarySearch().toLowerCase()),
+                        `${item.label} ${item.kind} ${item.description}`.toLowerCase().includes(librarySearch().toLowerCase()),
                     )}
                   >
                     {item => (

@@ -114,9 +114,9 @@
     "valid": false,
     "nodeId": "b",
     "inputId": "value",
-    "contains": "Condition needs a value",
+    "contains": "Condition is required",
     "messages": [
-      "Condition needs a value"
+      "Condition is required"
     ]
   },
   {
@@ -643,9 +643,53 @@
     "valid": false,
     "nodeId": "f",
     "inputId": "pointer",
-    "contains": "pointer",
+    "contains": "path",
     "messages": [
-      "Pointer must be a JSON pointer such as /state"
+      "Path can use ~ only as ~0 for a ~ or ~1 for a / in a name"
+    ]
+  },
+  {
+    "name": "json pointer must start with a slash",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "get_field",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "object",
+              "value": {}
+            },
+            "pointer": "a",
+            "type": "string"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "f",
+    "inputId": "pointer",
+    "contains": "path",
+    "messages": [
+      "Path must start with /, such as /state"
     ]
   },
   {
@@ -689,9 +733,9 @@
     "valid": false,
     "nodeId": "t",
     "inputId": "trigger",
-    "contains": "Trigger needs a value",
+    "contains": "Trigger is required",
     "messages": [
-      "Trigger needs a value"
+      "Trigger is required"
     ]
   },
   {
@@ -2341,9 +2385,9 @@
     "valid": false,
     "nodeId": "b",
     "inputId": "value",
-    "contains": "Condition needs a value",
+    "contains": "Condition is required",
     "messages": [
-      "Condition needs a value"
+      "Condition is required"
     ]
   },
   {
@@ -2446,9 +2490,9 @@
     "valid": false,
     "nodeId": "r",
     "inputId": "exports.n.initial",
-    "contains": "Initial n needs a value",
+    "contains": "Initial n is required",
     "messages": [
-      "Initial n needs a value"
+      "Initial n is required"
     ]
   },
   {
@@ -2552,9 +2596,9 @@
     "valid": false,
     "nodeId": "o",
     "inputId": "field:on",
-    "contains": "on needs a value",
+    "contains": "on is required",
     "messages": [
-      "On needs a value"
+      "On is required"
     ]
   },
   {
@@ -3341,9 +3385,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "type",
-    "contains": "Type needs a value",
+    "contains": "Type is required",
     "messages": [
-      "Type needs a value"
+      "Type is required"
     ]
   },
   {
@@ -5925,7 +5969,7 @@
     "nodeId": "t",
     "inputId": "at",
     "messages": [
-      "At needs a value"
+      "At is required"
     ]
   },
   {
@@ -13141,7 +13185,7 @@
     "contains": "Data cycle is forbidden",
     "messages": [
       "Data cycle is forbidden",
-      "Value needs a value"
+      "Value is required"
     ],
     "codes": [
       "cycle.data"
