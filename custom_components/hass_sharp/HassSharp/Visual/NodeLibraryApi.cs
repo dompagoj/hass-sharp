@@ -20,23 +20,32 @@ public partial class HassSharpManager
     {
         AuthoringFiles.Recover();
         var documents = LibraryDocuments.List();
-        return (documents, LibraryWorkspaceGeneration(documents), WithServices(new NodeLibraryCompiler(_diagnosticsProvider).Preview(documents.Select(d => d.AsSource()))));
+        return (documents, LibraryWorkspaceGeneration(documents), new NodeLibraryCompiler(_diagnosticsProvider).Preview(documents.Select(d => d.AsSource())));
     }
-    // Validators see the current service schemas; the catalog root and generations never do (D2).
-    NodeLibraryPreview WithServices(NodeLibraryPreview preview) => preview with { Snapshot = preview.Snapshot.WithServices(ServiceSchemas) };
+    // Only authoring validation of one graph sees the service schemas. Init and the library-save
+    // rebuild use SavedLibraries' snapshot without them, so loading never depends on which
+    // integrations had registered services (C4, D3); the catalog root never contains them (D2).
+    VisualCatalogSnapshot AuthoringSnapshot(VisualCatalogSnapshot saved) => saved.WithServices(ServiceSchemas);
     static string Success(object result) => JsonSerializer.Serialize(new { version = 1, ok = true, result }, VisualStore.Json);
+    static bool IsServicesRequest(string requestJson)
+    {
+        // Anything malformed falls through to the gated path, which reports it as before.
+        try { return JsonNode.Parse(requestJson) is JsonObject request && request["operation"] is JsonValue op && op.TryGetValue<string>(out var name) && name == "services"; }
+        catch (JsonException) { return false; }
+    }
     static string RequiredString(JsonObject request, string key) => request[key]?.GetValue<string>() ?? throw new ArgumentException($"{key} is required");
 
     public async Task<string> NodeLibraryRequest(string requestJson)
     {
+        // The schemas are immutable and swapped whole: the editor never waits behind Init's compiles for them.
+        if (IsServicesRequest(requestJson)) return Success(ServiceSchemas.Section);
         await _visualGate.WaitAsync();
         try
         {
             var request = JsonNode.Parse(requestJson)!.AsObject();
             var operation = RequiredString(request, "operation");
-            if (operation == "services") return Success(ServiceSchemas.Section);
             var saved = SavedLibraries();
-            if (operation == "catalog") return Success(new { catalog = saved.Preview.Snapshot.Catalog, generation = saved.Generation, servicesGeneration = saved.Preview.Snapshot.Services!.Generation, saved = true, valid = saved.Preview.Valid, diagnostics = saved.Preview.Diagnostics });
+            if (operation == "catalog") return Success(new { catalog = saved.Preview.Snapshot.Catalog, generation = saved.Generation, servicesGeneration = ServiceSchemas.Generation, saved = true, valid = saved.Preview.Valid, diagnostics = saved.Preview.Diagnostics });
             if (operation == "list") return Success(new { documents = saved.Documents, generation = saved.Generation });
             var id = RequiredString(request, "id"); NodeLibraryStore.ValidateId(id);
             var old = saved.Documents.SingleOrDefault(d => d.Id == id);
@@ -87,7 +96,7 @@ public partial class HassSharpManager
             // Source ordering is part of the generated artifact identity and must match reload.
             var candidates = saved.Documents.Where(d => d.Id != id).Concat(document == null ? [] : new[] { document })
                 .OrderBy(d => d.Id, StringComparer.Ordinal).ToArray();
-            var candidate = WithServices(new NodeLibraryCompiler(_diagnosticsProvider).Preview(candidates.Select(d => d.AsSource())));
+            var candidate = new NodeLibraryCompiler(_diagnosticsProvider).Preview(candidates.Select(d => d.AsSource()));
             var generation = LibraryWorkspaceGeneration(candidates);
             // Every artifact embeds every source, including advanced C# and indirect helper dependencies.
             var graphs = VisualDocuments.List(strict: true);

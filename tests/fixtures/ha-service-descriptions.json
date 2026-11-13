@@ -703,6 +703,13 @@
         "kept": {"selector": {"boolean": {}}}
       }
     },
+    "odd_texts": {
+      "name": 5,
+      "description": {"text": "not a string"},
+      "fields": {
+        "odd_label": {"name": ["Odd"], "description": "Kept with its key as label.", "selector": {"boolean": {}}}
+      }
+    },
     "not_an_object": 7,
     "Bad-Service": {"fields": {}},
     "bad_target": {"target": "everything", "fields": {}},

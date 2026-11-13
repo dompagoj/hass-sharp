@@ -74,8 +74,8 @@ public sealed class ServiceSchemaCatalog
     {
         var description = node as JsonObject ?? throw new FormatException("the description is not an object");
         var raw = Object(description, "fields") ?? new JsonObject();
-        // Top-level fields first, then sections by name: a key repeated across sections resolves
-        // the same way whatever order the input lists them in. Sections exist only for display.
+        // HA's display order: top-level fields first, then each section's fields, all in input order.
+        // A key repeated in a later section is skipped. Sections exist only for display.
         var topLevel = new List<KeyValuePair<string, JsonNode?>>();
         var groups = new List<(string? Section, IEnumerable<KeyValuePair<string, JsonNode?>> Fields)> { (null, topLevel) };
         foreach (var (key, field) in raw)
@@ -86,17 +86,18 @@ public sealed class ServiceSchemaCatalog
             }
             else topLevel.Add(KeyValuePair.Create(key, field));
         var normalised = new SortedDictionary<string, JsonObject>(StringComparer.Ordinal);
-        foreach (var (section, fields) in groups.OrderBy(g => g.Section, StringComparer.Ordinal))
+        foreach (var (section, fields) in groups)
         foreach (var (key, field) in fields)
         {
             if (normalised.ContainsKey(key)) { log($"Skipping field {key} of {id}: the name is already used by another section"); continue; }
-            try { normalised[key] = Field(key, field, section); }
-            catch (Exception ex) { log($"Skipping field {key} of {id}: {ex.Message}"); }
+            try { normalised[key] = Field(key, field, section, $"field {key} of {id}", log); }
+            catch (Exception ex) { log($"Skipping field {key} of {id}: {ex.Message}"); continue; }
+            normalised[key]["order"] = normalised.Count - 1;
         }
+        var (name, text) = Texts(description, service, "service " + id, log);
         var result = new JsonObject
         {
-            ["domain"] = domain, ["service"] = service,
-            ["name"] = String(description, "name") ?? service, ["description"] = String(description, "description") ?? "",
+            ["domain"] = domain, ["service"] = service, ["name"] = name, ["description"] = text,
             ["target"] = Target(description["target"]), ["response"] = Response(description["response"]),
             ["fields"] = new JsonObject(),
         };
@@ -105,14 +106,16 @@ public sealed class ServiceSchemaCatalog
     }
 
     // Contract C3: the selector decides the accepted types and the literal constraints.
-    static JsonObject Field(string key, JsonNode? node, string? section)
+    // The caller fills in "order" once the field is known to be kept.
+    static JsonObject Field(string key, JsonNode? node, string? section, string entry, Action<string> log)
     {
         var field = node as JsonObject ?? throw new FormatException("the field is not an object");
         var (selector, config) = Selector(field["selector"]);
+        var (label, text) = Texts(field, key, entry, log);
         var spec = new JsonObject
         {
-            ["label"] = String(field, "name") ?? key, ["description"] = String(field, "description") ?? "", ["types"] = null,
-            ["required"] = Bool(field, "required") ?? false, ["advanced"] = Bool(field, "advanced") ?? false, ["section"] = section,
+            ["label"] = label, ["description"] = text, ["types"] = null,
+            ["required"] = Bool(field, "required") ?? false, ["advanced"] = Bool(field, "advanced") ?? false, ["section"] = section, ["order"] = null,
             ["min"] = null, ["max"] = null, ["integer"] = false, ["step"] = null, ["unit"] = null, ["enum"] = null, ["enumLabels"] = null,
             ["pattern"] = null, ["minItems"] = null, ["maxItems"] = null,
             ["default"] = Canonical(field["default"]), ["example"] = Canonical(field["example"]),
@@ -140,7 +143,7 @@ public sealed class ServiceSchemaCatalog
                 var value = config?["value"] ?? throw new FormatException("a constant selector needs a value");
                 types = [TypeOf(value)];
                 spec["enum"] = new JsonArray(Canonical(value));
-                if (String(config, "label") is { } label) spec["enumLabels"] = new JsonArray(label);
+                if (String(config, "label") is { } constantLabel) spec["enumLabels"] = new JsonArray(constantLabel);
                 break;
             default: types = AnyType; break;
         }
@@ -156,8 +159,8 @@ public sealed class ServiceSchemaCatalog
         return (name, config switch { null => null, JsonObject options => options, _ => throw new FormatException($"the {name} selector options are not an object") });
     }
 
-    // HA's normalised selectors always state a step; integer literals are demanded only when one is
-    // stated, whole, and the mode does not ask for floats. An omitted step still reports HA's default of 1.
+    // HA fills in step 1 for every number selector and enforces only min and max, so the step is a
+    // widget increment and never demands integers ("integer" stays false).
     static void NumberConstraints(JsonObject spec, JsonObject? config)
     {
         var stated = config?["step"];
@@ -166,7 +169,6 @@ public sealed class ServiceSchemaCatalog
             : Number(config, "step") ?? 1;
         spec["min"] = Number(config, "min"); spec["max"] = Number(config, "max");
         spec["step"] = step; spec["unit"] = String(config, "unit_of_measurement");
-        spec["integer"] = stated != null && step is { } whole && whole > 0 && whole == Math.Floor(whole) && String(config, "mode") != "float";
     }
 
     static void SelectOptions(JsonObject spec, JsonObject? config)
@@ -269,6 +271,16 @@ public sealed class ServiceSchemaCatalog
     }
 
     static JsonArray Array(IReadOnlyList<string>? values) => new(values?.Select(v => (JsonNode?)v).ToArray() ?? []);
+
+    // Descriptions set through async_set_service_schema are not validated by HA: a non-text name or
+    // description falls back (key, empty text) with one log line instead of dropping the entry.
+    static (string Name, string Description) Texts(JsonObject owner, string fallback, string entry, Action<string> log)
+    {
+        static bool IsText(JsonNode? node) => node is null || node is JsonValue v && v.GetValueKind() == JsonValueKind.String;
+        var (name, description) = (owner["name"], owner["description"]);
+        if (!IsText(name) || !IsText(description)) log($"Ignoring the non-text name or description of {entry}");
+        return (IsText(name) ? name?.GetValue<string>() ?? fallback : fallback, IsText(description) ? description?.GetValue<string>() ?? "" : "");
+    }
 
     static IReadOnlyList<string>? Strings(JsonObject? owner, string key) => owner?[key] switch
     {

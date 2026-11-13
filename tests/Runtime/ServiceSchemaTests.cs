@@ -31,6 +31,8 @@ public static class ServiceSchemaTests
         SelectorMapping();
         Generation(descriptions, catalog);
         await Manager(descriptions, catalog);
+        await Attachment(descriptions, catalog);
+        Ordering();
     }
 
     static JsonObject Item(ServiceSchemaCatalog catalog, string id) => catalog.Items[id] as JsonObject ?? throw new Exception($"service {id} missing");
@@ -57,7 +59,8 @@ public static class ServiceSchemaTests
         Equal(Item(catalog, "script.turn_on")["fields"], "{}", "a service without fields");
         var brightness = Field(catalog, "light.turn_on", "brightness_pct");
         Check(brightness["min"]!.GetValue<double>() == 0 && brightness["max"]!.GetValue<double>() == 100 && brightness["step"]!.GetValue<double>() == 1
-            && brightness["unit"]!.GetValue<string>() == "%" && brightness["integer"]!.GetValue<bool>(), "number constraints of brightness_pct: " + Text(brightness));
+            && brightness["unit"]!.GetValue<string>() == "%" && !brightness["integer"]!.GetValue<bool>(), "number constraints of brightness_pct (HA accepts 40.5): " + Text(brightness));
+        Check(!Field(catalog, "light.turn_on", "transition")["integer"]!.GetValue<bool>(), "transition accepts 0.5");
         Equal(brightness["filter"], """{"attribute":{"supported_color_modes":["brightness","color_temp","hs","xy","rgb","rgbw","rgbww"]}}""", "attribute field filter");
         Equal(Field(catalog, "light.turn_on", "transition")["filter"], """{"supportedFeatures":[32]}""", "supported-features field filter");
         var rgbw = Field(catalog, "light.turn_on", "rgbw_color");
@@ -65,19 +68,31 @@ public static class ServiceSchemaTests
         Check(Field(catalog, "light.turn_on", "transition")["section"] == null, "top-level fields have no section");
         Check(!Item(catalog, "light.turn_on")["fields"]!.AsObject().ContainsKey("additional_fields"), "a section is not a field");
         Equal(Field(catalog, "light.turn_on", "rgb_color")["types"], """["array"]""", "color_rgb");
+        int Order(string field) => Field(catalog, "light.turn_on", field)["order"]!.GetValue<int>();
+        Check(Order("transition") == 0 && Order("brightness_pct") == 3, "order follows HA's input order");
+        Check(Order("effect") < Order("rgbw_color") && Order("transition") < Order("flash"), "top-level fields come before the additional_fields section");
+        var orders = Item(catalog, "light.turn_on")["fields"]!.AsObject().Select(p => p.Value!["order"]!.GetValue<int>()).Order().ToArray();
+        Check(orders.SequenceEqual(Enumerable.Range(0, orders.Length)), "order is flattened and 0-based: " + string.Join(",", orders));
+        var keys = Field(catalog, "light.turn_on", "transition").Select(p => p.Key).ToArray();
+        Check(keys[System.Array.IndexOf(keys, "section") + 1] == "order", "order follows section in the emitted field");
         Console.WriteLine("PASS service schema recorded HA services: target, response, sections, filters");
     }
 
     static void Synthetic(ServiceSchemaCatalog catalog, List<string> logged)
     {
         var level = Field(catalog, "hass_sharp_test.sectioned", "level");
-        Check(level["section"] == null && level["required"]!.GetValue<bool>() && level["default"]!.ToJsonString() == "3" && level["integer"]!.GetValue<bool>(),
+        Check(level["section"] == null && level["required"]!.GetValue<bool>() && level["default"]!.ToJsonString() == "3" && !level["integer"]!.GetValue<bool>() && level["order"]!.GetValue<int>() == 0,
             "a top-level field wins over a same-named section field: " + Text(level));
         var speed = Field(catalog, "hass_sharp_test.sectioned", "speed");
         Check(speed["section"]!.GetValue<string>() == "advanced_options" && speed["advanced"]!.GetValue<bool>() && speed["example"]!.GetValue<string>() == "fast", "section, advanced, example");
         Equal(speed["enum"], """["slow","fast"]""", "labelled select values");
         Equal(speed["enumLabels"], """["Slow","fast"]""", "labelled select labels");
         Check(Field(catalog, "hass_sharp_test.sectioned", "note")["section"]!.GetValue<string>() == "extras", "second section");
+        Check(speed["order"]!.GetValue<int>() == 1 && Field(catalog, "hass_sharp_test.sectioned", "note")["order"]!.GetValue<int>() == 2, "sections follow in input order; a skipped duplicate takes no order");
+        var odd = Item(catalog, "hass_sharp_test.odd_texts");
+        Check(odd["name"]!.GetValue<string>() == "odd_texts" && odd["description"]!.GetValue<string>() == "", "a non-text service name or description falls back: " + Text(odd));
+        var oddLabel = Field(catalog, "hass_sharp_test.odd_texts", "odd_label");
+        Check(oddLabel["label"]!.GetValue<string>() == "odd_label" && oddLabel["description"]!.GetValue<string>() == "Kept with its key as label.", "a non-text field name falls back to the key");
         Check(Item(catalog, "hass_sharp_test.sectioned")["name"]!.GetValue<string>() == "Sectioned", "service name");
         var filtered = Item(catalog, "hass_sharp_test.filtered");
         Equal(filtered["target"], """{"entity":[{"domain":["fan"],"deviceClass":["ceiling"],"supportedFeatures":[1]}],"device":[{"integration":"zha","manufacturer":null,"model":"Ceiling fan","modelId":null}]}""", "dict-form target");
@@ -87,9 +102,9 @@ public static class ServiceSchemaTests
         Check(Item(catalog, "hass_sharp_test.partly_malformed")["fields"]!.AsObject().Select(p => p.Key).SequenceEqual(["kept"]), "malformed fields are skipped, the rest survive");
         foreach (var skipped in new[] { "hass_sharp_test.not_an_object", "hass_sharp_test.Bad-Service", "hass_sharp_test.bad_target", "hass_sharp_test.bad_response", "hass_sharp_test.bad_fields", "broken_domain.turn_on", "Bad Domain.turn_on" })
             Check(!catalog.Items.ContainsKey(skipped), $"malformed service {skipped} is skipped");
-        foreach (var name in new[] { "broken_domain", "Bad Domain", "not_an_object", "Bad-Service", "bad_target", "bad_response", "bad_fields", "two_selectors", "scalar_field", "bad_minimum", "unknown_options", "field level of hass_sharp_test.sectioned" })
+        foreach (var name in new[] { "broken_domain", "Bad Domain", "not_an_object", "Bad-Service", "bad_target", "bad_response", "bad_fields", "two_selectors", "scalar_field", "bad_minimum", "unknown_options", "field level of hass_sharp_test.sectioned", "service hass_sharp_test.odd_texts", "field odd_label of hass_sharp_test.odd_texts" })
             Check(logged.Count(l => l.Contains(name, StringComparison.Ordinal)) == 1, $"exactly one log line for {name}: {string.Join(" | ", logged)}");
-        Check(logged.Count == 12, "one log line per skipped entry: " + string.Join(" | ", logged));
+        Check(logged.Count == 14, "one log line per skipped or repaired entry: " + string.Join(" | ", logged));
         foreach (var bad in new[] { "[]", "\"text\"", "not json", "null" })
         {
             var threw = false;
@@ -147,7 +162,7 @@ public static class ServiceSchemaTests
         Types("number_float", "number");
         Check(F("number_float")["min"]!.GetValue<double>() == 1 && F("number_float")["max"]!.GetValue<double>() == 5 && F("number_float")["step"]!.GetValue<double>() == 0.5
             && F("number_float")["unit"]!.GetValue<string>() == "W" && !F("number_float")["integer"]!.GetValue<bool>(), "fractional step: " + Text(F("number_float")));
-        Check(F("number_whole")["integer"]!.GetValue<bool>() && F("number_whole")["step"]!.GetValue<double>() == 2, "whole step demands integers");
+        Check(!F("number_whole")["integer"]!.GetValue<bool>() && F("number_whole")["step"]!.GetValue<double>() == 2, "a whole step is only the widget increment");
         Check(!F("number_float_mode")["integer"]!.GetValue<bool>(), "float mode does not demand integers");
         Check(F("number_any")["step"] == null && !F("number_any")["integer"]!.GetValue<bool>(), "step any");
         Types("text", "string"); Check(F("text")["selector"]!["text"]!["multiline"]!.GetValue<bool>(), "multiline hint");
@@ -182,17 +197,68 @@ public static class ServiceSchemaTests
         Console.WriteLine($"PASS service schema selector mapping: {fields.Count} C3 cases");
     }
 
-    static JsonNode? Reversed(JsonNode? node) => node switch
+    // Reverses every object's keys except a "fields" object's, whose order is HA's display order.
+    // Install a later sequence, then an earlier one that finished after it: the later catalog stays.
+    static void Ordering()
     {
-        JsonObject o => new JsonObject(o.Reverse().Select(p => KeyValuePair.Create(p.Key, Reversed(p.Value)))),
-        JsonArray a => new JsonArray(a.Select(Reversed).ToArray()),
+        var manager = new HassSharpManager(Path.Combine(Path.GetTempPath(), "service-order-" + Guid.NewGuid()));
+        manager.SetServiceDescriptions("""{"light":{"turn_on":{"fields":{}}}}""", 2);
+        manager.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}}}""", 1);
+        Check(manager.ServiceSchemas.Items.Select(p => p.Key).SequenceEqual(["light.turn_on"]), "an earlier push finishing later never replaces a later one");
+        manager.SetServiceDescriptions("""{"light":{"toggle":{"fields":{}}}}""", 3);
+        Check(manager.ServiceSchemas.Items.Select(p => p.Key).SequenceEqual(["light.toggle"]), "a later sequence replaces an earlier one");
+        Console.WriteLine("PASS service schema push ordering by sequence");
+    }
+
+    // Services reach only authoring validation of one graph (C4 "Where services are attached").
+    // Observed through the private selection methods: Init and the catalog op build on SavedLibraries,
+    // the library-save rebuild on a fresh compiler preview, and VisualApi preview/save on AuthoringSnapshot.
+    static async Task Attachment(string descriptions, ServiceSchemaCatalog expected)
+    {
+        var previous = HassPath.HassConfiguration;
+        var path = Path.Combine(Path.GetTempPath(), "service-attach-" + Guid.NewGuid());
+        var manager = new HassSharpManager(path);
+        try
+        {
+            manager.SetServiceDescriptions(descriptions);
+            await manager.Init([]);
+            const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
+            var saved = typeof(HassSharpManager).GetMethod("SavedLibraries", Private)!.Invoke(manager, null)!;
+            var savedPreview = (NodeLibraryPreview)saved.GetType().GetField("Item3")!.GetValue(saved)!;
+            Check(savedPreview.Snapshot.Services == null, "the snapshot Init validates with carries no services");
+            Check(new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([]).Snapshot.Services == null, "the library-save rebuild snapshot carries no services");
+            var authoring = (VisualCatalogSnapshot)typeof(HassSharpManager).GetMethod("AuthoringSnapshot", Private)!.Invoke(manager, [savedPreview.Snapshot])!;
+            Check(authoring.Services is { } attached && attached.Generation == expected.Generation && ReferenceEquals(attached, manager.ServiceSchemas), "VisualApi preview/save validates with the pushed services");
+            Check(ReferenceEquals(authoring.Root, savedPreview.Snapshot.Root), "authoring shares the saved catalog root");
+            var graph = JsonNode.Parse("""{"version":5,"name":"Attached","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}}],"edges":[]}""")!.AsObject();
+            var preview = JsonNode.Parse(await manager.VisualRequest(JsonSerializer.Serialize(new { operation = "preview", graph })))!;
+            Check(preview["ok"]!.GetValue<bool>() && preview["result"]!["valid"]!.GetValue<bool>(), "VisualApi preview with services attached: " + preview.ToJsonString());
+            Console.WriteLine("PASS service schema attachment: none for Init and library rebuild, pushed for VisualApi authoring");
+        }
+        finally { await manager.UnloadAsync(); HassPath.HassConfiguration = previous; try { Directory.Delete(path, true); } catch { } }
+    }
+
+    static JsonNode? Reversed(JsonNode? node, bool keepOrder = false) => node switch
+    {
+        JsonObject o => new JsonObject((keepOrder ? o : o.Reverse()).Select(p => KeyValuePair.Create(p.Key, Reversed(p.Value, p.Key == "fields")))),
+        JsonArray a => new JsonArray(a.Select(n => Reversed(n)).ToArray()),
         _ => node?.DeepClone(),
     };
 
     static void Generation(string descriptions, ServiceSchemaCatalog catalog)
     {
         var reversed = ServiceSchemaCatalog.Parse(Reversed(JsonNode.Parse(descriptions))!.ToJsonString(), _ => { });
-        Check(reversed.Generation == catalog.Generation && reversed.CanonicalJson == catalog.CanonicalJson, "generation is stable across input key order");
+        Check(reversed.Generation == catalog.Generation && reversed.CanonicalJson == catalog.CanonicalJson, "generation is stable across domain, service and raw selector/default/example key order");
+        Check(JsonNode.Parse(descriptions)!["light"]!["turn_on"]!["fields"]!["transition"]!["selector"]!["number"]!.AsObject().First().Key
+            != Reversed(JsonNode.Parse(descriptions))!["light"]!["turn_on"]!["fields"]!["transition"]!["selector"]!["number"]!.AsObject().First().Key, "the reversal reaches raw selector keys");
+        var swapped = JsonNode.Parse(descriptions)!;
+        var turnOn = swapped["light"]!["turn_on"]!.AsObject();
+        var fieldPairs = turnOn["fields"]!.AsObject().Select(p => KeyValuePair.Create(p.Key, p.Value?.DeepClone())).ToList();
+        (fieldPairs[0], fieldPairs[1]) = (fieldPairs[1], fieldPairs[0]);
+        turnOn["fields"] = new JsonObject(fieldPairs);
+        var swappedCatalog = ServiceSchemaCatalog.Parse(swapped.ToJsonString(), _ => { });
+        Check(Field(swappedCatalog, "light.turn_on", "transition")["order"]!.GetValue<int>() == 1 && Field(swappedCatalog, "light.turn_on", "rgb_color")["order"]!.GetValue<int>() == 0
+            && swappedCatalog.Generation != catalog.Generation, "swapping two fields changes their order and the generation");
         var respelled = ServiceSchemaCatalog.Parse(descriptions.Replace("\"step\": 1.0", "\"step\": 1"), _ => { });
         Check(respelled.Generation == catalog.Generation, "generation is stable across number spelling");
         var changed = JsonNode.Parse(descriptions)!;
@@ -205,7 +271,7 @@ public static class ServiceSchemaTests
         Check(ServiceSchemaCatalog.Empty.Generation == Convert.ToHexString(System.Security.Cryptography.SHA256.HashData("{}"u8)).ToLowerInvariant(), "empty generation hashes the empty canonical object");
         var section = catalog.Section; section["items"]!.AsObject().Clear();
         Check(catalog.Count > 0 && catalog.Section["items"]!.AsObject().Count == catalog.Count, "the section is a defensive copy");
-        Console.WriteLine("PASS service schema generation: key order, number spelling, field changes");
+        Console.WriteLine("PASS service schema generation: key order, field order, number spelling, field changes");
     }
 
     static async Task<JsonObject> Library(HassSharpManager manager, object request)
@@ -242,7 +308,12 @@ public static class ServiceSchemaTests
             // Never takes the authoring gate: completes while another request holds it.
             var gate = (SemaphoreSlim)typeof(HassSharpManager).GetField("_visualGate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
             await gate.WaitAsync();
-            try { await Task.Run(() => manager.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}}}""")).WaitAsync(TimeSpan.FromSeconds(5)); }
+            try
+            {
+                await Task.Run(() => manager.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}}}""")).WaitAsync(TimeSpan.FromSeconds(5));
+                var ungated = await Library(manager, new { operation = "services" }).WaitAsync(TimeSpan.FromSeconds(5));
+                Check(ungated["items"]!.AsObject().ContainsKey("light.turn_off"), "the services op is answered without the authoring gate");
+            }
             finally { gate.Release(); }
             var swapped = await Library(manager, new { operation = "services" });
             Check(swapped["items"]!.AsObject().Select(p => p.Key).SequenceEqual(["light.turn_off"]), "a later push replaces the schemas whole");

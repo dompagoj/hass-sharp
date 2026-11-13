@@ -103,9 +103,11 @@ public partial class HassSharpManager
     /// lock, then swaps the immutable result in; a later push always wins over an earlier one that
     /// finishes after it. Malformed input is logged and the previous schemas stay; it never throws.
     /// </summary>
-    public void SetServiceDescriptions(string json)
+    public void SetServiceDescriptions(string json) => SetServiceDescriptions(json, Interlocked.Increment(ref _serviceDescriptionsSequence));
+
+    // The sequence is taken on entry; installing compares it, so ordering is testable deterministically.
+    internal void SetServiceDescriptions(string json, long sequence)
     {
-        var sequence = Interlocked.Increment(ref _serviceDescriptionsSequence);
         ServiceDescriptionsState next;
         // Logging crosses into Python; the caller must not see a failure from it either.
         try { next = new(sequence, ServiceSchemaCatalog.Parse(json)); }

@@ -71,7 +71,8 @@ public partial class HassSharpManager
             object result;
             var store = VisualDocuments;
             var libraries = SavedLibraries();
-            if (operation == "preview") result = new VisualGenerator(_diagnosticsProvider).Preview(request["graph"]!.AsObject(), libraries.Preview.Snapshot);
+            var authoring = AuthoringSnapshot(libraries.Preview.Snapshot);
+            if (operation == "preview") result = new VisualGenerator(_diagnosticsProvider).Preview(request["graph"]!.AsObject(), authoring);
             else if (operation == "list") result = store.List().Select(WithRuntimeIdentity).ToArray();
             else
             {
@@ -83,7 +84,7 @@ public partial class HassSharpManager
                     var revision = request["expectedRevision"]!.GetValue<long>();
                     if (operation == "save")
                     {
-                        var document = store.Save(id, request["graph"]!.AsObject(), revision, libraries.Preview.Snapshot, libraries.Generation);
+                        var document = store.Save(id, request["graph"]!.AsObject(), revision, authoring, libraries.Generation);
                         result = await ActivateVisualDocument(document);
                     }
                     else if (operation == "delete")
