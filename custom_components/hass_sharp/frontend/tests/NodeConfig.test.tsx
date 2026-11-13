@@ -35,7 +35,7 @@ function mount(graph: VisualGraph, id: string) {
   dispose = render(
     () => (
       <QueryClientProvider client={client}>
-        <HassCtx.Provider value={{ callWS: async () => ({ entities: [{ entity_id: 'light.kitchen', friendly_name: 'Kitchen' }] }) } as any}>
+        <HassCtx.Provider value={{ callWS: async () => ({ entities: [{ entity_id: 'light.kitchen', name: 'Kitchen' }] }) } as any}>
           <NodeConfig
             node={node()}
             graph={current()}

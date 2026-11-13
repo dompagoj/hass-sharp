@@ -1,4 +1,4 @@
-# Run history frontend (Task 3 continuation)
+# Run history frontend
 
 Based on integrated commit `398905a` and `docs/backend/run-history.md` contract v1.
 This change touches only the frontend; scheduler, graph backend, and C# runtime
@@ -18,15 +18,49 @@ saved code; unsaved edits stay in Monaco. The backend remains authoritative abou
 whether an action allows manual calls. A C# action completing does not prove a
 physical device effect.
 
-History uses 20-record offset pages without inventing a total. It shows every
-backend status, entity/manual/time/startup cause, cause details, received time and
-duration; expandable details include revision, run ID, planned/start/end times.
-Times are displayed locally with original UTC values in `datetime` and tooltips.
-Errors and cause details render as plain text. Newest/newer/older and refresh,
-loading/error/retry/empty states are included. Active records on the newest page
-refresh every two seconds while visible; an accepted attempt absent from that
-page is checked for up to one minute. Query errors stop automatic refresh until
-retry. Offset pages can move as records arrive, as the panel explains.
+History uses 20-record offset pages without inventing a total. Newest/newer/older
+and refresh, loading/error/retry/empty states are included. Active records on the
+newest page refresh every two seconds while visible; an accepted attempt absent
+from that page is checked for up to one minute. Query errors stop automatic
+refresh until retry. Offset pages can move as records arrive, as the panel explains.
+
+## Run list (run history v2, node editor overhaul Task 8)
+
+Built against contract C9 (`hass_sharp/run_history` version 2). Each run is one
+compact row, a real `<button>` with `aria-expanded`:
+
+- status as text plus a coloured marker whose shape also differs (Interrupted
+  diamond, Stopped square, Skipped/Pending hollow, Running pulsing unless reduced
+  motion is requested);
+- `actionLabel` (the trigger node label), then the cause in words ("Home
+  Assistant trigger", "Entity change", "Schedule", "Manual run", "Startup") and a
+  one-line trigger summary from `components/TriggerSummary.tsx`, for example
+  `climate.outside_bathroom_vtrv: off → heat`;
+- for runs that did not succeed, the first line of `error`, which carries the
+  cancel reason for Cancelled runs ("Restarted by a newer trigger");
+- received time relative ("5 minutes ago", refreshed every 30 s; absolute local
+  time in the tooltip, UTC in `datetime`) and duration.
+
+Expanding shows the full error or cancel reason, the structured trigger summary,
+run metadata (run ID with a Copy button where the Clipboard API exists, graph
+revision `visualRevision`, automation revision, planned/received/started/ended,
+duration) and the raw record in a collapsible tree (`components/JsonTree.tsx`).
+Expansion is keyed by run ID, so an open row stays open while polling replaces it.
+
+A Status select sends the server-side `status: [value]` filter and returns to the
+first page; "All statuses" omits the parameter. An accepted manual dispatch clears
+the filter as well as the page so the new run is visible. Rows with `hasTrace` and
+a `visualId` link "View trace" to `/visual/{visualId}/runs/{runId}` (the route
+arrives with the trace viewer).
+
+Until the backend ships v2, rows in the v1 shape still render: the label falls back
+to `action`, rows without `trigger` show only the cause, rows without `hasTrace`
+show no trace link. The v1 `details` string (the raw trigger payload) is no longer
+displayed. The v1 command schema rejects the `status` key, so filtering only works
+once the backend accepts it.
+
+Checked in the dev preview with temporary v2 sample rows (not committed): desktop
+light and 360 px dark, no horizontal overflow at 360 px.
 
 ## Monaco ErrorEvent reproduction and fix
 

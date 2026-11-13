@@ -32,7 +32,7 @@ function setup(failRefresh = false, savedMethods?: string[]) {
       if (method === 'POST' && savedMethods) scripts[0].classes[0].methods = savedMethods
       return { fileName: 'A.cs', source: 'refreshed A' }
     },
-    callWS: async (message: any) => message.type === 'hass_sharp/run_history' ? { version: 1, offset: 0, limit: 20, runs: [] } : message.type.endsWith('format_source') ? message.source : [],
+    callWS: async (message: any) => message.type === 'hass_sharp/run_history' ? { version: 2, offset: 0, limit: 20, runs: [] } : message.type.endsWith('format_source') ? message.source : [],
   }
   dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={hass as any}>
     <MemoryRouter history={history}><Route path="/automations/:id" component={AutomationView} /></MemoryRouter>

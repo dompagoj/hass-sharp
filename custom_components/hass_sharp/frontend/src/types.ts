@@ -7,6 +7,7 @@ import type {
   HassServices,
   HassServiceTarget,
 } from 'home-assistant-js-websocket'
+import type { Graph, VisualCatalogSnapshot } from './visual/contract'
 
 export interface ToggleMenuActionConfig extends BaseActionConfig {
   action: 'toggle-menu'
@@ -374,27 +375,101 @@ export interface HassValueChangedEvent extends Event {
   }
 }
 
-/** Version 1 of docs/backend/run-history.md. UTC strings are rendered in local time. */
+export type RunStatus = 'Pending' | 'Running' | 'Succeeded' | 'Skipped' | 'Cancelled' | 'Failed' | 'Interrupted' | 'Stopped'
+/** Stored trigger summary of a run (run history v2). Only the fields of its kind are present. */
+export interface RunTrigger {
+  kind: 'ha' | 'entity' | 'schedule' | 'manual' | 'startup'
+  platform?: string
+  id?: string
+  description?: string
+  entityId?: string
+  from?: string
+  to?: string
+  eventType?: string
+  scheduleId?: string
+  planned?: string
+}
+/**
+ * Run history v2. UTC strings are rendered in local time. Rows written before v2
+ * lack `actionLabel`, `trigger` and `hasTrace`; the run list falls back for those.
+ */
 export interface AutomationRun {
   runId: string
   automationId: string
   revision: string
   action: string
+  actionLabel: string
+  triggerNodeId: string | null
+  visualId: string | null
+  visualRevision: number | null
   cause: string
-  details: string | null
+  trigger: RunTrigger | null
   plannedUtc: string | null
   receivedUtc: string
   startUtc: string | null
   endUtc: string | null
   durationMs: number | null
-  status: 'Pending' | 'Running' | 'Succeeded' | 'Skipped' | 'Cancelled' | 'Failed' | 'Interrupted'
+  status: RunStatus
   error: string | null
+  hasTrace: boolean
 }
 export interface RunHistoryResponse {
-  version: 1
+  version: 2
   offset: number
   limit: number
   runs: AutomationRun[]
+}
+export type TraceEventStatus = 'ok' | 'error' | 'failed' | 'running' | 'cancelled' | 'stopped'
+/** A recorded value; `trunc` marks a value cut to the trace caps, `src` an input that came from a wire. */
+export interface TraceValue {
+  type: string
+  v?: unknown
+  trunc?: boolean
+  src?: { node: string; port: string }
+}
+export interface TraceEvent {
+  seq: number
+  node: string
+  /** `""` at top level, else `/`-joined parallel branch and loop iteration segments. */
+  frame: string
+  /** Milliseconds since run start. */
+  t: number
+  /** Node duration; absent while the node is still running. */
+  ms?: number
+  status: TraceEventStatus
+  /** Execution port taken; absent for terminal nodes. */
+  port?: string
+  inputs?: Record<string, TraceValue>
+  outputs?: Record<string, TraceValue>
+  error?: { type: string; message: string }
+}
+export interface RunTrace {
+  format: 1
+  runId: string
+  rootNodeId: string
+  startedUtc: string
+  complete: boolean
+  truncated: boolean
+  dropped: number
+  /** Normalised trigger payload, at most 16 KiB. */
+  trigger: Record<string, unknown>
+  events: TraceEvent[]
+  summary: Record<string, { count: number; failed: number; last: TraceEventStatus }>
+}
+export interface RunTraceSnapshot {
+  revision: string
+  visualId: string
+  visualRevision: number
+  graph: Graph
+  catalog: VisualCatalogSnapshot
+}
+/** `hass_sharp/run_trace` response. `live` is true while the run is Pending or Running. */
+export interface RunTraceResponse {
+  version: 1
+  run: AutomationRun
+  live: boolean
+  snapshot: RunTraceSnapshot | null
+  trace: RunTrace | null
 }
 export interface RunAcceptedResponse {
   version: 1

@@ -1,17 +1,36 @@
-import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js'
+import { batch, createMemo, createSignal, createUniqueId, For, onCleanup, Show } from 'solid-js'
+import { A } from '@solidjs/router'
 import { useQuery, useMutation } from '@tanstack/solid-query'
 import { useHass } from '../context'
-import type { AutomationRun, RunAcceptedResponse, RunHistoryResponse, UserScriptClassDto } from '../types'
-import { Button, Status } from './Controls'
+import type { AutomationRun, RunAcceptedResponse, RunHistoryResponse, RunStatus, UserScriptClassDto } from '../types'
+import { Button, Icon } from './Controls'
+import { JsonTree } from './JsonTree'
+import { summarizeTrigger, TriggerSummary } from './TriggerSummary'
 
 const PAGE_SIZE = 20
+const STATUSES: RunStatus[] = ['Failed', 'Cancelled', 'Interrupted', 'Stopped', 'Skipped', 'Succeeded', 'Running', 'Pending']
+const CAUSES: Record<string, string> = {
+  HomeAssistantTrigger: 'Home Assistant trigger', Entity: 'Entity change', Schedule: 'Schedule', Manual: 'Manual run', Startup: 'Startup',
+}
 const active = (run: AutomationRun) => run.status === 'Pending' || run.status === 'Running'
 const errorMessage = (error: unknown) => {
   const e = error as { message?: string; body?: { error?: string }; error?: string }
   return e?.body?.error ?? e?.message ?? e?.error ?? 'Check your connection and try again.'
 }
 const duration = (ms: number | null) => ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} s`
-const cause = (value: string) => value === 'Schedule' ? 'Time' : value
+// Rows recorded before run history v2 carry only the method name and no trigger summary.
+const runLabel = (run: AutomationRun) => run.actionLabel ?? run.action
+const causeLabel = (run: AutomationRun) => CAUSES[run.cause] ?? run.cause
+const reason = (run: AutomationRun) => run.status !== 'Succeeded' && run.error ? run.error.split('\n', 1)[0] : undefined
+const relativeFormat = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+const relative = (iso: string, now: number) => {
+  const seconds = (Date.parse(iso) - now) / 1000
+  if (Number.isNaN(seconds)) return iso
+  if (seconds > -45) return 'just now'
+  for (const [unit, size, limit] of [['minute', 60, 45], ['hour', 3600, 22], ['day', 86400, 26]] as const)
+    if (-seconds < size * limit) return relativeFormat.format(Math.round(seconds / size), unit)
+  return new Date(iso).toLocaleDateString()
+}
 const Timestamp = (props: { value: string | null }) => <Show when={props.value} fallback="—">{value =>
   <time dateTime={value()} title={value()}>{new Date(value()).toLocaleString()}</time>
 }</Show>
@@ -27,16 +46,31 @@ export const AutomationRuns = (props: { automationId: string; classes: UserScrip
 const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[]; actionLabels?: Record<string, string> }) => {
   const hass = useHass()
   const selectId = createUniqueId()
+  const filterId = createUniqueId()
   const [offset, setOffset] = createSignal(0)
+  const [statusFilter, setStatusFilter] = createSignal<RunStatus | ''>('')
   const [selection, setSelection] = createSignal('')
   const [accepted, setAccepted] = createSignal<{ runId: string; at: number }>()
+  // Expansion is keyed by run ID so a row stays open while polling replaces its record.
+  const [expanded, setExpanded] = createSignal<ReadonlySet<string>>(new Set())
+  const [now, setNow] = createSignal(Date.now())
+  const clock = setInterval(() => setNow(Date.now()), 30_000)
+  onCleanup(() => clearInterval(clock))
+  const toggle = (runId: string) => setExpanded(current => {
+    const next = new Set(current)
+    if (!next.delete(runId)) next.add(runId)
+    return next
+  })
   const actions = createMemo(() => props.classes.flatMap(klass => klass.methods.map(method => ({
     key: `${klass.name}::${method}`, className: klass.name, method,
   }))))
   const selected = () => actions().find(action => action.key === selection()) ?? actions()[0]
   const history = useQuery(() => ({
-    queryKey: ['run-history', props.automationId, offset()],
-    queryFn: () => hass.callWS<RunHistoryResponse>({ type: 'hass_sharp/run_history', automationId: props.automationId, offset: offset(), limit: PAGE_SIZE }),
+    queryKey: ['run-history', props.automationId, offset(), statusFilter()],
+    queryFn: () => hass.callWS<RunHistoryResponse>({
+      type: 'hass_sharp/run_history', automationId: props.automationId, offset: offset(), limit: PAGE_SIZE,
+      ...(statusFilter() ? { status: [statusFilter()] } : {}),
+    }),
     staleTime: 0,
     refetchInterval: query => {
       if (offset() || query.state.status === 'error') return false
@@ -52,8 +86,8 @@ const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[]; 
     }),
     onSuccess: response => {
       setAccepted({ runId: response.runId, at: Date.now() })
-      // Return to newest records so an accepted attempt is never hidden on an older page.
-      if (offset()) setOffset(0)
+      // Return to the newest, unfiltered records so an accepted attempt is never hidden.
+      if (offset() || statusFilter()) batch(() => { setOffset(0); setStatusFilter('') })
       else void history.refetch()
     },
   }))
@@ -63,6 +97,7 @@ const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[]; 
     setAccepted(undefined)
     dispatch.mutate(action)
   }
+  const filter = (value: RunStatus | '') => batch(() => { setStatusFilter(value); setOffset(0) })
   return <div class="hs-runs">
     <section class="hs-run-controls" aria-label="Run automation">
       <div><h2>Run now</h2><p class="hs-muted">Runs the last saved version. Unsaved editor changes are not included.</p></div>
@@ -80,30 +115,24 @@ const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[]; 
     </section>
     <section aria-label="Run history" class="hs-run-history">
       <header class="hs-history-heading"><div><h2>Run history</h2><p class="hs-muted">Newest first · times in your local time zone. Pages may shift when new runs arrive.</p></div>
-        <Button busy={history.isFetching} onClick={() => void history.refetch()}>Refresh</Button></header>
+        <div class="hs-history-tools">
+          <label for={filterId}>Status</label>
+          <select id={filterId} class="hs-input" value={statusFilter()} onChange={event => filter(event.currentTarget.value as RunStatus | '')}>
+            <option value="">All statuses</option>
+            <For each={STATUSES}>{status => <option value={status}>{status}</option>}</For>
+          </select>
+          <Button busy={history.isFetching} onClick={() => void history.refetch()}>Refresh</Button>
+        </div></header>
       <Show when={history.isPending}><div class="hs-empty" role="status">Loading run history…</div></Show>
       <Show when={history.isError}><div class="hs-notice hs-notice--danger" role="alert"><h2>Run history couldn’t load</h2>
         <p>{errorMessage(history.error)}</p><Button onClick={() => void history.refetch()}>Try again</Button>
       </div></Show>
       <Show when={history.isSuccess && !history.data.runs.length}><div class="hs-empty" role="status">
-        <h2>{offset() ? 'No more runs' : 'No runs yet'}</h2><p>{offset() ? 'Return to the newest runs or the previous page.' : 'Run an action or wait for its next trigger.'}</p>
+        <h2>{offset() ? 'No more runs' : statusFilter() ? `No ${statusFilter().toLowerCase()} runs` : 'No runs yet'}</h2>
+        <p>{offset() ? 'Return to the newest runs or the previous page.' : statusFilter() ? 'Choose another status to see other runs.' : 'Run an action or wait for its next trigger.'}</p>
       </div></Show>
       <ul class="hs-run-list" aria-label="Recorded runs" aria-busy={history.isFetching}>
-        <For each={history.data?.runs}>{run => <li class="hs-run-card">
-          <div class="hs-run-summary"><strong>{run.action}</strong><Status tone={run.status === 'Failed' || run.status === 'Interrupted' ? 'danger' : run.status === 'Succeeded' ? 'success' : 'neutral'}>{run.status}</Status></div>
-          <div class="hs-run-meta"><span>{cause(run.cause)}</span><Timestamp value={run.receivedUtc} /><span>{duration(run.durationMs)}</span></div>
-          <Show when={run.details}><p class="hs-run-cause">{run.details}</p></Show>
-          <details><summary>Run details</summary><dl class="hs-run-details">
-            <div><dt>Run ID</dt><dd><code>{run.runId}</code></dd></div>
-            <div><dt>Revision</dt><dd><code>{run.revision}</code></dd></div>
-            <div><dt>Planned</dt><dd><Timestamp value={run.plannedUtc} /></dd></div>
-            <div><dt>Received</dt><dd><Timestamp value={run.receivedUtc} /></dd></div>
-            <div><dt>Started</dt><dd><Timestamp value={run.startUtc} /></dd></div>
-            <div><dt>Ended</dt><dd><Timestamp value={run.endUtc} /></dd></div>
-            <div><dt>Duration</dt><dd>{duration(run.durationMs)}</dd></div>
-          </dl></details>
-          <Show when={run.error}><pre class="hs-run-error" aria-label="Run error">{run.error}</pre></Show>
-        </li>}</For>
+        <For each={history.data?.runs}>{run => <RunRow run={run} now={now()} open={expanded().has(run.runId)} onToggle={() => toggle(run.runId)} />}</For>
       </ul>
       <nav class="hs-history-pagination" aria-label="Run history pages">
         <Button disabled={!offset() || history.isFetching} onClick={() => setOffset(0)}>Newest</Button>
@@ -113,4 +142,64 @@ const RunPanel = (props: { automationId: string; classes: UserScriptClassDto[]; 
       </nav>
     </section>
   </div>
+}
+
+const RunRow = (props: { run: AutomationRun; now: number; open: boolean; onToggle: () => void }) => {
+  const bodyId = createUniqueId()
+  const summary = () => props.run.trigger ? summarizeTrigger(props.run.trigger) : undefined
+  return <li class={`hs-run-row hs-run-row--${props.run.status.toLowerCase()}`}>
+    <div class="hs-run-line">
+      <button type="button" class="hs-run-toggle" aria-expanded={props.open} aria-controls={props.open ? bodyId : undefined} onClick={() => props.onToggle()}>
+        <span class={`hs-run-status hs-run-status--${props.run.status.toLowerCase()}`}>{props.run.status}</span>
+        <span class="hs-run-main">
+          <span class="hs-run-label">{runLabel(props.run)}</span>
+          <span class="hs-run-cause">{causeLabel(props.run)}<Show when={summary()}> · <span class="hs-run-trigger">{summary()}</span></Show></span>
+          <Show when={reason(props.run)}><span class="hs-run-reason">{reason(props.run)}</span></Show>
+        </span>
+        <span class="hs-run-when">
+          <time dateTime={props.run.receivedUtc} title={new Date(props.run.receivedUtc).toLocaleString()}>{relative(props.run.receivedUtc, props.now)}</time>
+          <span class="hs-run-duration">{duration(props.run.durationMs)}</span>
+        </span>
+        <Icon name="chevron" />
+      </button>
+      <Show when={props.run.hasTrace && props.run.visualId}>{visualId =>
+        <A class="hs-run-trace" href={`/visual/${encodeURIComponent(visualId())}/runs/${encodeURIComponent(props.run.runId)}`}>View trace</A>
+      }</Show>
+    </div>
+    <Show when={props.open}><div id={bodyId} class="hs-run-body">
+      <Show when={props.run.error}>{error => <section>
+        <h3>{props.run.status === 'Cancelled' ? 'Cancel reason' : 'Error'}</h3>
+        <pre class={`hs-run-error ${props.run.status === 'Cancelled' ? 'hs-run-error--quiet' : ''}`}>{error()}</pre>
+      </section>}</Show>
+      <section><h3>Trigger</h3><TriggerSummary trigger={props.run.trigger} /></section>
+      <section><h3>Run</h3><dl class="hs-run-fields">
+        <div><dt>Run ID</dt><dd class="hs-run-id"><code>{props.run.runId}</code><CopyButton value={props.run.runId} /></dd></div>
+        <Show when={props.run.visualRevision != null}><div><dt>Graph revision</dt><dd>{props.run.visualRevision}</dd></div></Show>
+        <div><dt>Automation revision</dt><dd><code>{props.run.revision}</code></dd></div>
+        <div><dt>Planned</dt><dd><Timestamp value={props.run.plannedUtc} /></dd></div>
+        <div><dt>Received</dt><dd><Timestamp value={props.run.receivedUtc} /></dd></div>
+        <div><dt>Started</dt><dd><Timestamp value={props.run.startUtc} /></dd></div>
+        <div><dt>Ended</dt><dd><Timestamp value={props.run.endUtc} /></dd></div>
+        <div><dt>Duration</dt><dd>{duration(props.run.durationMs)}</dd></div>
+      </dl></section>
+      <details class="hs-run-raw"><summary>Raw values</summary><JsonTree value={props.run} label="Raw run record" /></details>
+    </div></Show>
+  </li>
+}
+
+const CopyButton = (props: { value: string }) => {
+  const [state, setState] = createSignal<'idle' | 'copied' | 'failed'>('idle')
+  let reset: ReturnType<typeof setTimeout> | undefined
+  onCleanup(() => clearTimeout(reset))
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(props.value); setState('copied') } catch { setState('failed') }
+    clearTimeout(reset)
+    reset = setTimeout(() => setState('idle'), 2000)
+  }
+  // The Clipboard API exists only in secure contexts; the ID stays selectable without it.
+  return <Show when={typeof navigator.clipboard?.writeText === 'function'}>
+    <Button variant="ghost" class="hs-run-copy" aria-label={state() === 'copied' ? 'Run ID copied' : 'Copy run ID'} onClick={() => void copy()}>
+      {state() === 'copied' ? 'Copied' : state() === 'failed' ? 'Copy failed' : 'Copy'}
+    </Button>
+  </Show>
 }
