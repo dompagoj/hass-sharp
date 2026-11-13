@@ -20,20 +20,39 @@ function setup(saved = false, minimal = false) {
     <MemoryRouter history={history} root={props => <><A href="/elsewhere">Leave</A><A href="/visual/new?name=Fresh">New visual</A>{props.children}</>}>
       <Route path="/visual/:id" component={VisualAutomationView} />
       <Route path="/elsewhere" component={() => <h1>Elsewhere</h1>} />
+      <Route path="/automations" component={() => <h1>Automations</h1>} />
     </MemoryRouter></HassCtx.Provider></QueryClientProvider>, root)
   return { root, fixture }
 }
 const button = (root: Element, text: string) => [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === text || b.getAttribute('aria-label') === text)!
 const edit = (root: Element, text: string) => { const input = root.querySelector<HTMLInputElement>('[aria-label="Node label"]')!; input.value = text; input.dispatchEvent(new Event('input', { bubbles: true })) }
+const chip = (root: Element) => root.querySelector('.hs-save-chip')!
+/** Waits for the save state "Saved" at `revision` (the revision is in the chip's tooltip, not its text). */
+const saved = async (root: Element, revision: number) => vi.waitFor(() => {
+  expect(chip(root).textContent).toBe('Saved')
+  expect(chip(root).getAttribute('title')).toBe(`Saved revision ${revision}`)
+})
+/** Picks an item of the top bar's "⋯" menu. */
+const more = (root: Element, item: string) => {
+  button(root, 'More actions').click()
+  const choice = [...root.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')].find(b => b.textContent === item)
+  expect(choice, item).toBeDefined()
+  choice!.click()
+}
+/** Opens a tab of the bottom drawer. */
+const tab = (root: Element, name: string) => {
+  const found = [...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith(name))!
+  if (found.getAttribute('aria-selected') !== 'true') found.click()
+}
 it('creates, edits and saves separate drafts on HTTP without crypto.randomUUID', async () => {
   // HTTP LAN origins expose getRandomValues but not randomUUID.
   vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
   const { root, fixture } = setup()
   button(root, 'Add step').click(); button(root, 'Create Trigger').click();chooseTrigger(root, 'manual')
   button(root, 'Add step').click(); button(root, 'Create Trigger').click();chooseTrigger(root, 'manual')
-  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
-  button(root, 'Save graph').click()
-  await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 1'))
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await saved(root, 1)
   const first = [...fixture.documents.values()][0]
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
   expect(first.id.slice('visual-'.length)).toMatch(uuid)
@@ -43,8 +62,8 @@ it('creates, edits and saves separate drafts on HTTP without crypto.randomUUID',
 
   root.querySelector<HTMLAnchorElement>('a[href="/visual/new?name=Fresh"]')!.click()
   await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Fresh'))
-  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
-  button(root, 'Save graph').click()
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
   await vi.waitFor(() => expect(fixture.documents.size).toBe(2))
   const second = [...fixture.documents.values()][1]
   expect(second.id).not.toBe(first.id)
@@ -70,40 +89,47 @@ it('protects only changed drafts and allows explicit discard', async () => {
 it('saves server generated source, opens persisted identity and exposes run/history', async () => {
   const { root, fixture } = setup()
   edit(root, 'Motion trigger')
-  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
-  button(root, 'Save graph').click()
-  await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 1'))
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await saved(root, 1)
   expect(fixture.documents.size).toBe(1)
   const doc = [...fixture.documents.values()][0]
   expect(doc.graph.nodes[0].label).toBe('Motion trigger')
   expect(doc.source).toContain('generated on server')
+  // The Runs tab of the drawer shows the history; Run now in the top bar starts the saved trigger.
+  expect(root.querySelector('[aria-label="Run history"]')).toBeNull()
+  tab(root, 'Runs')
   await vi.waitFor(() => expect(root.textContent).toContain('No runs yet'))
-  button(root, 'Run now').click()
-  await vi.waitFor(() => expect(root.textContent).toContain('Request accepted'))
+  const runNow = root.querySelector<HTMLButtonElement>('.hs-topbar__run')!
+  expect(runNow.textContent?.trim()).toBe('Run now')
+  runNow.click()
+  await vi.waitFor(() => expect(root.querySelector('.hs-topbar__notice')?.textContent).toBe('Run started. Its result is under Runs.'))
   expect(fixture.calls).toContainEqual({ type: 'hass_sharp/run_now', automationId: `visual:${doc.id}`, className: 'VisualAutomation', method: 'Run_747269676765722D31' })
+  // The history asks again, so the new run shows.
+  await vi.waitFor(() => expect(fixture.calls.filter(c => c.type === 'hass_sharp/run_history').length).toBeGreaterThan(1))
   root.querySelector<HTMLAnchorElement>('a')!.click(); await Promise.resolve()
   expect(root.textContent).toContain('Elsewhere')
 })
 it('keeps a conflicted local draft until the user explicitly reloads it', async () => {
   const { root, fixture } = setup()
-  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
-  button(root, 'Save graph').click()
-  await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 1'))
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await saved(root, 1)
   fixture.controls.conflict = true
   edit(root, 'My unsaved change')
-  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
-  button(root, 'Save graph').click()
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
   await vi.waitFor(() => expect(root.textContent).toContain('Changed elsewhere'))
   expect((root.querySelector('[aria-label="Node label"]') as HTMLInputElement).value).toBe('My unsaved change')
-  button(root, 'Reload saved graph').click()
+  more(root, 'Reload saved graph')
   expect(root.querySelector('dialog[open]')?.textContent).toContain('Discard local changes')
   button(root, 'Reload and discard').click()
   await vi.waitFor(() => expect((root.querySelector('[aria-label="Node label"]') as HTMLInputElement).value).toBe('Entity changes'))
 })
 it('shows persistence succeeded when runtime activation fails', async () => {
   const { root, fixture } = setup(); fixture.controls.active = false
-  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
-  button(root, 'Save graph').click()
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
   await vi.waitFor(() => expect(root.textContent).toContain('Saved, but not activated'))
   expect(root.textContent).toContain('Compilation failed during activation')
   root.querySelector<HTMLAnchorElement>('a')!.click(); await Promise.resolve()
@@ -112,20 +138,43 @@ it('shows persistence succeeded when runtime activation fails', async () => {
 it('maps diagnostics onto nodes and source lines and blocks invalid saves', async () => {
   const { root, fixture } = setup(); fixture.controls.invalid = true
   await vi.waitFor(() => expect(root.textContent).toContain('Invalid entity'))
-  expect(button(root, 'Save graph').disabled).toBe(true)
+  expect(button(root, 'Save').disabled).toBe(true)
   expect(root.querySelector('[data-id="trigger-1"] .hs-flow-card--error')).not.toBeNull()
-  button(root, 'Invalid entity · line 3').click()
+  expect(chip(root).textContent).toBe('1 problem')
+  // The Problems tab lists it under its step; the message selects the step and marks its generated line.
+  const problems = root.querySelector('.hs-problems')!
+  expect(problems.querySelector('.hs-problems__step')?.textContent).toBe('Entity changes')
+  button(problems, 'Invalid entity').click()
   expect(root.querySelector('[data-source-line="3"]')?.getAttribute('aria-current')).toBe('true')
   expect(root.querySelector('[data-id="trigger-1"]')?.classList.contains('selected')).toBe(true)
+  button(problems, 'Show line 3 of the generated C#').click()
+  expect(root.querySelector('.hs-drawer [role="tab"][aria-selected="true"]')?.textContent).toBe('Generated C#')
+})
+it('asks before the back button leaves unsaved changes, and leaves an unchanged draft at once', async () => {
+  const { root } = setup()
+  edit(root, 'Changed')
+  button(root, 'Back to automations').click(); await Promise.resolve()
+  expect(root.querySelector('dialog[open]')?.textContent).toContain('Leave and discard your unsaved changes?')
+  button(root, 'Keep editing').click()
+  expect(root.querySelector('[aria-label="Visual automation editor"]')).not.toBeNull()
+  button(root, 'Back to automations').click(); await Promise.resolve()
+  button(root, 'Discard changes').click()
+  await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Automations'))
+  // A fresh, unchanged draft goes back without asking.
+  root.querySelector<HTMLAnchorElement>('a[href="/visual/new?name=Fresh"]')!.click()
+  await vi.waitFor(() => expect(button(root, 'Back to automations')).toBeDefined())
+  button(root, 'Back to automations').click()
+  await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Automations'))
+  expect(root.querySelector('dialog[open]')).toBeNull()
 })
 it('reads and renames a saved graph without changing its automation identity', async () => {
   const { root, fixture } = setup(true)
   await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Saved motion'))
   const name = root.querySelector<HTMLInputElement>('[aria-label="Automation name"]')!
   name.value = 'Renamed motion'; name.dispatchEvent(new Event('input', { bubbles: true }))
-  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
-  button(root, 'Save graph').click()
-  await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 5'))
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await saved(root, 5)
   expect(fixture.documents.get('motion')?.graph.name).toBe('Renamed motion')
   expect(fixture.documents.get('motion')?.automationId).toBe('visual:motion')
   expect(fixture.calls.filter(c => c.request?.operation === 'save').at(-1).request.expectedRevision).toBe(4)
@@ -136,8 +185,10 @@ it('creates a fresh draft when navigating from a saved visual graph to new', asy
   await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Saved motion'))
   root.querySelector<HTMLAnchorElement>('a[href="/visual/new?name=Fresh"]')!.click()
   await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Fresh'))
-  expect(root.textContent).toContain('Not saved')
+  expect(chip(root).textContent).toBe('Not saved')
+  tab(root, 'Runs')
   expect(root.querySelector('[aria-label="Run history"]')).toBeNull()
+  expect(root.textContent).toContain('Save this automation to run it')
   expect(button(root, 'Undo').disabled).toBe(true)
 })
 
@@ -145,9 +196,9 @@ it('opens valid API graphs without optional canvas metadata and preserves their 
   const { root, fixture } = setup(true, true)
   await vi.waitFor(() => expect(root.querySelector('[data-id="trigger-1"]')).not.toBeNull())
   await vi.waitFor(()=>expect(root.querySelector('[data-id="trigger-1"] .hs-flow-card strong')?.textContent).toBe('Trigger'))
-  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
-  button(root, 'Save graph').click()
-  await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 5'))
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await saved(root, 5)
   expect(fixture.documents.get('motion')?.graph.nodes[0]).toMatchObject({ id: 'trigger-1', config: { entity: 'binary_sensor.motion' } })
 })
 
@@ -182,10 +233,10 @@ function json(root: Element) {
   return JSON.parse(root.querySelector('[aria-label="Graph JSON"]')!.textContent!)
 }
 
-it('authors two v4 triggers and C# sections, saves/reloads them, then dispatches either saved action', async () => {
+it('authors two triggers, saves/reloads them, then dispatches either saved action', async () => {
   const { root, fixture } = setup()
-  setControl(root, 'C# imports', 'using System.Globalization;')
-  setControl(root, 'C# members', 'private string Prefix() => "Heating";')
+  // The page has no C# sections of its own (a Custom C# step holds the shared C#).
+  expect(root.querySelector('[aria-label="C# imports"], [aria-label="C# members"], [aria-label="Graph C# sections"]')).toBeNull()
   chooseTrigger(root, 'daily')
   setControl(root, 'Time of day', '07:30')
   setControl(root, 'Time zone', 'Europe/Zagreb')
@@ -199,25 +250,29 @@ it('authors two v4 triggers and C# sections, saves/reloads them, then dispatches
   press(root.querySelector('[data-id="service-1"] [data-handleid="in"]')!)
   const draft = json(root)
   const second = draft.nodes.at(-1)
-  expect(draft).toMatchObject({ version: 5, imports: 'using System.Globalization;', members: 'private string Prefix() => "Heating";' })
+  expect(draft).toMatchObject({ version: 5 })
   expect(draft.nodes[0]).toMatchObject({ id: 'trigger-1', config: { type: 'daily', time: '07:30', timeZone: 'Europe/Zagreb', mode: 'Restart' } })
   expect(second).toMatchObject({ kind: 'trigger', config: { type: 'manual' } })
   expect(draft.edges).toContainEqual({ id: `${second.id}->service-1`, source: second.id, target: 'service-1' })
-  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
-  button(root, 'Save graph').click()
-  await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 1'))
-  const saved = [...fixture.documents.values()][0]
-  expect(saved.graph).toEqual(draft)
-  setControl(root, 'C# members', 'unsaved member')
-  button(root, 'Reload saved graph').click(); button(root, 'Reload and discard').click()
-  await vi.waitFor(() => expect(control(root, 'C# members').value).toBe('private string Prefix() => "Heating";'))
-  expect(json(root)).toEqual(draft)
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await saved(root, 1)
+  const stored = [...fixture.documents.values()][0]
+  expect(stored.graph).toEqual(draft)
+  setControl(root, 'Node label', 'unsaved label')
+  more(root, 'Reload saved graph'); button(root, 'Reload and discard').click()
+  await vi.waitFor(() => expect(json(root)).toEqual(draft))
+  // With two triggers to choose from, Run now in the top bar opens the Runs tab at its choice of action.
+  root.querySelector<HTMLButtonElement>('.hs-topbar__run')!.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-run-action select')))
+  expect(fixture.calls.filter(c => c.type === 'hass_sharp/run_now')).toHaveLength(0)
   const actions = root.querySelector<HTMLSelectElement>('.hs-run-action select')!
+  const run = root.querySelector<HTMLButtonElement>('.hs-run-action button')!
   expect(actions.options).toHaveLength(2)
   for (const option of Array.from(actions.options)) {
     actions.value = option.value; actions.dispatchEvent(new Event('change', { bubbles: true }))
-    button(root, 'Run now').click()
-    await vi.waitFor(() => expect(button(root, 'Run now').disabled).toBe(false))
+    run.click()
+    await vi.waitFor(() => expect(run.disabled).toBe(false))
   }
   const methods = fixture.calls.filter(c => c.type === 'hass_sharp/run_now').map(c => c.method)
   expect(methods).toContain('Run_747269676765722D31')
@@ -262,12 +317,12 @@ it('edits all trigger kinds, boolean overrides and expressions without changing 
 it('rejects old saved graph versions without offering upgrade or overwriting the document',async()=>{
  const {root,fixture}=setup(true);fixture.documents.get('motion')!.graph.version=1 as any
  await vi.waitFor(()=>expect(root.textContent).toContain('Unsupported graph version 1; only version 5 is supported'))
- expect(button(root,'Save graph').disabled).toBe(true)
+ expect(button(root,'Save').disabled).toBe(true)
  expect(root.textContent).not.toContain('Upgrade to')
  expect(fixture.documents.get('motion')!.revision).toBe(4)
 })
 
-it('locates import/member diagnostics and all ranges for the same trigger from backend mappings', async () => {
+it('lists shared C# problems under Shared C#, shows their line, and marks every range of the selected trigger', async () => {
   const { root, fixture } = setup()
   // Replace only the external preview response; the editor/adapter/session stay real.
   fixture.controls.preview = {
@@ -276,13 +331,17 @@ it('locates import/member diagnostics and all ranges for the same trigger from b
       { nodeId: 'trigger-1', startLine: 4, endLine: 4 }, { nodeId: 'trigger-1', startLine: 5, endLine: 5 }],
     diagnostics: [{ nodeId: '$members', message: 'Unknown member', severity: 3, startLine: 3, startColumn: 10 }],
   }
-  await vi.waitFor(() => expect(root.textContent).toContain('Unknown member'))
-  button(root, 'Unknown member · line 3').click()
-  expect(control(root, 'C# members').getAttribute('aria-invalid')).toBe('true')
-  await vi.waitFor(() => expect(document.activeElement).toBe(control(root, 'C# members')))
+  await vi.waitFor(() => expect(root.querySelector('.hs-problems')?.textContent).toContain('Unknown member'))
+  const group = root.querySelector('.hs-problems__group')!
+  expect(group.querySelector('.hs-problems__step')?.textContent).toBe('Shared C#')
+  expect(group.textContent).toContain('edited in a Custom C# step')
+  button(group, 'Unknown member').click()
+  expect(root.querySelector('.hs-drawer [role="tab"][aria-selected="true"]')?.textContent).toBe('Generated C#')
   expect(root.querySelector('[data-source-line="3"]')?.getAttribute('aria-current')).toBe('true')
+  // A line of the shared C# belongs to no step.
   button(root, 'Select source line 1').click()
-  await vi.waitFor(() => expect(document.activeElement).toBe(control(root, 'C# imports')))
+  expect(root.querySelector('[data-source-line="1"]')?.getAttribute('aria-current')).toBe('true')
+  await vi.waitFor(() => expect(root.querySelector('[data-id="trigger-1"]')?.classList.contains('selected')).toBe(false))
   root.querySelector('[data-id="trigger-1"]')!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
   expect(root.querySelector('[data-source-line="4"]')?.getAttribute('aria-current')).toBe('true')
   expect(root.querySelector('[data-source-line="5"]')?.getAttribute('aria-current')).toBe('true')
@@ -290,14 +349,17 @@ it('locates import/member diagnostics and all ranges for the same trigger from b
 
 it('renders a save-time validation rejection and a structural diagnostic without node or line', async () => {
   const { root, fixture } = setup()
-  await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   fixture.controls.invalid = true
-  button(root, 'Save graph').click()
+  button(root, 'Save').click()
   await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain('Fix the graph errors before saving.'))
-  expect(root.querySelector('[aria-label="Graph diagnostics"]')?.textContent).toContain('Error: Invalid entity · line 3')
-  expect(button(root, 'Save graph').disabled).toBe(true)
-  expect(root.textContent).toContain('Not saved')
+  const problem = root.querySelector('.hs-problems .hs-problem')!
+  expect(problem.textContent).toBe('Invalid entityLine 3')
+  expect(problem.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('Error')
+  expect(button(root, 'Save').disabled).toBe(true)
+  expect(chip(root).getAttribute('title')).toBe('Not saved yet')
   fixture.controls.preview = { valid: false, source: '', sourceMap: [], diagnostics: [{ nodeId: null, message: 'Only one outgoing edge per port is supported', severity: 3, startLine: null, startColumn: null }] }
   edit(root, 'Changed')
-  await vi.waitFor(() => expect(root.querySelector('[aria-label="Graph diagnostics"]')?.textContent).toContain('Error: Only one outgoing edge per port is supported'))
+  await vi.waitFor(() => expect(root.querySelector('.hs-problems')?.textContent).toContain('Only one outgoing edge per port is supported'))
+  expect([...root.querySelectorAll('.hs-problems__step')].map(h => h.textContent)).toContain('This automation')
 })

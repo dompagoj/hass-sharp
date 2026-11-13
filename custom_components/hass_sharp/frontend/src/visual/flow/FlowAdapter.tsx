@@ -56,6 +56,18 @@ export interface FlowAdapterProps {
   trace?: FlowTrace
   /** Rendered at the end of the canvas toolbar (the editor page's "Full screen" button). */
   toolbarExtra?: JSX.Element
+  /** Receives the canvas's own actions for the page around it (the inspector's Duplicate, the library's click-to-add). */
+  controls?(controls: FlowControls): void
+}
+
+/** What the page may ask of the canvas: the same placement the canvas uses for its own additions. */
+export interface FlowControls {
+  /** Duplicates the steps the way the canvas's Duplicate does (below any card in the way) and returns the copies' ids. */
+  duplicate(ids: string[]): string[]
+  /** Where a step added at the centre of the view goes: there, or below the cards in the way. */
+  placeAtCentre(): { x: number; y: number }
+  /** Pans, if needed, so the step's card is visible above `bottom` (a client y, such as the top of a bottom sheet). */
+  reveal(id: string, bottom: number): void
 }
 
 type Point = { x: number; y: number }
@@ -745,9 +757,12 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     notify(`Copied ${steps(data.nodes.length)}`)
   }
   let lastPaste: { data: StepClipboard; count: number } | undefined
-  const insert = (data: StepClipboard, placement: { at: Point } | { offset: Point }, verb = 'Pasted') => {
+  const insert = (data: StepClipboard, placement: { at: Point } | { offset: Point }, verb = 'Pasted'): string[] => {
     const result = pasteSteps(graph(), data, catalog(), placement, snap() ? GRID : undefined)
-    if ('error' in result) return notify(`Cannot ${verb === 'Pasted' ? 'paste' : 'duplicate'}: ${result.error}`)
+    if ('error' in result) {
+      notify(`Cannot ${verb === 'Pasted' ? 'paste' : 'duplicate'}: ${result.error}`)
+      return []
+    }
     // Moved down together, below any card the copies would cover.
     const added = new Set(result.ids)
     const size = typicalSize()
@@ -755,6 +770,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     change(dy ? { ...result.graph, nodes: result.graph.nodes.map(node => (added.has(node.id) ? { ...node, position: { x: node.position?.x ?? 0, y: (node.position?.y ?? 0) + dy } } : node)) } : result.graph)
     selectAdded(result.ids)
     if (result.unnamed) notify(`${verb} ${steps(result.ids.length)}; variable names were not copied`)
+    return result.ids
   }
   const paste = async () => {
     if (readOnly()) return
@@ -762,16 +778,17 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     if (!data) return notify('Nothing to paste: copy steps first')
     // At the pointer when it is over the canvas; from the keyboard alone, a little below the originals (further
     // each time the same copy is pasted again).
-    if (lastPointer) return insert(data, { at: toFlow(lastPointer) })
+    if (lastPointer) return void insert(data, { at: toFlow(lastPointer) })
     const count = lastPaste && JSON.stringify(lastPaste.data) === JSON.stringify(data) ? lastPaste.count + 1 : 1
     lastPaste = { data, count }
     insert(data, { offset: { x: 40 * count, y: 40 * count } })
   }
-  const duplicate = (target: Element) => {
-    if (readOnly()) return
-    const data = copySteps(graph(), targets(target))
-    if (data) insert(data, { offset: { x: 40, y: 40 } }, 'Duplicated')
+  const duplicateSteps = (ids: string[]) => {
+    if (readOnly()) return []
+    const data = copySteps(graph(), ids)
+    return data ? insert(data, { offset: { x: 40, y: 40 } }, 'Duplicated') : []
   }
+  const duplicate = (target: Element) => void duplicateSteps(targets(target))
   const tidy = () => {
     if (readOnly()) return
     const sizes = (id: string) => {
@@ -789,6 +806,22 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     const next = { ...graph(), nodes: graph().nodes.map(node => (moving.has(node.id) ? { ...node, position: { x: (node.position?.x ?? 60) + dx * step, y: (node.position?.y ?? 100) + dy * step } } : node)) }
     change(next)
   }
+  props.controls?.({
+    duplicate: duplicateSteps,
+    placeAtCentre: () => placeNew(toFlow(centre())),
+    reveal: (id, bottom) => {
+      const card = [...canvas.querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.getAttribute('data-id') === id)
+      if (!card || !flow) return
+      const rect = card.getBoundingClientRect(), area = canvas.getBoundingClientRect()
+      const top = area.top + 16, limit = Math.min(bottom, area.bottom) - 16
+      // Up until its bottom clears the sheet, but never so far that its top leaves the canvas.
+      let dy = rect.bottom > limit ? limit - rect.bottom : 0
+      if (rect.top + dy < top) dy = top - rect.top
+      if (Math.abs(dy) < 1) return
+      const viewport = flow.getViewport()
+      void flow.setViewport({ ...viewport, y: viewport.y + dy }, { duration: motion() })
+    },
+  })
 
   // ---- Marquee: Shift and drag on empty canvas adds the cards it touches to the selection.
   const [marquee, setMarquee] = createSignal<{ start: Point; end: Point; base: string[] }>()

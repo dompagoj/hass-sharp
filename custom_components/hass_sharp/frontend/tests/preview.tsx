@@ -34,13 +34,35 @@ if (diagnosticsFixture) source = 'public class Broken { void Run() { MissingName
 // Fixture controls are deliberately local: no HA websocket or device call is made.
 const fixture = { historyError: false, dispatchError: false, result: 'Succeeded' as AutomationRun['status'] }
 ;(window as any).runFixture = fixture
-const runs: AutomationRun[] = Array.from({ length: 23 }, (_, i) => ({
-  runId: `fixture-run-${i}`, automationId: 'fixture-bathroom', revision: 'fixture-revision', action: 'Home.BathroomHeating::Execute',
-  cause: i % 3 === 0 ? 'Schedule' : i % 3 === 1 ? 'Entity' : 'Manual', details: i % 3 === 1 ? 'sensor.bathroom_temperature' : null,
-  plannedUtc: i % 3 === 0 ? '2026-11-12T00:59:00Z' : null, receivedUtc: '2026-11-12T01:00:00Z',
-  startUtc: '2026-11-12T01:00:00Z', endUtc: '2026-11-12T01:00:01Z', durationMs: 1000,
-  status: i === 0 ? 'Failed' : i === 1 ? 'Skipped' : 'Succeeded', error: i === 0 ? 'Example error detail\nSecond line (fixture only).' : null,
-}))
+// Run history v2 samples: the action's plain label, the trigger summary, and which runs have a trace.
+const statuses: AutomationRun['status'][] = ['Failed', 'Skipped', 'Succeeded', 'Stopped', 'Cancelled', 'Succeeded', 'Interrupted']
+const errors: Partial<Record<AutomationRun['status'], string>> = {
+  Failed: 'Example error detail\nSecond line (fixture only).', Stopped: 'Stopped by a Stop step: nobody is home', Cancelled: 'Replaced by a newer run (mode Restart)', Interrupted: 'Home Assistant restarted during the run',
+}
+const scriptRun = (i: number): AutomationRun => {
+  const status = i < statuses.length ? statuses[i] : 'Succeeded', kind = i % 3 === 0 ? 'schedule' : i % 3 === 1 ? 'entity' : 'manual'
+  return {
+    runId: `fixture-run-${i}`, automationId: 'fixture-bathroom', revision: 'fixture-revision', action: 'Home.BathroomHeating::Execute', actionLabel: 'BathroomHeating · Execute',
+    triggerNodeId: null, visualId: null, visualRevision: null,
+    cause: kind === 'schedule' ? 'Schedule' : kind === 'entity' ? 'Entity' : 'Manual',
+    trigger: kind === 'schedule' ? { kind, scheduleId: 'morning', planned: '2026-11-12T00:59:00Z' } : kind === 'entity' ? { kind, entityId: 'sensor.bathroom_temperature', from: '20.5', to: '19.0' } : { kind },
+    plannedUtc: kind === 'schedule' ? '2026-11-12T00:59:00Z' : null, receivedUtc: '2026-11-12T01:00:00Z',
+    startUtc: '2026-11-12T01:00:00Z', endUtc: '2026-11-12T01:00:01Z', durationMs: 1000,
+    status, error: errors[status] ?? null, hasTrace: false,
+  }
+}
+const visualRun = (i: number): AutomationRun => {
+  const status = (['Succeeded', 'Failed', 'Stopped', 'Succeeded', 'Cancelled'] as const)[i % 5], manual = i % 4 === 2
+  return {
+    runId: `fixture-visual-run-${i}`, automationId: 'visual:typed-demo', revision: 'fixture-revision', action: 'Visual.TypedDemo::Trigger_trigger_1', actionLabel: 'Motion in the hall',
+    triggerNodeId: 'trigger-1', visualId: 'typed-demo', visualRevision: 1,
+    cause: manual ? 'Manual' : 'Entity', trigger: manual ? { kind: 'manual' } : { kind: 'entity', entityId: 'binary_sensor.hall_0', from: 'off', to: 'on' },
+    plannedUtc: null, receivedUtc: new Date(Date.parse('2026-11-12T18:00:00Z') - i * 3_600_000).toISOString(),
+    startUtc: '2026-11-12T18:00:00Z', endUtc: '2026-11-12T18:00:02Z', durationMs: 2000,
+    status, error: errors[status] ?? null, hasTrace: true,
+  }
+}
+const runs: AutomationRun[] = [...Array.from({ length: 23 }, (_, i) => scriptRun(i)), ...Array.from({ length: 8 }, (_, i) => visualRun(i))]
 
 ;(window as any).setPreviewTheme = (theme: 'light' | 'dark') => {
   const vars = theme === 'light'
@@ -104,13 +126,15 @@ const hass = {
     if (message.type === 'hass_sharp/run_history') {
       if (fixture.historyError) throw { message: 'Example history connection error' }
       const request = message as any
-      return { version: 1, offset: request.offset, limit: request.limit, runs: structuredClone(runs.filter(run => run.automationId === request.automationId).slice(request.offset, request.offset + request.limit)) }
+      const matching = runs.filter(run => run.automationId === request.automationId && (!request.status?.length || request.status.includes(run.status)))
+      return { version: 2, offset: request.offset, limit: request.limit, runs: structuredClone(matching.slice(request.offset, request.offset + request.limit)) }
     }
     if (message.type === 'hass_sharp/run_now') {
       if (fixture.dispatchError) throw { message: 'Example manual dispatch rejection' }
       const request = message as any
-      const run: AutomationRun = { ...runs[0], automationId: request.automationId, action: `${request.className}::${request.method}`, runId: `fixture-manual-${Date.now()}`, cause: 'Manual', details: null,
-        receivedUtc: new Date().toISOString(), startUtc: null, plannedUtc: null, endUtc: null, durationMs: null, status: 'Pending', error: null }
+      const visual = String(request.automationId).startsWith('visual:')
+      const run: AutomationRun = { ...(visual ? visualRun(0) : scriptRun(2)), automationId: request.automationId, action: `${request.className}::${request.method}`, runId: `fixture-manual-${Date.now()}`,
+        cause: 'Manual', trigger: { kind: 'manual' }, receivedUtc: new Date().toISOString(), startUtc: null, plannedUtc: null, endUtc: null, durationMs: null, status: 'Pending', error: null }
       runs.unshift(run)
       setTimeout(() => Object.assign(run, { status: fixture.result, startUtc: new Date().toISOString(), endUtc: new Date().toISOString(), durationMs: 1000 }), 1000)
       return { version: 1, runId: run.runId }

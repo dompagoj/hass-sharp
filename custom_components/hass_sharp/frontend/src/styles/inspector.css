@@ -135,16 +135,45 @@
 .hs-app .hs-insp-wire__port { color: var(--hs-muted); font-size: 12px; }
 .hs-app .hs-insp-wire__arrow { padding-left: 12px; color: var(--hs-muted); }
 
-/* Bottom sheet below 900px; a side panel above. */
-.hs-app .hs-insp-sheet-bar { display: none; }
+/*
+ * A side panel above 900px. Below it, a two-stage bottom sheet inside the workspace: a peek bar (about 56px: icon,
+ * name, summary, "Edit") that takes its own row under the canvas, and the open sheet over the canvas. Nothing
+ * selected shows no bar. In full screen the panel floats over the canvas, and closes to the same bar.
+ */
+.hs-app .hs-insp-sheet-bar, .hs-app .hs-insp-peek { display: none; }
+.hs-app .hs-insp-peek { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 16px; border: 0; background: var(--hs-surface); color: var(--hs-text); font: inherit; text-align: left; cursor: pointer; }
+.hs-app .hs-insp-peek:hover { background: var(--hs-soft); }
+.hs-app .hs-insp-peek:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: -2px; }
+.hs-app .hs-insp-peek__icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; color: var(--hs-cat, var(--hs-accent)); background: color-mix(in oklab, var(--hs-cat, var(--hs-accent)) 14%, var(--hs-surface)); }
+.hs-app .hs-insp-peek__text { display: grid; min-width: 0; }
+.hs-app .hs-insp-peek__text > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-insp-peek__text strong { font-weight: 650; }
+.hs-app .hs-insp-peek__text small { color: var(--hs-muted); font-size: 12px; }
+.hs-app .hs-insp-peek__edit { color: var(--hs-accent); font-weight: 650; }
+.hs-app .hs-insp-grip { display: grid; place-items: center; width: 64px; height: 24px; padding: 0; border: 0; background: none; cursor: grab; touch-action: none; }
+.hs-app .hs-insp-grip > span { width: 40px; height: 4px; border-radius: 2px; background: var(--hs-line); }
+.hs-app .hs-insp-close { width: 40px; height: 40px; min-height: 40px; padding: 8px; }
+@keyframes hs-sheet-in { from { transform: translateY(24px); opacity: 0; } }
 @media (max-width: 899px) {
-  .hs-app .hs-inspector { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; max-height: 70dvh; padding: 0 16px 16px; border: 1px solid var(--hs-line); border-bottom: 0; border-radius: 16px 16px 0 0; box-shadow: var(--hs-card-shadow-raised); transform: translateY(0); transition: transform var(--hs-motion) ease-out, visibility 0s; }
-  .hs-app .hs-inspector[data-open="false"] { transform: translateY(105%); visibility: hidden; transition: transform var(--hs-motion) ease-out, visibility 0s var(--hs-motion); }
-  .hs-app .hs-insp-sheet-bar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; position: sticky; top: 0; z-index: 1; margin: 0 -16px 8px; padding: 4px 8px 0; background: var(--hs-surface); }
-  .hs-app .hs-insp-grip { grid-column: 2; display: grid; place-items: center; width: 64px; height: 24px; padding: 0; border: 0; background: none; cursor: grab; touch-action: none; }
-  .hs-app .hs-insp-grip > span { width: 40px; height: 4px; border-radius: 2px; background: var(--hs-line); }
-  .hs-app .hs-insp-close { grid-column: 3; justify-self: end; width: 40px; height: 40px; min-height: 40px; padding: 8px; }
+  .hs-app .hs-visual-workspace { grid-template-rows: minmax(0, 1fr) auto; }
+  .hs-app .hs-visual-workspace > .hs-inspector { grid-column: 1 / -1; grid-row: 2; width: auto; }
+  .hs-app .hs-visual-workspace > .hs-inspector[data-peek="true"] { display: block; padding: 0; overflow: hidden; border-left: 0; border-top: 1px solid var(--hs-line); }
+  .hs-app .hs-visual-workspace > .hs-inspector[data-peek="true"] > :not(.hs-insp-peek) { display: none; }
+  .hs-app .hs-visual-workspace > .hs-inspector[data-peek="true"] > .hs-insp-peek { display: grid; }
+  /* Placed in no grid area, so the open sheet measures against the whole workspace, not the peek bar's row. */
+  .hs-app .hs-visual-workspace > .hs-inspector[data-open="true"] { grid-area: auto; position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; max-height: min(70%, 640px); padding: 0 16px 16px; border: 1px solid var(--hs-line); border-bottom: 0; border-radius: 16px 16px 0 0; box-shadow: var(--hs-card-shadow-raised); animation: hs-sheet-in var(--hs-motion) ease-out; }
+  .hs-app .hs-visual-workspace > .hs-inspector[data-open="true"] > .hs-insp-sheet-bar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; position: sticky; top: 0; z-index: 1; margin: 0 -16px 8px; padding: 4px 8px 0; background: var(--hs-surface); }
+  .hs-app .hs-visual-workspace > .hs-inspector[data-open="true"] .hs-insp-grip { grid-column: 2; }
+  .hs-app .hs-visual-workspace > .hs-inspector[data-open="true"] .hs-insp-close { grid-column: 3; justify-self: end; }
+}
+@media (min-width: 900px) {
+  .hs-app .hs-visual--fullscreen .hs-visual-workspace > .hs-inspector { position: absolute; z-index: 10; top: 72px; right: 12px; bottom: 12px; width: 360px; height: auto; border: 1px solid var(--hs-line); border-radius: 12px; box-shadow: var(--hs-card-shadow-raised); animation: hs-sheet-in var(--hs-motion) ease-out; }
+  .hs-app .hs-visual--fullscreen .hs-visual-workspace > .hs-inspector[data-open="true"] > .hs-insp-sheet-bar { display: flex; justify-content: flex-end; position: sticky; top: -16px; z-index: 1; margin: -16px -16px 8px; padding: 4px; background: var(--hs-surface); }
+  .hs-app .hs-visual--fullscreen .hs-visual-workspace > .hs-inspector[data-open="true"] .hs-insp-grip { display: none; }
+  .hs-app .hs-visual--fullscreen .hs-visual-workspace > .hs-inspector[data-peek="true"] { display: block; bottom: auto; width: 320px; padding: 0; overflow: hidden; animation: none; }
+  .hs-app .hs-visual--fullscreen .hs-visual-workspace > .hs-inspector[data-peek="true"] > :not(.hs-insp-peek) { display: none; }
+  .hs-app .hs-visual--fullscreen .hs-visual-workspace > .hs-inspector[data-peek="true"] > .hs-insp-peek { display: grid; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .hs-app .hs-inspector, .hs-app .hs-inspector * { transition: none !important; }
+  .hs-app .hs-inspector, .hs-app .hs-inspector * { transition: none !important; animation: none !important; }
 }

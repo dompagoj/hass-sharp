@@ -48,8 +48,7 @@
 /* Suggestion lists and the node chooser share one popover look. */
 .hs-app .hs-autocomplete { position: relative; }
 .hs-app .hs-suggestions { border: 1px solid var(--hs-line); border-radius: 10px; background: var(--hs-surface); color: var(--hs-text); box-shadow: 0 8px 28px #0003; padding: 8px; z-index: 30; position: absolute; top: 100%; left: 0; right: 0; min-width: 0; max-height: 280px; overflow: auto; }
-.hs-app .hs-node-chooser { border: 1px solid var(--hs-line); border-radius: 10px; background: var(--hs-surface); color: var(--hs-text); box-shadow: 0 8px 28px #0003; padding: 8px; z-index: 30; position: absolute; width: min(280px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow: auto; display: grid; gap: 8px; }
-.hs-app .hs-suggestions [role="option"], .hs-app .hs-node-chooser [role="option"] { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.hs-app .hs-suggestions [role="option"] { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
 .hs-app [role="option"] small { color: var(--hs-muted); }
 .hs-app [role="option"][aria-selected="true"], .hs-app [role="option"]:hover { background: var(--hs-soft); }
 

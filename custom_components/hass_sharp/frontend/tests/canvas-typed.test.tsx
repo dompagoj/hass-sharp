@@ -306,11 +306,12 @@ it('keeps local/backend errors beneath the canvas and focuses exact typed input 
     ),
     el,
   )
+  // The Problems tab of the drawer below the canvas lists them.
   await vi.waitFor(() =>
-    expect(el.querySelector('[aria-label="Graph diagnostics"]')?.textContent).toContain('Home Assistant: entity_id is required'),
+    expect(el.querySelector('.hs-problems')?.textContent).toContain('Home Assistant: entity_id is required'),
   )
-  const list = el.querySelector('[aria-label="Graph diagnostics"]')!
-  expect(list.previousElementSibling?.getAttribute('aria-label')).toBe('Automation canvas')
+  const list = el.querySelector('.hs-problems')!
+  expect(list.closest('[role="tabpanel"]')?.previousElementSibling?.contains(el.querySelector('[role="tab"]'))).toBe(true)
   ;[...list.querySelectorAll<HTMLButtonElement>('button')]
     .find(button => button.textContent === 'Home Assistant: entity_id is required')!
     .click()

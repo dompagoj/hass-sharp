@@ -32,13 +32,15 @@ export type IconName = keyof typeof icons
 export interface NodeIdentity {
   /** `trigger` for trigger nodes (they must look different from actions), else the lower-case catalog category. */
   key: string
-  /** The catalog category, for people ("Hass", "Flow", …), or "Trigger". */
+  /** The category in plain words ("Home Assistant", "Flow", …, a library's own category), or "Trigger". */
   label: string
   color: string
   icon: readonly string[]
 }
 
 const known: Record<string, IconName> = { hass: 'hass', flow: 'flow', logic: 'logic', data: 'data', code: 'code' }
+/** Built-in catalog categories are short keys; people read these names (the canvas, quick-add and the library). */
+const plainNames: Record<string, string> = { hass: 'Home Assistant', flow: 'Flow', logic: 'Logic', data: 'Data', code: 'Code' }
 /**
  * Category identity of a node kind. The built-in categories have their own colour token; any other category (a
  * library's) gets a stable hue derived from its name and the library icon.
@@ -47,7 +49,7 @@ export function nodeIdentity(kind: string, catalog: VisualCatalogSnapshot = node
   if (kind === 'trigger') return { key: 'trigger', label: 'Trigger', color: 'var(--hs-cat-trigger)', icon: icons.trigger }
   const category = Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind].category : 'Library'
   const key = category.toLowerCase()
-  if (Object.hasOwn(known, key)) return { key, label: category, color: `var(--hs-cat-${key})`, icon: icons[known[key]] }
+  if (Object.hasOwn(known, key)) return { key, label: plainNames[key], color: `var(--hs-cat-${key})`, icon: icons[known[key]] }
   return {
     key: 'library',
     label: category,

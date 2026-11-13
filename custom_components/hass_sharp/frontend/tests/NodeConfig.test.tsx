@@ -228,11 +228,15 @@ it('"Return response" of a service that only answers, stored off, shows off and 
   expect(toggle.disabled).toBe(false)
   // The validator's message is under the switch, and its callout focuses it.
   expect(row(el, 'returnResponse')!.textContent).toContain(message)
+  // Its hint says the switch must be on, not that the Response output is always there.
+  expect(row(el, 'returnResponse')!.textContent).toContain('Return response must be on for this service.')
+  expect(row(el, 'returnResponse')!.textContent).not.toContain('always there')
   button(el.querySelector('.hs-insp-problems')!, message)!.click()
   expect(document.activeElement).toBe(toggle)
   toggle.click()
   expect(node().config.returnResponse).toBe(true)
   expect(responseSwitch(el)).toBe(toggle)
+  expect(row(el, 'returnResponse')!.textContent).toContain('always there')
   expect(toggle.checked).toBe(true)
   expect(toggle.disabled).toBe(true)
 })
@@ -623,6 +627,21 @@ it('after removing a loop declaration, focuses the next one, else the name input
   await focused(() => section().querySelector('input[aria-label="New kept between iterations name"]'))
 })
 
+it('shows two loop declarations of the same name as two rows, each edited and removed by itself', () => {
+  // Possible in a graph written through the API; the validator reports the duplicate.
+  const graph = updateNode(addNode(createGraph('Loop'), 'foreach', 'loop'), 'loop', {
+    config: { itemType: 'number', carry: [{ name: 'total', type: 'number', initial: lit('number', 1) }, { name: 'total', type: 'number', initial: lit('number', 2) }] },
+  })
+  const { el, node } = mount(graph, 'loop')
+  const rows = () => [...row(el, 'carry')!.querySelectorAll<HTMLElement>('.hs-insp-declaration')]
+  expect(rows()).toHaveLength(2)
+  type(rows()[1].querySelector<HTMLInputElement>('input')!, '7')
+  expect((node().config.carry as any[]).map(c => c.initial.value)).toEqual([1, 7])
+  rows()[0].querySelector<HTMLButtonElement>('button[aria-label="Remove total"]')!.click()
+  expect((node().config.carry as any[]).map(c => [c.name, c.initial.value])).toEqual([['total', 7]])
+  expect(rows()).toHaveLength(1)
+})
+
 it('keeps a loop declaration\'s row and focus while its starting value is edited', () => {
   const graph = updateNode(addNode(createGraph('Loop'), 'foreach', 'loop'), 'loop', {
     config: { itemType: 'number', carry: [{ name: 'total', type: 'number', initial: lit('number', 0) }] },
@@ -690,7 +709,7 @@ it('a "From …" pill and a wire end select their step and focus its title', asy
   await focused(() => titleOf(second.el))
 })
 
-it('closing the sheet focuses the selected step\'s card, and selecting it again reopens the sheet', async () => {
+it('closing the sheet focuses the selected step\'s card and leaves its peek bar, which opens it again', async () => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
   const { el } = mount(addNode(createGraph('Sheet'), 'delay', 'wait'), 'wait', { canvas: true })
@@ -701,11 +720,14 @@ it('closing the sheet focuses the selected step\'s card, and selecting it again 
   button(aside, 'Close panel')!.click()
   expect(aside.getAttribute('data-open')).toBe('false')
   await focused(card)
+  // Keys and clicks on the card leave it closed: the editor page decides when it opens (Enter on the card itself).
   card()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-  expect(aside.getAttribute('data-open')).toBe('true')
-  button(aside, 'Close panel')!.click()
   card()!.click()
+  expect(aside.getAttribute('data-open')).toBe('false')
+  expect(aside.getAttribute('data-peek')).toBe('true')
+  button(aside, 'Edit Delay')!.click()
   expect(aside.getAttribute('data-open')).toBe('true')
+  expect(aside.getAttribute('data-peek')).toBeNull()
 })
 
 // ── Smaller items (items 7 and 10) ───────────────────────────────────────────────────────────────────

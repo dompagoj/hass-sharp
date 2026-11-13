@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, type JSX } from 'solid-js'
+import { createEffect, createMemo, createSignal, For, on, Show, type JSX } from 'solid-js'
 import { NodeConfig } from './NodeConfig'
 import { TypeChip } from './InputRow'
 import { Glyph } from './Glyph'
@@ -34,9 +34,17 @@ export interface InspectorProps {
   /** Shows the problems list; without it the page's diagnostics list is focused. */
   onShowProblems?(): void
   lastRun?: InspectorLastRun
-  /** Below 900px the inspector is a bottom sheet: shown while `open` (default: while something is selected). */
+  /**
+   * Below 900px (and floating over a full-screen canvas) the inspector is a sheet in two stages: a peek bar naming
+   * the selection, and the panel. `open` is the page's choice of the panel (default: while something is selected,
+   * until closed); with something selected and `open` false, the peek bar shows.
+   */
   open?: boolean
   onClose?(): void
+  /** The peek bar was tapped: the page opens the panel. */
+  onOpen?(): void
+  /** Duplicates steps with the canvas's own placement and returns the copies' ids (else the panel places them). */
+  onDuplicate?(ids: string[]): string[]
 }
 
 /**
@@ -54,15 +62,23 @@ export function Inspector(props: InspectorProps) {
   // A new selection brings the sheet back.
   createEffect(on(() => [props.selected?.id, props.selectedEdgeId, ids().join(' '), props.description?.kind], () => setDismissed(false), { defer: true }))
   const hasContent = () => !!(props.description || props.selected || many() || edge())
-  const open = () => (props.open ?? hasContent()) && !dismissed()
+  const open = () => (props.open === undefined ? hasContent() && !dismissed() : props.open && hasContent())
+  const peek = () => hasContent() && !open()
   const workspace = (): ParentNode => aside.closest('.hs-visual-workspace') ?? aside.parentElement ?? document
   const card = (id: string | undefined) =>
     id ? [...workspace().querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.getAttribute('data-id') === id) : undefined
   const canvas = () => workspace().querySelector<HTMLElement>('.hs-flow')
-  /** Focuses what `find` returns once the update that shows it has been rendered (it may take a frame). */
+  const focused = () => (aside.getRootNode() as Document | ShadowRoot).activeElement
+  /**
+   * Focuses what `find` returns once the update that shows it has been rendered (it may take a frame), unless the
+   * user has put focus somewhere else meanwhile.
+   */
   const focusSoon = (find: () => HTMLElement | null | undefined) => {
     let tries = 0
+    const start = focused()
     const attempt = () => {
+      const now = focused()
+      if (now !== start && now instanceof HTMLElement && now !== aside.ownerDocument.body && now.isConnected) return
       const target = find()
       if (target?.isConnected) { target.focus(); target.scrollIntoView?.({ block: 'nearest' }); return }
       if (++tries < 3) setTimeout(attempt, 0)
@@ -84,28 +100,23 @@ export function Inspector(props: InspectorProps) {
     // Back to where the selection is: its card on the canvas, else the canvas.
     focusSoon(() => card(id) ?? canvas())
   }
-  // Selecting a step again (click, or Enter or Space on its card) brings a dismissed sheet back.
-  onMount(() => {
-    const scope = aside.closest('.hs-visual-workspace')
-    if (!scope) return
-    const reopen = (event: Event) => {
-      if (!dismissed() || !(event.target instanceof Element) || !event.target.closest('.solid-flow__node')) return
-      if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return
-      setDismissed(false)
-    }
-    scope.addEventListener('click', reopen, true)
-    scope.addEventListener('keydown', reopen, true)
-    onCleanup(() => { scope.removeEventListener('click', reopen, true); scope.removeEventListener('keydown', reopen, true) })
-  })
 
   const duplicate = (selection: string[]) => {
-    const data = copySteps(props.graph, selection)
-    if (!data) return
-    const result = pasteSteps(props.graph, data, props.catalog, { offset: { x: 40, y: 40 } }, 20)
-    if ('error' in result) return setStatus(result.error)
-    props.commit(result.graph)
-    setStatus(result.ids.length === 1 ? 'Duplicated' : `Duplicated ${result.ids.length} steps`)
-    if (selection.length === 1 && result.ids.length === 1) selectAndFocus(result.ids[0])
+    let ids: string[]
+    if (props.onDuplicate) {
+      // The canvas places the copies, the same way as its own Duplicate (and says why when it cannot).
+      ids = props.onDuplicate(selection)
+      if (!ids.length) return
+    } else {
+      const data = copySteps(props.graph, selection)
+      if (!data) return
+      const result = pasteSteps(props.graph, data, props.catalog, { offset: { x: 40, y: 40 } }, 20)
+      if ('error' in result) return setStatus(result.error)
+      props.commit(result.graph)
+      ids = result.ids
+    }
+    setStatus(ids.length === 1 ? 'Duplicated' : `Duplicated ${ids.length} steps`)
+    if (selection.length === 1 && ids.length === 1) selectAndFocus(ids[0])
   }
   const remove = (selection: string[]) => {
     const next = selection.reduce((graph, id) => removeNode(graph, id, props.catalog), props.graph)
@@ -133,7 +144,10 @@ export function Inspector(props: InspectorProps) {
   }
 
   return (
-    <aside ref={aside} class="hs-inspector" aria-label="Node inspector" data-open={open() ? 'true' : 'false'}>
+    <aside ref={aside} class="hs-inspector" aria-label="Node inspector" data-open={open() ? 'true' : 'false'} data-peek={peek() ? 'true' : undefined}>
+      <Show when={peek()}>
+        <PeekBar />
+      </Show>
       <div class="hs-insp-sheet-bar">
         <SheetGrip onClose={close} />
         <button type="button" class="hs-button hs-button--ghost hs-insp-close" aria-label="Close panel" onClick={close}>
@@ -196,6 +210,48 @@ export function Inspector(props: InspectorProps) {
       </Show>
     </aside>
   )
+
+  /**
+   * The sheet's first stage: what is selected in one line and an "Edit" affordance; tapping it opens the panel. Only
+   * shown (CSS) where the inspector is a sheet or floats; the side panel never collapses to it.
+   */
+  function PeekBar() {
+    const node = () => (many() || props.description ? undefined : props.selected)
+    const identity = () => { const current = node(); return current ? nodeIdentity(current.kind, props.catalog) : undefined }
+    const title = () => {
+      if (props.description) return props.description.label
+      if (many()) return `${ids().length} steps selected`
+      const current = node()
+      if (current) return nodeTitle(current, props.catalog)
+      return edge()?.kind === 'data' ? 'Value wire' : 'Flow wire'
+    }
+    const line = () => {
+      const current = node(), wire = edge()
+      if (current) return nodeSummary(current, props.catalog, undefined, props.graph)
+      if (!many() && wire) {
+        const end = (id: string) => nodeTitle(props.graph.nodes.find(n => n.id === id), props.catalog, 'Missing step')
+        return `From ${end(wire.source)} to ${end(wire.target)}`
+      }
+      return ''
+    }
+    const expand = () => {
+      if (props.onOpen) return props.onOpen()
+      setDismissed(false)
+    }
+    return (
+      <button type="button" class="hs-insp-peek" aria-expanded="false" aria-label={`Edit ${title()}`} title={line() || undefined}
+        style={{ '--hs-cat': identity()?.color }} onClick={expand}>
+        <span class="hs-insp-peek__icon" aria-hidden="true">
+          <Glyph paths={identity()?.icon ?? (many() ? icons.flow : icons.data)} />
+        </span>
+        <span class="hs-insp-peek__text">
+          <strong>{title()}</strong>
+          <Show when={line()}><small>{line()}</small></Show>
+        </span>
+        <span class="hs-insp-peek__edit" aria-hidden="true">Edit</span>
+      </button>
+    )
+  }
 
   /** With nothing selected: the automation's triggers (each selects itself), problems and last run. */
   function Overview() {

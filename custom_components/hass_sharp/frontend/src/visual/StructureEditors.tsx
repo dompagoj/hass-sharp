@@ -138,17 +138,22 @@ export function Declarations(props: { ctx: StructureContext; key: 'carry' | 'exp
   const ctx = props.ctx
   let nameInput!: HTMLInputElement
   const list = () => { const value = ctx.node().config[props.key]; return Array.isArray(value) ? value.filter(record) : [] }
-  // Rows are keyed by name, so editing a starting value keeps its row (and focus).
-  const names = () => list().map(item => String(item.name ?? ''))
-  const item = (name: string) => list().find(entry => String(entry.name ?? '') === name)
+  // Rows are keyed by name and by position among the entries of that name: editing a starting value or removing
+  // another entry keeps a row (and its focus), and two entries with the same or no name (a graph written through the
+  // API) stay two rows, each edited and removed by its own position.
+  const nameAt = (entry: Record<string, unknown>) => String(entry.name ?? '')
+  const keys = () => list().map((entry, index, all) => `${all.slice(0, index).filter(other => nameAt(other) === nameAt(entry)).length}:${nameAt(entry)}`)
+  const nameOf = (key: string) => key.slice(key.indexOf(':') + 1)
+  /** The entry's current position in the list. */
+  const at = (key: string) => keys().indexOf(key)
   const prefix = props.key === 'carry' ? 'carry' : 'export'
   const used = (name: string) => ctx.graph().edges.some(e => e.kind === 'data' && ((e.source === ctx.node().id && e.sourcePort === `${prefix}:${name}`) || e.targetPort === `${prefix}:${name}`))
   const literalTypes = () => Object.keys(ctx.catalog().types).filter(t => resolveTypeSpec(t, ctx.catalog())?.literalKind)
   const [name, setName] = createSignal('')
   const [type, setType] = createSignal('number')
   const [error, setError] = createSignal('')
-  const update = (target: string, patch: Record<string, unknown>) =>
-    ctx.set(props.key, list().map(entry => (String(entry.name ?? '') === target ? { ...entry, ...patch } : entry)))
+  const update = (index: number, patch: Record<string, unknown>) =>
+    ctx.set(props.key, list().map((entry, i) => (i === index ? { ...entry, ...patch } : entry)))
   const add = () => {
     const value = name().trim()
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(value)) return setError('Use letters, digits and underscores, not starting with a digit.')
@@ -161,10 +166,12 @@ export function Declarations(props: { ctx: StructureContext; key: 'carry' | 'exp
     <section class="hs-insp-section" aria-label={props.title} data-input-id={props.key}>
       <h3 class="hs-insp-heading">{props.title}</h3>
       <small class="hs-field-hint">{props.hint}</small>
-      <For each={names()}>
-        {itemName => {
-          const itemType = () => { const t = item(itemName)?.type; return typeof t === 'string' ? t : 'object' }
-          const initial = () => { const value = item(itemName)?.initial; return record(value) ? (value as Operand) : undefined }
+      <For each={keys()}>
+        {key => {
+          const itemName = nameOf(key)
+          const item = () => list()[at(key)]
+          const itemType = () => { const t = item()?.type; return typeof t === 'string' ? t : 'object' }
+          const initial = () => { const value = item()?.initial; return record(value) ? (value as Operand) : undefined }
           return (
             <div class="hs-insp-declaration">
               <div class="hs-insp-field__row">
@@ -174,7 +181,8 @@ export function Declarations(props: { ctx: StructureContext; key: 'carry' | 'exp
                   title={used(itemName) ? 'Remove its connections on the canvas first' : undefined}
                   onClick={event => {
                     const restore = keepFocus(event.currentTarget.closest('.hs-insp-declaration'), '.hs-insp-declaration', () => nameInput)
-                    ctx.set(props.key, list().filter(entry => String(entry.name ?? '') !== itemName))
+                    const index = at(key)
+                    ctx.set(props.key, list().filter((_, i) => i !== index))
                     restore()
                   }}>
                   <Glyph paths={closeIcon} />
@@ -182,7 +190,7 @@ export function Declarations(props: { ctx: StructureContext; key: 'carry' | 'exp
               </div>
               <InputEditor variant="panel" label={`${itemName} starts at`} catalog={ctx.catalog()}
                 input={{ types: [itemType()], required: true, description: 'Its value before the first iteration.' }}
-                value={initial()} onChange={next => update(itemName, { initial: next })} />
+                value={initial()} onChange={next => update(at(key), { initial: next })} />
             </div>
           )
         }}

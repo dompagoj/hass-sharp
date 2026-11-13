@@ -171,7 +171,9 @@ export function ServiceFields(props: {
               <strong>Return response</strong>
               <small class="hs-field-hint">
                 {response() === 'only'
-                  ? 'This service always answers, so its Response output is always there.'
+                  ? returning()
+                    ? 'This service always answers, so its Response output is always there.'
+                    : 'Return response must be on for this service.'
                   : returning() && responseConnected()
                     ? 'The Response output is connected; remove that connection on the canvas to turn this off.'
                     : 'Adds a Response output with what the service answers.'}

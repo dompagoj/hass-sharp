@@ -21,8 +21,14 @@ For smoke-check evidence in browser devtools, the iframe exposes `previewCode()`
 fixture is outside the production build entry point. Live Home Assistant checks
 still require the local instance described in the repository's AGENTS.md.
 
-Visual editor shell coverage lives in `visual-graph.test.ts`, `VisualEditor.test.tsx`
-and `VisualAutomationView.test.tsx`. Tests use the real pinned Solid Flow/D3
+Visual editor page coverage lives in `editor-shell.test.tsx` (the top bar's in-place
+rename and "⋯" menu, the bottom drawer's tabs, a problem selecting its step and field,
+the step library's search and click-to-add, full screen with and without the Fullscreen
+API, the narrow-screen peek bar and sheet, the panel's Duplicate, and the keyboard
+boundary) and `VisualAutomationView.test.tsx` (save state, Run now, Runs, Problems and
+Generated C# against the in-memory API, and the unsaved-changes guard). `matchMedia` is
+stubbed for the narrow layout; Happy DOM has no CSS, so the layout itself is a browser
+check (light, dark, 360px and full screen in the preview below). Tests use the real pinned Solid Flow/D3
 implementation. Happy DOM has no layout engine; the resize/edge tests supply only
 measured DOM dimensions at that boundary. These tests do not replace desktop/mobile
 browser acceptance. See `../docs/visual-editor-feasibility.md` for the adapter touch handling,
@@ -31,6 +37,9 @@ capability limits, and browser follow-up results.
 Run `bun run build:preview` to build the mock-data responsive fixture; see the feasibility report for the temporary local HA static-route workflow. This is not a real HA integration test.
 
 Run history checks are in `AutomationRuns.test.tsx` and `AutomationView.test.tsx`.
+The preview's sample runs follow run history v2 (action labels, trigger summaries,
+`hasTrace`, and Stopped/Cancelled/Interrupted reasons); `?view=visual&typed=1` has
+runs for its saved typed-demo automation under the editor's Runs tab.
 The fixture's BathroomHeating automation has sample history and accepts mock manual
 runs. Its `window.runFixture` lets browser checks set `historyError`,
 `dispatchError`, or the terminal `result`; no real HA service/device is called.
@@ -55,7 +64,7 @@ blocker. Fixture results do not verify backend compilation or persistence.
 
 
 Graph v4 authoring is covered by `VisualAutomationView.test.tsx` (multiple
-triggers, C# sections, saved action dispatch, unsupported-version rejection and source mappings) and
+triggers, shared C# problems, saved action dispatch, unsupported-version rejection and source mappings) and
 `visual-graph.test.ts` (UTF-8 action IDs and duplicate-label disambiguation).
 The fixture's `visualFixture.controls.preview` accepts an explicit backend preview
 response for inspecting real source and maps without authenticating to HA. This

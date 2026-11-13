@@ -110,7 +110,7 @@ export function visualFixture(
       throw new Error(`Unsupported library fixture operation ${request.operation}`)
     }
     if (message.type === 'get_services') return { light: { turn_on: { name: 'Turn on', description: 'Turn on a light' } } }
-    if (message.type === 'hass_sharp/run_history') return { version: 1, offset: 0, limit: 20, runs: [] }
+    if (message.type === 'hass_sharp/run_history') return { version: 2, offset: message.offset ?? 0, limit: message.limit ?? 20, runs: [] }
     if (message.type === 'hass_sharp/run_now') return { version: 1, runId: 'manual-visual-run' }
     if (message.type === 'hass_sharp/get_entities') return { entities: [] }
     if (message.type === 'hass_sharp/reload_entities') return { success: true }

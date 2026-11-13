@@ -349,14 +349,14 @@ it('opens a focused keyboard chooser and cancels without creating anything', asy
 it('drops palette nodes at flow coordinates accounting for pan and zoom', () => {
   const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
   const data = new DataTransfer()
-  button(host, 'About Delay').dispatchEvent(dragEvent('dragstart', data))
+  button(host, 'Add Delay').dispatchEvent(dragEvent('dragstart', data))
   const canvas = host.querySelector('[aria-label="Automation canvas"]')!
   // On empty space: exactly at the pointer.
   canvas.dispatchEvent(dragEvent('drop', data, 160, 470))
   expect(json(host).nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: 200, y: 600 } })
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
   // On the trigger's card (at 60, 100; unmeasured cards count as 260 × 120): 40 px below it instead.
-  button(host, 'About Delay').dispatchEvent(dragEvent('dragstart', data))
+  button(host, 'Add Delay').dispatchEvent(dragEvent('dragstart', data))
   canvas.dispatchEvent(dragEvent('drop', data, 160, 170))
   expect(json(host).nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: 200, y: 100 + 120 + 40 } })
 })
@@ -446,7 +446,7 @@ it('does not open a chooser after panning, node drags, resize or drops outside t
   pane.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, clientX: 80, clientY: 80 }))
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
   const data = new DataTransfer()
-  button(host, 'About Delay').dispatchEvent(dragEvent('dragstart', data))
+  button(host, 'Add Delay').dispatchEvent(dragEvent('dragstart', data))
   document.body.dispatchEvent(dragEvent('drop', data, 1000, 1000))
   expect(json(host).nodes).toHaveLength(3)
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()

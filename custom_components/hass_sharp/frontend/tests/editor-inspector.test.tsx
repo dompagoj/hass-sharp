@@ -43,10 +43,14 @@ it('offers palette, inspector, connection editing and undo/redo while requesting
   // Wires are made on the canvas (here from the keyboard), never in the inspector.
   const wait = json(host).nodes.at(-1).id
   press(pin(host, wait, 'next')); press(pin(host, 'service-1', 'in'))
-  expect(host.querySelector('[aria-label="Connections"]')?.textContent).toContain('Wait for warmth → Call service')
-  button(host, 'Remove Wait for warmth → Call service').click()
-  expect(host.querySelector('[aria-label="Connections"]')?.textContent).not.toContain('Wait for warmth → Call service')
-  expect(host.textContent).toContain('Not saved')
+  expect(json(host).edges).toContainEqual(expect.objectContaining({ source: wait, target: 'service-1' }))
+  // The page has no list of connections: a wire is removed on the canvas, and undone like any edit.
+  expect(host.querySelector('[aria-label="Connections"]')).toBeNull()
+  button(host, 'Undo').click()
+  expect(json(host).edges).not.toContainEqual(expect.objectContaining({ source: wait, target: 'service-1' }))
+  // Never saved: the save state is not "Saved" (here it names the unconnected Delay's problem).
+  expect(host.querySelector('.hs-save-chip')?.textContent).not.toBe('Saved')
+  expect(host.querySelector('.hs-save-chip')?.getAttribute('title')).toBe('Not saved yet; there are unsaved changes')
   expect(host.textContent).toContain('Generated C#')
   expect(host.textContent).not.toContain('SAMPLE ONLY')
 })
@@ -93,25 +97,12 @@ it('shows a wire selected on the canvas read only in the inspector', async () =>
 })
 it('finds library steps by their kind id as well as their name', () => {
   const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
-  const search = host.querySelector<HTMLInputElement>('input[aria-label="Search nodes"]')!
+  const search = host.querySelector<HTMLInputElement>('input[aria-label="Search the step library"]')!
   for (const [query, label] of [['xor', 'Exclusive or'], ['foreach', 'For each']]) {
     search.value = query
     search.dispatchEvent(new Event('input', { bubbles: true }))
-    expect([...host.querySelectorAll('.hs-palette-item')].map(item => item.getAttribute('aria-label'))).toEqual([`About ${label}`])
+    expect([...host.querySelectorAll('.hs-lib__item')].map(item => item.getAttribute('aria-label'))).toEqual([`Add ${label}`])
   }
-})
-it('palette clicks describe configuration and connections without editing history', () => {
-  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
-  const before = json(host)
-  button(host, 'About State condition').click()
-  const inspector = host.querySelector('[aria-label="Node inspector"]')!
-  expect(inspector.textContent).toContain('depending on whether an entity has a given state')
-  expect(inspector.textContent).toContain('If true')
-  expect(inspector.textContent).toContain('If false')
-  expect(inspector.textContent).toContain('On error')
-  expect(inspector.querySelector('input')).toBeNull()
-  expect(json(host)).toEqual(before)
-  expect(button(host, 'Undo').disabled).toBe(true)
 })
 function dragEvent(type: string, data: DataTransfer, clientX = 0, clientY = 0) {
   const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY })
