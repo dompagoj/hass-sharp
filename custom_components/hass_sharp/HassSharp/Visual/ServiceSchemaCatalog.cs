@@ -90,11 +90,14 @@ public sealed class ServiceSchemaCatalog
         foreach (var (key, field) in fields)
         {
             if (normalised.ContainsKey(key)) { log($"Skipping field {key} of {id}: the name is already used by another section"); continue; }
-            try { normalised[key] = Field(key, field, section, $"field {key} of {id}", log); }
+            JsonObject spec; bool repaired;
+            try { spec = Field(key, field, section, out repaired); }
             catch (Exception ex) { log($"Skipping field {key} of {id}: {ex.Message}"); continue; }
-            normalised[key]["order"] = normalised.Count - 1;
+            if (repaired) log(TextsRepaired($"field {key} of {id}"));
+            spec["order"] = normalised.Count;
+            normalised[key] = spec;
         }
-        var (name, text) = Texts(description, service, "service " + id, log);
+        var (name, text, renamed) = Texts(description, service);
         var result = new JsonObject
         {
             ["domain"] = domain, ["service"] = service, ["name"] = name, ["description"] = text,
@@ -102,16 +105,19 @@ public sealed class ServiceSchemaCatalog
             ["fields"] = new JsonObject(),
         };
         foreach (var (key, field) in normalised) result["fields"]![key] = field;
+        // Logged only once the service is known to be kept: a skipped entry gets just its skip line.
+        if (renamed) log(TextsRepaired("service " + id));
         return result;
     }
 
     // Contract C3: the selector decides the accepted types and the literal constraints.
-    // The caller fills in "order" once the field is known to be kept.
-    static JsonObject Field(string key, JsonNode? node, string? section, string entry, Action<string> log)
+    // The caller fills in "order" and logs a repaired label once the field is known to be kept.
+    static JsonObject Field(string key, JsonNode? node, string? section, out bool repaired)
     {
         var field = node as JsonObject ?? throw new FormatException("the field is not an object");
         var (selector, config) = Selector(field["selector"]);
-        var (label, text) = Texts(field, key, entry, log);
+        var (label, text, relabelled) = Texts(field, key);
+        repaired = relabelled;
         var spec = new JsonObject
         {
             ["label"] = label, ["description"] = text, ["types"] = null,
@@ -273,14 +279,15 @@ public sealed class ServiceSchemaCatalog
     static JsonArray Array(IReadOnlyList<string>? values) => new(values?.Select(v => (JsonNode?)v).ToArray() ?? []);
 
     // Descriptions set through async_set_service_schema are not validated by HA: a non-text name or
-    // description falls back (key, empty text) with one log line instead of dropping the entry.
-    static (string Name, string Description) Texts(JsonObject owner, string fallback, string entry, Action<string> log)
+    // description falls back (key, empty text) instead of dropping the entry; the caller logs it once kept.
+    static (string Name, string Description, bool Repaired) Texts(JsonObject owner, string fallback)
     {
         static bool IsText(JsonNode? node) => node is null || node is JsonValue v && v.GetValueKind() == JsonValueKind.String;
         var (name, description) = (owner["name"], owner["description"]);
-        if (!IsText(name) || !IsText(description)) log($"Ignoring the non-text name or description of {entry}");
-        return (IsText(name) ? name?.GetValue<string>() ?? fallback : fallback, IsText(description) ? description?.GetValue<string>() ?? "" : "");
+        return (IsText(name) ? name?.GetValue<string>() ?? fallback : fallback, IsText(description) ? description?.GetValue<string>() ?? "" : "",
+            !IsText(name) || !IsText(description));
     }
+    static string TextsRepaired(string entry) => $"Ignoring the non-text name or description of {entry}";
 
     static IReadOnlyList<string>? Strings(JsonObject? owner, string key) => owner?[key] switch
     {

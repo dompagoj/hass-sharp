@@ -29,9 +29,10 @@ public partial class HassSharpManager
     static string Success(object result) => JsonSerializer.Serialize(new { version = 1, ok = true, result }, VisualStore.Json);
     static bool IsServicesRequest(string requestJson)
     {
-        // Anything malformed falls through to the gated path, which reports it as before.
+        // Anything malformed (null, invalid JSON, duplicate keys, ...) falls through to the gated
+        // path, which reports it in the usual invalid_request envelope.
         try { return JsonNode.Parse(requestJson) is JsonObject request && request["operation"] is JsonValue op && op.TryGetValue<string>(out var name) && name == "services"; }
-        catch (JsonException) { return false; }
+        catch { return false; }
     }
     static string RequiredString(JsonObject request, string key) => request[key]?.GetValue<string>() ?? throw new ArgumentException($"{key} is required");
 

@@ -32,7 +32,7 @@ public static class ServiceSchemaTests
         Generation(descriptions, catalog);
         await Manager(descriptions, catalog);
         await Attachment(descriptions, catalog);
-        Ordering();
+        await Ordering();
     }
 
     static JsonObject Item(ServiceSchemaCatalog catalog, string id) => catalog.Items[id] as JsonObject ?? throw new Exception($"service {id} missing");
@@ -105,6 +105,18 @@ public static class ServiceSchemaTests
         foreach (var name in new[] { "broken_domain", "Bad Domain", "not_an_object", "Bad-Service", "bad_target", "bad_response", "bad_fields", "two_selectors", "scalar_field", "bad_minimum", "unknown_options", "field level of hass_sharp_test.sectioned", "service hass_sharp_test.odd_texts", "field odd_label of hass_sharp_test.odd_texts" })
             Check(logged.Count(l => l.Contains(name, StringComparison.Ordinal)) == 1, $"exactly one log line for {name}: {string.Join(" | ", logged)}");
         Check(logged.Count == 14, "one log line per skipped or repaired entry: " + string.Join(" | ", logged));
+        foreach (var (description, expected) in new[]
+        {
+            ("""{"name":5,"target":"everything","fields":{}}""", "Skipping service d.s: the target is not an object"),
+            ("""{"name":5,"fields":{},"response":{"optional":"maybe"}}""", "Skipping service d.s: optional is not a boolean"),
+            ("""{"fields":{"f":{"name":5,"selector":{"constant":{}}}}}""", "Skipping field f of d.s: a constant selector needs a value"),
+            ("""{"fields":{"f":{"description":[1],"selector":{"number":{"step":"half"}}}}}""", "Skipping field f of d.s: the number step must be a number or \"any\""),
+        })
+        {
+            var lines = new List<string>();
+            ServiceSchemaCatalog.Parse("""{"d":{"s":""" + description + "}}", lines.Add);
+            Check(lines.SequenceEqual([expected]), $"a skipped entry with a non-text name logs only its skip: {string.Join(" | ", lines)}");
+        }
         foreach (var bad in new[] { "[]", "\"text\"", "not json", "null" })
         {
             var threw = false;
@@ -197,22 +209,26 @@ public static class ServiceSchemaTests
         Console.WriteLine($"PASS service schema selector mapping: {fields.Count} C3 cases");
     }
 
-    // Reverses every object's keys except a "fields" object's, whose order is HA's display order.
     // Install a later sequence, then an earlier one that finished after it: the later catalog stays.
-    static void Ordering()
+    static async Task Ordering()
     {
-        var manager = new HassSharpManager(Path.Combine(Path.GetTempPath(), "service-order-" + Guid.NewGuid()));
-        manager.SetServiceDescriptions("""{"light":{"turn_on":{"fields":{}}}}""", 2);
-        manager.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}}}""", 1);
-        Check(manager.ServiceSchemas.Items.Select(p => p.Key).SequenceEqual(["light.turn_on"]), "an earlier push finishing later never replaces a later one");
-        manager.SetServiceDescriptions("""{"light":{"toggle":{"fields":{}}}}""", 3);
-        Check(manager.ServiceSchemas.Items.Select(p => p.Key).SequenceEqual(["light.toggle"]), "a later sequence replaces an earlier one");
-        Console.WriteLine("PASS service schema push ordering by sequence");
+        var previous = HassPath.HassConfiguration;
+        var path = Path.Combine(Path.GetTempPath(), "service-order-" + Guid.NewGuid());
+        var manager = new HassSharpManager(path);
+        try
+        {
+            manager.SetServiceDescriptions("""{"light":{"turn_on":{"fields":{}}}}""", 2);
+            manager.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}}}""", 1);
+            Check(manager.ServiceSchemas.Items.Select(p => p.Key).SequenceEqual(["light.turn_on"]), "an earlier push finishing later never replaces a later one");
+            manager.SetServiceDescriptions("""{"light":{"toggle":{"fields":{}}}}""", 3);
+            Check(manager.ServiceSchemas.Items.Select(p => p.Key).SequenceEqual(["light.toggle"]), "a later sequence replaces an earlier one");
+            Console.WriteLine("PASS service schema push ordering by sequence");
+        }
+        finally { await manager.UnloadAsync(); HassPath.HassConfiguration = previous; try { Directory.Delete(path, true); } catch { } }
     }
 
-    // Services reach only authoring validation of one graph (C4 "Where services are attached").
-    // Observed through the private selection methods: Init and the catalog op build on SavedLibraries,
-    // the library-save rebuild on a fresh compiler preview, and VisualApi preview/save on AuthoringSnapshot.
+    // The two private selection methods: SavedLibraries carries no services, AuthoringSnapshot the pushed
+    // ones. The call sites (Init, library-save rebuild, VisualApi preview/save) are pinned by ServiceNodeTests.
     static async Task Attachment(string descriptions, ServiceSchemaCatalog expected)
     {
         var previous = HassPath.HassConfiguration;
@@ -225,19 +241,19 @@ public static class ServiceSchemaTests
             const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
             var saved = typeof(HassSharpManager).GetMethod("SavedLibraries", Private)!.Invoke(manager, null)!;
             var savedPreview = (NodeLibraryPreview)saved.GetType().GetField("Item3")!.GetValue(saved)!;
-            Check(savedPreview.Snapshot.Services == null, "the snapshot Init validates with carries no services");
-            Check(new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([]).Snapshot.Services == null, "the library-save rebuild snapshot carries no services");
+            Check(savedPreview.Snapshot.Services == null, "SavedLibraries carries no services after a push");
             var authoring = (VisualCatalogSnapshot)typeof(HassSharpManager).GetMethod("AuthoringSnapshot", Private)!.Invoke(manager, [savedPreview.Snapshot])!;
-            Check(authoring.Services is { } attached && attached.Generation == expected.Generation && ReferenceEquals(attached, manager.ServiceSchemas), "VisualApi preview/save validates with the pushed services");
+            Check(authoring.Services is { } attached && attached.Generation == expected.Generation && ReferenceEquals(attached, manager.ServiceSchemas), "the authoring snapshot carries the pushed services");
             Check(ReferenceEquals(authoring.Root, savedPreview.Snapshot.Root), "authoring shares the saved catalog root");
             var graph = JsonNode.Parse("""{"version":5,"name":"Attached","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}}],"edges":[]}""")!.AsObject();
             var preview = JsonNode.Parse(await manager.VisualRequest(JsonSerializer.Serialize(new { operation = "preview", graph })))!;
             Check(preview["ok"]!.GetValue<bool>() && preview["result"]!["valid"]!.GetValue<bool>(), "VisualApi preview with services attached: " + preview.ToJsonString());
-            Console.WriteLine("PASS service schema attachment: none for Init and library rebuild, pushed for VisualApi authoring");
+            Console.WriteLine("PASS service schema attachment: SavedLibraries without services, authoring snapshot with the pushed ones");
         }
         finally { await manager.UnloadAsync(); HassPath.HassConfiguration = previous; try { Directory.Delete(path, true); } catch { } }
     }
 
+    // Reverses every object's keys except a "fields" object's, whose order is HA's display order.
     static JsonNode? Reversed(JsonNode? node, bool keepOrder = false) => node switch
     {
         JsonObject o => new JsonObject((keepOrder ? o : o.Reverse()).Select(p => KeyValuePair.Create(p.Key, Reversed(p.Value, p.Key == "fields")))),
@@ -315,6 +331,12 @@ public static class ServiceSchemaTests
                 Check(ungated["items"]!.AsObject().ContainsKey("light.turn_off"), "the services op is answered without the authoring gate");
             }
             finally { gate.Release(); }
+            foreach (var malformed in new string?[] { null, "not json", "[]", """{"operation":"services","operation":"catalog"}""", """{"operation":7}""" })
+            {
+                var response = JsonNode.Parse(await manager.NodeLibraryRequest(malformed!))!;
+                Check(!response["ok"]!.GetValue<bool>() && response["error"]!["code"]!.GetValue<string>() == "invalid_request",
+                    $"malformed request {malformed ?? "null"} gets the invalid_request envelope: {response.ToJsonString()}");
+            }
             var swapped = await Library(manager, new { operation = "services" });
             Check(swapped["items"]!.AsObject().Select(p => p.Key).SequenceEqual(["light.turn_off"]), "a later push replaces the schemas whole");
 
