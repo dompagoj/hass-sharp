@@ -12,7 +12,8 @@ const Glyph = (props: { paths: readonly string[] }) => (
 /**
  * The quick-add palette: a search field over every step it may add, grouped by category with the category's icon
  * and colour, each step with its name and one line of description. Arrow keys move through the list, Enter adds,
- * Escape closes. Opened from a pin, it lists only steps that can connect to that pin and its title says so.
+ * Escape (or Tab) closes and hands focus back to whoever opened it. Opened from a pin, it lists only steps that can
+ * connect to that pin and its title says so.
  */
 export function QuickAdd(props: {
   catalog?: VisualCatalogSnapshot
@@ -21,9 +22,11 @@ export function QuickAdd(props: {
   y: number
   /** "Add a step", or what choosing will connect ("Connect Entity to…"). */
   title: string
+  /** Asked once per kind while open (not per keystroke). */
   allowed: (kind: NodeKind) => boolean
   onChoose: (kind: NodeKind) => void
-  onClose: () => void
+  /** `restore`: closed from the keyboard, so focus goes back to where it was; a click elsewhere keeps its own focus. */
+  onClose: (restore: boolean) => void
 }) {
   const [search, setSearch] = createSignal('')
   const [active, setActive] = createSignal(0)
@@ -32,10 +35,10 @@ export function QuickAdd(props: {
   let input!: HTMLInputElement
   let list!: HTMLDivElement
   const catalog = () => props.catalog ?? nodeCatalog
+  const offered = createMemo(() => catalogPalette(catalog()).filter(item => props.allowed(item.kind)))
   const items = createMemo(() => {
     const words = search().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-    return catalogPalette(catalog()).filter(item => {
-      if (!props.allowed(item.kind)) return false
+    return offered().filter(item => {
       const text = `${item.label} ${item.category} ${item.description}`.toLocaleLowerCase()
       return words.every(word => text.includes(word))
     })
@@ -58,7 +61,7 @@ export function QuickAdd(props: {
     if (kind) list?.querySelector(`[id="${optionId(kind)}"]`)?.scrollIntoView?.({ block: 'nearest' })
   })
   const outside = (event: PointerEvent) => {
-    if (!event.composedPath().includes(root)) props.onClose()
+    if (!event.composedPath().includes(root)) props.onClose(false)
   }
   onMount(() => {
     input.focus({ preventScroll: true })
@@ -77,11 +80,12 @@ export function QuickAdd(props: {
       aria-label={props.title}
       style={{ left: `${props.x}px`, top: `${props.y}px` }}
       on:focusout={(event: FocusEvent) => {
-        if (event.relatedTarget && !root.contains(event.relatedTarget as Node)) props.onClose()
+        if (event.relatedTarget && !root.contains(event.relatedTarget as Node)) props.onClose(false)
       }}
       on:keydown={(event: KeyboardEvent) => {
         const keys: Record<string, () => void> = {
-          Escape: props.onClose,
+          Escape: () => props.onClose(true),
+          Tab: () => props.onClose(true),
           ArrowDown: () => move(active() + 1),
           ArrowUp: () => move(active() - 1),
           PageDown: () => move(Math.min(active() + 8, flat().length - 1)),

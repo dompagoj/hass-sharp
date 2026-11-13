@@ -158,10 +158,19 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   const [selection, setSelection] = createSignal<Selection>({ nodes: props.selectedId ? [props.selectedId] : [] }, { equals: sameSelection })
   const selectedSet = createMemo(() => new Set(selection().nodes))
   const primary = (current: Selection) => (current.nodes.length === 1 ? current.nodes[0] : undefined)
+  // Steps just added, pasted or duplicated, waiting for a parent that applies `onChange` later to show them.
+  let pendingSelect: string[] | undefined
+  const present = (ids: string[]) => ids.every(id => graph().nodes.some(n => n.id === id))
   const select = (nodes: string[], edge?: string) => {
+    pendingSelect = undefined
     const next: Selection = { nodes: [...new Set(nodes)].filter(id => graph().nodes.some(n => n.id === id)), ...(edge ? { edge } : {}) }
     setSelection(next)
     props.onSelect(primary(next))
+  }
+  /** Selects new steps now, or as soon as they appear in the graph. */
+  const selectAdded = (ids: string[]) => {
+    if (present(ids)) return select(ids)
+    pendingSelect = ids
   }
   const toggle = (id: string) => {
     const current = selection().nodes
@@ -183,6 +192,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     on(
       graph,
       current => {
+        if (pendingSelect && present(pendingSelect)) return select(pendingSelect)
         const before = untrack(selection)
         const nodes = before.nodes.filter(id => current.nodes.some(n => n.id === id))
         const edge = before.edge && current.edges.some(e => e.id === before.edge) ? before.edge : undefined
@@ -193,7 +203,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       { defer: true },
     ),
   )
-  createEffect(on(selection, current => props.onSelectionChange?.(current.nodes, current.edge), { defer: true }))
+  // Reported once on mount (the initial selection), then on every change.
+  createEffect(on(selection, current => props.onSelectionChange?.(current.nodes, current.edge)))
 
   // ---- Connections. Hover asks the connection index only; a drop runs the full check once, inside connectData (D12).
   const quickError = (connection: Connection): string | undefined => {
@@ -325,7 +336,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   }
 
   // ---- Quick-add: double-click, right-click, long-press, `A`, the toolbar, "Add step", or a pin dropped on empty space.
-  const [quickAdd, setQuickAdd] = createSignal<{ screen: Point; position: Point; pin?: PinRef }>()
+  /** `returnTo`: what had focus when it opened, which gets it back when it closes from the keyboard. */
+  const [quickAdd, setQuickAdd] = createSignal<{ screen: Point; position: Point; pin?: PinRef; returnTo?: HTMLElement }>()
   const toFlow = (point: Point) => (flow ? flow.screenToFlowPosition(point, { snapToGrid: false }) : point)
   const [snap, setSnap] = createSignal(false)
   const [minimap, setMinimap] = createSignal(false)
@@ -340,14 +352,46 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   let gestureStart: Point | undefined
   let pointerHeld = false
   let lastPointer: Point | undefined
-  const closeQuickAdd = () => setQuickAdd(undefined)
+  const activeElement = () => (canvas.getRootNode() as Document | ShadowRoot).activeElement
+  /** Focus back to `element` while it is still on the page, else to the canvas: never to the page body. */
+  const refocus = (element?: HTMLElement) => (element?.isConnected ? element.focus({ preventScroll: true }) : focusCanvas())
+  /**
+   * Closes the palette. Focus inside it (its search field) would fall to the page body when it unmounts, so it goes
+   * back to where it was when the palette opened; so it does when `restore` asks (Escape, Tab, a choice).
+   */
+  const closeQuickAdd = (restore = false) => {
+    const request = quickAdd()
+    if (!request) return
+    const focused = !!canvas.querySelector('.hs-quick-add')?.contains(activeElement())
+    setQuickAdd(undefined)
+    if (restore || focused) refocus(request.returnTo)
+  }
+  let focusFrame = 0
+  onCleanup(() => cancelAnimationFrame(focusFrame))
+  /** Focuses a new step's card once it is on the canvas (a parent may apply the change a little later). */
+  const focusCard = (id: string) => {
+    cancelAnimationFrame(focusFrame)
+    let frames = 0
+    const from = activeElement()
+    const attempt = () => {
+      const card = [...canvas.querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.getAttribute('data-id') === id)
+      // The user has moved on meanwhile: leave their focus alone.
+      if (activeElement() !== from && activeElement() !== card) return
+      // A card is hidden until it has been measured, and a hidden card does not take focus: try again next frame.
+      card?.focus({ preventScroll: true })
+      if ((!card || activeElement() !== card) && ++frames < 60) focusFrame = requestAnimationFrame(attempt)
+    }
+    attempt()
+  }
   const centre = (): Point => {
     const rect = canvas.getBoundingClientRect()
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
   }
   const openQuickAdd = (screen: Point, pin?: PinRef, position?: Point) => {
     if (readOnly()) return
-    setQuickAdd({ screen, position: position ?? toFlow(screen), pin })
+    const focused = activeElement()
+    const returnTo = focused instanceof HTMLElement && focused !== canvas.ownerDocument.body && !focused.closest('.hs-quick-add') ? focused : quickAdd()?.returnTo
+    setQuickAdd({ screen, position: position ?? toFlow(screen), pin, returnTo })
   }
   /** Beside the pin's card: to its right for an output, to its left for an input. */
   const besidePin = (pin: PinRef): Point | undefined => {
@@ -360,26 +404,30 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     if (!pin) return 'Add a step'
     const label = pinView(pin)?.label ?? ''
     const title = nodeTitle(graph().nodes.find(n => n.id === pin.nodeId), catalog())
-    if (pin.type === 'source') return `Connect ${pin.handle === 'next' ? title : label} to…`
+    // A named output says which one: "Connect State condition · If true to…".
+    if (pin.type === 'source') return `Connect ${pin.handle === 'next' || !label ? title : `${title} · ${label}`} to…`
     return dataPortOf(pin.handle) !== undefined ? `Get ${label} from…` : `Connect a step to ${title}`
   }
   const create = (kind: NodeKind) => {
     const request = quickAdd()
-    closeQuickAdd()
+    closeQuickAdd(true)
     if (readOnly() || !request) return
     const position = place(request.position)
     if (!request.pin) {
       const next = createNodeAt(graph(), kind, position, undefined, catalog())
       if (next === graph()) return
+      const id = next.nodes.at(-1)!.id
       change(next)
-      select([next.nodes.at(-1)!.id])
+      selectAdded([id])
+      focusCard(id)
       return
     }
     const result = addConnected(graph(), kind, position, request.pin, catalog())
     if (!result) return
     setActiveHandle(undefined)
     change(result.graph)
-    select([result.nodeId])
+    selectAdded([result.nodeId])
+    focusCard(result.nodeId)
     if (result.error && result.refused) reject(result.refused, result.error)
   }
 
@@ -650,11 +698,12 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     notify(`Copied ${steps(data.nodes.length)}`)
   }
   let lastPaste: { data: StepClipboard; count: number } | undefined
-  const insert = (data: StepClipboard, placement: { at: Point } | { offset: Point }) => {
+  const insert = (data: StepClipboard, placement: { at: Point } | { offset: Point }, verb = 'Pasted') => {
     const result = pasteSteps(graph(), data, catalog(), placement, snap() ? GRID : undefined)
-    if ('error' in result) return notify(`Cannot paste: ${result.error}`)
+    if ('error' in result) return notify(`Cannot ${verb === 'Pasted' ? 'paste' : 'duplicate'}: ${result.error}`)
     change(result.graph)
-    select(result.ids)
+    selectAdded(result.ids)
+    if (result.unnamed) notify(`${verb} ${steps(result.ids.length)}; variable names were not copied`)
   }
   const paste = async () => {
     if (readOnly()) return
@@ -670,7 +719,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   const duplicate = (target: Element) => {
     if (readOnly()) return
     const data = copySteps(graph(), targets(target))
-    if (data) insert(data, { offset: { x: 40, y: 40 } })
+    if (data) insert(data, { offset: { x: 40, y: 40 } }, 'Duplicated')
   }
   const tidy = () => {
     if (readOnly()) return
@@ -843,6 +892,10 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     locateProblem,
   }
 
+  const selectedText = () => {
+    const root = canvas.getRootNode() as { getSelection?: () => Selection | null }
+    return (root.getSelection?.() ?? canvas.ownerDocument.getSelection())?.toString() ?? ''
+  }
   const consume = (event: KeyboardEvent) => {
     event.preventDefault()
     event.stopPropagation()
@@ -875,10 +928,18 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       return
     }
     if (command && !event.altKey && !event.shiftKey && (key === 'c' || key === 'v' || key === 'd')) {
+      // Text selected on a card is the user's to copy.
+      if (key === 'c' && selectedText()) return
       consume(event)
       if (key === 'c') copy(target)
       else if (key === 'v') void paste()
       else duplicate(target)
+      return
+    }
+    // A focused or selected wire: Escape deselects it (and nothing else sees the key).
+    if (event.key === 'Escape' && (target.closest('.solid-flow__edge') || (selection().edge && !target.closest('.solid-flow__node')))) {
+      consume(event)
+      select([])
       return
     }
     if (target.closest('.solid-flow__handle')) return
@@ -981,12 +1042,14 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
             select([])
           }}
           onPaneContextMenu={({ event }) => {
+            // A run or saved version on view has nothing to add: the browser's own menu stays.
+            if (readOnly()) return
             event.preventDefault()
             // A long press already opened it (some browsers then send a context menu too).
             if (Date.now() - pressedAt < 1000) return
             openQuickAdd({ x: event.clientX, y: event.clientY })
           }}
-          onMoveStart={closeQuickAdd}
+          onMoveStart={() => closeQuickAdd()}
           onMove={() => setGestureMoved(true)}
           onConnectStart={(_event, params) => {
             closeQuickAdd()
@@ -1082,16 +1145,20 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
           </p>
         </Show>
         <Show when={!readOnly() && quickAdd()} keyed>
-          {request => (
-            <QuickAdd
-              catalog={catalog()}
-              {...quickAddOffset(request.screen)}
-              title={quickAddTitle(request.pin)}
-              allowed={kind => canAddFor(graph(), kind, request.pin, catalog())}
-              onClose={closeQuickAdd}
-              onChoose={create}
-            />
-          )}
+          {request => {
+            // Worked out once per opening (and graph change), not per keystroke in the search.
+            const allowed = createMemo(() => new Set(palette().filter(item => canAddFor(graph(), item.kind, request.pin, catalog())).map(item => item.kind)))
+            return (
+              <QuickAdd
+                catalog={catalog()}
+                {...quickAddOffset(request.screen)}
+                title={quickAddTitle(request.pin)}
+                allowed={kind => allowed().has(kind)}
+                onClose={closeQuickAdd}
+                onChoose={create}
+              />
+            )
+          }}
         </Show>
       </div>
     </FlowContext.Provider>

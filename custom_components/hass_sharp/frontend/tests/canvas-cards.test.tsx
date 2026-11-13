@@ -65,6 +65,10 @@ const withServices = (edit?: (section: contract.ServicesSection) => void) => {
   return { ...contract.nodeCatalog, services: section }
 }
 const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
+/** Transition as a typed number field instead of a slider, so a draft can be refused. */
+const typedTransition = (section: contract.ServicesSection) => {
+  ;(section as any).items['light.turn_on'].fields.transition.selector.number.mode = 'box'
+}
 /** The default graph's Call service step turning on a light, with the given service fields. */
 const lightOn = (fields: Record<string, unknown>) =>
   updateNode(typed(), 'service-1', { config: { ...typed().nodes.find(n => n.id === 'service-1')!.config, service: 'light.turn_on', fields } })
@@ -615,7 +619,7 @@ it('names branch rows by the branch name, else by position; keeps the execution 
 it('keeps an opened optional row open when focus moves to its own menu, even when the focus event comes late', async () => {
   const el = host()
   const [graph, setGraph] = createSignal(lightOn({ brightness_pct: lit('number', 50), transition: { kind: 'unset' } }))
-  dispose = render(() => providers(() => <FlowAdapter graph={graph()} catalog={withServices()} onSelect={() => {}} onChange={setGraph} />), el)
+  dispose = render(() => providers(() => <FlowAdapter graph={graph()} catalog={withServices(typedTransition)} onSelect={() => {}} onChange={setGraph} />), el)
   const cell = () => el.querySelector<HTMLElement>('[data-id="service-1"] [data-input-id="field:transition"]')!
   cell().querySelector<HTMLButtonElement>('button.hs-pin-set')!.click()
   await Promise.resolve()
@@ -628,16 +632,52 @@ it('keeps an opened optional row open when focus moves to its own menu, even whe
   field.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: menuButton }))
   await new Promise(resolve => setTimeout(resolve, 0))
   expect(cell().querySelector('.hs-card-editor')).not.toBeNull()
-  // A draft the editor refused keeps the row open even when focus leaves the card.
+  // A draft the editor refused ("abc" is not a number) keeps the row open even when focus leaves the card.
   const input = cell().querySelector<HTMLInputElement>('.hs-card-editor input')!
-  input.setAttribute('aria-invalid', 'true')
+  input.value = 'abc'
+  input.dispatchEvent(new InputEvent('input', { bubbles: true }))
+  input.dispatchEvent(new FocusEvent('blur'))
+  expect(input.getAttribute('aria-invalid')).toBe('true')
+  expect(cell().textContent).toContain('Enter a number.')
   const outside = el.appendChild(document.createElement('button'))
   input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }))
   await new Promise(resolve => setTimeout(resolve, 0))
   expect(cell().querySelector('.hs-card-editor')).not.toBeNull()
-  input.removeAttribute('aria-invalid')
+  // Escape drops the draft; then leaving folds the unset row.
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  expect(input.getAttribute('aria-invalid')).toBeNull()
   input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }))
   await vi.waitFor(() => expect(cell().querySelector('.hs-card-editor')).toBeNull())
+})
+
+it('keeps an opened optional row open while a click inside it lands, where a click does not focus the button (Safari, Firefox on macOS)', async () => {
+  const el = host()
+  const [graph, setGraph] = createSignal(lightOn({ brightness_pct: lit('number', 50), transition: { kind: 'unset' } }))
+  dispose = render(() => providers(() => <FlowAdapter graph={graph()} catalog={withServices()} onSelect={() => {}} onChange={setGraph} />), el)
+  const cell = () => el.querySelector<HTMLElement>('[data-id="service-1"] [data-input-id="field:transition"]')
+  cell()!.querySelector<HTMLButtonElement>('button.hs-pin-set')!.click()
+  await Promise.resolve()
+  const wrapper = el.querySelector<HTMLElement>('.solid-flow__node[data-id="service-1"]')!
+  const field = () => cell()!.querySelector<HTMLElement>('.hs-card-editor input')!
+  /** The pointer goes down on `target`, focus leaves the field for the card (not the button), then the click lands. */
+  const press = async (target: HTMLElement) => {
+    target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1 }))
+    field().dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: wrapper }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(cell()!.querySelector('.hs-card-editor')).not.toBeNull()
+    target.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerId: 1 }))
+    target.click()
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+  await press(cell()!.querySelector<HTMLElement>('button[aria-label="Transition mode"]')!)
+  expect(cell()!.querySelector('[role="menu"]')).not.toBeNull()
+  expect(cell()!.querySelector('.hs-card-editor')).not.toBeNull()
+  // "Clear" from that menu leaves the input unset, and the row stays open under the pointer.
+  setGraph(lightOn({ brightness_pct: lit('number', 50), transition: lit('number', 2) }))
+  await Promise.resolve()
+  await press([...cell()!.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === 'Clear')!)
+  expect((graph().nodes.find(n => n.id === 'service-1')!.config.fields as any).transition).toEqual({ kind: 'unset' })
+  expect(cell()!.querySelector('.hs-card-editor')).not.toBeNull()
 })
 
 it('centres a run on its focus node once: a new trace object for the same node leaves the view alone', async () => {

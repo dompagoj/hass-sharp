@@ -1,10 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { clearSteps, clipboardMarker, copySteps, parseSteps, pasteSteps, readSteps, writeSteps } from '../src/visual/clipboard'
+import { clipboardMarker, copySteps, parseSteps, pasteRefusals, pasteSteps, readSteps, writeSteps } from '../src/visual/clipboard'
 import { addNode, connectNodes, createGraph, updateNode } from '../src/visual/graph'
-import { connectData, nodeCatalog, validateGraph, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { analyzeGraph, connectData, diagnosticCodes, nodeCatalog, validateGraph, type DiagnosticCode, type VisualCatalogSnapshot } from '../src/visual/contract'
 
 afterEach(() => {
-  clearSteps()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -69,36 +68,111 @@ it('pastes a second trigger the validator allows, and refuses what the editor wo
   // A step whose kind this catalog does not know.
   const unknown = { ...trigger, nodes: [{ ...trigger.nodes[0], kind: 'library:Gone' }] }
   expect(pasteSteps(graph, unknown, nodeCatalog, { offset: { x: 0, y: 0 } })).toEqual({ error: 'Unknown node kind' })
+  // A copy of a wire into an input that is already wired: refused by its code (port.inputTaken), not its wording.
+  const fed = sample()
+  const copy = copySteps(fed, ['value', 'log'])!
+  const doubled = { ...copy, edges: [...copy.edges, { ...copy.edges.find(e => e.kind === 'data')!, id: 'again' }] }
+  const refusedWire = pasteSteps(fed, doubled, nodeCatalog, { offset: { x: 0, y: 0 } })
+  expect('error' in refusedWire && refusedWire.error).toBeTruthy()
   // More steps than the graph limit allows.
   const small: VisualCatalogSnapshot = { ...nodeCatalog, limits: { ...nodeCatalog.limits, nodes: 3 } }
   const full = pasteSteps(graph, trigger, small, { offset: { x: 40, y: 40 } })
   expect('error' in full && full.error).toMatch(/^Graph limit/)
 })
 
-it('reads and writes the system clipboard when allowed, and never throws when it is missing or denied', async () => {
+it('takes the newer of this tab\'s copy and the system clipboard\'s, and never throws when it is missing, denied or huge', async () => {
   const graph = sample()
+  const now = vi.spyOn(Date, 'now')
+  now.mockReturnValue(1000)
   const copy = copySteps(graph, ['log'])!
   let stored = ''
   vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn(async (text: string) => { stored = text }), readText: vi.fn(async () => stored) } })
   await writeSteps(copy)
   expect(parseSteps(stored)).toEqual(copy)
-  // Memory first.
   expect(await readSteps()).toEqual(copy)
-  // Another tab's copy, through the system clipboard.
-  clearSteps()
-  expect(await readSteps()).toEqual(copy)
-  // Unrelated clipboard text is not steps.
+  // Another tab copied later: its steps win.
+  now.mockReturnValue(2000)
+  const later = copySteps(graph, ['value'])!
+  stored = JSON.stringify(later)
+  expect(await readSteps()).toEqual(later)
+  // An older copy on the system clipboard does not replace this tab's newer one.
+  now.mockReturnValue(3000)
+  const newest = copySteps(graph, ['value', 'log'])!
+  await writeSteps(newest)
+  stored = JSON.stringify(later)
+  expect(await readSteps()).toEqual(newest)
+  // Unrelated or oversized clipboard text is not steps; this tab's copy is pasted.
   stored = '{"nodes":[]}'
-  expect(await readSteps()).toBeUndefined()
-  stored = 'hello'
-  expect(await readSteps()).toBeUndefined()
+  expect(await readSteps()).toEqual(newest)
+  expect(parseSteps('hello')).toBeUndefined()
+  expect(parseSteps(JSON.stringify({ ...later, padding: 'x'.repeat(1_000_001) }))).toBeUndefined()
   // Denied.
   vi.stubGlobal('navigator', { clipboard: { writeText: () => Promise.reject(new Error('denied')), readText: () => Promise.reject(new Error('denied')) } })
   await expect(writeSteps(copy)).resolves.toBeUndefined()
-  clearSteps()
-  await expect(readSteps()).resolves.toBeUndefined()
+  expect(await readSteps()).toEqual(copy)
   // Missing.
   vi.stubGlobal('navigator', {})
-  await expect(writeSteps(copy)).resolves.toBeUndefined()
-  expect(await readSteps()).toEqual(copy)
+  await expect(writeSteps(newest)).resolves.toBeUndefined()
+  expect(await readSteps()).toEqual(newest)
+})
+
+it('does not copy a C# variable name, so a pasted step never publishes the same variable as its original', () => {
+  const graph = updateNode(sample(), 'value', { config: { type: 'number', value: lit('number', 4), output: 'level' } })
+  const result = pasteSteps(graph, copySteps(graph, ['value', 'log'])!, nodeCatalog, { offset: { x: 40, y: 40 } })
+  if ('error' in result) throw new Error(result.error)
+  expect(result.unnamed).toBe(1)
+  const pasted = result.graph.nodes.find(n => n.id === result.ids[0])!
+  expect('output' in pasted.config).toBe(false)
+  expect(graph.nodes.find(n => n.id === 'value')!.config.output).toBe('level')
+  expect(validateGraph(result.graph).some(d => /level/.test(d.message))).toBe(false)
+  const plain = pasteSteps(sample(), copySteps(sample(), ['log'])!, nodeCatalog, { offset: { x: 0, y: 0 } })
+  expect('unnamed' in plain && plain.unnamed).toBe(0)
+})
+
+it('refuses a paste only by structural codes the validator really produces', () => {
+  // Every refused code is a declared code, and none is one pasted steps have until they are wired in.
+  for (const code of pasteRefusals) expect(diagnosticCodes).toContain(code)
+  for (const code of ['node.unreachable', 'scope.execution', 'scope.data', 'graph.name', 'graph.noTrigger'] as const) expect(pasteRefusals.has(code)).toBe(false)
+  const base = createGraph('Codes')
+  const [trigger, condition, service] = base.nodes
+  const small = (limits: Partial<VisualCatalogSnapshot['limits']>): VisualCatalogSnapshot => ({ ...nodeCatalog, limits: { ...nodeCatalog.limits, ...limits } })
+  let nested = addNode(addNode(base, 'repeat', 'outer'), 'repeat', 'inner')
+  nested = updateNode(updateNode(nested, 'outer', { config: { count: lit('number', 2), carry: [], exports: [] } }), 'inner', { config: { count: lit('number', 2), carry: [], exports: [] } })
+  nested = addNode(nested, 'delay', 'deep')
+  nested = connectNodes(connectNodes(connectNodes(nested, 'service-1', 'outer'), 'outer', 'inner', 'body'), 'inner', 'deep', 'body')
+  const valueWire = sample().edges.find(e => e.kind === 'data')!
+  const crafted: Record<DiagnosticCode, [unknown, VisualCatalogSnapshot?]> = {
+    'graph.version': [{ ...base, version: 4 }],
+    'graph.shape': [{ ...base, edges: null }],
+    'graph.limit': [base, small({ nodes: 2 })],
+    'node.invalid': [{ ...base, nodes: [...base.nodes, { id: 'x' }] }],
+    'node.duplicate': [{ ...base, nodes: [...base.nodes, service] }],
+    'node.unknownKind': [{ ...base, nodes: [...base.nodes, { ...service, id: 'gone', kind: 'library:Gone' }] }],
+    'limit.nesting': [nested, small({ nesting: 1 })],
+    'edge.invalid': [{ ...base, edges: [...base.edges, { source: trigger.id, target: condition.id }] }],
+    'edge.duplicate': [{ ...base, edges: [...base.edges, base.edges[0]] }],
+    'edge.endpoint': [{ ...base, edges: [...base.edges, { id: 'dangling', source: trigger.id, target: 'missing' }] }],
+    'edge.unknownKind': [{ ...base, edges: [...base.edges, { id: 'odd', kind: 'magic', source: trigger.id, target: service.id }] }],
+    'edge.valueWirePins': [{ ...sample(), edges: [...sample().edges, { ...valueWire, id: 'pinless', port: 'next' }] }],
+    'edge.orderWirePins': [{ ...base, edges: [...base.edges, { id: 'mixed', source: service.id, target: condition.id, sourcePort: 'x' }] }],
+    'edge.orderPinName': [{ ...base, edges: [...base.edges, { id: 'nameless', source: service.id, target: condition.id, port: 7 }] }],
+    'port.unknownExecution': [{ ...base, edges: [...base.edges, { id: 'nowhere', source: service.id, target: condition.id, port: 'sideways' }] }],
+    'port.executionTaken': [{ ...base, edges: [...base.edges, { id: 'twice', source: trigger.id, target: service.id }] }],
+    'port.unknownOutput': [{ ...sample(), edges: [...sample().edges.filter(e => e.kind !== 'data'), { ...valueWire, sourcePort: 'nothing' }] }],
+    'port.unknownInput': [{ ...sample(), edges: [...sample().edges.filter(e => e.kind !== 'data'), { ...valueWire, targetPort: 'nothing' }] }],
+    'port.inputTaken': [{ ...sample(), edges: [...sample().edges, { ...valueWire, id: 'again' }] }],
+    'trigger.incoming': [{ ...base, edges: [...base.edges, { id: 'back', source: service.id, target: trigger.id }] }],
+    'cycle.execution': [{ ...base, edges: [...base.edges, { id: 'loop', source: service.id, target: condition.id }] }],
+    'cycle.data': [(() => {
+      const g = connectNodes(connectNodes(addNode(addNode(base, 'and', 'a'), 'and', 'b'), 'service-1', 'a'), 'a', 'b')
+      const wire = (source: string, target: string) => ({ id: `${source}-${target}`, kind: 'data', source, target, sourcePort: 'value', targetPort: 'left' })
+      return { ...g, edges: [...g.edges, wire('a', 'b'), wire('b', 'a')] }
+    })()],
+  } as Record<DiagnosticCode, [unknown, VisualCatalogSnapshot?]>
+  for (const code of pasteRefusals) {
+    expect(crafted[code], code).toBeDefined()
+    const [graph, catalog] = crafted[code]
+    const codes = analyzeGraph(graph, catalog ?? nodeCatalog).diagnostics.map(d => d.code)
+    expect(codes, code).toContain(code)
+  }
 })

@@ -84,3 +84,68 @@ it('survives malformed entries and an execution cycle', () => {
   expect([...positions.keys()].sort()).toEqual(['condition-1', 'service-1', 'trigger-1'])
   expect(applyLayout(broken, positions).nodes[0]).toBeNull()
 })
+
+const each = (positions: Map<string, { x: number; y: number }>, ids: string[]) => ids.map(id => positions.get(id)!)
+const noOverlaps = (positions: Map<string, { x: number; y: number }>, size = { width: 260, height: 120 }) => {
+  const ids = [...positions.keys()]
+  for (const a of ids) for (const b of ids) if (a < b) expect(overlap(positions.get(a)!, size, positions.get(b)!, size), `${a} and ${b}`).toBe(false)
+}
+
+it('places what runs after a loop right of the loop body, not in its columns', () => {
+  let graph = createGraph('Loop')
+  graph = { ...graph, nodes: graph.nodes.filter(n => n.id === 'trigger-1'), edges: [] }
+  for (const [kind, id] of [['repeat', 'loop'], ['delay', 'first'], ['delay', 'second'], ['log', 'after']] as const) graph = addNode(graph, kind, id)
+  graph = connectNodes(graph, 'trigger-1', 'loop')
+  graph = connectNodes(connectNodes(graph, 'loop', 'first', 'body'), 'first', 'second')
+  graph = connectNodes(graph, 'loop', 'after', 'next')
+  const positions = tidyLayout(graph)
+  const [loop, first, second, after] = each(positions, ['loop', 'first', 'second', 'after'])
+  expect(first.x).toBeGreaterThan(loop.x)
+  expect(second.x).toBeGreaterThan(first.x)
+  expect(after.x).toBeGreaterThan(second.x)
+  noOverlaps(positions)
+})
+
+it('keeps a parallel step\'s two branches in their order and runs what follows after both', () => {
+  let graph = createGraph('Parallel')
+  graph = { ...graph, nodes: graph.nodes.filter(n => n.id === 'trigger-1'), edges: [] }
+  graph = addNode(graph, 'parallel', 'both')
+  graph = updateNode(graph, 'both', { config: { ...graph.nodes.find(n => n.id === 'both')!.config, branches: ['left', 'right'] } })
+  for (const [kind, id] of [['delay', 'a1'], ['delay', 'a2'], ['log', 'b1'], ['log', 'done']] as const) graph = addNode(graph, kind, id)
+  graph = connectNodes(graph, 'trigger-1', 'both')
+  graph = connectNodes(connectNodes(graph, 'both', 'a1', 'branch:left'), 'a1', 'a2')
+  graph = connectNodes(graph, 'both', 'b1', 'branch:right')
+  graph = connectNodes(graph, 'both', 'done', 'next')
+  expect(graph.edges).toHaveLength(5)
+  const positions = tidyLayout(graph)
+  const [both, a1, a2, b1, done] = each(positions, ['both', 'a1', 'a2', 'b1', 'done'])
+  expect(a1.x).toBe(b1.x)
+  expect(a1.y).toBeLessThan(b1.y)
+  expect(a2.x).toBeGreaterThan(a1.x)
+  expect(done.x).toBeGreaterThan(Math.max(a2.x, b1.x))
+  expect(both.x).toBeLessThan(a1.x)
+  noOverlaps(positions)
+})
+
+it('gives each trigger\'s flow its own band, in the order of the triggers, and loose steps a last row', () => {
+  let graph = createGraph('Two')
+  // The second flow's trigger sits above the first's: its band comes first.
+  graph = updateNode(graph, 'trigger-1', { position: { x: 60, y: 400 } })
+  graph = addNode(graph, 'trigger', 'other')
+  graph = updateNode(graph, 'other', { position: { x: 300, y: 100 } })
+  for (const id of ['o1', 'o2']) graph = addNode(graph, 'delay', id)
+  graph = connectNodes(connectNodes(graph, 'other', 'o1'), 'o1', 'o2')
+  graph = addNode(graph, 'stop', 'alone')
+  const positions = tidyLayout(graph)
+  const first = ['trigger-1', 'condition-1', 'service-1'], second = ['other', 'o1', 'o2']
+  const top = (ids: string[]) => Math.min(...each(positions, ids).map(p => p.y))
+  const bottom = (ids: string[]) => Math.max(...each(positions, ids).map(p => p.y + 120))
+  expect(bottom(second)).toBeLessThanOrEqual(top(first))
+  expect(positions.get('alone')!.y).toBeGreaterThanOrEqual(bottom(first))
+  // Both bands start at the left edge of the layout.
+  expect(positions.get('other')!.x).toBe(positions.get('trigger-1')!.x)
+  noOverlaps(positions)
+  // Tidying again keeps the bands in the same order.
+  const tidied = applyLayout(graph, positions)
+  expect(applyLayout(tidied, tidyLayout(tidied))).toBe(tidied)
+})

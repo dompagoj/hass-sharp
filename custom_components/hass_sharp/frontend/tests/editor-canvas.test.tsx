@@ -383,8 +383,6 @@ it('clears the selection on an empty canvas click and opens quick-add on double-
   expect(host.querySelector('[aria-label="Search steps"]')).not.toBeNull()
   button(host, 'Create Delay').click()
   expect(json(host).nodes).toHaveLength(count + 1)
-  host.querySelector<HTMLInputElement>('[aria-label="Node label"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }))
-  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
 })
 it('opens quick-add on a long press of empty canvas, not after a moved touch', async () => {
   const host = root()
@@ -417,6 +415,8 @@ it('offers valid steps after an output drag and undoes node plus branch in one o
   document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 160, clientY: 170 }))
   document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 160, clientY: 170 }))
   expect(host.querySelector('[aria-label="Search steps"]')).not.toBeNull()
+  // A named output says which one, with its step.
+  expect(host.querySelector('.hs-quick-add')!.getAttribute('aria-label')).toBe('Connect State condition · If false to…')
   expect(host.querySelector('[aria-label="Create Entity changes"]')).toBeNull()
   button(host, 'Create Delay').click()
   const after = json(host)
@@ -498,35 +498,101 @@ const fixedLayout = () => {
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(100)
 }
 
-it('drops a data pin on empty canvas: lists only steps that take its type and wires the chosen one in one undo step', async () => {
+/** Drags from `pin` to empty canvas (which opens quick-add for it). */
+const dropOnPane = (host: Element, pin: Element) => {
+  vi.spyOn(document, 'elementFromPoint').mockReturnValue(host.querySelector('.solid-flow__pane')!)
+  pin.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+  document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 160, clientY: 170 }))
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 160, clientY: 170 }))
+}
+const dataPin = (host: Element, node: string, side: 'source' | 'target', port: string) => host.querySelector(`[data-id="${node}"] .${side}[data-handleid="data:${port}"]`)!
+
+it('drops a data pin on empty canvas: lists only steps that take its type, and runs the new step after it when that port is free', async () => {
+  fixedLayout()
+  const host = root()
+  // The trigger's next is free: nothing runs after it yet.
+  const start = createGraph('Heating')
+  const history = createGraphHistory({ ...start, edges: start.edges.filter(e => e.source !== 'trigger-1') })
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  const before = history.graph()
+  dropOnPane(host, dataPin(host, 'trigger-1', 'source', 'entity_id'))
+  expect(host.querySelector('[role="dialog"]')!.getAttribute('aria-label')).toBe('Connect Entity changes · Entity to…')
+  // Only steps with an input that takes the pin's type: no trigger, no Delay (its only input is a duration).
+  expect(host.querySelector('[aria-label="Create Entity changes"]')).toBeNull()
+  expect(host.querySelector('[aria-label="Create Delay"]')).toBeNull()
+  button(host, 'Create Set value').click()
+  const after = history.graph()
+  const created = after.nodes.at(-1)!
+  expect(created.kind).toBe('set_value')
+  expect(after.edges).toEqual([...before.edges, expect.objectContaining({ source: 'trigger-1', target: created.id }), expect.objectContaining({ kind: 'data', source: 'trigger-1', sourcePort: 'entity_id', target: created.id })])
+  history.undo()
+  expect(history.graph()).toEqual(before)
+})
+
+it.each([
+  ['a kind that has next', 'Set value', 'set_value', 'value'],
+  ['a kind that has none', 'State condition', 'condition', 'entity'],
+])('never moves the wire on an occupied next (%s): the step is added, unwired, and the callout says what to do', async (_, label, kind, port) => {
   fixedLayout()
   const host = root()
   const history = createGraphHistory(createGraph('Heating'))
   dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
   await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
   const before = history.graph()
-  const pane = host.querySelector('.solid-flow__pane')!
-  vi.spyOn(document, 'elementFromPoint').mockReturnValue(pane)
-  const pin = host.querySelector('[data-id="trigger-1"] .source[data-handleid="data:entity_id"]')!
-  pin.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
-  document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 160, clientY: 170 }))
-  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 160, clientY: 170 }))
-  const dialog = host.querySelector('[role="dialog"]')!
-  expect(dialog.getAttribute('aria-label')).toMatch(/^Connect .+ to…$/)
-  // Only steps with an input that takes the pin's type: no trigger, no Delay (its only input is a duration).
-  expect(host.querySelector('[aria-label="Create Entity changes"]')).toBeNull()
-  expect(host.querySelector('[aria-label="Create Delay"]')).toBeNull()
-  expect(host.querySelector('[aria-label="Create Set value"]')).not.toBeNull()
+  dropOnPane(host, dataPin(host, 'trigger-1', 'source', 'entity_id'))
+  button(host, `Create ${label}`).click()
+  const after = history.graph()
+  const created = after.nodes.at(-1)!
+  expect(created.kind).toBe(kind)
+  // Every wire is as it was, and nothing new: the new step does not run yet, so it cannot take the value.
+  expect(after.edges).toEqual(before.edges)
+  expect(after.nodes.slice(0, -1)).toEqual(before.nodes)
+  await vi.waitFor(() =>
+    expect(host.querySelector(`[data-id="${created.id}"] [role="alert"]`)?.textContent).toBe(`Added ${label}. Connect it into the flow, then connect Entity.`),
+  )
+  expect(host.querySelector(`[data-id="${created.id}"] .target[data-handleid="data:${port}"]`)).not.toBeNull()
+  history.undo()
+  expect(history.graph()).toEqual(before)
+})
+
+it('never re-points the wires into a data input\'s step: the new step does not run before it, and the value is not wired', async () => {
+  fixedLayout()
+  const host = root()
+  const history = createGraphHistory(connectNodes(addNode(createGraph('Heating'), 'log', 'log'), 'service-1', 'log'))
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  const before = history.graph()
+  // The log step already runs after the service call.
+  dropOnPane(host, dataPin(host, 'log', 'target', 'value'))
+  expect(host.querySelector('[role="dialog"]')!.getAttribute('aria-label')).toMatch(/^Get .+ from…$/)
   button(host, 'Create Set value').click()
   const after = history.graph()
   const created = after.nodes.at(-1)!
-  expect(created.kind).toBe('set_value')
-  expect(after.edges).toContainEqual(expect.objectContaining({ kind: 'data', source: 'trigger-1', sourcePort: 'entity_id', target: created.id }))
-  // The value is read after the trigger: the new step runs between the trigger and what came next.
-  expect(after.edges).toContainEqual(expect.objectContaining({ source: 'trigger-1', target: created.id }))
-  expect(after.edges).toContainEqual(expect.objectContaining({ source: created.id, target: 'condition-1' }))
+  expect(after.edges).toEqual(before.edges)
+  await vi.waitFor(() => expect(host.querySelector('[data-id="log"] [role="alert"]')?.textContent).toMatch(/^Added Set value\. Connect it into the flow, then connect \w+\.$/))
+  expect(after.nodes.at(-1)).toBe(created)
   history.undo()
   expect(history.graph()).toEqual(before)
+})
+
+it('offers only steps that can be placed there: no Condition result outside a loop condition', async () => {
+  fixedLayout()
+  const host = root()
+  let graph = addNode(createGraph('Heating'), 'and', 'both')
+  graph = connectNodes(graph, 'service-1', 'both')
+  const history = createGraphHistory(graph)
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  dropOnPane(host, dataPin(host, 'both', 'source', 'value'))
+  expect(host.querySelector('[aria-label="Create If"]')).not.toBeNull()
+  expect(host.querySelector('[aria-label="Create Condition result"]')).toBeNull()
+  button(host, 'Create If').click()
+  const created = history.graph().nodes.at(-1)!
+  expect(history.graph().edges.slice(-2)).toEqual([
+    expect.objectContaining({ source: 'both', target: created.id }),
+    expect.objectContaining({ kind: 'data', source: 'both', sourcePort: 'value', target: created.id, targetPort: 'value' }),
+  ])
 })
 
 it('selects several steps with Shift-click and removes them with Delete in one undo step', async () => {
@@ -654,7 +720,10 @@ it('keeps a read-only canvas inert while selection and viewport tools still work
   expect(selections.at(-1)).toEqual(['trigger-1'])
   for (const [k, init] of [['Delete', {}], ['Backspace', {}], ['a', {}], ['d', { ctrlKey: true }], ['v', { ctrlKey: true }], ['ArrowRight', {}]] as const) key(node, k, init)
   pane.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 160, clientY: 170 }))
-  pane.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 160, clientY: 170 }))
+  // The browser's own context menu stays: there is nothing to add here.
+  const menu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 160, clientY: 170 })
+  pane.dispatchEvent(menu)
+  expect(menu.defaultPrevented).toBe(false)
   await new Promise(resolve => setTimeout(resolve, 0))
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
   expect(changes).not.toHaveBeenCalled()
@@ -663,4 +732,130 @@ it('keeps a read-only canvas inert while selection and viewport tools still work
   button(host, 'Zoom in').click()
   button(host, 'Fit to view').click()
   expect(changes).not.toHaveBeenCalled()
+})
+
+it('leaves canvas keys to a card\'s inline field, the quick-add search and an open menu', async () => {
+  const host = root()
+  dispose = render(() => <VisualEditor name="Heating" />, host)
+  const card = () => host.querySelector<HTMLElement>('.solid-flow__node[data-id="condition-1"]')!
+  const before = json(host)
+  /** Each canvas shortcut, pressed on `target`: none may act or be swallowed. */
+  const shortcuts = (target: Element) => {
+    for (const [k, init] of [['a', {}], ['Delete', {}], ['Backspace', {}], ['v', { ctrlKey: true }], ['d', { ctrlKey: true }], ['ArrowRight', {}]] as const) {
+      const event = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init })
+      target.dispatchEvent(event)
+      expect(event.defaultPrevented, `${k} on ${target.getAttribute('aria-label') ?? target.tagName}`).toBe(false)
+    }
+  }
+  // A card's inline field (the condition's Entity).
+  const field = await vi.waitFor(() => {
+    const found = card().querySelector<HTMLElement>('[data-input-id="entity"] .hs-card-editor input')
+    expect(found).not.toBeNull()
+    return found!
+  })
+  shortcuts(field)
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  // An open menu on the card.
+  const trigger = card().querySelector<HTMLButtonElement>('[data-input-id="entity"] button[aria-haspopup="menu"]')!
+  trigger.click()
+  const item = card().querySelector<HTMLElement>('[role="menu"] [role="menuitem"]')!
+  expect(item).not.toBeNull()
+  shortcuts(item)
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  // The quick-add search: typing A is a letter, Delete edits the text.
+  button(host, 'Add step').click()
+  const search = host.querySelector<HTMLInputElement>('[aria-label="Search steps"]')!
+  shortcuts(search)
+  expect(host.querySelector('[aria-label="Search steps"]')).toBe(search)
+  expect(json(host)).toEqual(before)
+})
+
+it('gives focus back when quick-add closes: to where it was after Escape, to the new card after a choice', async () => {
+  const host = root()
+  const history = createGraphHistory(createGraph('Heating'))
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
+  const card = (id: string) => host.querySelector<HTMLElement>(`.solid-flow__node[data-id="${id}"]`)!
+  card('service-1').focus()
+  key(card('service-1'), 'a')
+  const search = host.querySelector<HTMLInputElement>('[aria-label="Search steps"]')!
+  expect(document.activeElement).toBe(search)
+  key(search, 'Escape')
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  expect(document.activeElement).toBe(card('service-1'))
+  // Tab closes it the same way, instead of dropping focus on the page.
+  key(card('service-1'), 'a')
+  key(host.querySelector('[aria-label="Search steps"]')!, 'Tab')
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  expect(document.activeElement).toBe(card('service-1'))
+  // Opened from a toolbar button that a click did not focus: focus goes to the new card once it is there.
+  ;(document.activeElement as HTMLElement).blur()
+  // A card is hidden until measured, and a hidden card refuses focus: the first try on it does nothing here.
+  const focus = HTMLElement.prototype.focus
+  let refused = false
+  vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+    if (!refused && this.classList.contains('solid-flow__node')) return void (refused = true)
+    focus.call(this, options)
+  })
+  button(host, 'Add a step').click()
+  button(host, 'Create Delay').click()
+  const created = history.graph().nodes.at(-1)!
+  await vi.waitFor(() => expect(document.activeElement).toBe(card(created.id)))
+  expect(refused).toBe(true)
+  // A step that never appears (the parent refused it): focus is back on the canvas, never on the page body.
+  dispose()
+  const refusing = root()
+  dispose = render(() => <FlowAdapter graph={createGraph('Heating')} onSelect={() => {}} onChange={() => {}} />, refusing)
+  button(refusing, 'Add a step').click()
+  button(refusing, 'Create Delay').click()
+  expect(refusing.contains(document.activeElement)).toBe(true)
+})
+
+it('selects new, pasted and duplicated steps when a parent applies the change later, and reports the first selection once', async () => {
+  const host = root()
+  const [graph, setGraph] = createSignal(createGraph('Heating'))
+  const selections: string[][] = []
+  // The parent applies each change on a later task (a store round trip).
+  const later = (next: typeof graph extends () => infer G ? G : never) => setTimeout(() => setGraph(next))
+  dispose = render(() => <FlowAdapter graph={graph()} selectedId="trigger-1" onSelect={() => {}} onSelectionChange={ids => selections.push(ids)} onChange={later} />, host)
+  expect(selections).toEqual([['trigger-1']])
+  button(host, 'Add a step').click()
+  button(host, 'Create Delay').click()
+  await vi.waitFor(() => expect(graph().nodes).toHaveLength(4))
+  const created = graph().nodes.at(-1)!.id
+  await vi.waitFor(() => expect(selections.at(-1)).toEqual([created]))
+  key(host.querySelector(`.solid-flow__node[data-id="${created}"]`)!, 'd', { ctrlKey: true })
+  await vi.waitFor(() => expect(graph().nodes).toHaveLength(5))
+  await vi.waitFor(() => expect(selections.at(-1)).toEqual([graph().nodes.at(-1)!.id]))
+})
+
+it('does not copy C# variable names into pasted steps, and says so; leaves Ctrl+C to selected text', async () => {
+  const host = root()
+  let start = addNode(createGraph('Heating'), 'set_value', 'named')
+  start = updateNode(start, 'named', { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 1 }, output: 'level' } })
+  const history = createGraphHistory(start)
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
+  const node = (id: string) => host.querySelector<HTMLElement>(`.solid-flow__node[data-id="${id}"]`)!
+  click(node('named'))
+  // Text selected on a card: the browser copies it, the canvas does not.
+  const text = node('named').querySelector('.hs-card__title, h3, strong') ?? node('named')
+  const range = document.createRange()
+  range.selectNodeContents(text)
+  document.getSelection()!.removeAllRanges()
+  document.getSelection()!.addRange(range)
+  const copyText = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true })
+  node('named').dispatchEvent(copyText)
+  expect(copyText.defaultPrevented).toBe(false)
+  expect(host.textContent).not.toContain('Copied')
+  document.getSelection()!.removeAllRanges()
+  key(node('named'), 'd', { ctrlKey: true })
+  const copy = history.graph().nodes.at(-1)!
+  expect(copy.id).not.toBe('named')
+  expect(copy.config.output).toBeUndefined()
+  expect(history.graph().nodes.find(n => n.id === 'named')!.config.output).toBe('level')
+  expect(host.textContent).toContain('Duplicated 1 step; variable names were not copied')
+  key(node('named'), 'c', { ctrlKey: true })
+  expect(host.textContent).toContain('Copied 1 step')
+  key(host.querySelector('.hs-flow')!, 'v', { ctrlKey: true })
+  await vi.waitFor(() => expect(host.textContent).toContain('Pasted 1 step; variable names were not copied'))
+  expect(history.graph().nodes.filter(n => n.config.output === 'level')).toHaveLength(1)
 })

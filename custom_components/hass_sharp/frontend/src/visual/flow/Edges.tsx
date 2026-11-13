@@ -1,5 +1,5 @@
-import { Show } from 'solid-js'
-import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from '@dschz/solid-flow'
+import { createMemo, Show } from 'solid-js'
+import { BaseEdge, EdgeLabelRenderer, getBezierPath, useViewport, type EdgeProps } from '@dschz/solid-flow'
 import { ToolIcon, toolIcons } from './CanvasToolbar'
 import { useFlow } from './flowModel'
 
@@ -23,16 +23,21 @@ const geometry = (props: EdgeProps, curvature: number) =>
 
 const wire = (props: EdgeProps) => (props.data ?? {}) as Partial<WireData>
 
-/** A selected wire shows a "Delete wire" button at its middle, for touch and for anyone who does not use Delete. */
+/**
+ * A selected wire shows a "Delete wire" button at its middle, for touch and for anyone who does not use Delete. It is
+ * scaled against the zoom, so it keeps its on-screen size (and its 32 px touch target) however far the canvas zooms.
+ */
 function DeleteWire(props: { edge: EdgeProps; x: number; y: number }) {
   const flow = useFlow()
+  const viewport = useViewport()
+  const zoom = () => viewport().zoom || 1
   return (
     <Show when={props.edge.selected && !flow.readOnly()}>
       <EdgeLabelRenderer>
         <button
           type="button"
           class="hs-wire-delete nodrag nopan"
-          style={{ transform: `translate(-50%, -50%) translate(${props.x}px, ${props.y}px)` }}
+          style={{ transform: `translate(${props.x}px, ${props.y}px) translate(-50%, -50%) scale(${1 / zoom()})` }}
           aria-label="Delete wire"
           data-tip="Delete wire (Delete)"
           on:pointerdown={(event: PointerEvent) => event.stopPropagation()}
@@ -53,7 +58,8 @@ function DeleteWire(props: { edge: EdgeProps; x: number; y: number }) {
  * error path is red and dashed. Trace classes on the edge group (`hs-wire--travelled`, `hs-wire--idle`) style it.
  */
 export function ExecEdge(props: EdgeProps) {
-  const path = () => geometry(props, 0.32)
+  // One path per change of the ends, read by the wire and the button alike.
+  const path = createMemo(() => geometry(props, 0.32))
   return (
     <>
       <BaseEdge
@@ -69,7 +75,7 @@ export function ExecEdge(props: EdgeProps) {
 
 /** A data wire: a value handed from an output to an input, in the colour of its type. */
 export function DataEdge(props: EdgeProps) {
-  const path = () => geometry(props, 0.25)
+  const path = createMemo(() => geometry(props, 0.25))
   return (
     <>
       <BaseEdge

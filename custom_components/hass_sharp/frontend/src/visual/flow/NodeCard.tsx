@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, createUniqueId, For, on, onCleanup, Show, type JSX } from 'solid-js'
+import { createEffect, createMemo, createSignal, createUniqueId, For, on, onCleanup, onMount, Show, type JSX } from 'solid-js'
 import { delegateEvents } from 'solid-js/web'
 import { useUpdateNodeInternals, type NodeProps } from '@dschz/solid-flow'
 import { inputValue, type Operand } from '../contract'
@@ -107,8 +107,34 @@ export function NodeCard(props: NodeProps) {
     // unless its editor holds a draft it refused, which stays open with its error.
     let pendingLeave: ReturnType<typeof setTimeout> | undefined
     onCleanup(() => clearTimeout(pendingLeave))
+    // A pointer went down inside the row and its click has not finished yet. Safari, the iOS web view and Firefox on
+    // macOS do not focus a clicked button: focus leaves for the card (or nowhere) before the click opens the menu, so
+    // the row must not fold under it. A pointer that goes down inside the row never folds it.
+    let pressed: number | undefined
+    let release: ReturnType<typeof setTimeout> | undefined
+    const listen = (on: boolean) => {
+      for (const type of ['pointerup', 'pointercancel']) (on ? root.ownerDocument.addEventListener : root.ownerDocument.removeEventListener).call(root.ownerDocument, type, ended as EventListener, true)
+    }
+    function ended(event: PointerEvent) {
+      if (pressed === undefined || (event.pointerId !== undefined && event.pointerId !== pressed)) return
+      listen(false)
+      // After the click this release produces has been delivered (it follows in the same task).
+      clearTimeout(release)
+      release = setTimeout(() => (pressed = undefined))
+    }
+    const press = (event: PointerEvent) => {
+      clearTimeout(release)
+      if (pressed === undefined) listen(true)
+      pressed = event.pointerId ?? 0
+    }
+    onMount(() => root.addEventListener('pointerdown', press, true))
+    onCleanup(() => {
+      clearTimeout(release)
+      root.removeEventListener('pointerdown', press, true)
+      if (pressed !== undefined) listen(false)
+    })
     const fold = (active: Element | null | undefined) => {
-      if (!expanded() || (active && root.contains(active))) return
+      if (!expanded() || pressed !== undefined || (active && root.contains(active))) return
       if (root.querySelector('.hs-card-editor [aria-invalid="true"]')) return
       setExpanded(false)
     }
