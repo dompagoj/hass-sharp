@@ -36,7 +36,7 @@ entity ID in Read entity. Wire its `value` output to Describe's `entity` input,
 Describe's `result` to Format reading's `reading`, and Format reading's `result` to
 Log's `value`. The catalog supplies those exact custom kinds and CLR types; the
 interface assignment is checked by Roslyn. The complete graph JSON, complete
-library source and additional harmless examples ship in
+library source and the other authoring examples ship in
 [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json)
 and are returned by `get_capabilities`. Preview the graph, save, then manually run
 its `start` trigger to write a log entry. Reading state does not control a device.
@@ -53,7 +53,16 @@ initializers or methods.
 Ports support actual CLR classes, records, interfaces, enums, nullable types,
 arrays and closed generics. Use the catalog's `assignableTo`, `nullable` and
 `literalKind` metadata; arbitrary object types do not automatically gain a JSON
-literal editor. Open generic methods/containers, ref/in/out parameters, ref
+literal editor.
+
+Ports carry the CLR type, never a refined catalog type. A `string` parameter
+accepts an `entity_id` or `entity_id:light` value, because those refine
+`string`; a `string` result does not fit an `entity_id` input such as Read
+entity's, or a domain-filtered service target, because a string is not known to
+be an entity ID. Pass such a result through a Convert node set to the input's type
+(`entity_id`, or `entity_id:light` for a light target). An `EntityStateSnapshot`
+parameter can be wired directly from Read entity or from a trigger's New state and
+Previous state outputs. Open generic methods/containers, ref/in/out parameters, ref
 returns, pointer/ref-like ports, static abstract interface methods and async void
 are rejected. Custom kinds include source ID and the fully qualified method and
 parameter signature; changing a type can change a kind. Renaming a file preserves

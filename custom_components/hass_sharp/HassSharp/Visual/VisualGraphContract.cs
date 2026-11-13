@@ -3,7 +3,7 @@ using static HassSharp.VisualNodeCatalog;
 
 namespace HassSharp;
 
-/// <summary>Immutable authoring helpers for the v4 graph format.</summary>
+/// <summary>Immutable authoring helpers for the catalog graph format.</summary>
 public static class VisualGraphContract
 {
     public static JsonObject CreateNode(string kind, string id, VisualCatalogSnapshot? snapshot = null)
@@ -19,6 +19,8 @@ public static class VisualGraphContract
             }
         return new() { ["id"] = id, ["kind"] = kind, ["label"] = Text(spec, "label"), ["config"] = config };
     }
+    /// <summary>A copy with a position for every node that lacks one. Nodes have no stored size (the editor measures
+    /// them), so a <c>size</c> an older client still sends is dropped.</summary>
     public static JsonObject FillMissingLayout(JsonObject graph)
     {
         var next = (JsonObject)graph.DeepClone();
@@ -27,7 +29,7 @@ public static class VisualGraphContract
         {
             if (nodes[i] is not JsonObject node) throw new ArgumentException("Node must be an object", nameof(graph));
             node["position"] ??= new JsonObject { ["x"] = 60 + i % 4 * 300, ["y"] = 100 + i / 4 * 180 };
-            node["size"] ??= new JsonObject { ["width"] = 220, ["height"] = 112 };
+            node.Remove("size");
         }
         return next;
     }

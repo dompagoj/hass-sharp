@@ -19,15 +19,36 @@ static class AuthoringAdapterTests
             await manager.Init([]);
             var examples=JsonNode.Parse(await File.ReadAllTextAsync("custom_components/hass_sharp/authoring_examples.json"))!;
             var exampleDiagnostics=new DiagnosticsProvider(); exampleDiagnostics.GenerateHassEntities([]);
-            foreach(var example in examples["graphs"]!.AsArray()) {
-                var preview=new VisualGenerator(exampleDiagnostics).Preview(example!.AsObject());
-                VisualExecutionTests.Check(preview.Valid,"capability graph example compiles: "+JsonSerializer.Serialize(preview.Diagnostics));
+            // Every example must hold both at startup (no services) and in authoring preview/save, where the
+            // service schemas are attached: the golden fixture is the normalised form of ha-service-descriptions.json.
+            var services=ServiceSchemaCatalog.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,"ha-service-descriptions.json")),_=>{});
+            VisualExecutionTests.Check(JsonNode.DeepEquals(services.Section,JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,"visual-services.json")))),"fixture services normalise to visual-services.json");
+            var builtIn=new NodeLibraryCompiler(exampleDiagnostics).Preview([]).Snapshot;
+            void Clean(JsonObject example,VisualCatalogSnapshot snapshot,string label) {
+                foreach(var (name,attached) in new[]{("without services",snapshot),("with services",snapshot.WithServices(services))}) {
+                    var preview=new VisualGenerator(exampleDiagnostics).Preview(example,attached);
+                    VisualExecutionTests.Check(preview.Valid && preview.Diagnostics.Count==0,$"{label} validates and compiles {name} with no diagnostics: "+JsonSerializer.Serialize(preview.Diagnostics));
+                }
             }
+            var graphs=examples["graphs"]!.AsArray().Select(g=>g!.AsObject()).ToArray();
+            foreach(var item in graphs) Clean(item,builtIn,"capability example "+item["name"]);
+            VisualExecutionTests.Check(graphs.Any(g=>g["nodes"]!.AsArray().Any(n=>n!["kind"]!.GetValue<string>()=="service")),"capability examples include a service call");
+            // The documented typing rule, against the examples themselves: with services attached, a plain entity_id
+            // into light.turn_on's domain-filtered target is an error, as a literal and as a wire (Convert removed).
+            JsonObject Example(string name)=>(JsonObject)graphs.Single(g=>g["name"]!.GetValue<string>()==name).DeepClone();
+            bool Rejected(JsonObject mutated,string nodeId,string inputId)=>VisualGraphValidator.Validate(mutated,builtIn.WithServices(services)).Any(d=>d.Severity==3&&d.NodeId==nodeId&&d.InputId==inputId);
+            var plainLiteral=Example("Sunset lights"); plainLiteral["nodes"]![1]!["config"]!["target"]!["type"]="entity_id";
+            VisualExecutionTests.Check(Rejected(plainLiteral,"lights","target") && VisualGraphValidator.Validate(plainLiteral).All(d=>d.Severity<3),"plain entity_id literal into light.turn_on target is an error only once services are attached");
+            var unknownField=Example("Sunset lights"); unknownField["nodes"]![1]!["config"]!["fields"]!["not_a_field"]=new JsonObject{["kind"]="literal",["type"]="number",["value"]=1};
+            VisualExecutionTests.Check(Rejected(unknownField,"lights","field:not_a_field"),"service fields are checked against the attached schema");
+            var plainWire=Example("Light named in an event");
+            var edges=plainWire["edges"]!.AsArray(); edges.Remove(edges.Single(e=>e!["id"]!.GetValue<string>()=="light-target"));
+            edges.Add(new JsonObject{["id"]="plain-target",["kind"]="data",["source"]="entity",["sourcePort"]="value",["target"]="on",["targetPort"]="target"});
+            VisualExecutionTests.Check(Rejected(plainWire,"on","target"),"a wired plain entity_id into light.turn_on target needs Convert");
             var library=examples["library"]!;
             var candidate=new NodeLibraryCompiler(exampleDiagnostics).Preview([new(library["id"]!.GetValue<string>(),library["source"]!.GetValue<string>(),1)]);
             VisualExecutionTests.Check(candidate.Valid,"capability library source compiles");
-            var richPreview=new VisualGenerator(exampleDiagnostics).Preview(library["graph"]!.AsObject(),candidate.Snapshot);
-            VisualExecutionTests.Check(richPreview.Valid,"complete read-entity/custom-library example compiles: "+JsonSerializer.Serialize(richPreview.Diagnostics));
+            Clean(library["graph"]!.AsObject(),candidate.Snapshot,"complete read-entity/custom-library example");
             var ordinary=await new CodeCompiler(exampleDiagnostics).CompileSingleFile(Path.Combine(path,"example.cs"),examples["ordinaryCSharp"]!.GetValue<string>(),true); ordinary.Unload();
             var graph=G(N("l","log",new{value=Lit("string","safe")}));
             graph["nodes"]![0]!["position"]=new JsonObject{["x"]=12,["y"]=34};

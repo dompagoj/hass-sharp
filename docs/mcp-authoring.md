@@ -31,36 +31,67 @@ Every name begins `hass_sharp__`. Results are JSON objects:
 `{version:1,ok:true,result:...}` or
 `{version:1,ok:false,error:{code,detail}}`. Errors also set the MCP tool error flag.
 Validation details include mapped node/input diagnostics; conflicts require a
-fresh read rather than retrying with the old revision.
+fresh read rather than retrying with the old revision. The API prompt and the
+tool descriptions summarise the workflow below and the entity typing rule.
 
-1. Call `get_capabilities` and `get_node_schema`. These return the actual merged
-   built-in/custom catalog, graph version4, CLR types, assignability, nullability,
-   defaults, constraints and complete harmless examples.
-2. Use `discover` to find entities, services, devices, areas or installed trigger
-   descriptions. Supply `kind`, optional `query`, `offset` (default0) and `limit`
-   (default50, maximum100). Filtering happens before stable sorting/pagination.
-   Service entries include data fields and target descriptions; discovery never
-   attaches triggers or calls services.
-3. `list` and `read({id})` return saved graphs, revisions, activation state and
-   `triggers:[{triggerId,method,manual,runnable}]`.
-4. `preview({graph})` validates and compiles a complete graph, including HA-native
-   trigger declarations, returning `valid`, `source`, `sourceMap`, `diagnostics`.
-   It does not attach triggers or execute custom code.
-5. `save({id,expectedRevision,graph})` persists and activates through the editor's
-   same authoring service. New IDs use revision0; existing edits use the exact
-   read revision. Warnings are allowed; severity3 errors prevent persistence.
+1. Call `get_capabilities` once. It returns graph version 5, the actual merged
+   built-in/custom catalog, the authoring rules as `semantics` (execution and data
+   edges, types and refinement, trigger outputs, the Call service node, run
+   history, C#) and complete example graphs that validate and compile.
+2. Call `get_node_schema({kind})` for each node kind you add. It returns the node,
+   the type table, `parametricTypes` and limits. For `trigger` it adds the
+   `triggerOutputs` table. For `service`, pass `service` (`domain.service`) to get
+   that service's `field:<name>` inputs with types and constraints, its target
+   types (for example `["target","entity_id:light"]`), whether `returnResponse`
+   must be on or off, and its outputs. Without `kind` it returns the whole catalog.
+3. Use `discover` to find entities, services, devices, areas or installed trigger
+   descriptions. Supply `kind`, optional `query`, `offset` (default 0) and `limit`
+   (default 50, maximum 100); entities and services also take `domain`.
+   Filtering happens before stable sorting/pagination. Services come from the same
+   normalised schemas the validator uses: without `service`, one summary line per
+   service (`id`, `name`, `description`, `hasTarget`, `response`); with `service`,
+   that service's complete schema, fields in Home Assistant's order. Discovery
+   never attaches triggers or calls services.
+4. `list` returns saved graphs, revisions, activation state and
+   `triggers:[{triggerId,method,manual,runnable}]`, without the generated source.
+   `read({id})` returns one complete document including `source` and `sourceMap`.
+5. `preview({graph})` validates and compiles a complete graph against the
+   registered service schemas, including HA-native trigger declarations, returning
+   `valid`, `source`, `sourceMap`, `diagnostics`. It does not attach triggers or
+   execute custom code.
+6. `save({id,expectedRevision,graph})` persists and activates through the editor's
+   same authoring service. New IDs use revision 0; existing edits use the exact
+   read revision. Warnings are allowed; severity 3 errors prevent persistence.
    Saving can enable startup, scheduled or native effects, so authorize those
    effects before saving. The result separates `saved:true` from `active` and
    `activationError`.
-6. With authorization, `run({id,triggerId})` dispatches a manually eligible trigger
+7. With authorization, `run({id,triggerId})` dispatches a manually eligible trigger
    on the exact current saved active revision and returns `{version:1,runId}`.
-   `history({id,offset?,limit?})` returns its existing runtime run records.
-7. `delete({id,expectedRevision})` deletes a document and stops its runtime.
+8. `history({id,status?,offset?,limit?})` returns run history version 2 for that
+   document, `{id,version:2,offset,limit,runs}`, newest first, optionally only runs
+   with the given statuses. See [run history](backend/run-history.md) for the run
+   fields.
+9. `trace({runId,node?,graph?})` reads one run's trace. By default it returns the
+   run, `live`, the snapshot identity (`revision`, `visualId`, `visualRevision`),
+   and the trace's `rootNodeId`, `startedUtc`, `complete`, `truncated`, `dropped`,
+   `summary` and events in order without their values (node, frame, status, port,
+   `t`, `ms`, error). `node` returns that node's events with their `inputs` and
+   `outputs`; `graph: true` adds the graph revision that ran. The catalog stored
+   with the snapshot is never returned. `trace` is `null` for a run without one.
+10. `delete({id,expectedRevision})` deletes a document and stops its runtime.
+
+Graph nodes are `{id,kind,config,label?,position?}`; a stored `size` from an older
+editor is removed from documents MCP returns, and the graph schema rejects it.
+Write entity IDs for domain-filtered inputs with their exact type: the target of
+`light.turn_on` takes `{"kind":"literal","type":"entity_id:light","value":"light.hall"}`,
+and a wired plain `entity_id` needs a Convert node with type `entity_id:light`
+first. See [visual authoring](writing-visual-automations.md#types-and-refinement).
 
 Tool arguments are strict: unknown fields and wrong types are rejected. Revisions
 and pagination values must be integers (booleans are not accepted). Stable IDs
-match `[a-z0-9][a-z0-9_-]{0,79}`. All mutations require administrator privileges.
-Read-only MCP mode removes save, delete, run, library_save and library_delete.
+match `[a-z0-9][a-z0-9_-]{0,79}`. All tools require administrator privileges.
+Read-only MCP mode removes save, delete, run, library_save and library_delete;
+`trace` and `history` stay available.
 
 A failed replacement can leave an older generation running. Document `active`
 means some generation is active; **`currentRevisionActive`** means the saved

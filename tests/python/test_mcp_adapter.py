@@ -30,10 +30,17 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         import importlib
         self.adapter = importlib.import_module(package+'.llm')
         self.service=types.SimpleNamespace(visual=AsyncMock(return_value={'version':1,'ok':True,'result':[]}), node_library=AsyncMock(return_value={'version':1,'ok':True,'result':{'catalog':{'nodes':{},'types':{},'limits':{}}}}))
+        self.service.history=AsyncMock(return_value={'version':2,'offset':0,'limit':50,'runs':[]})
+        self.service.trace=AsyncMock(return_value=None)
         self.state=self.adapter.EntryState(self.service)
         self.state.ready=True
         self.api=self.adapter.HassSharpAPI(self.hass,self.state)
         self.instance=await self.api.async_get_api_instance(self.context)
+    CATALOG=json.loads((ROOT/'custom_components/hass_sharp/visual_node_catalog.json').read_text())
+    SERVICES=json.loads((ROOT/'tests/fixtures/visual-services.json').read_text())
+    async def library(self,request,is_admin):
+        if request['operation']=='services': return {'version':1,'ok':True,'result':self.SERVICES}
+        return {'version':1,'ok':True,'result':{'catalog':self.CATALOG,'generation':'g','servicesGeneration':self.SERVICES['servicesGeneration']}}
     async def asyncTearDown(self):
         await self.hass.async_stop()
         self.temp.cleanup()
@@ -43,7 +50,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         return await tool.async_call(self.hass,llm.ToolInput(tool_name=tool.name,tool_args=args),context or self.context)
     async def test_schema_validation_and_annotations(self):
         import probatio
-        self.assertEqual(len(self.instance.tools),15)
+        self.assertEqual(len(self.instance.tools),16)
         for tool in self.instance.tools:
             schema=probatio.to_openapi(tool.parameters,openapi_version='3.1.0')
             self.assertEqual(schema['type'],'object')
@@ -85,7 +92,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.adapter.register(self.hass,self.state)
         self.assertIn('hass_sharp',[api.id for api in llm.async_get_apis(self.hass)])
         instance=await async_get_api_instance(self.hass,'hass_sharp',self.context,True)
-        self.assertEqual(len(instance.tools),10)
+        self.assertEqual(len(instance.tools),11)
         for tool in instance.tools:
             self.assertTrue(_format_tool(tool,None).annotations.read_only_hint)
         cached=self.instance.tools[0]
@@ -95,19 +102,30 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError): self.adapter.register(self.hass,self.state)
 
     async def test_discovery_filters_before_paging_and_includes_services(self):
-        import voluptuous as vol
         self.hass.states.async_set('sensor.z_match','1',{'friendly_name':'A match'})
         self.hass.states.async_set('sensor.a_other','1')
         self.hass.states.async_set('sensor.b_match','1')
         result=await self.call('discover',{'kind':'entities','query':'match','offset':1,'limit':1})
         self.assertEqual(result.data['result']['total'],2)
         self.assertEqual(result.data['result']['items'][0]['id'],'sensor.z_match')
-        async def no_effect(call): raise AssertionError('Discovery must not call services')
-        self.hass.services.async_register('test','safe',no_effect,schema=vol.Schema({vol.Required('value'):str}))
-        from homeassistant.helpers import service
-        service.async_set_service_schema(self.hass,'test','safe',{'name':'Safe','description':'A test service','fields':{'value':{'description':'Input','required':True}},'target':{}})
-        result=await self.call('discover',{'kind':'services','query':'test.safe'})
-        self.assertEqual(result.data['result']['items'][0]['fields']['value']['description'],'Input')
+        self.hass.states.async_set('light.hall','on')
+        result=await self.call('discover',{'kind':'entities','domain':'light'})
+        self.assertEqual([i['id'] for i in result.data['result']['items']],['light.hall'])
+        # Services come from the normalised schemas the validator uses, never from calling a service.
+        self.service.node_library.side_effect=self.library
+        result=await self.call('discover',{'kind':'services','domain':'light'})
+        self.assertFalse(result.error,result.data)
+        self.assertEqual([i['id'] for i in result.data['result']['items']],['light.turn_off','light.turn_on'])
+        self.assertEqual(set(result.data['result']['items'][0]),{'id','name','description','hasTarget','response'})
+        result=await self.call('discover',{'kind':'services','query':'forecast'})
+        self.assertEqual(result.data['result']['items'],[{'id':'weather.get_forecasts','name':'get_forecasts','description':'','hasTarget':True,'response':'only'}])
+        result=await self.call('discover',{'kind':'services','service':'light.turn_on'})
+        fields=result.data['result']['service']['fields']
+        self.assertEqual([f['order'] for f in fields.values()],sorted(f['order'] for f in fields.values()))
+        self.assertEqual(result.data['result']['service']['target']['entity'][0]['domain'],['light'])
+        self.assertEqual((await self.call('discover',{'kind':'services','service':'light.missing'})).data['error']['code'],'not_found')
+        self.assertTrue((await self.call('discover',{'kind':'areas','domain':'light'})).error)
+        self.assertTrue((await self.call('discover',{'kind':'entities','service':'light.turn_on'})).error)
         from homeassistant.helpers import area_registry, device_registry
         await area_registry.async_get(self.hass).async_load()
         device_registry.async_setup(self.hass)
@@ -140,5 +158,65 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.service.visual.assert_awaited_with({'operation':'run','id':'x','triggerId':'start'},is_admin=True)
         await self.call('library_save',{'id':'lib','name':'Safe','source':'','expectedRevision':0})
         self.service.node_library.assert_awaited_with({'operation':'save','id':'lib','name':'Safe','source':'','expectedRevision':0},is_admin=True)
+
+    async def test_node_schema_service_fields_trigger_outputs_and_types(self):
+        self.service.node_library.side_effect=self.library
+        result=(await self.call('get_node_schema',{'kind':'service','service':'light.turn_on'})).data['result']
+        self.assertIn('entity_id',result['parametricTypes'])
+        service=result['service']
+        self.assertEqual(service['target']['types'],['target','entity_id:light'])
+        self.assertEqual(service['fields']['field:brightness_pct']['max'],100)
+        self.assertNotIn('enum',service['fields']['field:brightness_pct'])
+        self.assertEqual(list(service['fields']),sorted(service['fields'],key=lambda k:self.SERVICES['items']['light.turn_on']['fields'][k[6:]]['order']))
+        self.assertEqual((service['returnResponse'],service['outputs']),(False,{}))
+        service=(await self.call('get_node_schema',{'kind':'service','service':'weather.get_forecasts'})).data['result']['service']
+        self.assertEqual((service['returnResponse'],list(service['outputs'])),(True,['response']))
+        self.assertIsNone((await self.call('get_node_schema',{'kind':'service','service':'notify.notify'})).data['result']['service']['target'])
+        self.assertFalse((await self.call('get_node_schema',{'kind':'service','service':'light.missing'})).data['result']['service']['known'])
+        trigger=(await self.call('get_node_schema',{'kind':'trigger'})).data['result']
+        self.assertEqual(trigger['triggerOutputs']['entity']['entity_id']['refineFrom'],'entity')
+        self.assertNotIn('triggerOutputs',(await self.call('get_node_schema',{'kind':'log'})).data['result'])
+        self.assertTrue((await self.call('get_node_schema',{'kind':'log','service':'light.turn_on'})).error)
+        self.assertTrue((await self.call('get_node_schema',{'service':'light.turn_on'})).error)
+        capabilities=(await self.call('get_capabilities',{})).data['result']
+        self.assertEqual(set(capabilities['semantics']),{'execution','types','triggers','service','runs','csharp'})
+
+    async def test_graph_schema_has_no_node_size(self):
+        graph={'version':5,'name':'Sized','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'},'size':{'width':220,'height':112}}],'edges':[]}
+        self.assertEqual((await self.call('preview',{'graph':graph})).data['error']['code'],'invalid_request')
+        self.service.visual.assert_not_called()
+        self.service.visual.return_value={'version':1,'ok':True,'result':{'id':'x','revision':2,'graph':graph}}
+        result=await self.call('read',{'id':'x'})
+        self.assertNotIn('size',result.data['result']['graph']['nodes'][0])
+
+    async def test_history_status_and_trace_views(self):
+        self.service.visual.return_value={'version':1,'ok':True,'result':{'id':'x','automationId':'auto'}}
+        result=await self.call('history',{'id':'x','status':['Failed','Stopped']})
+        self.assertFalse(result.error,result.data)
+        self.service.history.assert_awaited_with('auto',0,50,['Failed','Stopped'],is_admin=True)
+        self.assertEqual(result.data['result']['version'],2)
+        self.assertTrue((await self.call('history',{'id':'x','status':['Bogus']})).error)
+        self.assertEqual((await self.call('trace',{'runId':'r1'})).data['error']['code'],'not_found')
+        self.service.trace.return_value={'version':1,'run':{'runId':'r1','status':'Failed','hasTrace':True},'live':False,
+            'snapshot':{'revision':'abc','visualId':'x','visualRevision':3,'graph':{'nodes':['g']},'catalog':{'nodes':{'big':{}}}},
+            'trace':{'format':1,'runId':'r1','rootNodeId':'t','startedUtc':'2026-11-13T00:00:00Z','complete':True,'truncated':False,'dropped':0,
+                     'trigger':{'platform':'manual'},
+                     'events':[{'seq':0,'node':'t','frame':'','t':0,'ms':0.1,'status':'ok','port':'next','outputs':{'data':{'type':'object','v':{}}}},
+                               {'seq':1,'node':'svc','frame':'','t':1,'ms':2,'status':'failed','inputs':{'field:x':{'type':'number','v':1}},'error':{'type':'E','message':'boom'}}],
+                     'summary':{'t':{'count':1,'failed':0,'last':'ok'},'svc':{'count':1,'failed':1,'last':'failed'}}}}
+        view=(await self.call('trace',{'runId':'r1'})).data['result']
+        self.service.trace.assert_awaited_with('r1',is_admin=True)
+        self.assertEqual(view['snapshot'],{'revision':'abc','visualId':'x','visualRevision':3})
+        self.assertEqual([e['node'] for e in view['trace']['events']],['t','svc'])
+        self.assertTrue(all('inputs' not in e and 'outputs' not in e for e in view['trace']['events']))
+        self.assertEqual(view['trace']['events'][1]['error']['message'],'boom')
+        self.assertNotIn('trigger',view['trace'])
+        self.assertEqual(view['trace']['summary']['svc']['failed'],1)
+        view=(await self.call('trace',{'runId':'r1','node':'svc','graph':True})).data['result']
+        self.assertEqual(view['trace']['events'],[self.service.trace.return_value['trace']['events'][1]])
+        self.assertEqual(view['snapshot']['graph'],{'nodes':['g']})
+        self.assertNotIn('catalog',json.dumps(view))
+        self.assertTrue(next(t for t in self.instance.tools if t.name=='hass_sharp__trace').annotations.read_only)
+        self.assertTrue((await self.call('trace',{'runId':'r1','graph':'yes'})).error)
 
 if __name__=='__main__': unittest.main()

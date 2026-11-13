@@ -29,10 +29,13 @@ public static class VisualGraphContractTests
             if (fixture["noDiagnostics"]?.GetValue<bool>() == true && diagnostics.Count > 0)
                 throw new Exception($"Visual graph {name}: expected no diagnostics, got {string.Join("; ", diagnostics)}");
         }
-        var graph = JsonNode.Parse("""{"version":5,"name":"Layout","nodes":[{"id":"trigger/é","kind":"trigger","config":{"type":"manual"},"position":{"x":13,"y":42}},{"id":"d","kind":"delay","config":{"seconds":{"kind":"literal","type":"number","value":2}}}],"edges":[]}""")!.AsObject();
+        var graph = JsonNode.Parse("""{"version":5,"name":"Layout","nodes":[{"id":"trigger/é","kind":"trigger","config":{"type":"manual"},"position":{"x":13,"y":42},"size":{"width":300,"height":90}},{"id":"d","kind":"delay","config":{"seconds":{"kind":"literal","type":"number","value":2}}}],"edges":[]}""")!.AsObject();
         var laidOut = VisualGraphContract.FillMissingLayout(graph);
         if (graph["nodes"]![1]!["position"] != null || laidOut["nodes"]![0]!["position"]!["x"]!.GetValue<int>() != 13 || laidOut["nodes"]![1]!["position"]!["x"]!.GetValue<int>() != 360)
             throw new Exception("Visual graph layout must be immutable and preserve supplied positions while filling missing layout");
+        // Nodes are measured by the editor: a size from an older client is accepted and dropped, never filled in.
+        if (graph["nodes"]![0]!["size"] == null || laidOut["nodes"]!.AsArray().Any(n => n!.AsObject().ContainsKey("size")))
+            throw new Exception("Visual graph layout must drop node size without changing the supplied graph");
         if (VisualNodeCatalog.EffectiveTriggerMethod(laidOut["nodes"]![0]!.AsObject()) != "Run_747269676765722FC3A9") throw new Exception("Trigger method identity must use uppercase UTF8 hex");
         var created = VisualGraphContract.CreateNode("parallel", "p");
         if (created["config"]?["branches"]?.ToJsonString() != "[\"a\",\"b\"]") throw new Exception("Visual graph creation must use catalog defaults");

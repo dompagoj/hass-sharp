@@ -151,7 +151,268 @@
     },
     {
       "version": 5,
-      "name": "Service fields and response",
+      "name": "Sunset lights",
+      "nodes": [
+        {
+          "id": "sunset",
+          "kind": "trigger",
+          "label": "At sunset",
+          "config": {
+            "type": "ha",
+            "manual": true,
+            "trigger": {
+              "trigger": "sun",
+              "event": "sunset",
+              "offset": "-00:15:00"
+            }
+          }
+        },
+        {
+          "id": "lights",
+          "kind": "service",
+          "label": "Living room lights on",
+          "config": {
+            "service": "light.turn_on",
+            "target": {
+              "kind": "literal",
+              "type": "entity_id:light",
+              "value": "light.living_room"
+            },
+            "fields": {
+              "brightness_pct": {
+                "kind": "literal",
+                "type": "number",
+                "value": 60
+              },
+              "color_temp_kelvin": {
+                "kind": "literal",
+                "type": "number",
+                "value": 2700
+              },
+              "transition": {
+                "kind": "literal",
+                "type": "number",
+                "value": 5
+              }
+            },
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "flow",
+          "source": "sunset",
+          "target": "lights",
+          "port": "next"
+        }
+      ]
+    },
+    {
+      "version": 5,
+      "name": "Heater off after 30 minutes",
+      "nodes": [
+        {
+          "id": "heating",
+          "kind": "trigger",
+          "label": "Heating for 30 minutes",
+          "config": {
+            "type": "ha",
+            "manual": false,
+            "trigger": {
+              "trigger": "state",
+              "entity_id": "climate.bathroom",
+              "to": "heat",
+              "for": {
+                "minutes": 30
+              }
+            }
+          }
+        },
+        {
+          "id": "off",
+          "kind": "service",
+          "label": "Heater off",
+          "config": {
+            "service": "climate.set_hvac_mode",
+            "fields": {
+              "hvac_mode": {
+                "kind": "literal",
+                "type": "string",
+                "value": "off"
+              }
+            },
+            "returnResponse": false
+          }
+        },
+        {
+          "id": "name",
+          "kind": "entity_field",
+          "label": "Heater name",
+          "config": {
+            "field": "attribute",
+            "attribute": "friendly_name",
+            "type": "string"
+          }
+        },
+        {
+          "id": "notify",
+          "kind": "service",
+          "label": "Notify",
+          "config": {
+            "service": "notify.notify",
+            "fields": {
+              "title": {
+                "kind": "unset"
+              },
+              "message": {
+                "kind": "literal",
+                "type": "string",
+                "value": "It was heating for 30 minutes and has been switched off."
+              }
+            },
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "flow-off",
+          "source": "heating",
+          "target": "off",
+          "port": "next"
+        },
+        {
+          "id": "flow-name",
+          "source": "off",
+          "target": "name",
+          "port": "next"
+        },
+        {
+          "id": "flow-notify",
+          "source": "name",
+          "target": "notify",
+          "port": "next"
+        },
+        {
+          "id": "heater-target",
+          "kind": "data",
+          "source": "heating",
+          "sourcePort": "entity_id",
+          "target": "off",
+          "targetPort": "target"
+        },
+        {
+          "id": "heater-state",
+          "kind": "data",
+          "source": "heating",
+          "sourcePort": "to_state",
+          "target": "name",
+          "targetPort": "entity"
+        },
+        {
+          "id": "heater-title",
+          "kind": "data",
+          "source": "name",
+          "sourcePort": "value",
+          "target": "notify",
+          "targetPort": "field:title"
+        }
+      ]
+    },
+    {
+      "version": 5,
+      "name": "Light named in an event",
+      "nodes": [
+        {
+          "id": "request",
+          "kind": "trigger",
+          "label": "Light requested",
+          "config": {
+            "type": "ha",
+            "manual": false,
+            "trigger": {
+              "trigger": "event",
+              "event_type": "hass_sharp_light_request"
+            }
+          }
+        },
+        {
+          "id": "entity",
+          "kind": "get_field",
+          "label": "Requested entity",
+          "config": {
+            "pointer": "/entity_id",
+            "type": "entity_id"
+          }
+        },
+        {
+          "id": "as_light",
+          "kind": "convert",
+          "label": "As light",
+          "config": {
+            "type": "entity_id:light"
+          }
+        },
+        {
+          "id": "on",
+          "kind": "service",
+          "label": "Light on",
+          "config": {
+            "service": "light.turn_on",
+            "fields": {},
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "flow-entity",
+          "source": "request",
+          "target": "entity",
+          "port": "next"
+        },
+        {
+          "id": "flow-convert",
+          "source": "entity",
+          "target": "as_light",
+          "port": "next"
+        },
+        {
+          "id": "flow-on",
+          "source": "as_light",
+          "target": "on",
+          "port": "next"
+        },
+        {
+          "id": "event-data",
+          "kind": "data",
+          "source": "request",
+          "sourcePort": "event_data",
+          "target": "entity",
+          "targetPort": "value"
+        },
+        {
+          "id": "entity-value",
+          "kind": "data",
+          "source": "entity",
+          "sourcePort": "value",
+          "target": "as_light",
+          "targetPort": "value"
+        },
+        {
+          "id": "light-target",
+          "kind": "data",
+          "source": "as_light",
+          "sourcePort": "value",
+          "target": "on",
+          "targetPort": "target"
+        }
+      ]
+    },
+    {
+      "version": 5,
+      "name": "Log the daily forecast",
       "nodes": [
         {
           "id": "start",
@@ -162,35 +423,18 @@
           }
         },
         {
-          "id": "dim",
-          "kind": "service",
-          "config": {
-            "service": "light.turn_on",
-            "fields": {
-              "brightness_pct": {
-                "kind": "literal",
-                "type": "number",
-                "value": 40
-              },
-              "transition": {
-                "kind": "literal",
-                "type": "number",
-                "value": 2
-              }
-            },
-            "returnResponse": false,
-            "target": {
-              "kind": "literal",
-              "type": "entity_id:light",
-              "value": "light.hall"
-            }
-          }
-        },
-        {
           "id": "forecast",
           "kind": "service",
+          "label": "Daily forecast",
           "config": {
             "service": "weather.get_forecasts",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "weather.home"
+              }
+            },
             "fields": {
               "type": {
                 "kind": "literal",
@@ -198,14 +442,7 @@
                 "value": "daily"
               }
             },
-            "returnResponse": true,
-            "target": {
-              "kind": "literal",
-              "type": "target",
-              "value": {
-                "entity_id": "weather.home"
-              }
-            }
+            "returnResponse": true
           }
         },
         {
@@ -220,14 +457,8 @@
       ],
       "edges": [
         {
-          "id": "flow-dim",
-          "source": "start",
-          "target": "dim",
-          "port": "next"
-        },
-        {
           "id": "flow-forecast",
-          "source": "dim",
+          "source": "start",
           "target": "forecast",
           "port": "next"
         },
@@ -241,8 +472,8 @@
           "id": "response-log",
           "kind": "data",
           "source": "forecast",
-          "target": "log",
           "sourcePort": "response",
+          "target": "log",
           "targetPort": "value"
         }
       ]
