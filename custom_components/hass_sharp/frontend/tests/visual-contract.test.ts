@@ -303,6 +303,31 @@ describe('refusing a connection only for a problem it causes (fix round 2)', () 
       expect(quick(graph, 'b', 'value', 'd', 'seconds')).toBe(crossing)
     }
   })
+  it('does not refuse a wire from an output because the input of the same name has a problem (fix round 3)', () => {
+    const graph = { version: 5 as const, name: 'Not', nodes: [trigger, producer,
+      { id: 'n', kind: 'not', config: { value: { kind: 'unset' } } }, { id: 'i', kind: 'if', config: { value: { kind: 'unset' } } }],
+    edges: [{ id: 'ta', source: 't', target: 'a' }, { id: 'an', source: 'a', target: 'n' }, { id: 'ni', source: 'n', target: 'i' },
+      { id: 'a.value:n.value', kind: 'data', source: 'a', target: 'n', sourcePort: 'value', targetPort: 'value' }] }
+    // The existing problem names the Not step's input pin `value`, the same name as its output.
+    expect(contract.validateGraph(graph)).toContainEqual(expect.objectContaining({ nodeId: 'n', inputId: 'value', portId: 'value', message: 'Value accepts Yes/No, not Number' }))
+    expect(() => contract.connectData(graph, 'n', 'value', 'i', 'value')).not.toThrow()
+    expect(quick(graph, 'n', 'value', 'i', 'value')).toBeUndefined()
+  })
+  it('judges a data cycle by the new wire when the graph already has one (fix round 3)', () => {
+    const convert = (id: string) => ({ id, kind: 'convert', config: { type: 'number', value: { kind: 'unset' } } })
+    const data = (s: string, t: string) => ({ id: `${s}:${t}`, kind: 'data', source: s, target: t, sourcePort: 'value', targetPort: 'value' })
+    const graph = { version: 5 as const, name: 'Cycle', nodes: [trigger, convert('c1'), convert('c2'), convert('c3'), convert('c4')],
+      edges: [{ id: 't1', source: 't', target: 'c1' }, { id: '12', source: 'c1', target: 'c2' }, { id: '23', source: 'c2', target: 'c3' }, { id: '34', source: 'c3', target: 'c4' },
+        data('c1', 'c2'), data('c2', 'c1')] }
+    expect(contract.validateGraph(graph).map(d => d.code)).toContain('cycle.data')
+    // (a) An unrelated wire is made by both checks.
+    expect(() => contract.connectData(graph, 'c3', 'value', 'c4', 'value')).not.toThrow()
+    expect(quick(graph, 'c3', 'value', 'c4', 'value')).toBeUndefined()
+    // (b) A wire (not a self-wire) that closes a second cycle is refused by both.
+    const linked = { ...graph, edges: [...graph.edges, data('c3', 'c4')] }
+    expect(() => contract.connectData(linked, 'c4', 'value', 'c3', 'value')).toThrow('Data cycle is forbidden')
+    expect(quick(linked, 'c4', 'value', 'c3', 'value')).toContain('Data cycle is forbidden')
+  })
   it('does not count a node whose id merely reads like a code as blocking', () => {
     const graph = base([{ id: 'cycle_count', kind: 'log', config: { value: { kind: 'variable', name: 'scope.data' } } }], [{ id: 'dc', source: 'd', target: 'cycle_count' }])
     expect(contract.validateGraph(graph).some(contract.blockingDiagnostic)).toBe(false)

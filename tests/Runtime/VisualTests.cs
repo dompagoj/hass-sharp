@@ -45,6 +45,18 @@ static class VisualTests
             graph["name"]="Renamed";store.Save("motion",graph,1);Check(store.Read("motion")!.Graph["name"]!.GetValue<string>()=="Renamed","durable rename");
             var invalid=(JsonObject)graph.DeepClone();invalid["version"]=3;try{store.Save("motion",invalid,2);throw new Exception("invalid save accepted");}catch(VisualValidationException){}
             Check(store.Read("motion")!.Revision==2,"invalid write leaves old artifact");
+            // Steps wired by value but not into the flow: the wire itself is not a diagnostic, but each step is
+            // node.unreachable, an error, so neither Save nor the Preview gate Manager.Init uses accepts the graph.
+            var loose=(JsonObject)graph.DeepClone();
+            loose["nodes"]!.AsArray().Add(JsonNode.Parse("""{"id":"a","kind":"set_value","config":{"type":"number","value":{"kind":"literal","type":"number","value":1}}}"""));
+            loose["nodes"]!.AsArray().Add(JsonNode.Parse("""{"id":"x","kind":"delay","config":{"seconds":{"kind":"unset"}}}"""));
+            loose["edges"]!.AsArray().Add(JsonNode.Parse("""{"id":"ax","kind":"data","source":"a","target":"x","sourcePort":"value","targetPort":"seconds"}"""));
+            var loosePreview=generator.Preview(loose);
+            Check(!loosePreview.Valid&&loosePreview.Diagnostics.Select(d=>d.Code+" "+d.NodeId+": "+d.Message).OrderBy(s=>s,StringComparer.Ordinal).SequenceEqual([
+                "node.unreachable a: Set value is not connected into the flow; connect a step to its execution input",
+                "node.unreachable x: Delay is not connected into the flow; connect a step to its execution input"]),"loose steps are only unreachable: "+System.Text.Json.JsonSerializer.Serialize(loosePreview.Diagnostics));
+            try{store.Save("motion",loose,2);throw new Exception("graph with a step outside the flow saved");}catch(VisualValidationException e) when (e.Preview.Diagnostics.Any(d=>d.Code=="node.unreachable")){}
+            Check(store.Read("motion")!.Revision==2,"refused loose write leaves old artifact");
             var contenders=await Task.WhenAll(Enumerable.Range(0,8).Select(_=>Task.Run(()=>{try{store.Save("motion",graph,2);return true;}catch(VisualConflictException){return false;}})));Check(contenders.Count(x=>x)==1,"one concurrent revision writer wins");store.Delete("motion",3);Check(store.Read("motion")==null,"delete persists");
             var api=new HassSharpManager(root);api.GenerateHassEntities(["binary_sensor.motion","light.hall"]);var original=PyInterop.SubscribeToEntityTracking;
             PyInterop.SubscribeToEntityTracking=_=>throw new InvalidOperationException("fixture registration failure");

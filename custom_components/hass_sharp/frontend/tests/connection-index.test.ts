@@ -33,7 +33,7 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below.
-const GRAPHS = 221, PAIRS = 691, ACCEPTED = 278, BY_VALIDATION = 125, SERVICES_ACCEPTED = 225, SERVICES_BY_VALIDATION = 134
+const GRAPHS = 225, PAIRS = 739, ACCEPTED = 307, BY_VALIDATION = 133, SERVICES_ACCEPTED = 254, SERVICES_BY_VALIDATION = 142
 // The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit).
 const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config']
 const RICH: Totals = { graphs: 21, pairs: 190, accepted: 38, rejected: 152, byValidation: 0, fallbacks: [], skipped: [] }
@@ -94,6 +94,8 @@ describe('connection index agrees with connectData', () => {
       return n + sum.accepted
     }, 0)
     expect(accepted('cycle.')).toBeGreaterThan(0)
+    // An existing data cycle on its own leaves unrelated wires free (the shared case `data cycle already present …`).
+    expect(accepted('cycle.data')).toBeGreaterThan(0)
     expect(accepted('scope.')).toBeGreaterThan(0)
   })
   it('for the shared CLR catalog graphs', () => {

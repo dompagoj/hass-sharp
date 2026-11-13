@@ -2048,14 +2048,12 @@
     },
     "valid": false,
     "nodeId": "b",
-    "contains": "reachable",
+    "contains": "If is not connected into the flow; connect a step to its execution input",
     "messages": [
-      "Condition cannot use this value here: it is on the other side of a loop or parallel branch boundary",
-      "Every node must be reachable by execution from a trigger"
+      "If is not connected into the flow; connect a step to its execution input"
     ],
     "codes": [
-      "node.unreachable",
-      "scope.data"
+      "node.unreachable"
     ]
   },
   {
@@ -2304,7 +2302,7 @@
     "valid": false,
     "contains": "8",
     "messages": [
-      "Every node must be reachable by execution from a trigger",
+      "Stop is not connected into the flow; connect a step to its execution input",
       "Structured nesting limit is 8"
     ],
     "codes": [
@@ -3585,7 +3583,7 @@
     "nodeId": "p",
     "contains": "This step order wire leaves from a pin without a valid name",
     "messages": [
-      "Every node must be reachable by execution from a trigger",
+      "Set value is not connected into the flow; connect a step to its execution input",
       "This step order wire leaves from a pin without a valid name"
     ],
     "codes": [
@@ -12391,7 +12389,7 @@
     "contains": "At least one trigger is required",
     "messages": [
       "At least one trigger is required",
-      "Every node must be reachable by execution from a trigger"
+      "Log is not connected into the flow; connect a step to its execution input"
     ],
     "codes": [
       "graph.noTrigger",
@@ -12525,7 +12523,7 @@
     "contains": "Edge id is required",
     "messages": [
       "Edge id is required",
-      "Every node must be reachable by execution from a trigger"
+      "Log is not connected into the flow; connect a step to its execution input"
     ],
     "codes": [
       "edge.invalid",
@@ -13036,6 +13034,346 @@
     ],
     "codes": [
       "port.unknownInput"
+    ]
+  },
+  {
+    "name": "data cycle already present leaves other value wires free",
+    "graph": {
+      "version": 5,
+      "name": "Cycle",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c1",
+          "kind": "convert",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "c2",
+          "kind": "convert",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "c3",
+          "kind": "convert",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "c4",
+          "kind": "convert",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:c1",
+          "source": "t",
+          "target": "c1"
+        },
+        {
+          "id": "c1:c2",
+          "source": "c1",
+          "target": "c2"
+        },
+        {
+          "id": "c2:c3",
+          "source": "c2",
+          "target": "c3"
+        },
+        {
+          "id": "c3:c4",
+          "source": "c3",
+          "target": "c4"
+        },
+        {
+          "id": "c1.value:c2.value",
+          "kind": "data",
+          "source": "c1",
+          "target": "c2",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "c2.value:c1.value",
+          "kind": "data",
+          "source": "c2",
+          "target": "c1",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "c3.value:c4.value",
+          "kind": "data",
+          "source": "c3",
+          "target": "c4",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "Data cycle is forbidden",
+    "messages": [
+      "Data cycle is forbidden",
+      "Value needs a value"
+    ],
+    "codes": [
+      "cycle.data"
+    ]
+  },
+  {
+    "name": "value wire between two steps not in the flow reports only that they are not connected",
+    "graph": {
+      "version": 5,
+      "name": "Loose",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "a.value:d.seconds",
+          "kind": "data",
+          "source": "a",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "contains": "Delay is not connected into the flow; connect a step to its execution input",
+    "messages": [
+      "Delay is not connected into the flow; connect a step to its execution input",
+      "Set value is not connected into the flow; connect a step to its execution input"
+    ],
+    "codes": [
+      "node.unreachable",
+      "node.unreachable"
+    ]
+  },
+  {
+    "name": "value wire out of a loop body to a step not in the flow reports only that step",
+    "graph": {
+      "version": 5,
+      "name": "Scope",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "foreach",
+          "config": {
+            "items": {
+              "kind": "literal",
+              "type": "array",
+              "value": [
+                1,
+                2
+              ]
+            },
+            "itemType": "number"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:f",
+          "source": "t",
+          "target": "f"
+        },
+        {
+          "id": "f:b",
+          "source": "f",
+          "target": "b",
+          "port": "body"
+        },
+        {
+          "id": "b.value:d.seconds",
+          "kind": "data",
+          "source": "b",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "contains": "Delay is not connected into the flow; connect a step to its execution input",
+    "messages": [
+      "Delay is not connected into the flow; connect a step to its execution input"
+    ],
+    "codes": [
+      "node.unreachable"
+    ]
+  },
+  {
+    "name": "value wire out of a loop body to a step after the loop crosses the boundary",
+    "graph": {
+      "version": 5,
+      "name": "Scope",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "foreach",
+          "config": {
+            "items": {
+              "kind": "literal",
+              "type": "array",
+              "value": [
+                1,
+                2
+              ]
+            },
+            "itemType": "number"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:f",
+          "source": "t",
+          "target": "f"
+        },
+        {
+          "id": "f:b",
+          "source": "f",
+          "target": "b",
+          "port": "body"
+        },
+        {
+          "id": "f:d",
+          "source": "f",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "b.value:d.seconds",
+          "kind": "data",
+          "source": "b",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "inputId": "seconds",
+    "contains": "Seconds cannot use this value here: it is on the other side of a loop or parallel branch boundary",
+    "messages": [
+      "Seconds cannot use this value here: it is on the other side of a loop or parallel branch boundary"
+    ],
+    "codes": [
+      "scope.data"
     ]
   }
 ]

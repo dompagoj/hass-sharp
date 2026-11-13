@@ -39,8 +39,8 @@ export interface ConnectionIndex {
   verdict(source: string, sourcePort: string, target: string, targetPort: string): ConnectionVerdict
 }
 
-// connectData rejects a new diagnostic, any diagnostic on the target input or source output, and a wire that lies on a
-// data cycle. A cycle or scope error the graph already has rejects nothing on its own.
+// connectData rejects a new diagnostic, any diagnostic on the target input or about the source output (no inputId),
+// and a wire that lies on a data cycle. A cycle or scope error the graph already has rejects nothing on its own.
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const pairKey = (a: string | null, b: string) => JSON.stringify([a, b])
 
@@ -137,7 +137,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       (o.kind === 'serviceTarget' && o.node === targetId && (targetPort === 'target' || targetPort.startsWith('field:')))
     const messages = new Set<string>()
     // Carried-over diagnostics reject when they match connectData's filters.
-    for (const i of [...(byInput.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(sourceId, sourcePort)) ?? [])].sort((a, b) => a - b))
+    for (const i of [...(byInput.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(sourceId, sourcePort)) ?? []).filter(i => diagnostics[i].inputId === undefined)].sort((a, b) => a - b))
       if (!volatile(origins[i])) messages.add(diagnostics[i].message)
     // The new edge, as the validator types it.
     const output = dataOutputs(source, catalog)[sourcePort]
@@ -146,7 +146,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     if (!input) messages.add(words.unknownInput(targetPort))
     if (output && input) {
       if (!input.types.some(t => index.assignable(output.type, t))) messages.add(incompatibleInput(target, input, targetPort, output.type, catalog))
-      if (!analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
+      if (analysis.scopes.has(sourceId) && analysis.scopes.has(targetId) && !analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
     }
     // The new wire lies on a cycle. Without one in the graph, a path from the target back to the source cannot use
     // the wire it replaces, so the memoised reach of the current graph answers.

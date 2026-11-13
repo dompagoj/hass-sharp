@@ -267,6 +267,14 @@ const blankEnds = /^[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205
 export const words = {
   /** A key or value people did not name, in words: `needs_action` → `Needs action`; never empty. */
   key: (key: string) => { const w = domainWords(key); return w.replace(blankEnds, '') ? w : 'Unnamed' },
+  /** A step as people see it on the canvas: its own label, else its kind's catalog label, else its kind in words. */
+  stepName: (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string => {
+    const label = typeof node.label === 'string' ? node.label.replace(blankEnds, '') : ''
+    const kindLabel = typeof node.kind === 'string' && Object.hasOwn(catalog.nodes, node.kind) && typeof catalog.nodes[node.kind].label === 'string' ? catalog.nodes[node.kind].label.replace(blankEnds, '') : ''
+    return label || kindLabel || words.key(typeof node.kind === 'string' ? node.kind : '')
+  },
+  /** A step that execution never reaches, and what to do about it. */
+  unreachable: (step: string) => `${step} is not connected into the flow; connect a step to its execution input`,
   /** A name or id quoted as written, without surrounding whitespace; `Unnamed` when nothing is left. */
   name: (name: string) => name.replace(blankEnds, '') || 'Unnamed',
   or: (items: string[]) => items.length <= 1 ? items.join('') : items.slice(0, -1).join(', ') + ' or ' + items.at(-1),
@@ -337,8 +345,10 @@ export function serviceTargetDiagnostics(node: GraphNode, connected: (port: stri
   return errors
 }
 /**
- * The codes of structural diagnostics, identical in `VisualGraphValidator.Codes`. A code starting with `cycle.` or
- * `scope.` is a blocking diagnostic: `connectData` refuses a wire that adds one (`blockingDiagnostic`).
+ * The codes of structural diagnostics, identical in `VisualGraphValidator.Codes`. `connectData` does not read them:
+ * it refuses a wire for any diagnostic the wire adds (compared by full content), any diagnostic on the input it fills
+ * or about the output it reads, and a data cycle the wire itself lies on. A code starting with `cycle.` or `scope.`
+ * marks a blocking diagnostic (`blockingDiagnostic`), which the canvas uses when it places a new step.
  */
 export const diagnosticCodes = [
   'graph.version', 'graph.name', 'graph.shape', 'graph.limit', 'graph.noTrigger',
@@ -500,7 +510,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   const roots = [...nodes.values()].filter(n => n.kind === 'trigger')
   if (!roots.length) error(null, 'At least one trigger is required', undefined, undefined, 'graph.noTrigger')
   roots.forEach(n => scope(n.id, []))
-  for (const id of nodes.keys()) if (!scopes.has(id)) error(id, 'Every node must be reachable by execution from a trigger', undefined, undefined, 'node.unreachable')
+  for (const [id, node] of nodes) if (!scopes.has(id)) error(id, words.unreachable(words.stepName(node, catalog)), undefined, undefined, 'node.unreachable')
   const incoming = new Map<string, DataEdge>()
   const key = (node: string, port: string) => JSON.stringify([node, port])
   for (const edge of data) {
@@ -513,7 +523,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     incoming.set(key(target.id, edge.targetPort), edge)
     if (output && input) {
       if (!input.types.some(t => isAssignable(output.type, t))) error(target.id, incompatibleInput(target, input, edge.targetPort, output.type, catalog), edge.targetPort, edge.targetPort)
-      if (!visible(source, target, output)) error(target.id, words.scopeData(inputSubject(target, input, edge.targetPort, catalog)), edge.targetPort, edge.targetPort, 'scope.data')
+      // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable.
+      if (scopes.has(source.id) && scopes.has(target.id) && !visible(source, target, output))
+        error(target.id, words.scopeData(inputSubject(target, input, edge.targetPort, catalog)), edge.targetPort, edge.targetPort, 'scope.data')
     }
   }
   origin = graphOrigin
@@ -713,14 +725,15 @@ export function connectData(graph: Graph, source: string, sourcePort: string, ta
   next.edges.push({ id, kind: 'data', source, target, sourcePort, targetPort })
   setInput(node, targetPort, { kind: 'unset' }, catalog)
   const old = validateGraph(graph, catalog).map(e => JSON.stringify(e))
-  // A connection is refused only for a problem it causes: a new diagnostic, or any diagnostic on the input it fills
-  // or the output it reads. A blocking diagnostic the graph already has is no reason. A cycle diagnostic names the
+  // A connection is refused only for a problem it causes: a new diagnostic (new by its full content, message
+  // included), or any diagnostic on the input it fills or about the output it reads (one with no inputId: an input
+  // of the same name as the output is another pin). A blocking diagnostic the graph already has is no reason. A cycle diagnostic names the
   // node where the search happened to close the loop, which another wire can move, so cycles are judged by whether
   // the new wire itself lies on one (a data wire never changes execution cycles).
   const after = analyzeGraph(next, catalog)
   const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && (!old.includes(JSON.stringify(e)) ||
     (e.nodeId === target && (e.inputId === targetPort || e.portId === targetPort)) ||
-    (e.nodeId === source && e.portId === sourcePort)))
+    (e.nodeId === source && e.portId === sourcePort && e.inputId === undefined)))
   const messages = addedErrors.map(e => e.message)
   if (after.complete && closesDataCycle(after.data, source, target)) messages.push('Data cycle is forbidden')
   if (messages.length) throw new Error(messages.join('; '))

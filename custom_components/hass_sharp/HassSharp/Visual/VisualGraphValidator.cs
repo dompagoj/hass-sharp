@@ -23,8 +23,10 @@ public static class VisualGraphValidator
     internal static string TargetKeyMessage(string key) => $"Target can only contain entity_id, device_id, area_id, floor_id and label_id; found {key}";
 
     /// <summary>
-    /// The codes of structural diagnostics, identical in <c>contract.ts</c>. The editor's connection check (in
-    /// <c>contract.ts</c> only) refuses a wire that adds a <c>cycle.</c> or <c>scope.</c> diagnostic.
+    /// The codes of structural diagnostics, identical in <c>contract.ts</c>. The editor's connection check lives in
+    /// <c>contract.ts</c> only (<c>connectData</c>) and does not read codes: it refuses a wire for any diagnostic the wire
+    /// adds (compared by full content), any diagnostic on the input it fills or about the output it reads, and a data
+    /// cycle the wire itself lies on.
     /// </summary>
     public static readonly string[] Codes =
     [
@@ -56,6 +58,13 @@ public static class VisualGraphValidator
         internal static string DomainWords(string domain) => Capital(domain.Replace('_', ' '));
         /// <summary>A key or value people did not name, in words: <c>needs_action</c> → <c>Needs action</c>; never empty.</summary>
         internal static string KeyWords(string key) => DomainWords(key) is var words && Trimmed(words).Length > 0 ? words : "Unnamed";
+        /// <summary>A step as people see it on the canvas: its own label, else its kind's catalog label, else its kind in words.</summary>
+        internal static string StepName(JsonObject node, JsonNode? spec) =>
+            node["label"] is JsonValue l && l.TryGetValue<string>(out var label) && Trimmed(label).Length > 0 ? Trimmed(label)
+            : Text(spec, "label") is { } kindLabel && Trimmed(kindLabel).Length > 0 ? Trimmed(kindLabel)
+            : KeyWords(node["kind"] is JsonValue k && k.TryGetValue<string>(out var kind) ? kind : "");
+        /// <summary>A step that execution never reaches, and what to do about it.</summary>
+        internal static string Unreachable(string step) => $"{step} is not connected into the flow; connect a step to its execution input";
         /// <summary>A name or id quoted as written, without surrounding whitespace; <c>Unnamed</c> when nothing is left.</summary>
         internal static string Name(string name) => Trimmed(name) is { Length: > 0 } trimmed ? trimmed : "Unnamed";
         /// <summary>JavaScript's whitespace (as <c>String.prototype.trim</c> removes it), spelled out: .NET's differs at U+FEFF.</summary>
@@ -274,7 +283,7 @@ public static class VisualGraphValidator
             var roots = nodes.Values.Where(n => Kind(n) == "trigger").ToArray();
             if (roots.Length == 0) Error(null, "At least one trigger is required", code: "graph.noTrigger");
             foreach (var root in roots) Scope(Id(root), []);
-            foreach (var id in nodes.Keys) if (!scopes.ContainsKey(id)) Error(id, "Every node must be reachable by execution from a trigger", code: "node.unreachable");
+            foreach (var (id, node) in nodes) if (!scopes.ContainsKey(id)) Error(id, Words.Unreachable(Words.StepName(node, Spec(node))), code: "node.unreachable");
             foreach (var edge in data)
             {
                 var source = nodes[Text(edge, "source")]; var target = nodes[Text(edge, "target")];
@@ -287,7 +296,9 @@ public static class VisualGraphValidator
                 {
                     var type = Text(output, "type"); var expected = Strings(input["types"]);
                     if (!expected.Any(t => CompatibleTypes(type, t))) Error(Id(target), Words.Incompatible(Root, Prefix(target) + Words.PortLabel(input, tp), type, expected), tp, tp);
-                    if (!Visible(source, target, output)) Error(Id(target), ScopeData(Prefix(target) + Words.PortLabel(input, tp)), tp, tp, "scope.data");
+                    // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable.
+                    if (scopes.ContainsKey(Id(source)) && scopes.ContainsKey(Id(target)) && !Visible(source, target, output))
+                        Error(Id(target), ScopeData(Prefix(target) + Words.PortLabel(input, tp)), tp, tp, "scope.data");
                 }
             }
             foreach (var node in nodes.Values) ValidateNode(node);
