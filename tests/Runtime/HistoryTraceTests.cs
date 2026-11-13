@@ -432,6 +432,67 @@ static class HistoryTraceTests
                 finally { await api.UnloadAsync(); HassPath.HassConfiguration = previous; }
             });
 
+            await Test("a manual run of an entity trigger carries the entity's current state and stays a manual run", async () =>
+            {
+                var root = Path.Combine(folder, "manual-entity");
+                var previous = HassPath.HassConfiguration; HassPath.HassConfiguration = root;
+                var entity = PyInterop.Entity;
+                PyInterop.Entity = id => id == "binary_sensor.motion" ? new() { EntityId = id, State = "on", LastChanged = 1_700_000_000, LastReported = 1_700_000_000 } : null;
+                var api = new HassSharpManager(root);
+                try
+                {
+                    api.SetServiceDescriptions(Fixture("ha-service-descriptions.json"));
+                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    async Task<JsonNode> Visual(object request) => JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(request)))!;
+                    // The new state feeds a step: a missing value would fail the run.
+                    var graph = JsonNode.Parse("""
+                    {"version":5,"name":"Motion","nodes":[
+                      {"id":"t","kind":"trigger","label":"Hallway motion","config":{"type":"entity","entity":"binary_sensor.motion"}},
+                      {"id":"f","kind":"entity_field","config":{"entity":{"kind":"unset"},"field":"state","attribute":"","type":"string"}},
+                      {"id":"l","kind":"log","config":{"value":{"kind":"unset"}}}
+                    ],"edges":[{"id":"tf","source":"t","target":"f"},{"id":"fl","source":"f","target":"l"},
+                      {"id":"d1","kind":"data","source":"t","sourcePort":"to_state","target":"f","targetPort":"entity"},
+                      {"id":"d2","kind":"data","source":"f","sourcePort":"value","target":"l","targetPort":"value"}]}
+                    """)!;
+                    var saved = await Visual(new { operation = "save", id = "hallway", graph, expectedRevision = 0 });
+                    Check(saved["ok"]!.GetValue<bool>() && saved["result"]!["active"]!.GetValue<bool>(), "save rejected: " + saved.ToJsonString());
+                    var source = saved["result"]!["document"]!["source"]!.GetValue<string>();
+                    var runId = (await Visual(new { operation = "run", id = "hallway", triggerId = "t" }))["result"]!["runId"]!.GetValue<string>();
+                    await Until(() => JsonNode.Parse(api.GetRunTrace(runId))!["run"]!["endUtc"] != null, "manual entity run completes");
+                    var trace = JsonNode.Parse(api.GetRunTrace(runId))!;
+                    var run = trace["run"]!;
+                    Check(run["status"]!.GetValue<string>() == "Succeeded" && run["cause"]!.GetValue<string>() == "Manual" && run["actionLabel"]!.GetValue<string>() == "Hallway motion"
+                        && run["trigger"]!.ToJsonString() == """{"kind":"manual","entityId":"binary_sensor.motion"}""", "manual entity run: " + run.ToJsonString());
+                    var payload = trace["trace"]!["trigger"]!;
+                    Check(payload["platform"]!.GetValue<string>() == "entity" && payload["manual"]!.GetValue<bool>() && payload["entity_id"]!.GetValue<string>() == "binary_sensor.motion"
+                        && payload["to_state"]!["state"]!.GetValue<string>() == "on" && payload["from_state"]!["state"]!.GetValue<string>() == "on", "manual payload in the trace: " + payload.ToJsonString());
+                    var field = trace["trace"]!["events"]!.AsArray().Single(e => e!["node"]!.GetValue<string>() == "f")!;
+                    Check(field["outputs"]!["value"]!["v"]!.GetValue<string>() == "on", "the step did not read the new state: " + field.ToJsonString());
+                    // The generated class does not change: a manual run reads state at dispatch, not in generated code.
+                    Check(!source.Contains("manual\":true") && (await Visual(new { operation = "read", id = "hallway" }))["result"]!["source"]!.GetValue<string>() == source, "source changed");
+
+                    // When the entity has no state the run is a plain manual run and the step fails, naming the output.
+                    PyInterop.Entity = _ => null;
+                    var bare = (await Visual(new { operation = "run", id = "hallway", triggerId = "t" }))["result"]!["runId"]!.GetValue<string>();
+                    await Until(() => JsonNode.Parse(api.GetRunTrace(bare))!["run"]!["endUtc"] != null, "manual run without state completes");
+                    var failed = JsonNode.Parse(api.GetRunTrace(bare))!;
+                    Check(failed["run"]!["status"]!.GetValue<string>() == "Failed" && failed["run"]!["error"]!.GetValue<string>().Contains("t.to_state")
+                        && failed["run"]!["trigger"]!.ToJsonString() == """{"kind":"manual"}""" && failed["trace"]!["trigger"]!.ToJsonString() == """{"platform":"manual"}""", "manual run without state: " + failed.ToJsonString());
+                }
+                finally { await api.UnloadAsync(); HassPath.HassConfiguration = previous; PyInterop.Entity = entity; }
+            });
+
+            await Test("trigger summaries: a manual run may name its entity, a real firing is unchanged", () =>
+            {
+                var state = new HasEntityState { EntityId = "binary_sensor.motion", State = "on" };
+                var manual = TriggerPayload.Manual("entity", new JsonObject { ["entity"] = "binary_sensor.motion" }, _ => state);
+                Check(TriggerSummary.Summarize(InvocationCause.Manual, manual) == """{"kind":"manual","entityId":"binary_sensor.motion"}""", "manual entity summary: " + TriggerSummary.Summarize(InvocationCause.Manual, manual));
+                Check(TriggerSummary.Summarize(InvocationCause.Manual, TriggerPayload.Manual()) == """{"kind":"manual"}""", "plain manual summary");
+                var real = TriggerPayload.Entity(state, new HasEntityState { EntityId = "binary_sensor.motion", State = "off" });
+                Check(TriggerSummary.Summarize(InvocationCause.Entity, real) == """{"kind":"entity","entityId":"binary_sensor.motion","from":"off","to":"on"}""", "real entity summary: " + TriggerSummary.Summarize(InvocationCause.Entity, real));
+                return Task.CompletedTask;
+            });
+
             await Test("a code automation run has no trace and no snapshot in run_trace", async () =>
             {
                 var root = Path.Combine(folder, "code");

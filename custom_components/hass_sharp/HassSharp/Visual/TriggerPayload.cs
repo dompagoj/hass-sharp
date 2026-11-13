@@ -21,11 +21,13 @@ public static class TriggerPayload
     }
 
     /// <summary>A tracked entity changed; states use the <c>State.as_dict</c> shape and a missing old state is null.</summary>
-    public static JsonElement Entity(HasEntityState newState, HasEntityState? oldState) => JsonSerializer.SerializeToElement(new JsonObject
+    public static JsonElement Entity(HasEntityState newState, HasEntityState? oldState) => JsonSerializer.SerializeToElement(EntityObject(newState, oldState));
+
+    static JsonObject EntityObject(HasEntityState newState, HasEntityState? oldState) => new()
     {
         ["platform"] = "entity", ["entity_id"] = newState.EntityId,
         ["from_state"] = oldState == null ? null : State(oldState), ["to_state"] = State(newState),
-    });
+    };
 
     /// <summary>A <c>daily</c> or <c>once</c> occurrence; <c>planned</c> is ISO-8601 UTC.</summary>
     public static JsonElement Schedule(string scheduleId, DateTime plannedUtc) => JsonSerializer.SerializeToElement(new JsonObject
@@ -35,6 +37,41 @@ public static class TriggerPayload
     });
 
     public static JsonElement Manual() => Platform("manual");
+
+    /// <summary>
+    /// A manual run of a visual trigger. An <c>entity</c> trigger, or a native <c>state</c> or <c>numeric_state</c>
+    /// trigger (the first of its entities), gets the payload a real firing would carry, with the entity's current
+    /// state as both the previous and the new state, and <c>manual: true</c>. Any other trigger, or an entity
+    /// without a state, gets <see cref="Manual()"/>.
+    /// </summary>
+    /// <param name="type">The trigger's config type, as <c>VisualNodeCatalog.TriggerType</c> resolves it.</param>
+    /// <param name="currentState">Reads an entity's current state, null when it has none.</param>
+    public static JsonElement Manual(string type, JsonObject? config, Func<string, HasEntityState?> currentState)
+    {
+        var native = type == "ha" ? config?["trigger"] as JsonObject : null;
+        var platform = native == null ? null : Text(native["trigger"]) ?? Text(native["platform"]);
+        var entityId = type switch
+        {
+            "entity" when Text(config?["entitiesExpression"]) is null or "" => Text(config?["entity"]),
+            "ha" when platform is "state" or "numeric_state" => native!["entity_id"] switch
+            {
+                JsonArray list => list.Count > 0 ? Text(list[0]) : null,
+                var single => Text(single)?.Split(',')[0].Trim(),
+            },
+            _ => null,
+        };
+        if (string.IsNullOrEmpty(entityId) || currentState(entityId) is not { State: not null } state) return Manual();
+        var payload = type == "entity" ? EntityObject(state, state) : new JsonObject
+        {
+            ["platform"] = platform, ["entity_id"] = entityId, ["from_state"] = State(state), ["to_state"] = State(state),
+        };
+        if (platform == "numeric_state")
+            foreach (var bound in new[] { "below", "above" })
+                if (native![bound] is { } value) payload[bound] = value.DeepClone();
+        payload["manual"] = true;
+        return JsonSerializer.SerializeToElement(payload);
+    }
+
     public static JsonElement Startup() => Platform("startup");
 
     static JsonElement Platform(string platform) => JsonSerializer.SerializeToElement(new JsonObject { ["platform"] = platform });
@@ -47,5 +84,6 @@ public static class TriggerPayload
         ["last_changed"] = Time(state.LastChanged), ["last_updated"] = null, ["last_reported"] = Time(state.LastReported),
     };
 
+    static string? Text(JsonNode? node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
     static string Time(double unixSeconds) => DateTimeOffset.UnixEpoch.AddSeconds(unixSeconds).ToString("O", CultureInfo.InvariantCulture);
 }

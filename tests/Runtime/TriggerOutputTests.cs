@@ -84,9 +84,65 @@ static class TriggerOutputTests
         var schedule = TriggerPayload.Schedule("noon", new DateTime(2026, 11, 13, 12, 0, 0, DateTimeKind.Utc));
         Check(schedule.ToString() == """{"platform":"schedule","schedule_id":"noon","planned":"2026-11-13T12:00:00.0000000Z"}""", "schedule payload: " + schedule);
         Check(TriggerPayload.Manual().ToString() == """{"platform":"manual"}""" && TriggerPayload.Startup().ToString() == """{"platform":"startup"}""", "manual and startup payloads");
+        // A real entity firing is byte-for-byte what it was before manual runs carried states.
+        Check(entity.ToString() == """{"platform":"entity","entity_id":"sensor.test","from_state":{"entity_id":"sensor.test","state":"off","attributes":{"unit":"C","levels":[1,"two"]},"last_changed":"2020-09-13T12:26:40.0000000\u002B00:00","last_updated":null,"last_reported":"2020-09-13T12:26:45.0000000\u002B00:00"},"to_state":{"entity_id":"sensor.test","state":"on","attributes":{"unit":"C","levels":[1,"two"]},"last_changed":"2023-11-14T22:13:20.0000000\u002B00:00","last_updated":null,"last_reported":"2023-11-14T22:13:25.0000000\u002B00:00"}}""", "real entity payload changed: " + entity);
+        ManualPayloads();
         var variables = JsonSerializer.SerializeToElement(new { trigger = new { platform = "event", @event = new { event_type = "test" } }, context = new { id = "c1" }, other = 1 });
         Check(TriggerPayload.Native(variables).ToString() == """{"platform":"event","event":{"event_type":"test"},"context":{"id":"c1"}}""", "native payload is the trigger dict plus context");
         Check(TriggerPayload.Native(JsonSerializer.SerializeToElement(new { other = 1 })).ToString() == "{}", "native payload without a trigger dict is empty");
+    }
+
+    // The current state a manual run reads: sensor.test is 21, sensor.blank has no state, everything else does not exist.
+    static HasEntityState? Current(string id) => id switch { "sensor.test" => State("sensor.test", "21"), "sensor.blank" => new() { EntityId = id }, _ => null };
+    static JsonElement ManualOf(JsonObject trigger) => TriggerPayload.Manual(trigger["type"]!.GetValue<string>(), trigger, Current);
+
+    static void ManualPayloads()
+    {
+        JsonNode Expected(object fields)
+        {
+            var payload = JsonSerializer.SerializeToNode(fields)!.AsObject();
+            foreach (var key in new[] { "from_state", "to_state" }) payload[key] = JsonNode.Parse(TriggerPayload.Entity(State("sensor.test", "21"), null).GetProperty("to_state").GetRawText());
+            payload["manual"] = true;
+            return payload;
+        }
+        void Same(JsonObject trigger, JsonNode expected) =>
+            Check(JsonNode.DeepEquals(JsonNode.Parse(ManualOf(trigger).GetRawText()), expected), $"manual payload of {trigger.ToJsonString()}: {ManualOf(trigger)}");
+
+        // An entity trigger carries the shape of a real firing, with the current state as both states.
+        var entity = new JsonObject { ["type"] = "entity", ["entity"] = "sensor.test" };
+        Same(entity, Expected(new { platform = "entity", entity_id = "sensor.test", from_state = 0, to_state = 0 }));
+        var keys = string.Join(",", ManualOf(entity).EnumerateObject().Select(p => p.Name));
+        Check(keys == "platform,entity_id,from_state,to_state,manual", "manual entity payload keys: " + keys);
+        Check(EntityStateSnapshot.FromStateJson(ManualOf(entity).GetProperty("from_state")).State == "21", "manual states read as snapshots");
+
+        // Native state (trigger or platform key, a list uses its first entity) and numeric_state with its bounds.
+        Same(Ha(new { trigger = "state", entity_id = new[] { "sensor.test", "sensor.other" }, to = "on" }), Expected(new { platform = "state", entity_id = "sensor.test", from_state = 0, to_state = 0 }));
+        Same(Ha(new { platform = "state", entity_id = "sensor.test" }), Expected(new { platform = "state", entity_id = "sensor.test", from_state = 0, to_state = 0 }));
+        Same(Ha(new { trigger = "numeric_state", entity_id = "sensor.test", above = 20, below = "input_number.limit" }),
+            Expected(new { platform = "numeric_state", entity_id = "sensor.test", from_state = 0, to_state = 0, below = "input_number.limit", above = 20 }));
+        Same(Ha(new { trigger = "numeric_state", entity_id = new[] { "sensor.test" }, below = 30.5 }), Expected(new { platform = "numeric_state", entity_id = "sensor.test", from_state = 0, to_state = 0, below = 30.5 }));
+
+        // Everything else, and an entity that is not known or has no state, stays a plain manual run.
+        foreach (var trigger in new JsonObject[] {
+            new() { ["type"] = "entity", ["entity"] = "sensor.missing" },
+            new() { ["type"] = "entity", ["entity"] = "sensor.blank" },
+            new() { ["type"] = "entity" },
+            new() { ["type"] = "entity", ["entity"] = "sensor.test", ["entitiesExpression"] = "[Entities.Sensor.Test]" },
+            new() { ["type"] = "daily", ["time"] = "07:30", ["timeZone"] = "UTC" },
+            new() { ["type"] = "once", ["at"] = "2030-01-01T10:00:00Z" },
+            new() { ["type"] = "manual" },
+            new() { ["type"] = "startup" },
+            Ha(new { trigger = "state", entity_id = "sensor.missing" }),
+            Ha(new { trigger = "state", entity_id = Array.Empty<string>() }),
+            Ha(new { trigger = "numeric_state", above = 1 }),
+            Ha(new { trigger = "template", value_template = "{{ is_state('sensor.test', '21') }}", entity_id = "sensor.test" }),
+            Ha(new { trigger = "zone", entity_id = "sensor.test", zone = "zone.home", @event = "enter" }),
+            Ha(new { trigger = "time", at = "07:00:00" }),
+            Ha(new { trigger = "time_pattern", minutes = "/5" }),
+            Ha(new { trigger = "event", event_type = "test" }),
+            Ha(new { trigger = "sun", @event = "sunset" }),
+            new() { ["type"] = "ha" } })
+            Check(ManualOf(trigger).ToString() == """{"platform":"manual"}""", $"manual payload of {trigger.ToJsonString()}: {ManualOf(trigger)}");
     }
 
     static JsonObject Log(string id) => N(id, "log", new { value = new { kind = "unset" } });
@@ -137,6 +193,39 @@ static class TriggerOutputTests
         absent["edges"] = new JsonArray(E("t", "from"), E("from", "c", "error"), D("t", "from", "entity", "from_state"));
         var logged = await Logged(absent, InvocationCause.Entity, TriggerPayload.Entity(current, null));
         Check(logged.Length == 1 && logged[0].Contains("t.from_state") && logged[0].Contains("from.entity"), "absent from_state names the trigger output: " + string.Join("|", logged));
+
+        // A manual run of an entity trigger, a native state trigger and a native numeric_state trigger: the typed
+        // outputs resolve from the current state, and the bounds a numeric_state trigger was configured with are in data.
+        foreach (var (trigger, expected) in new (JsonObject, string[])[] {
+            (new() { ["type"] = "entity", ["entity"] = "sensor.test" }, ["sensor.test", "21", "21", "C", "entity"]),
+            (Ha(new { trigger = "state", entity_id = "sensor.test" }), ["sensor.test", "21", "21", "C", "state"]),
+            (Ha(new { trigger = "numeric_state", entity_id = new[] { "sensor.test" }, above = 20 }), ["sensor.test", "21", "21", "C", "numeric_state", "20"]) })
+        {
+            var reads = Wired(trigger,
+                [N("e", "set_value", new { type = "entity_id:sensor", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), Field("from"), Log("lf"), Field("unit", "attribute", "unit"), Log("lu"),
+                 N("p", "get_field", new { value = new { kind = "unset" }, pointer = "/platform", type = "string" }), Log("lp")],
+                ("entity_id", "e", "value"), ("to_state", "to", "entity"), ("from_state", "from", "entity"), ("to_state", "unit", "entity"), ("data", "p", "value"));
+            foreach (var (source, target) in new[] { ("e", "le"), ("to", "lt"), ("from", "lf"), ("unit", "lu"), ("p", "lp") }) reads["edges"]!.AsArray().Add(D(source, target, "value"));
+            if (expected.Length == 6)
+            {
+                reads["nodes"]!.AsArray().Add(N("a", "get_field", new { value = new { kind = "unset" }, pointer = "/above", type = "number" }));
+                reads["nodes"]!.AsArray().Add(Log("la"));
+                reads["edges"]!.AsArray().Add(E("lp", "a")); reads["edges"]!.AsArray().Add(E("a", "la"));
+                reads["edges"]!.AsArray().Add(D("t", "a", "value", "data")); reads["edges"]!.AsArray().Add(D("a", "la", "value"));
+            }
+            var got = await Logged(reads, InvocationCause.Manual, ManualOf(trigger));
+            Check(got.SequenceEqual(expected), $"manual run of {trigger.ToJsonString()} reaches typed outputs: " + string.Join("|", got));
+        }
+
+        // A manual run of an entity that no longer exists (compiled when it did) is a plain manual run: its consumer gets the named error.
+        var gone = new JsonObject { ["type"] = "entity", ["entity"] = "sensor.test" };
+        var fallback = TriggerPayload.Manual("entity", gone, _ => null);
+        Check(fallback.ToString() == """{"platform":"manual"}""", "unknown entity falls back");
+        var missing = Wired(gone,
+            [Field("to"), N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.to_state\"))throw lastError; Logger.Info(\"missing \"+lastError.Message);" })]);
+        missing["edges"] = new JsonArray(E("t", "to"), E("to", "c", "error"), D("t", "to", "entity", "to_state"));
+        logged = await Logged(missing, InvocationCause.Manual, fallback);
+        Check(logged.Length == 1 && logged[0].Contains("t.to_state") && logged[0].Contains("to.entity"), "unknown entity names the trigger output: " + string.Join("|", logged));
 
         // Without any payload even data is absent.
         var none = Wired(new() { ["type"] = "manual" }, [N("p", "get_field", new { value = new { kind = "unset" }, pointer = "", type = "object" }), N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.data\"))throw lastError;" })], ("data", "p", "value"));

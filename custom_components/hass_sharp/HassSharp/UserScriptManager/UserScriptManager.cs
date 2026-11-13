@@ -15,12 +15,13 @@ class UserScriptManager
         return script.Classes.Single(c => c.ClassName == className).RunMethod(method, InvocationCause.Manual);
     }
 
-    public string DispatchManual(string automationId, string className, string method)
+    /// <param name="payload">The normalised trigger payload; <c>{platform: "manual"}</c> when omitted.</param>
+    public string DispatchManual(string automationId, string className, string method, System.Text.Json.JsonElement? payload = null)
     {
         var script = _userScripts.Single(s => s.AutomationId == automationId);
         var klass = script.Classes.Single(c => c.ClassName == className);
         var runId = Guid.NewGuid().ToString("N");
-        var task = klass.RunMethod(method, InvocationCause.Manual, runId);
+        var task = klass.RunMethod(method, InvocationCause.Manual, runId, payload);
         if (task.IsCompleted) task.GetAwaiter().GetResult();
         else _ = Observe(task);
         return runId;

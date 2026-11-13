@@ -97,7 +97,8 @@ the run, whatever started it:
 | Native HA trigger | Home Assistant's `trigger` variables plus `context` |
 | Entity change | `{platform: "entity", entity_id, from_state, to_state}`, states as `{entity_id, state, attributes, last_changed, last_updated, last_reported}`, with `last_updated` always `null` |
 | Daily or once | `{platform: "schedule", schedule_id, planned}` with `planned` in ISO-8601 UTC |
-| Manual run or startup | `{platform: "manual"}` or `{platform: "startup"}` |
+| Manual run of an entity trigger, or of a native state or numeric state trigger | What a real firing would carry, with the entity's current state as both `from_state` and `to_state`, plus `manual: true` (see below) |
+| Any other manual run, or startup | `{platform: "manual"}` or `{platform: "startup"}` |
 
 Triggers also have typed outputs for their usual values. Entity triggers and the
 native state, numeric state and template triggers offer **Entity**, **New state**
@@ -115,8 +116,18 @@ heater's name for the notification.
 
 An output whose value is missing from the payload is not produced. A step that
 reads it fails with an error naming that trigger output and follows its Error path
-when connected. A manual run of a state-triggered graph, for example, has no
-Entity: set `manual` to false on triggers whose graph depends on those outputs.
+when connected.
+
+**Run now** tests a graph with the values its trigger would really have. A manual
+run of an entity trigger gets `{platform: "entity", entity_id, from_state,
+to_state, manual: true}`; a native state or numeric state trigger gets
+`{platform, entity_id, from_state, to_state, manual: true}` for its first entity,
+and a numeric state trigger adds its configured `below` and `above`. Both states
+are the entity's current state, read as Read entity reads it, so Entity, New state
+and Previous state resolve and the run trace shows them. The run is still recorded
+as a manual run and its summary names the entity, never a change. A manual run of
+any other trigger, or of an entity that does not exist or has no state, carries
+`{platform: "manual"}`, and a step reading one of those outputs fails as above.
 
 Daily schedules require a local time and an explicit time zone. Once schedules
 require an ISO timestamp with an explicit offset or Z. Missed daily starts and

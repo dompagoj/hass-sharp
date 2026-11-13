@@ -124,6 +124,17 @@ that output unproduced, and a consumer fails with an error naming the trigger
 output. The payload for each cause is described in
 [visual authoring](../writing-visual-automations.md#triggers-and-their-outputs).
 
+A manual dispatch (`run` or `run_now`) builds its payload where the run starts
+(`TriggerPayload.Manual` called from the visual dispatch): an `entity` trigger, or
+a native `state` or `numeric_state` trigger naming an entity (the first of a
+list), gets the payload a real firing would carry, with the entity's current
+state (`PyInterop.Entity`, as Read entity) as both `from_state` and `to_state`,
+`numeric_state`'s configured `below`/`above`, and `manual: true`. Other triggers,
+an `entitiesExpression`, or an entity without a state give `{platform: "manual"}`.
+The cause stays `Manual`; the run's trigger summary is `{kind: "manual"}` plus
+`entityId` when the payload names one, never `from`/`to`. Generated source is
+unchanged: the payload is built outside the generated class.
+
 ### Call service
 
 `service` nodes have `config.service` (`domain.service`), `config.fields` (field

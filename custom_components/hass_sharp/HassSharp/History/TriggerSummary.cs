@@ -30,6 +30,8 @@ public static class TriggerSummary
             Add("from", State(payload, "from_state"));
             Add("to", State(payload, "to_state"));
         }
+        // A manual run that carries an entity's current state names the entity only: no from/to, so it never reads as a change.
+        if (kind == "manual") Add("entityId", Scalar(payload, "entity_id"));
         if (kind == "ha" && Property(payload, "event") is { ValueKind: JsonValueKind.Object } native) Add("eventType", Scalar(native, "event_type"));
         if (kind == "schedule")
         {
