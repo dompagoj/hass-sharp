@@ -179,3 +179,34 @@ it('preserves explicit named variable references, layout and C# through v4 edits
  expect(graph.imports).toBe(before.imports);expect(graph.members).toBe(before.members)
  expect(JSON.parse(serializeGraph(graph)).nodes.at(-1).config).toEqual(graph.nodes.at(-1)!.config)
 })
+
+describe('coalesced history commits', () => {
+  const label = (history: ReturnType<typeof createGraphHistory>, text: string, coalesce?: string) =>
+    history.commit(updateNode(history.graph(), 'trigger-1', { label: text }), coalesce === undefined ? undefined : { coalesce })
+  it('merges consecutive commits with the same key into one undo step', () => createRoot(dispose => {
+    const history = createGraphHistory(createGraph('Typing'))
+    for (const text of ['H', 'He', 'Hel', 'Hell', 'Hello']) label(history, text, 'trigger-1:label')
+    expect(history.graph().nodes[0].label).toBe('Hello')
+    history.undo()
+    expect(history.graph().nodes[0].label).toBe('Entity changes')
+    expect(history.canUndo()).toBe(false)
+    history.redo()
+    expect(history.graph().nodes[0].label).toBe('Hello')
+    dispose()
+  }))
+  it('does not merge different keys, keyless commits, or commits across undo and redo', () => createRoot(dispose => {
+    const history = createGraphHistory(createGraph('Typing'))
+    label(history, 'a', 'one'); label(history, 'ab', 'two')
+    history.undo(); expect(history.graph().nodes[0].label).toBe('a')
+    label(history, 'b', 'one'); label(history, 'c'); label(history, 'd', 'one')
+    history.undo(); expect(history.graph().nodes[0].label).toBe('c')
+    history.undo(); expect(history.graph().nodes[0].label).toBe('b')
+    history.undo(); expect(history.graph().nodes[0].label).toBe('a')
+    // Undo ends the run: the next same-key commit is a new step.
+    label(history, 'e', 'one')
+    history.undo(); expect(history.graph().nodes[0].label).toBe('a')
+    history.redo(); label(history, 'f', 'one')
+    history.undo(); expect(history.graph().nodes[0].label).toBe('e')
+    dispose()
+  }))
+})

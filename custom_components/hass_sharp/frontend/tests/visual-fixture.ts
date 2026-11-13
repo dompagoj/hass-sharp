@@ -1,4 +1,4 @@
-import { nodeCatalog, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { nodeCatalog, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import type { VisualDocument, VisualPreview } from '../src/visual/api'
 import type { VisualGraph } from '../src/visual/graph'
 
@@ -18,6 +18,9 @@ export function visualFixture(
     preview: undefined as VisualPreview | undefined,
     catalog: options.catalog ?? nodeCatalog,
     generation: 'saved-fixture',
+    /** The C4 services section; the catalog reports its generation. Undefined: no services op (an older backend). */
+    services: undefined as ServicesSection | undefined,
+    servicesError: false,
   }
   const makePreview = (_graph: VisualGraph): VisualPreview => ({
     valid: !controls.invalid,
@@ -33,8 +36,12 @@ export function visualFixture(
         return {
           version: 1,
           ok: true,
-          result: { catalog: controls.catalog, generation: controls.generation, saved: true, valid: true, diagnostics: [] },
+          result: { catalog: controls.catalog, generation: controls.generation, ...(controls.services ? { servicesGeneration: controls.services.servicesGeneration } : {}), saved: true, valid: true, diagnostics: [] },
         }
+      if (request.operation === 'services') {
+        if (controls.servicesError || !controls.services) throw new Error('Services offline')
+        return { version: 1, ok: true, result: structuredClone(controls.services) }
+      }
       if (request.operation === 'list')
         return { version: 1, ok: true, result: { documents: [...libraries.values()], generation: controls.generation } }
       if (request.operation === 'read') {
@@ -113,7 +120,8 @@ export function visualFixture(
     if (req.operation === 'preview') {
       if (controls.previewError) throw new Error('Preview offline')
       result = controls.preview ?? makePreview(req.graph)
-    } else if (req.operation === 'list') result = [...documents.values()]
+    // Like the backend, list omits the generated source; read returns it.
+    } else if (req.operation === 'list') result = [...documents.values()].map(({ source: _source, sourceMap: _sourceMap, ...summary }) => summary)
     else if (req.operation === 'read') {
       if (!documents.has(req.id)) return fail('not_found', 'Document missing')
       result = documents.get(req.id)

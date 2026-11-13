@@ -69,21 +69,22 @@ export const FlowAdapter: Component<Props> = props => {
   )
   const dataPort = (handle?: string | null) => (handle?.startsWith('data:') ? handle.slice(5) : undefined)
   type Connection = { source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null }
-  const connectionError = (connection: Connection): string | undefined => {
+  const connectionError = (connection: Connection, quick = false): string | undefined => {
     const source = props.graph.nodes.find(n => n.id === connection.source),
       target = props.graph.nodes.find(n => n.id === connection.target)
     if (!source || !target) return 'Connection endpoint missing'
     const output = dataPort(connection.sourceHandle),
       input = dataPort(connection.targetHandle)
     if (output !== undefined && input !== undefined) {
-      return dataConnectionError(props.graph, source.id, output, target.id, input, catalog())
+      return dataConnectionError(props.graph, source.id, output, target.id, input, catalog(), { quick })
     }
     if (output !== undefined || input !== undefined) return 'Execution and data ports cannot connect'
     if (connection.targetHandle !== 'in' || !canConnect(props.graph, source.id, target.id, connection.sourceHandle ?? undefined, catalog()))
       return 'Execution connection is unavailable or creates a cycle'
   }
-  const validate = (connection: Connection) => {
-    const message = connectionError(connection)
+  // Hover (isValidConnection) uses only the connection index; a drop also runs the full check (D12).
+  const validate = (connection: Connection, quick = false) => {
+    const message = connectionError(connection, quick)
     if (message) {
       const inputId = dataPort(connection.targetHandle) ?? connection.targetHandle ?? 'in'
       setRejected(current =>
@@ -626,7 +627,7 @@ export const FlowAdapter: Component<Props> = props => {
           if (targetNode) props.onSelect(targetNode.id)
         }}
         onNodeDragStop={() => commitGeometry()}
-        isValidConnection={validate}
+        isValidConnection={connection => validate(connection, true)}
         onConnect={connect}
       >
         <Coordinates />

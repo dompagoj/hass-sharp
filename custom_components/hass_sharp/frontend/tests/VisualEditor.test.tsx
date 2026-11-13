@@ -555,14 +555,15 @@ it('opens visual help with node examples without changing the graph', () => {
 it('fetches current entity suggestions when reopening an editor with a fresh cache', async () => {
   const host = root()
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  client.setQueryData(['hass-entities'], [{ entity_id: 'sensor.old' }])
+  // The shared registry query (src/registry.ts) caches the whole get_entities reply.
+  client.setQueryData(['hass-entities'], { entities: [{ entity_id: 'sensor.old' }], areas: [], devices: [], floors: [], labels: [] })
   const fixture = visualFixture()
   const callWS = vi.fn((message: any) => message.type === 'hass_sharp/get_entities'
     ? Promise.resolve({ entities: [{ entity_id: 'sensor.new' }] }) : fixture.callWS(message))
   dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={{ ...fixture, callWS } as any}>
     <RealVisualEditor name="Reopened" />
   </HassCtx.Provider></QueryClientProvider>, host)
-  await vi.waitFor(() => expect(client.getQueryData(['hass-entities'])).toEqual([{ entity_id: 'sensor.new' }]))
+  await vi.waitFor(() => expect((client.getQueryData(['hass-entities']) as any)?.entities).toEqual([{ entity_id: 'sensor.new' }]))
   expect(callWS).toHaveBeenCalledWith({ type: 'hass_sharp/get_entities' })
 })
 it('clears a touch connection canceled before a later touch release', async () => {

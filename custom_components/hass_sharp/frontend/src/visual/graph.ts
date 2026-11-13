@@ -8,7 +8,6 @@ import {
   inputValue,
   setInput,
   connectData,
-  isAssignable,
   resolveTypeSpec,
   nodeCatalog,
   type Graph,
@@ -19,6 +18,7 @@ import {
   type JsonValue,
   type InputSpec,
 } from './contract'
+import { connectionIndex } from './connectionIndex'
 export type { GraphNode, GraphEdge, Operand } from './contract'
 export type VisualGraph = Graph
 export type NodeKind = string
@@ -216,22 +216,22 @@ export function inputType(
 ): string | undefined {
   // Fixed ports present their declared contract; only unions choose the bound value's type.
   if (input.types.length === 1) return input.types[0]
+  // The validator's resolution: the wire, the literal, or the first producer visible from this node (D7).
+  const resolved = connectionIndex(graph, catalog).analysis.resolved.get(node.id)
+  if (resolved && Object.hasOwn(resolved, port)) return resolved[port]
   const edge = graph.edges.find(e => e.kind === 'data' && e.target === node.id && e.targetPort === port)
   if (edge?.kind === 'data') {
     const source = graph.nodes.find(n => n.id === edge.source)
     if (source) return dataOutputs(source, catalog)[edge.sourcePort]?.type
   }
   const value = inputValue(node, port, catalog)
-  if (value && typeof value === 'object') {
-    if ('type' in value && typeof value.type === 'string') return value.type
-    if ('kind' in value && value.kind === 'variable' && 'name' in value) {
-      const producer = graph.nodes.find(n => n.config.output === value.name)
-      if (producer) return dataOutputs(producer, catalog).value?.type
-    }
-  }
+  if (value && typeof value === 'object' && 'type' in value && typeof value.type === 'string') return value.type
   return undefined
 }
-/** Explain the same immutable typed connection operation used by every interaction. */
+/**
+ * Explain the same immutable typed connection operation used by every interaction. The connection index
+ * answers first; `quick` callers (hover) stop there, everyone else also runs the full connectData check.
+ */
 export function dataConnectionError(
   graph: VisualGraph,
   sourceId: string,
@@ -239,15 +239,19 @@ export function dataConnectionError(
   targetId: string,
   targetPort: string,
   catalog: VisualCatalogSnapshot = nodeCatalog,
+  options: { quick?: boolean } = {},
 ): string | undefined {
   const source = graph.nodes.find(n => n.id === sourceId),
     target = graph.nodes.find(n => n.id === targetId)
   if (!source || !target) return 'Connection endpoint missing'
-  const output = dataOutputs(source, catalog)[sourcePort],
-    input = nodeInputs(graph, target, catalog)[targetPort]
+  const index = connectionIndex(graph, catalog)
+  const output = index.remember(JSON.stringify(['outputs', sourceId]), () => dataOutputs(source, catalog))[sourcePort],
+    input = index.remember(JSON.stringify(['inputs', targetId]), () => nodeInputs(graph, target, catalog))[targetPort]
   if (!output || !input) return 'Unknown data port'
-  if (!input.types.some(t => isAssignable(output.type, t, catalog)))
+  if (!input.types.some(t => index.assignable(output.type, t)))
     return `${input.label ?? targetPort} requires ${input.types.map(t => typeLabel(t, catalog)).join(' / ')}; ${output.label ?? sourcePort} outputs ${typeLabel(output.type, catalog)}`
+  const quick = index.verdict(sourceId, sourcePort, targetId, targetPort)
+  if (quick.message || options.quick || quick.fallback) return quick.message
   try {
     connectData(graph, sourceId, sourcePort, targetId, targetPort, catalog)
   } catch (error) {
@@ -260,28 +264,37 @@ export function createGraphHistory(initial: VisualGraph) {
   const [graph, setGraph] = createSignal(initial)
   const [past, setPast] = createSignal<VisualGraph[]>([])
   const [future, setFuture] = createSignal<VisualGraph[]>([])
+  // Consecutive commits with the same coalesce key (typing in one field, dragging one slider) are one undo step.
+  let coalescing: string | undefined
   return {
     graph,
     reset(next: VisualGraph) {
+      coalescing = undefined
       setPast([])
       setFuture([])
       setGraph(next)
     },
     canUndo: () => past().length > 0,
     canRedo: () => future().length > 0,
-    commit(next: VisualGraph) {
+    /** A commit without `coalesce`, with a different key, or any undo/redo ends the merged run. */
+    commit(next: VisualGraph, options: { coalesce?: string } = {}) {
+      const key = options.coalesce
+      const merge = key !== undefined && key === coalescing && past().length > 0
+      coalescing = key
       if (serializeGraph(next) === serializeGraph(graph())) return
-      setPast([...past().slice(-99), graph()])
+      if (!merge) setPast([...past().slice(-99), graph()])
       setFuture([])
       setGraph(next)
     },
     undo() {
+      coalescing = undefined
       if (!past().length) return
       setFuture([graph(), ...future()])
       setGraph(past().at(-1)!)
       setPast(past().slice(0, -1))
     },
     redo() {
+      coalescing = undefined
       if (!future().length) return
       setPast([...past(), graph()])
       setGraph(future()[0])

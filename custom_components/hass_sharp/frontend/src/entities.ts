@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/solid-query'
 import { useHass } from './context'
+import { registryQuery, type Registry } from './registry'
 
 export interface EntityInfo {
   entity_id: string
@@ -21,13 +22,9 @@ export interface EntityRegistry {
   floors: { floor_id: string; name: string }[]
   labels: { label_id: string; name: string }[]
 }
-export const entityQueryKey = ['hass-entities'] as const
+export { entityQueryKey } from './registry'
+/** The entities of the shared registry query (one `get_entities` request). */
 export function useEntities() {
   const hass = useHass()
-  return useQuery(() => ({
-    queryKey: entityQueryKey,
-    queryFn: async () => (await hass.callWS<EntityRegistry>({ type: 'hass_sharp/get_entities' })).entities,
-    staleTime: Infinity,
-    retry: false,
-  }))
+  return useQuery(() => ({ ...registryQuery(hass), select: (registry: Registry) => registry.entities }))
 }

@@ -2,14 +2,21 @@ import { batch, createEffect, createMemo, createSignal, onCleanup } from 'solid-
 import type { HomeAssistant } from '../types'
 import { createGraphHistory, serializeGraph, type VisualGraph } from './graph'
 import { visualApi, VisualApiError, visualError, type VisualDocument, type VisualPreview } from './api'
-import { nodeCatalog, validateGraph, type VisualCatalogSnapshot } from './contract'
+import { nodeCatalog, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { connectionIndex } from './connectionIndex'
 import { createUuid } from './id'
 
 /** Owns graph/source pairs and their revisions. Never generates or persists source locally. */
 export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial: VisualGraph) {
   const api = visualApi(hass)
   const history = createGraphHistory(initial)
-  const [catalog, setCatalog] = createSignal<VisualCatalogSnapshot>(nodeCatalog)
+  const [libraryCatalog, setCatalog] = createSignal<VisualCatalogSnapshot>(nodeCatalog)
+  // C4: the services section never enters the catalog root; it is attached to the snapshot the editor validates with.
+  const [services, setServices] = createSignal<ServicesSection>()
+  const catalog = createMemo<VisualCatalogSnapshot>(() => {
+    const base = libraryCatalog(), section = services()
+    return section ? { ...base, services: section } : base
+  })
   const [catalogGeneration, setCatalogGeneration] = createSignal<string>()
   const [catalogReady, setCatalogReady] = createSignal(false)
   const [catalogError, setCatalogError] = createSignal<string>()
@@ -26,7 +33,8 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
   const [previewAttempt, setPreviewAttempt] = createSignal(0)
   const dirty = createMemo(() => serializeGraph(history.graph()) !== baseline())
   const diagnostics = createMemo(() => {
-    const local = validateGraph(history.graph(), catalog()).map(d => ({ ...d, startLine: null, startColumn: null }))
+    // The same validation the connection index of this graph snapshot already ran.
+    const local = connectionIndex(history.graph(), catalog()).analysis.diagnostics.map(d => ({ ...d, startLine: null, startColumn: null }))
     const backend = preview()?.diagnostics ?? []
     return [
       ...local,
@@ -41,6 +49,26 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
   let catalogRequest = 0
   // A catalog reply does not prove the opened document revision was checked.
   let checkedDocument: { id: string; revision: number; generation: string } | undefined
+  let servicesRequest = 0,
+    servicesPending: string | undefined
+  /**
+   * Fetch the services section when the catalog reports a generation other than the attached one. A failure keeps
+   * the catalog usable without services (validators skip service checks); the next catalog refresh retries.
+   */
+  const refreshServices = async (wanted: string | undefined) => {
+    if (wanted === undefined || services()?.servicesGeneration === wanted || servicesPending === wanted) return
+    const request = ++servicesRequest
+    servicesPending = wanted
+    try {
+      const section = await api.services()
+      if (disposed || request !== servicesRequest) return
+      if (section && typeof section.servicesGeneration === 'string' && section.items && typeof section.items === 'object') setServices(section)
+    } catch {
+      // Keep the previous section (or none); retried on the next catalog refresh.
+    } finally {
+      if (request === servicesRequest) servicesPending = undefined
+    }
+  }
   const refreshCatalog = async () => {
     const request = ++catalogRequest
     const opened = document()
@@ -56,6 +84,7 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
         setCatalogReady(true)
         setCatalogError(undefined)
       })
+      const servicesRefresh = refreshServices(result.servicesGeneration)
       if (
         opened &&
         (checkedDocument?.id !== opened.id ||
@@ -72,6 +101,7 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
             })
         }
       }
+      await servicesRefresh
     } catch (err) {
       if (!disposed && request === catalogRequest) {
         setCatalogReady(false)
@@ -94,6 +124,7 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
     generation++
     loadGeneration++
     catalogRequest++
+    servicesRequest++
   })
   createEffect(() => {
     const graph = history.graph()

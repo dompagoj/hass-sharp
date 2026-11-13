@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/solid-query'
 import { Dialog } from '../components/Dialog'
 import { Button, Field, Icon, Status } from '../components/Controls'
 import { Menu } from '../components/Menu'
-import { visualApi, visualError, type VisualDocument } from '../visual/api'
+import { visualApi, visualError, type VisualDocumentSummary } from '../visual/api'
 import { entityQueryKey } from '../entities'
 import { errorToHassError } from '../utils'
 
@@ -42,7 +42,7 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
   const [error, setError] = createSignal<string>()
   const [submitting, setSubmitting] = createSignal(false)
   const visual = visualApi(hass)
-  const [deleteVisual, setDeleteVisual] = createSignal<VisualDocument>()
+  const [deleteVisual, setDeleteVisual] = createSignal<VisualDocumentSummary>()
   const [deleteFile, setDeleteFile] = createSignal<string>()
   const [deleteError, setDeleteError] = createSignal<string>()
   const [deleting, setDeleting] = createSignal(false)

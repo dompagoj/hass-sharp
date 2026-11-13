@@ -193,7 +193,8 @@ export function setInput(node: GraphNode, port: string, value: Operand, catalog:
   else if (node.kind === 'loop_result') { node.config.values ??= {}; (node.config.values as Record<string, unknown>)[port] = value }
   else node.config[port] = value
 }
-type Scope = { owner: string; port: string }[]
+/** A node's structured execution scope: each enclosing owner and the scope port it was entered through, outermost first. */
+export type Scope = { owner: string; port: string }[]
 const isAncestor = (a: Scope, b: Scope) => a.length <= b.length && a.every((s, i) => s.owner === b[i].owner && s.port === b[i].port)
 const scopePort = (node: GraphNode, port: string, catalog: VisualCatalogSnapshot) => nodeSpec(node.kind, catalog)?.scopePorts?.includes(port) || (node.kind === 'parallel' && port.startsWith('branch:'))
 const flowPort = (node: GraphNode, edge: ExecutionEdge) => node.kind === 'condition' && (!edge.port || edge.port === 'next') ? 'true' : edge.port ?? 'next'
@@ -236,8 +237,58 @@ function validOffsetDateTime(value: string): boolean {
     instant >= Date.parse('0001-01-01T00:00:00Z') && instant <= Date.parse('9999-12-31T23:59:59.999Z')
 }
 
+/**
+ * Which part of the validator produced a diagnostic. The connection index re-derives only the parts a
+ * candidate data edge can change; every other diagnostic is carried over unchanged.
+ */
+export type DiagnosticOrigin =
+  | { kind: 'graph' }
+  /** Structure or typing of `graph.edges[edge]`. */
+  | { kind: 'edge'; edge: number }
+  | { kind: 'dataCycle' }
+  /** The operand bound to one input of one node. */
+  | { kind: 'operand'; node: string; port: string }
+  | { kind: 'comparison'; node: string }
+  /** Service checks that depend on whether `target` is wired. */
+  | { kind: 'serviceTarget'; node: string }
+/** The validator's view of a graph. `complete` is false when validation stopped before analysing nodes. */
+export interface GraphAnalysis {
+  diagnostics: GraphDiagnostic[]
+  /** Aligned with `diagnostics`. */
+  origins: DiagnosticOrigin[]
+  complete: boolean
+  /** Well-formed nodes by id (first occurrence wins). */
+  nodes: Map<string, GraphNode>
+  /** Well-formed data edges whose endpoints exist. */
+  data: DataEdge[]
+  scopes: Map<string, Scope>
+  /** The type each input resolves to (wire, literal or first visible variable producer); undefined when unbound. */
+  resolved: Map<string, Record<string, string | undefined>>
+  /** The loop whose body directly contains the node, as the validator resolves loop ports. */
+  ownerOf(node: GraphNode): GraphNode | undefined
+  /** Whether a data output of `source` may be read by `target` across structured scopes. */
+  visible(source: GraphNode, target: GraphNode, port: OutputSpec): boolean
+}
+/** The comparison rule of a node, given its resolved input types. Used by the validator and the connection index. */
+export function comparisonDiagnostics(node: GraphNode, spec: NodeSpec, resolved: Record<string, string | undefined>, catalog: VisualCatalogSnapshot = nodeCatalog): GraphDiagnostic[] {
+  const rule = spec.comparison
+  if (!rule) return []
+  const errors: GraphDiagnostic[] = []
+  const error = (message: string, inputId?: string) => errors.push({ nodeId: node.id, message, severity: 3, ...(inputId ? { inputId } : {}) })
+  const left = rule.leftInput ? resolved[rule.leftInput] : text(node.config[rule.typeConfig!])
+  const right = resolved[rule.rightInput]
+  if (left && right && !(isAssignable(left, right, catalog) || isAssignable(right, left, catalog))) error('Comparison operands must have matching types', rule.rightInput)
+  if (rule.orderingOperators.includes(text(node.config[rule.operatorConfig])) && left !== rule.orderingType) error(`Ordering comparison requires ${rule.orderingType} type`, rule.leftInput ?? rule.typeConfig)
+  return errors
+}
 /** Static validation only: evaluating data never schedules a producer. */
 export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): GraphDiagnostic[] {
+  return analyzeGraph(value, catalog).diagnostics
+}
+/** The validator's structured scope of every node reachable from a trigger. */
+export const analyzeScopes = (value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog) => analyzeGraph(value, catalog).scopes
+/** Runs the validator once and keeps what it learned: diagnostics with origins, scopes and resolved input types. */
+export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): GraphAnalysis {
   const types = Object.keys(catalog.types)
   const nodeSpec = (kind: unknown) => typeof kind === 'string' && Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined
   const knownType = (type: string) => typeChain(type, catalog).length > 0
@@ -246,15 +297,31 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
   const dataInputs = (node: GraphNode, owner?: GraphNode) => catalogDataInputs(node, owner, catalog)
   const isAssignable = (source: string, target: string) => catalogIsAssignable(source, target, catalog)
   const scopePort = (node: GraphNode, port: string) => catalogScopePort(node, port, catalog)
-  const errors: GraphDiagnostic[] = []
-  const error = (nodeId: string | null, message: string, inputId?: string, portId?: string) => { errors.push({ nodeId, message, severity: 3, ...(inputId ? { inputId } : {}), ...(portId ? { portId } : {}) }) }
-  const warning = (nodeId: string, message: string, inputId: string) => { errors.push({ nodeId, message, severity: 2, inputId }) }
-  if (!record(value) || value.version !== catalog.graphVersion) { error(null, `Expected graph version ${catalog.graphVersion}`); return errors }
-  if (typeof value.name !== 'string' || !value.name.trim()) error(null, 'Graph name is required')
-  if (!Array.isArray(value.nodes) || !Array.isArray(value.edges)) { error(null, 'Nodes and edges arrays are required'); return errors }
-  const graph = value as unknown as Graph
-  if (!graph.nodes.length || graph.nodes.length > catalog.limits.nodes || graph.edges.length > catalog.limits.edges) { error(null, 'Graph limit: 1–256 nodes and at most 512 edges'); return errors }
+  const errors: GraphDiagnostic[] = [], origins: DiagnosticOrigin[] = []
+  const graphOrigin: DiagnosticOrigin = { kind: 'graph' }
+  let origin: DiagnosticOrigin = graphOrigin
+  const error = (nodeId: string | null, message: string, inputId?: string, portId?: string) => { errors.push({ nodeId, message, severity: 3, ...(inputId ? { inputId } : {}), ...(portId ? { portId } : {}) }); origins.push(origin) }
+  const warning = (nodeId: string, message: string, inputId: string) => { errors.push({ nodeId, message, severity: 2, inputId }); origins.push(origin) }
   const nodes = new Map<string, GraphNode>()
+  const data: DataEdge[] = []
+  const scopes = new Map<string, Scope>()
+  const resolvedTypes = new Map<string, Record<string, string | undefined>>()
+  const ownerOf = (node: GraphNode) => { const s = scopes.get(node.id)?.at(-1); return s?.port === 'body' ? nodes.get(s.owner) : undefined }
+  function visible(source: GraphNode, target: GraphNode, port: OutputSpec) {
+    const a = scopes.get(source.id), b = scopes.get(target.id)
+    if (!a || !b || !isAncestor(a, b)) return false
+    const owned = b[a.length]?.owner === source.id
+    if (port.visibility === 'outside') return !owned
+    if (port.visibility === 'body') return owned && b[a.length]?.port === 'body'
+    if (port.visibility === 'loop') return owned && ['body', 'condition'].includes(b[a.length]?.port)
+    return true
+  }
+  const analysis = (complete: boolean): GraphAnalysis => ({ diagnostics: errors, origins, complete, nodes, data, scopes, resolved: resolvedTypes, ownerOf, visible })
+  if (!record(value) || value.version !== catalog.graphVersion) { error(null, `Expected graph version ${catalog.graphVersion}`); return analysis(false) }
+  if (typeof value.name !== 'string' || !value.name.trim()) error(null, 'Graph name is required')
+  if (!Array.isArray(value.nodes) || !Array.isArray(value.edges)) { error(null, 'Nodes and edges arrays are required'); return analysis(false) }
+  const graph = value as unknown as Graph
+  if (!graph.nodes.length || graph.nodes.length > catalog.limits.nodes || graph.edges.length > catalog.limits.edges) { error(null, 'Graph limit: 1–256 nodes and at most 512 edges'); return analysis(false) }
   for (const node of graph.nodes) {
     if (!record(node) || typeof node.id !== 'string' || !node.id || !record(node.config)) { error(null, 'Each node requires id and config'); continue }
     if (nodes.has(node.id)) error(node.id, 'Duplicate node id')
@@ -262,15 +329,16 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
     if (!nodeSpec(node.kind)) error(node.id, 'Unknown node kind')
   }
   const outgoing = new Map([...nodes.keys()].map(id => [id, [] as ExecutionEdge[]]))
-  const data: DataEdge[] = []
+  const dataIndex = new Map<DataEdge, number>()
   const edgeIds = new Set<string>()
-  for (const edge of graph.edges) {
+  for (const [index, edge] of graph.edges.entries()) {
+    origin = { kind: 'edge', edge: index }
     if (!record(edge) || typeof edge.id !== 'string' || !edge.id) { error(null, 'Edge id is required'); continue }
     if (edgeIds.has(edge.id)) error(edge.source, 'Duplicate edge id'); edgeIds.add(edge.id)
     if (!nodes.has(edge.source) || !nodes.has(edge.target)) { error(null, 'Edge endpoint missing'); continue }
     if (edge.kind === 'data') {
       if ('port' in edge || typeof edge.sourcePort !== 'string' || typeof edge.targetPort !== 'string') error(edge.source, 'Do not mix execution and data ports')
-      else data.push(edge)
+      else { data.push(edge); dataIndex.set(edge, index) }
     } else if (edge.kind === undefined || edge.kind === 'execution') {
       if ('sourcePort' in edge || 'targetPort' in edge) error(edge.source, 'Do not mix data and execution ports')
       if (edge.port !== undefined && typeof edge.port !== 'string') { error(edge.source, 'Execution port must be a string'); continue }
@@ -281,6 +349,7 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
       outgoing.get(node.id)!.push(edge)
     } else error(edge.source, 'Unknown edge kind')
   }
+  origin = graphOrigin
   function cycles(edges: { source: string; target: string }[], label: string) {
     const active = new Set<string>(), done = new Set<string>()
     function visit(id: string) {
@@ -292,8 +361,8 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
     }
     for (const id of nodes.keys()) visit(id)
   }
-  cycles([...outgoing.values()].flat(), 'Execution'); cycles(data, 'Data')
-  const scopes = new Map<string, Scope>()
+  cycles([...outgoing.values()].flat(), 'Execution')
+  origin = { kind: 'dataCycle' }; cycles(data, 'Data'); origin = graphOrigin
   function scope(id: string, path: Scope) {
     if (path.length > catalog.limits.nesting) { error(id, 'Structured nesting limit is 8'); return }
     const old = scopes.get(id)
@@ -309,19 +378,10 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
   if (!roots.length) error(null, 'At least one trigger is required')
   roots.forEach(n => scope(n.id, []))
   for (const id of nodes.keys()) if (!scopes.has(id)) error(id, 'Every node must be reachable by execution from a trigger')
-  const ownerOf = (node: GraphNode) => { const s = scopes.get(node.id)?.at(-1); return s?.port === 'body' ? nodes.get(s.owner) : undefined }
-  function visible(source: GraphNode, target: GraphNode, port: OutputSpec) {
-    const a = scopes.get(source.id), b = scopes.get(target.id)
-    if (!a || !b || !isAncestor(a, b)) return false
-    const owned = b[a.length]?.owner === source.id
-    if (port.visibility === 'outside') return !owned
-    if (port.visibility === 'body') return owned && b[a.length]?.port === 'body'
-    if (port.visibility === 'loop') return owned && ['body', 'condition'].includes(b[a.length]?.port)
-    return true
-  }
   const incoming = new Map<string, DataEdge>()
   const key = (node: string, port: string) => JSON.stringify([node, port])
   for (const edge of data) {
+    origin = { kind: 'edge', edge: dataIndex.get(edge)! }
     const source = nodes.get(edge.source)!, target = nodes.get(edge.target)!
     const output = dataOutputs(source)[edge.sourcePort], input = dataInputs(target, ownerOf(target))[edge.targetPort]
     if (!output) error(source.id, 'Unknown data output port', undefined, edge.sourcePort)
@@ -333,7 +393,13 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
       if (!visible(source, target, output)) error(target.id, 'Data cannot cross this structured scope', edge.targetPort, edge.targetPort)
     }
   }
+  origin = graphOrigin
   function operand(node: GraphNode, port: string, raw: unknown, spec: InputSpec): string | undefined {
+    const outer = origin
+    origin = { kind: 'operand', node: node.id, port }
+    try { return operandType(node, port, raw, spec) } finally { origin = outer }
+  }
+  function operandType(node: GraphNode, port: string, raw: unknown, spec: InputSpec): string | undefined {
     const edge = incoming.get(key(node.id, port))
     if (edge) return dataOutputs(nodes.get(edge.source)!)[edge.sourcePort]?.type
     if (raw === undefined && !spec.required) return
@@ -389,7 +455,10 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
     for (const name of Object.keys(fields)) if (!Object.hasOwn(known, name)) error(node.id, `Service ${service} has no field ${name}`, `field:${name}`)
     for (const [name, field] of Object.entries(known)) if (record(field) && field.required === true && !Object.hasOwn(fields, name)) error(node.id, `Service ${service} requires field ${name}`, 'fields')
     const wired = incoming.has(key(node.id, 'target')), target = node.config.target
+    const targetOrigin: DiagnosticOrigin = { kind: 'serviceTarget', node: node.id }
+    origin = targetOrigin
     if (!record(schema.target) && (wired || (record(target) && target.kind !== 'unset'))) error(node.id, `Service ${service} does not take a target`, 'target')
+    origin = graphOrigin
     const response = text(schema.response, 'none'), returnResponse = node.config.returnResponse === true
     if (returnResponse && response === 'none') error(node.id, `Service ${service} returns no response; turn off Return response`, 'returnResponse')
     if (!returnResponse && response === 'only') error(node.id, `Service ${service} only returns a response; turn on Return response`, 'returnResponse')
@@ -397,9 +466,11 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
     const domains = serviceTargetDomains(schema)
     if (!domains.length || wired || !record(target) || target.kind !== 'literal' || !record(target.value)) return
     const entities = Array.isArray(target.value.entity_id) ? target.value.entity_id : target.value.entity_id === undefined ? [] : [target.value.entity_id]
+    origin = targetOrigin
     for (const entity of entities)
       if (typeof entity === 'string' && entity !== 'all' && entity !== 'none' && !domains.includes(entity.split('.')[0]))
         error(node.id, `Service ${service} cannot target ${entity}; expected a ${domains.join(' or ')} entity`, 'target')
+    origin = graphOrigin
   }
   for (const node of nodes.values()) {
     const spec = nodeSpec(node.kind); if (!spec) continue
@@ -421,14 +492,13 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
     for (const port of spec.requiredExecution ?? []) if (!outgoing.get(node.id)!.some(e => flowPort(node, e) === port)) error(node.id, 'Execution connection is required', port, port)
     if (spec.argumentStorage === 'arguments' && record(node.config.arguments))
       for (const name of Object.keys(node.config.arguments)) if (!Object.hasOwn(dataInputs(node, ownerOf(node)), name)) error(node.id, 'Unknown custom argument', name)
-    const resolved: Record<string, string | undefined> = {}
+    const resolved: Record<string, string | undefined> = Object.create(null)
     for (const [port, rule] of Object.entries(dataInputs(node, ownerOf(node)))) resolved[port] = operand(node, port, inputValue(node, port, catalog), rule)
+    resolvedTypes.set(node.id, resolved)
     if (spec.comparison) {
-      const rule = spec.comparison
-      const left = rule.leftInput ? resolved[rule.leftInput] : text(node.config[rule.typeConfig!])
-      const right = resolved[rule.rightInput]
-      if (left && right && !(isAssignable(left, right) || isAssignable(right, left))) error(node.id, 'Comparison operands must have matching types', rule.rightInput)
-      if (rule.orderingOperators.includes(text(node.config[rule.operatorConfig])) && left !== rule.orderingType) error(node.id, `Ordering comparison requires ${rule.orderingType} type`, rule.leftInput ?? rule.typeConfig)
+      origin = { kind: 'comparison', node: node.id }
+      for (const d of comparisonDiagnostics(node, spec, resolved, catalog)) error(d.nodeId, d.message, d.inputId)
+      origin = graphOrigin
     }
     if (spec.dynamicInputs === 'service') validateService(node, spec)
     if (node.config.output !== undefined && (typeof node.config.output !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(node.config.output))) error(node.id, 'Invalid variable output name', 'output')
@@ -471,7 +541,7 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
       if (record(node.config.values)) for (const name of Object.keys(node.config.values)) if (!dataInputs(node, owner)[name]) error(node.id, 'Unknown loop carry/export input', name)
     }
   }
-  return errors
+  return analysis(true)
 }
 
 export function fillGraphLayout<T extends { nodes: GraphNode[] }>(graph: T): T {

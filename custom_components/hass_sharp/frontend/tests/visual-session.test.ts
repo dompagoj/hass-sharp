@@ -1,5 +1,7 @@
-import { afterEach, expect, it, vi } from 'vitest'
-import { nodeCatalog } from '../src/visual/contract'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { nodeCatalog, type ServicesSection } from '../src/visual/contract'
+import servicesFixture from '../../../../tests/fixtures/visual-services.json'
+import { visualFixture } from './visual-fixture'
 import { createRoot } from 'solid-js'
 import { createGraph, updateNode } from '../src/visual/graph'
 import { createVisualSession } from '../src/visual/session'
@@ -210,4 +212,77 @@ it('does not lose a pending rebuilt-revision check when a same-generation catalo
   expect(session.document()?.revision).toBe(2)
   expect(session.history.graph()).toEqual(local)
   expect(session.canSave()).toBe(false)
+})
+
+describe('services section (C4)', () => {
+  const section = (generation: string) => ({ ...structuredClone(servicesFixture), servicesGeneration: generation }) as unknown as ServicesSection
+  function servicesSetup() {
+    const state = { generation: 'one' as string | undefined, current: section('one'), fail: false, requests: 0 }
+    const hass = { callWS: async (message: any) => {
+      if (message.type !== 'hass_sharp/node_library') return ok(preview())
+      if (message.request.operation === 'services') {
+        state.requests++
+        if (state.fail) throw new Error('Services offline')
+        return ok(state.current)
+      }
+      return ok({ catalog: nodeCatalog, generation: 'fixture', ...(state.generation ? { servicesGeneration: state.generation } : {}), saved: true, valid: true, diagnostics: [] })
+    } } as any
+    const session = createRoot(d => { dispose = d; return createVisualSession(hass, graph()) })
+    return { session, state }
+  }
+  it('attaches the section as catalog.services and refetches only when servicesGeneration changes', async () => {
+    const { session, state } = servicesSetup()
+    await vi.waitFor(() => expect(session.catalog().services?.servicesGeneration).toBe('one'))
+    const first = session.catalog()
+    expect(first.nodes).toBe(nodeCatalog.nodes)
+    expect(nodeCatalog.services).toBeUndefined()
+    await session.refreshCatalog(); await session.refreshCatalog()
+    expect(state.requests).toBe(1)
+    expect(session.catalog()).toBe(first)
+    state.generation = 'two'; state.current = section('two')
+    await session.refreshCatalog()
+    expect(state.requests).toBe(2)
+    expect(session.catalog().services?.servicesGeneration).toBe('two')
+    expect(session.catalog()).not.toBe(first)
+    await session.refreshCatalog()
+    expect(state.requests).toBe(2)
+  })
+  it('keeps the catalog usable without services when the request fails, and retries on the next refresh', async () => {
+    const { session, state } = servicesSetup()
+    state.fail = true
+    await session.refreshCatalog()
+    await vi.waitFor(() => expect(state.requests).toBeGreaterThan(0))
+    expect(session.catalog().services).toBeUndefined()
+    expect(session.catalogError()).toBeUndefined()
+    expect(session.diagnostics().filter(d => d.severity === 3)).toEqual([])
+    state.fail = false
+    await session.refreshCatalog()
+    expect(session.catalog().services?.servicesGeneration).toBe('one')
+    // Service checks now run: an unknown service is reported as a warning.
+    session.history.commit(updateNode(session.history.graph(), 'service-1', { config: { ...session.history.graph().nodes[2].config, service: 'light.unknown_service' } }))
+    expect(session.diagnostics()).toEqual(expect.arrayContaining([expect.objectContaining({ nodeId: 'service-1', severity: 2 })]))
+  })
+  it('does not request services from a catalog that reports no servicesGeneration', async () => {
+    const { session, state } = servicesSetup()
+    state.generation = undefined
+    await session.refreshCatalog()
+    expect(state.requests).toBeLessThanOrEqual(1)
+    const before = state.requests
+    await session.refreshCatalog()
+    expect(state.requests).toBe(before)
+  })
+})
+
+it('reads run traces from hass_sharp/run_trace and serves list results without source', async () => {
+  const response = { version: 1, run: { runId: 'r1' }, live: false, snapshot: null, trace: null }
+  const callWS = vi.fn(async () => response)
+  expect(await visualApi({ callWS } as any).runTrace('r1')).toBe(response)
+  expect(callWS).toHaveBeenCalledWith({ type: 'hass_sharp/run_trace', runId: 'r1' })
+  const backend = visualFixture()
+  backend.documents.set('motion', document() as any)
+  const listed = await visualApi(backend as any).list()
+  expect(listed[0]).toMatchObject({ id: 'motion', revision: 2 })
+  expect(listed[0]).not.toHaveProperty('source')
+  expect(listed[0]).not.toHaveProperty('sourceMap')
+  expect((await visualApi(backend as any).read('motion')).source).toBe('saved source')
 })

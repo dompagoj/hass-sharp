@@ -1,6 +1,6 @@
-import type { HomeAssistant } from '../types'
+import type { HomeAssistant, RunTraceResponse } from '../types'
 import type { VisualGraph } from './graph'
-import type { VisualCatalogSnapshot } from './contract'
+import type { ServicesSection, VisualCatalogSnapshot } from './contract'
 
 export interface SourceRange {
   nodeId: string
@@ -37,6 +37,8 @@ export interface VisualDocument {
   activationError?: string | null
   automationId: string
 }
+/** A `list` entry: the document without its generated source; `read` returns the source. */
+export type VisualDocumentSummary = Omit<VisualDocument, 'source' | 'sourceMap'>
 export interface VisualSaveResult {
   document: VisualDocument
   active: boolean
@@ -67,16 +69,21 @@ export function visualApi(hass: Pick<HomeAssistant, 'callWS'>) {
     if (!response.ok) throw new VisualApiError(response.error.code, response.error.detail)
     return response.result
   }
+  const library = async <T>(operation: string): Promise<T> => {
+    const response = await hass.callWS<Envelope<T>>({ type: 'hass_sharp/node_library', request: { operation } })
+    if (!response.ok) throw new VisualApiError(response.error.code, response.error.detail)
+    return response.result
+  }
   return {
-    catalog: async () => {
-      const response = await hass.callWS<
-        Envelope<{ catalog: VisualCatalogSnapshot; generation: string; saved: true; valid: boolean; diagnostics: VisualDiagnostic[] }>
-      >({ type: 'hass_sharp/node_library', request: { operation: 'catalog' } })
-      if (!response.ok) throw new VisualApiError(response.error.code, response.error.detail)
-      return response.result
-    },
+    /** `servicesGeneration` tells the session when to refetch `services()` (C4). */
+    catalog: () =>
+      library<{ catalog: VisualCatalogSnapshot; generation: string; servicesGeneration?: string; saved: true; valid: boolean; diagnostics: VisualDiagnostic[] }>('catalog'),
+    /** Contract C4. Never part of the catalog root; attach it as `catalog.services`. */
+    services: () => library<ServicesSection>('services'),
+    /** Contract C9. Not enveloped, like `run_history`. */
+    runTrace: (runId: string) => hass.callWS<RunTraceResponse>({ type: 'hass_sharp/run_trace', runId }),
     preview: (graph: VisualGraph) => request<VisualPreview>('preview', { graph }),
-    list: () => request<VisualDocument[]>('list'),
+    list: () => request<VisualDocumentSummary[]>('list'),
     read: (id: string) => request<VisualDocument>('read', { id }),
     save: (id: string, graph: VisualGraph, expectedRevision: number) => request<VisualSaveResult>('save', { id, graph, expectedRevision }),
     delete: (id: string, expectedRevision: number) => request<{ deleted: true }>('delete', { id, expectedRevision }),
