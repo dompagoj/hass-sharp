@@ -1,0 +1,40 @@
+/* Input editor and its widgets (node cards and the inspector). Controls reuse .hs-input, .hs-switch and .hs-menu. */
+.hs-app .hs-input-editor { display: grid; gap: 6px; min-width: 0; }
+.hs-app .hs-input-editor__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.hs-app .hs-input-editor__head label { font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
+.hs-app .hs-input-editor__body { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.hs-app .hs-input-editor__body > :not(.hs-menu) { flex: 1; min-width: 0; }
+.hs-app .hs-input-editor__state { overflow-wrap: anywhere; }
+.hs-app .hs-input-editor__state code { color: var(--hs-value-color, var(--hs-accent)); }
+.hs-app .hs-input-editor__errors { margin: 0; padding: 0; list-style: none; color: var(--hs-danger); font-size: 12px; }
+.hs-app .hs-input-editor .hs-menu .hs-icon-button { width: 32px; height: 32px; min-height: 32px; padding: 6px; }
+.hs-app .hs-input-editor .hs-picker-field { min-height: 44px; width: 100%; }
+.hs-app .hs-input-editor .hs-code-input { font: 12px/1.5 monospace; resize: vertical; }
+
+.hs-app .hs-widget-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hs-app .hs-widget-row > .hs-input { flex: 1; }
+.hs-app .hs-unit { color: var(--hs-muted); font-size: 12px; white-space: nowrap; }
+.hs-app .hs-range { flex: 1; min-width: 0; min-height: 32px; accent-color: var(--hs-action); }
+.hs-app .hs-slider-value { min-width: 4.5em; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; }
+.hs-app .hs-color { width: 52px; height: 36px; padding: 2px; border: 1px solid var(--hs-line); border-radius: 8px; background: var(--hs-surface); flex: none; }
+.hs-app .hs-duration { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.hs-app .hs-duration-part { display: flex; align-items: center; gap: 4px; flex: 1 1 48px; min-width: 0; }
+.hs-app .hs-widget-list, .hs-app .hs-target { display: grid; gap: 6px; min-width: 0; }
+.hs-app .hs-target-add { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.hs-app .hs-target-add > * { flex: 1 1 140px; min-width: 0; }
+
+.hs-app .hs-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; min-width: 0; }
+.hs-app .hs-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 2px 2px 2px 9px; border: 1px solid var(--hs-line); border-radius: 14px; background: var(--hs-soft); color: var(--hs-text); font-size: 12px; }
+.hs-app .hs-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.hs-app .hs-chip small { color: var(--hs-muted); }
+.hs-app .hs-chip-remove { display: grid; place-items: center; width: 24px; height: 24px; flex: none; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--hs-muted); font-size: 16px; line-height: 1; }
+.hs-app .hs-chip-remove:hover:not(:disabled) { background: var(--hs-surface); color: var(--hs-text); }
+
+/* Inline (node card): smaller controls, no label row; the menu sits after the control. */
+.hs-app .hs-input-editor--inline { gap: 3px; font-size: 12px; }
+.hs-app .hs-input-editor--inline .hs-input { min-height: 32px; padding: 4px 8px; border-radius: 6px; font-size: 12px; }
+.hs-app .hs-input-editor--inline .hs-picker-field { min-height: 32px; padding: 4px 8px; font-size: 12px; font-weight: 500; }
+.hs-app .hs-input-editor--inline .hs-field { gap: 0; }
+.hs-app .hs-input-editor--inline .hs-input-editor__errors { font-size: 11px; }
+.hs-app .hs-input-editor--inline .hs-code-input { min-height: 56px; }
+.hs-app .hs-input-editor--inline .hs-chip-remove { width: 20px; height: 20px; }

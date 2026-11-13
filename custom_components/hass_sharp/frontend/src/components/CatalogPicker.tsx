@@ -25,30 +25,54 @@ const DomainIcon = (props: { domain: string }) => <svg class="hs-icon" viewBox="
   <path d={domainPaths[props.domain] ?? 'M5 5h14v14H5ZM9 9h6v6H9Z'} />
 </svg>
 
-export function CatalogPicker(props: {
-  value: string
-  onChange: (id: string) => void
+export interface CatalogPickerProps {
+  value?: string
+  onChange?: (id: string) => void
   clearLabel?: string
   kind: 'entities' | 'services'
   items: CatalogItem[]
   loading: boolean
   error: boolean
   refresh: () => unknown
-}) {
+  /** Only items passing the predicate are offered; the current selection is still shown. */
+  filter?: (item: CatalogItem) => boolean
+  /** Select several items: results toggle membership of `values` and the dialog stays open. */
+  multiple?: boolean
+  values?: string[]
+  onChangeValues?: (ids: string[]) => void
+  /** Accessible name of the field (defaults to "Entity ID" or "Service"); `hideLabel` keeps it off screen. */
+  label?: string
+  hideLabel?: boolean
+  /** Text of the field button instead of the current selection (when the selection is shown elsewhere, as chips). */
+  buttonText?: string
+  id?: string
+  describedBy?: string
+  invalid?: boolean
+  disabled?: boolean
+}
+export function CatalogPicker(props: CatalogPickerProps) {
   const [open, setOpen] = createSignal(false)
   const [search, setSearch] = createSignal('')
   const [domain, setDomain] = createSignal('')
   const [active, setActive] = createSignal(-1)
   const id = createUniqueId()
-  const domains = createMemo(() => [...new Set(props.items.map(item => item.id.split('.')[0]))].sort())
-  const matches = createMemo(() => props.items.filter(item =>
+  const offered = createMemo(() => props.filter ? props.items.filter(item => props.filter!(item)) : props.items)
+  const domains = createMemo(() => [...new Set(offered().map(item => item.id.split('.')[0]))].sort())
+  const matches = createMemo(() => offered().filter(item =>
     (!domain() || item.id.startsWith(domain() + '.')) &&
     `${item.id} ${item.name ?? ''} ${item.description ?? ''}`.toLocaleLowerCase().includes(search().toLocaleLowerCase())))
   // A refreshed catalog can reorder results while the dialog remains open.
   createEffect(() => { matches(); setActive(-1) })
   const activeId = () => active() >= 0 && active() < matches().length ? `${id}-${active()}` : undefined
-  const choose = (value: string) => { props.onChange(value); setOpen(false) }
-  const label = () => props.kind === 'entities' ? 'Entity ID' : 'Service'
+  const values = () => props.values ?? []
+  const selected = (item: string) => props.multiple ? values().includes(item) : props.value === item
+  const choose = (value: string) => {
+    if (!props.multiple) { props.onChange?.(value); setOpen(false); return }
+    props.onChangeValues?.(values().includes(value) ? values().filter(v => v !== value) : [...values(), value])
+  }
+  const label = () => props.label ?? (props.kind === 'entities' ? 'Entity ID' : 'Service')
+  const noun = () => props.kind === 'entities' ? (props.multiple ? 'entities' : 'entity') : (props.multiple ? 'services' : 'service')
+  const current = () => props.multiple ? values().join(', ') : props.value ?? ''
   const show = () => {
     setSearch(''); setDomain(''); setActive(-1); setOpen(true)
     void props.refresh()
@@ -71,18 +95,19 @@ export function CatalogPicker(props: {
   }
 
   return <div class="hs-field">
-    <label id={`${id}-label`}>{label()}</label>
-    <Button class="hs-picker-field" aria-label={label()} aria-haspopup="dialog" aria-expanded={open()} onClick={show}>
-      {props.value || `Choose ${label().toLowerCase()}…`}
+    <Show when={!props.hideLabel}><label id={`${id}-label`} for={props.id}>{label()}</label></Show>
+    <Button id={props.id} class="hs-picker-field" aria-label={label()} aria-haspopup="dialog" aria-expanded={open()} onClick={show}
+      aria-describedby={props.describedBy} aria-invalid={props.invalid || undefined} disabled={props.disabled}>
+      {props.buttonText ?? (current() || `Choose ${label().toLowerCase()}…`)}
     </Button>
-    <Dialog open={open()} title={`Choose ${props.kind === 'entities' ? 'entity' : 'service'}`} width="large" onClose={() => setOpen(false)} footer={<>
-      <Button onClick={() => setOpen(false)}>Cancel</Button>
-      <Show when={props.clearLabel}><Button onClick={() => choose('')}>{props.clearLabel}</Button></Show>
-      <Show when={manual() && /^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/.test(manual())}>
-        <Button onClick={() => choose(manual())}>Use ID: {manual()}</Button>
+    <Dialog open={open()} title={`Choose ${noun()}`} width="large" onClose={() => setOpen(false)} footer={<>
+      <Button onClick={() => setOpen(false)}>{props.multiple ? 'Done' : 'Cancel'}</Button>
+      <Show when={props.clearLabel}><Button onClick={() => props.multiple ? props.onChangeValues?.([]) : choose('')}>{props.clearLabel}</Button></Show>
+      <Show when={manual() && /^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/.test(manual()) && !(props.multiple && values().includes(manual()))}>
+        <Button onClick={() => choose(manual())}>{props.multiple ? 'Add ID' : 'Use ID'}: {manual()}</Button>
       </Show>
     </>}>
-      <p class="hs-muted">Current selection: {props.value || 'None'}. Search without changing it; select a result to apply.</p>
+      <p class="hs-muted">Current selection: {current() || 'None'}. Search without changing it; select a result to {props.multiple ? 'add or remove it' : 'apply'}.</p>
       <div class="hs-picker-filters">
         <input autofocus class="hs-input" aria-label={`Search ${props.kind}`} placeholder="Search by name, ID or description"
           value={search()} onInput={event => setSearch(event.currentTarget.value)} on:keydown={keyboard}
@@ -97,12 +122,12 @@ export function CatalogPicker(props: {
       <Show when={!props.loading && !props.error && !matches().length}>
         <p role="status">No matching {props.kind}. Enter an exact ID to retain an unavailable item.</p>
       </Show>
-      <div class="hs-picker-results" role="listbox" id={`${id}-list`} aria-label={`${label()} results`}>
+      <div class="hs-picker-results" role="listbox" id={`${id}-list`} aria-label={`${label()} results`} aria-multiselectable={props.multiple || undefined}>
         <For each={matches()}>{(item, index) => <button type="button" tabindex="-1" role="option" id={`${id}-${index()}`}
-          aria-selected={props.value === item.id} classList={{ 'hs-picker-active': active() === index() }} onClick={() => choose(item.id)}>
+          aria-selected={selected(item.id)} classList={{ 'hs-picker-active': active() === index() }} onClick={() => choose(item.id)}>
           <DomainIcon domain={item.id.split('.')[0]} />
           <span><strong>{item.name || item.id}</strong><small>{item.id}</small><Show when={item.description}><small>{item.description}</small></Show></span>
-          <Show when={props.value === item.id}><span aria-label="Current selection">Selected</span></Show>
+          <Show when={selected(item.id)}><span aria-label="Current selection">Selected</span></Show>
         </button>}</For>
       </div>
     </Dialog>
