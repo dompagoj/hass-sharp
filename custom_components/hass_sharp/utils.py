@@ -32,13 +32,14 @@ def _entity_state_options(domain: str, attributes: dict):
 
 def get_hass_entity_registry(hass: HomeAssistant):
     registry = er.async_get(hass)
-    devices = dr.async_get(hass).devices
+    # Look devices up with `async_get` and only iterate `devices`: HA deprecates using it as a mapping.
+    device_registry = dr.async_get(hass)
     entities = []
     for entity_id in sorted(get_hass_entities(hass)):
         state = hass.states.get(entity_id)
         attributes = state.attributes if state else {}
         entry = registry.entities.get(entity_id)
-        device = devices.get(entry.device_id) if entry and entry.device_id else None
+        device = device_registry.async_get(entry.device_id) if entry and entry.device_id else None
         domain = entity_id.split(".", 1)[0]
         supported_features = attributes.get("supported_features")
         entities.append({
@@ -61,7 +62,7 @@ def get_hass_entity_registry(hass: HomeAssistant):
         "areas": [{"area_id": area.id, "name": area.name, "floor_id": area.floor_id}
                   for area in ar.async_get(hass).async_list_areas()],
         "devices": [{"id": device.id, "name": device.name_by_user or device.name, "area_id": device.area_id}
-                    for device in devices.values()],
+                    for device in device_registry.devices],
         "floors": [{"floor_id": floor.floor_id, "name": floor.name}
                    for floor in fr.async_get(hass).async_list_floors()],
         "labels": [{"label_id": label.label_id, "name": label.name}

@@ -8,6 +8,7 @@ import { AutomationRuns } from '../components/AutomationRuns'
 import { Dialog } from '../components/Dialog'
 import { useEntities } from '../entities'
 import { useHass } from '../context'
+import { useRegistry } from '../registry'
 import type { RunHistoryResponse } from '../types'
 import { FlowAdapter, type FlowControls } from './flow/FlowAdapter'
 import { Inspector, type InspectorLastRun } from './Inspector'
@@ -228,6 +229,9 @@ export function VisualEditor(props: {
     if (!doc.currentRevisionActive) return 'The saved version is not active'
   }
   const automationId = () => session.document()?.automationId
+  // Registry names for summaries outside the canvas (the canvas reads the same cached query).
+  const registry = useRegistry()
+  const names = () => (registry.isSuccess ? registry.data : undefined)
   // The same query (and cache) as the first page of the Runs tab.
   const lastRuns = useQuery(() => ({
     queryKey: ['run-history', automationId(), 0, ''],
@@ -329,7 +333,7 @@ export function VisualEditor(props: {
         onSave={() => void save()}
         run={
           admin() ? (
-            <RunNowButton document={session.document()} catalog={session.catalog()} unavailable={runUnavailable()} dirty={session.dirty()} busy={busy()}
+            <RunNowButton document={session.document()} catalog={session.catalog()} names={names()} unavailable={runUnavailable()} dirty={session.dirty()} busy={busy()}
               onNotice={showRunNotice} />
           ) : undefined
         }
@@ -392,6 +396,7 @@ export function VisualEditor(props: {
           onSelect={id => inPanel(() => choose(id))}
           graph={graph()}
           catalog={session.catalog()}
+          names={names()}
           diagnostics={session.diagnostics()}
           commit={commit}
           onShowProblems={showProblems}

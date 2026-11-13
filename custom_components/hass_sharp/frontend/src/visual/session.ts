@@ -36,9 +36,10 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
     // The same validation the connection index of this graph snapshot already ran.
     const local = connectionIndex(history.graph(), catalog()).analysis.diagnostics.map(d => ({ ...d, startLine: null, startColumn: null }))
     const backend = preview()?.diagnostics ?? []
+    // The server sends a missing input as null; local diagnostics leave it out.
     return [
       ...local,
-      ...backend.filter(d => !local.some(other => other.nodeId === d.nodeId && other.inputId === d.inputId && other.message === d.message)),
+      ...backend.filter(d => !local.some(other => other.nodeId === d.nodeId && (other.inputId ?? null) === (d.inputId ?? null) && other.message === d.message)),
     ]
   })
   let id = `visual-${createUuid()}`

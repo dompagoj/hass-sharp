@@ -10,7 +10,7 @@ import { nodeInputs, outputPort, removeNode, updateNode, type VisualGraph } from
 import { focusSoon as focusWhenShown } from './soon'
 import { icons, nodeIdentity } from './icons'
 import { applyLayout, tidyLayout } from './layout'
-import { nodeSummary, serviceFieldLabel } from './nodeSummary'
+import { nodeSummary, serviceFieldLabel, type SummaryNames } from './nodeSummary'
 import { typeColor, typeIsList, typeLabel } from './typeLabels'
 
 type Options = { coalesce?: string }
@@ -26,6 +26,8 @@ export interface InspectorProps {
   selectedEdgeId?: string
   graph: VisualGraph
   catalog: VisualCatalogSnapshot
+  /** Registry names, so summaries name entities as the cards do. */
+  names?: SummaryNames
   diagnostics: VisualDiagnostic[]
   commit(graph: VisualGraph, options?: Options): void
   /** Select a node (or nothing) on the canvas. */
@@ -187,7 +189,7 @@ export function Inspector(props: InspectorProps) {
     }
     const line = () => {
       const current = node(), wire = edge()
-      if (current) return nodeSummary(current, props.catalog, undefined, props.graph)
+      if (current) return nodeSummary(current, props.catalog, props.names, props.graph)
       if (!many() && wire) {
         const end = (id: string) => nodeTitle(props.graph.nodes.find(n => n.id === id), props.catalog, 'Missing step')
         return `From ${end(wire.source)} to ${end(wire.target)}`
@@ -222,7 +224,7 @@ export function Inspector(props: InspectorProps) {
                 <li>
                   <button type="button" class="hs-insp-trigger-line" onClick={() => selectAndFocus(node.id)}>
                     <span class="hs-insp-trigger-line__icon" aria-hidden="true"><Glyph paths={icons.trigger} /></span>
-                    <span>{nodeSummary(node, props.catalog, undefined, props.graph)}</span>
+                    <span>{nodeSummary(node, props.catalog, props.names, props.graph)}</span>
                   </button>
                 </li>
               )}

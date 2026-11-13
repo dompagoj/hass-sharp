@@ -7,7 +7,7 @@ import type { VisualDocument } from './api'
 import type { VisualCatalogSnapshot } from './contract'
 import { nodeTitle } from './flow/flowModel'
 import { triggerMethod, visualActionLabels, visualRunClasses } from './graph'
-import { nodeSummary } from './nodeSummary'
+import { nodeSummary, type SummaryNames } from './nodeSummary'
 
 /** A trigger of the saved automation that can be started by hand. */
 export interface ManualTrigger {
@@ -19,8 +19,8 @@ export interface ManualTrigger {
   summary: string
 }
 
-/** The saved graph's triggers that allow manual runs, in the graph's order. */
-export function manualTriggers(document: VisualDocument | undefined, catalog: VisualCatalogSnapshot): ManualTrigger[] {
+/** The saved graph's triggers that allow manual runs, in the graph's order; summaries name entities as the cards do. */
+export function manualTriggers(document: VisualDocument | undefined, catalog: VisualCatalogSnapshot, names?: SummaryNames): ManualTrigger[] {
   if (!document) return []
   const graph = document.graph
   const labels = visualActionLabels(graph, catalog)
@@ -34,7 +34,7 @@ export function manualTriggers(document: VisualDocument | undefined, catalog: Vi
       nodeId: node.id,
       action: { className, method },
       label: labels[`${className}::${method}`] ?? nodeTitle(node, catalog),
-      summary: nodeSummary(node, catalog, undefined, graph),
+      summary: nodeSummary(node, catalog, names, graph),
     }]
   })
 }
@@ -49,6 +49,8 @@ export interface RunNotice { text: string; error?: boolean }
 export function RunNowButton(props: {
   document?: VisualDocument
   catalog: VisualCatalogSnapshot
+  /** Registry names for the menu's summaries. */
+  names?: SummaryNames
   /** Why the saved version cannot be run now (a conflict, the catalog failed, not activated), if so. */
   unavailable?: string
   dirty: boolean
@@ -63,7 +65,7 @@ export function RunNowButton(props: {
   let menu: HTMLDivElement | undefined
   const [open, setOpen] = createSignal(false)
   const [running, setRunning] = createSignal(false)
-  const triggers = () => manualTriggers(props.document, props.catalog)
+  const triggers = () => manualTriggers(props.document, props.catalog, props.names)
   const reason = () => {
     if (!props.document) return 'Save the automation to run it'
     if (props.unavailable) return props.unavailable

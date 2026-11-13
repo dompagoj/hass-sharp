@@ -29,8 +29,10 @@ def load_utils():
         'select.mode': entry(),
         'input_select.scene': entry(),
     })
-    devices = NS(devices={'dev1': NS(id='dev1', name='Hub', name_by_user='Hall hub', area_id='hall'),
-                          'dev2': NS(id='dev2', name='Thermostat', name_by_user=None, area_id=None)})
+    # HA 2026.11 deprecates `devices` as a mapping: only iterate it, and look devices up with `async_get`.
+    device_entries = {'dev1': NS(id='dev1', name='Hub', name_by_user='Hall hub', area_id='hall'),
+                      'dev2': NS(id='dev2', name='Thermostat', name_by_user=None, area_id=None)}
+    devices = NS(devices=tuple(device_entries.values()), async_get=device_entries.get)
     areas = NS(async_list_areas=lambda: [NS(id='hall', name='Hall', floor_id='ground')])
     floors = NS(async_list_floors=lambda: [NS(floor_id='ground', name='Ground floor')])
     labels = NS(async_list_labels=lambda: [NS(label_id='night', name='Night')])

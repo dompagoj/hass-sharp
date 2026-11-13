@@ -21,7 +21,7 @@ class Encoder(json.JSONEncoder):
         return super().default(value)
 
 
-def load_services(descriptions=None):
+def load_services(descriptions=None, translations=None):
     tree = ast.parse(Path('custom_components/hass_sharp/services.py').read_text())
     tree.body = [n for n in tree.body if not isinstance(n, ast.ImportFrom)]
     timers = []
@@ -32,7 +32,8 @@ def load_services(descriptions=None):
     env = {'EVENT_SERVICE_REGISTERED': EVENTS[0], 'EVENT_SERVICE_REMOVED': EVENTS[1],
            'EVENT_HOMEASSISTANT_STARTED': EVENTS[2], 'callback': lambda f: f, 'JSONEncoder': Encoder,
            'async_call_later': call_later, 'logger': Mock(),
-           'async_get_all_descriptions': AsyncMock(return_value=descriptions or {})}
+           'async_get_all_descriptions': AsyncMock(return_value=descriptions or {}),
+           'async_get_translations': AsyncMock(return_value=translations or {})}
     exec(compile(tree, '<services>', 'exec'), env)
     listeners = {}
     def listen(event_type, handler):
@@ -42,7 +43,7 @@ def load_services(descriptions=None):
     async def executor(fn, *args):
         executed.append(fn)
         return fn(*args)
-    hass = NS(bus=NS(async_listen=listen), async_add_executor_job=executor)
+    hass = NS(bus=NS(async_listen=listen), async_add_executor_job=executor, config=NS(language='en'))
     return env, hass, listeners, timers, executed
 
 
@@ -60,6 +61,41 @@ class ServiceDescriptions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(payload), {'light': {'turn_on': {'name': 'Turn on', 'fields': {
             'brightness_pct': {'selector': {'number': {'min': 0, 'max': 100}}}}}}})
         self.assertEqual(executed, [manager.SetServiceDescriptions])
+        env['async_get_translations'].assert_awaited_once_with(hass, 'en', 'services', ['light'])
+
+    async def test_push_adds_translated_names_without_changing_cached_descriptions(self):
+        # Built-in services keep their names in translations only; HA's own UI shows those.
+        descriptions = {
+            'climate': {'set_hvac_mode': {'fields': {'hvac_mode': {'selector': {'state': {}}}}}},
+            'light': {'turn_on': {'name': 'Yaml name', 'fields': {
+                'brightness_pct': {'selector': {'number': {}}},
+                'additional_fields': {'collapsed': True, 'fields': {'brightness': {'name': 'Yaml field'}}}}}},
+            'script': {'greet': {'name': 'Greet', 'fields': {'who': {'name': 'Who to greet'}}}},
+        }
+        cached = json.loads(json.dumps(descriptions))
+        translations = {
+            'component.climate.services.set_hvac_mode.name': 'Set thermostat HVAC mode',
+            'component.climate.services.set_hvac_mode.description': 'Sets the HVAC mode of a thermostat.',
+            'component.climate.services.set_hvac_mode.fields.hvac_mode.name': 'HVAC mode',
+            'component.light.services.turn_on.name': 'Turn on light',
+            'component.light.services.turn_on.fields.brightness_pct.name': 'Brightness',
+            'component.light.services.turn_on.fields.brightness.name': 'Brightness value',
+            'component.light.services.turn_on.sections.additional_fields.name': 'Additional options',
+        }
+        env, hass, _, _, _ = load_services(descriptions, translations)
+        manager = NS(SetServiceDescriptions=Mock())
+        await env['async_push'](hass, manager)
+        payload = json.loads(manager.SetServiceDescriptions.call_args.args[0])
+        self.assertEqual(payload['climate']['set_hvac_mode'], {
+            'name': 'Set thermostat HVAC mode', 'description': 'Sets the HVAC mode of a thermostat.',
+            'fields': {'hvac_mode': {'name': 'HVAC mode', 'selector': {'state': {}}}}})
+        light = payload['light']['turn_on']
+        self.assertEqual(light['name'], 'Turn on light')
+        self.assertEqual(light['fields']['brightness_pct']['name'], 'Brightness')
+        self.assertEqual(light['fields']['additional_fields']['name'], 'Additional options')
+        self.assertEqual(light['fields']['additional_fields']['fields']['brightness'], {'name': 'Brightness value'})
+        self.assertEqual(payload['script'], cached['script'])
+        self.assertEqual(descriptions, cached)
 
     async def test_push_failure_is_logged_without_leaking(self):
         env, hass, _, _, _ = load_services()

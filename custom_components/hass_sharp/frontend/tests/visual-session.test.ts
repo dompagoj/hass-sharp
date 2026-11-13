@@ -3,7 +3,7 @@ import { nodeCatalog, type ServicesSection } from '../src/visual/contract'
 import servicesFixture from '../../../../tests/fixtures/visual-services.json'
 import { visualFixture } from './visual-fixture'
 import { createRoot } from 'solid-js'
-import { createGraph, updateNode } from '../src/visual/graph'
+import { createGraph, removeEdge, updateNode } from '../src/visual/graph'
 import { createVisualSession } from '../src/visual/session'
 import { visualApi, VisualApiError } from '../src/visual/api'
 
@@ -127,6 +127,19 @@ it('reports local typed input errors immediately and rejects old graphs without 
  session.history.commit(updateNode(before,'condition-1',{config:{entity:{kind:'unset'},state:'on'}}))
  expect(session.diagnostics()).toEqual(expect.arrayContaining([expect.objectContaining({nodeId:'condition-1',inputId:'entity',severity:3})]))
  expect(session.canSave()).toBe(false)
+})
+
+it('lists a step-level problem once when the server reports it with a null input', async () => {
+  // The server serialises inputId and portId as null; local diagnostics leave them out.
+  const unreachable = 'Call service is not connected into the flow; connect a step to its execution input'
+  const { session } = setup(async () => ok({ ...preview(), valid: false, diagnostics: [
+    { nodeId: 'service-1', message: unreachable, severity: 3, startLine: null, startColumn: null, inputId: null, portId: null },
+    { nodeId: 'service-1', message: 'Only the server knows this', severity: 3, startLine: null, startColumn: null, inputId: null, portId: null },
+  ] }))
+  const start = session.history.graph()
+  session.history.commit(removeEdge(start, start.edges.find(e => e.kind !== 'data' && e.target === 'service-1')!.id))
+  await vi.waitFor(() => expect(session.diagnostics().some(d => d.message === 'Only the server knows this')).toBe(true))
+  expect(session.diagnostics().filter(d => d.message === unreachable)).toHaveLength(1)
 })
 
 it('refreshes document-owned catalogs and surfaces dependent graph revision conflicts',async()=>{

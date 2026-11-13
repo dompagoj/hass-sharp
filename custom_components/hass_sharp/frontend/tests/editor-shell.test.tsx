@@ -6,7 +6,7 @@ import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { addNode, connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { connectData, nodeCatalog } from '../src/visual/contract'
 import { soon } from '../src/visual/soon'
-import { RunNowButton } from '../src/visual/RunNow'
+import { manualTriggers, RunNowButton } from '../src/visual/RunNow'
 import { acceptedRun } from '../src/components/runDispatch'
 
 import { HassCtx } from '../src/context'
@@ -616,6 +616,21 @@ it('forgets a run it started once the page leaves that automation for a new draf
   await vi.waitFor(() => expect(acceptedRun('visual:a')?.runId).toBe('run-a'))
   setDocument(undefined)
   expect(acceptedRun('visual:a')).toBeUndefined()
+})
+
+it('names trigger entities by their registry name in the overview and the Run now menu, as the cards do', async () => {
+  const saved = createGraph('Named')
+  const { host } = mount('Named', {
+    saved,
+    callWS: message => message.type === 'hass_sharp/get_entities'
+      ? Promise.resolve({ entities: [{ entity_id: 'binary_sensor.motion', name: 'Hall motion' }] }) : undefined,
+  })
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__node[data-id="trigger-1"]')).not.toBeNull())
+  key(host.querySelector('.solid-flow__node[data-id="trigger-1"]')!, 'Escape')
+  await vi.waitFor(() => expect(host.querySelector('.hs-insp-trigger-line')?.textContent).toBe('When Hall motion changes'))
+  const names = { entities: [{ entity_id: 'binary_sensor.motion', name: 'Hall motion' }] }
+  const document = { version: 1, id: 'named', revision: 1, graph: saved, source: '', sourceMap: [], automationId: 'visual:named' } as any
+  expect(manualTriggers(document, nodeCatalog, names).map(t => t.summary)).toEqual(['When Hall motion changes'])
 })
 
 it('disables Run now when no trigger allows manual runs, and says why', async () => {
