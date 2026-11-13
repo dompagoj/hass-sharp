@@ -29,6 +29,11 @@ static class VisualTraceTests
                 Check(all.Length > 0 && all[^1].Final && all.Count(w => w.Final) == 1, "the final write is not the single last write: " + string.Join(",", all.Select(w => w.Final)));
                 var doc = all[^1].Doc;
                 Check(all[^1].Count == Events(doc).Count && all[^1].Truncated == doc["truncated"]!.GetValue<bool>(), "sink count/truncated disagree with the document");
+                Check(Events(doc).All(e => S(e!["status"]) != "running"), "an event is still running in the final document: " + doc.ToJsonString());
+                // Documents are stored in the order they were built: a later one never has fewer events or a lower seq.
+                var partial = all[..^1].Select(w => (Events(w.Doc).Count, Seq: Events(w.Doc).Select(e => e!["seq"]!.GetValue<int>()).DefaultIfEmpty(0).Max())).ToArray();
+                for (var i = 1; i < partial.Length; i++)
+                    Check(partial[i].Count >= partial[i - 1].Count && partial[i].Seq >= partial[i - 1].Seq, $"document {i} is older than document {i - 1}: {partial[i]} after {partial[i - 1]}");
                 return doc;
             }
         }
@@ -95,7 +100,7 @@ static class VisualTraceTests
             Check(new[] { "ok", "error", "failed", "running", "cancelled", "stopped" }.Contains(S(e["status"])) && (e["ms"] == null) == (S(e["status"]) == "running"), "event status/ms: " + e.ToJsonString());
             foreach (var side in new[] { "inputs", "outputs" })
                 foreach (var (_, value) in e[side] as JsonObject ?? [])
-                    Check(value!.AsObject().All(p => p.Key is "type" or "v" or "trunc" or "src") && value["type"] is JsonValue && (value["src"] == null || value["src"]!.AsObject().Select(p => p.Key).SequenceEqual(["node", "port"])), "value fields: " + value.ToJsonString());
+                    Check(value!.AsObject().All(p => p.Key is "type" or "v" or "trunc" or "redacted" or "src") && value["type"] is JsonValue && (value["src"] == null || value["src"]!.AsObject().Select(p => p.Key).SequenceEqual(["node", "port"])), "value fields: " + value.ToJsonString());
         }
         var seqs = Events(doc).Select(e => e!["seq"]!.GetValue<int>()).ToArray();
         Check(seqs.SequenceEqual(seqs.Order()) && seqs.Distinct().Count() == seqs.Length, "events are not in start order");
@@ -170,12 +175,16 @@ static class VisualTraceTests
                 for (var i = 0; i < 6; i++)
                 {
                     nodes.Add(N("r" + i, "repeat", new { count = Lit("number", 20) }));
-                    nodes.Add(C("c" + i, "await global::System.Threading.Tasks.Task.Yield();"));
+                    nodes.Add(C("c" + i, i % 2 == 0 ? "await global::System.Threading.Tasks.Task.Yield();" : "await global::System.Threading.Tasks.Task.Delay(60);"));
                     edges.Add(E("p", "r" + i, "branch:b" + i)); edges.Add(E("r" + i, "c" + i, "body"));
                 }
                 var graph = G([.. nodes]); graph["edges"] = edges;
-                var (_, doc, _) = await Trace(graph);
+                var (sink, doc, _) = await Trace(graph);
                 Shape(doc);
+                // Sink.Final checked that the partial documents never go back; there must be several to compare.
+                var partial = sink.Writes.Where(w => !w.Final).ToArray();
+                Check(partial.Length >= 2 && partial.All(w => w.Doc["complete"]!.GetValue<bool>() == false), "partial documents while the branches wait: " + partial.Length);
+                foreach (var w in partial) Shape(w.Doc);
                 Check(Events(doc).Count == 1 + 1 + 6 + 120 + 1, "event count: " + Events(doc).Count);
                 Check(S(One(doc, "p")["frame"]) == "" && S(One(doc, "p")["status"]) == "ok" && S(One(doc, "join")["frame"]) == "", "top-level frames");
                 for (var i = 0; i < 6; i++)
@@ -224,7 +233,7 @@ static class VisualTraceTests
                 var output = One(doc, "big")["outputs"]!["value"]!;
                 var v = output["v"]!.AsObject();
                 Check(output["trunc"]!.GetValue<bool>() && System.Text.Encoding.UTF8.GetByteCount(v.ToJsonString()) <= TraceJson.MaxValueBytes, "value over 4 KiB: " + output.ToJsonString().Length);
-                Check(S(v["long"]).Length == TraceJson.MaxChars && v["wide"]!.AsObject().Count <= TraceJson.MaxItems && Depth(v) <= TraceJson.MaxDepth + 1, "string, item or depth cap: " + v.ToJsonString());
+                Check(S(v["long"]).Length == TraceJson.MaxChars && v["wide"]!.AsObject().Count <= TraceJson.MaxItems && Depth(v) == TraceJson.MaxDepth && Same(v["deep"]!["d"]!["d"]!["d"]!["d"]!["d"], "null"), "string, item or depth cap: " + v.ToJsonString());
                 var input = One(doc, "l")["inputs"]!["value"]!;
                 Check(input["trunc"]!.GetValue<bool>() && Same(input["src"], """{"node":"big","port":"value"}"""), "wired input truncated: " + input.ToJsonString());
                 var many = One(doc, "many");
@@ -238,10 +247,33 @@ static class VisualTraceTests
 
             await Test("the bounded writer stops early and always writes valid JSON", () =>
             {
+                // Only materialised values are walked: a lazy sequence is never enumerated and no getter runs.
                 var pulled = 0;
-                IEnumerable<int> Endless() { for (var i = 0; ; i++) { pulled++; yield return i; } }
-                var (json, cut) = TraceJson.Value(Endless(), TraceJson.MaxValueBytes);
-                Check(cut && JsonNode.Parse(json)!.AsArray().Count == TraceJson.MaxItems && pulled <= TraceJson.MaxItems + 1, "endless sequence: pulled " + pulled);
+                IEnumerable<int> Lazy() { pulled++; yield return 1; }
+                var (json, cut) = TraceJson.Value(Lazy(), TraceJson.MaxValueBytes);
+                Check(cut && pulled == 0 && JsonNode.Parse(json)!.GetValue<string>().StartsWith("global::"), "lazy sequence: pulled " + pulled + ", " + System.Text.Encoding.UTF8.GetString(json));
+                var (selected, selectedCut) = TraceJson.Value(new[] { 1, 2 }.Select(i => { pulled++; return i; }), TraceJson.MaxValueBytes);
+                Check(selectedCut && pulled == 0 && JsonNode.Parse(selected) is JsonValue, "LINQ query enumerated: pulled " + pulled);
+                var effect = new Effect();
+                var (effectJson, effectCut) = TraceJson.Value(effect, TraceJson.MaxValueBytes);
+                Check(effectCut && effect.Calls == 0 && Same(JsonNode.Parse(effectJson), """{"Stored":2}"""), "getter with a side effect: " + effect.Calls + ", " + System.Text.Encoding.UTF8.GetString(effectJson));
+                var (anonymous, anonymousCut) = TraceJson.Value(new { A = 1 }, TraceJson.MaxValueBytes);
+                Check(anonymousCut && JsonNode.Parse(anonymous) is JsonValue, "an anonymous object has no auto-properties: " + System.Text.Encoding.UTF8.GetString(anonymous));
+                var (materialised, materialisedCut) = TraceJson.Value(new Dictionary<string, object?> { ["list"] = new List<int> { 1, 2 }, ["set"] = new HashSet<string> { "a" }, ["array"] = new[] { 3 }, [DayOfWeek.Monday.ToString()] = new Dictionary<DayOfWeek, int> { [DayOfWeek.Friday] = 5 }, ["keys"] = new Dictionary<Key, int> { [new Key()] = 1 } }, TraceJson.MaxValueBytes);
+                Check(!materialisedCut && Same(JsonNode.Parse(materialised), """{"list":[1,2],"set":["a"],"array":[3],"Monday":{"Friday":5},"keys":{"Key":1}}"""), "materialised collections: " + System.Text.Encoding.UTF8.GetString(materialised));
+                Check(Key.Formatted == 0, "a user key's formatting ran");
+
+                // Failures inside the walk shorten the value instead of failing.
+                var (broken, brokenCut) = TraceJson.Value(new BrokenList(), TraceJson.MaxValueBytes);
+                Check(brokenCut && Same(JsonNode.Parse(broken), "null"), "a throwing GetEnumerator: " + System.Text.Encoding.UTF8.GetString(broken));
+                var (message, messageCut) = TraceJson.Value(new BrokenMessage(), TraceJson.MaxValueBytes);
+                Check(messageCut && Same(JsonNode.Parse(message), """{"type":"BrokenMessage","message":""}"""), "a throwing Exception.Message: " + System.Text.Encoding.UTF8.GetString(message));
+                foreach (var odd in new JsonNode?[] { JsonValue.Create(double.NaN), JsonValue.Create(double.PositiveInfinity), JsonValue.Create(12.5m), JsonValue.Create(7L), JsonValue.Create(DateTime.UnixEpoch), new JsonObject { ["nan"] = double.NaN } })
+                {
+                    var (bytes, _) = TraceJson.Value(odd, TraceJson.MaxValueBytes);
+                    _ = JsonSerializer.Serialize(JsonNode.Parse(bytes));
+                }
+                Check(Same(JsonNode.Parse(TraceJson.Value(JsonValue.Create(12.5m), 4096).Json), "12.5") && Same(JsonNode.Parse(TraceJson.Value(JsonValue.Create(double.NaN), 4096).Json), "\"NaN\""), "numeric JsonValue");
 
                 // A huge JSON string or array is read only as far as it is written.
                 using var text = JsonDocument.Parse("\"" + new string('a', 5_000_000) + "\"");
@@ -264,14 +296,27 @@ static class VisualTraceTests
                         _ = JsonSerializer.Serialize(JsonNode.Parse(bytes));
                     }
 
-                // CLR objects: members as declared; a throwing getter is left out; cycles end at the depth cap.
+                // CLR objects: auto-properties as declared; computed properties are never called; cycles end at the depth cap with null.
                 var loop = new Link(); loop.Next = loop;
                 var (clr, clrCut) = TraceJson.Value(new Reading("hall", 21.5), TraceJson.MaxValueBytes);
                 var (cyclic, cyclicCut) = TraceJson.Value(loop, TraceJson.MaxValueBytes);
                 var (faulty, faultyCut) = TraceJson.Value(new Faulty(), TraceJson.MaxValueBytes);
                 Check(Same(JsonNode.Parse(clr), """{"Name":"hall","Value":21.5}""") && !clrCut, "record: " + System.Text.Encoding.UTF8.GetString(clr));
-                Check(cyclicCut && Depth(JsonNode.Parse(cyclic)) == TraceJson.MaxDepth + 1, "cycle: " + System.Text.Encoding.UTF8.GetString(cyclic));
-                Check(faultyCut && Same(JsonNode.Parse(faulty), """{"Fine":1}"""), "throwing getter: " + System.Text.Encoding.UTF8.GetString(faulty));
+                Check(cyclicCut && Depth(JsonNode.Parse(cyclic)) == TraceJson.MaxDepth && Same(JsonNode.Parse(cyclic), """{"Next":{"Next":{"Next":{"Next":{"Next":{"Next":null}}}}}}"""), "cycle: " + System.Text.Encoding.UTF8.GetString(cyclic));
+                Check(faultyCut && Same(JsonNode.Parse(faulty), "\"global::VisualTraceTests.Faulty\""), "computed properties only: " + System.Text.Encoding.UTF8.GetString(faulty));
+
+                // The 4 KiB value cap through a port entry: under it the value is whole, over it cut to valid JSON within it.
+                JsonObject Props(int count) { var o = new JsonObject(); for (var i = 0; i < count; i++) o["p" + i] = new string((char)('a' + i % 26), 200); return o; }
+                foreach (var (count, over) in new[] { (15, false), (30, true) })
+                {
+                    var (full, bare) = TraceJson.Entry("value", "object", Props(count), ("n", "value"));
+                    var entry = JsonNode.Parse(full)!.AsObject();
+                    var v = entry["v"]!.AsObject();
+                    var vBytes = System.Text.Encoding.UTF8.GetByteCount(v.ToJsonString());
+                    Check(vBytes <= TraceJson.MaxValueBytes && (entry["trunc"] != null) == over && (over ? v.Count < count : v.Count == count) && S(entry["type"]) == "object" && Same(entry["src"], """{"node":"n","port":"value"}"""),
+                        $"{count} properties: {vBytes} bytes, {v.Count} kept, {entry.ToJsonString()[..120]}");
+                    Check(Same(JsonNode.Parse(bare), """{"type":"object","trunc":true,"src":{"node":"n","port":"value"}}"""), "bare entry: " + System.Text.Encoding.UTF8.GetString(bare));
+                }
                 return Task.CompletedTask;
             });
 
@@ -332,17 +377,37 @@ static class VisualTraceTests
             {
                 var graph = G(N("a", "not", new { value = Lit("boolean", true) }), N("b", "not", new { value = Lit("boolean", true) }), Log("c", "after the fault"));
                 var logged = messages.Count(m => m.Contains("Stopped recording the trace"));
-                VisualTrace.Fault = node => { if (node == "b") throw new InvalidOperationException("recorder bug"); };
-                JsonObject doc;
-                try { (_, doc, _) = await Trace(graph); }
-                finally { VisualTrace.Fault = null; }
-                Shape(doc);
-                Check(doc["truncated"]!.GetValue<bool>() && doc["complete"]!.GetValue<bool>() && Events(doc).Select(e => S(e!["node"])).SequenceEqual(["t", "a"]) && messages.Contains("after the fault"), "after a recorder failure: " + doc.ToJsonString());
-                Check(messages.Count(m => m.Contains("Stopped recording the trace")) == logged + 1, "the failure is not logged exactly once");
+                // A fault at each point the recorder can fail: starting an event, recording an input or output, building the document.
+                foreach (var (stage, nodes) in new (string, string[])[] { ("start:b", ["t", "a"]), ("input:b", ["t", "a", "b"]), ("output:b", ["t", "a", "b"]), ("build", []) })
+                {
+                    var before = messages.Count(m => m.Contains("after the fault"));
+                    VisualTrace.Fault = at => { if (at == stage) throw new InvalidOperationException("recorder bug"); };
+                    JsonObject doc;
+                    try { (_, doc, _) = await Trace(graph); }
+                    finally { VisualTrace.Fault = null; }
+                    Shape(doc);
+                    Check(doc["truncated"]!.GetValue<bool>() && doc["complete"]!.GetValue<bool>() && Events(doc).Select(e => S(e!["node"])).SequenceEqual(nodes) && messages.Count(m => m.Contains("after the fault")) == before + 1, $"after a recorder failure at {stage}: " + doc.ToJsonString());
+                    Check(Events(doc).All(e => S(e!["status"]) == "ok"), $"events after a fault at {stage} did not complete: " + doc.ToJsonString());
+                    if (stage == "input:b") Check(One(doc, "b")["inputs"] == null && One(doc, "b")["outputs"] == null, "values recorded after an input fault");
+                    if (stage == "output:b") Check(One(doc, "b")["inputs"] != null && One(doc, "b")["outputs"] == null, "values recorded after an output fault");
+                    Check(messages.Count(m => m.Contains("Stopped recording the trace")) == ++logged, $"the failure at {stage} is not logged exactly once");
+                }
+                // A build fault while a node waits: no partial document, the final one is the minimal valid document.
+                {
+                    using var waiting = await Load(G(N("d", "delay", new { seconds = Lit("number", 0.1) }), Log("e", "after a build fault")));
+                    var sink = new Sink();
+                    VisualTrace.Fault = at => { if (at == "build") throw new InvalidOperationException("recorder bug"); };
+                    try { await waiting.Start(sink).WaitAsync(TimeSpan.FromSeconds(10)); }
+                    finally { VisualTrace.Fault = null; }
+                    var doc = sink.Final;
+                    Shape(doc);
+                    Check(sink.Writes.Length == 1 && doc["truncated"]!.GetValue<bool>() && doc["complete"]!.GetValue<bool>() && Events(doc).Count == 0 && messages.Contains("after a build fault"), "build fault while waiting: " + doc.ToJsonString());
+                    Check(messages.Count(m => m.Contains("Stopped recording the trace")) == ++logged, "the build fault is not logged exactly once");
+                }
                 // A sink that throws on every write is the same: logged once, the run still succeeds.
                 using var loaded = await Load(G(N("d", "delay", new { seconds = Lit("number", 0.05) }), Log("e", "after a broken sink")));
                 await loaded.Start(new Sink { Throws = true }).WaitAsync(TimeSpan.FromSeconds(10));
-                Check(messages.Contains("after a broken sink") && messages.Count(m => m.Contains("Stopped recording the trace")) == logged + 2, "a throwing sink");
+                Check(messages.Contains("after a broken sink") && messages.Count(m => m.Contains("Stopped recording the trace")) == ++logged, "a throwing sink");
             });
 
             await Test("no sink: no recorder and no recording path", async () =>
@@ -380,6 +445,126 @@ static class VisualTraceTests
                 sink.Write("{\"n\":4}", 4, false, false);
                 Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":4}", "the interval restarts at the immediate write");
                 return Task.CompletedTask;
+            });
+
+            await Test("while and until loops record condition frames with the carried values", async () =>
+            {
+                static JsonObject V(string name) => new() { ["kind"] = "variable", ["name"] = name };
+                foreach (var kind in new[] { "while", "until" })
+                {
+                    var cfg = new JsonObject { ["maxIterations"] = 5, ["carry"] = new JsonArray(new JsonObject { ["name"] = "n", ["type"] = "number", ["initial"] = Lit("number", 0) }) };
+                    var graph = G(N("loop", kind, cfg), N("body", "set_value", new { type = "number", value = Unset(), output = "next" }), C("inc", "values.Set(\"next\", values.Get<double>(\"next\",\"inc\")+1);"),
+                        N("result", "loop_result", new { values = new JsonObject { ["carry:n"] = V("next") } }),
+                        N("compare", "compare", new { left = Unset(), right = Lit("number", 3), @operator = kind == "while" ? "lt" : "ge" }), N("condition", "condition_result", new { value = Unset() }));
+                    graph["edges"] = new JsonArray(E("t", "loop"), E("loop", "body", "body"), E("body", "inc"), E("inc", "result"), D("loop", "body", "value", "carry:n"),
+                        E("loop", "compare", "condition"), E("compare", "condition"), D("loop", "compare", "left", "carry:n"), D("compare", "condition", "value"));
+                    var (_, doc, _) = await Trace(graph);
+                    Shape(doc);
+                    // while tests n = 0, 1, 2, 3 before each body; until tests n = 1, 2, 3 after it.
+                    var tested = kind == "while" ? new[] { 0, 1, 2, 3 } : [1, 2, 3];
+                    var compares = Of(doc, "compare");
+                    Check(compares.Select(e => S(e["frame"])).SequenceEqual(tested.Select((_, i) => $"loop#{i}:condition")), kind + " condition frames: " + string.Join(",", compares.Select(e => S(e["frame"]))));
+                    Check(compares.Select(e => e["inputs"]!["left"]!["v"]!.GetValue<double>()).SequenceEqual(tested.Select(n => (double)n)) && compares.All(e => Same(e["inputs"]!["left"]!["src"], """{"node":"loop","port":"carry:n"}""")), kind + " carried values: " + string.Join(",", compares.Select(e => e["inputs"]!.ToJsonString())));
+                    Check(Of(doc, "condition").Select(e => S(e["frame"])).SequenceEqual(compares.Select(e => S(e["frame"]))) && Of(doc, "condition").All(e => e["port"] == null && S(e["status"]) == "ok"), kind + " condition_result events: " + doc.ToJsonString());
+                    Check(Of(doc, "body").Select(e => S(e["frame"])).SequenceEqual(["loop#0:body", "loop#1:body", "loop#2:body"]) && Of(doc, "inc").Length == 3, kind + " body frames");
+                    Check(S(One(doc, "loop")["frame"]) == "" && S(One(doc, "loop")["status"]) == "ok" && S(One(doc, "loop")["port"]) == "next", kind + " loop event: " + One(doc, "loop").ToJsonString());
+                }
+            });
+
+            await Test("a failing parallel branch cancels its siblings and fails or recovers at the parallel node", async () =>
+            {
+                foreach (var recover in new[] { false, true })
+                {
+                    var graph = G(N("p", "parallel", new { branches = new[] { "a", "b" } }), C("x", "await global::System.Threading.Tasks.Task.Delay(50); throw new InvalidOperationException(\"branch\");"), N("d", "delay", new { seconds = Lit("number", 30) }));
+                    graph["edges"] = new JsonArray(E("t", "p"), E("p", "x", "branch:a"), E("p", "d", "branch:b"));
+                    if (recover) { graph["nodes"]!.AsArray().Add(Log("r", "recovered")); graph["edges"]!.AsArray().Add(E("p", "r", "error")); }
+                    var (_, doc, _) = await Trace(graph, fails: !recover);
+                    Shape(doc);
+                    var x = One(doc, "x"); var d = One(doc, "d"); var p = One(doc, "p");
+                    Check(S(x["status"]) == "failed" && S(x["frame"]) == "p:branch:a" && S(x["error"]!["message"]) == "branch", "failing branch node: " + x.ToJsonString());
+                    Check(S(d["status"]) == "cancelled" && S(d["frame"]) == "p:branch:b" && d["ms"]!.GetValue<double>() < 20_000, "sibling: " + d.ToJsonString());
+                    if (recover) Check(S(p["status"]) == "error" && S(p["port"]) == "error" && S(One(doc, "r")["status"]) == "ok", "recovered parallel: " + doc.ToJsonString());
+                    else Check(S(p["status"]) == "failed" && p["port"] == null && p["error"] != null && Of(doc, "r").Length == 0 && Same(doc["summary"]!["p"], """{"count":1,"failed":1,"last":"failed"}"""), "failed parallel: " + doc.ToJsonString());
+                }
+            });
+
+            await Test("secret-looking names and token= values are redacted everywhere", async () =>
+            {
+                var previousCall = PyInterop.CallService;
+                var sent = new List<string>();
+                PyInterop.CallService = (_, _, json, done, _) => { lock (sent) sent.Add(json ?? ""); done?.Invoke(); };
+                try
+                {
+                    var literal = JsonNode.Parse("""{"user":"me","auth":{"Password":"s3cr3t-3","pin":1234,"deeper":[{"api_key":"s3cr3t-5"}]},"note":"see token=s3cr3t-4 here","Token":"s3cr3t-6"}""")!.AsObject();
+                    var graph = G(N("o", "object", new { value = Lit("object", literal) }), N("s", "service", new JsonObject { ["service"] = "lock.unlock", ["fields"] = new JsonObject { ["code"] = Lit("string", "4321") }, ["target"] = Unset() }));
+                    graph["nodes"]![0]!["config"] = new JsonObject { ["type"] = "entity", ["entity"] = "sensor.test" };
+                    graph["edges"]!.AsArray().Add(D("t", "s", "target", "entity_id"));
+                    var attributes = new Dictionary<string, object> { ["access_token"] = "s3cr3t-1", ["entity_picture"] = "/api/camera_proxy/camera.door?token=s3cr3t-2&width=10", ["unit"] = "C" };
+                    HasEntityState State(string state) => new() { EntityId = "sensor.test", State = state, Attributes = new(attributes), LastChanged = 1_700_000_000, LastReported = 1_700_000_000 };
+                    var (_, doc, _) = await Trace(graph, payload: TriggerPayload.Entity(State("on"), State("off")));
+                    Shape(doc);
+                    var text = doc.ToJsonString();
+                    Check(!text.Contains("s3cr3t") && !text.Contains("4321"), "a secret reached the trace: " + text);
+                    Check(sent.Count == 1 && JsonNode.Parse(sent[0])!["code"]!.GetValue<string>() == "4321", "the service did not get the real code: " + string.Join(",", sent));
+                    var code = One(doc, "s")["inputs"]!["field:code"]!;
+                    Check(S(code["v"]) == TraceJson.Redacted && code["redacted"]!.GetValue<bool>() && S(code["type"]) == "string", "field:code port: " + code.ToJsonString());
+                    var picture = "/api/camera_proxy/camera.door?token=***&width=10";
+                    foreach (var state in new[] { doc["trigger"]!["to_state"]!, One(doc, "t")["outputs"]!["to_state"]!["v"]!, One(doc, "t")["outputs"]!["data"]!["v"]!["from_state"]! })
+                        Check(S(state["attributes"]!["access_token"]) == "***" && S(state["attributes"]!["entity_picture"]) == picture && S(state["attributes"]!["unit"]) == "C", "state attributes: " + state.ToJsonString());
+                    var o = One(doc, "o")["outputs"]!["value"]!;
+                    Check(Same(o["v"], """{"user":"me","auth":{"Password":"***","pin":"***","deeper":[{"api_key":"***"}]},"note":"see token=*** here","Token":"***"}""") && o["redacted"] == null, "nested secrets: " + o.ToJsonString());
+                    var (clr, _) = TraceJson.Value(new Credentials("me", "pw", new Credentials("you", "pw2")), TraceJson.MaxValueBytes);
+                    Check(Same(JsonNode.Parse(clr), """{"User":"me","Password":"***","Inner":{"User":"you","Password":"***","Inner":null}}"""), "CLR secrets: " + System.Text.Encoding.UTF8.GetString(clr));
+                    var (map, _) = TraceJson.Value(new Dictionary<string, object> { ["Authorization"] = "Bearer x", ["PASSWD"] = 1, ["codes"] = 2 }, TraceJson.MaxValueBytes);
+                    Check(Same(JsonNode.Parse(map), """{"Authorization":"***","PASSWD":"***","codes":2}"""), "dictionary keys: " + System.Text.Encoding.UTF8.GetString(map));
+                }
+                finally { PyInterop.CallService = previousCall; }
+            });
+
+            await Test("waits store at most once per 500 ms and a long wait is still stored promptly", async () =>
+            {
+                var time = new ManualTime();
+                var sink = new Sink();
+                var prior = InvocationContext.Current;
+                InvocationContext.Current = new InvocationContext("run-manual", InvocationCause.Manual, null, TriggerPayload.Manual()) { TraceSink = sink };
+                VisualTrace trace;
+                try { trace = VisualTrace.Create("t", ["w", "long"], (_, _) => null, (_, _) => null, time)!; }
+                finally { InvocationContext.Current = prior; }
+                // Nothing stored yet: the first wait is stored at once.
+                var first = trace.Start("", "w")!; trace.Waiting();
+                await Until(() => sink.Writes.Length == 1, "the first wait is stored at once");
+                Check(sink.Writes[0].Immediate && S(One(sink.Writes[0].Doc, "w")["status"]) == "running", "first wait: " + sink.Writes[0].Doc.ToJsonString());
+                trace.End(first, "ok", "next", null);
+                // A long wait 10 ms after that store is stored when the 500 ms gap ends.
+                time.Advance(TimeSpan.FromMilliseconds(10));
+                var wait = trace.Start("", "long")!; trace.Waiting();
+                await Task.Delay(100);
+                Check(sink.Writes.Length == 1, "stored inside the 500 ms gap: " + sink.Writes.Length);
+                time.Advance(TimeSpan.FromMilliseconds(489));
+                await Task.Delay(50);
+                Check(sink.Writes.Length == 1, "stored before the 500 ms gap ended");
+                time.Advance(TimeSpan.FromMilliseconds(1));
+                await Until(() => sink.Writes.Length == 2, "the long wait is stored when the gap ends");
+                var shown = sink.Writes[1];
+                Check(shown.Immediate && S(One(shown.Doc, "long")["status"]) == "running" && S(One(shown.Doc, "w")["status"]) == "ok", "long wait: " + shown.Doc.ToJsonString());
+                time.Advance(TimeSpan.FromSeconds(5));
+                Check(sink.Writes.Length == 2, "stored without a change");
+                trace.End(wait, "ok", "next", null);
+                // 1,000 waits of 10 ms each: at most one store per 500 ms over the 10 s, not one per wait. (The loop
+                // outruns the thread pool, so fewer stores than that are fine; what matters is the bound.)
+                var before = sink.Writes.Length;
+                for (var i = 0; i < 1000; i++)
+                {
+                    var ev = trace.Start("", "w")!; trace.Waiting(); time.Advance(TimeSpan.FromMilliseconds(10)); trace.End(ev, "ok", "next", null);
+                    if (i % 10 == 0) await Task.Delay(1);
+                }
+                trace.Complete();
+                var doc = sink.Final;
+                var during = sink.Writes.Length - 1 - before;
+                Check(during is >= 1 and <= 10_000 / 500 + 2, "stores during 1,000 short waits: " + during);
+                Check(Events(doc).Count == 1002 && doc["complete"]!.GetValue<bool>() && time.Pending == 0, $"final document: {Events(doc).Count} events, {time.Pending} timers");
+                trace.Waiting(); time.Advance(TimeSpan.FromSeconds(2)); await Task.Delay(50);
+                Check(sink.Writes.Length == before + during + 1, "a store after the final document");
             });
 
             await Test("end to end through the manager: saved graph, run, run_trace", async () =>
@@ -422,4 +607,20 @@ static class VisualTraceTests
     public sealed record Reading(string Name, double Value);
     public sealed class Link { public Link? Next { get; set; } }
     public sealed class Faulty { public int Fine => 1; public int Broken => throw new InvalidOperationException("getter"); }
+    public sealed class Effect { public int Calls; public int Computed { get { Calls++; return 1; } } public int Stored { get; set; } = 2; }
+    public sealed record Credentials(string User, string Password, Credentials? Inner = null);
+    public sealed class Key : IFormattable
+    {
+        public static int Formatted;
+        public string ToString(string? format, IFormatProvider? provider) { Formatted++; return "formatted"; }
+    }
+    public sealed class BrokenList : System.Collections.ICollection
+    {
+        public int Count => 1;
+        public bool IsSynchronized => false;
+        public object SyncRoot => this;
+        public void CopyTo(Array array, int index) { }
+        public System.Collections.IEnumerator GetEnumerator() => throw new InvalidOperationException("enumerator");
+    }
+    public sealed class BrokenMessage : Exception { public override string Message => throw new InvalidOperationException("message"); }
 }

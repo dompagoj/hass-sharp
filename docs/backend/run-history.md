@@ -90,23 +90,60 @@ and no trace.
   `<loopNodeId>#<iteration>:condition`, with 0-based iterations.
 - `t` is milliseconds since the run started and `ms` the node's duration. `port`
   is the execution port the node took; it is absent for nodes without one.
-- `inputs` and `outputs` map port names to `{type, v, src?, trunc?}`; `src` names
-  the node and port a wired input came from.
+- `inputs` and `outputs` map port names to `{type, v, trunc?, redacted?, src?}`;
+  `src` names the node and port a wired input came from.
 - `summary` has one row per node of the graph: how often it ran, how often it
   failed, and its last status.
 
-Caps: at most 2,000 events per run; after that only `summary` and `dropped`
-change and `truncated` is true. Each value is cut at depth 6, 50 items or
-properties, 1,000 characters per string and 4 KiB serialised, and is then marked
-`trunc: true`. An event is at most 16 KiB and a trace at most 256 KiB: beyond that
-the oldest events lose their inputs and outputs first (they keep node, frame,
-status, port, timing and error, and are marked `"trunc": true`), and only then are
-new events dropped.
+What a value records: only values that are already materialised are walked. These
+are JSON values, strings, numbers, booleans, dates, arrays, collections
+(`ICollection`, `IReadOnlyCollection`), dictionaries (`IDictionary`), entity states,
+exceptions (type and message), and the compiler-generated auto-properties of
+objects such as records. Auto-properties are read from their backing fields, so no
+getter runs. Anything else is recorded as its type name with `trunc: true`: a lazy
+sequence such as a LINQ query or iterator (never enumerated), a computed property,
+or a Python object. An object that has auto-properties and also computed ones keeps
+the auto-properties and is marked `trunc`. Tracing never runs automation code that
+could have side effects. A collection whose enumeration or an exception whose
+message throws only shortens the value.
 
-The trace is written at most once per second, again when a node starts waiting
-(delay, wait until, service calls and asynchronous custom or library nodes) and at
-run end, so a running run's trace can be read while it waits. Recording never
-fails a run: a recorder error stops recording and marks the trace truncated.
+Caps:
+
+- A run records at most 2,000 events. After that only `summary` and `dropped`
+  change, and `truncated` is true.
+- Each value is cut at depth 6, 50 items or properties, 1,000 characters per
+  string, and 4 KiB serialised, and is then marked `trunc: true`. A container
+  deeper than the depth cap is written as `null`.
+- An event is at most 16 KiB. A port whose value does not fit keeps its type and
+  source but not `v`.
+- A trace is at most 256 KiB. Beyond that, the oldest events lose their inputs and
+  outputs first. They keep node, frame, status, port, timing and error, and are
+  marked `"trunc": true`. Only then are new events dropped.
+- The trigger payload is at most 16 KiB.
+
+Redaction: a property, dictionary key or port whose name is `password`,
+`passwd`, `secret`, `token`, `access_token`, `api_key`, `apikey`,
+`authorization`, `code` or `pin` is recorded as `"***"`. Names are matched
+without regard to case, and for a port, the name after `field:` is used, so the
+`code` field of `lock.unlock` is redacted. A redacted port's entry also has
+`redacted: true`. Inside any string, `token=<value>` becomes `token=***`, which
+covers, for example, an `entity_picture` URL. These rules apply to the trigger
+payload, entity state attributes and nested objects alike, and the real value is
+never serialised. Redaction is by name only. It is a safeguard against the common
+cases, not a security boundary: a secret stored under another name, or inside an
+opaque string, is recorded as it is.
+
+Storing: nodes only mark the trace as changed, and a single writer builds the
+latest state and stores it, so stored documents never go backwards. While a run is
+going, the trace is stored at most once per second. When a node starts waiting
+(delay, wait until, service calls, and asynchronous custom or library nodes), it
+is stored as soon as 500 ms have passed since the last store, or at once if nothing
+has been stored yet. A running run's trace can therefore be read while it waits,
+and many short waits cost at most two stores a second. The run's end stores the
+complete document, and nothing is stored after it. Recording never fails a run: a
+recorder error is logged once and stops recording, events already listed still
+get their final status, and the stored trace stays valid and is marked
+`truncated`.
 
 Retention: traces are kept for the newest 1,000 runs that have one; older runs
 keep their record with `hasTrace` false. A pruned run's trace is deleted with it,
