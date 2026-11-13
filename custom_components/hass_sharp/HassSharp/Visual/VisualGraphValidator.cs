@@ -23,8 +23,8 @@ public static class VisualGraphValidator
     internal static string TargetKeyMessage(string key) => $"Target can only contain entity_id, device_id, area_id, floor_id and label_id; found {key}";
 
     /// <summary>
-    /// The codes of structural diagnostics, identical in <c>contract.ts</c>. A code starting with <c>cycle.</c> or
-    /// <c>scope.</c> also rejects any new connection (<see cref="Blocking"/>).
+    /// The codes of structural diagnostics, identical in <c>contract.ts</c>. The editor's connection check (in
+    /// <c>contract.ts</c> only) refuses a wire that adds a <c>cycle.</c> or <c>scope.</c> diagnostic.
     /// </summary>
     public static readonly string[] Codes =
     [
@@ -34,7 +34,6 @@ public static class VisualGraphValidator
         "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
         "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult",
     ];
-    public static bool Blocking(VisualDiagnostic diagnostic) => diagnostic.Code is { } code && (code.StartsWith("cycle.", StringComparison.Ordinal) || code.StartsWith("scope.", StringComparison.Ordinal));
 
     /// <summary>
     /// The wording of validator messages, which people read on node cards and under fields. Byte-identical to
@@ -56,7 +55,18 @@ public static class VisualGraphValidator
         /// <summary><c>binary_sensor</c> → <c>Binary sensor</c>.</summary>
         internal static string DomainWords(string domain) => Capital(domain.Replace('_', ' '));
         /// <summary>A key or value people did not name, in words: <c>needs_action</c> → <c>Needs action</c>; never empty.</summary>
-        internal static string KeyWords(string key) => DomainWords(key) is { Length: > 0 } words && words.Trim().Length > 0 ? words : "Unnamed";
+        internal static string KeyWords(string key) => DomainWords(key) is var words && Trimmed(words).Length > 0 ? words : "Unnamed";
+        /// <summary>A name or id quoted as written, without surrounding whitespace; <c>Unnamed</c> when nothing is left.</summary>
+        internal static string Name(string name) => Trimmed(name) is { Length: > 0 } trimmed ? trimmed : "Unnamed";
+        /// <summary>JavaScript's whitespace (as <c>String.prototype.trim</c> removes it), spelled out: .NET's differs at U+FEFF.</summary>
+        static bool Blank(char c) => c is '\t' or '\n' or '\v' or '\f' or '\r' or ' ' or '\u00a0' or '\u1680' or (>= '\u2000' and <= '\u200a') or '\u2028' or '\u2029' or '\u202f' or '\u205f' or '\u3000' or '\ufeff';
+        static string Trimmed(string text)
+        {
+            int start = 0, end = text.Length;
+            while (start < end && Blank(text[start])) start++;
+            while (end > start && Blank(text[end - 1])) end--;
+            return text[start..end];
+        }
         static string ClrWords(string id)
         {
             var trimmed = Regex.Replace(Regex.Replace(Regex.Replace(id, "^global::", ""), "<.*$", "", RegexOptions.Singleline), @"[?[\]]+$", "");
@@ -87,7 +97,7 @@ public static class VisualGraphValidator
         }
         /// <summary>
         /// A number as JavaScript's <c>String(n)</c> writes it, so both validators print it alike: plain digits from
-        /// 1e-7 up to 1e21, exponent form (<c>1e-7</c>, <c>1.5e+21</c>) outside that range.
+        /// 1e-6 (inclusive) up to 1e21 (exclusive), exponent form (<c>1e-7</c>, <c>1.5e+21</c>) outside that range.
         /// </summary>
         internal static string Number(double value)
         {
@@ -149,12 +159,12 @@ public static class VisualGraphValidator
         };
         /// <summary>
         /// The label people see for an input: its spec label, else (or when the label is only the key) the key in
-        /// words. List items count from 1.
+        /// words. List items count from 1, for an index of any length (exactly, as TS does with BigInt).
         /// </summary>
         internal static string PortLabel(JsonNode? spec, string port)
         {
             if (port.StartsWith("item:", StringComparison.Ordinal))
-                return int.TryParse(port[5..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var index) ? "Item " + (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) : "Item";
+                return port.Length > 5 && port[5..].All(char.IsAsciiDigit) ? "Item " + (System.Numerics.BigInteger.Parse(port[5..], System.Globalization.CultureInfo.InvariantCulture) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) : "Item";
             var key = port.StartsWith("field:", StringComparison.Ordinal) || port.StartsWith("carry:", StringComparison.Ordinal) ? port[6..]
                 : port.StartsWith("export:", StringComparison.Ordinal) ? port[7..] : port;
             return Text(spec, "label") is { Length: > 0 } label && label != key && label.Trim().Length > 0 ? label : KeyWords(key);
@@ -334,20 +344,21 @@ public static class VisualGraphValidator
                 type = Text(operand, "type", "unknown"); var value = operand["value"];
                 var valid = ValidLiteral(type, value, operand.ContainsKey("value"), snapshot);
                 if (!valid) Error(Id(node), operand["type"] is not JsonValue tv || !tv.TryGetValue<string>(out var named) || named.Length == 0 ? $"{subject} has a value without a type"
-                    : !KnownType(type) ? $"{subject} has a value of unknown type {type}" : $"{subject} is not a valid {Words.TypeLabel(Root, type)} value", port);
+                    : !KnownType(type) ? $"{subject} has a value of unknown type {Words.Name(type)}" : $"{subject} is not a valid {Words.TypeLabel(Root, type)} value", port);
                 if (Number(value) is { } number && (Number(spec["min"]) is { } min && number < min || Number(spec["max"]) is { } max && number > max || Bool(spec, "integer") && Math.Truncate(number) != number))
                     Error(Id(node), $"{subject} must be {Words.Range(Number(spec["min"]), Number(spec["max"]), Bool(spec, "integer"))}", port);
-                // Input constraints restrict authored values only; a wire is constrained by its type. A value equal to an
-                // allowed value is accepted (a constant list); otherwise a list, where the input accepts one, is checked
-                // item by item (a multiple select), and anything else is one value.
+                // Input constraints restrict authored values only; a wire is constrained by its type. When any allowed
+                // value is itself a list (a constant list), only a value equal to one of them is accepted. When every
+                // allowed value is a scalar, a list, where the input accepts one, is checked item by item (a multiple
+                // select; an empty list passes and minItems decides), and anything else must equal an allowed value.
                 var types = Strings(spec["types"]);
                 if (spec["enum"] is JsonArray allowed && !allowed.Any(v => JsonNode.DeepEquals(v, value)))
                 {
                     var labels = spec["enumLabels"];
-                    if (value is JsonArray items && types.Contains("array"))
+                    if (value is JsonArray items && types.Contains("array") && !allowed.Any(v => v is JsonArray))
                     {
                         if (!items.All(item => allowed.Any(v => JsonNode.DeepEquals(v, item))))
-                            Error(Id(node), allowed.Any(v => v is JsonArray) ? $"{subject} must be {Words.Choices(allowed, labels, "one of ")}" : $"{subject} may only contain {Words.Choices(allowed, labels, "")}", port);
+                            Error(Id(node), $"{subject} may only contain {Words.Choices(allowed, labels, "")}", port);
                     }
                     else Error(Id(node), $"{subject} must be {Words.Choices(allowed, labels, "one of ")}", port);
                 }
@@ -391,7 +402,7 @@ public static class VisualGraphValidator
             if (services.Items[service] is not JsonObject schema) { errors.Add(new(id, $"{service} is not available in this Home Assistant, so its fields cannot be checked", 2, InputId: "service")); return; }
             var known = schema["fields"] as JsonObject ?? [];
             var fields = cfg["fields"] as JsonObject ?? [];
-            foreach (var (key, _) in fields) if (!known.ContainsKey(key)) Error(id, $"{service} has no field {key}", "field:" + key);
+            foreach (var (key, _) in fields) if (!known.ContainsKey(key)) Error(id, $"{service} has no field {Words.Name(key)}", "field:" + key);
             foreach (var (key, field) in known) if (Bool(field, "required") && !fields.ContainsKey(key)) Error(id, $"{service} needs a value for {Words.PortLabel(field, key)}", "fields");
             var wired = incoming.ContainsKey((id, "target"));
             var response = Text(schema, "response", "none"); var returnResponse = Bool(cfg, "returnResponse");
@@ -404,7 +415,7 @@ public static class VisualGraphValidator
             var accepted = Words.Or(domains.Select(d => Words.DomainWords(d).ToLowerInvariant()));
             foreach (var entity in entities)
                 if (entity is JsonValue ev && ev.TryGetValue<string>(out var entityId) && entityId is not ("all" or "none") && !domains.Contains(entityId.Split('.')[0]))
-                    Error(id, $"{service} only accepts {accepted} entities; {entityId} is not " + (entityId.IndexOf('.') > 0 ? "one" : "an entity"), "target");
+                    Error(id, $"{service} only accepts {accepted} entities; {Words.Name(entityId)} is not " + (entityId.IndexOf('.') > 0 ? "one" : "an entity"), "target");
         }
         /// <summary>
         /// The target rules of a service node, with or without services. A target the service does not take is an
@@ -463,7 +474,7 @@ public static class VisualGraphValidator
             }
             foreach (var port in Strings(spec["requiredExecution"])) if (!outgoing[id].Any(e => FlowPort(node, e) == port)) Error(id, "Execution connection is required", port, port);
             if (Text(spec, "argumentStorage") == "arguments" && cfg["arguments"] is JsonObject arguments)
-                foreach (var (name, _) in arguments) if (!DataInputs(node, Owner(node)).ContainsKey(name)) Error(id, $"Unknown input {name}", name);
+                foreach (var (name, _) in arguments) if (!DataInputs(node, Owner(node)).ContainsKey(name)) Error(id, $"Unknown input {Words.Name(name)}", name);
             var resolved = new Dictionary<string, string?>();
             foreach (var (port, rule) in DataInputs(node, Owner(node)))
             {
@@ -527,7 +538,7 @@ public static class VisualGraphValidator
             {
                 var owner = Owner(node);
                 if (owner == null || Text(Spec(owner), "dynamicOutputs") != "loop") Error(id, "A Loop result step must be inside the body of a loop", code: "scope.loopResult");
-                if (cfg["values"] is JsonObject values) foreach (var (name, _) in values) if (!DataInputs(node, owner).ContainsKey(name)) Error(id, $"Unknown loop value {name}", name);
+                if (cfg["values"] is JsonObject values) foreach (var (name, _) in values) if (!DataInputs(node, owner).ContainsKey(name)) Error(id, $"Unknown loop value {Words.Name(name)}", name);
             }
         }
     }

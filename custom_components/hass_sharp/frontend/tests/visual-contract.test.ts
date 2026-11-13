@@ -3,6 +3,7 @@ import fixtureCases from '../../../../tests/fixtures/visual-graph-validation.jso
 import servicesFixture from '../../../../tests/fixtures/visual-services.json'
 import * as contract from '../src/visual/contract'
 import type { Graph } from '../src/visual/contract'
+import { connectionIndex } from '../src/visual/connectionIndex'
 
 interface ValidationCase {
   name: string; graph: unknown; valid: boolean; nodeId?: string; inputId?: string; contains?: string
@@ -54,6 +55,8 @@ describe('shared visual graph validation contract', () => {
     // A case without `messages` expects none: a warning only one validator raises cannot pass by omission.
     expect(diagnostics.map(d => d.message).sort()).toEqual([...(fixture.messages ?? [])].sort())
     expect(diagnostics.flatMap(d => d.code ? [d.code] : []).sort()).toEqual([...(fixture.codes ?? [])].sort())
+    // Every code the validator emits is declared, as the C# runner checks against VisualGraphValidator.Codes.
+    for (const d of diagnostics) if (d.code !== undefined) expect(contract.diagnosticCodes as readonly string[], fixture.name).toContain(d.code)
     for (const d of diagnostics) expect(d.message, 'message wording').not.toMatch(jargon)
   })
 })
@@ -253,27 +256,54 @@ it('blocks a connection only on cycle and scope errors themselves, not on a name
   expect(contract.validateGraph(graph).map(d => d.message)).toEqual(['Message uses variable cycle_scope, which no earlier step provides with a single type'])
   expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).not.toThrow()
 })
-describe('blocking a new connection by diagnostic code (fix round 1)', () => {
+describe('refusing a connection only for a problem it causes (fix round 2)', () => {
   const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
   const trigger = { id: 't', kind: 'trigger', config: { type: 'manual' } }
   const producer = { id: 'a', kind: 'set_value', config: { type: 'number', value: lit('number', 1) } }
   const delay = { id: 'd', kind: 'delay', config: { seconds: lit('number', 2) } }
   const base = (extra: object[], edges: object[]) => ({ version: 5 as const, name: 'Blocking', nodes: [trigger, producer, delay, ...extra],
     edges: [{ id: 'ta', source: 't', target: 'a' }, { id: 'ad', source: 'a', target: 'd' }, ...edges] })
-  it('rejects any connection while the graph already has an execution cycle', () => {
-    const graph = base([{ id: 'x', kind: 'log', config: { value: lit('string', 'x') } }, { id: 'y', kind: 'log', config: { value: lit('string', 'y') } }],
-      [{ id: 'dx', source: 'd', target: 'x' }, { id: 'xy', source: 'x', target: 'y' }, { id: 'yx', source: 'y', target: 'x' }])
+  const cycle = () => base([{ id: 'x', kind: 'log', config: { value: lit('string', 'x') } }, { id: 'y', kind: 'log', config: { value: lit('string', 'y') } }],
+    [{ id: 'dx', source: 'd', target: 'x' }, { id: 'xy', source: 'x', target: 'y' }, { id: 'yx', source: 'y', target: 'x' }])
+  const conditionResult = () => base([{ id: 'r', kind: 'condition_result', config: { value: lit('boolean', true) } }], [{ id: 'dr', source: 'd', target: 'r' }])
+  // A value made in a For each body cannot reach the step after the loop.
+  const loop = (extra: object[] = [], edges: object[] = []) => ({ version: 5 as const, name: 'Scope', nodes: [trigger,
+    { id: 'f', kind: 'foreach', config: { items: lit('array', [1, 2]), itemType: 'number' } },
+    { id: 'b', kind: 'set_value', config: { type: 'number', value: lit('number', 1) } }, delay, ...extra],
+    edges: [{ id: 'tf', source: 't', target: 'f' }, { id: 'fb', source: 'f', target: 'b', port: 'body' }, { id: 'fd', source: 'f', target: 'd', port: 'next' }, ...edges] })
+  const crossing = 'Seconds cannot use this value here: it is on the other side of a loop or parallel branch boundary'
+  const quick = (graph: contract.Graph, ...wire: [string, string, string, string]) => connectionIndex(graph).verdict(...wire).message
+
+  it('accepts an unrelated wire while the graph already has an execution cycle', () => {
+    const graph = cycle()
     expect(contract.validateGraph(graph).filter(contract.blockingDiagnostic).map(d => d.code)).toContain('cycle.execution')
-    expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).toThrow('Execution cycle is forbidden')
+    expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).not.toThrow()
+    expect(quick(graph, 'a', 'value', 'd', 'seconds')).toBeUndefined()
   })
-  it('rejects any connection while the graph already has a scope error', () => {
-    const graph = base([{ id: 'r', kind: 'condition_result', config: { value: lit('boolean', true) } }], [{ id: 'dr', source: 'd', target: 'r' }])
-    expect(contract.validateGraph(graph).map(d => d.code)).toContain('scope.conditionResult')
-    expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).toThrow('A Condition result step must be inside the condition of a While or Until loop')
-    const loop = base([{ id: 'r', kind: 'loop_result', config: { values: {} } }], [{ id: 'dr', source: 'd', target: 'r' }])
-    expect(() => contract.connectData(loop, 'a', 'value', 'd', 'seconds')).toThrow('A Loop result step must be inside the body of a loop')
+  it('accepts an unrelated wire while the graph already has a step outside its loop', () => {
+    for (const graph of [conditionResult(), base([{ id: 'r', kind: 'loop_result', config: { values: {} } }], [{ id: 'dr', source: 'd', target: 'r' }])]) {
+      expect(contract.validateGraph(graph).some(contract.blockingDiagnostic)).toBe(true)
+      expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).not.toThrow()
+      expect(quick(graph, 'a', 'value', 'd', 'seconds')).toBeUndefined()
+    }
   })
-  it('does not block on a node whose id merely reads like a code', () => {
+  it('still refuses a wire that itself makes a data cycle, with or without a cycle already there', () => {
+    const own = loop([{ id: 'c', kind: 'convert', config: { type: 'number', value: { kind: 'unset' } } }], [{ id: 'dc', source: 'd', target: 'c' }])
+    for (const graph of [own, { ...own, edges: [...own.edges, ...cycle().edges.slice(2).map(e => ({ ...e, id: 'z' + e.id }))], nodes: [...own.nodes, ...cycle().nodes.slice(3)] }]) {
+      expect(() => contract.connectData(graph, 'c', 'value', 'c', 'value')).toThrow('Data cycle is forbidden')
+      expect(quick(graph, 'c', 'value', 'c', 'value')).toContain('Data cycle is forbidden')
+    }
+  })
+  it('still refuses a wire that itself crosses a scope, with or without a scope error already there', () => {
+    const plain = loop()
+    const broken = loop([{ id: 'r', kind: 'condition_result', config: { value: lit('boolean', true) } }], [{ id: 'dr', source: 'd', target: 'r' }])
+    expect(contract.validateGraph(broken).map(d => d.code)).toContain('scope.conditionResult')
+    for (const graph of [plain, broken]) {
+      expect(() => contract.connectData(graph, 'b', 'value', 'd', 'seconds')).toThrow(crossing)
+      expect(quick(graph, 'b', 'value', 'd', 'seconds')).toBe(crossing)
+    }
+  })
+  it('does not count a node whose id merely reads like a code as blocking', () => {
     const graph = base([{ id: 'cycle_count', kind: 'log', config: { value: { kind: 'variable', name: 'scope.data' } } }], [{ id: 'dc', source: 'd', target: 'cycle_count' }])
     expect(contract.validateGraph(graph).some(contract.blockingDiagnostic)).toBe(false)
     expect(contract.validateGraph(graph)).not.toEqual([])

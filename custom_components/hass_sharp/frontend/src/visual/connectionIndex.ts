@@ -1,6 +1,6 @@
 import {
   analyzeGraph,
-  blockingDiagnostic,
+  closesDataCycle,
   inputSubject,
   comparisonDiagnostics,
   connectData,
@@ -39,8 +39,8 @@ export interface ConnectionIndex {
   verdict(source: string, sourcePort: string, target: string, targetPort: string): ConnectionVerdict
 }
 
-// connectData rejects a new diagnostic, any diagnostic on the target input or source output, and any cycle or scope error.
-const blocking = blockingDiagnostic
+// connectData rejects a new diagnostic, any diagnostic on the target input or source output, and a wire that lies on a
+// data cycle. A cycle or scope error the graph already has rejects nothing on its own.
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const pairKey = (a: string | null, b: string) => JSON.stringify([a, b])
 
@@ -59,8 +59,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
   const analysis = analyzeGraph(graph, catalog)
   const { diagnostics, origins } = analysis
   const old = new Set(diagnostics.map(d => JSON.stringify(d)))
-  // Diagnostics that can reject a candidate on their own: by message, or by the node input/port they name.
-  const blockingAll = diagnostics.flatMap((d, i) => (blocking(d) ? [i] : []))
+  // Diagnostics that reject a candidate on their own: those naming the node input or port it touches.
   const byInput = new Map<string, number[]>(), byPort = new Map<string, number[]>()
   const add = (map: Map<string, number[]>, key: string, i: number) => map.set(key, [...(map.get(key) ?? []), i])
   diagnostics.forEach((d, i) => {
@@ -138,7 +137,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       (o.kind === 'serviceTarget' && o.node === targetId && (targetPort === 'target' || targetPort.startsWith('field:')))
     const messages = new Set<string>()
     // Carried-over diagnostics reject when they match connectData's filters.
-    for (const i of [...blockingAll, ...(byInput.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(sourceId, sourcePort)) ?? [])].sort((a, b) => a - b))
+    for (const i of [...(byInput.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(sourceId, sourcePort)) ?? [])].sort((a, b) => a - b))
       if (!volatile(origins[i])) messages.add(diagnostics[i].message)
     // The new edge, as the validator types it.
     const output = dataOutputs(source, catalog)[sourcePort]
@@ -149,14 +148,17 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       if (!input.types.some(t => index.assignable(output.type, t))) messages.add(incompatibleInput(target, input, targetPort, output.type, catalog))
       if (!analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
     }
-    if (sourceId === targetId || (hasDataCycle ? dataCycleAfter(analysis, sourceId, targetId, targetPort) : reach(targetId).has(sourceId))) messages.add('Data cycle is forbidden')
+    // The new wire lies on a cycle. Without one in the graph, a path from the target back to the source cannot use
+    // the wire it replaces, so the memoised reach of the current graph answers.
+    const rewired = () => [...analysis.data.filter(e => !(e.target === targetId && e.targetPort === targetPort)), { source: sourceId, target: targetId }]
+    if (sourceId === targetId || (hasDataCycle ? closesDataCycle(rewired(), sourceId, targetId) : reach(targetId).has(sourceId))) messages.add('Data cycle is forbidden')
     if (spec.comparison && input) {
       const resolved = { ...analysis.resolved.get(targetId), [targetPort]: output?.type }
       for (const d of comparisonDiagnostics(target, spec, resolved, catalog))
         if (d.inputId === targetPort || !old.has(JSON.stringify(d))) messages.add(d.message)
     }
-    // The service checks that a wired target or field changes: a target the service does not take, and a field that
-    // repeats a key the target brings. They name the target input, so only a wire into it, or a new one, rejects.
+    // The service checks that a wired target or field changes: a target the service does not take, and a field named
+    // like a target key once the target is set. They name the target input, so only a wire into it, or a new one, rejects.
     if (spec.dynamicInputs === 'service' && (targetPort === 'target' || targetPort.startsWith('field:'))) {
       const connected = (port: string) => port === targetPort || analysis.data.some(e => e.target === targetId && e.targetPort === port)
       for (const d of serviceTargetDiagnostics(target, connected, catalog))
@@ -205,22 +207,4 @@ function storageIsPrivate(node: GraphNode, port: string, spec: NodeSpec) {
   if (port.startsWith('item:')) return Array.isArray(node.config.items)
   if (node.kind === 'loop_result') return node.config.values === undefined || record(node.config.values)
   return !sharedConfigKeys(node.kind, spec).has(port)
-}
-
-/** Whether the data edges, with the target input rewired to the new source, contain any cycle. */
-function dataCycleAfter(analysis: GraphAnalysis, sourceId: string, targetId: string, targetPort: string) {
-  const adjacency = new Map<string, string[]>()
-  const link = (from: string, to: string) => adjacency.set(from, [...(adjacency.get(from) ?? []), to])
-  for (const edge of analysis.data) if (!(edge.target === targetId && edge.targetPort === targetPort)) link(edge.source, edge.target)
-  link(sourceId, targetId)
-  const active = new Set<string>(), done = new Set<string>()
-  const visit = (id: string): boolean => {
-    if (active.has(id)) return true
-    if (done.has(id)) return false
-    active.add(id)
-    const cyclic = (adjacency.get(id) ?? []).some(visit)
-    active.delete(id); done.add(id)
-    return cyclic
-  }
-  return [...analysis.nodes.keys()].some(visit)
 }

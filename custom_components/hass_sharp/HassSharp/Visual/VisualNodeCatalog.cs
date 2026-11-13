@@ -148,9 +148,13 @@ public static class VisualNodeCatalog
             }
         }
         if (dynamic == "items" && node["config"]?["items"] is JsonArray items)
-            for (var i = 0; i < items.Count; i++) ports["item:" + i] = Input(all, true, "Array item " + i);
+            // Labelled as in contract.ts: list items count from 1.
+            for (var i = 0; i < items.Count; i++) { var item = Input(all, true, "Array item " + (i + 1)); item["label"] = "Item " + (i + 1); ports["item:" + i] = item; }
         if (dynamic == "loop" && loopOwner != null) foreach (var key in new[] { "carry", "exports" }) foreach (var item in Declarations(loopOwner, key))
-            ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = Input([Text(item, "type")], false, "Next " + key + " value");
+        {
+            var port = Input([Text(item, "type")], false, "Next " + key + " value"); port["label"] = Text(item, "name");
+            ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = port;
+        }
         return ports;
     }
     public static JsonNode? InputValue(JsonObject node, string port, VisualCatalogSnapshot? snapshot = null) => TryGetInputValue(node, port, out var value, snapshot) ? value : null;

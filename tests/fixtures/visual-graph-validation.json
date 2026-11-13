@@ -12084,5 +12084,958 @@
     "codes": [
       "scope.loopResult"
     ]
+  },
+  {
+    "name": "service constant list field rejects an empty list",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "pair": {
+                "kind": "literal",
+                "type": "array",
+                "value": []
+              }
+            },
+            "returnResponse": false,
+            "target": {
+              "kind": "unset"
+            },
+            "service": "hass_sharp_test.selectors"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:s",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "field:pair",
+    "contains": "hass_sharp_test.selectors: Pair must be Both",
+    "messages": [
+      "hass_sharp_test.selectors: Pair must be Both"
+    ]
+  },
+  {
+    "name": "service constant list field rejects a list holding its list",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "pair": {
+                "kind": "literal",
+                "type": "array",
+                "value": [
+                  [
+                    1,
+                    2
+                  ]
+                ]
+              }
+            },
+            "returnResponse": false,
+            "target": {
+              "kind": "unset"
+            },
+            "service": "hass_sharp_test.selectors"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:s",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "field:pair",
+    "contains": "hass_sharp_test.selectors: Pair must be Both",
+    "messages": [
+      "hass_sharp_test.selectors: Pair must be Both"
+    ]
+  },
+  {
+    "name": "service field with a target key rejected with services too",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "entity_id": {
+                "kind": "literal",
+                "type": "entity_id",
+                "value": "light.hall"
+              }
+            },
+            "returnResponse": false,
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.kitchen"
+              }
+            },
+            "service": "light.turn_on"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:s",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "light.turn_on has a target, so it cannot also have a field named entity_id",
+    "messages": [
+      "light.turn_on has a target, so it cannot also have a field named entity_id",
+      "light.turn_on has no field entity_id"
+    ]
+  },
+  {
+    "name": "service field with an empty key is named Unnamed",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "": {
+                "kind": "literal",
+                "type": "number",
+                "value": 1
+              }
+            },
+            "returnResponse": false,
+            "target": {
+              "kind": "unset"
+            },
+            "service": "light.turn_on"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:s",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "field:",
+    "contains": "light.turn_on has no field Unnamed",
+    "messages": [
+      "light.turn_on has no field Unnamed"
+    ]
+  },
+  {
+    "name": "code graph.name: a blank name",
+    "graph": {
+      "version": 5,
+      "name": "  ",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:l",
+          "source": "t",
+          "target": "l"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "Graph name is required",
+    "messages": [
+      "Graph name is required"
+    ],
+    "codes": [
+      "graph.name"
+    ]
+  },
+  {
+    "name": "code graph.shape: nodes is not a list",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": {},
+      "edges": []
+    },
+    "valid": false,
+    "contains": "Nodes and edges arrays are required",
+    "messages": [
+      "Nodes and edges arrays are required"
+    ],
+    "codes": [
+      "graph.shape"
+    ]
+  },
+  {
+    "name": "code graph.limit: no nodes",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [],
+      "edges": []
+    },
+    "valid": false,
+    "contains": "Graph limit: 1–256 nodes and at most 512 edges",
+    "messages": [
+      "Graph limit: 1–256 nodes and at most 512 edges"
+    ],
+    "codes": [
+      "graph.limit"
+    ]
+  },
+  {
+    "name": "code graph.noTrigger: no trigger",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "contains": "At least one trigger is required",
+    "messages": [
+      "At least one trigger is required",
+      "Every node must be reachable by execution from a trigger"
+    ],
+    "codes": [
+      "graph.noTrigger",
+      "node.unreachable"
+    ]
+  },
+  {
+    "name": "code node.invalid: a node without config",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log"
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:l",
+          "source": "t",
+          "target": "l"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "Each node requires id and config",
+    "messages": [
+      "Each node requires id and config",
+      "Edge endpoint missing"
+    ],
+    "codes": [
+      "edge.endpoint",
+      "node.invalid"
+    ]
+  },
+  {
+    "name": "code node.duplicate: two nodes with one id",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:l",
+          "source": "t",
+          "target": "l"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "contains": "Duplicate node id",
+    "messages": [
+      "Duplicate node id"
+    ],
+    "codes": [
+      "node.duplicate"
+    ]
+  },
+  {
+    "name": "code edge.invalid: an edge without id",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "t",
+          "target": "l"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "Edge id is required",
+    "messages": [
+      "Edge id is required",
+      "Every node must be reachable by execution from a trigger"
+    ],
+    "codes": [
+      "edge.invalid",
+      "node.unreachable"
+    ]
+  },
+  {
+    "name": "code edge.duplicate: two edges with one id",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "m",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:l",
+          "source": "t",
+          "target": "l"
+        },
+        {
+          "id": "t:l",
+          "source": "l",
+          "target": "m"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "Duplicate edge id",
+    "messages": [
+      "Duplicate edge id"
+    ],
+    "codes": [
+      "edge.duplicate"
+    ]
+  },
+  {
+    "name": "code edge.endpoint: an edge to a missing step",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:l",
+          "source": "t",
+          "target": "l"
+        },
+        {
+          "id": "l:x",
+          "source": "l",
+          "target": "x"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "Edge endpoint missing",
+    "messages": [
+      "Edge endpoint missing"
+    ],
+    "codes": [
+      "edge.endpoint"
+    ]
+  },
+  {
+    "name": "code edge.unknownKind: an edge of another kind",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:l",
+          "source": "t",
+          "target": "l"
+        },
+        {
+          "id": "l:t",
+          "kind": "other",
+          "source": "l",
+          "target": "t"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "This wire is neither a step order wire nor a value wire",
+    "messages": [
+      "This wire is neither a step order wire nor a value wire"
+    ],
+    "codes": [
+      "edge.unknownKind"
+    ]
+  },
+  {
+    "name": "code edge.valueWirePins: a value wire without pins",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:s",
+          "source": "t",
+          "target": "s"
+        },
+        {
+          "id": "s:l",
+          "source": "s",
+          "target": "l"
+        },
+        {
+          "id": "v",
+          "kind": "data",
+          "source": "s",
+          "target": "l"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "This value wire does not join two value pins; connect value pins to value pins",
+    "messages": [
+      "This value wire does not join two value pins; connect value pins to value pins"
+    ],
+    "codes": [
+      "edge.valueWirePins"
+    ]
+  },
+  {
+    "name": "code port.unknownExecution: a step order wire from a pin the step lacks",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:l",
+          "source": "t",
+          "target": "l",
+          "port": "sideways"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "Unknown execution port",
+    "messages": [
+      "Unknown execution port"
+    ],
+    "codes": [
+      "port.unknownExecution"
+    ]
+  },
+  {
+    "name": "code port.executionTaken: two step order wires from one pin",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "m",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:l",
+          "source": "t",
+          "target": "l"
+        },
+        {
+          "id": "t:m",
+          "source": "t",
+          "target": "m"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "Only one execution edge per port",
+    "messages": [
+      "Only one execution edge per port"
+    ],
+    "codes": [
+      "port.executionTaken"
+    ]
+  },
+  {
+    "name": "code port.unknownInput: a value wire into a pin the step lacks",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:s",
+          "source": "t",
+          "target": "s"
+        },
+        {
+          "id": "s:l",
+          "source": "s",
+          "target": "l"
+        },
+        {
+          "id": "v",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "volume"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "contains": "This value wire goes into Volume, which this step does not have",
+    "messages": [
+      "This value wire goes into Volume, which this step does not have"
+    ],
+    "codes": [
+      "port.unknownInput"
+    ]
+  },
+  {
+    "name": "code trigger.incoming: a step order wire into the trigger",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:l",
+          "source": "t",
+          "target": "l"
+        },
+        {
+          "id": "l:t",
+          "source": "l",
+          "target": "t"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "Trigger cannot have incoming execution edges",
+    "messages": [
+      "Execution cycle is forbidden",
+      "Trigger cannot have incoming execution edges"
+    ],
+    "codes": [
+      "cycle.execution",
+      "trigger.incoming"
+    ]
+  },
+  {
+    "name": "message wording: a list item port of any length counts from 1",
+    "graph": {
+      "version": 5,
+      "name": "Codes",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "set_value",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "a",
+          "kind": "array_create",
+          "config": {
+            "items": [
+              {
+                "kind": "literal",
+                "type": "number",
+                "value": 1
+              }
+            ]
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:s",
+          "source": "t",
+          "target": "s"
+        },
+        {
+          "id": "s:a",
+          "source": "s",
+          "target": "a"
+        },
+        {
+          "id": "v",
+          "kind": "data",
+          "source": "s",
+          "target": "a",
+          "sourcePort": "value",
+          "targetPort": "item:99999999999999999999"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "a",
+    "contains": "This value wire goes into Item 100000000000000000000, which this step does not have",
+    "messages": [
+      "This value wire goes into Item 100000000000000000000, which this step does not have"
+    ],
+    "codes": [
+      "port.unknownInput"
+    ]
   }
 ]

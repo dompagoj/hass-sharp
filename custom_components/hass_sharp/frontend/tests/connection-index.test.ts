@@ -7,7 +7,7 @@ import type { Graph, VisualCatalogSnapshot } from '../src/visual/contract'
 import { connectionIndex } from '../src/visual/connectionIndex'
 import { connectNodes, createGraph, dataConnectionError, inputType, literal, nodeInputs, updateNode } from '../src/visual/graph'
 
-interface ValidationCase { name: string; graph: unknown; services?: boolean; catalogPatch?: Record<string, unknown> }
+interface ValidationCase { name: string; graph: unknown; services?: boolean; catalogPatch?: Record<string, unknown>; codes?: string[] }
 const services = servicesFixture as unknown as contract.ServicesSection
 // The same catalog patching as visual-contract.test.ts.
 function patched(patch: Record<string, unknown>): VisualCatalogSnapshot {
@@ -33,7 +33,9 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below.
-const GRAPHS = 203, PAIRS = 657, ACCEPTED = 238, BY_VALIDATION = 135, SERVICES_ACCEPTED = 189, SERVICES_BY_VALIDATION = 142
+const GRAPHS = 221, PAIRS = 691, ACCEPTED = 278, BY_VALIDATION = 125, SERVICES_ACCEPTED = 225, SERVICES_BY_VALIDATION = 134
+// The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit).
+const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config']
 const RICH: Totals = { graphs: 21, pairs: 190, accepted: 38, rejected: 152, byValidation: 0, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 
@@ -79,8 +81,20 @@ describe('connection index agrees with connectData', () => {
     }
     // Pinned: a fixture change that alters these is visible here. No fixture pair needs the full check.
     expect(sum).toEqual(withServices
-      ? { graphs: GRAPHS, pairs: PAIRS, accepted: SERVICES_ACCEPTED, rejected: PAIRS - SERVICES_ACCEPTED, byValidation: SERVICES_BY_VALIDATION, fallbacks: [], skipped: [] }
-      : { graphs: GRAPHS, pairs: PAIRS, accepted: ACCEPTED, rejected: PAIRS - ACCEPTED, byValidation: BY_VALIDATION, fallbacks: [], skipped: [] })
+      ? { graphs: GRAPHS, pairs: PAIRS, accepted: SERVICES_ACCEPTED, rejected: PAIRS - SERVICES_ACCEPTED, byValidation: SERVICES_BY_VALIDATION, fallbacks: [], skipped: SKIPPED }
+      : { graphs: GRAPHS, pairs: PAIRS, accepted: ACCEPTED, rejected: PAIRS - ACCEPTED, byValidation: BY_VALIDATION, fallbacks: [], skipped: SKIPPED })
+  })
+  // A cycle or scope error a graph already has refuses no unrelated wire, in connectData and the index alike.
+  it('for graphs that already contain a cycle or a scope error, accepting unrelated wires', () => {
+    const cases = (fixtureCases as ValidationCase[]).filter(c => c.codes?.some(code => code.startsWith('cycle.') || code.startsWith('scope.')))
+    for (const prefix of ['cycle.data', 'cycle.execution', 'scope.']) expect(cases.some(c => c.codes!.some(code => code.startsWith(prefix))), prefix).toBe(true)
+    const accepted = (prefix: string) => cases.filter(c => c.codes!.some(code => code.startsWith(prefix))).reduce((n, c) => {
+      const sum = totals()
+      agree(c.name, c.graph, c.catalogPatch ? patched(c.catalogPatch) : contract.nodeCatalog, sum)
+      return n + sum.accepted
+    }, 0)
+    expect(accepted('cycle.')).toBeGreaterThan(0)
+    expect(accepted('scope.')).toBeGreaterThan(0)
   })
   it('for the shared CLR catalog graphs', () => {
     const sum = totals()
