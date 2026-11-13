@@ -74,7 +74,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             });
             var compiledConversions=new Dictionary<string,(string Source,string Target)>();
             foreach(var node in nodes.Where(n=>Text(n,"kind") is "convert" or "set_value")) {
-                var sourceType=InputType(node,"value");var target=Text(node["config"],"type");
+                // CLR conversions are between roots; Output still narrows to the declared (possibly refined) type.
+                var sourceType=VisualTypes.RootId(snapshot.Root,InputType(node,"value"));var target=VisualTypes.RootId(snapshot.Root,Text(node["config"],"type"));
                 if(snapshot.Types.TryGetValue(sourceType,out var from)&&snapshot.Types.TryGetValue(target,out var to) && snapshot.Compilation.ClassifyConversion(from.Symbol,to.Symbol).IsUserDefined)
                     compiledConversions.Add(Text(node,"id"),(ClrExpression(from.Symbol),ClrExpression(to.Symbol)));
             }
@@ -107,7 +108,6 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             Add($"private async global::System.Threading.Tasks.Task {handler}(string {nodeId},global::HassSharp.VisualScope {scope},global::HassSharp.VisualRuntime {engine}) {{");
             var authoredNames = CSharpSyntaxTree.ParseText("class Authored {"+Text(graph,"members")+"}").GetRoot().DescendantTokens().Where(t=>t.IsKind(SyntaxKind.IdentifierToken)).Select(t=>t.ValueText).ToHashSet(StringComparer.Ordinal);
             if(!authoredNames.Contains("values"))Add($"var values={scope}.Values;");
-            if(!authoredNames.Contains("responses"))Add($"var responses={scope}.Responses;");
             if(!authoredNames.Contains("lastError"))Add($"var lastError={scope}.LastError;");
             Add($"var CancellationToken={scope}.CancellationToken;");
             Add("await global::System.Threading.Tasks.Task.CompletedTask;");

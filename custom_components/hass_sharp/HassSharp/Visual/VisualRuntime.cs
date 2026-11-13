@@ -86,7 +86,6 @@ public sealed class VisualScope
 {
     internal Dictionary<(string Node,string Port),object?> Outputs {get;}=[];
     public VisualValues Values {get;internal set;}=new();
-    public Dictionary<string,JsonElement> Responses {get;}=new(StringComparer.Ordinal);
     public Exception? LastError {get;set;}
     public CancellationToken CancellationToken {get;internal set;}
     internal bool? Condition;
@@ -94,7 +93,6 @@ public sealed class VisualScope
     internal VisualScope Clone(CancellationToken token) {
         var copy=new VisualSnapshot();var result=new VisualScope{CancellationToken=token,Values=Values.Snapshot(copy),LastError=(Exception?)copy.Copy(LastError)};
         foreach(var pair in Outputs)result.Outputs.Add(pair.Key,copy.Copy(pair.Value));
-        foreach(var pair in Responses)result.Responses.Add(pair.Key,(JsonElement)copy.Copy(pair.Value)!);
         return result;
     }
 }

@@ -44,6 +44,27 @@ static class VisualTypesTests
         Check(VisualGraphValidator.Validate(wired, library.Snapshot).Count == 0, "library string parameter accepts an entity_id:light wire: " + JsonSerializer.Serialize(VisualGraphValidator.Validate(wired, library.Snapshot)));
         await Execute(wired, library.Snapshot);
 
+        // A user-defined conversion from a refined value is compiled through its root, exactly as from entity_id.
+        var wrapping = new NodeLibraryCompiler(Diagnostics).Preview([new("wrapping", """
+            public sealed record Wrapped(string Value) { public static implicit operator Wrapped(string value) => new(value); }
+            public static class Wrapping { [Node("Unwrap")] public static void Unwrap(Wrapped value, string expected) { if (value.Value != expected) throw new System.Exception("wrapped value lost"); } }
+            """, 1)]);
+        Check(wrapping.Valid, string.Join("; ", wrapping.Diagnostics.Select(d => d.Message)));
+        var generated = "";
+        var unwrap = wrapping.Snapshot.Methods.Values.Single(m => m.Method.Name == "Unwrap").Kind;
+        foreach (var source in new[] { "entity_id", "entity_id:light" })
+        {
+            var consumer = VisualGraphContract.CreateNode(unwrap, "u", wrapping.Snapshot);
+            consumer["config"]!["arguments"] = new JsonObject { ["value"] = new JsonObject { ["kind"] = "unset" }, ["expected"] = Lit("string", "light.kitchen") };
+            var converted = G(N("s", "set_value", new { type = source, value = Lit(source, "light.kitchen") }), N("c", "convert", new { type = "global::NodeLib.Wrapped", value = new { kind = "unset" } }), consumer);
+            converted["edges"]!.AsArray().Add(D("s", "c", "value")); converted["edges"]!.AsArray().Add(D("c", "u", "value"));
+            var preview = new VisualGenerator(Diagnostics).Preview(converted, wrapping.Snapshot);
+            Check(preview.Valid && preview.Source.Contains("(global::NodeLib.Wrapped)__visual_engine.Input<global::System.String>("), $"user-defined conversion from {source} is compiled: " + JsonSerializer.Serialize(preview.Diagnostics));
+            await Execute(converted, wrapping.Snapshot);
+            generated = preview.Source;
+        }
+        Check(!generated.Contains("var responses=") && !generated.Contains(".Responses"), "no legacy responses variable is generated");
+
         // Convert narrows only a value that satisfies every pattern in the target chain.
         JsonObject Narrow(string text) => G(N("s", "set_value", new { type = "string", value = Lit("string", text) }), N("c", "convert", new { type = "entity_id:light", value = new { kind = "unset" }, output = "light" }),
             N("verify", "custom", new { code = "if(values.Get<string>(\"light\",\"verify\")!=\"light.kitchen\")throw new Exception(\"narrowed value changed\");" }));
