@@ -456,7 +456,8 @@ static class HistoryTraceTests
                     """)!;
                     var saved = await Visual(new { operation = "save", id = "hallway", graph, expectedRevision = 0 });
                     Check(saved["ok"]!.GetValue<bool>() && saved["result"]!["active"]!.GetValue<bool>(), "save rejected: " + saved.ToJsonString());
-                    var source = saved["result"]!["document"]!["source"]!.GetValue<string>();
+                    var document = saved["result"]!["document"]!;
+                    var (revision, source) = (document["revision"]!.GetValue<long>(), document["source"]!.GetValue<string>());
                     var runId = (await Visual(new { operation = "run", id = "hallway", triggerId = "t" }))["result"]!["runId"]!.GetValue<string>();
                     await Until(() => JsonNode.Parse(api.GetRunTrace(runId))!["run"]!["endUtc"] != null, "manual entity run completes");
                     var trace = JsonNode.Parse(api.GetRunTrace(runId))!;
@@ -468,16 +469,26 @@ static class HistoryTraceTests
                         && payload["to_state"]!["state"]!.GetValue<string>() == "on" && payload["from_state"]!["state"]!.GetValue<string>() == "on", "manual payload in the trace: " + payload.ToJsonString());
                     var field = trace["trace"]!["events"]!.AsArray().Single(e => e!["node"]!.GetValue<string>() == "f")!;
                     Check(field["outputs"]!["value"]!["v"]!.GetValue<string>() == "on", "the step did not read the new state: " + field.ToJsonString());
-                    // The generated class does not change: a manual run reads state at dispatch, not in generated code.
-                    Check(!source.Contains("manual\":true") && (await Visual(new { operation = "read", id = "hallway" }))["result"]!["source"]!.GetValue<string>() == source, "source changed");
+                    // A manual run reads state at dispatch, not in generated code: the document keeps its revision and source.
+                    var after = (await Visual(new { operation = "read", id = "hallway" }))["result"]!;
+                    Check(after["revision"]!.GetValue<long>() == revision && after["source"]!.GetValue<string>() == source && after["currentRevisionActive"]!.GetValue<bool>(), "the manual run changed the document: " + after["revision"]);
 
-                    // When the entity has no state the run is a plain manual run and the step fails, naming the output.
-                    PyInterop.Entity = _ => null;
-                    var bare = (await Visual(new { operation = "run", id = "hallway", triggerId = "t" }))["result"]!["runId"]!.GetValue<string>();
-                    await Until(() => JsonNode.Parse(api.GetRunTrace(bare))!["run"]!["endUtc"] != null, "manual run without state completes");
-                    var failed = JsonNode.Parse(api.GetRunTrace(bare))!;
-                    Check(failed["run"]!["status"]!.GetValue<string>() == "Failed" && failed["run"]!["error"]!.GetValue<string>().Contains("t.to_state")
-                        && failed["run"]!["trigger"]!.ToJsonString() == """{"kind":"manual"}""" && failed["trace"]!["trigger"]!.ToJsonString() == """{"platform":"manual"}""", "manual run without state: " + failed.ToJsonString());
+                    // An entity with no state, a bridge that fails, or attributes that cannot be normalised: the run still
+                    // starts as a plain manual run and the step fails, naming the output.
+                    foreach (var (reader, why) in new (Func<string, HasEntityState?>, string)[] {
+                        (_ => null, "no state"),
+                        (_ => throw new InvalidOperationException("bridge down"), "bridge failure"),
+                        (id => new() { EntityId = id, State = "on", Attributes = new() { ["forecast"] = new Dictionary<object, object> { [1] = "x" } } }, "unnormalisable attributes") })
+                    {
+                        PyInterop.Entity = reader;
+                        var response = await Visual(new { operation = "run", id = "hallway", triggerId = "t" });
+                        Check(response["ok"]!.GetValue<bool>(), why + ": run request failed: " + response.ToJsonString());
+                        var bare = response["result"]!["runId"]!.GetValue<string>();
+                        await Until(() => JsonNode.Parse(api.GetRunTrace(bare))!["run"]!["endUtc"] != null, "manual run with " + why + " completes");
+                        var failed = JsonNode.Parse(api.GetRunTrace(bare))!;
+                        Check(failed["run"]!["status"]!.GetValue<string>() == "Failed" && failed["run"]!["error"]!.GetValue<string>().Contains("t.to_state")
+                            && failed["run"]!["trigger"]!.ToJsonString() == """{"kind":"manual"}""" && failed["trace"]!["trigger"]!.ToJsonString() == """{"platform":"manual"}""", "manual run with " + why + ": " + failed.ToJsonString());
+                    }
                 }
                 finally { await api.UnloadAsync(); HassPath.HassConfiguration = previous; PyInterop.Entity = entity; }
             });

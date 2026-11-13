@@ -129,8 +129,11 @@ A manual dispatch (`run` or `run_now`) builds its payload where the run starts
 a native `state` or `numeric_state` trigger naming an entity (the first of a
 list), gets the payload a real firing would carry, with the entity's current
 state (`PyInterop.Entity`, as Read entity) as both `from_state` and `to_state`,
-`numeric_state`'s configured `below`/`above`, and `manual: true`. Other triggers,
-an `entitiesExpression`, or an entity without a state give `{platform: "manual"}`.
+a native trigger's configured `id` and `attribute`, `numeric_state`'s configured
+`below`/`above`, and `manual: true` (never `for`, `description` or `context`).
+Other triggers, an `entitiesExpression`, or an entity without a state give
+`{platform: "manual"}`. So does a state that cannot be read or normalised; that is
+logged as a warning naming the entity, and the run still starts.
 The cause stays `Manual`; the run's trigger summary is `{kind: "manual"}` plus
 `entityId` when the payload names one, never `from`/`to`. Generated source is
 unchanged: the payload is built outside the generated class.

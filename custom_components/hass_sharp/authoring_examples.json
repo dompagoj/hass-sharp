@@ -218,7 +218,6 @@
           "label": "Heating for 30 minutes",
           "config": {
             "type": "ha",
-            "manual": false,
             "trigger": {
               "trigger": "state",
               "entity_id": "climate.bathroom",

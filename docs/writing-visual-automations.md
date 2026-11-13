@@ -122,11 +122,14 @@ when connected.
 run of an entity trigger gets `{platform: "entity", entity_id, from_state,
 to_state, manual: true}`; a native state or numeric state trigger gets
 `{platform, entity_id, from_state, to_state, manual: true}` for its first entity,
-and a numeric state trigger adds its configured `below` and `above`. Both states
-are the entity's current state, read as Read entity reads it, so Entity, New state
-and Previous state resolve and the run trace shows them. The run is still recorded
-as a manual run and its summary names the entity, never a change. A manual run of
-any other trigger, or of an entity that does not exist or has no state, carries
+plus its configured `id` and `attribute`, and a numeric state trigger adds its
+configured `below` and `above`. `for`, `description` and `context` are left out:
+only a real firing knows them. Both states are the entity's current state, read as
+Read entity reads it, so Entity, New state and Previous state resolve and the run
+trace shows them. The run is still recorded as a manual run and its summary names
+the entity, never a change. A manual run of any other trigger, of an entity trigger
+whose entities come from an Entities expression, or of an entity that does not
+exist or whose state cannot be read (a warning is logged), carries
 `{platform: "manual"}`, and a step reading one of those outputs fails as above.
 
 Daily schedules require a local time and an explicit time zone. Once schedules

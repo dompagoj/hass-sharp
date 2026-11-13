@@ -63,7 +63,8 @@ public partial class HassSharpManager
         var trigger = document.Graph["nodes"]!.AsArray().SingleOrDefault(n => n?["kind"]?.GetValue<string>() == "trigger" && n?["id"]?.GetValue<string>() == triggerId)?.AsObject()
             ?? throw new ArgumentException("Trigger not found");
         if (!(trigger["config"]?["manual"]?.GetValue<bool>() ?? true)) throw new InvalidOperationException("Trigger does not permit manual execution");
-        // An entity or state trigger run manually carries the entity's current state, read as the Read entity node does.
+        // An entity or state trigger run manually carries the entity's current state, read as the Read entity node does;
+        // a state that cannot be read is logged and the run starts without trigger values.
         var payload = TriggerPayload.Manual(VisualNodeCatalog.TriggerType(trigger, VisualCatalogSnapshot.BuiltIn), trigger["config"] as JsonObject, PyInterop.Entity);
         return new { version = 1, runId = _userScriptManager.DispatchManual(document.AutomationId!, "VisualAutomation", VisualNodeCatalog.EffectiveTriggerMethod(trigger), payload) };
     }

@@ -41,8 +41,10 @@ public static class TriggerPayload
     /// <summary>
     /// A manual run of a visual trigger. An <c>entity</c> trigger, or a native <c>state</c> or <c>numeric_state</c>
     /// trigger (the first of its entities), gets the payload a real firing would carry, with the entity's current
-    /// state as both the previous and the new state, and <c>manual: true</c>. Any other trigger, or an entity
-    /// without a state, gets <see cref="Manual()"/>.
+    /// state as both the previous and the new state, and <c>manual: true</c>; a native trigger also carries its
+    /// configured <c>id</c> and <c>attribute</c> (and <c>numeric_state</c> its <c>below</c>/<c>above</c>). Any other
+    /// trigger, an entity without a state, or a state that cannot be read or normalised (logged as a warning),
+    /// gets <see cref="Manual()"/>, so a manual run always starts.
     /// </summary>
     /// <param name="type">The trigger's config type, as <c>VisualNodeCatalog.TriggerType</c> resolves it.</param>
     /// <param name="currentState">Reads an entity's current state, null when it has none.</param>
@@ -60,16 +62,27 @@ public static class TriggerPayload
             },
             _ => null,
         };
-        if (string.IsNullOrEmpty(entityId) || currentState(entityId) is not { State: not null } state) return Manual();
-        var payload = type == "entity" ? EntityObject(state, state) : new JsonObject
+        if (string.IsNullOrEmpty(entityId)) return Manual();
+        try
         {
-            ["platform"] = platform, ["entity_id"] = entityId, ["from_state"] = State(state), ["to_state"] = State(state),
-        };
-        if (platform == "numeric_state")
-            foreach (var bound in new[] { "below", "above" })
-                if (native![bound] is { } value) payload[bound] = value.DeepClone();
-        payload["manual"] = true;
-        return JsonSerializer.SerializeToElement(payload);
+            if (currentState(entityId) is not { State: not null } state) return Manual();
+            var payload = type == "entity" ? EntityObject(state, state) : new JsonObject
+            {
+                ["platform"] = platform, ["entity_id"] = entityId, ["from_state"] = State(state), ["to_state"] = State(state),
+            };
+            // What the configuration knows; for, description and context cannot be known without a real firing.
+            if (native != null)
+                foreach (var key in platform == "numeric_state" ? new[] { "id", "attribute", "below", "above" } : new[] { "id", "attribute" })
+                    if (native[key] is { } value) payload[key] = value.DeepClone();
+            payload["manual"] = true;
+            return JsonSerializer.SerializeToElement(payload);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            // An unreadable state (the bridge failed, or attributes the normaliser cannot convert) must not stop the run.
+            Logger.Warn($"Manual run of the trigger for '{entityId}' used no trigger values: its state could not be read ({error.GetType().Name}: {error.Message}).");
+            return Manual();
+        }
     }
 
     public static JsonElement Startup() => Platform("startup");

@@ -118,6 +118,11 @@ static class TriggerOutputTests
         // Native state (trigger or platform key, a list uses its first entity) and numeric_state with its bounds.
         Same(Ha(new { trigger = "state", entity_id = new[] { "sensor.test", "sensor.other" }, to = "on" }), Expected(new { platform = "state", entity_id = "sensor.test", from_state = 0, to_state = 0 }));
         Same(Ha(new { platform = "state", entity_id = "sensor.test" }), Expected(new { platform = "state", entity_id = "sensor.test", from_state = 0, to_state = 0 }));
+        // The configured id and attribute are copied; for is not (it cannot be known without a real firing).
+        Same(Ha(new { trigger = "state", entity_id = "sensor.test", id = "warm", attribute = "unit", @for = "00:05:00" }),
+            Expected(new { platform = "state", entity_id = "sensor.test", from_state = 0, to_state = 0, id = "warm", attribute = "unit" }));
+        Same(Ha(new { trigger = "numeric_state", entity_id = "sensor.test", id = "hot", attribute = "unit", above = 20 }),
+            Expected(new { platform = "numeric_state", entity_id = "sensor.test", from_state = 0, to_state = 0, id = "hot", attribute = "unit", above = 20 }));
         Same(Ha(new { trigger = "numeric_state", entity_id = "sensor.test", above = 20, below = "input_number.limit" }),
             Expected(new { platform = "numeric_state", entity_id = "sensor.test", from_state = 0, to_state = 0, below = "input_number.limit", above = 20 }));
         Same(Ha(new { trigger = "numeric_state", entity_id = new[] { "sensor.test" }, below = 30.5 }), Expected(new { platform = "numeric_state", entity_id = "sensor.test", from_state = 0, to_state = 0, below = 30.5 }));
@@ -143,6 +148,21 @@ static class TriggerOutputTests
             Ha(new { trigger = "sun", @event = "sunset" }),
             new() { ["type"] = "ha" } })
             Check(ManualOf(trigger).ToString() == """{"platform":"manual"}""", $"manual payload of {trigger.ToJsonString()}: {ManualOf(trigger)}");
+
+        // A state that cannot be read, or whose attributes cannot be normalised, falls back with a warning naming the entity.
+        foreach (var (reader, what) in new (Func<string, HasEntityState?>, string)[] {
+            (_ => throw new InvalidOperationException("bridge down"), "bridge down"),
+            (id => new() { EntityId = id, State = "21", Attributes = new() { ["forecast"] = new Dictionary<object, object> { [1] = "x" } } }, "keys must be strings") })
+            foreach (var trigger in new[] { new JsonObject { ["type"] = "entity", ["entity"] = "sensor.test" }, Ha(new { trigger = "state", entity_id = "sensor.test" }) })
+            {
+                while (messages.TryDequeue(out _)) { }
+                var payload = TriggerPayload.Manual(trigger["type"]!.GetValue<string>(), trigger, reader);
+                var warning = messages.ToArray();
+                Check(payload.ToString() == """{"platform":"manual"}""" && warning.Length == 1 && warning[0].Contains("'sensor.test'") && warning[0].Contains("no trigger values") && warning[0].Contains(what),
+                    $"unreadable state of {trigger.ToJsonString()}: {payload} | {string.Join("|", warning)}");
+            }
+        try { TriggerPayload.Manual("entity", new JsonObject { ["entity"] = "sensor.test" }, _ => throw new OperationCanceledException()); throw new Exception("cancellation swallowed"); }
+        catch (OperationCanceledException) { }
     }
 
     static JsonObject Log(string id) => N(id, "log", new { value = new { kind = "unset" } });
