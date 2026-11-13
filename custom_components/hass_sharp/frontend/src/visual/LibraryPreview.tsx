@@ -1,6 +1,7 @@
 import { For, Show } from 'solid-js'
 import { dataInputs, dataOutputs, executionPorts, type VisualCatalogSnapshot } from './contract'
-import { portLabel, typeCategory, typeColor, typeLabel } from './graph'
+import { portLabel, typeCategory } from './graph'
+import { typeColor, typeLabel } from './typeLabels'
 
 export const LibraryPreview = (props: { catalog?: VisualCatalogSnapshot; sourceId: string; pending: boolean }) => {
   const nodes = () => Object.entries(props.catalog?.nodes ?? {}).filter(([, spec]) => spec.sourceId === props.sourceId)

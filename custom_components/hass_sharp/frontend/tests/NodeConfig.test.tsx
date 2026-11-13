@@ -1,105 +1,386 @@
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
-import { NodeConfig } from '../src/visual/NodeConfig'
-import { QuickAdd } from '../src/visual/QuickAdd'
-import { TriggerConfig } from '../src/visual/TriggerConfig'
-import { ValueOperand } from '../src/visual/ValueOperand'
-import { addNode, createGraph, catalogPalette, catalogCategories, type VisualGraph } from '../src/visual/graph'
-import { nodeCatalog } from '../src/visual/contract'
-import { HassCtx } from '../src/context'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
-let dispose: () => void
-let client: QueryClient
-afterEach(() => {
+import { Inspector } from '../src/visual/Inspector'
+import { FlowAdapter } from '../src/visual/FlowAdapter'
+import { QuickAdd } from '../src/visual/QuickAdd'
+import { addNode, catalogCategories, catalogPalette, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
+import { connectData, nodeCatalog, validateGraph, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
+import type { VisualDiagnostic } from '../src/visual/api'
+import { HassCtx } from '../src/context'
+import services from '../../../../tests/fixtures/visual-services.json'
+
+let dispose: (() => void) | undefined
+let client: QueryClient | undefined
+afterEach(async () => {
   dispose?.()
+  dispose = undefined
   client?.clear()
+  vi.restoreAllMocks()
   document.body.innerHTML = ''
+  await new Promise(resolve => setTimeout(resolve, 0))
 })
-function host() {
-  const host = document.createElement('div')
-  document.body.append(host)
-  return host
+const catalog = { ...nodeCatalog, services: services as unknown as ServicesSection } as VisualCatalogSnapshot
+const entity = (entity_id: string, name: string, state_options: string[] | null = null) => ({
+  entity_id, name, domain: entity_id.split('.')[0], area_id: null, device_id: null, device_class: null, supported_features: null, unit: null, icon: null, disabled: false, state_options,
+})
+const registry = {
+  entities: [entity('light.hall', 'Hall'), entity('climate.living', 'Living room', ['off', 'heat', 'cool', 'unavailable']), entity('switch.fan', 'Fan')],
+  areas: [], devices: [], floors: [], labels: [],
 }
-function change(root: Element, label: string, value: string) {
-  const field = root.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
-  expect(field, label).not.toBeNull()
+const host = () => {
+  const el = document.createElement('div')
+  el.className = 'hs-app'
+  document.body.append(el)
+  return el
+}
+const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
+const button = (root: Element, label: string) =>
+  [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === label || b.getAttribute('aria-label') === label)
+const row = (root: Element, id: string) => [...root.querySelectorAll<HTMLElement>('.hs-inspector [data-input-id]')].find(el => el.dataset.inputId === id)
+function type(field: HTMLInputElement | HTMLTextAreaElement, value: string) {
   field.value = value
-  field.dispatchEvent(new Event(field.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }))
+  field.dispatchEvent(new Event('input', { bubbles: true }))
+  field.dispatchEvent(new FocusEvent('blur'))
 }
-function mount(graph: VisualGraph, id: string) {
-  const root = host(),
-    [current, setGraph] = createSignal(graph)
+
+/** The inspector over a graph history (and the canvas beside it when asked), as the editor wires them. */
+function mount(graph: VisualGraph, id: string | undefined, options: { canvas?: boolean; diagnostics?: VisualDiagnostic[]; catalog?: VisualCatalogSnapshot } = {}) {
+  const el = host()
+  const history = createGraphHistory(graph)
+  const [selected, setSelected] = createSignal(id)
+  const [selection, setSelection] = createSignal<{ ids: string[]; edge?: string }>({ ids: id ? [id] : [] })
+  const current = options.catalog ?? catalog
   client = new QueryClient()
-  const node = () => current().nodes.find(n => n.id === id)!
+  const hass = { callWS: async (message: { type: string }) => (message.type === 'hass_sharp/get_entities' ? structuredClone(registry) : {}) }
   dispose = render(
     () => (
-      <QueryClientProvider client={client}>
-        <HassCtx.Provider value={{ callWS: async () => ({ entities: [{ entity_id: 'light.kitchen', name: 'Kitchen' }] }) } as any}>
-          <NodeConfig
-            node={node()}
-            graph={current()}
-            catalog={nodeCatalog}
-            onChange={config => setGraph({ ...current(), nodes: current().nodes.map(n => (n.id === id ? { ...n, config } : n)) })}
-            onGraphChange={setGraph}
-          />
+      <QueryClientProvider client={client!}>
+        <HassCtx.Provider value={hass as any}>
+          <div class="hs-visual-workspace">
+            {options.canvas && (
+              <FlowAdapter graph={history.graph()} catalog={current} selectedId={selected()} onSelect={setSelected}
+                onSelectionChange={(ids, edge) => setSelection({ ids, edge })} onChange={history.commit} />
+            )}
+            <Inspector graph={history.graph()} catalog={current} diagnostics={options.diagnostics ?? []} commit={history.commit}
+              selected={history.graph().nodes.find(n => n.id === selected())} selectedIds={selection().ids} selectedEdgeId={selection().edge}
+              onSelect={next => { setSelected(next); setSelection({ ids: next ? [next] : [] }) }} />
+          </div>
         </HassCtx.Provider>
       </QueryClientProvider>
     ),
-    root,
+    el,
   )
-  return { root, node, graph: current }
+  const node = (nodeId = selected()!) => history.graph().nodes.find(n => n.id === nodeId)!
+  return { el, history, node, selected, setSelected }
 }
-it.each(['condition', 'read_entity', 'wait_until'])('keeps %s entity literal picker required', kind => {
-  const { root } = mount(addNode(createGraph('Entity'), kind, 'required'), 'required')
-  change(root, 'Entity source', 'literal')
-  root.querySelector<HTMLButtonElement>('[aria-label="Entity ID"]')!.click()
-  expect(root.textContent).not.toContain('No target')
-  change(root, 'Search entities', '')
-  expect(root.textContent).not.toContain('Use ID:')
+/** Picks a service in the inspector's service picker by its id. */
+async function pickService(el: Element, id: string) {
+  el.querySelector<HTMLButtonElement>('.hs-inspector [data-input-id="service"] button[aria-label="Service"]')!.click()
+  const search = el.querySelector<HTMLInputElement>('[aria-label="Search services"]')!
+  search.value = id
+  search.dispatchEvent(new Event('input', { bubbles: true }))
+  const option = await vi.waitFor(() => {
+    const found = [...el.querySelectorAll<HTMLElement>('[role="option"]')].find(o => o.textContent?.includes(id))
+    expect(found, id).toBeDefined()
+    return found!
+  })
+  option.click()
+}
+/** The options "+ Add field" offers, by visible label. */
+function addFieldOptions(el: Element) {
+  const field = el.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Add field"]')
+  if (!field) return []
+  field.dispatchEvent(new FocusEvent('focus'))
+  field.value = ''
+  field.dispatchEvent(new Event('input', { bubbles: true }))
+  const labels = [...el.querySelectorAll('[aria-label="Add field options"] [role="option"]')].map(o => o.textContent ?? '')
+  field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  return labels
+}
+function addField(el: Element, label: string, key = '') {
+  const field = el.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Add field"]')!
+  field.value = label
+  field.dispatchEvent(new Event('input', { bubbles: true }))
+  const option = [...el.querySelectorAll<HTMLElement>('[aria-label="Add field options"] [role="option"]')].find(o => o.textContent?.startsWith(label) && o.textContent.includes(key))!
+  expect(option, label).toBeDefined()
+  option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+  option.click()
+}
+
+it('picking light.turn_on gives a lights-only target picker and "+ Add field" offering exactly its fields', async () => {
+  const graph = updateNode(createGraph('Service'), 'service-1', { config: { service: 'notify.notify', fields: {} } })
+  const { el, node } = mount(graph, 'service-1')
+  await pickService(el, 'light.turn_on')
+  expect(node().config.service).toBe('light.turn_on')
+  // The target picker offers lights only.
+  const target = row(el, 'target')!
+  expect(target).toBeDefined()
+  target.querySelector<HTMLButtonElement>('button[aria-label="Target entities"]')!.click()
+  await vi.waitFor(() => expect(el.querySelectorAll('[aria-label="Target entities results"] [role="option"]').length).toBeGreaterThan(0))
+  const offered = [...el.querySelectorAll('[aria-label="Target entities results"] [role="option"]')].map(o => o.textContent ?? '')
+  expect(offered.some(text => text.includes('light.hall'))).toBe(true)
+  expect(offered.some(text => text.includes('climate.living') || text.includes('switch.fan'))).toBe(false)
+  el.querySelector('dialog[open]')?.dispatchEvent(new Event('cancel', { cancelable: true }))
+  // "+ Add field" offers exactly light.turn_on's fields (none is stored yet), named for people.
+  const fields = Object.keys((services as any).items['light.turn_on'].fields)
+  const offeredFields = addFieldOptions(el)
+  expect(offeredFields).toHaveLength(fields.length)
+  expect(offeredFields.some(text => text.startsWith('Brightness'))).toBe(true)
+  addField(el, 'Brightness', 'brightness_pct')
+  expect(Object.keys(node().config.fields as object)).toEqual(['brightness_pct'])
+  expect(addFieldOptions(el)).toHaveLength(fields.length - 1)
+  // An optional field can be removed again.
+  button(row(el, 'field:brightness_pct')!, 'Remove Brightness')!.click()
+  expect(node().config.fields).toEqual({})
 })
-it.each([
-  ['entity_id:light', true],
-  ['entity_id', true],
-  ['string', false],
-])('edits a %s literal with the entity picker only when it refines entity_id', (type, picker) => {
-  const root = host()
+
+it('shows climate.set_hvac_mode\'s hvac_mode as a select of the chosen entity\'s state options', async () => {
+  const graph = updateNode(createGraph('Climate'), 'service-1', {
+    config: { service: 'climate.set_hvac_mode', target: lit('target', { entity_id: ['climate.living'] }), fields: { hvac_mode: { kind: 'unset' } } },
+  })
+  const { el, node } = mount(graph, 'service-1')
+  const select = await vi.waitFor(() => {
+    const found = row(el, 'field:hvac_mode')?.querySelector<HTMLSelectElement>('select')
+    expect(found).toBeTruthy()
+    return found!
+  })
+  const values = [...select.options].map(o => o.textContent).filter(text => text && !text.endsWith('…') && text !== 'Not set')
+  expect(values).toEqual(['off', 'heat', 'cool'])
+  select.value = [...select.options].find(o => o.textContent === 'heat')!.value
+  select.dispatchEvent(new Event('change', { bubbles: true }))
+  expect((node().config.fields as any).hvac_mode).toMatchObject({ kind: 'literal', value: 'heat' })
+})
+
+it('adds required fields automatically and prunes fields the new service does not have', async () => {
+  const graph = updateNode(createGraph('Prune'), 'service-1', {
+    config: { service: 'light.turn_on', target: lit('target', { entity_id: 'light.hall' }), fields: { brightness_pct: lit('number', 40), transition: lit('number', 2) } },
+  })
+  const { el, node } = mount(graph, 'service-1')
+  expect(row(el, 'field:brightness_pct')).toBeDefined()
+  await pickService(el, 'persistent_notification.create')
+  // light.turn_on's fields are gone; the required message is there without asking.
+  expect(Object.keys(node().config.fields as object)).toEqual(['message'])
+  expect(row(el, 'field:brightness_pct')).toBeUndefined()
+  const message = row(el, 'field:message')!
+  expect(message).toBeDefined()
+  expect(button(message, 'Remove Message')).toBeUndefined()
+  // A required field has no "Not set" placeholder: its editor is there.
+  expect(message.querySelector('input,textarea')).not.toBeNull()
+})
+
+it('keeps an unknown service\'s stored fields editable as plain values and says the service is not available', () => {
+  const graph = updateNode(createGraph('Gone'), 'service-1', { config: { service: 'gone.away', fields: { level: lit('number', 3) } } })
+  const { el, node } = mount(graph, 'service-1')
+  expect(el.querySelector('.hs-inspector')!.textContent).toContain('gone.away is not available in this Home Assistant')
+  const field = row(el, 'field:level')!.querySelector<HTMLInputElement>('input')!
+  expect(field.value).toBe('3')
+  type(field, '5')
+  expect((node().config.fields as any).level).toEqual(lit('number', 5))
+})
+
+it('stores a domain-filtered entity with a type the validator accepts', async () => {
+  const graph = updateNode(createGraph('Filtered'), 'service-1', { config: { service: 'hass_sharp_test.selectors', fields: {} } })
+  const { el, node, history } = mount(graph, 'service-1')
+  addField(el, 'Light')
+  const picker = row(el, 'field:light')!.querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"]')!
+  picker.click()
+  const option = await vi.waitFor(() => {
+    const found = [...el.querySelectorAll<HTMLElement>('[role="option"]')].find(o => o.textContent?.includes('light.hall'))
+    expect(found).toBeDefined()
+    return found!
+  })
+  option.click()
+  const stored = (node().config.fields as any).light
+  expect(stored).toMatchObject({ kind: 'literal', value: 'light.hall' })
+  expect(validateGraph(history.graph(), catalog).filter(d => d.nodeId === 'service-1')).toEqual([])
+})
+
+it('"Use the response": always on for a service that only answers, a switch for an optional one, absent otherwise', async () => {
+  const graph = updateNode(createGraph('Response'), 'service-1', { config: { service: 'light.turn_on', target: lit('target', { entity_id: 'light.hall' }), fields: {} } })
+  const { el, node } = mount(graph, 'service-1')
+  const toggle = () => [...el.querySelectorAll<HTMLLabelElement>('.hs-inspector .hs-insp-toggle')].find(l => l.textContent?.includes('Use the response'))?.querySelector('input')
+  expect(toggle()).toBeUndefined()
+  await pickService(el, 'todo.get_items')
+  expect(toggle()!.checked).toBe(true)
+  expect(toggle()!.disabled).toBe(true)
+  expect(node().config.returnResponse).toBe(true)
+  await pickService(el, 'hass_sharp_test.respond_optionally')
+  expect(toggle()!.disabled).toBe(false)
+  const before = toggle()!.checked
+  toggle()!.click()
+  expect(node().config.returnResponse).toBe(!before)
+  expect(toggle()!.checked).toBe(!before)
+})
+
+it('keeps values edited in the panel and on the node card in sync', async () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
+  const graph = addNode(createGraph('Sync'), 'delay', 'wait')
+  const { el, node } = mount(graph, 'wait', { canvas: true })
+  const panel = () => el.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Seconds"]')!
+  const card = () => el.querySelector<HTMLInputElement>('[data-id="wait"] .hs-card-editor input[aria-label="Seconds"]')!
+  type(panel(), '75')
+  expect(node().config.seconds).toEqual(lit('number', 75))
+  await vi.waitFor(() => expect(card().value).toBe('75'))
+  card().value = '30'
+  card().dispatchEvent(new Event('input', { bubbles: true }))
+  card().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  expect(node().config.seconds).toEqual(lit('number', 30))
+  await vi.waitFor(() => expect(panel().value).toBe('30'))
+})
+
+/** No control of the inspector makes, changes or removes a wire. */
+function expectNoWireControls(el: Element) {
+  const inspector = el.querySelector('.hs-inspector')!
+  const names = [...inspector.querySelectorAll('button, select, [role="combobox"], [role="option"]')].map(c => `${c.getAttribute('aria-label') ?? ''} ${c.textContent ?? ''}`)
+  for (const name of names) expect(name).not.toMatch(/connect|disconnect|unlink|destination|\bsource\b/i)
+  expect(inspector.textContent).not.toMatch(/Next destination|Execution|Connect /)
+}
+it('has no control that connects or disconnects, for a node with execution branches or with data inputs', () => {
+  let graph = addNode(createGraph('Wires'), 'set_value', 'temperature')
+  graph = updateNode(graph, 'temperature', { config: { type: 'number', value: lit('number', 20) } })
+  graph = addNode(graph, 'compare', 'compare')
+  graph = connectData(graph, 'temperature', 'value', 'compare', 'left')
+  const { el, setSelected } = mount(graph, 'condition-1')
+  expect(el.querySelector('.hs-inspector .hs-insp-node')).not.toBeNull()
+  expectNoWireControls(el)
+  setSelected('compare')
+  expect(row(el, 'left')).toBeDefined()
+  expectNoWireControls(el)
+})
+
+it('shows a connected input as a "From" pill without an editor, and brings the editor back with the stored value when the wire is deleted on the canvas', async () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
+  let graph = addNode(createGraph('Pill'), 'set_value', 'temperature')
+  graph = updateNode(graph, 'temperature', { config: { type: 'number', value: lit('number', 20) } })
+  graph = addNode(graph, 'compare', 'compare')
+  graph = connectData(graph, 'temperature', 'value', 'compare', 'left')
+  const { el, history, selected } = mount(graph, 'compare', { canvas: true })
+  const left = () => row(el, 'left')!
+  const pill = left().querySelector<HTMLButtonElement>('.hs-insp-pill')!
+  expect(pill.textContent).toBe('From Set value · Value')
+  expect(left().querySelector('input,select,textarea')).toBeNull()
+  // The pill selects its source.
+  pill.click()
+  expect(selected()).toBe('temperature')
+  // Back on the compare step, delete the wire on the canvas.
+  el.querySelector('[data-id="compare"]')!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+  await vi.waitFor(() => expect(selected()).toBe('compare'))
+  const wire = history.graph().edges.find(e => e.kind === 'data' && e.target === 'compare')!
+  const edge = await vi.waitFor(() => {
+    const found = [...el.querySelectorAll<HTMLElement>(".solid-flow__edge")].find(e => e.getAttribute("data-id") === wire.id)
+    expect(found).toBeDefined()
+    return found!
+  })
+  edge.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+  edge.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }))
+  expect(history.graph().edges.some(e => e.id === wire.id)).toBe(false)
+  el.querySelector('[data-id="compare"]')!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+  // The editor is back, showing what the step now stores (removing a wire leaves its input unset).
+  expect(history.graph().nodes.find(n => n.id === 'compare')!.config.left).toEqual({ kind: 'unset' })
+  const editor = await vi.waitFor(() => { const found = left()?.querySelector<HTMLInputElement>('input'); expect(found).toBeTruthy(); return found! })
+  expect(editor.value).toBe('')
+  type(editor, '7')
+  expect(history.graph().nodes.find(n => n.id === 'compare')!.config.left).toMatchObject({ kind: 'literal', value: '7' })
+  expect(left().querySelector('.hs-insp-pill')).toBeNull()
+})
+
+it('shows problems as callouts that focus their field, and names types in words with a fallback for unresolvable ones', async () => {
+  const graph = addNode(createGraph('Problems'), 'compare', 'compare')
+  const diagnostics: VisualDiagnostic[] = [{ nodeId: 'compare', inputId: 'right', message: 'Right needs a value', severity: 3, startLine: null, startColumn: null }]
+  const { el } = mount(graph, 'compare', { diagnostics })
+  const callout = button(el.querySelector('.hs-insp-problems')!, 'Right needs a value')!
+  expect(callout).toBeDefined()
+  callout.click()
+  expect(row(el, 'right')!.contains(document.activeElement)).toBe(true)
+  // Validator messages appear as they are under their field.
+  expect(row(el, 'right')!.textContent).toContain('Right needs a value')
+  const chips = [...el.querySelectorAll('.hs-inspector .hs-type-chip')].map(c => c.textContent)
+  expect(chips.length).toBeGreaterThan(0)
+  for (const chip of chips) expect(chip).not.toMatch(/Boolean|String|System\.|global::/)
+})
+
+it('falls back to the declared types when an input\'s type cannot be resolved', () => {
+  const odd = structuredClone(nodeCatalog) as VisualCatalogSnapshot
+  odd.nodes.odd_step = { ...structuredClone(odd.nodes.delay), label: 'Odd step', inputs: { mystery: { types: ['unknown', 'number'], required: false, description: '' } } } as any
+  const graph = addNode(createGraph('Odd'), 'odd_step', 'odd', odd)
+  const { el } = mount(graph, 'odd', { catalog: odd })
+  const chip = row(el, 'mystery')?.querySelector('.hs-type-chip')
+  expect(chip?.textContent).toBe('Number')
+})
+
+it('edits the title, offers Duplicate, Copy node ID and Delete, and never shows the node id', async () => {
+  const writeText = vi.fn(async () => {})
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+  const { el, history, node } = mount(addNode(createGraph('Head'), 'delay', 'wait-1234'), 'wait-1234')
+  const title = el.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Node label"]')!
+  expect(title.placeholder).toBe('Delay')
+  title.value = 'Warm up'
+  title.dispatchEvent(new Event('input', { bubbles: true }))
+  expect(node().label).toBe('Warm up')
+  expect(el.querySelector('.hs-inspector')!.textContent).not.toContain('wait-1234')
+  button(el, 'Node actions')!.click()
+  button(el, 'Copy node ID')!.click()
+  expect(writeText).toHaveBeenCalledWith('wait-1234')
+  const count = history.graph().nodes.length
+  button(el, 'Node actions')!.click()
+  button(el, 'Duplicate')!.click()
+  expect(history.graph().nodes).toHaveLength(count + 1)
+  button(el, 'Node actions')!.click()
+  button(el, 'Delete')!.click()
+  expect(history.graph().nodes).toHaveLength(count)
+})
+
+it('puts the shared usings and helper members in a Custom C# step\'s Advanced section', () => {
+  const graph = addNode(createGraph('Code'), 'custom', 'code')
+  const { el, history } = mount(graph, 'code')
+  const advanced = el.querySelector<HTMLDetailsElement>('.hs-inspector .hs-insp-advanced')!
+  expect(advanced.open).toBe(false)
+  expect(advanced.textContent).toContain('Shared C# for this automation')
+  type(advanced.querySelector<HTMLTextAreaElement>('textarea[aria-label="Usings"]')!, 'using System.Globalization;')
+  type(advanced.querySelector<HTMLTextAreaElement>('textarea[aria-label="Helper members"]')!, 'int Twice(int x) => x * 2;')
+  expect(history.graph()).toMatchObject({ imports: 'using System.Globalization;', members: 'int Twice(int x) => x * 2;' })
+  type(el.querySelector<HTMLTextAreaElement>('.hs-inspector textarea[aria-label="C# code"]')!, 'Logger.LogInformation("hi");')
+  expect(history.graph().nodes.find(n => n.id === 'code')!.config.code).toBe('Logger.LogInformation("hi");')
+})
+
+it('shows the selection count with Duplicate, Tidy selection and Delete, and a selected wire read only', () => {
+  const graph = createGraph('Many')
+  const el = host()
+  const history = createGraphHistory(graph)
+  const [ids, setIds] = createSignal<string[]>(['condition-1', 'service-1'])
+  const [edge, setEdge] = createSignal<string>()
   client = new QueryClient()
-  dispose = render(
-    () => (
-      <QueryClientProvider client={client}>
-        <HassCtx.Provider value={{ callWS: async () => ({ entities: [] }) } as any}>
-          <ValueOperand
-            label="Entity"
-            value={{ kind: 'literal', type, value: 'light.kitchen' }}
-            spec={{ types: [type], required: true, description: '' }}
-            catalog={nodeCatalog}
-            onChange={() => {}}
-          />
-        </HassCtx.Provider>
-      </QueryClientProvider>
-    ),
-    root,
-  )
-  expect(root.querySelector('[aria-label="Entity ID"]') !== null).toBe(picker)
-  expect(root.querySelector('input[aria-label="Entity"]') !== null).toBe(!picker)
+  dispose = render(() => (
+    <QueryClientProvider client={client!}>
+      <HassCtx.Provider value={{ callWS: async () => registry } as any}>
+        <Inspector graph={history.graph()} catalog={catalog} diagnostics={[]} commit={history.commit} selectedIds={ids()} selectedEdgeId={edge()} onSelect={() => {}} />
+      </HassCtx.Provider>
+    </QueryClientProvider>
+  ), el)
+  expect(el.textContent).toContain('2 steps selected')
+  button(el, 'Duplicate')!.click()
+  expect(history.graph().nodes).toHaveLength(5)
+  button(el, 'Delete')!.click()
+  expect(history.graph().nodes.map(n => n.id).filter(id => id === 'condition-1' || id === 'service-1')).toEqual([])
+  history.undo(); history.undo()
+  setIds([])
+  setEdge(history.graph().edges.find(e => e.source === 'condition-1')!.id)
+  const wire = el.querySelector('.hs-insp-wire')!
+  expect(wire.textContent).toContain('State condition')
+  expect(wire.textContent).toContain('If true')
+  expect(wire.textContent).toContain('Call service')
+  expect(wire.querySelector('select, input')).toBeNull()
+  expectNoWireControls(el)
+  setEdge(undefined)
+  // Nothing selected: the triggers as summary lines and the next step.
+  expect(el.querySelector('.hs-insp-overview')!.textContent).toContain('Select a step to edit it.')
+  expect(el.querySelectorAll('.hs-insp-trigger-line')).toHaveLength(1)
 })
-it('keeps trigger subscriptions required', () => {
-  const root = host()
-  client = new QueryClient()
-  dispose = render(
-    () => (
-      <QueryClientProvider client={client}>
-        <HassCtx.Provider value={{ callWS: async () => ({ entities: [] }) } as any}>
-          <TriggerConfig node={createGraph('Trigger').nodes[0]} onChange={() => {}} />
-        </HassCtx.Provider>
-      </QueryClientProvider>
-    ),
-    root,
-  )
-  root.querySelector<HTMLButtonElement>('[aria-label="Entity ID"]')!.click()
-  expect(root.textContent).not.toContain('No target')
-})
+
 it('categorizes every catalog node and groups and filters the quick-add palette', () => {
   const root = host()
   let chosen = ''
@@ -109,58 +390,13 @@ it('categorizes every catalog node and groups and filters the quick-add palette'
   expect(groups.map(group => group.querySelector('.hs-quick-add__category')!.textContent)).toEqual(catalogCategories().filter(c => catalogPalette().some(n => n.category === c)))
   const logic = groups.find(group => group.querySelector('.hs-quick-add__category')!.textContent === 'Logic')!
   expect(logic.querySelectorAll('[role="option"]')).toHaveLength(catalogPalette().filter(n => n.category === 'Logic').length)
-  change(root, 'Search steps', 'Xor')
+  const search = root.querySelector<HTMLInputElement>('[aria-label="Search steps"]')!
+  search.value = 'Xor'
+  search.dispatchEvent(new Event('input', { bubbles: true }))
   expect(root.querySelectorAll('[role="option"]')).toHaveLength(1)
-  root.querySelector('input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
   expect(chosen).toBe('xor')
-  change(root, 'Search steps', 'no such step anywhere')
+  search.value = 'no such step anywhere'
+  search.dispatchEvent(new Event('input', { bubbles: true }))
   expect(root.textContent).toContain('No step matches that search.')
-})
-it('offers typed named variables and keeps producer configuration unchanged', () => {
-  let graph = addNode(addNode(addNode(createGraph('Values'), 'set_value', 'text'), 'and', 'boolean'), 'if', 'if')
-  graph = {
-    ...graph,
-    nodes: graph.nodes.map(n =>
-      n.id === 'boolean'
-        ? { ...n, config: { ...n.config, output: 'is_ready' } }
-        : n.id === 'text'
-          ? { ...n, config: { ...n.config, output: 'name' } }
-          : n,
-    ),
-  }
-  const { root, node } = mount(graph, 'if')
-  change(root, 'Condition source', 'variable')
-  expect([...root.querySelectorAll('datalist option')].map(o => o.getAttribute('value'))).toEqual(['is_ready'])
-  change(root, 'Condition variable', 'is_ready')
-  expect(node().config.value).toEqual({ kind: 'variable', name: 'is_ready' })
-  change(root, 'Condition source', 'literal')
-  change(root, 'Condition', 'false')
-  expect(node().config.value).toEqual({ kind: 'literal', type: 'boolean', value: false })
-  expect(graph.nodes.find(n => n.id === 'boolean')!.config.left).toEqual({ kind: 'literal', type: 'boolean', value: true })
-})
-it('preserves intermediate numeric input, element identity/focus and invalid cleared input', () => {
-  const { root, node } = mount(addNode(createGraph('Numbers'), 'compare', 'compare'), 'compare')
-  const field = root.querySelector<HTMLInputElement>('[aria-label="Left"]')!
-  field.focus()
-  for (const value of ['-', '-2', '-2.', '-2.5']) {
-    change(root, 'Left', value)
-    expect(root.querySelector('[aria-label="Left"]')).toBe(field)
-    expect(field.value).toBe(value)
-    expect(document.activeElement).toBe(field)
-  }
-  expect(node().config.left).toEqual({ kind: 'literal', type: 'number', value: -2.5 })
-  change(root, 'Left', '')
-  expect(node().config.left).toEqual({ kind: 'literal', type: 'number', value: '' })
-  expect(field.getAttribute('aria-invalid')).toBe('true')
-  expect(root.textContent).toContain('Enter a finite number')
-})
-it('edits object and array literal JSON and explicit unset without discarding unknown config', () => {
-  const graph = addNode(createGraph('Objects'), 'object', 'call')
-  graph.nodes.at(-1)!.config.extra = { keep: true }
-  const { root, node } = mount(graph, 'call')
-  change(root, 'Object', '{"brightness":120}')
-  expect(node().config.value).toEqual({ kind: 'literal', type: 'object', value: { brightness: 120 } })
-  change(root, 'Object source', 'unset')
-  expect(node().config.value).toEqual({ kind: 'unset' })
-  expect(node().config.extra).toEqual({ keep: true })
 })

@@ -1,42 +1,111 @@
-import { For, Show, createUniqueId, createSignal, onMount, onCleanup } from 'solid-js'
-import { EntityAutocomplete } from '../components/EntityAutocomplete'
-import { Field } from '../components/Controls'
-import type { GraphNode } from './graph'
+import { createSignal, createUniqueId, For, onCleanup, onMount, Show } from 'solid-js'
 import { useHass } from '../context'
-import { JsonField } from './ValueOperand'
+import type { GraphNode, InputSpec, JsonValue } from './contract'
+import type { VisualDiagnostic } from './api'
+import { domainWords } from './typeLabels'
+import { DraftField } from './widgets/common'
+import { fitsWidget, widgetFor, WidgetControl, type Widget } from './widgets'
 
 type Config = GraphNode['config']
+type Change = (config: Config, options?: { coalesce?: string }) => void
+const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 
-function Select(props: { label: string; value: string; options: [string, string][]; onChange: (value: string) => void }) {
-  const id = createUniqueId()
+/** A 24×24 stroke icon (the same drawing style as `icons.ts`). */
+export const Glyph = (props: { paths: readonly string[]; class?: string }) => (
+  <svg class={props.class ?? 'hs-insp-glyph'} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <For each={props.paths}>{d => <path d={d} />}</For>
+  </svg>
+)
+
+/** The trigger types people choose from: HassSharp's own and the common Home Assistant platforms. */
+interface Choice { id: string; name: string; explanation: string; icon: readonly string[] }
+const clock = ['M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z', 'M12 7.5V12l3 2']
+const calendar = ['M4 6h16v14H4z', 'M4 10h16', 'M8 3v4', 'M16 3v4']
+export const triggerChoices: Choice[] = [
+  { id: 'entity', name: 'Entity changes', explanation: 'Runs whenever the entity’s state changes.', icon: ['M4 12a8 8 0 0 1 14-5.3', 'M18 3v4h-4', 'M20 12a8 8 0 0 1-14 5.3', 'M6 21v-4h4'] },
+  { id: 'state', name: 'State', explanation: 'Runs when an entity becomes a state, optionally for a while.', icon: ['M8 7h8a5 5 0 0 1 0 10H8A5 5 0 0 1 8 7z', 'M16 9.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5z'] },
+  { id: 'numeric_state', name: 'Numeric state', explanation: 'Runs when a number rises above or drops below a limit.', icon: ['M4 19h16', 'M4 15l4-4 4 3 7-7', 'M15 7h4v4'] },
+  { id: 'time', name: 'Time', explanation: 'Runs at a time of day, or the time a helper holds.', icon: clock },
+  { id: 'daily', name: 'Every day', explanation: 'Runs every day at a set time in a set time zone.', icon: calendar },
+  { id: 'once', name: 'Once', explanation: 'Runs one time, at a set date and time.', icon: [...calendar, 'M12 14.5v.5'] },
+  { id: 'time_pattern', name: 'Time pattern', explanation: 'Runs every so many hours, minutes or seconds.', icon: ['M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z', 'M12 3v3', 'M12 18v3', 'M3 12h3', 'M18 12h3'] },
+  { id: 'sun', name: 'Sunrise or sunset', explanation: 'Runs at sunrise or sunset, with an optional offset.', icon: ['M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8z', 'M12 2v2', 'M12 20v2', 'M2 12h2', 'M20 12h2', 'M4.9 4.9l1.4 1.4', 'M17.7 17.7l1.4 1.4', 'M4.9 19.1l1.4-1.4', 'M17.7 6.3l1.4-1.4'] },
+  { id: 'zone', name: 'Zone', explanation: 'Runs when someone enters or leaves a zone.', icon: ['M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z', 'M12 7.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5z'] },
+  { id: 'event', name: 'Event', explanation: 'Runs when an event fires in Home Assistant.', icon: ['M3 12h4l2-6 4 12 2-6h6'] },
+  { id: 'startup', name: 'Home Assistant starts', explanation: 'Runs once each time Home Assistant starts.', icon: ['M12 3v8', 'M6.3 6.3a8 8 0 1 0 11.4 0'] },
+  { id: 'manual', name: 'Only manually', explanation: 'Runs only when started with Run now or by another automation.', icon: ['M7 4.5v15l12-7.5z'] },
+  { id: 'other', name: 'Other trigger', explanation: 'Any other trigger an integration in Home Assistant offers.', icon: ['M9 3v5', 'M15 3v5', 'M6 8h12v3a6 6 0 0 1-12 0z', 'M12 17v4'] },
+]
+const native = ['entity', 'daily', 'once', 'manual', 'startup']
+const platforms = ['state', 'numeric_state', 'time', 'time_pattern', 'sun', 'zone', 'event']
+const runModes = [
+  ['Single', 'Ignore it', 'Keep the current run; the new trigger is skipped.'],
+  ['Restart', 'Start over', 'Stop the current run and start a new one.'],
+  ['Queued', 'Run afterwards', 'Let the current run finish, then run again.'],
+  ['Parallel', 'Run alongside', 'Start another run at the same time.'],
+] as const
+
+/** A value edited with a shared widget, stored as a plain value (trigger settings are not operands). */
+function ValueField(props: {
+  label: string
+  hint?: string
+  widget: Widget
+  value: unknown
+  required?: boolean
+  inputId?: string
+  errors?: string[]
+  context?: { targetEntityIds?: string[] }
+  onChange(value: JsonValue | undefined): void
+}) {
+  const id = createUniqueId(), hintId = `${id}-hint`, errorsId = `${id}-errors`
+  const value = () => (props.value === undefined || props.value === null ? undefined : (props.value as JsonValue))
+  // A stored value of another shape stays editable as JSON instead of being misread by the widget.
+  const widget = (): Widget => (fitsWidget(props.widget, value()) ? props.widget : { kind: 'json', multiple: false })
+  const errors = () => props.errors ?? []
+  const describedBy = () => [errors().length && errorsId, props.hint && hintId].filter(Boolean).join(' ') || undefined
   return (
-    <div class="hs-field">
-      <label for={id}>{props.label}</label>
-      <select
-        id={id}
-        aria-label={props.label}
-        class="hs-input"
-        value={props.value}
-        onChange={event => props.onChange(event.currentTarget.value)}
-      >
-        <For each={props.options}>{([value, label]) => <option value={value}>{label}</option>}</For>
-      </select>
+    <div class="hs-insp-field" data-input-id={props.inputId} aria-invalid={errors().length > 0 || undefined}>
+      <label class="hs-insp-field__label" for={id}>{props.label}</label>
+      <WidgetControl widget={widget()} value={value()} commit={v => props.onChange(v)} id={id} label={props.label} describedBy={describedBy()}
+        invalid={errors().length > 0} disabled={false} compact={false} required={!!props.required} context={props.context} />
+      <Show when={props.hint}><small id={hintId} class="hs-field-hint">{props.hint}</small></Show>
+      <Show when={errors().length}><ul id={errorsId} class="hs-input-editor__errors"><For each={errors()}>{m => <li>{m}</li>}</For></ul></Show>
     </div>
   )
 }
+const entityWidget = (multiple: boolean, domains: string[] = []): Widget => ({ kind: 'entity', multiple, domains })
+const text: Widget = { kind: 'text', multiple: false }
+/** One entity id stays a string; several are a list. */
+const entityValue = (value: JsonValue | undefined) => (Array.isArray(value) && value.length === 1 ? value[0] : value)
+/** "07:30:00" is stored as Home Assistant and HassSharp write a time of day without seconds. */
+const timeOfDay = (value: JsonValue | undefined) => (typeof value === 'string' && /^\d\d:\d\d:00$/.test(value) ? value.slice(0, 5) : value)
+/** A number stays a number; anything else (an entity holding the limit) is kept as text. */
+const numberOrText = (value: JsonValue | undefined) =>
+  typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value)) ? Number(value) : value
+const timeZones = (() => {
+  try {
+    return (Intl as unknown as { supportedValuesOf?(key: string): string[] }).supportedValuesOf?.('timeZone') ?? []
+  } catch {
+    return []
+  }
+})()
 
-/** Type changes preserve inactive fields and extensions so editing never discards saved C#. */
-export function TriggerConfig(props: { node: GraphNode; onChange: (config: Config) => void }) {
+/**
+ * The main section of a trigger: "When" (a visible choice of trigger types, each with an icon and a one-line
+ * explanation), the form of the chosen type built on the shared widgets, and what happens when it triggers again
+ * while running. Changing the type keeps the other types' settings, so switching back loses nothing.
+ */
+export function TriggerConfig(props: { node: GraphNode; onChange: Change; diagnostics?: VisualDiagnostic[] }) {
   const hass = useHass()
-  const [platforms, setPlatforms] = createSignal<Record<string, unknown>>({})
+  const [discovered, setDiscovered] = createSignal<Record<string, unknown>>({})
   const [discoveryError, setDiscoveryError] = createSignal('')
-  let unsubscribe: (() => void) | undefined,
-    disposed = false
+  const [choosing, setChoosing] = createSignal(false)
+  let unsubscribe: (() => void) | undefined, disposed = false
   onMount(async () => {
-    if (!hass.connection?.subscribeMessage) return
+    if (!hass?.connection?.subscribeMessage) return
     try {
       const stop = await hass.connection.subscribeMessage<Record<string, unknown>>(
-        event => setPlatforms(current => ({ ...current, ...event })),
+        event => setDiscovered(current => ({ ...current, ...event })),
         { type: 'trigger_platforms/subscribe' },
       )
       if (disposed) stop()
@@ -50,254 +119,219 @@ export function TriggerConfig(props: { node: GraphNode; onChange: (config: Confi
     unsubscribe?.()
   })
   const config = () => props.node.config
-  const native = () =>
-    config().trigger && typeof config().trigger === 'object' && !Array.isArray(config().trigger)
-      ? (config().trigger as Record<string, unknown>)
-      : {}
-  const platform = () => String(native().trigger ?? native().platform ?? 'state')
-  const aliases = ['state', 'numeric_state', 'event', 'time', 'time_pattern', 'sun', 'zone']
-  const nativeSet = (key: string, value: unknown) => {
-    const next: Record<string, unknown> = {
-      ...(native().trigger === undefined && native().platform === undefined ? { trigger: platform() } : {}),
-      ...native(),
-    }
-    if (value === '' && !['trigger', 'platform'].includes(key)) delete next[key]
+  const errors = (key: string) => props.diagnostics?.filter(d => d.nodeId === props.node.id && d.severity === 3 && (d.inputId === key || d.portId === key)).map(d => d.message) ?? []
+  const type = () => (typeof config().type === 'string' ? (config().type as string) : 'entity')
+  const declaration = () => (record(config().trigger) ? (config().trigger as Record<string, unknown>) : {})
+  const platformKey = () => (Object.hasOwn(declaration(), 'platform') && !Object.hasOwn(declaration(), 'trigger') ? 'platform' : 'trigger')
+  const platform = () => String(declaration().trigger ?? declaration().platform ?? 'state')
+  const choice = () => (type() !== 'ha' ? type() : platforms.includes(platform()) ? platform() : 'other')
+  const current = () => triggerChoices.find(c => c.id === choice()) ?? triggerChoices[0]
+  const set = (key: string, value: unknown, coalesce?: string) => {
+    const next = { ...config() }
+    if (value === undefined) delete next[key]
+    else next[key] = value
+    props.onChange(next, coalesce ? { coalesce } : undefined)
+  }
+  /** One key of the Home Assistant declaration; unknown keys are kept. */
+  const setNative = (key: string, value: unknown) => {
+    const next: Record<string, unknown> = { ...(Object.hasOwn(declaration(), platformKey()) ? {} : { trigger: platform() }), ...declaration() }
+    if (value === undefined || value === '') delete next[key]
     else next[key] = value
     props.onChange({ ...config(), trigger: next })
   }
-  const platformOptions = () =>
-    [...new Set([...aliases, ...Object.keys(platforms()), platform()])].map(id => [id, id.replaceAll('_', ' ')] as [string, string])
-  const nativeField = (key: string, label: string, kind = 'string') => (
-    <Field
-      label={label}
-      aria-label={label}
-      value={String(native()[key] ?? '')}
-      onInput={event =>
-        nativeSet(
-          key,
-          kind === 'number' && event.currentTarget.value.trim() !== '' && Number.isFinite(Number(event.currentTarget.value))
-            ? Number(event.currentTarget.value)
-            : event.currentTarget.value,
-        )
-      }
-    />
+  const setOption = (key: string, value: unknown) => {
+    const options = record(declaration().options) ? { ...(declaration().options as Record<string, unknown>) } : {}
+    if (value === undefined || value === '') delete options[key]
+    else options[key] = value
+    setNative('options', Object.keys(options).length ? options : undefined)
+  }
+  const choose = (id: string) => {
+    setChoosing(false)
+    if (native.includes(id)) return props.onChange({ ...config(), type: id })
+    const next: Record<string, unknown> = { ...declaration() }
+    const key = platformKey()
+    next[key] = id === 'other' ? (choice() === 'other' ? platform() : '') : id
+    if (next.event === undefined && (id === 'sun' || id === 'zone')) next.event = id === 'sun' ? 'sunrise' : 'enter'
+    props.onChange({ ...config(), type: 'ha', trigger: next })
+  }
+  const value = (key: string) => declaration()[key]
+  const field = (key: string, label: string, widget: Widget, extra: { hint?: string; required?: boolean; map?: (v: JsonValue | undefined) => unknown; context?: { targetEntityIds?: string[] } } = {}) => (
+    <ValueField label={label} hint={extra.hint} widget={widget} value={value(key)} required={extra.required} context={extra.context}
+      onChange={v => setNative(key, extra.map ? extra.map(v) : v)} />
   )
+  const entityIds = () => { const ids = value('entity_id'); return (Array.isArray(ids) ? ids : [ids]).filter((id): id is string => typeof id === 'string') }
+  const description = () => { const d = discovered()[platform()]; return record(d) ? d : undefined }
+  const schemaFields = () => {
+    const fields = description()?.fields
+    return record(fields) ? Object.entries(fields).filter(([, f]) => record(f)) as [string, Record<string, unknown>][] : []
+  }
+  const options = () => (record(declaration().options) ? (declaration().options as Record<string, unknown>) : {})
+  const fieldSpec = (name: string, f: Record<string, unknown>): InputSpec => ({
+    types: ['string', 'number', 'boolean', 'object', 'array'], required: f.required === true, description: typeof f.description === 'string' ? f.description : '',
+    ...(record(f.selector) ? { selector: f.selector } : {}), label: typeof f.name === 'string' ? f.name : domainWords(name),
+  })
 
-  const type = () => String(config().type ?? 'entity')
-  const set = (key: string, value: string | boolean) =>
-    props.onChange({
-      ...config(),
-      [key]: value,
-      ...(key === 'type' && value === 'ha' && config().trigger === undefined ? { trigger: { trigger: 'state' } } : {}),
-    })
-  const optional = (key: string, value: string | boolean) => {
+  return (
+    <div class="hs-insp-trigger">
+      <div class="hs-when">
+        <span class="hs-insp-field__label" id={`${props.node.id}-when`}>When</span>
+        <div class="hs-when__current">
+          <span class="hs-when__icon"><Glyph paths={current().icon} /></span>
+          <span class="hs-when__text"><strong>{current().name}</strong><small>{current().explanation}</small></span>
+          <button type="button" class="hs-button hs-button--ghost hs-when__change" aria-expanded={choosing()} aria-label="Change trigger type"
+            onClick={() => setChoosing(!choosing())}>{choosing() ? 'Close' : 'Change'}</button>
+        </div>
+        <Show when={choosing()}>
+          <div class="hs-when__choices" role="radiogroup" aria-label="Trigger type">
+            <For each={triggerChoices}>
+              {item => (
+                <label class="hs-when__choice" classList={{ 'hs-when__choice--current': item.id === choice() }}>
+                  <input type="radio" name={`${props.node.id}-trigger-type`} value={item.id} checked={item.id === choice()} onChange={() => choose(item.id)} />
+                  <span class="hs-when__icon"><Glyph paths={item.icon} /></span>
+                  <span class="hs-when__text"><strong>{item.name}</strong><small>{item.explanation}</small></span>
+                </label>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+
+      <Show when={type() === 'entity'}>
+        <ValueField label="Entity" inputId="entity" widget={entityWidget(false)} value={config().entity} required errors={errors('entity')}
+          onChange={v => set('entity', typeof v === 'string' ? v : undefined)} />
+      </Show>
+      <Show when={type() === 'daily'}>
+        <ValueField label="Time of day" inputId="time" widget={{ kind: 'time', multiple: false }} value={config().time} required errors={errors('time')}
+          onChange={v => set('time', timeOfDay(v))} />
+        <ValueField label="Time zone" inputId="timeZone" widget={{ ...text, options: timeZones.map(zone => ({ value: zone, label: zone })) }} value={config().timeZone}
+          required errors={errors('timeZone')} hint="For example Europe/Zagreb or UTC." onChange={v => set('timeZone', v)} />
+      </Show>
+      <Show when={type() === 'once'}>
+        <ValueField label="Date and time" inputId="at" widget={text} value={config().at} required errors={errors('at')}
+          hint="With its offset from UTC, for example 2026-12-01T07:30:00+01:00." onChange={v => set('at', v)} />
+      </Show>
+      <Show when={type() === 'ha'}>
+        <div class="hs-insp-trigger__form" data-input-id="trigger" aria-invalid={errors('trigger').length > 0 || undefined}>
+          <Show when={choice() === 'other'}>
+            <ValueField label="Trigger platform" widget={{ ...text, options: Object.keys(discovered()).sort().map(id => ({ value: id, label: id })) }}
+              value={platform() || undefined} required hint="Any trigger platform installed in Home Assistant."
+              onChange={v => setNative(platformKey(), typeof v === 'string' ? v : '')} />
+            <Show when={record(description()?.target)}>
+              <ValueField label="Target" widget={{ kind: 'target', multiple: false, filter: { target: description()!.target } }} value={value('target')}
+                onChange={v => setNative('target', v)} />
+            </Show>
+            <For each={schemaFields()}>
+              {([name, f]) => {
+                const spec = fieldSpec(name, f)
+                return <ValueField label={spec.label!} hint={spec.description || undefined} required={spec.required} value={options()[name]}
+                  widget={widgetFor(spec)} onChange={v => setOption(name, v)} />
+              }}
+            </For>
+            <Show when={discoveryError()}>
+              <p class="hs-insp-note" role="note">Home Assistant did not list its trigger platforms ({discoveryError()}). Enter the platform and edit the trigger as JSON under Advanced.</p>
+            </Show>
+          </Show>
+          <Show when={choice() === 'state'}>
+            {field('entity_id', 'Entity', entityWidget(true), { required: true, map: entityValue })}
+            {field('attribute', 'Attribute', text, { hint: 'Leave empty to watch the state itself.' })}
+            {field('from', 'From', { kind: 'state', multiple: false }, { context: { targetEntityIds: entityIds() }, hint: 'Leave empty for any state.' })}
+            {field('to', 'To', { kind: 'state', multiple: false }, { context: { targetEntityIds: entityIds() }, hint: 'Leave empty for any state.' })}
+            {field('for', 'For', { kind: 'duration', multiple: false, objectForm: true }, { hint: 'How long the new state must hold first.' })}
+          </Show>
+          <Show when={choice() === 'numeric_state'}>
+            {field('entity_id', 'Entity', entityWidget(true), { required: true, map: entityValue })}
+            {field('attribute', 'Attribute', text, { hint: 'Leave empty to compare the state itself.' })}
+            {field('above', 'Above', text, { map: numberOrText, hint: 'A number, or an entity holding one.' })}
+            {field('below', 'Below', text, { map: numberOrText, hint: 'A number, or an entity holding one.' })}
+            {field('for', 'For', { kind: 'duration', multiple: false, objectForm: true }, { hint: 'How long the value must stay there first.' })}
+          </Show>
+          <Show when={choice() === 'time'}>
+            {field('at', 'At', typeof value('at') === 'string' && /^\d/.test(value('at') as string) || value('at') === undefined ? { kind: 'time', multiple: false } : entityWidget(true, ['input_datetime', 'sensor']), {
+              required: true, map: v => (Array.isArray(v) ? entityValue(v) : v), hint: 'A time of day, or a date-time helper or timestamp sensor.' })}
+          </Show>
+          <Show when={choice() === 'time_pattern'}>
+            {field('hours', 'Hours', text, { hint: 'A number, or /2 for every 2 hours.' })}
+            {field('minutes', 'Minutes', text, { hint: 'A number, or /5 for every 5 minutes.' })}
+            {field('seconds', 'Seconds', text, { hint: 'A number, or /30 for every 30 seconds.' })}
+          </Show>
+          <Show when={choice() === 'sun'}>
+            {field('event', 'Sun event', { kind: 'select', multiple: false, options: [{ value: 'sunrise', label: 'Sunrise' }, { value: 'sunset', label: 'Sunset' }] }, { required: true })}
+            {field('offset', 'Offset', text, { hint: 'Earlier or later, for example -00:30:00 for half an hour before.' })}
+          </Show>
+          <Show when={choice() === 'zone'}>
+            {field('entity_id', 'Who', entityWidget(true, ['person', 'device_tracker']), { required: true, map: entityValue })}
+            {field('zone', 'Zone', entityWidget(false, ['zone']), { required: true })}
+            {field('event', 'When they', { kind: 'select', multiple: false, options: [{ value: 'enter', label: 'Enter' }, { value: 'leave', label: 'Leave' }] }, { required: true })}
+          </Show>
+          <Show when={choice() === 'event'}>
+            {field('event_type', 'Event type', text, { required: true })}
+            {field('event_data', 'Event data', { kind: 'json', multiple: false, structured: true }, { hint: 'Only events whose data contains these values.' })}
+          </Show>
+          <Show when={errors('trigger').length}>
+            <ul class="hs-input-editor__errors"><For each={errors('trigger')}>{m => <li>{m}</li>}</For></ul>
+          </Show>
+        </div>
+      </Show>
+      <Show when={type() === 'manual'}><p class="hs-muted">Use Run now, or start it from another automation.</p></Show>
+      <Show when={type() === 'startup'}><p class="hs-muted">Runs once each time Home Assistant starts.</p></Show>
+
+      <fieldset class="hs-insp-modes">
+        <legend class="hs-insp-field__label">If it triggers again while running</legend>
+        <For each={runModes}>
+          {([mode, name, explanation]) => (
+            <label class="hs-insp-mode">
+              <input type="radio" name={`${props.node.id}-mode`} value={mode} checked={(config().mode ?? 'Single') === mode} onChange={() => set('mode', mode)} />
+              <span><strong>{name}</strong><small>{explanation}</small></span>
+            </label>
+          )}
+        </For>
+      </fieldset>
+    </div>
+  )
+}
+
+/**
+ * The rarely needed trigger settings, shown in the node's Advanced section: manual runs, startup, C# subscription
+ * expressions and, for Home Assistant triggers, the whole declaration as JSON.
+ */
+export function TriggerAdvanced(props: { node: GraphNode; onChange: Change }) {
+  const config = () => props.node.config
+  const set = (key: string, value: unknown) => {
     const next = { ...config() }
-    if (value === '') delete next[key]
+    if (value === undefined || value === '') delete next[key]
     else next[key] = value
     props.onChange(next)
   }
+  const id = createUniqueId()
   return (
     <>
-      <Field
-        label="Trigger ID"
-        aria-label="Trigger ID"
-        value={props.node.id}
-        readOnly
-        hint="Stable action identity. Changing the label keeps this ID."
-      />
-      <Select
-        label="Trigger type"
-        value={type()}
-        options={[
-          ['ha', 'Home Assistant'],
-          ['entity', 'Entity changes'],
-          ['daily', 'Daily'],
-          ['once', 'Once'],
-          ['manual', 'Manual'],
-          ['startup', 'Startup'],
-        ]}
-        onChange={value => set('type', value)}
-      />
-      <Show when={type() === 'entity'}>
-        <div data-input-id="entity" tabindex="-1">
-          <EntityAutocomplete value={String(config().entity ?? '')} onChange={value => set('entity', value)} />
-        </div>
+      <label class="hs-insp-toggle">
+        <input type="checkbox" role="switch" class="hs-switch" checked={config().manual !== false} onChange={e => set('manual', e.currentTarget.checked)} />
+        <span><strong>Can be started with Run now</strong><small class="hs-field-hint">Turn off to hide it from Run now.</small></span>
+      </label>
+      <div class="hs-insp-field">
+        <label class="hs-insp-field__label" for={`${id}-startup`}>Run when Home Assistant starts</label>
+        <select id={`${id}-startup`} class="hs-input"
+          onChange={e => set('startup', e.currentTarget.value === '' ? undefined : e.currentTarget.value === 'true')}>
+          <option value="" selected={config().startup == null}>Only for a startup trigger</option>
+          <option value="true" selected={config().startup === true}>Yes, also at startup</option>
+          <option value="false" selected={config().startup === false}>No, never at startup</option>
+        </select>
+      </div>
+      <For each={[['entitiesExpression', 'Entities expression', 'A C# expression that replaces the entities this trigger listens to.'], ['schedulesExpression', 'Schedules expression', 'A C# expression that replaces the schedules this trigger uses.']] as const}>
+        {([key, label, hint]) => (
+          <div class="hs-insp-field">
+            <label class="hs-insp-field__label" for={`${id}-${key}`}>{label}</label>
+            <DraftField id={`${id}-${key}`} label={label} multiline class="hs-code-input" text={typeof config()[key] === 'string' ? (config()[key] as string) : ''}
+              commit={t => { set(key, t.trim() ? t : undefined); return undefined }} describedBy={`${id}-${key}-hint`} />
+            <small id={`${id}-${key}-hint`} class="hs-field-hint">{hint}</small>
+          </div>
+        )}
+      </For>
+      <Show when={config().type === 'ha'}>
+        <ValueField label="Trigger as JSON" widget={{ kind: 'json', multiple: false, structured: true }} value={config().trigger}
+          hint="Home Assistant checks this declaration; keys the form does not show are kept." onChange={v => set('trigger', v)} />
       </Show>
-      <Show when={type() === 'ha'}>
-        <Select
-          label="Native trigger platform"
-          value={platform()}
-          options={platformOptions()}
-          onChange={value => {
-            const next = { ...native() }
-            if (Object.hasOwn(next, 'platform') && !Object.hasOwn(next, 'trigger')) next.platform = value
-            else next.trigger = value
-            if (next.event === undefined && ['sun', 'zone'].includes(value)) next.event = value === 'sun' ? 'sunrise' : 'enter'
-            props.onChange({ ...config(), trigger: next })
-          }}
-        />
-        <Field
-          label="Platform identifier"
-          aria-label="Platform identifier"
-          value={platform()}
-          hint="Any installed platform is supported, including platforms without a description."
-          onInput={event =>
-            nativeSet(
-              Object.hasOwn(native(), 'platform') && !Object.hasOwn(native(), 'trigger') ? 'platform' : 'trigger',
-              event.currentTarget.value,
-            )
-          }
-        />
-        <Show when={['state', 'numeric_state', 'zone'].includes(platform())}>{nativeField('entity_id', 'Native entity ID')}</Show>
-        <Show when={platform() === 'state'}>
-          {nativeField('from', 'From state')}
-          {nativeField('to', 'To state')}
-          {nativeField('attribute', 'Attribute')}
-          {nativeField('for', 'For duration')}
-        </Show>
-        <Show when={platform() === 'numeric_state'}>
-          {nativeField('above', 'Above', 'number')}
-          {nativeField('below', 'Below', 'number')}
-          {nativeField('attribute', 'Attribute')}
-          {nativeField('for', 'For duration')}
-        </Show>
-        <Show when={platform() === 'event'}>
-          {nativeField('event_type', 'Event type')}
-          <JsonField label="Event data" value={native().event_data ?? {}} onChange={value => nativeSet('event_data', value)} />
-        </Show>
-        <Show when={platform() === 'time'}>{nativeField('at', 'At time')}</Show>
-        <Show when={platform() === 'time_pattern'}>
-          {nativeField('hours', 'Hours')}
-          {nativeField('minutes', 'Minutes')}
-          {nativeField('seconds', 'Seconds')}
-        </Show>
-        <Show when={platform() === 'sun'}>
-          <Select
-            label="Sun event"
-            value={String(native().event ?? 'sunrise')}
-            options={[
-              ['sunrise', 'Sunrise'],
-              ['sunset', 'Sunset'],
-            ]}
-            onChange={value => nativeSet('event', value)}
-          />
-          {nativeField('offset', 'Offset')}
-        </Show>
-        <Show when={platform() === 'zone'}>
-          {nativeField('zone', 'Zone')}
-          <Select
-            label="Zone event"
-            value={String(native().event ?? 'enter')}
-            options={[
-              ['enter', 'Enter'],
-              ['leave', 'Leave'],
-            ]}
-            onChange={value => nativeSet('event', value)}
-          />
-        </Show>
-        <div data-input-id="trigger" tabindex="-1">
-          <JsonField
-            label="Native trigger JSON"
-            value={config().trigger ?? { trigger: platform() }}
-            onChange={value => props.onChange({ ...config(), trigger: value })}
-            hint="Home Assistant validates this declaration. Unknown fields are preserved."
-          />
-        </div>
-        <Show when={discoveryError()}>
-          <p class="hs-muted">Platform discovery unavailable: {discoveryError()}. Enter a platform identifier and JSON.</p>
-        </Show>
-      </Show>
-      <Show when={type() === 'daily'}>
-        <Field
-          data-input-id="time"
-          label="Daily time"
-          aria-label="Daily time"
-          type="time"
-          value={String(config().time ?? '')}
-          onInput={event => set('time', event.currentTarget.value)}
-        />
-        <Field
-          data-input-id="timeZone"
-          label="Time zone"
-          aria-label="Time zone"
-          placeholder="Europe/Zagreb"
-          value={String(config().timeZone ?? '')}
-          onInput={event => set('timeZone', event.currentTarget.value)}
-          hint="Explicit system time zone, for example Europe/Zagreb or UTC."
-        />
-      </Show>
-      <Show when={type() === 'once'}>
-        <Field
-          data-input-id="at"
-          label="Once timestamp"
-          aria-label="Once timestamp"
-          placeholder="2026-12-01T07:30:00+01:00"
-          value={String(config().at ?? '')}
-          onInput={event => set('at', event.currentTarget.value)}
-          hint="ISO timestamp with an explicit offset or Z."
-        />
-      </Show>
-      <Select
-        label="Concurrency mode"
-        value={String(config().mode ?? 'Single')}
-        options={[
-          ['Single', 'Single'],
-          ['Restart', 'Restart'],
-          ['Queued', 'Queued'],
-          ['Parallel', 'Parallel'],
-        ]}
-        onChange={value => set('mode', value)}
-      />
-      <p class="hs-muted">
-        Concurrency applies to whole invocations. Restart cancels the previous invocation; Parallel allows overlapping runs.
-      </p>
-      <Select
-        label="Startup override"
-        value={config().startup == null ? '' : String(config().startup)}
-        options={[
-          ['', 'Follow trigger type'],
-          ['true', 'Run at startup'],
-          ['false', 'Do not run at startup'],
-        ]}
-        onChange={value => optional('startup', value === '' ? '' : value === 'true')}
-      />
-      <Select
-        label="Allow manual runs"
-        value={String(config().manual ?? true)}
-        options={[
-          ['true', 'Allowed'],
-          ['false', 'Disabled'],
-        ]}
-        onChange={value => set('manual', value === 'true')}
-      />
-      <details>
-        <summary>Advanced C# subscriptions</summary>
-        <div class="hs-stack">
-          <p class="hs-muted">
-            Expressions override subscriptions and schedules. Entity, daily and once types still require their normal fields. Use Manual for
-            fully custom subscriptions.
-          </p>
-          <For each={['entitiesExpression', 'schedulesExpression'] as const}>
-            {key => {
-              const label = key === 'entitiesExpression' ? 'Entities expression' : 'Schedules expression'
-              const id = createUniqueId()
-              return (
-                <div class="hs-field">
-                  <label for={id}>{label}</label>
-                  <textarea
-                    id={id}
-                    aria-label={label}
-                    class="hs-input hs-code-input"
-                    rows="3"
-                    value={String(config()[key] ?? '')}
-                    onInput={event => optional(key, event.currentTarget.value)}
-                  />
-                </div>
-              )
-            }}
-          </For>
-        </div>
-      </details>
     </>
   )
 }

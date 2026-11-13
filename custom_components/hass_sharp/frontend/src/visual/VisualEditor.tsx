@@ -106,6 +106,8 @@ export function VisualEditor(props: {
   const [selectedId, setSelectedId] = createSignal<string | undefined>('trigger-1')
   const [preview, setPreview] = createSignal<'code' | 'json'>('code')
   const selected = createMemo(() => graph().nodes.find(node => node.id === selectedId()))
+  // Every selected node and a selected wire, as the canvas reports them (the inspector's multi-selection and wire views).
+  const [selection, setSelection] = createSignal<{ ids: string[]; edge?: string }>({ ids: [] })
   const edited = session.dirty
   const beforeUnload = (event: BeforeUnloadEvent) => {
     if (edited()) {
@@ -297,6 +299,7 @@ export function VisualEditor(props: {
               addStepRequest={addStepRequest()}
               selectedId={selectedId()}
               onSelect={choose}
+              onSelectionChange={(ids, edge) => setSelection({ ids, edge })}
               onChange={commit}
               diagnostics={session.diagnostics()}
               fitViewKey={loads() || undefined}
@@ -335,6 +338,9 @@ export function VisualEditor(props: {
           <Inspector
             description={description()}
             selected={selected()}
+            selectedIds={selection().ids}
+            selectedEdgeId={selection().edge}
+            onSelect={choose}
             graph={graph()}
             catalog={session.catalog()}
             diagnostics={session.diagnostics()}

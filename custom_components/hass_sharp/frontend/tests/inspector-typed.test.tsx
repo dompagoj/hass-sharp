@@ -1,8 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { render } from 'solid-js/web'
-import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { NodeConfig } from '../src/visual/NodeConfig'
-import { addNode, connectNodes, createGraph, createGraphHistory, catalogPalette, updateNode } from '../src/visual/graph'
+import { addNode, connectNodes, createGraph, updateNode } from '../src/visual/graph'
 import { nodeCatalog, type VisualCatalogSnapshot } from '../src/visual/contract'
 let dispose: (() => void) | undefined
 afterEach(() => {
@@ -23,17 +22,29 @@ const fixture = () => {
   graph = connectNodes(graph, 'temperature', 'branch')
   return graph
 }
-it('shows separate typed inputs/outputs and required condition semantics, without an appearance section', () => {
+it('shows typed inputs with friendly type chips and outputs, without an appearance section', () => {
   const el = host()
   const graph = fixture()
-  const node = graph.nodes.find(n => n.id === 'branch')!
-  dispose = render(() => <NodeConfig graph={graph} node={node} catalog={nodeCatalog} onChange={() => {}} onGraphChange={() => {}} />, el)
-  expect(el.textContent).toContain('Condition · Boolean · Required')
-  expect(el.textContent).toContain('True selects the True execution branch')
-  expect([...el.querySelectorAll('h3')].map(n => n.textContent)).toEqual(expect.arrayContaining(['Inputs', 'Outputs']))
+  dispose = render(() => (
+    <>
+      <NodeConfig graph={graph} node={graph.nodes.find(n => n.id === 'branch')!} catalog={nodeCatalog} onChange={() => {}} onGraphChange={() => {}} />
+      <NodeConfig graph={graph} node={graph.nodes.find(n => n.id === 'temperature')!} catalog={nodeCatalog} onChange={() => {}} onGraphChange={() => {}} />
+    </>
+  ), el)
+  const [branch, temperature] = [...el.querySelectorAll('.hs-insp-node')]
+  const condition = branch.querySelector<HTMLElement>('.hs-insp-input[data-input-id="value"]')!
+  // Label, type chip and the input's description; the chip names the type in words.
+  expect(condition.textContent).toContain('Condition')
+  expect(condition.querySelector('.hs-type-chip')!.textContent).toBe('Yes/No')
+  expect(condition.textContent).toContain('True selects the True execution branch')
+  expect([...branch.querySelectorAll('h3')].map(n => n.textContent)).toContain('Inputs')
+  expect([...temperature.querySelectorAll('h3')].map(n => n.textContent)).toContain('Outputs')
+  const output = temperature.querySelector('.hs-insp-output')!
+  expect(output.querySelector('.hs-insp-output__type')!.textContent).toBe('Number')
+  expect(output.getAttribute('aria-label')).toContain('Number')
   expect(el.querySelector('[aria-label="Appearance"]')).toBeNull()
 })
-it('offers explicit null for nullable wire-only CLR types', () => {
+it('offers "No value" for nullable wire-only CLR types', () => {
   const el = host(),
     catalog = structuredClone(nodeCatalog)
   catalog.types['global::Example.Result?'] = {
@@ -58,76 +69,57 @@ it('offers explicit null for nullable wire-only CLR types', () => {
   const graph = addNode(createGraph('Nullable'), 'library:nullable', 'consumer', catalog)
   let config = graph.nodes.at(-1)!.config
   dispose = render(
-    () => (
-      <NodeConfig graph={graph} node={graph.nodes.at(-1)!} catalog={catalog} onChange={next => (config = next)} onGraphChange={() => {}} />
-    ),
+    () => <NodeConfig graph={graph} node={graph.nodes.at(-1)!} catalog={catalog} onChange={next => (config = next)} onGraphChange={() => {}} />,
     el,
   )
-  const mode = el.querySelector<HTMLSelectElement>('[aria-label="Result source"]')!
-  expect([...mode.options].map(o => o.value)).toContain('literal')
-  mode.value = 'literal'
-  mode.dispatchEvent(new Event('change', { bubbles: true }))
+  const result = el.querySelector('.hs-insp-input[data-input-id="result"]')!
+  const none = [...result.querySelectorAll('label')].find(l => l.textContent?.includes('No value'))!.querySelector('input')!
+  expect(none.checked).toBe(false)
+  none.click()
   expect(config.arguments).toEqual({ result: { kind: 'literal', type: 'global::Example.Result?', value: null } })
+  // The chip names the type for people, never by its CLR name.
+  expect(result.querySelector('.hs-type-chip')!.textContent).not.toContain('global::')
 })
 
-import { connectData, dataOutputs } from '../src/visual/contract'
 import { createSignal } from 'solid-js'
-it('highlights inspector connection mismatch with the same exact typed explanation', () => {
+import type { VisualDiagnostic } from '../src/visual/api'
+it('shows a validator message as it is under its field, and clears it when the problem is gone', () => {
   const el = host(),
     graph = fixture()
-  let changed = false
+  const message = 'Condition requires Yes/No; Value outputs Number'
+  const [diagnostics, setDiagnostics] = createSignal<VisualDiagnostic[]>([{ nodeId: 'branch', inputId: 'value', message, severity: 3, startLine: null, startColumn: null }])
   dispose = render(
-    () => (
-      <NodeConfig
-        graph={graph}
-        node={graph.nodes.find(n => n.id === 'branch')!}
-        catalog={nodeCatalog}
-        onChange={() => {}}
-        onGraphChange={() => {
-          changed = true
-        }}
-      />
-    ),
+    () => <NodeConfig graph={graph} node={graph.nodes.find(n => n.id === 'branch')!} catalog={nodeCatalog} diagnostics={diagnostics()} onChange={() => {}} onGraphChange={() => {}} />,
     el,
   )
-  const select = el.querySelector<HTMLSelectElement>('[aria-label="Condition connection"]')!
-  select.value = JSON.stringify(['temperature', 'value'])
-  select.dispatchEvent(new Event('change', { bubbles: true }))
-  ;[...el.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Connect Condition')!.click()
-  expect(changed).toBe(false)
-  expect(el.querySelector('[data-input-id="value"]')?.getAttribute('aria-invalid')).toBe('true')
-  expect(el.textContent).toContain('Condition requires Boolean; Value outputs Number')
+  const row = el.querySelector('.hs-insp-input[data-input-id="value"]')!
+  expect(row.getAttribute('aria-invalid')).toBe('true')
+  expect(row.querySelector('.hs-input-editor__errors')!.textContent).toBe(message)
+  // The problem is also a callout at the top that focuses the field.
+  const callout = el.querySelector<HTMLButtonElement>('.hs-insp-problems button')!
+  expect(callout.textContent).toBe(message)
+  setDiagnostics([])
+  expect(el.querySelector('.hs-insp-input[data-input-id="value"]')!.getAttribute('aria-invalid')).toBeNull()
+  expect(el.textContent).not.toContain(message)
 })
 
-import { VisualEditor } from '../src/visual/VisualEditor'
-import { HassCtx } from '../src/context'
-import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
-import { visualFixture } from './visual-fixture'
 import richCatalogFixture from '../../../../tests/fixtures/visual-rich-catalog.json'
 import type { Graph } from '../src/visual/contract'
-it('clears a rejected inspector connection when a later literal edit resolves its context', () => {
+import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
+import { HassCtx } from '../src/context'
+it('names source-derived CLR types in words on every chip and output', () => {
   const el = host(),
-    [graph, setGraph] = createSignal(fixture())
-  dispose = render(
-    () => (
-      <NodeConfig
-        graph={graph()}
-        node={graph().nodes.find(n => n.id === 'branch')!}
-        catalog={nodeCatalog}
-        onChange={config => setGraph(updateNode(graph(), 'branch', { config }))}
-        onGraphChange={setGraph}
-      />
-    ),
-    el,
-  )
-  const connection = el.querySelector<HTMLSelectElement>('[aria-label="Condition connection"]')!
-  connection.value = JSON.stringify(['temperature', 'value'])
-  connection.dispatchEvent(new Event('change', { bubbles: true }))
-  ;[...el.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Connect Condition')!.click()
-  expect(el.textContent).toContain('Condition requires Boolean; Value outputs Number')
-  const value = el.querySelector<HTMLSelectElement>('[aria-label="Condition"]')!
-  value.value = 'false'
-  value.dispatchEvent(new Event('change', { bubbles: true }))
-  expect(el.textContent).not.toContain('Condition requires Boolean; Value outputs Number')
-  expect(el.querySelector('[data-input-id="value"]')?.getAttribute('aria-invalid')).toBeNull()
+    catalog = richCatalogFixture.catalog as unknown as VisualCatalogSnapshot
+  const graph = structuredClone(richCatalogFixture.cases[0].graph) as Graph
+  const client = new QueryClient()
+  dispose = render(() => (
+    <QueryClientProvider client={client}>
+      <HassCtx.Provider value={{ callWS: async () => ({ entities: [], areas: [], devices: [], floors: [], labels: [] }) } as any}>
+        {graph.nodes.map(node => <NodeConfig graph={graph} node={node} catalog={catalog} onChange={() => {}} onGraphChange={() => {}} />)}
+      </HassCtx.Provider>
+    </QueryClientProvider>
+  ), el)
+  const shown = [...el.querySelectorAll('.hs-type-chip, .hs-insp-output__type')].map(c => c.textContent ?? '')
+  expect(shown.length).toBeGreaterThan(0)
+  for (const text of shown) expect(text).not.toMatch(/global::|System\.|EntityStateSnapshot|Boolean|String/)
 })

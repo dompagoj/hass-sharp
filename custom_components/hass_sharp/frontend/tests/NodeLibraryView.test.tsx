@@ -31,7 +31,7 @@ afterEach(() => { dispose?.(); host.remove(); vi.useRealTimers() })
 it('shows source-derived cards, XML docs, actual CLR ports and explicit execution without running code', async () => {
   mount(); await vi.advanceTimersByTimeAsync(900)
   expect(host.textContent).toContain('Read a typed state.'); expect(host.textContent).toContain('A detached snapshot.'); expect(host.textContent).toContain('The reading.')
-  expect(host.textContent).toContain('EntityStateSnapshot'); expect(host.textContent).toContain('NodeLib.Reading')
+  expect(host.querySelector('[aria-label="Node previews"]')?.textContent).toContain('Entity state'); expect(host.querySelector('[aria-label="Node previews"]')?.textContent).toContain('Reading'); expect(host.querySelector('[aria-label="Node previews"]')?.textContent).not.toContain('EntityStateSnapshot')
   expect(host.querySelector('[aria-label="Node previews"]')?.textContent).toContain('Execution')
   expect(host.textContent).toContain('factory node'); expect(host.textContent).not.toContain('Pure')
   expect(requests.every(r => !['run', 'execute'].includes(r.operation))).toBe(true)

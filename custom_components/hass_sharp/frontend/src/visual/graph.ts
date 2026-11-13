@@ -1,5 +1,6 @@
 import { createSignal } from 'solid-js'
 import { createUuid } from './id'
+import { typeLabel } from './typeLabels'
 import {
   addGraphNode,
   executionPorts,
@@ -45,13 +46,8 @@ export const portLabel = (id: string) => portLabels[id] ?? (id.startsWith('branc
 /** Display metadata never changes a node's stable source-derived kind or ID. */
 export const nodeLabel = (node: GraphNode | undefined, catalog: VisualCatalogSnapshot = nodeCatalog, fallback = '') =>
   node ? (node.label ?? catalog.nodes[node.kind]?.label ?? node.kind) : fallback
-export const typeLabel = (type: string, catalog: VisualCatalogSnapshot = nodeCatalog) => {
-  const spec = resolveTypeSpec(type, catalog)
-  return spec?.label ?? spec?.clrType ?? spec?.description ?? type
-}
 export const typeCategory = (type: string, catalog: VisualCatalogSnapshot = nodeCatalog) =>
   (resolveTypeSpec(type, catalog)?.category ?? 'Object').toLowerCase()
-export const typeColor = (type: string, catalog: VisualCatalogSnapshot = nodeCatalog) => `var(--hs-port-${typeCategory(type, catalog)})`
 export const outputPorts = (kind: string, catalog: VisualCatalogSnapshot = nodeCatalog) => catalog.nodes[kind]?.execution ?? []
 export const edgePort = (edge: GraphEdge) => (edge.kind === 'data' ? edge.sourcePort : (edge.port ?? 'next'))
 export const outputPort = (kind: string, edge: GraphEdge) => (kind === 'condition' && edgePort(edge) === 'next' ? 'true' : edgePort(edge))

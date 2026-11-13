@@ -25,6 +25,8 @@ function button(root: Element, label: string) {
 function input(root: Element, label: string, value: string) {
   const control = root.querySelector<HTMLInputElement>(`.hs-inspector [aria-label="${label}"]`) ?? root.querySelector<HTMLInputElement>(`[aria-label="${label}"]`) ?? root.querySelector<HTMLInputElement>(`#${[...root.querySelectorAll('label')].find(l => l.textContent === label)?.htmlFor}`)
   expect(control, label).not.toBeNull(); control!.value = value; control!.dispatchEvent(new Event('change', { bubbles: true })); control!.dispatchEvent(new Event('input', { bubbles: true }))
+  // Inspector text fields commit on blur.
+  control!.dispatchEvent(new FocusEvent('blur'))
 }
 
 it('offers palette, inspector, connection editing and undo/redo while requesting a server preview', async () => {
@@ -38,8 +40,9 @@ it('offers palette, inspector, connection editing and undo/redo while requesting
   expect((host.querySelector('.hs-inspector input[aria-label="Seconds"]') as HTMLInputElement).value).toBe('60')
   button(host, 'Redo').click()
   expect((host.querySelector('.hs-inspector input[aria-label="Seconds"]') as HTMLInputElement).value).toBe('90')
-  input(host, 'Next destination', 'service-1')
-  button(host, 'Connect Next').click()
+  // Wires are made on the canvas (here from the keyboard), never in the inspector.
+  const wait = json(host).nodes.at(-1).id
+  press(pin(host, wait, 'next')); press(pin(host, 'service-1', 'in'))
   expect(host.querySelector('[aria-label="Connections"]')?.textContent).toContain('Wait for warmth → Call service')
   button(host, 'Remove Wait for warmth → Call service').click()
   expect(host.querySelector('[aria-label="Connections"]')?.textContent).not.toContain('Wait for warmth → Call service')
@@ -59,24 +62,34 @@ it('has no node size fields: cards are sized by their content (D14)', () => {
 })
 
 const json = (host: Element) => { button(host, 'Graph JSON').click(); return JSON.parse(host.querySelector('pre[aria-label="Graph JSON"]')!.textContent!) }
+const press = (target: Element) => target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+const pin = (host: Element, id: string, handle: string) => host.querySelector(`[data-id="${id}"] [data-handleid="${handle}"]`)!
 const focusNode = (host: Element, id: string) => host.querySelector(`[data-id="${id}"]`)!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
-it('authors condition false and error branches from distinct typed inspector rows and undoes them', () => {
+it('wires condition false and error branches on the canvas, while the inspector offers no destination', () => {
  const host=root();dispose=render(()=><VisualEditor name="Heating"/>,host)
  button(host,'Add step').click();button(host,'Create Delay').click();input(host,'Node label','Otherwise')
  button(host,'Add step').click();button(host,'Create Call service').click();input(host,'Node label','Recover')
  const draft=json(host);focusNode(host,'condition-1')
- expect(host.querySelector('[aria-label="If true destination"]')).toBeNull()
- input(host,'If false destination',draft.nodes.find((n:any)=>n.label==='Otherwise').id);button(host,'Connect If false').click()
- input(host,'On error destination',draft.nodes.find((n:any)=>n.label==='Recover').id);button(host,'Connect On error').click()
+ const inspector=host.querySelector('.hs-inspector')!
+ expect(inspector.querySelector('[aria-label$="destination"]')).toBeNull()
+ expect([...inspector.querySelectorAll('button')].some(b=>/connect/i.test(b.textContent ?? ''))).toBe(false)
+ press(pin(host,'condition-1','false'));press(pin(host,draft.nodes.find((n:any)=>n.label==='Otherwise').id,'in'))
+ press(pin(host,'condition-1','error'));press(pin(host,draft.nodes.find((n:any)=>n.label==='Recover').id,'in'))
  expect(json(host).edges.filter((e:any)=>e.source==='condition-1').map((e:any)=>e.port)).toEqual(['true','false','error'])
  button(host,'Undo').click();expect(json(host).edges.filter((e:any)=>e.source==='condition-1').map((e:any)=>e.port)).toEqual(['true','false'])
 })
-it('blocks a second outgoing execution edge on a used inspector port',()=>{
+it('shows a wire selected on the canvas read only in the inspector', async () => {
+ vi.spyOn(HTMLElement.prototype,'offsetWidth','get').mockReturnValue(800);vi.spyOn(HTMLElement.prototype,'offsetHeight','get').mockReturnValue(570)
  const host=root();dispose=render(()=><VisualEditor name="Heating"/>,host)
- button(host,'Add step').click();button(host,'Create Delay').click();const wait=json(host).nodes.at(-1).id;focusNode(host,'service-1')
- input(host,'Next destination',wait);button(host,'Connect Next').click()
- expect(host.querySelector('[aria-label="Next destination"]')).toBeNull()
- expect(host.querySelector('[aria-label="On error destination"]')).not.toBeNull()
+ const edge=await vi.waitFor(()=>{const found=[...host.querySelectorAll<HTMLElement>('.solid-flow__edge')].find(e=>e.getAttribute('data-id')==='trigger-1->condition-1');expect(found).toBeDefined();return found!})
+ edge.dispatchEvent(new FocusEvent('focusin',{bubbles:true}))
+ const wire=await vi.waitFor(()=>{const found=host.querySelector('.hs-inspector .hs-insp-wire');expect(found).not.toBeNull();return found!})
+ expect(wire.textContent).toContain('Entity changes')
+ expect(wire.textContent).toContain('State condition')
+ expect(wire.querySelector('input, select, textarea')).toBeNull()
+ // Its ends select their steps.
+ wire.querySelectorAll<HTMLButtonElement>('.hs-insp-wire__end')[1].click()
+ await vi.waitFor(()=>expect(host.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Node label"]')?.placeholder).toBe('State condition'))
 })
 it('palette clicks describe configuration and connections without editing history', () => {
   const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
@@ -104,7 +117,7 @@ it('entity picker keyboard selection works inside the editor shortcut boundary',
     callWS: (message: any) => message.type === 'hass_sharp/get_entities' ? Promise.resolve({ entities: [{ entity_id: 'sensor.fresh', name: 'New sensor' }] }) : fixture.callWS(message),
   } as any}><RealVisualEditor name="Keys" /></HassCtx.Provider></QueryClientProvider>, host)
   const inspector = host.querySelector('.hs-inspector')!
-  inspector.querySelector<HTMLButtonElement>('[aria-label="Entity ID"]')!.click()
+  inspector.querySelector<HTMLButtonElement>('[data-input-id="entity"] [aria-label="Entity"]')!.click()
   const field = inspector.querySelector<HTMLInputElement>('[aria-label="Search entities"]')!
   field.focus(); input(inspector, 'Search entities', 'new')
   await vi.waitFor(() => expect(host.querySelector('[role="option"]')).not.toBeNull())

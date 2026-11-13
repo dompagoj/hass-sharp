@@ -29,8 +29,8 @@ it('creates, edits and saves separate drafts on HTTP without crypto.randomUUID',
   // HTTP LAN origins expose getRandomValues but not randomUUID.
   vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
   const { root, fixture } = setup()
-  button(root, 'Add step').click(); button(root, 'Create Trigger').click();setControl(root,'Trigger type','manual')
-  button(root, 'Add step').click(); button(root, 'Create Trigger').click();setControl(root,'Trigger type','manual')
+  button(root, 'Add step').click(); button(root, 'Create Trigger').click();chooseTrigger(root, 'manual')
+  button(root, 'Add step').click(); button(root, 'Create Trigger').click();chooseTrigger(root, 'manual')
   await vi.waitFor(() => expect(button(root, 'Save graph').disabled).toBe(false))
   button(root, 'Save graph').click()
   await vi.waitFor(() => expect(root.textContent).toContain('Saved · revision 1'))
@@ -152,13 +152,31 @@ it('opens valid API graphs without optional canvas metadata and preserves their 
 })
 
 
-const control = (root: Element, label: string) => root.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[aria-label="${label}"]`)!
+type Field = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+// By accessible name: an aria-label, or a <label for> (the inspector labels its fields).
+const control = (root: Element, label: string) => {
+  const named = root.querySelector<Field>(`[aria-label="${label}"]`)
+  const tag = [...root.querySelectorAll<HTMLLabelElement>('label[for]')].find(l => l.textContent?.trim() === label)
+  return (named ?? (tag ? root.querySelector<Field>(`[id="${tag.htmlFor}"]`) : null))!
+}
 function setControl(root: Element, label: string, value: string) {
   const field = control(root, label)
   expect(field, label).not.toBeNull()
   field.value = value
   field.dispatchEvent(new Event(field.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }))
+  // Inspector text fields commit on blur.
+  field.dispatchEvent(new FocusEvent('blur'))
 }
+/** Picks a trigger type from the inspector's visible "When" choices. */
+function chooseTrigger(root: Element, type: string) {
+  const inspector = root.querySelector('.hs-inspector')!
+  if (!inspector.querySelector('[role="radiogroup"][aria-label="Trigger type"]')) button(inspector, 'Change trigger type').click()
+  const radio = inspector.querySelector<HTMLInputElement>(`[aria-label="Trigger type"] input[value="${type}"]`)
+  expect(radio, type).not.toBeNull()
+  radio!.click()
+}
+const chooseMode = (root: Element, mode: string) => root.querySelector<HTMLInputElement>(`.hs-inspector .hs-insp-modes input[value="${mode}"]`)!.click()
+const press = (target: Element) => target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
 function json(root: Element) {
   button(root, 'Graph JSON').click()
   return JSON.parse(root.querySelector('[aria-label="Graph JSON"]')!.textContent!)
@@ -168,15 +186,17 @@ it('authors two v4 triggers and C# sections, saves/reloads them, then dispatches
   const { root, fixture } = setup()
   setControl(root, 'C# imports', 'using System.Globalization;')
   setControl(root, 'C# members', 'private string Prefix() => "Heating";')
-  setControl(root, 'Trigger type', 'daily')
-  setControl(root, 'Daily time', '07:30')
+  chooseTrigger(root, 'daily')
+  setControl(root, 'Time of day', '07:30')
   setControl(root, 'Time zone', 'Europe/Zagreb')
-  setControl(root, 'Concurrency mode', 'Restart')
+  chooseMode(root, 'Restart')
   button(root, 'Add step').click(); button(root, 'Create Trigger').click()
   setControl(root, 'Node label', 'Manual evening')
-  setControl(root, 'Trigger type', 'manual')
-  setControl(root, 'Next destination', 'service-1')
-  button(root, 'Connect Next').click()
+  chooseTrigger(root, 'manual')
+  // Wires are made on the canvas (here from the keyboard): Enter on the new trigger's Next pin, then on the service.
+  const added = json(root).nodes.at(-1).id
+  press(root.querySelector(`[data-id="${added}"] [data-handleid="next"]`)!)
+  press(root.querySelector('[data-id="service-1"] [data-handleid="in"]')!)
   const draft = json(root)
   const second = draft.nodes.at(-1)
   expect(draft).toMatchObject({ version: 5, imports: 'using System.Globalization;', members: 'private string Prefix() => "Heating";' })
@@ -211,10 +231,10 @@ it('authors two v4 triggers and C# sections, saves/reloads them, then dispatches
 it('edits all trigger kinds, boolean overrides and expressions without changing its ID or custom code', () => {
   const { root } = setup()
   for (const type of ['once', 'startup', 'manual', 'entity', 'daily']) {
-    setControl(root, 'Trigger type', type)
-    if (type === 'once') setControl(root, 'Once timestamp', '2026-12-01T07:30:00+01:00')
+    chooseTrigger(root, type)
+    if (type === 'once') setControl(root, 'Date and time', '2026-12-01T07:30:00+01:00')
     if (type === 'entity') {
-      root.querySelector<HTMLButtonElement>('.hs-inspector [aria-label="Entity ID"]')!.click()
+      root.querySelector<HTMLButtonElement>('.hs-inspector [aria-label="Entity"]')!.click()
       // Cards on the canvas have their own entity pickers; this edits the trigger in the inspector.
       const inspector = root.querySelector('.hs-inspector')!
       setControl(inspector, 'Search entities', 'sensor.temperature')
@@ -222,11 +242,12 @@ it('edits all trigger kinds, boolean overrides and expressions without changing 
     }
   }
   for (const mode of ['Single', 'Restart', 'Queued', 'Parallel']) {
-    setControl(root, 'Concurrency mode', mode)
+    chooseMode(root, mode)
     expect(json(root).nodes[0].config.mode).toBe(mode)
   }
-  setControl(root, 'Startup override', 'true')
-  setControl(root, 'Allow manual runs', 'false')
+  setControl(root, 'Run when Home Assistant starts', 'true')
+  const manualRuns = [...root.querySelectorAll('.hs-inspector label')].find(l => l.textContent?.includes('Can be started with Run now'))!
+  manualRuns.querySelector('input')!.click()
   setControl(root, 'Entities expression', '["sensor.temperature"]')
   setControl(root, 'Schedules expression', '[]')
   expect(json(root).nodes[0]).toMatchObject({ id: 'trigger-1', config: {
@@ -234,7 +255,7 @@ it('edits all trigger kinds, boolean overrides and expressions without changing 
     at: '2026-12-01T07:30:00+01:00', entity: 'sensor.temperature',
   } })
   button(root, 'Add step').click(); button(root, 'Create Custom C#').click()
-  setControl(root, 'Custom C# section', 'await Task.Delay(10, CancellationToken);')
+  setControl(root, 'C# code', 'await Task.Delay(10, CancellationToken);')
   expect(json(root).nodes.at(-1).config.code).toBe('await Task.Delay(10, CancellationToken);')
 })
 
