@@ -11,20 +11,12 @@
   --hs-danger: var(--error-color, #bb283f);
   --hs-soft: color-mix(in srgb, var(--hs-accent) 9%, var(--hs-surface));
   --hs-focus: var(--hs-accent);
-  /* Port categories are visual tokens; stable CLR identities remain in the catalog. */
-  --hs-port-boolean: #9464d5;
-  --hs-port-number: #397fd1;
-  --hs-port-string: #32875b;
-  --hs-port-object: #d28335;
-  --hs-port-array: #1599ad;
-  --hs-port-execution: var(--hs-muted, #6c7583);
-  --hs-port-error: var(--hs-danger, #d03651);
 }
 @media (prefers-color-scheme: dark) {
   .hs-app { --hs-bg: var(--primary-background-color, #131720); --hs-surface: var(--card-background-color, #1d2330); --hs-text: var(--primary-text-color, #edf0f8); --hs-muted: var(--secondary-text-color, #aab3c5); --hs-line: var(--divider-color, #343d4e); --hs-accent: color-mix(in srgb, var(--hs-text) 45%, var(--primary-color, #aa9fff)); --hs-danger: var(--error-color, #ff8394); }
 }
-/* The canvas defines the port tokens too, so they resolve wherever a .hs-flow is mounted. */
-.hs-flow {
+/* Port categories are visual tokens; stable CLR identities remain in the catalog. */
+.hs-app, .hs-flow {
  --hs-port-boolean: #9464d5;
  --hs-port-number: #397fd1;
  --hs-port-string: #32875b;
@@ -33,5 +25,5 @@
  --hs-port-execution: var(--hs-muted, #6c7583);
  --hs-port-error: var(--hs-danger, #d03651);
 }
-/* Execution rows use the execution port colour unless the inspector sets one inline. */
+/* Execution port rows take the execution port colour; rows with an inline --hs-value-color override it. */
 .hs-app .hs-port-row--execution { --hs-value-color: var(--hs-port-execution); }
