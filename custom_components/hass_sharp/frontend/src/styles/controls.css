@@ -1,0 +1,72 @@
+/* Shared controls: buttons, fields, status chips, menus, notices, dialogs, tabs, switches and pickers. */
+.hs-app .hs-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 9px 16px; border: 1px solid transparent; border-radius: 9px; font-weight: 650; line-height: 1.4; transition: background .15s; }
+.hs-app .hs-button--primary { background: var(--hs-action); color: var(--hs-on-action); }
+.hs-app .hs-button--secondary { background: var(--hs-surface); color: var(--hs-text); border-color: var(--hs-line); }
+.hs-app .hs-button--ghost { background: transparent; color: var(--hs-muted); }
+.hs-app .hs-button--danger { background: #ad2339; color: #fff; }
+.hs-app .hs-button:hover:not(:disabled) { filter: brightness(.93); }
+.hs-app .hs-button--ghost:hover:not(:disabled) { background: var(--hs-soft); color: var(--hs-text); }
+.hs-app .hs-icon-button { width: 44px; height: 44px; flex: none; padding: 10px; }
+/* The header's sidebar toggle is a ghost icon button; its visibility must follow .hs-button. */
+.hs-app .hs-sidebar-toggle { display: none; }
+.hs-app .hs-field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.hs-app .hs-field label { font-size: 12px; font-weight: 650; }
+.hs-app .hs-input { min-height: 44px; border: 1px solid var(--hs-line); border-radius: 8px; padding: 9px 12px; background: var(--hs-surface); color: var(--hs-text); min-width: 0; width: 100%; }
+.hs-app .hs-field-hint { color: var(--hs-muted); font-size: 12px; }
+.hs-app .hs-status { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 650; white-space: nowrap; background: var(--hs-soft); color: var(--hs-accent); }
+.hs-app .hs-status--danger { color: var(--hs-danger); background: color-mix(in srgb, var(--hs-danger) 10%, var(--hs-surface)); }
+.hs-app .hs-status--success { color: var(--success-color, #258350); }
+.hs-app .hs-menu { position: relative; flex: none; }
+.hs-app .hs-menu-items { position: absolute; right: 0; top: calc(100% + 4px); z-index: 8; padding: 5px; width: 160px; background: var(--hs-surface); border: 1px solid var(--hs-line); border-radius: 10px; box-shadow: 0 8px 30px #0002; }
+.hs-app .hs-menu-items button { display: block; min-height: 44px; padding: 10px 12px; width: 100%; text-align: left; background: none; border: none; border-radius: 6px; color: var(--hs-text); }
+.hs-app .hs-menu-items button:hover, .hs-app .hs-menu-items button:focus { background: var(--hs-soft); }
+.hs-app .hs-menu-items .hs-menu-danger { color: var(--hs-danger); }
+.hs-app .hs-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px; padding: 56px 20px; border: 1px dashed var(--hs-line); border-radius: 12px; color: var(--hs-muted); }
+.hs-app .hs-empty h2 { color: var(--hs-text); }
+.hs-app .hs-notice { margin: 16px; padding: 16px; border: 1px solid var(--hs-line); border-radius: 10px; }
+.hs-app .hs-notice--danger { color: var(--hs-danger); background: color-mix(in srgb, var(--hs-danger) 6%, var(--hs-surface)); }
+.hs-app .hs-notice p { margin: 8px 0 16px; }
+.hs-app .hs-error { color: var(--hs-danger); font-size: 13px; }
+.hs-app .hs-dialog { padding: 0; border: 1px solid var(--hs-line); border-radius: 16px; width: min(600px, calc(100% - 32px)); max-height: calc(100dvh - 40px); color: var(--hs-text); background: var(--hs-surface); box-shadow: 0 24px 80px #0004; margin: auto; }
+.hs-app .hs-dialog::backdrop { background: #0b122775; backdrop-filter: blur(3px); }
+.hs-app .hs-dialog--small { width: min(440px, calc(100% - 32px)); }
+.hs-app .hs-dialog--large { width: min(800px, calc(100% - 32px)); }
+.hs-app .hs-dialog--full { width: calc(100% - 32px); }
+.hs-app .hs-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 16px 8px 24px; }
+.hs-app .hs-dialog-header h2 { font-size: 20px; }
+.hs-app .hs-dialog-body { padding: 12px 24px 24px; overflow-wrap: anywhere; }
+.hs-app .hs-dialog-footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 16px 24px; border-top: 1px solid var(--hs-line); }
+.hs-app .hs-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.hs-app .hs-tabs { display: flex; gap: 24px; }
+.hs-app .hs-tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--hs-muted); padding: 12px 0; font-weight: 650; min-height: 44px; }
+.hs-app .hs-tabs button[aria-selected="true"] { border-color: var(--hs-accent); color: var(--hs-accent); }
+.hs-app .hs-switch { appearance: none; width: 44px; height: 26px; border-radius: 20px; background: var(--hs-muted); flex: none; padding: 3px; margin: 0; cursor: pointer; }
+.hs-app .hs-switch::before { content: ''; display: block; width: 20px; height: 20px; border-radius: 50%; background: var(--hs-surface); transition: transform .15s; }
+.hs-app .hs-switch:checked { background: var(--hs-action); }
+.hs-app .hs-switch:checked::before { transform: translateX(18px); background: var(--hs-on-action); }
+
+/* Suggestion lists and the node chooser share one popover look. */
+.hs-app .hs-autocomplete { position: relative; }
+.hs-app .hs-suggestions { border: 1px solid var(--hs-line); border-radius: 10px; background: var(--hs-surface); color: var(--hs-text); box-shadow: 0 8px 28px #0003; padding: 8px; z-index: 30; position: absolute; top: 100%; left: 0; right: 0; min-width: 0; max-height: 280px; overflow: auto; }
+.hs-app .hs-node-chooser { border: 1px solid var(--hs-line); border-radius: 10px; background: var(--hs-surface); color: var(--hs-text); box-shadow: 0 8px 28px #0003; padding: 8px; z-index: 30; position: absolute; width: min(280px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow: auto; display: grid; gap: 8px; }
+.hs-app .hs-suggestions [role="option"], .hs-app .hs-node-chooser [role="option"] { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.hs-app [role="option"] small { color: var(--hs-muted); }
+.hs-app [role="option"][aria-selected="true"], .hs-app [role="option"]:hover { background: var(--hs-soft); }
+
+/* Catalog picker dialog. */
+.hs-app .hs-picker-field { justify-content: flex-start; text-align: left; overflow-wrap: anywhere; }
+.hs-app .hs-picker-filters { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 12px; margin: 16px 0; }
+.hs-app .hs-picker-results { height: min(48dvh, 480px); overflow-y: auto; border: 1px solid var(--hs-line); border-radius: 8px; }
+.hs-app .hs-picker-results button { display: flex; align-items: center; gap: 14px; width: 100%; border: 0; border-bottom: 1px solid var(--hs-line); background: var(--hs-surface); color: var(--hs-text); text-align: left; padding: 14px; cursor: pointer; }
+.hs-app .hs-picker-results button > span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.hs-app .hs-picker-results small { display: block; color: var(--hs-muted); margin-top: 4px; }
+.hs-app .hs-picker-results button:hover, .hs-app .hs-picker-results .hs-picker-active, .hs-app .hs-picker-results [aria-selected="true"] { background: var(--hs-soft); }
+@media (max-width: 700px) {
+  .hs-app .hs-sidebar-toggle { display: inline-flex; }
+  .hs-app .hs-picker-filters { grid-template-columns: minmax(0, 1fr); }
+}
+@media (forced-colors: active) {
+  .hs-app .hs-switch { appearance: auto; }
+  .hs-app .hs-switch::before { display: none; }
+  .hs-app .hs-button, .hs-app .hs-tabs button[aria-selected="true"] { border: 1px solid ButtonText; }
+}

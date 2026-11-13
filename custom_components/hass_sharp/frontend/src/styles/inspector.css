@@ -1,0 +1,23 @@
+/* Node inspector: typed inputs, port rows, value operands and code fields. */
+.hs-app .hs-inspector { padding: 14px 12px; min-width: 0; overflow-y: auto; min-height: 0; border-left: 1px solid var(--hs-line); }
+.hs-app .hs-inspector > h2 { margin-bottom: 16px; }
+.hs-app .hs-inspector .hs-stack { gap: 12px; }
+.hs-app .hs-inspector .hs-status { align-self: flex-start; }
+.hs-app .hs-inspector textarea { font: 12px/1.6 monospace; resize: vertical; }
+.hs-app .hs-size-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.hs-app .hs-code-input { font-family: monospace; resize: vertical; tab-size: 4; }
+.hs-app .hs-operand { min-width: 0; margin: 0; padding: 10px; border: 1px solid var(--hs-line); border-radius: 8px; display: grid; gap: 10px; }
+.hs-app .hs-operand legend { padding: 0 5px; font-size: 12px; font-weight: 600; }
+.hs-app .hs-operand .hs-muted { font-size: 11px; margin: 0; }
+.hs-app .hs-typed-inspector header h2 { font-size: 15px; margin: 0; }
+.hs-app .hs-typed-inspector p { font-size: 12px; margin: 6px 0; }
+.hs-app .hs-typed-inspector h3 { font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--hs-muted); margin: 14px 0 9px; }
+.hs-app .hs-typed-input, .hs-app .hs-port-row { border-left: 3px solid var(--hs-value-color); padding-left: 9px; margin: 12px 0; font-size: 11px; overflow-wrap: anywhere; }
+.hs-app .hs-typed-input[aria-invalid="true"], .hs-app [data-input-id][aria-invalid="true"] { outline: 1px solid var(--hs-port-error); outline-offset: 4px; }
+.hs-app [data-input-id]:focus-within, .hs-app [data-input-id]:focus-visible { outline: 2px solid var(--hs-accent); outline-offset: 4px; }
+.hs-app .hs-typed-input .hs-operand { padding: 6px; border: 0; }
+.hs-app .hs-typed-inspector details > summary { cursor: pointer; padding: 8px 0; font-size: 12px; font-weight: 600; }
+.hs-app .hs-typed-inspector .hs-field { margin-top: 8px; }
+@media (max-width: 700px) {
+  .hs-app .hs-inspector { border-left: 0; border-top: 1px solid var(--hs-line); max-height: 60dvh; }
+}

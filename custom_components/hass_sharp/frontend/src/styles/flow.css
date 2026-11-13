@@ -1,0 +1,35 @@
+/* Visual canvas: Solid Flow host, node cards, handles, ports and canvas overlays. */
+.hs-app .hs-flow-toolbar { display: flex; align-items: center; gap: 8px; padding: 16px 0; flex-wrap: wrap; }
+.hs-app .hs-flow-toolbar .hs-muted { margin-left: auto; font-size: 11px; }
+.hs-app .hs-canvas-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.hs-app .hs-flow { height: 100%; min-height: 0; min-width: 0; position: relative; background: var(--hs-bg); }
+.hs-app .hs-canvas-column .hs-flow { flex: 1; min-height: 240px; }
+.hs-app .hs-flow .solid-flow { --xy-background-color: var(--hs-bg); --xy-node-color: var(--hs-text); --xy-node-background-color: var(--hs-surface); --xy-edge-stroke: var(--hs-muted); --xy-handle-background-color: var(--hs-accent); --xy-controls-button-background-color: var(--hs-surface); --xy-controls-button-color: var(--hs-text); --xy-controls-button-background-color-hover: var(--hs-soft); --xy-controls-button-color-hover: var(--hs-text); --xy-controls-button-border-color: var(--hs-line); --xy-attribution-background-color: var(--hs-surface); --xy-edge-label-background-color: var(--hs-surface); --xy-edge-label-color: var(--hs-muted); }
+.hs-app .hs-flow .solid-flow__node-automation { background: var(--hs-surface); border: 1px solid var(--hs-line); color: var(--hs-text); border-radius: 10px; box-shadow: 0 3px 12px #0001; }
+.hs-app .hs-flow .solid-flow__node-automation.selected { border-color: var(--hs-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--hs-accent) 25%, transparent); }
+.hs-app .hs-flow .solid-flow__controls-button { width: 44px; height: 44px; }
+.hs-app .hs-flow .solid-flow__attribution { color: var(--hs-muted); }
+.hs-app .hs-flow-card { height: 100%; display: flex; flex-direction: column; padding: 7px 10px; gap: 2px; overflow: hidden; border-radius: 7px; }
+.hs-app .hs-flow-card > strong { font-size: 12px; }
+.hs-app .hs-flow-card > span:last-child { color: var(--hs-muted); font: 11px/1.5 monospace; overflow-wrap: anywhere; overflow: hidden; }
+.hs-app .hs-flow-kind { font-size: 8px; letter-spacing: .03em; text-transform: uppercase; color: var(--hs-accent); }
+.hs-flow-card--error { outline: 2px solid var(--error-color, #bf3048); outline-offset: 2px; }
+.hs-app .hs-flow-card--error { outline: 2px solid var(--hs-port-error); outline-offset: 0; }
+.hs-app .hs-flow .solid-flow__handle { width: 12px; height: 12px; background: var(--hs-accent); border: 2px solid var(--hs-surface); }
+.hs-app .hs-flow .solid-flow__handle:focus-visible { outline: 3px solid var(--hs-accent); outline-offset: 3px; }
+.hs-app .hs-flow .solid-flow__handle[aria-invalid="true"] { outline: 3px solid var(--hs-port-error); outline-offset: 2px; }
+.hs-app .hs-flow .hs-port--false { background: var(--hs-muted); }
+.hs-app .hs-flow .hs-port--error { background: var(--hs-danger); }
+.hs-app .hs-port-label { position: absolute; right: 10px; transform: translateY(-50%); font-size: 10px; letter-spacing: 0; color: var(--hs-muted); background: transparent; padding: 0 2px; pointer-events: none; }
+.hs-app .hs-port-label--target { left: 9px; right: auto; }
+.hs-app .hs-port-label--source { right: 9px; left: auto; }
+.hs-app .hs-node-errors { display: none; position: absolute; z-index: 20; left: calc(100% + 12px); top: 0; min-width: 200px; max-width: 340px; width: max-content; padding: 10px 12px; border: 1px solid var(--hs-port-error); border-radius: 6px; background: var(--hs-surface); box-shadow: 0 4px 18px #0002; color: var(--hs-text); font-size: 12px; pointer-events: none; }
+.hs-app .hs-node-errors p { margin: 0 0 4px; }
+.hs-app .solid-flow__node:hover > .hs-node-errors, .hs-app .solid-flow__node:focus-within > .hs-node-errors, .hs-app .solid-flow__node:focus > .hs-node-errors { display: block; }
+.hs-app .hs-connection-error, .hs-app .hs-connection-prompt { position: absolute; z-index: 10; bottom: 8px; left: 56px; right: 8px; border: 1px solid currentColor; background: var(--hs-surface); border-radius: 6px; padding: 8px; font-size: 12px; pointer-events: none; }
+.hs-diagnostics { padding-inline-start: 1.2rem; }
+.hs-app .hs-canvas-column .hs-diagnostics { flex: none; max-height: 150px; overflow: auto; margin: 0; padding: 4px 10px; border-top: 1px solid var(--hs-line); list-style: none; background: var(--hs-surface); font-size: 11px; }
+.hs-app .hs-diagnostics .hs-button { padding: 5px 2px; text-align: left; white-space: normal; }
+@media (max-width: 700px) {
+  .hs-app .hs-canvas-column { min-height: 360px; }
+}
