@@ -21,7 +21,7 @@ failure and disables running the newer saved revision.
 
 Control edges schedule execution. A control output has one destination; multiple
 paths may enter a non-trigger step. Triggers cannot receive control inputs.
-Connections cannot create cycles; use bounded Repeat, While or Foreach loops.
+Connections cannot create cycles; use bounded Repeat, While or For each loops.
 Data edges supply typed values and **never execute their source nodes**. The
 producer must have executed on the chosen path before the consumer reads it.
 Missing producer output is a mapped runtime error, not an implicit default.
@@ -39,7 +39,7 @@ If and State condition choose True/False paths; most actions also offer an Error
 which receives the failure instead of ending the run. Parallel branches and bounded
 loops have structured scopes. Branch/body outputs do not automatically escape. Loop carry values retain state across sequential iterations; explicit
 exports publish selected values when the loop completes. Each declaration has a
-type and required initial operand. Foreach validates a declared item type, snapshots
+type and required initial operand. For each validates a declared item type, snapshots
 its input and exposes item/index only inside its body. A loop may lower its own
 iteration cap; the shared catalog defines global node/edge/nesting/step limits.
 Scope snapshots and unsupported live resources are described in

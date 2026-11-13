@@ -290,14 +290,14 @@ it('shows a connected input as a "From" pill without an editor, and brings the e
 
 it('shows problems as callouts that focus their field, and names types in words with a fallback for unresolvable ones', async () => {
   const graph = addNode(createGraph('Problems'), 'compare', 'compare')
-  const diagnostics: VisualDiagnostic[] = [{ nodeId: 'compare', inputId: 'right', message: 'Right needs a value', severity: 3, startLine: null, startColumn: null }]
+  const diagnostics: VisualDiagnostic[] = [{ nodeId: 'compare', inputId: 'right', message: 'Second value needs a value', severity: 3, startLine: null, startColumn: null }]
   const { el } = mount(graph, 'compare', { diagnostics })
-  const callout = button(el.querySelector('.hs-insp-problems')!, 'Right needs a value')!
+  const callout = button(el.querySelector('.hs-insp-problems')!, 'Second value needs a value')!
   expect(callout).toBeDefined()
   callout.click()
   expect(row(el, 'right')!.contains(document.activeElement)).toBe(true)
   // Validator messages appear as they are under their field.
-  expect(row(el, 'right')!.textContent).toContain('Right needs a value')
+  expect(row(el, 'right')!.textContent).toContain('Second value needs a value')
   const chips = [...el.querySelectorAll('.hs-inspector .hs-type-chip')].map(c => c.textContent)
   expect(chips.length).toBeGreaterThan(0)
   for (const chip of chips) expect(chip).not.toMatch(/Boolean|String|System\.|global::/)
@@ -391,7 +391,7 @@ it('categorizes every catalog node and groups and filters the quick-add palette'
   const logic = groups.find(group => group.querySelector('.hs-quick-add__category')!.textContent === 'Logic')!
   expect(logic.querySelectorAll('[role="option"]')).toHaveLength(catalogPalette().filter(n => n.category === 'Logic').length)
   const search = root.querySelector<HTMLInputElement>('[aria-label="Search steps"]')!
-  search.value = 'Xor'
+  search.value = 'Exclusive or'
   search.dispatchEvent(new Event('input', { bubbles: true }))
   expect(root.querySelectorAll('[role="option"]')).toHaveLength(1)
   search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))

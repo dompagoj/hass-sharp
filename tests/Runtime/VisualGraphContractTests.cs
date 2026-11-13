@@ -57,6 +57,34 @@ public static class VisualGraphContractTests
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// The catalog's descriptions are what people read in the node library, quick-add and the inspector: none uses
+    /// implementation words, the words the editor replaces ("yes/no value", "text"), pointer escapes or raw port ids.
+    /// </summary>
+    [RuntimeSuite("--catalog-wording", Order = 11)]
+    public static Task CatalogWording()
+    {
+        var descriptions = new List<(string Path, string Text)>();
+        void Collect(JsonNode? node, string path)
+        {
+            if (node is JsonObject obj)
+                foreach (var (key, value) in obj)
+                    if (key == "description" && value is JsonValue text && text.TryGetValue<string>(out var description)) descriptions.Add((path, description));
+                    else Collect(value, path + "/" + key);
+            else if (node is JsonArray list)
+                for (var i = 0; i < list.Count; i++) Collect(list[i], path + "/" + i);
+        }
+        Collect(VisualNodeCatalog.GetCatalog(), "");
+        if (descriptions.Count < 100) throw new Exception($"Catalog wording: expected the catalog's descriptions, found {descriptions.Count}");
+        var problems = descriptions.Where(d => BannedWording.IsMatch(d.Text)).Select(d => $"{d.Path}: \"{BannedWording.Match(d.Text).Value}\" in {d.Text}").ToList();
+        if (problems.Count > 0) throw new Exception("Catalog wording: descriptions use words people do not use:\n" + string.Join("\n", problems));
+        Console.WriteLine($"PASS catalog wording: {descriptions.Count} catalog descriptions use plain words");
+        return Task.CompletedTask;
+    }
+    static readonly System.Text.RegularExpressions.Regex BannedWording = new(
+        @"\b(?:operands?|literals?|payloads?|invocations?|snapshot(?:s|ted)?|detached|concrete|CLR|typed|atomically|RFC|booleans?|strings?|legacy)\b|scope isolation|~[01]|\b(?:branch|field|item|carry|export):|\b[a-z_]+:<",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     /// <summary>Messages are one short sentence for people: no full stop, no validator vocabulary, no CLR type names.</summary>
     static readonly System.Text.RegularExpressions.Regex Jargon = new(@"\b(?:literal|unset|operand|payload)\b|global::|System\.|\.$|\b(?:field|data):|type-checked|\b[0-9a-f]{32}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 

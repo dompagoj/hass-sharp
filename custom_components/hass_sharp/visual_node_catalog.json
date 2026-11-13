@@ -11,7 +11,7 @@
   },
   "types": {
     "boolean": {
-      "description": "Boolean",
+      "description": "A yes/no value.",
       "clrType": "System.Boolean",
       "nullable": false,
       "category": "Boolean",
@@ -22,7 +22,7 @@
       "label": "Boolean"
     },
     "number": {
-      "description": "Number",
+      "description": "A number, such as 21.5.",
       "clrType": "System.Double",
       "nullable": false,
       "category": "Number",
@@ -33,7 +33,7 @@
       "label": "Number"
     },
     "string": {
-      "description": "String",
+      "description": "Text, such as a state or a name.",
       "clrType": "System.String",
       "nullable": false,
       "category": "String",
@@ -44,7 +44,7 @@
       "label": "String"
     },
     "object": {
-      "description": "Object",
+      "description": "A set of named values, such as the data of an event.",
       "clrType": "System.Text.Json.Nodes.JsonObject",
       "nullable": false,
       "category": "Object",
@@ -55,7 +55,7 @@
       "label": "Object"
     },
     "array": {
-      "description": "Array",
+      "description": "A list of values.",
       "clrType": "System.Text.Json.Nodes.JsonArray",
       "nullable": false,
       "category": "Array",
@@ -66,7 +66,7 @@
       "label": "Array"
     },
     "entity_id": {
-      "description": "Entity Id",
+      "description": "The id of an entity, such as light.kitchen.",
       "refines": "string",
       "pattern": "^[a-z0-9_]+\\.[a-z0-9_]+$",
       "clrType": "System.String",
@@ -85,10 +85,10 @@
       "literalKind": "object",
       "label": "Target",
       "category": "Object",
-      "description": "Home Assistant target"
+      "description": "The entities, devices, areas, floors or labels a service acts on."
     },
     "global::HassSharp.EntityStateSnapshot": {
-      "description": "Detached Home Assistant entity state",
+      "description": "An entity's state and attributes as they were when read.",
       "clrType": "HassSharp.EntityStateSnapshot",
       "nullable": false,
       "category": "Object",
@@ -113,7 +113,7 @@
     "trigger": {
       "label": "Trigger",
       "category": "Hass",
-      "description": "Start an invocation from HA, a legacy trigger, or manual run.",
+      "description": "Start the automation when something happens, at a set time, or when you run it.",
       "minGraphVersion": 5,
       "config": {
         "type": {
@@ -127,27 +127,27 @@
             "ha"
           ],
           "default": "entity",
-          "description": "Trigger platform selector.",
+          "description": "What starts it: an entity change, a daily time, one date and time, a manual run, startup or a Home Assistant trigger.",
           "label": "Type"
         },
         "entity": {
           "type": "string",
-          "description": "Home Assistant entity ID.",
+          "description": "The entity to watch, such as binary_sensor.front_door.",
           "label": "Entity"
         },
         "time": {
           "type": "string",
-          "description": "Daily local time in HH:mm format.",
+          "description": "The time of day to run, as HH:mm in 24-hour time, such as 07:30.",
           "label": "Time"
         },
         "timeZone": {
           "type": "string",
-          "description": "Explicit IANA/system time zone for daily scheduling.",
+          "description": "The time zone of the daily time, such as Europe/Zagreb or UTC.",
           "label": "Time zone"
         },
         "trigger": {
           "type": "object",
-          "description": "Native Home Assistant trigger declaration, with trigger or platform and platform-specific options.",
+          "description": "A Home Assistant trigger as written in a YAML automation, such as {\"trigger\": \"state\", \"entity_id\": \"light.hall\"}.",
           "label": "Trigger"
         },
         "mode": {
@@ -159,33 +159,33 @@
             "Parallel"
           ],
           "default": "Single",
-          "description": "Whole-invocation concurrency policy: Single, Restart, Queued or Parallel.",
+          "description": "If it triggers while running: Single ignores it, Restart starts over, Queued runs afterwards, Parallel runs alongside.",
           "label": "Mode"
         },
         "manual": {
           "type": "boolean",
           "default": true,
-          "description": "Whether this trigger exposes a manual run action.",
+          "description": "Whether Run now can start the automation from this trigger.",
           "label": "Manual"
         },
         "startup": {
           "type": "boolean",
-          "description": "Optional override of startup behavior; when omitted, follows the trigger type.",
+          "description": "Whether to also run when Home Assistant starts; when not set, only a startup trigger runs then.",
           "label": "Startup"
         },
         "entitiesExpression": {
           "type": "string",
-          "description": "Optional C# expression overriding legacy entity subscriptions.",
+          "description": "A C# expression that replaces the entities this trigger listens to.",
           "label": "Entities expression"
         },
         "schedulesExpression": {
           "type": "string",
-          "description": "Optional C# expression overriding legacy schedules.",
+          "description": "A C# expression that replaces the schedules this trigger uses.",
           "label": "Schedules expression"
         },
         "at": {
           "type": "string",
-          "description": "Once-only ISO timestamp with explicit UTC offset or Z.",
+          "description": "The date and time to run once, with its offset from UTC, such as 2026-12-01T07:30:00+01:00.",
           "label": "At",
           "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:\\.[0-9]{1,7})?)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))(?![\\s\\S])",
           "format": "date-time-offset"
@@ -204,13 +204,13 @@
     "condition": {
       "label": "State condition",
       "category": "Hass",
-      "description": "Branch on an entity state.",
+      "description": "Continue on If true or If false, depending on whether an entity has a given state.",
       "minGraphVersion": 5,
       "config": {
         "state": {
           "type": "string",
           "required": true,
-          "description": "Expected raw entity state string.",
+          "description": "The state to compare with, as Home Assistant stores it, such as on, off or home.",
           "label": "State"
         }
       },
@@ -220,7 +220,7 @@
             "entity_id"
           ],
           "required": true,
-          "description": "Entity whose state is compared with the configured state.",
+          "description": "The entity to check. For the entity that started the run, its state when the trigger fired is used.",
           "label": "Entity"
         }
       },
@@ -237,7 +237,7 @@
     "service": {
       "label": "Call service",
       "category": "Hass",
-      "description": "Call a Home Assistant service with typed target and fields.",
+      "description": "Run a Home Assistant service, such as turning on a light or sending a notification.",
       "minGraphVersion": 5,
       "config": {
         "service": {
@@ -245,19 +245,19 @@
           "required": true,
           "pattern": "^[a-z0-9_]+\\.[a-z0-9_]+$",
           "label": "Service",
-          "description": "Service identifier in domain.service form."
+          "description": "The service to call, such as light.turn_on."
         },
         "fields": {
           "type": "object",
           "default": {},
           "label": "Fields",
-          "description": "Service field operands keyed by field name."
+          "description": "The service's options you set, such as brightness or a message, each with its value."
         },
         "returnResponse": {
           "type": "boolean",
           "default": false,
           "label": "Return response",
-          "description": "Request the service response."
+          "description": "Ask the service for its response, so later steps can use it."
         }
       },
       "inputs": {
@@ -268,14 +268,14 @@
           ],
           "required": false,
           "label": "Target",
-          "description": "Entities, devices, areas or labels the service acts on."
+          "description": "The entities, devices, areas, floors or labels the service acts on."
         }
       },
       "outputs": {
         "response": {
           "type": "object",
           "label": "Response",
-          "description": "Service response object.",
+          "description": "What the service sent back, such as a weather forecast.",
           "when": "returnResponse"
         }
       },
@@ -291,7 +291,7 @@
     "delay": {
       "label": "Delay",
       "category": "Flow",
-      "description": "Wait for the given seconds.",
+      "description": "Wait a number of seconds before the next step.",
       "minGraphVersion": 5,
       "config": {},
       "inputs": {
@@ -300,7 +300,7 @@
             "number"
           ],
           "required": true,
-          "description": "Duration to wait before continuing.",
+          "description": "How long to wait, up to about 49 days.",
           "min": 0,
           "max": 4294967.294,
           "default": {
@@ -323,14 +323,14 @@
     "custom": {
       "label": "Custom C#",
       "category": "Code",
-      "description": "Execute C# with values and lastError available.",
+      "description": "Run your own C# code, which can read the trigger's data and earlier steps' values.",
       "minGraphVersion": 5,
       "config": {
         "code": {
           "type": "string",
           "required": true,
           "default": "// Add your C# here",
-          "description": "C# statements with values, lastError and normal Automation members available.",
+          "description": "The C# statements to run. They can use TriggerData, values (what earlier steps exposed by name) and lastError.",
           "label": "Code"
         }
       },
@@ -347,7 +347,7 @@
     "if": {
       "label": "If",
       "category": "Logic",
-      "description": "Choose a branch using a Boolean input.",
+      "description": "Continue on If true or If false, depending on a yes/no value.",
       "minGraphVersion": 5,
       "config": {},
       "inputs": {
@@ -356,7 +356,7 @@
             "boolean"
           ],
           "required": true,
-          "description": "True selects the True execution branch; false selects False.",
+          "description": "Yes continues on If true, no continues on If false.",
           "default": {
             "kind": "literal",
             "type": "boolean",
@@ -378,12 +378,12 @@
     "and": {
       "label": "And",
       "category": "Logic",
-      "description": "Combine two Boolean values.",
+      "description": "Combine two yes/no values: the result is yes only when both are yes.",
       "minGraphVersion": 5,
       "config": {
         "output": {
           "type": "string",
-          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
           "label": "Output"
         }
       },
@@ -393,32 +393,30 @@
             "boolean"
           ],
           "required": true,
-          "description": "First Boolean operand.",
           "default": {
             "kind": "literal",
             "type": "boolean",
             "value": true
           },
-          "label": "Left"
+          "label": "First value"
         },
         "right": {
           "types": [
             "boolean"
           ],
           "required": true,
-          "description": "Second Boolean operand.",
           "default": {
             "kind": "literal",
             "type": "boolean",
             "value": false
           },
-          "label": "Right"
+          "label": "Second value"
         }
       },
       "outputs": {
         "value": {
           "type": "boolean",
-          "description": "True if both Boolean inputs are true.",
+          "description": "Yes when both values are yes.",
           "label": "Result"
         }
       },
@@ -433,12 +431,12 @@
     "or": {
       "label": "Or",
       "category": "Logic",
-      "description": "Combine two Boolean values.",
+      "description": "Combine two yes/no values: the result is yes when at least one is yes.",
       "minGraphVersion": 5,
       "config": {
         "output": {
           "type": "string",
-          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
           "label": "Output"
         }
       },
@@ -448,32 +446,30 @@
             "boolean"
           ],
           "required": true,
-          "description": "First Boolean operand.",
           "default": {
             "kind": "literal",
             "type": "boolean",
             "value": true
           },
-          "label": "Left"
+          "label": "First value"
         },
         "right": {
           "types": [
             "boolean"
           ],
           "required": true,
-          "description": "Second Boolean operand.",
           "default": {
             "kind": "literal",
             "type": "boolean",
             "value": false
           },
-          "label": "Right"
+          "label": "Second value"
         }
       },
       "outputs": {
         "value": {
           "type": "boolean",
-          "description": "True if at least one Boolean input is true.",
+          "description": "Yes when at least one value is yes.",
           "label": "Result"
         }
       },
@@ -486,14 +482,14 @@
       ]
     },
     "xor": {
-      "label": "Xor",
+      "label": "Exclusive or",
       "category": "Logic",
-      "description": "Combine two Boolean values.",
+      "description": "Combine two yes/no values: the result is yes when exactly one is yes.",
       "minGraphVersion": 5,
       "config": {
         "output": {
           "type": "string",
-          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
           "label": "Output"
         }
       },
@@ -503,32 +499,30 @@
             "boolean"
           ],
           "required": true,
-          "description": "First Boolean operand.",
           "default": {
             "kind": "literal",
             "type": "boolean",
             "value": true
           },
-          "label": "Left"
+          "label": "First value"
         },
         "right": {
           "types": [
             "boolean"
           ],
           "required": true,
-          "description": "Second Boolean operand.",
           "default": {
             "kind": "literal",
             "type": "boolean",
             "value": false
           },
-          "label": "Right"
+          "label": "Second value"
         }
       },
       "outputs": {
         "value": {
           "type": "boolean",
-          "description": "True if exactly one Boolean input is true.",
+          "description": "Yes when exactly one value is yes.",
           "label": "Result"
         }
       },
@@ -543,12 +537,12 @@
     "not": {
       "label": "Not",
       "category": "Logic",
-      "description": "Invert a Boolean value.",
+      "description": "Turn a yes/no value around: yes becomes no and no becomes yes.",
       "minGraphVersion": 5,
       "config": {
         "output": {
           "type": "string",
-          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
           "label": "Output"
         }
       },
@@ -558,7 +552,6 @@
             "boolean"
           ],
           "required": true,
-          "description": "Boolean value to invert.",
           "default": {
             "kind": "literal",
             "type": "boolean",
@@ -570,7 +563,7 @@
       "outputs": {
         "value": {
           "type": "boolean",
-          "description": "Logical inverse of the input Boolean.",
+          "description": "The opposite of the value.",
           "label": "Result"
         }
       },
@@ -585,7 +578,7 @@
     "compare": {
       "label": "Compare",
       "category": "Logic",
-      "description": "Compare operands with matching types; ordering requires numbers.",
+      "description": "Compare two values, such as whether a temperature is above 21.",
       "minGraphVersion": 5,
       "config": {
         "operator": {
@@ -600,12 +593,12 @@
             "ge"
           ],
           "default": "eq",
-          "description": "Equality or numeric ordering comparison operator.",
+          "description": "How to compare. Less than, at most, greater than and at least work only with numbers.",
           "label": "Operator"
         },
         "output": {
           "type": "string",
-          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
           "label": "Output"
         }
       },
@@ -615,32 +608,32 @@
             "$any"
           ],
           "required": true,
-          "description": "First operand; both operands must have matching types.",
+          "description": "The value to check, such as a temperature. Both values must be of the same type.",
           "default": {
             "kind": "literal",
             "type": "number",
             "value": 0
           },
-          "label": "Left"
+          "label": "First value"
         },
         "right": {
           "types": [
             "$any"
           ],
           "required": true,
-          "description": "Second operand; ordering comparisons require numbers.",
+          "description": "The value to compare it with, such as 21.",
           "default": {
             "kind": "literal",
             "type": "number",
             "value": 0
           },
-          "label": "Right"
+          "label": "Second value"
         }
       },
       "outputs": {
         "value": {
           "type": "boolean",
-          "description": "Boolean result of the selected comparison.",
+          "description": "Yes when the comparison holds, otherwise no.",
           "label": "Result"
         }
       },
@@ -667,12 +660,12 @@
     "read_entity": {
       "label": "Read entity",
       "category": "Hass",
-      "description": "Read a detached, concrete Home Assistant entity-state snapshot.",
+      "description": "Read an entity's current state and attributes for later steps to use.",
       "minGraphVersion": 5,
       "config": {
         "output": {
           "type": "string",
-          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
           "label": "Output"
         }
       },
@@ -682,7 +675,7 @@
             "entity_id"
           ],
           "required": true,
-          "description": "Entity ID to read from the invocation state snapshot.",
+          "description": "The entity to read. For the entity that started the run, its state when the trigger fired is used.",
           "default": {
             "kind": "literal",
             "type": "entity_id",
@@ -694,7 +687,7 @@
       "outputs": {
         "value": {
           "type": "global::HassSharp.EntityStateSnapshot",
-          "description": "Detached entity ID, state, attributes and timestamps.",
+          "description": "The entity's id, state, attributes and change times; it does not update afterwards.",
           "label": "Entity state"
         }
       },
@@ -709,7 +702,7 @@
     "set_value": {
       "label": "Set value",
       "category": "Data",
-      "description": "Explicitly convert an input to the selected type.",
+      "description": "Make a value of the type you choose for later steps to use.",
       "minGraphVersion": 5,
       "config": {
         "type": {
@@ -724,13 +717,13 @@
             "entity_id"
           ],
           "default": "string",
-          "description": "Registered declared C# type produced by this node.",
+          "description": "The type of the value, such as Number or Text.",
           "label": "Type",
           "enumSource": "types"
         },
         "output": {
           "type": "string",
-          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
           "label": "Output"
         }
       },
@@ -740,7 +733,7 @@
             "$any"
           ],
           "required": true,
-          "description": "Value assigned or explicitly converted to the selected result type.",
+          "description": "The value to give. It is changed to the chosen type if needed, such as the text 21 into the number 21.",
           "default": {
             "kind": "literal",
             "type": "string",
@@ -752,7 +745,7 @@
       "outputs": {
         "value": {
           "type": "$type",
-          "description": "Assigned value after explicit conversion to the configured type.",
+          "description": "The value, as the chosen type.",
           "label": "Value"
         }
       },
@@ -767,7 +760,7 @@
     "convert": {
       "label": "Convert",
       "category": "Data",
-      "description": "Explicitly convert an input to the selected type.",
+      "description": "Change a value into another type, such as text into a number.",
       "minGraphVersion": 5,
       "config": {
         "type": {
@@ -782,13 +775,13 @@
             "entity_id"
           ],
           "default": "string",
-          "description": "Registered declared C# type produced by this node.",
+          "description": "The type to change the value into, such as Number or Entity.",
           "label": "Type",
           "enumSource": "types"
         },
         "output": {
           "type": "string",
-          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
           "label": "Output"
         }
       },
@@ -798,7 +791,7 @@
             "$any"
           ],
           "required": true,
-          "description": "Source value explicitly converted to the selected result type.",
+          "description": "The value to change. If it cannot be changed, the step takes its On error path.",
           "default": {
             "kind": "literal",
             "type": "string",
@@ -810,7 +803,7 @@
       "outputs": {
         "value": {
           "type": "$type",
-          "description": "Input converted to the configured result type.",
+          "description": "The value, as the chosen type.",
           "label": "Value"
         }
       },
@@ -825,7 +818,7 @@
     "stop": {
       "label": "Stop",
       "category": "Flow",
-      "description": "End the invocation.",
+      "description": "End the whole run here, including any branches still running.",
       "minGraphVersion": 5,
       "config": {},
       "inputs": {},
@@ -838,7 +831,7 @@
     "log": {
       "label": "Log",
       "category": "Data",
-      "description": "Log any typed value.",
+      "description": "Write a message to the Home Assistant log.",
       "minGraphVersion": 5,
       "config": {
         "level": {
@@ -850,7 +843,7 @@
             "Error"
           ],
           "default": "Info",
-          "description": "Home Assistant logging severity.",
+          "description": "How important the message is: Debug, Info, Warn or Error.",
           "label": "Level"
         }
       },
@@ -860,7 +853,7 @@
             "$any"
           ],
           "required": true,
-          "description": "Typed value formatted as text for the Home Assistant log.",
+          "description": "What to write. Any value works; it is written as text.",
           "default": {
             "kind": "literal",
             "type": "string",
@@ -881,7 +874,7 @@
     "repeat": {
       "label": "Repeat",
       "category": "Flow",
-      "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
+      "description": "Run the steps in Body a set number of times, then continue with Done.",
       "minGraphVersion": 5,
       "config": {
         "maxIterations": {
@@ -889,21 +882,21 @@
           "min": 1,
           "max": 1000,
           "default": 1000,
-          "description": "Maximum iterations for this loop; may only lower the global 1000-iteration limit.",
+          "description": "The loop stops with an error if it would run more often than this; at most 1000.",
           "label": "Maximum iterations"
         },
         "carry": {
           "type": "array",
           "default": [],
-          "description": "Named typed values with required initial operands, retained across sequential iterations.",
-          "label": "Carry",
+          "description": "Values each iteration can read and change, each starting from a value you set.",
+          "label": "Kept between iterations",
           "itemsStructure": "loopDeclaration"
         },
         "exports": {
           "type": "array",
           "default": [],
-          "description": "Named typed values with required initial operands, published only after loop completion.",
-          "label": "Exports",
+          "description": "Values set inside the loop for steps after it; nothing else made inside the loop is available outside.",
+          "label": "Available after the loop",
           "itemsStructure": "loopDeclaration"
         }
       },
@@ -913,7 +906,7 @@
             "number"
           ],
           "required": true,
-          "description": "Whole number of sequential body iterations, bounded by the loop limit.",
+          "description": "How many times to run Body, from 0 up to the maximum iterations.",
           "min": 0,
           "max": 1000,
           "integer": true,
@@ -945,7 +938,7 @@
     "while": {
       "label": "While",
       "category": "Flow",
-      "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
+      "description": "Check Condition before each iteration and run Body while it gives yes.",
       "minGraphVersion": 5,
       "config": {
         "maxIterations": {
@@ -953,21 +946,21 @@
           "min": 1,
           "max": 1000,
           "default": 1000,
-          "description": "Maximum iterations for this loop; may only lower the global 1000-iteration limit.",
+          "description": "The loop stops with an error if it would run more often than this; at most 1000.",
           "label": "Maximum iterations"
         },
         "carry": {
           "type": "array",
           "default": [],
-          "description": "Named typed values with required initial operands, retained across sequential iterations.",
-          "label": "Carry",
+          "description": "Values each iteration can read and change, each starting from a value you set.",
+          "label": "Kept between iterations",
           "itemsStructure": "loopDeclaration"
         },
         "exports": {
           "type": "array",
           "default": [],
-          "description": "Named typed values with required initial operands, published only after loop completion.",
-          "label": "Exports",
+          "description": "Values set inside the loop for steps after it; nothing else made inside the loop is available outside.",
+          "label": "Available after the loop",
           "itemsStructure": "loopDeclaration"
         }
       },
@@ -995,7 +988,7 @@
     "until": {
       "label": "Until",
       "category": "Flow",
-      "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
+      "description": "Run Body, then check Condition, and repeat until it gives yes.",
       "minGraphVersion": 5,
       "config": {
         "maxIterations": {
@@ -1003,21 +996,21 @@
           "min": 1,
           "max": 1000,
           "default": 1000,
-          "description": "Maximum iterations for this loop; may only lower the global 1000-iteration limit.",
+          "description": "The loop stops with an error if it would run more often than this; at most 1000.",
           "label": "Maximum iterations"
         },
         "carry": {
           "type": "array",
           "default": [],
-          "description": "Named typed values with required initial operands, retained across sequential iterations.",
-          "label": "Carry",
+          "description": "Values each iteration can read and change, each starting from a value you set.",
+          "label": "Kept between iterations",
           "itemsStructure": "loopDeclaration"
         },
         "exports": {
           "type": "array",
           "default": [],
-          "description": "Named typed values with required initial operands, published only after loop completion.",
-          "label": "Exports",
+          "description": "Values set inside the loop for steps after it; nothing else made inside the loop is available outside.",
+          "label": "Available after the loop",
           "itemsStructure": "loopDeclaration"
         }
       },
@@ -1043,9 +1036,9 @@
       ]
     },
     "foreach": {
-      "label": "Foreach",
+      "label": "For each",
       "category": "Flow",
-      "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
+      "description": "Run the steps in Body once for each item in a list.",
       "minGraphVersion": 5,
       "config": {
         "maxIterations": {
@@ -1053,21 +1046,21 @@
           "min": 1,
           "max": 1000,
           "default": 1000,
-          "description": "Maximum iterations for this loop; may only lower the global 1000-iteration limit.",
+          "description": "The loop stops with an error if it would run more often than this; at most 1000.",
           "label": "Maximum iterations"
         },
         "carry": {
           "type": "array",
           "default": [],
-          "description": "Named typed values with required initial operands, retained across sequential iterations.",
-          "label": "Carry",
+          "description": "Values each iteration can read and change, each starting from a value you set.",
+          "label": "Kept between iterations",
           "itemsStructure": "loopDeclaration"
         },
         "exports": {
           "type": "array",
           "default": [],
-          "description": "Named typed values with required initial operands, published only after loop completion.",
-          "label": "Exports",
+          "description": "Values set inside the loop for steps after it; nothing else made inside the loop is available outside.",
+          "label": "Available after the loop",
           "itemsStructure": "loopDeclaration"
         },
         "itemType": {
@@ -1082,7 +1075,7 @@
             "entity_id"
           ],
           "default": "object",
-          "description": "Required type for every foreach item; heterogeneous arrays fail if an item does not match.",
+          "description": "The type every item must have; the loop stops with an error at an item of another type.",
           "label": "Item type",
           "enumSource": "types"
         }
@@ -1093,7 +1086,7 @@
             "array"
           ],
           "required": true,
-          "description": "JSON array or compatible closed CLR array, snapshotted at loop entry; CLR element type must be assignable to itemType.",
+          "description": "The list to go through. It is copied when the loop starts, so later changes do not affect it.",
           "default": {
             "kind": "literal",
             "type": "array",
@@ -1105,13 +1098,13 @@
       "outputs": {
         "item": {
           "type": "$itemType",
-          "description": "Current snapshot element, validated against itemType; visible only in the body.",
+          "description": "The item of the current iteration; only available inside Body.",
           "visibility": "body",
           "label": "Item"
         },
         "index": {
           "type": "number",
-          "description": "Zero-based current array index; visible only in the body.",
+          "description": "The position of the current item, counting from 0; only available inside Body.",
           "visibility": "body",
           "label": "Index"
         }
@@ -1135,7 +1128,7 @@
     "parallel": {
       "label": "Parallel",
       "category": "Flow",
-      "description": "Run isolated stable branches; next runs after all branches join.",
+      "description": "Run several branches at the same time, then continue with Done when all have finished.",
       "minGraphVersion": 5,
       "config": {
         "branches": {
@@ -1147,7 +1140,7 @@
           ],
           "minItems": 1,
           "maxItems": 32,
-          "description": "Ordered stable branch IDs; each creates branch:<id>, isolated from siblings; next is the joined continuation.",
+          "description": "The branches to run at the same time. Values made in one branch are not available to the others or after it.",
           "label": "Branches",
           "itemsStructure": "branchId"
         }
@@ -1166,7 +1159,7 @@
     "condition_result": {
       "label": "Condition result",
       "category": "Flow",
-      "description": "Return a Boolean from the nearest while/until condition scope.",
+      "description": "End the Condition of a While or Until loop with a yes/no answer.",
       "minGraphVersion": 5,
       "config": {},
       "inputs": {
@@ -1175,7 +1168,7 @@
             "boolean"
           ],
           "required": true,
-          "description": "Boolean result of this condition evaluation; while continues on true, until stops on true.",
+          "description": "Yes keeps While going and stops Until; no does the opposite.",
           "default": {
             "kind": "literal",
             "type": "boolean",
@@ -1193,13 +1186,13 @@
     "loop_result": {
       "label": "Loop result",
       "category": "Flow",
-      "description": "Finish one iteration, atomically updating named carry and exports.",
+      "description": "Finish this iteration of the loop, setting the values it keeps and passes on.",
       "minGraphVersion": 5,
       "config": {
         "values": {
           "type": "object",
           "default": {},
-          "description": "Optional carry:<name> and export:<name> updates applied atomically at iteration completion; omitted values are retained.",
+          "description": "New values for the loop to keep or pass on; a value left out keeps what it had.",
           "label": "Values"
         }
       },
@@ -1214,7 +1207,7 @@
     "wait_until": {
       "label": "Wait until",
       "category": "Hass",
-      "description": "Poll live entity state or attribute until comparison succeeds.",
+      "description": "Wait until an entity's state or an attribute matches a value, or fail when time runs out.",
       "minGraphVersion": 5,
       "config": {
         "field": {
@@ -1224,12 +1217,12 @@
             "attribute"
           ],
           "default": "state",
-          "description": "Choose entity state or an attribute.",
+          "description": "Whether to check the entity's state or one of its attributes.",
           "label": "Field"
         },
         "attribute": {
           "type": "string",
-          "description": "Attribute key, required when field is attribute.",
+          "description": "The attribute to check, such as brightness or temperature; needed when checking an attribute.",
           "label": "Attribute"
         },
         "type": {
@@ -1244,7 +1237,7 @@
             "entity_id"
           ],
           "default": "string",
-          "description": "Type produced by this node.",
+          "description": "The type of the value to compare, such as Number for a temperature.",
           "label": "Type"
         },
         "operator": {
@@ -1258,7 +1251,7 @@
             "ge"
           ],
           "default": "eq",
-          "description": "Equality or numeric ordering comparison operator.",
+          "description": "How to compare. Less than, at most, greater than and at least work only with numbers.",
           "label": "Operator"
         }
       },
@@ -1268,7 +1261,7 @@
             "entity_id"
           ],
           "required": true,
-          "description": "Entity refreshed on each poll.",
+          "description": "The entity to watch; its latest state is read at every check.",
           "label": "Entity"
         },
         "right": {
@@ -1276,7 +1269,7 @@
             "$type"
           ],
           "required": true,
-          "description": "Value compared with the current state or attribute.",
+          "description": "The value to compare the state or attribute with, such as on or 20.",
           "label": "Expected value"
         },
         "timeout": {
@@ -1284,7 +1277,7 @@
             "number"
           ],
           "required": true,
-          "description": "Maximum wait in seconds before following the error path.",
+          "description": "How many seconds to wait at most; when the time runs out, the step takes its On error path.",
           "min": 0.001,
           "max": 86400,
           "default": {
@@ -1299,7 +1292,7 @@
             "number"
           ],
           "required": true,
-          "description": "Seconds between fresh entity reads.",
+          "description": "How many seconds to wait between checks.",
           "min": 0.001,
           "max": 3600,
           "default": {
@@ -1334,7 +1327,7 @@
     "object": {
       "label": "Object",
       "category": "Data",
-      "description": "Produce a JSON literal.",
+      "description": "Provide an object you write out, such as data for a service.",
       "minGraphVersion": 5,
       "config": {},
       "inputs": {
@@ -1343,7 +1336,7 @@
             "object"
           ],
           "required": true,
-          "description": "JSON object literal produced when this node executes.",
+          "description": "The object to provide, such as {\"brightness\": 80}.",
           "default": {
             "kind": "literal",
             "type": "object",
@@ -1355,7 +1348,6 @@
       "outputs": {
         "value": {
           "type": "object",
-          "description": "The configured JSON object.",
           "label": "Object"
         }
       },
@@ -1368,9 +1360,9 @@
       ]
     },
     "array": {
-      "label": "Array",
+      "label": "List",
       "category": "Data",
-      "description": "Produce a JSON literal.",
+      "description": "Provide a list you write out, such as a list of entity ids.",
       "minGraphVersion": 5,
       "config": {},
       "inputs": {
@@ -1379,20 +1371,19 @@
             "array"
           ],
           "required": true,
-          "description": "JSON array literal produced when this node executes.",
+          "description": "The list to provide, such as [\"light.hall\", \"light.porch\"].",
           "default": {
             "kind": "literal",
             "type": "array",
             "value": []
           },
-          "label": "Array"
+          "label": "List"
         }
       },
       "outputs": {
         "value": {
           "type": "array",
-          "description": "The configured JSON array.",
-          "label": "Array"
+          "label": "List"
         }
       },
       "execution": [
@@ -1406,13 +1397,13 @@
     "object_create": {
       "label": "Create object",
       "category": "Data",
-      "description": "Build an object from named typed fields.",
+      "description": "Build an object from named fields, each set or connected on its own.",
       "minGraphVersion": 5,
       "config": {
         "fields": {
           "type": "object",
           "default": {},
-          "description": "Object mapping field names to typed operands; each field exposes a field:<name> input.",
+          "description": "The object's fields by name; each field gets its own input.",
           "label": "Fields"
         }
       },
@@ -1420,7 +1411,7 @@
       "outputs": {
         "value": {
           "type": "object",
-          "description": "Object containing the resolved named field inputs.",
+          "description": "The object, with a field for each input.",
           "label": "Object"
         }
       },
@@ -1434,15 +1425,15 @@
       ]
     },
     "array_create": {
-      "label": "Create array",
+      "label": "Create list",
       "category": "Data",
-      "description": "Build an array from ordered typed items.",
+      "description": "Build a list from items, each set or connected on its own.",
       "minGraphVersion": 5,
       "config": {
         "items": {
           "type": "array",
           "default": [],
-          "description": "Ordered typed operands; each array entry exposes an item:<index> input.",
+          "description": "The list's items in order; each item gets its own input.",
           "label": "Items"
         }
       },
@@ -1450,8 +1441,8 @@
       "outputs": {
         "value": {
           "type": "array",
-          "description": "Array containing the resolved item inputs in order.",
-          "label": "Array"
+          "description": "The list, with the items in order.",
+          "label": "List"
         }
       },
       "execution": [
@@ -1466,15 +1457,15 @@
     "get_field": {
       "label": "Get field",
       "category": "Data",
-      "description": "Extract a typed value using an RFC 6901 JSON pointer.",
+      "description": "Take one value out of an object or list, such as an attribute from the trigger data.",
       "minGraphVersion": 5,
       "config": {
         "pointer": {
           "type": "string",
           "required": true,
           "default": "",
-          "description": "RFC 6901 JSON pointer; empty selects the entire input, ~0 escapes tilde and ~1 escapes slash.",
-          "label": "Pointer"
+          "description": "Where the value is, such as /brightness or /items/0. Leave empty for the whole value.",
+          "label": "Path"
         },
         "type": {
           "type": "string",
@@ -1488,7 +1479,7 @@
             "entity_id"
           ],
           "default": "string",
-          "description": "Type produced by this node.",
+          "description": "The type of the value you expect, such as Number; a value of another type takes the On error path.",
           "label": "Type"
         }
       },
@@ -1499,14 +1490,14 @@
             "array"
           ],
           "required": true,
-          "description": "Object or array traversed by the JSON pointer.",
+          "description": "The object or list to take the value from, such as Trigger data.",
           "label": "Source"
         }
       },
       "outputs": {
         "value": {
           "type": "$type",
-          "description": "Extracted JSON value checked against the configured result type.",
+          "description": "The value found at the path.",
           "label": "Value"
         }
       },
@@ -1521,7 +1512,7 @@
     "entity_field": {
       "label": "Entity field",
       "category": "Hass",
-      "description": "Extract state or an attribute from an entity snapshot into a scalar or JSON type.",
+      "description": "Get the state or one attribute from an entity state, as the type you choose.",
       "minGraphVersion": 5,
       "config": {
         "field": {
@@ -1531,12 +1522,12 @@
             "attribute"
           ],
           "default": "state",
-          "description": "Choose entity state or an attribute.",
+          "description": "Whether to take the entity's state or one of its attributes.",
           "label": "Field"
         },
         "attribute": {
           "type": "string",
-          "description": "Attribute key, required when field is attribute.",
+          "description": "The attribute to take, such as brightness or friendly_name; needed when taking an attribute.",
           "label": "Attribute"
         },
         "type": {
@@ -1551,12 +1542,12 @@
             "entity_id"
           ],
           "default": "string",
-          "description": "Type produced by this node.",
+          "description": "The type to turn the value into, such as Number for a temperature sensor's state.",
           "label": "Type"
         },
         "output": {
           "type": "string",
-          "description": "Optional named variable assigned in addition to the data output; references retain scope isolation.",
+          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
           "label": "Output"
         }
       },
@@ -1567,13 +1558,13 @@
           ],
           "required": true,
           "label": "Entity state",
-          "description": "Detached entity snapshot to extract from."
+          "description": "The entity state to read from, such as a trigger's New state or what Read entity gives."
         }
       },
       "outputs": {
         "value": {
           "type": "$type",
-          "description": "Selected entity state or attribute converted to the configured type.",
+          "description": "The state or attribute, as the chosen type.",
           "label": "Value"
         }
       },
@@ -1592,7 +1583,7 @@
         "type": "object",
         "pointer": "",
         "label": "Trigger data",
-        "description": "Whole normalised trigger payload."
+        "description": "All the data the trigger passed to the run."
       }
     },
     "entity": {
@@ -1601,19 +1592,19 @@
         "pointer": "/entity_id",
         "refineFrom": "entity",
         "label": "Entity",
-        "description": "Entity whose state changed."
+        "description": "The entity whose state changed."
       },
       "to_state": {
         "type": "global::HassSharp.EntityStateSnapshot",
         "pointer": "/to_state",
         "label": "New state",
-        "description": "Entity state after the change."
+        "description": "The entity's state after the change."
       },
       "from_state": {
         "type": "global::HassSharp.EntityStateSnapshot",
         "pointer": "/from_state",
         "label": "Previous state",
-        "description": "Entity state before the change; absent when the entity had no previous state."
+        "description": "The entity's state before the change; missing when the entity had no state before."
       }
     },
     "daily|once": {
@@ -1621,7 +1612,7 @@
         "type": "string",
         "pointer": "/planned",
         "label": "Planned time",
-        "description": "Planned occurrence as an ISO-8601 UTC timestamp."
+        "description": "When the run was planned to start, in UTC, such as 2026-12-24T17:00:00Z."
       }
     },
     "ha:state|ha:numeric_state|ha:template": {
@@ -1630,19 +1621,19 @@
         "pointer": "/entity_id",
         "refineFrom": "trigger.entity_id",
         "label": "Entity",
-        "description": "Entity that fired the trigger."
+        "description": "The entity that set off the trigger."
       },
       "to_state": {
         "type": "global::HassSharp.EntityStateSnapshot",
         "pointer": "/to_state",
         "label": "New state",
-        "description": "Entity state after the change."
+        "description": "The entity's state after the change."
       },
       "from_state": {
         "type": "global::HassSharp.EntityStateSnapshot",
         "pointer": "/from_state",
         "label": "Previous state",
-        "description": "Entity state before the change; absent when the entity had no previous state."
+        "description": "The entity's state before the change; missing when the entity had no state before."
       }
     },
     "ha:zone": {
@@ -1651,19 +1642,19 @@
         "pointer": "/entity_id",
         "refineFrom": "trigger.entity_id",
         "label": "Entity",
-        "description": "Entity that entered or left the zone."
+        "description": "The entity, such as a person, that entered or left the zone."
       },
       "zone": {
         "type": "string",
         "pointer": "/zone/entity_id",
         "label": "Zone",
-        "description": "Zone entity id."
+        "description": "The zone's entity id, such as zone.home."
       },
       "event": {
         "type": "string",
         "pointer": "/event",
         "label": "Event",
-        "description": "Zone event: enter or leave."
+        "description": "Whether the entity entered or left: enter or leave."
       }
     },
     "ha:event": {
@@ -1671,13 +1662,13 @@
         "type": "string",
         "pointer": "/event/event_type",
         "label": "Event type",
-        "description": "Type of the fired event."
+        "description": "The type of the event, such as call_service."
       },
       "event_data": {
         "type": "object",
         "pointer": "/event/data",
         "label": "Event data",
-        "description": "Data of the fired event."
+        "description": "The data that came with the event."
       }
     },
     "ha:time|ha:time_pattern": {
@@ -1685,7 +1676,7 @@
         "type": "string",
         "pointer": "/now",
         "label": "Time",
-        "description": "Time the trigger fired, as an ISO-8601 timestamp."
+        "description": "When the trigger fired, such as 2026-12-24T07:30:00+01:00."
       }
     },
     "ha:sun|ha:homeassistant": {
@@ -1693,7 +1684,7 @@
         "type": "string",
         "pointer": "/event",
         "label": "Event",
-        "description": "Event that fired the trigger."
+        "description": "Which event it was: sunrise or sunset, or start or shutdown of Home Assistant."
       }
     },
     "ha:webhook": {
@@ -1701,13 +1692,13 @@
         "type": "object",
         "pointer": "/json",
         "label": "JSON body",
-        "description": "Parsed JSON request body."
+        "description": "The JSON the webhook call sent."
       },
       "query": {
         "type": "object",
         "pointer": "/query",
         "label": "Query",
-        "description": "Request query parameters."
+        "description": "The query parameters of the webhook address."
       }
     },
     "ha:mqtt": {
@@ -1715,13 +1706,13 @@
         "type": "string",
         "pointer": "/topic",
         "label": "Topic",
-        "description": "MQTT topic of the message."
+        "description": "The MQTT topic the message arrived on."
       },
       "payload": {
         "type": "string",
         "pointer": "/payload",
         "label": "Payload",
-        "description": "MQTT message payload."
+        "description": "The content of the MQTT message, as text."
       }
     }
   },
@@ -1738,7 +1729,7 @@
       ],
       "defaultKind": "execution",
       "defaultPort": "next",
-      "description": "Schedules the next node; condition next aliases true."
+      "description": "Runs the next step; on a State condition, next means the same as true."
     },
     "data": {
       "required": [
@@ -1752,7 +1743,7 @@
       "schedulesDependencies": false,
       "maxSourcesPerInput": 1,
       "maxConsumersPerOutput": null,
-      "description": "Reads an already-produced value from the current scope snapshot; never executes its source."
+      "description": "Passes a value an earlier step has already made; it never runs that step."
     }
   },
   "structures": {
@@ -1772,7 +1763,7 @@
           "$type"
         ],
         "required": true,
-        "description": "Initial value required even for zero iterations."
+        "description": "The value before the first iteration; needed even when the loop runs zero times."
       }
     },
     "branchId": {
@@ -1797,7 +1788,7 @@
           "target"
         ],
         "constraintsSource": "types",
-        "description": "Resolve each type in types: non-null values must satisfy literalKind and its pattern, numeric bounds, character or enumValues constraints. Null requires nullable=true. Types without literalKind accept only null when nullable; arbitrary CLR classes do not accept object JSON."
+        "description": "A value written into the step. A value other than null must fit its type and every type that type refines: the kind of JSON value, pattern, number range, single character and allowed values. null needs a type that allows it; a C# type with no JSON form takes only null, and a C# class never takes a JSON object."
       },
       "variable": {
         "required": [
@@ -1810,7 +1801,7 @@
         "required": [
           "kind"
         ],
-        "description": "No active literal or reference; connecting and disconnecting never restores an old literal."
+        "description": "No value. Connecting a wire and then removing it never brings back an earlier value."
       }
     }
   },

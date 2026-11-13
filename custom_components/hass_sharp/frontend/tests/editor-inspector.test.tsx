@@ -96,7 +96,7 @@ it('palette clicks describe configuration and connections without editing histor
   const before = json(host)
   button(host, 'About State condition').click()
   const inspector = host.querySelector('[aria-label="Node inspector"]')!
-  expect(inspector.textContent).toContain('Branch on an entity state')
+  expect(inspector.textContent).toContain('depending on whether an entity has a given state')
   expect(inspector.textContent).toContain('If true')
   expect(inspector.textContent).toContain('If false')
   expect(inspector.textContent).toContain('On error')

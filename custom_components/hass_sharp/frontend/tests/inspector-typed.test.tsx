@@ -36,7 +36,7 @@ it('shows typed inputs with friendly type chips and outputs, without an appearan
   // Label, type chip and the input's description; the chip names the type in words.
   expect(condition.textContent).toContain('Condition')
   expect(condition.querySelector('.hs-type-chip')!.textContent).toBe('Yes/No')
-  expect(condition.textContent).toContain('True selects the True execution branch')
+  expect(condition.textContent).toContain('Yes continues on If true, no continues on If false.')
   expect([...branch.querySelectorAll('h3')].map(n => n.textContent)).toContain('Inputs')
   expect([...temperature.querySelectorAll('h3')].map(n => n.textContent)).toContain('Outputs')
   const output = temperature.querySelector('.hs-insp-output')!
