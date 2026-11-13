@@ -1,5 +1,5 @@
 {
-  "servicesGeneration": "72a450956b2f1a069f3299dbb252fb08494edc4c14da0dd9985ce1b776ffe5d3",
+  "servicesGeneration": "85f9da0abbf9371d1e180c17fad03ba9e420b9791ab97ca619e9b0b889b05724",
   "items": {
     "climate.set_hvac_mode": {
       "domain": "climate",
@@ -325,6 +325,323 @@
         }
       }
     },
+    "hass_sharp_test.selectors": {
+      "domain": "hass_sharp_test",
+      "service": "selectors",
+      "name": "Selectors",
+      "description": "One field per selector the editor has a widget for.",
+      "target": null,
+      "response": "none",
+      "fields": {
+        "area": {
+          "label": "Area",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 8,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "area": {}
+          },
+          "filter": null
+        },
+        "day": {
+          "label": "Day",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 1,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "date": {}
+          },
+          "filter": null
+        },
+        "device": {
+          "label": "Device",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 7,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "device": {}
+          },
+          "filter": null
+        },
+        "floor": {
+          "label": "Floor",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 9,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "floor": {}
+          },
+          "filter": null
+        },
+        "labels": {
+          "label": "Labels",
+          "description": "",
+          "types": [
+            "string",
+            "array"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 10,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "label": {
+              "multiple": true
+            }
+          },
+          "filter": null
+        },
+        "light": {
+          "label": "Light",
+          "description": "",
+          "types": [
+            "entity_id:light"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 5,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "entity": {
+              "domain": "light"
+            }
+          },
+          "filter": null
+        },
+        "lights": {
+          "label": "Lights",
+          "description": "",
+          "types": [
+            "entity_id:light",
+            "array"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 6,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "entity": {
+              "domain": "light",
+              "multiple": true
+            }
+          },
+          "filter": null
+        },
+        "moment": {
+          "label": "Moment",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 2,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])[T ]([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?$",
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "datetime": {}
+          },
+          "filter": null
+        },
+        "targets": {
+          "label": "Targets",
+          "description": "",
+          "types": [
+            "target"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 4,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "target": {}
+          },
+          "filter": null
+        },
+        "time_of_day": {
+          "label": "Time of day",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 0,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": "^([01]?\\d|2[0-3]):[0-5]\\d(:[0-5]\\d)?$",
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "time": {}
+          },
+          "filter": null
+        },
+        "wait": {
+          "label": "Wait",
+          "description": "",
+          "types": [
+            "number",
+            "object"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 3,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": null,
+          "selector": {
+            "duration": {}
+          },
+          "filter": null
+        }
+      }
+    },
     "homeassistant.turn_on": {
       "domain": "homeassistant",
       "service": "turn_on",
@@ -502,7 +819,7 @@
           }
         },
         "brightness_pct": {
-          "label": "brightness_pct",
+          "label": "Brightness",
           "description": "",
           "types": [
             "number"
@@ -1455,7 +1772,7 @@
           "filter": null
         },
         "message": {
-          "label": "message",
+          "label": "Message",
           "description": "",
           "types": [
             "string"
@@ -1668,6 +1985,64 @@
       },
       "response": "none",
       "fields": {}
+    },
+    "todo.get_items": {
+      "domain": "todo",
+      "service": "get_items",
+      "name": "Get to-do list items",
+      "description": "Get items on a to-do list.",
+      "target": {
+        "entity": [
+          {
+            "domain": [
+              "todo"
+            ],
+            "deviceClass": [],
+            "supportedFeatures": []
+          }
+        ],
+        "device": []
+      },
+      "response": "only",
+      "fields": {
+        "status": {
+          "label": "Status",
+          "description": "Only return to-do items with the specified statuses.",
+          "types": [
+            "array"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 0,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": [
+            "needs_action",
+            "completed"
+          ],
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": "needs_action",
+          "example": "needs_action",
+          "selector": {
+            "select": {
+              "multiple": true,
+              "options": [
+                "needs_action",
+                "completed"
+              ],
+              "translation_key": "status"
+            }
+          },
+          "filter": null
+        }
+      }
     },
     "weather.get_forecasts": {
       "domain": "weather",

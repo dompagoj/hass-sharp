@@ -316,15 +316,15 @@ it('keeps local/backend errors beneath the canvas and focuses exact typed input 
   const node = el.querySelector<HTMLElement>('[data-id="branch"]')!,
     port = node.querySelector<HTMLElement>('.target[data-handleid="data:value"]')!
   expect(node.querySelector('.hs-flow-card--error')).not.toBeNull()
-  expect(port.getAttribute('title')).toContain('Input is required')
+  expect(port.getAttribute('title')).toContain('Condition needs a value')
   const tooltip = node.querySelector('[role="tooltip"]')!
-  expect(tooltip.textContent).toContain('Input is required; connect a source or set a literal')
+  expect(tooltip.textContent).toContain('Condition needs a value')
   expect(port.getAttribute('aria-describedby')).toBe(tooltip.id)
   node.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
   port.focus()
   expect(node.querySelector('.hs-flow-card--error')).not.toBeNull()
   ;[...list.querySelectorAll<HTMLButtonElement>('button')]
-    .find(b => b.textContent === 'Input is required; connect a source or set a literal')!
+    .find(b => b.textContent === 'Condition needs a value')!
     .click()
   await Promise.resolve()
   const input = el.querySelector<HTMLSelectElement>('[aria-label="Condition source"]')!
@@ -333,7 +333,7 @@ it('keeps local/backend errors beneath the canvas and focuses exact typed input 
   fixtureBackend.controls.preview = { valid: true, source: 'current', sourceMap: [], diagnostics: [] }
   input.value = 'literal'
   input.dispatchEvent(new Event('change', { bubbles: true }))
-  expect(list.textContent).not.toContain('Input is required')
+  expect(list.textContent).not.toContain('Condition needs a value')
   expect(list.textContent).not.toContain('Home Assistant: entity_id is required')
   expect(node.querySelector('.hs-flow-card--error')).toBeNull()
   client.clear()

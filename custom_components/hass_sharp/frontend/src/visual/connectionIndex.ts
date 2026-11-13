@@ -1,12 +1,14 @@
 import {
   analyzeGraph,
+  blockingDiagnostic,
   comparisonDiagnostics,
   connectData,
   dataInputs,
   dataOutputs,
+  incompatibleInput,
   isAssignable,
   nodeCatalog,
-  serviceSchema,
+  serviceTargetDiagnostics,
   type DiagnosticOrigin,
   type Graph,
   type GraphAnalysis,
@@ -36,7 +38,7 @@ export interface ConnectionIndex {
 }
 
 // connectData rejects a new diagnostic, any diagnostic on the target input or source output, and any cycle or scope error.
-const blocking = /cycle|scope/
+const blocking = blockingDiagnostic
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const pairKey = (a: string | null, b: string) => JSON.stringify([a, b])
 
@@ -131,7 +133,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       (o.kind === 'edge' && removed.has(o.edge)) || o.kind === 'dataCycle' ||
       (o.kind === 'operand' && o.node === targetId && o.port === targetPort) ||
       (o.kind === 'comparison' && o.node === targetId) ||
-      (o.kind === 'serviceTarget' && o.node === targetId && targetPort === 'target')
+      (o.kind === 'serviceTarget' && o.node === targetId && (targetPort === 'target' || targetPort.startsWith('field:')))
     const messages = new Set<string>()
     // Carried-over diagnostics reject when they match connectData's filters.
     for (const i of [...blockingAll, ...(byInput.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(sourceId, sourcePort)) ?? [])].sort((a, b) => a - b))
@@ -142,7 +144,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     if (!output) messages.add('Unknown data output port')
     if (!input) messages.add('Unknown data input port')
     if (output && input) {
-      if (!input.types.some(t => index.assignable(output.type, t))) messages.add(`Incompatible input type ${output.type}; expected ${input.types.join('/')}`)
+      if (!input.types.some(t => index.assignable(output.type, t))) messages.add(incompatibleInput(target, input, targetPort, output.type, catalog))
       if (!analysis.visible(source, target, output)) messages.add('Data cannot cross this structured scope')
     }
     if (sourceId === targetId || (hasDataCycle ? dataCycleAfter(analysis, sourceId, targetId, targetPort) : reach(targetId).has(sourceId))) messages.add('Data cycle is forbidden')
@@ -151,12 +153,13 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       for (const d of comparisonDiagnostics(target, spec, resolved, catalog))
         if (d.inputId === targetPort || !old.has(JSON.stringify(d))) messages.add(d.message)
     }
-    // Mirrors validateService: a wired target on a known service without a target.
-    const service = target.config.service
-    if (targetPort === 'target' && spec.dynamicInputs === 'service' && catalog.services && typeof service === 'string' &&
-      new RegExp(spec.config.service?.pattern ?? '').test(service)) {
-      const schema = serviceSchema(target, catalog)
-      if (schema && !record(schema.target)) messages.add(`Service ${service} does not take a target`)
+    // The service checks that a wired target or field changes: a target the service does not take, and a field that
+    // repeats a key the target brings. They name the target input, so only a wire into it, or a new one, rejects.
+    if (spec.dynamicInputs === 'service' && (targetPort === 'target' || targetPort.startsWith('field:'))) {
+      const connected = (port: string) => port === targetPort || analysis.data.some(e => e.target === targetId && e.targetPort === port)
+      const targetType = targetPort === 'target' ? output?.type : analysis.resolved.get(targetId)?.target
+      for (const d of serviceTargetDiagnostics(target, connected, targetType, catalog))
+        if (d.inputId === targetPort || !old.has(JSON.stringify(d))) messages.add(d.message)
     }
     return messages.size ? { message: [...messages].join('; '), fallback: false } : { fallback: false }
   }

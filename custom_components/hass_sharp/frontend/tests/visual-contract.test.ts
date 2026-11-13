@@ -6,8 +6,12 @@ import type { Graph } from '../src/visual/contract'
 
 interface ValidationCase {
   name: string; graph: unknown; valid: boolean; nodeId?: string; inputId?: string; contains?: string
-  warning?: string; noDiagnostics?: boolean; services?: boolean; maxValidationMs?: number; catalogPatch?: Record<string, unknown>
+  warning?: string; warningInputId?: string; noDiagnostics?: boolean; services?: boolean; maxValidationMs?: number; catalogPatch?: Record<string, unknown>
+  /** Every diagnostic message, sorted by code unit: both validators word them byte for byte alike. */
+  messages?: string[]
 }
+/** Messages are one short sentence for people: no full stop, no validator vocabulary, no CLR type names. */
+const jargon = /\b(?:literal|unset|operand|payload)\b|global::|System\.|\.$/i
 const cases = fixtureCases as ValidationCase[]
 // The golden services section (tests/fixtures/visual-services.json), attached to the snapshot of cases that opt in.
 const services = servicesFixture as unknown as contract.ServicesSection
@@ -41,8 +45,11 @@ describe('shared visual graph validation contract', () => {
       (!fixture.nodeId || e.nodeId === fixture.nodeId) && (!fixture.inputId || e.inputId === fixture.inputId) &&
       (!fixture.contains || e.message.toLowerCase().includes(fixture.contains.toLowerCase())))).toBe(true)
     const warning = fixture.warning
-    if (warning !== undefined) expect(diagnostics.some(d => d.severity === 2 && d.message.toLowerCase().includes(warning.toLowerCase())), `expected warning "${warning}", got ${JSON.stringify(diagnostics)}`).toBe(true)
+    if (warning !== undefined) expect(diagnostics.some(d => d.severity === 2 && d.message.toLowerCase().includes(warning.toLowerCase()) &&
+      (fixture.warningInputId === undefined || d.inputId === fixture.warningInputId)), `expected warning "${warning}", got ${JSON.stringify(diagnostics)}`).toBe(true)
     if (fixture.noDiagnostics) expect(diagnostics).toEqual([])
+    if (fixture.messages) expect(diagnostics.map(d => d.message).sort()).toEqual([...fixture.messages].sort())
+    for (const d of diagnostics) expect(d.message, 'message wording').not.toMatch(jargon)
   })
 })
 it('missing layout is deterministic and supplied positions remain unchanged', () => {
@@ -76,7 +83,7 @@ it('graph creation rejects other versions and consumes catalog defaults', () => 
 })
 it('replacing an invalid connection still rejects the same type error', () => {
   const graph = structuredClone(cases.find(c => c.name === 'incompatible data type')!.graph) as Graph
-  expect(() => contract.connectData(graph, 'a', 'value', 'b', 'value')).toThrow(/type/)
+  expect(() => contract.connectData(graph, 'a', 'value', 'b', 'value')).toThrow('Condition must be a yes/no value, not a number')
 })
 it('resolves parametric types and decides refinement before root assignability', () => {
   expect(contract.resolveTypeSpec('entity_id:light')).toMatchObject({ refines: 'entity_id', pattern: '^light\\.[a-z0-9_]+$', label: 'Light entity', clrType: 'System.String', literalKind: 'string', category: 'String' })
@@ -181,7 +188,7 @@ it('rejects stale literal arguments after an optional custom parameter rename', 
   const consumer = graph.nodes[3]
   ;(consumer.config.arguments as Record<string, unknown>).removedParameter = { kind: 'literal', type: 'string', value: 'old value' }
   expect(contract.validateGraph(graph, richCatalog)).toEqual(expect.arrayContaining([
-    expect.objectContaining({ nodeId: consumer.id, inputId: 'removedParameter', message: 'Unknown custom argument' }),
+    expect.objectContaining({ nodeId: consumer.id, inputId: 'removedParameter', message: 'Unknown input removedParameter' }),
   ]))
 })
 
@@ -212,4 +219,32 @@ describe('service node ports (C5)', () => {
     expect(contract.dataOutputs(node({ service: 'weather.get_forecasts', returnResponse: true })).response).toMatchObject({ type: 'object', when: 'returnResponse' })
     expect(Object.keys(contract.dataOutputs(node({ service: 'weather.get_forecasts', returnResponse: 'yes' })))).toEqual([])
   })
+  it('copies a service field default (C4, a plain value) into its input spec, as the C# catalog does', () => {
+    const inputs = contract.dataInputs(node({ service: 'hass_sharp_test.sectioned', fields: { level: { kind: 'unset' }, speed: { kind: 'unset' } } }), undefined, withServices)
+    expect(inputs['field:level'].default).toBe(3)
+    expect(inputs['field:speed']).not.toHaveProperty('default')
+  })
+})
+
+it('reads an input only from an own property, never from the prototype', () => {
+  const service = { id: 's', kind: 'service', config: { fields: {} } }
+  for (const port of ['field:constructor', 'field:toString', 'field:__proto__']) expect(contract.inputValue(service, port, contract.nodeCatalog), port).toBeUndefined()
+  const operand = { kind: 'literal', type: 'string', value: 'x' }
+  expect(contract.inputValue({ ...service, config: { fields: { constructor: operand } } }, 'field:constructor', contract.nodeCatalog)).toBe(operand)
+  expect(contract.inputValue({ id: 'i', kind: 'array_create', config: { items: [operand] } }, 'item:length', contract.nodeCatalog)).toBeUndefined()
+  // An optional input named like an Object.prototype member, with nothing set, is not an invalid value.
+  const catalog = patched({ nodes: { log: { inputs: { toString: { types: ['string'], required: false, description: 'Optional' } } } } })
+  const graph = { version: 5, name: 'Own', nodes: [{ id: 't', kind: 'trigger', config: { type: 'manual' } }, { id: 'l', kind: 'log', config: { value: operand } }], edges: [{ id: 'tl', source: 't', target: 'l' }] }
+  expect(contract.validateGraph(graph, catalog)).toEqual([])
+})
+it('blocks a connection only on cycle and scope errors themselves, not on a name that contains those words', () => {
+  const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
+  const graph = { version: 5 as const, name: 'Names', nodes: [
+    { id: 't', kind: 'trigger', config: { type: 'manual' } },
+    { id: 'a', kind: 'set_value', config: { type: 'number', value: lit('number', 1) } },
+    { id: 'l', kind: 'log', config: { value: { kind: 'variable', name: 'cycle_scope' } } },
+    { id: 'd', kind: 'delay', config: { seconds: lit('number', 2) } },
+  ], edges: [{ id: 'ta', source: 't', target: 'a' }, { id: 'al', source: 'a', target: 'l' }, { id: 'ld', source: 'l', target: 'd' }] }
+  expect(contract.validateGraph(graph).map(d => d.message)).toEqual(['Message uses variable cycle_scope, which no earlier step provides with a single type'])
+  expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).not.toThrow()
 })

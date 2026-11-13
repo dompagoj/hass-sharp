@@ -20,6 +20,18 @@ public static class ServiceNodeTests
     {
         await Payloads();
         await Attachment();
+        Defaults();
+    }
+
+    // A service field's default (C4, a plain value) reaches its input spec in both languages, for the editor's first value.
+    static void Defaults()
+    {
+        var snapshot = VisualCatalogSnapshot.BuiltIn.WithServices(ServiceSchemaCatalog.Parse(Fixture("ha-service-descriptions.json"), _ => { }));
+        var node = Service("s", "hass_sharp_test.sectioned", new JsonObject { ["level"] = Unset(), ["speed"] = Unset() });
+        var inputs = VisualNodeCatalog.DataInputs(node, null, snapshot);
+        Check(JsonNode.DeepEquals(inputs["field:level"]?["default"], JsonValue.Create(3)), "a service field default is copied: " + inputs.ToJsonString());
+        Check(inputs["field:speed"]!.AsObject().ContainsKey("default") == false, "a field without a default has none: " + inputs["field:speed"]!.ToJsonString());
+        Console.WriteLine("PASS service node field defaults");
     }
 
     static async Task Payloads()
@@ -70,7 +82,16 @@ public static class ServiceNodeTests
             var unwired = (JsonObject)graph.DeepClone(); unwired["nodes"]![1]!["config"]!["returnResponse"] = false;
             var preview = new VisualGenerator(Diagnostics).Preview(unwired);
             Check(!preview.Valid && preview.Diagnostics.Any(d => d.NodeId == "first" && d.Message == "Unknown data output port"), "response output exists only with returnResponse: " + JsonSerializer.Serialize(preview.Diagnostics));
-            Console.WriteLine("PASS service node payloads: literal and wired fields, unset fields omitted, string and object targets, field named target, returnResponse");
+            // A target that brings a key a field already set is an error, never a silent overwrite. The validator rejects
+            // every target key it can know of; this connected target object also carries a brightness key.
+            var twice = G(N("value", "set_value", new { type = "target", value = Lit("target", new { entity_id = "light.a", brightness = 5 }) }),
+                Service("s", "light.turn_on", new JsonObject { ["brightness"] = Lit("number", 1) }, Unset()));
+            twice["edges"]!.AsArray().Add(D("value", "s", "target"));
+            var failure = await Record(() => Execute(twice));
+            Check(failure?.Message.Contains("light.turn_on sets brightness both as a field and in the target") == true && calls.Count == 0,
+                "a target key a field already set fails the call: " + failure + $" after {calls.Count} call(s)");
+            calls.Clear();
+            Console.WriteLine("PASS service node payloads: literal and wired fields, unset fields omitted, string and object targets, field named target, returnResponse, target key collision");
         }
         finally
         {
@@ -78,6 +99,12 @@ public static class ServiceNodeTests
             try { Directory.Delete(HassPath.HassConfiguration, true); } catch { }
             HassPath.HassConfiguration = previousPath;
         }
+    }
+
+    static async Task<Exception?> Record(Func<Task> action)
+    {
+        try { await action(); return null; }
+        catch (Exception error) { return error is System.Reflection.TargetInvocationException { InnerException: { } inner } ? inner : error; }
     }
 
     // A stored graph using a field the pushed service lacks still loads at Init and survives a library save
@@ -116,7 +143,7 @@ public static class ServiceNodeTests
 
                 var preview = await Visual(manager, new { operation = "preview", graph });
                 Check(preview["ok"]!.GetValue<bool>() && !preview["result"]!["valid"]!.GetValue<bool>()
-                    && preview["result"]!["diagnostics"]!.AsArray().Any(d => d!["message"]!.GetValue<string>() == "Service light.turn_on has no field glow" && d["inputId"]?.GetValue<string>() == "field:glow"),
+                    && preview["result"]!["diagnostics"]!.AsArray().Any(d => d!["message"]!.GetValue<string>() == "light.turn_on has no field glow" && d["inputId"]?.GetValue<string>() == "field:glow"),
                     "authoring preview reports the unknown field: " + preview.ToJsonString());
 
                 var library = JsonNode.Parse(await manager.NodeLibraryRequest(JsonSerializer.Serialize(new

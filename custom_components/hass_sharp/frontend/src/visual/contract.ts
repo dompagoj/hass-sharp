@@ -1,4 +1,5 @@
 import rawCatalog from '../../../visual_node_catalog.json'
+import { domainWords, typeLabel } from './typeLabels'
 
 /** The catalog's graphVersion is the visual graph format. The document/API envelope remains version 1. */
 export type DataType = string
@@ -113,7 +114,7 @@ export function serviceTargetDomains(schema: ServiceSchema): string[] {
   const domains = filters.map(f => (Array.isArray(f.domain) ? f.domain : []).filter((d): d is string => typeof d === 'string' && d !== ''))
   return !domains.length || domains.some(d => !d.length) ? [] : [...new Set(domains.flat())]
 }
-const serviceFieldConstraints = ['min', 'max', 'integer', 'enum', 'enumLabels', 'pattern', 'minItems', 'maxItems', 'step', 'unit', 'selector', 'advanced', 'section', 'example'] as const
+const serviceFieldConstraints = ['min', 'max', 'integer', 'enum', 'enumLabels', 'pattern', 'minItems', 'maxItems', 'step', 'unit', 'selector', 'advanced', 'section', 'example', 'default'] as const
 /** A known service field as an input spec, so catalog literal constraints (C2) apply to it. */
 function serviceFieldInput(key: string, field: ServiceFieldSchema): InputSpec {
   const port: InputSpec = { types: [...(field.types ?? [])], required: field.required === true, label: text(field.label, key), description: text(field.description) || `Service field ${key}` }
@@ -175,12 +176,17 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
   }
   return ports
 }
+/** An own property only, as `TryGetInputValue` reads it: a field named `constructor` or `toString` is not inherited. */
+const own = (container: unknown, key: string): unknown => record(container) && Object.hasOwn(container, key) ? container[key] : undefined
 export function inputValue(node: GraphNode, port: string, catalog: VisualCatalogSnapshot): unknown {
-  if (nodeSpec(node.kind, catalog)?.argumentStorage === 'arguments') return (node.config.arguments as Record<string, unknown> | undefined)?.[port]
-  if (port.startsWith('field:')) return (node.config.fields as Record<string, unknown> | undefined)?.[port.slice(6)]
-  if (port.startsWith('item:')) return (node.config.items as unknown[] | undefined)?.[Number(port.slice(5))]
-  if (node.kind === 'loop_result') return (node.config.values as Record<string, unknown> | undefined)?.[port]
-  return node.config[port]
+  if (nodeSpec(node.kind, catalog)?.argumentStorage === 'arguments') return own(node.config.arguments, port)
+  if (port.startsWith('field:')) return own(node.config.fields, port.slice(6))
+  if (port.startsWith('item:') && Array.isArray(node.config.items)) {
+    const index = Number(port.slice(5))
+    return Number.isInteger(index) && index >= 0 && index < node.config.items.length ? node.config.items[index] : undefined
+  }
+  if (node.kind === 'loop_result') return own(node.config.values, port)
+  return own(node.config, port)
 }
 export function setInput(node: GraphNode, port: string, value: Operand, catalog: VisualCatalogSnapshot) {
   if (nodeSpec(node.kind, catalog)?.argumentStorage === 'arguments') {
@@ -237,6 +243,82 @@ function validOffsetDateTime(value: string): boolean {
     instant >= Date.parse('0001-01-01T00:00:00Z') && instant <= Date.parse('9999-12-31T23:59:59.999Z')
 }
 
+/** Keys a service target is flattened into; a field with one of them would be sent twice. */
+const targetKeys = ['entity_id', 'device_id', 'area_id', 'floor_id', 'label_id']
+/**
+ * The wording of validator messages, which people read on node cards and under fields. Byte-identical to
+ * `VisualGraphValidator.Words`; type names are those of `typeLabel`.
+ */
+export const words = {
+  /** A label as a noun inside a sentence: `Light entity` → `light entity`; words with more capitals stay. */
+  noun: (label: string) => label === 'Yes/No' ? 'yes/no value' : label.split(' ').map(w => /^[A-Z][^A-Z]*$/.test(w) ? w.toLowerCase() : w).join(' '),
+  /** The noun with its article; "text" takes none. */
+  article: (noun: string) => noun === 'text' ? noun : (/^[aeiouAEIOU]/.test(noun) ? 'an ' : 'a ') + noun,
+  aType: (id: string, catalog: VisualCatalogSnapshot = nodeCatalog) => words.article(words.noun(typeLabel(id, catalog))),
+  or: (items: string[]) => items.length <= 1 ? items.join('') : items.slice(0, -1).join(', ') + ' or ' + items.at(-1),
+  show: (value: unknown) => typeof value === 'string' ? value : typeof value === 'boolean' || typeof value === 'number' ? String(value) : JSON.stringify(value),
+  /** The allowed values: one, a short list, or a reference to the listed options. */
+  choices: (values: unknown[], many: string) => values.length === 1 ? words.show(values[0]) : values.length <= 6 ? many + words.or(values.map(words.show)) : many + 'the listed options',
+  range: (min: number | undefined, max: number | undefined, integer: boolean) =>
+    min !== undefined && max !== undefined ? `${integer ? 'a whole number between ' : 'between '}${min} and ${max}`
+      : min !== undefined ? `${integer ? 'a whole number of at least ' : 'at least '}${min}`
+        : max !== undefined ? `${integer ? 'a whole number of at most ' : 'at most '}${max}` : integer ? 'a whole number' : 'a number',
+  items: (min: number | undefined, max: number | undefined) => {
+    const count = (n: number) => `${n} ${n === 1 ? 'item' : 'items'}`
+    return min !== undefined && max !== undefined ? min === max ? `exactly ${count(min)}` : `between ${min} and ${max} items`
+      : min !== undefined ? `at least ${count(min)}` : max !== undefined ? `at most ${count(max)}` : 'any number of items'
+  },
+  /** How a config rule's JSON type reads in a message. */
+  configKind: (type: string) => ({ array: 'a list', object: 'an object', integer: 'a whole number', number: 'a number', string: 'text', boolean: 'yes or no' } as Record<string, string>)[type] ?? words.article(type),
+  /** The label people see for an input: its spec label, else a name derived from the port id. */
+  portLabel: (spec: { label?: unknown } | undefined, port: string) => typeof spec?.label === 'string' && spec.label ? spec.label
+    : port.startsWith('field:') ? port.slice(6) : port.startsWith('item:') ? `Item ${port.slice(5)}`
+      : port.startsWith('carry:') ? port.slice(6) : port.startsWith('export:') ? port.slice(7) : port,
+  /** A type mismatch: the accepted types (named, at most four) and the one given, unless that is unknown. */
+  incompatible: (subject: string, type: string, expected: string[], catalog: VisualCatalogSnapshot = nodeCatalog) => {
+    if (!typeChain(type, catalog).length) return `${subject} is connected to a value of unknown type`
+    const names = [...new Set(expected.map(t => words.aType(t, catalog)))]
+    return names.length > 0 && names.length <= 4 ? `${subject} must be ${words.or(names)}, not ${words.aType(type, catalog)}` : `${subject} cannot take ${words.aType(type, catalog)}`
+  },
+}
+/** The service a service node calls, named in its messages; undefined for other nodes or without a service id. */
+const serviceName = (node: GraphNode, catalog: VisualCatalogSnapshot) => nodeSpec(node.kind, catalog)?.dynamicInputs === 'service' && typeof node.config.service === 'string' && node.config.service ? node.config.service : undefined
+/** What a message about one input of the node starts with: the service and a colon on a service node, then the input's label. */
+export const inputSubject = (node: GraphNode, spec: InputSpec | undefined, port: string, catalog: VisualCatalogSnapshot = nodeCatalog) => {
+  const service = serviceName(node, catalog)
+  return (service ? service + ': ' : '') + words.portLabel(spec, port)
+}
+/** The error a data wire into `port` gets when its type is not accepted there; shared with the connection index. */
+export const incompatibleInput = (node: GraphNode, spec: InputSpec, port: string, type: string, catalog: VisualCatalogSnapshot = nodeCatalog) =>
+  words.incompatible(inputSubject(node, spec, port, catalog), type, spec.types, catalog)
+/**
+ * The keys a supplied target brings into the call: entity_id for an entity id, the object's keys for a target value,
+ * and every target key for a connected or variable target object (`targetType` is what it resolves to).
+ */
+function targetCallKeys(target: unknown, wired: boolean, targetType: string | undefined, catalog: VisualCatalogSnapshot): string[] {
+  if (!wired && record(target) && target.kind === 'literal') return typeof target.value === 'string' ? ['entity_id'] : record(target.value) ? Object.keys(target.value) : []
+  return targetType !== undefined && refinesType(targetType, 'string', catalog) ? ['entity_id'] : targetKeys
+}
+/**
+ * The diagnostics of a service node that depend on whether `target` is connected, mirrored by
+ * `VisualGraphValidator.Service` and `TargetCollisions`: a target the service does not take (with services) and a
+ * field that repeats a key the target brings (always, since the runtime rejects it). `connected` says which inputs
+ * are wired; `targetType` is the type the target resolves to.
+ */
+export function serviceTargetDiagnostics(node: GraphNode, connected: (port: string) => boolean, targetType: string | undefined, catalog: VisualCatalogSnapshot = nodeCatalog): GraphDiagnostic[] {
+  const errors: GraphDiagnostic[] = []
+  const error = (message: string) => errors.push({ nodeId: node.id, message, severity: 3, inputId: 'target' })
+  const service = serviceName(node, catalog), schema = serviceSchema(node, catalog), wired = connected('target'), target = node.config.target
+  const supplied = (port: string, operand: unknown) => connected(port) || (record(operand) && operand.kind !== 'unset')
+  const pattern = nodeSpec(node.kind, catalog)?.config.service?.pattern ?? ''
+  if (schema && service && matches(service, pattern) && !record(schema.target) && supplied('target', target)) error(`${service} does not take a target`)
+  if (!supplied('target', target) || !record(node.config.fields)) return errors
+  const keys = targetCallKeys(target, wired, targetType, catalog)
+  for (const [name, operand] of Object.entries(node.config.fields))
+    if (keys.includes(name) && supplied(`field:${name}`, operand)) error(`${service ?? 'This service'} sets ${name} both as a field and in the target`)
+  return errors
+}
+
 /**
  * Which part of the validator produced a diagnostic. The connection index re-derives only the parts a
  * candidate data edge can change; every other diagnostic is carried over unchanged.
@@ -277,8 +359,8 @@ export function comparisonDiagnostics(node: GraphNode, spec: NodeSpec, resolved:
   const error = (message: string, inputId?: string) => errors.push({ nodeId: node.id, message, severity: 3, ...(inputId ? { inputId } : {}) })
   const left = rule.leftInput ? resolved[rule.leftInput] : text(node.config[rule.typeConfig!])
   const right = resolved[rule.rightInput]
-  if (left && right && !(isAssignable(left, right, catalog) || isAssignable(right, left, catalog))) error('Comparison operands must have matching types', rule.rightInput)
-  if (rule.orderingOperators.includes(text(node.config[rule.operatorConfig])) && left !== rule.orderingType) error(`Ordering comparison requires ${rule.orderingType} type`, rule.leftInput ?? rule.typeConfig)
+  if (left && right && !(isAssignable(left, right, catalog) || isAssignable(right, left, catalog))) error('Both sides of the comparison must have the same type', rule.rightInput)
+  if (rule.orderingOperators.includes(text(node.config[rule.operatorConfig])) && left !== rule.orderingType) error(`Less-than and greater-than comparisons need ${words.aType(rule.orderingType, catalog)}`, rule.leftInput ?? rule.typeConfig)
   return errors
 }
 /** Static validation only: evaluating data never schedules a producer. */
@@ -289,7 +371,6 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
 export const analyzeScopes = (value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog) => analyzeGraph(value, catalog).scopes
 /** Runs the validator once and keeps what it learned: diagnostics with origins, scopes and resolved input types. */
 export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): GraphAnalysis {
-  const types = Object.keys(catalog.types)
   const nodeSpec = (kind: unknown) => typeof kind === 'string' && Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined
   const knownType = (type: string) => typeChain(type, catalog).length > 0
   const executionPorts = (node: GraphNode) => catalogExecutionPorts(node, catalog)
@@ -389,7 +470,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (incoming.has(key(target.id, edge.targetPort))) error(target.id, 'Only one data source per input', edge.targetPort, edge.targetPort)
     incoming.set(key(target.id, edge.targetPort), edge)
     if (output && input) {
-      if (!input.types.some(t => isAssignable(output.type, t))) error(target.id, `Incompatible input type ${output.type}; expected ${input.types.join('/')}`, edge.targetPort, edge.targetPort)
+      if (!input.types.some(t => isAssignable(output.type, t))) error(target.id, incompatibleInput(target, input, edge.targetPort, output.type, catalog), edge.targetPort, edge.targetPort)
       if (!visible(source, target, output)) error(target.id, 'Data cannot cross this structured scope', edge.targetPort, edge.targetPort)
     }
   }
@@ -403,25 +484,35 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     const edge = incoming.get(key(node.id, port))
     if (edge) return dataOutputs(nodes.get(edge.source)!)[edge.sourcePort]?.type
     if (raw === undefined && !spec.required) return
-    if (!record(raw) || raw.kind === 'unset') { if (spec.required) error(node.id, 'Input is required; connect a source or set a literal', port, port); else if (raw !== undefined && !record(raw)) error(node.id, 'Expected a typed operand', port, port); return }
+    const label = words.portLabel(spec, port), subject = inputSubject(node, spec, port, catalog), service = serviceName(node, catalog)
+    if (!record(raw) || raw.kind === 'unset') { if (spec.required) error(node.id, service ? `${service} needs a value for ${label}` : `${label} needs a value`, port, port); else if (raw !== undefined && !record(raw)) error(node.id, `${subject} has an invalid value`, port, port); return }
     let type: string | undefined
     if (raw.kind === 'variable') {
-      if (typeof raw.name !== 'string' || !new RegExp(catalog.structures.loopDeclaration.name.pattern).test(raw.name)) { error(node.id, 'Variable name is required and must be a valid identifier', port, port); return }
+      if (typeof raw.name !== 'string' || !new RegExp(catalog.structures.loopDeclaration.name.pattern).test(raw.name)) { error(node.id, `${subject} uses a variable without a valid name`, port, port); return }
       const candidates = [...nodes.values()].filter(n => typeof n.config.output === 'string' && n.config.output === raw.name && dataOutputs(n).value && visible(n, node, dataOutputs(n).value))
       type = candidates[0] ? dataOutputs(candidates[0]).value.type : undefined
-      if (!type || candidates.some(n => dataOutputs(n).value.type !== type)) error(node.id, 'Variable has no visible producer or conflicting types', port)
+      if (!type || candidates.some(n => dataOutputs(n).value.type !== type)) error(node.id, `${subject} uses variable ${raw.name}, which no earlier step provides with a single type`, port)
     } else if (raw.kind === 'literal') {
       type = text(raw.type, 'unknown')
       const v = raw.value
       const valid = validLiteral(type, v, catalog)
-      if (!valid) error(node.id, `Invalid ${type} literal`, port)
-      if (typeof v === 'number' && ((spec.min !== undefined && v < spec.min) || (spec.max !== undefined && v > spec.max) || (spec.integer && !Number.isInteger(v)))) error(node.id, `Input must be ${spec.integer ? 'an integer ' : ''}between ${spec.min ?? '-infinity'} and ${spec.max ?? 'infinity'}`, port)
-      // Input constraints restrict authored literals only; a wire is constrained by its type.
-      if (spec.enum && !spec.enum.some(allowed => jsonEqual(allowed, v))) error(node.id, 'Input must be one of the allowed values', port)
-      if (spec.pattern && typeof v === 'string' && !matches(v, spec.pattern)) error(node.id, 'Input has invalid format', port)
-      if (Array.isArray(v) && ((spec.minItems !== undefined && v.length < spec.minItems) || (spec.maxItems !== undefined && v.length > spec.maxItems))) error(node.id, 'Input item count is out of range', port)
-    } else error(node.id, 'Operand kind must be literal, variable or unset', port)
-    if (type && !spec.types.some(t => isAssignable(type!, t))) error(node.id, `Incompatible input type ${type}; expected ${spec.types.join('/')}`, port)
+      if (!valid) {
+        const noun = knownType(type) ? words.noun(typeLabel(type, catalog)) : undefined
+        error(node.id, typeof raw.type !== 'string' ? `${subject} has a value without a type` : noun === undefined ? `${subject} has a value of unknown type ${type}` : noun === 'text' ? `${subject} is not valid text` : `${subject} is not a valid ${noun}`, port)
+      }
+      if (typeof v === 'number' && ((spec.min !== undefined && v < spec.min) || (spec.max !== undefined && v > spec.max) || (spec.integer && !Number.isInteger(v)))) error(node.id, `${subject} must be ${words.range(spec.min, spec.max, spec.integer === true)}`, port)
+      // Input constraints restrict authored values only; a wire is constrained by its type. A list, where the
+      // input accepts one, is checked item by item (a multiple select); anything else is one value.
+      if (spec.enum) {
+        const allowed = spec.enum
+        if (Array.isArray(v) && spec.types.includes('array')) { if (!v.every(item => allowed.some(a => jsonEqual(a, item)))) error(node.id, `${subject} may only contain ${words.choices(allowed, '')}`, port) }
+        else if (!allowed.some(a => jsonEqual(a, v))) error(node.id, `${subject} must be ${words.choices(allowed, 'one of ')}`, port)
+      }
+      if (spec.pattern && typeof v === 'string' && !matches(v, spec.pattern)) error(node.id, `${subject} is not in the expected format`, port)
+      if (Array.isArray(v) && ((spec.minItems !== undefined && v.length < spec.minItems) || (spec.maxItems !== undefined && v.length > spec.maxItems))) error(node.id, `${subject} must have ${words.items(spec.minItems, spec.maxItems)}`, port)
+    } else error(node.id, `${subject} has an invalid value`, port)
+    // A value of unknown type was reported above; it is not also a mismatch.
+    if (type && knownType(type) && !spec.types.some(t => isAssignable(type!, t))) error(node.id, words.incompatible(subject, type, spec.types, catalog), port)
     return type
   }
   // Memoize by the full analysis context. Shared successors are visited once,
@@ -452,46 +543,45 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (!schema) { warning(node.id, `Unknown service ${service}; fields are not type-checked`, 'service'); return }
     const known = record(schema.fields) ? schema.fields : {}
     const fields = record(node.config.fields) ? node.config.fields : {}
-    for (const name of Object.keys(fields)) if (!Object.hasOwn(known, name)) error(node.id, `Service ${service} has no field ${name}`, `field:${name}`)
-    for (const [name, field] of Object.entries(known)) if (record(field) && field.required === true && !Object.hasOwn(fields, name)) error(node.id, `Service ${service} requires field ${name}`, 'fields')
+    for (const name of Object.keys(fields)) if (!Object.hasOwn(known, name)) error(node.id, `${service} has no field ${name}`, `field:${name}`)
+    for (const [name, field] of Object.entries(known)) if (record(field) && field.required === true && !Object.hasOwn(fields, name)) error(node.id, `${service} needs a value for ${words.portLabel(field, name)}`, 'fields')
     const wired = incoming.has(key(node.id, 'target')), target = node.config.target
-    const targetOrigin: DiagnosticOrigin = { kind: 'serviceTarget', node: node.id }
-    origin = targetOrigin
-    if (!record(schema.target) && (wired || (record(target) && target.kind !== 'unset'))) error(node.id, `Service ${service} does not take a target`, 'target')
-    origin = graphOrigin
     const response = text(schema.response, 'none'), returnResponse = node.config.returnResponse === true
-    if (returnResponse && response === 'none') error(node.id, `Service ${service} returns no response; turn off Return response`, 'returnResponse')
-    if (!returnResponse && response === 'only') error(node.id, `Service ${service} only returns a response; turn on Return response`, 'returnResponse')
-    // A literal target object is checked by its entity_id domains; device, area, floor and label ids are not.
+    if (returnResponse && response === 'none') error(node.id, `${service} returns no response; turn off Return response`, 'returnResponse')
+    if (!returnResponse && response === 'only') error(node.id, `${service} only returns a response; turn on Return response`, 'returnResponse')
+    // A target value object is checked by its entity_id domains; device, area, floor and label ids are not.
     const domains = serviceTargetDomains(schema)
     if (!domains.length || wired || !record(target) || target.kind !== 'literal' || !record(target.value)) return
     const entities = Array.isArray(target.value.entity_id) ? target.value.entity_id : target.value.entity_id === undefined ? [] : [target.value.entity_id]
-    origin = targetOrigin
+    const accepted = words.or(domains.map(d => domainWords(d).toLowerCase()))
+    origin = { kind: 'serviceTarget', node: node.id }
     for (const entity of entities)
       if (typeof entity === 'string' && entity !== 'all' && entity !== 'none' && !domains.includes(entity.split('.')[0]))
-        error(node.id, `Service ${service} cannot target ${entity}; expected a ${domains.join(' or ')} entity`, 'target')
+        error(node.id, `${service} only accepts ${accepted} entities; ${entity.indexOf('.') > 0 ? `${entity} is ${words.article(domainWords(entity.split('.')[0]).toLowerCase())}` : `${entity} is not an entity`}`, 'target')
     origin = graphOrigin
   }
   for (const node of nodes.values()) {
     const spec = nodeSpec(node.kind); if (!spec) continue
     for (const [field, rule] of Object.entries(spec.config)) {
       const v = node.config[field]
-      if (v === undefined) { if (rule.required) error(node.id, `${field} is required`, field); continue }
+      const label = text(rule.label) || field
+      if (v === undefined) { if (rule.required) error(node.id, `${label} needs a value`, field); continue }
       const valid = rule.type === 'array' ? Array.isArray(v) : rule.type === 'object' ? record(v) : rule.type === 'integer' ? typeof v === 'number' && Number.isInteger(v) : typeof v === rule.type
-      if (!valid) { error(node.id, `${field} must be ${rule.type}`, field); continue }
+      if (!valid) { error(node.id, `${label} must be ${words.configKind(rule.type)}`, field); continue }
       // Trigger type changes retain inactive fields so drafts and overrides are not lost.
       if (node.kind === 'trigger' && field === 'at' && (node.config.type ?? spec.config.type.default) !== 'once') continue
       // Type choices accept every resolvable id, so a parametric type can be selected for narrowing.
-      if (rule.enumSource === 'types') { if (typeof v !== 'string' || !knownType(v)) error(node.id, `${field} must be one of ${types.join(', ')}`, field) }
-      else if (rule.enum && !rule.enum.includes(v as string)) error(node.id, `${field} must be one of ${rule.enum.join(', ')}`, field)
-      if (typeof v === 'number' && ((rule.min !== undefined && v < rule.min) || (rule.max !== undefined && v > rule.max))) error(node.id, `${field} must be between ${rule.min} and ${rule.max}`, field)
-      if (typeof v === 'string' && rule.pattern && !new RegExp(rule.pattern).test(v)) error(node.id, `${field} has invalid format`, field)
-      if (typeof v === 'string' && rule.format === 'date-time-offset' && !validOffsetDateTime(v)) error(node.id, `${field} must be a valid ISO timestamp with an explicit offset or Z`, field)
-      if (Array.isArray(v) && ((rule.minItems !== undefined && v.length < rule.minItems) || (rule.maxItems !== undefined && v.length > rule.maxItems))) error(node.id, `${field} item count is out of range`, field)
+      if (rule.enumSource === 'types') { if (typeof v !== 'string' || !knownType(v)) error(node.id, `${label} must be a known type`, field) }
+      else if (rule.enum && !rule.enum.some(choice => jsonEqual(choice, v))) error(node.id, `${label} must be ${words.choices(rule.enum, 'one of ')}`, field)
+      if (typeof v === 'number' && ((rule.min !== undefined && v < rule.min) || (rule.max !== undefined && v > rule.max))) error(node.id, `${label} must be ${words.range(rule.min, rule.max, false)}`, field)
+      if (typeof v === 'string' && rule.pattern && !matches(v, rule.pattern)) error(node.id, `${label} is not in the expected format`, field)
+      // A value already out of format is not also judged as a date (Date.parse accepts 24:00, .NET does not).
+      if (typeof v === 'string' && rule.format === 'date-time-offset' && (!rule.pattern || matches(v, rule.pattern)) && !validOffsetDateTime(v)) error(node.id, `${label} must be a date and time with a time zone offset or Z`, field)
+      if (Array.isArray(v) && ((rule.minItems !== undefined && v.length < rule.minItems) || (rule.maxItems !== undefined && v.length > rule.maxItems))) error(node.id, `${label} must have ${words.items(rule.minItems, rule.maxItems)}`, field)
     }
     for (const port of spec.requiredExecution ?? []) if (!outgoing.get(node.id)!.some(e => flowPort(node, e) === port)) error(node.id, 'Execution connection is required', port, port)
     if (spec.argumentStorage === 'arguments' && record(node.config.arguments))
-      for (const name of Object.keys(node.config.arguments)) if (!Object.hasOwn(dataInputs(node, ownerOf(node)), name)) error(node.id, 'Unknown custom argument', name)
+      for (const name of Object.keys(node.config.arguments)) if (!Object.hasOwn(dataInputs(node, ownerOf(node)), name)) error(node.id, `Unknown input ${name}`, name)
     const resolved: Record<string, string | undefined> = Object.create(null)
     for (const [port, rule] of Object.entries(dataInputs(node, ownerOf(node)))) resolved[port] = operand(node, port, inputValue(node, port, catalog), rule)
     resolvedTypes.set(node.id, resolved)
@@ -500,16 +590,22 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       for (const d of comparisonDiagnostics(node, spec, resolved, catalog)) error(d.nodeId, d.message, d.inputId)
       origin = graphOrigin
     }
-    if (spec.dynamicInputs === 'service') validateService(node, spec)
-    if (node.config.output !== undefined && (typeof node.config.output !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(node.config.output))) error(node.id, 'Invalid variable output name', 'output')
+    if (spec.dynamicInputs === 'service') {
+      validateService(node, spec)
+      origin = { kind: 'serviceTarget', node: node.id }
+      const connected = (port: string) => incoming.has(key(node.id, port))
+      for (const d of serviceTargetDiagnostics(node, connected, resolved.target, catalog)) error(d.nodeId, d.message, d.inputId)
+      origin = graphOrigin
+    }
+    if (node.config.output !== undefined && (typeof node.config.output !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(node.config.output))) error(node.id, `${text(spec.config.output?.label) || 'output'} must use only letters, digits and underscores and not start with a digit`, 'output')
     if (node.kind === 'trigger') {
       const type = node.config.type ?? spec.config.type.default
       const required = type === 'ha' ? ['trigger'] : type === 'entity' ? ['entity'] : type === 'daily' ? ['time','timeZone'] : type === 'once' ? ['at'] : []
-      for (const field of required) if (node.config[field] === undefined || node.config[field] === '') error(node.id, `${field} is required`, field)
-      if (type === 'ha' && record(node.config.trigger) && ![node.config.trigger.trigger, node.config.trigger.platform].some(p => typeof p === 'string' && p.trim())) error(node.id, 'Native trigger requires a platform', 'trigger')
+      for (const field of required) if (node.config[field] === undefined || node.config[field] === '') error(node.id, `${text(spec.config[field]?.label) || field} needs a value`, field)
+      if (type === 'ha' && record(node.config.trigger) && ![node.config.trigger.trigger, node.config.trigger.platform].some(p => typeof p === 'string' && p.trim())) error(node.id, 'Home Assistant trigger needs a platform', 'trigger')
     }
-    if (['entity_field','wait_until'].includes(node.kind) && node.config.field === 'attribute' && (typeof node.config.attribute !== 'string' || !node.config.attribute.trim())) error(node.id, 'Attribute name is required', 'attribute')
-    if (node.kind === 'get_field' && (typeof node.config.pointer !== 'string' || !/^(?:\/(?:[^~]|~[01])*)*$/.test(node.config.pointer))) error(node.id, 'Invalid JSON pointer', 'pointer')
+    if (['entity_field','wait_until'].includes(node.kind) && node.config.field === 'attribute' && (typeof node.config.attribute !== 'string' || !node.config.attribute.trim())) error(node.id, 'Attribute needs a value', 'attribute')
+    if (node.kind === 'get_field' && (typeof node.config.pointer !== 'string' || !/^(?:\/(?:[^~]|~[01])*)*$/.test(node.config.pointer))) error(node.id, 'Pointer must be a JSON pointer such as /state', 'pointer')
     if (node.kind === 'parallel' && Array.isArray(node.config.branches)) {
       const ids = new Set<string>()
       for (const branch of node.config.branches) {
@@ -524,21 +620,21 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         for (const decl of declarations(node, group)) {
           if (!record(decl) || typeof decl.name !== 'string' || !new RegExp(catalog.structures.loopDeclaration.name.pattern).test(decl.name) || names.has(decl.name) || typeof decl.type !== 'string' || !knownType(decl.type)) { error(node.id, 'Loop declarations require unique names and valid types', group); continue }
           names.add(decl.name)
-          operand(node, `${group}.${decl.name}.initial`, decl.initial, { types: [decl.type], required: true, description: 'Initial value' })
+          operand(node, `${group}.${decl.name}.initial`, decl.initial, { types: [decl.type], required: true, description: 'Initial value', label: `Initial ${decl.name}` })
         }
       }
       if (['while','until'].includes(node.kind)) {
         const condition = outgoing.get(node.id)!.find(e => flowPort(node, e) === 'condition')
-        if (!condition || !terminalsValid(condition.target, 'condition_result', node.id)) error(node.id, 'Every condition path must end in Boolean condition_result', 'condition', 'condition')
+        if (!condition || !terminalsValid(condition.target, 'condition_result', node.id)) error(node.id, 'Every condition path must end in a Condition result step', 'condition', 'condition')
       }
       const body = outgoing.get(node.id)!.find(e => flowPort(node, e) === 'body')
-      if ((declarations(node, 'carry').length || declarations(node, 'exports').length) && (!body || !terminalsValid(body.target, 'loop_result', node.id))) error(node.id, 'Every loop body path must end in loop_result when carry/exports are declared', 'body', 'body')
+      if ((declarations(node, 'carry').length || declarations(node, 'exports').length) && (!body || !terminalsValid(body.target, 'loop_result', node.id))) error(node.id, 'Every loop body path must end in a Loop result step when the loop carries or exports values', 'body', 'body')
     }
-    if (node.kind === 'condition_result') { const s = scopes.get(node.id)?.at(-1); if (!s || s.port !== 'condition' || !['while','until'].includes(nodes.get(s.owner)!.kind)) error(node.id, 'condition_result must be inside a loop condition scope') }
+    if (node.kind === 'condition_result') { const s = scopes.get(node.id)?.at(-1); if (!s || s.port !== 'condition' || !['while','until'].includes(nodes.get(s.owner)!.kind)) error(node.id, 'A Condition result step must be inside the condition of a While or Until loop') }
     if (node.kind === 'loop_result') {
       const owner = ownerOf(node)
-      if (!owner || nodeSpec(owner.kind)?.dynamicOutputs !== 'loop') error(node.id, 'loop_result must be inside a sequential loop body scope')
-      if (record(node.config.values)) for (const name of Object.keys(node.config.values)) if (!dataInputs(node, owner)[name]) error(node.id, 'Unknown loop carry/export input', name)
+      if (!owner || nodeSpec(owner.kind)?.dynamicOutputs !== 'loop') error(node.id, 'A Loop result step must be inside the body of a loop')
+      if (record(node.config.values)) for (const name of Object.keys(node.config.values)) if (!dataInputs(node, owner)[name]) error(node.id, `Unknown loop value ${name}`, name)
     }
   }
   return analysis(true)
@@ -557,6 +653,11 @@ export function addGraphNode(graph: Graph, kind: string, id: string, catalog: Vi
   for (const [key, value] of Object.entries(spec.inputs)) if (value.default !== undefined) storage[key] = structuredClone(value.default)
   return fillGraphLayout({ ...graph, nodes: [...graph.nodes, { id, kind, label: spec.label, config }] })
 }
+/**
+ * The cycle and scope errors, which reject any new connection. Matched whole: messages now quote labels and
+ * variable names, and a field labelled "Cycle" must not block every connection in the graph.
+ */
+export const blockingDiagnostic = /^(?:(?:Execution|Data) cycle is forbidden|Execution edge crosses a structured scope|Data cannot cross this structured scope)$/
 /** Returns a new immutable graph; the caller records that graph as one undo entry. */
 export function connectData(graph: Graph, source: string, sourcePort: string, target: string, targetPort: string, catalog: VisualCatalogSnapshot = nodeCatalog): Graph {
   if (graph.version !== catalog.graphVersion) throw new Error(`Only graph version ${catalog.graphVersion} is supported`)
@@ -570,7 +671,7 @@ export function connectData(graph: Graph, source: string, sourcePort: string, ta
   const old = validateGraph(graph, catalog).map(e => JSON.stringify(e))
   const addedErrors = validateGraph(next, catalog).filter(e => !old.includes(JSON.stringify(e)) ||
     (e.nodeId === target && (e.inputId === targetPort || e.portId === targetPort)) ||
-    (e.nodeId === source && e.portId === sourcePort) || /cycle|scope/.test(e.message))
+    (e.nodeId === source && e.portId === sourcePort) || blockingDiagnostic.test(e.message))
   if (addedErrors.length) throw new Error(addedErrors.map(e => e.message).join('; '))
   return next
 }

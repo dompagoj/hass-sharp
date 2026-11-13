@@ -221,11 +221,8 @@ const fixtureServices = (servicesFixture as unknown as ServicesSection).items
 // The fixture has no multi-select field, so one is added here, shaped as the C# normaliser writes it.
 const services: ServicesSection = { ...(servicesFixture as unknown as ServicesSection), items: { ...fixtureServices,
   'hass_sharp_test.multi_select': { domain: 'hass_sharp_test', service: 'multi_select', name: 'Multi select', description: '', target: null, response: 'none', fields: { choices: multiSelect } } } }
-/**
- * Fields whose widget value the validator still rejects. Only the multi-select `enum` case belongs here: both
- * validators compare the whole list with `enum`; the validator change that applies `enum` to each item removes it.
- */
-const expectedRejections = ['hass_sharp_test.multi_select.choices: sample']
+/** Fields whose widget value the validator still rejects: none, since both validators apply `enum` to each item of a list. */
+const expectedRejections: string[] = []
 function sample(widget: Widget): { value: JsonValue; kind?: ValueKind } {
   const one = (value: JsonValue) => ({ value: widget.multiple ? [value] : value })
   switch (widget.kind) {
@@ -261,9 +258,7 @@ it('every fixture service field accepts the value its widget emits', () => {
       const key = `${id}.${name}: ${label}`
       checked.push(key)
       if (errors.length) rejected.push(key)
-      // The exception holds only while the validator rejects it by its enum rule, not for some other reason.
-      if (errors.length && expectedRejections.includes(key)) expect(errors.map(e => e.message), key).toEqual(['Input must be one of the allowed values'])
-      else if (errors.length) expect.fail(`${key} ${JSON.stringify(operand)} was rejected: ${errors.map(e => e.message).join('; ')}`)
+      if (errors.length && !expectedRejections.includes(key)) expect.fail(`${key} ${JSON.stringify(operand)} was rejected: ${errors.map(e => e.message).join('; ')}`)
     }
   }
   expect(checked.length).toBeGreaterThan(30)

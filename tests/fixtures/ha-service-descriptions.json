@@ -57,6 +57,7 @@
           }
         },
         "brightness_pct": {
+          "name": "Brightness",
           "filter": {
             "attribute": {
               "supported_color_modes": [
@@ -553,6 +554,7 @@
     "notify": {
       "fields": {
         "message": {
+          "name": "Message",
           "required": true,
           "example": "The garage door has been open for 10 minutes.",
           "selector": {
@@ -668,7 +670,123 @@
       }
     }
   },
+  "todo": {
+    "get_items": {
+      "name": "Get to-do list items",
+      "description": "Get items on a to-do list.",
+      "fields": {
+        "status": {
+          "name": "Status",
+          "description": "Only return to-do items with the specified statuses.",
+          "example": "needs_action",
+          "default": "needs_action",
+          "selector": {
+            "select": {
+              "translation_key": "status",
+              "options": [
+                "needs_action",
+                "completed"
+              ],
+              "multiple": true
+            }
+          }
+        }
+      },
+      "target": {
+        "entity": [
+          {
+            "domain": [
+              "todo"
+            ],
+            "supported_features": []
+          }
+        ]
+      },
+      "response": {
+        "optional": false
+      }
+    }
+  },
   "hass_sharp_test": {
+    "selectors": {
+      "name": "Selectors",
+      "description": "One field per selector the editor has a widget for.",
+      "fields": {
+        "time_of_day": {
+          "name": "Time of day",
+          "selector": {
+            "time": {}
+          }
+        },
+        "day": {
+          "name": "Day",
+          "selector": {
+            "date": {}
+          }
+        },
+        "moment": {
+          "name": "Moment",
+          "selector": {
+            "datetime": {}
+          }
+        },
+        "wait": {
+          "name": "Wait",
+          "selector": {
+            "duration": {}
+          }
+        },
+        "targets": {
+          "name": "Targets",
+          "selector": {
+            "target": {}
+          }
+        },
+        "light": {
+          "name": "Light",
+          "selector": {
+            "entity": {
+              "domain": "light"
+            }
+          }
+        },
+        "lights": {
+          "name": "Lights",
+          "selector": {
+            "entity": {
+              "domain": "light",
+              "multiple": true
+            }
+          }
+        },
+        "device": {
+          "name": "Device",
+          "selector": {
+            "device": {}
+          }
+        },
+        "area": {
+          "name": "Area",
+          "selector": {
+            "area": {}
+          }
+        },
+        "floor": {
+          "name": "Floor",
+          "selector": {
+            "floor": {}
+          }
+        },
+        "labels": {
+          "name": "Labels",
+          "selector": {
+            "label": {
+              "multiple": true
+            }
+          }
+        }
+      }
+    },
     "sectioned": {
       "name": "Sectioned",
       "description": "Fields grouped into sections are flattened.",

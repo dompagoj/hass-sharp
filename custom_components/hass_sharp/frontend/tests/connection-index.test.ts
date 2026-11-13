@@ -33,7 +33,7 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below.
-const PAIRS = 549, ACCEPTED = 182, BY_VALIDATION = 122, SERVICES_ACCEPTED = 167, SERVICES_BY_VALIDATION = 121
+const GRAPHS = 188, PAIRS = 629, ACCEPTED = 222, BY_VALIDATION = 131, SERVICES_ACCEPTED = 181, SERVICES_BY_VALIDATION = 135
 const RICH: Totals = { graphs: 21, pairs: 190, accepted: 38, rejected: 152, byValidation: 0, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 
@@ -79,8 +79,8 @@ describe('connection index agrees with connectData', () => {
     }
     // Pinned: a fixture change that alters these is visible here. No fixture pair needs the full check.
     expect(sum).toEqual(withServices
-      ? { graphs: 155, pairs: PAIRS, accepted: SERVICES_ACCEPTED, rejected: PAIRS - SERVICES_ACCEPTED, byValidation: SERVICES_BY_VALIDATION, fallbacks: [], skipped: [] }
-      : { graphs: 155, pairs: PAIRS, accepted: ACCEPTED, rejected: PAIRS - ACCEPTED, byValidation: BY_VALIDATION, fallbacks: [], skipped: [] })
+      ? { graphs: GRAPHS, pairs: PAIRS, accepted: SERVICES_ACCEPTED, rejected: PAIRS - SERVICES_ACCEPTED, byValidation: SERVICES_BY_VALIDATION, fallbacks: [], skipped: [] }
+      : { graphs: GRAPHS, pairs: PAIRS, accepted: ACCEPTED, rejected: PAIRS - ACCEPTED, byValidation: BY_VALIDATION, fallbacks: [], skipped: [] })
   })
   it('for the shared CLR catalog graphs', () => {
     const sum = totals()

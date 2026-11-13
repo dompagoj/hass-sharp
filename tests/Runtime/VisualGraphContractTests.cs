@@ -24,10 +24,19 @@ public static class VisualGraphContractTests
                 (fixture["inputId"] == null || e.InputId == fixture["inputId"]!.GetValue<string>()) &&
                 (fixture["contains"] == null || e.Message.Contains(fixture["contains"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase))))
                 throw new Exception($"Visual graph {name}: expected precise diagnostic, got {string.Join("; ", errors)}");
-            if (fixture["warning"] is { } warning && !diagnostics.Any(d => d.Severity == 2 && d.Message.Contains(warning.GetValue<string>(), StringComparison.OrdinalIgnoreCase)))
+            if (fixture["warning"] is { } warning && !diagnostics.Any(d => d.Severity == 2 && d.Message.Contains(warning.GetValue<string>(), StringComparison.OrdinalIgnoreCase) &&
+                (fixture["warningInputId"] is not { } warningInput || d.InputId == warningInput.GetValue<string>())))
                 throw new Exception($"Visual graph {name}: expected warning \"{warning.GetValue<string>()}\", got {string.Join("; ", diagnostics)}");
             if (fixture["noDiagnostics"]?.GetValue<bool>() == true && diagnostics.Count > 0)
                 throw new Exception($"Visual graph {name}: expected no diagnostics, got {string.Join("; ", diagnostics)}");
+            // Both validators word every message byte for byte alike; the case lists them sorted by code unit.
+            if (fixture["messages"] is JsonArray expected)
+            {
+                var want = expected.Select(m => m!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray();
+                var got = diagnostics.Select(d => d.Message).Order(StringComparer.Ordinal).ToArray();
+                if (!want.SequenceEqual(got)) throw new Exception($"Visual graph {name}: expected messages [{string.Join(" | ", want)}], got [{string.Join(" | ", got)}]");
+            }
+            foreach (var d in diagnostics) if (Jargon.IsMatch(d.Message)) throw new Exception($"Visual graph {name}: message is not worded for people: {d.Message}");
         }
         var graph = JsonNode.Parse("""{"version":5,"name":"Layout","nodes":[{"id":"trigger/é","kind":"trigger","config":{"type":"manual"},"position":{"x":13,"y":42},"size":{"width":300,"height":90}},{"id":"d","kind":"delay","config":{"seconds":{"kind":"literal","type":"number","value":2}}}],"edges":[]}""")!.AsObject();
         var laidOut = VisualGraphContract.FillMissingLayout(graph);
@@ -42,6 +51,9 @@ public static class VisualGraphContractTests
         Console.WriteLine($"PASS visual graph contract: {fixtures.Count} shared contract fixtures");
         return Task.CompletedTask;
     }
+
+    /// <summary>Messages are one short sentence for people: no full stop, no validator vocabulary, no CLR type names.</summary>
+    static readonly System.Text.RegularExpressions.Regex Jargon = new(@"\b(?:literal|unset|operand|payload)\b|global::|System\.|\.$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     // A case may extend the built-in catalog, e.g. with input constraints no built-in node declares yet.
     static VisualCatalogSnapshot Patched(JsonObject patch)

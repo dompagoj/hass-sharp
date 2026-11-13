@@ -121,7 +121,7 @@ public static class NodeLibraryTests
         foreach (var invalidNumber in new[] { 1.5, 2147483648d, -2147483649d })
         {
             literalNode["config"]!["arguments"]!["count"] = new JsonObject { ["kind"] = "literal", ["type"] = "global::System.Int32", ["value"] = invalidNumber };
-            Check(VisualGraphValidator.Validate(literalGraph, snapshot).Any(d => d.InputId == "count" && d.Message.Contains("Invalid")), "Int32 rejects fractional/out-of-range literal");
+            Check(VisualGraphValidator.Validate(literalGraph, snapshot).Any(d => d.InputId == "count" && d.Message.EndsWith(" is not a valid number", StringComparison.Ordinal)), "Int32 rejects fractional/out-of-range literal: " + string.Join("; ", VisualGraphValidator.Validate(literalGraph, snapshot)));
         }
         literalNode["config"]!["arguments"]!["count"]!["value"] = 4;
         Check(VisualGraphValidator.Validate(literalGraph, snapshot).Count == 0, "numeric, nullable, enum, char defaults accepted");

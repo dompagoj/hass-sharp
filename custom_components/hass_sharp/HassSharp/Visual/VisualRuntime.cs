@@ -355,14 +355,18 @@ public sealed class VisualRuntime
     // An optional input contributes only when it is wired or its operand is not unset.
     bool Supplied(string id,string port,JsonNode? operand)=>data.ContainsKey((id,port)) || operand is JsonObject && Text(operand,"kind")!="unset";
     static JsonNode? Json(object? value)=>value switch{null=>null,JsonNode node=>node.DeepClone(),JsonElement element=>JsonNode.Parse(element.GetRawText()),_=>JsonSerializer.SerializeToNode(value)};
-    /// <summary>Contract C5: fields by name, then the target (a string is an entity_id, an object is flattened); a response only with returnResponse.</summary>
+    /// <summary>
+    /// Contract C5: fields by name, then the target (a string is an entity_id, an object is flattened); a response only
+    /// with returnResponse. A target key that a field already set is an error, as the validator reports, never a silent overwrite.
+    /// </summary>
     async Task Service(string id,VisualScope scope,JsonNode cfg) {
         var payload=new JsonObject();
         foreach(var (name,operand) in cfg["fields"] as JsonObject??[])if(Supplied(id,"field:"+name,operand))payload[name]=Json(Input(scope,id,"field:"+name));
         if(Supplied(id,"target",cfg["target"])) {
             var target=Json(Input(scope,id,"target"));
-            if(target is JsonValue entity && entity.TryGetValue<string>(out var entityId))payload["entity_id"]=entityId;
-            else if(target is JsonObject properties)foreach(var (name,value) in properties)payload[name]=value?.DeepClone();
+            void Set(string name,JsonNode? value){if(payload.ContainsKey(name))throw new InvalidOperationException($"{Text(cfg,"service")} sets {name} both as a field and in the target");payload[name]=value;}
+            if(target is JsonValue entity && entity.TryGetValue<string>(out var entityId))Set("entity_id",entityId);
+            else if(target is JsonObject properties)foreach(var (name,value) in properties)Set(name,value?.DeepClone());
             else throw new InvalidOperationException($"Input {id}.target requires an entity id or a target object.");
         }
         var service=Text(cfg,"service").Split('.');

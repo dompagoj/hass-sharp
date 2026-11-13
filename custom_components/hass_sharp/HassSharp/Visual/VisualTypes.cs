@@ -12,7 +12,35 @@ public static class VisualTypes
     // Library ids contain colons (global::HassSharp.EntityStateSnapshot); only this exact shape is parametric.
     static readonly Regex ParametricId = new("^([a-z_]+):([a-z0-9_]+)$", RegexOptions.CultureInvariant);
     static string Text(JsonNode? node, string key) => VisualNodeCatalog.Text(node, key);
-    static bool Match(string text, string pattern) => Regex.IsMatch(text, pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+    static bool Match(string text, string pattern) => Matches(text, pattern);
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> JavaScriptPatterns = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A catalog or service pattern tested the way JavaScript's <c>RegExp.test</c> does, so both validators agree.
+    /// .NET's <c>$</c> also matches before a final newline, so each unescaped <c>$</c> outside a character class
+    /// becomes <c>\z</c>, which is JavaScript's <c>$</c> without the m flag; and .NET's <c>\d</c> and <c>\w</c> also
+    /// match non-ASCII digits and letters, so they become JavaScript's ASCII classes.
+    /// </summary>
+    public static bool Matches(string text, string pattern) =>
+        Regex.IsMatch(text, JavaScriptPatterns.GetOrAdd(pattern, JavaScriptPattern), RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+    static string JavaScriptPattern(string pattern)
+    {
+        var result = new System.Text.StringBuilder(pattern.Length + 4); var inClass = false;
+        for (var i = 0; i < pattern.Length; i++)
+        {
+            var c = pattern[i];
+            if (c == '\\' && i + 1 < pattern.Length)
+            {
+                var escaped = pattern[++i];
+                result.Append(escaped switch { 'd' => inClass ? "0-9" : "[0-9]", 'w' => inClass ? "a-zA-Z0-9_" : "[a-zA-Z0-9_]", _ => "\\" + escaped });
+                continue;
+            }
+            if (inClass) { if (c == ']') inClass = false; result.Append(c); continue; }
+            if (c == '[') inClass = true;
+            if (c == '$') result.Append(@"\z"); else result.Append(c);
+        }
+        return result.ToString();
+    }
 
     /// <summary>An exact catalog type, or a type synthesized from <c>parametricTypes</c>; null when unknown.</summary>
     public static JsonObject? Resolve(JsonObject catalog, string id)
