@@ -4,7 +4,7 @@ import os
 import sys
 
 from awesomeversion import AwesomeVersion
-from homeassistant.const import __version__ as HA_VERSION
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, __version__ as HA_VERSION
 
 import pythonnet as pynet
 from clr_loader import get_coreclr
@@ -254,6 +254,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
         await services.async_push(hass, hass_sharp)
         hass.data.setdefault("hass_sharp_services", {})[entry.entry_id] = services.async_track(hass, hass_sharp)
+
+        async def on_stop(event):
+            # Home Assistant does not unload config entries when it stops: cancel the runs here, so they
+            # record why. The entry stays loaded; an unload after this still cleans it up.
+            try:
+                await hass.async_add_executor_job(hass_sharp.CancelRunsForShutdown)
+            except Exception:
+                logger.exception("Cannot cancel automation runs on stop")
+
+        hass.data.setdefault("hass_sharp_stop", {})[entry.entry_id] = hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, on_stop)
         await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.Init, utils.get_hass_entities(hass))
         register_panel(hass)
         state.ready = True
@@ -264,10 +274,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         stop_services = hass.data.get("hass_sharp_services", {}).pop(entry.entry_id, None)
         if stop_services is not None:
             stop_services()
+        stop_listener = hass.data.get("hass_sharp_stop", {}).pop(entry.entry_id, None)
+        if stop_listener is not None:
+            stop_listener()
         frontend.async_remove_panel(hass, "hass-sharp")
         native_bridge.close()
         try:
-            await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync)
+            await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync, hass.is_stopping)
         finally:
             try:
                 await native_bridge.async_shutdown()
@@ -294,12 +307,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     stop_services = hass.data.get("hass_sharp_services", {}).pop(entry.entry_id, None)
     if stop_services is not None:
         stop_services()
+    stop_listener = hass.data.get("hass_sharp_stop", {}).pop(entry.entry_id, None)
+    if stop_listener is not None:
+        stop_listener()
 
     native_bridge = hass.data.get("hass_sharp_native_triggers", {}).pop(entry.entry_id, None)
     if native_bridge is not None:
         native_bridge.close()
     try:
-        await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync)
+        # A reload or removal unless Home Assistant is stopping; cancelled runs record which.
+        await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync, hass.is_stopping)
     finally:
         try:
             if native_bridge is not None:

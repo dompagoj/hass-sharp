@@ -55,6 +55,17 @@ class UserScriptManager
 
     public Task UnloadUserScriptsAsync() => UnloadUserScriptsAsync(null);
 
+    /// <summary>Cancels every loaded script's lifetime with <paramref name="reason"/>, without unloading.</summary>
+    public void CancelRuns(string reason)
+    {
+        UserScript[] scripts;
+        lock (ActivationGate) scripts = _userScripts.Concat(_preparing).Distinct().ToArray();
+        List<Exception> errors = [];
+        foreach (var script in scripts)
+            try { script.CancelLifetime(reason); } catch (Exception error) { errors.Add(error); }
+        if (errors.Count > 0) throw new AggregateException(errors);
+    }
+
     /// <param name="reason">Recorded on the runs this cancels; see <see cref="CancelReasons"/>.</param>
     public Task UnloadUserScriptsAsync(string? reason)
     {

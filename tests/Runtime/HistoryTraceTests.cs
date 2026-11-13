@@ -144,27 +144,117 @@ static class HistoryTraceTests
                 var summary = TriggerSummary.Summarize(InvocationCause.HomeAssistantTrigger, TriggerPayload.Native(Element(huge.ToJsonString())));
                 var parsed = JsonNode.Parse(summary)!.AsObject();
                 Check(summary.Length <= 2048 && parsed["kind"]!.GetValue<string>() == "ha" && parsed.Count == 8 && parsed["description"]!.GetValue<string>().StartsWith("\"\\\n😀d"), "huge summary is not valid JSON within 2048 chars: " + summary.Length);
-                Check(!JsonSerializer.Serialize(parsed).Contains("\\uD83D\"") , "summary split a surrogate pair");
+                // A cut that lands right after a high surrogate drops the whole pair.
+                foreach (var length in new[] { 2, 3, 4 })
+                {
+                    var shortened = TriggerSummary.Shorten("a😀b😀c", length);
+                    Check(shortened.EndsWith('…') && !shortened.Where((c, i) => char.IsHighSurrogate(c) && (i + 1 >= shortened.Length || !char.IsLowSurrogate(shortened[i + 1]))).Any(), $"Shorten({length}) left a lone high surrogate: {shortened}");
+                }
+                Check(TriggerSummary.Shorten("a😀b", 3) == "a…", "cut after the high surrogate kept it");
                 return Task.CompletedTask;
             });
 
-            await Test("trace sink stores at most once per interval, holds the latest and writes final at once", async () =>
+            await Test("trace sink stores at most once per interval, holds the latest and writes final at once", () =>
             {
                 var store = new RunHistoryStore(Path.Combine(folder, "sink.db"));
                 var run = new InvocationRecord { AutomationId = "a", Revision = "r", Action = "A::Run", Cause = "Manual" };
                 store.Save(run);
-                var sink = new RunTraceSink(store, run.RunId, TimeSpan.FromMilliseconds(300), TimeProvider.System);
+                var time = new ManualTime();
+                var sink = new RunTraceSink(store, run.RunId, TimeSpan.FromSeconds(1), time);
                 sink.Write("{\"n\":1}", 1, false, false);
                 Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":1}", "first write not stored at once");
+                time.Advance(TimeSpan.FromMilliseconds(400));
                 sink.Write("{\"n\":2}", 2, false, false); sink.Write("{\"n\":3}", 3, false, false);
                 Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":1}", "write inside the interval stored at once");
-                await Until(() => store.ReadTrace(run.RunId)?.Json == "{\"n\":3}", "held write stored when the interval ends");
+                time.Advance(TimeSpan.FromMilliseconds(599));
+                Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":1}", "held write stored before the interval ended");
+                time.Advance(TimeSpan.FromMilliseconds(1));
+                Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":3}" && time.Pending == 0, "the latest held write not stored when the interval ended");
+                time.Advance(TimeSpan.FromMilliseconds(100));
                 sink.Write("{\"n\":4}", 4, false, false);
                 sink.Write("{\"n\":5}", 5, true, true);
-                Check(store.ReadTrace(run.RunId) is { Json: "{\"n\":5}", EventCount: 5, Truncated: true }, "final write not stored at once");
+                Check(store.ReadTrace(run.RunId) is { Json: "{\"n\":5}", EventCount: 5, Truncated: true } && time.Pending == 0, "final write not stored at once, or the held write survived it");
                 sink.Write("{\"n\":6}", 6, false, false);
-                await Task.Delay(400);
-                Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":5}", "write after final or a held write after final was stored");
+                time.Advance(TimeSpan.FromSeconds(5));
+                Check(store.ReadTrace(run.RunId)?.Json == "{\"n\":5}", "a write after final was stored");
+                return Task.CompletedTask;
+            });
+
+            await Test("concurrent sink writes: no exception and the final document wins", async () =>
+            {
+                var store = new RunHistoryStore(Path.Combine(folder, "sink-concurrent.db"));
+                var run = new InvocationRecord { AutomationId = "a", Revision = "r", Action = "A::Run", Cause = "Manual" };
+                store.Save(run);
+                var time = new ManualTime();
+                var sink = new RunTraceSink(store, run.RunId, TimeSpan.FromSeconds(1), time);
+                using var start = new ManualResetEventSlim();
+                var writers = Enumerable.Range(0, 8).Select(t => Task.Run(() =>
+                {
+                    start.Wait();
+                    for (var i = 0; i < 50; i++)
+                    {
+                        sink.Write($"{{\"t\":{t},\"i\":{i}}}", i, false, false);
+                        if (i % 10 == 0) time.Advance(TimeSpan.FromMilliseconds(300));
+                        if (t == 3 && i == 25) sink.Write("{\"final\":true}", 99, true, true);
+                    }
+                })).ToArray();
+                start.Set();
+                await Task.WhenAll(writers);
+                time.Advance(TimeSpan.FromSeconds(5));
+                Check(store.ReadTrace(run.RunId) is { Json: "{\"final\":true}", EventCount: 99, Truncated: true }, "final document did not win: " + store.ReadTrace(run.RunId)?.Json);
+            });
+
+            await Test("a sink write after its run was pruned stores nothing and does not throw", () =>
+            {
+                var store = new RunHistoryStore(Path.Combine(folder, "sink-pruned.db"), 1);
+                var pruned = Completed("a", "r", received: new DateTime(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc));
+                store.Save(pruned);
+                store.Save(Completed("a", "r", received: new DateTime(2026, 11, 12, 0, 1, 0, DateTimeKind.Utc)));
+                Check(store.ReadRun(pruned.RunId) == null, "run not pruned");
+                var time = new ManualTime();
+                var sink = new RunTraceSink(store, pruned.RunId, TimeSpan.FromSeconds(1), time);
+                sink.Write("{}", 0, false, false); sink.Write("{\"held\":1}", 1, false, false);
+                time.Advance(TimeSpan.FromSeconds(2));
+                sink.Write("{\"final\":1}", 1, false, true);
+                Check(store.ReadTrace(pruned.RunId) == null && store.ReadRun(pruned.RunId) == null, "trace stored for a pruned run");
+                return Task.CompletedTask;
+            });
+
+            await Test("traces are kept only for the newest traced runs", () =>
+            {
+                var store = new RunHistoryStore(Path.Combine(folder, "trace-cap.db"), 100, 2);
+                var start = new DateTime(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc);
+                var runs = Enumerable.Range(0, 4).Select(i => Completed("a", "r", received: start.AddMinutes(i))).ToArray();
+                foreach (var run in runs) { store.Save(run); Check(store.SaveTrace(run.RunId, "{\"n\":" + run.ReceivedUtc.Minute + "}", 0, false), "trace rejected"); }
+                // Retention runs with the next save; an untraced newer run does not count against the cap.
+                store.Save(Completed("a", "r", received: start.AddMinutes(10)));
+                var traced = runs.Select(r => (store.ReadRun(r.RunId)!.HasTrace, store.ReadTrace(r.RunId) != null)).ToArray();
+                Check(traced.SequenceEqual([(false, false), (false, false), (true, true), (true, true)]), "trace retention: " + string.Join(",", traced));
+                Check(store.Read("a", 0, 100).Count == 5, "trace retention removed runs");
+                Check(RunHistoryStore.TraceRetention == 1000 && RunHistoryStore.DefaultRetention == 10000, "retention constants");
+                return Task.CompletedTask;
+            });
+
+            await Test("a trigger summary that throws falls back to its kind and the run still executes", async () =>
+            {
+                PyInterop.Entity = id => new() { EntityId = id, State = "fresh" };
+                Probe.Mode = AutomationMode.Single;
+                Probe.Release = new(TaskCreationOptions.RunContinuationsAsynchronously); Probe.Release.SetResult();
+                Probe.Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
+                var history = new RunHistoryStore(Path.Combine(folder, "summary.db"));
+                var manager = new UserScriptManager { History = history };
+                try
+                {
+                    await manager.LoadUserScripts([new CompiledUserScript { FilePath = Path.Combine(folder, "summary.cs"), FileName = "summary", SourceCode = "summary", Assembly = typeof(Probe).Assembly, WrittenToDisk = true }]);
+                    var script = manager.GetUserScripts().Single();
+                    await script.Classes.Single().StartupCompletion;
+                    ScriptSyncRunner.Summarize = (_, _) => throw new InvalidOperationException("summary failed");
+                    try { await script.Classes.Single().RunMethod(nameof(Probe.Run), InvocationCause.Manual); }
+                    finally { ScriptSyncRunner.Summarize = TriggerSummary.Summarize; }
+                    var run = history.Read(script.AutomationId, 0, 10).First(r => r.Cause == "Manual");
+                    Check(run.Status == "Succeeded" && run.Trigger == "{\"kind\":\"manual\"}", "fallback summary: " + JsonSerializer.Serialize(run));
+                }
+                finally { await manager.UnloadUserScriptsAsync(); }
             });
 
             await Test("cancel reasons for restart, reload, stop and unknown", async () =>
@@ -203,6 +293,39 @@ static class HistoryTraceTests
                 finally { await manager.UnloadUserScriptsAsync(); Probe.Release.TrySetResult(); Probe.Mode = AutomationMode.Single; }
             });
 
+            await Test("manager unload records reloaded or stopping, and a stop cancels runs with the stopping reason", async () =>
+            {
+                var root = Path.Combine(folder, "reasons");
+                var previous = HassPath.HassConfiguration; HassPath.HassConfiguration = root;
+                Directory.CreateDirectory(HassPath.UserScripts);
+                File.WriteAllText(Path.Combine(HassPath.UserScripts, "hold.cs"), "public class Hold : Automation { public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Go), Startup: true)); public Task Go() => Task.Delay(-1, CancellationToken); }");
+                var api = new HassSharpManager(root);
+                try
+                {
+                    JsonNode[] Runs(string automation) => JsonNode.Parse(api.GetRunHistory(automation, 0, 100, null))!["runs"]!.AsArray().Select(r => r!).ToArray();
+                    async Task<string> Cancelled(Func<Task> cancel, int count)
+                    {
+                        await api.Init([]);
+                        var automation = api.GetScriptSummaries().Single(s => s.FileName == "hold").AutomationId!;
+                        await Until(() => Runs(automation).Any(r => r["status"]!.GetValue<string>() == "Running"), "startup run is running");
+                        await cancel();
+                        await Until(() => Runs(automation).Count(r => r["status"]!.GetValue<string>() == "Cancelled") == count, "startup run cancelled");
+                        return Runs(automation)[0]["error"]!.GetValue<string>();
+                    }
+                    Check(await Cancelled(() => api.UnloadAsync(false), 1) == "Automation reloaded", "an unload that is not a stop");
+                    Check(await Cancelled(() => api.UnloadAsync(true), 2) == "Home Assistant stopping", "an unload while stopping");
+                    Check(await Cancelled(() => { api.CancelRunsForShutdown(); return Task.CompletedTask; }, 3) == "Home Assistant stopping", "the stop event");
+                    // After the stop, a new run is recorded as cancelled for the same reason, and an unload still works.
+                    var automation = api.GetScriptSummaries().Single(s => s.FileName == "hold").AutomationId!;
+                    var late = JsonNode.Parse(api.RunNow(automation, "Hold", "Go"))!["runId"]!.GetValue<string>();
+                    var lateRun = JsonNode.Parse(api.GetRunTrace(late))!["run"]!;
+                    Check(lateRun["status"]!.GetValue<string>() == "Cancelled" && lateRun["error"]!.GetValue<string>() == "Home Assistant stopping", "run after stop: " + lateRun.ToJsonString());
+                    await api.UnloadAsync(true);
+                    Check(api.GetScriptSummaries().All(s => !s.Active), "unload after stop left a script active");
+                }
+                finally { await api.UnloadAsync(); HassPath.HassConfiguration = previous; }
+            });
+
             await Test("embedded catalog keeps only used built-in kinds, every library kind and their types", () =>
             {
                 var diagnostics = new DiagnosticsProvider(); diagnostics.GenerateHassEntities(["binary_sensor.motion", "light.hall"]);
@@ -224,7 +347,7 @@ static class HistoryTraceTests
                 return Task.CompletedTask;
             });
 
-            await Test("visual runs record trigger, snapshot and trace; Stopped status; list omits source", async () =>
+            await Test("visual runs record trigger, snapshot and trace; Stopped status; list omits source; snapshot identity; refreshed Init", async () =>
             {
                 var root = Path.Combine(folder, "manager");
                 var previous = HassPath.HassConfiguration; HassPath.HassConfiguration = root;
@@ -272,9 +395,37 @@ static class HistoryTraceTests
                     Check(JsonNode.DeepEquals(trace["trace"], JsonNode.Parse(traceJson)) && trace["run"]!["hasTrace"]!.GetValue<bool>() && History()["runs"]![0]!["hasTrace"]!.GetValue<bool>(), "stored trace not returned: " + trace.ToJsonString());
                     Check(api.GetRunTrace("missing") == "null", "unknown run");
 
-                    // Init after the generated source changed: the refreshed revision is active and its runs still snapshot.
+                    // Snapshot identity is the run's: a new revision with unchanged source, and an identical second
+                    // document, share the first snapshot row but each shows its own id and revision.
+                    async Task<JsonObject> RunAndTrace(string id)
+                    {
+                        var dispatched = (await Visual(new { operation = "run", id, triggerId = "t" }))["result"]!["runId"]!.GetValue<string>();
+                        await Until(() => JsonNode.Parse(api.GetRunTrace(dispatched))!["run"]!["endUtc"] != null, "run of " + id + " completes");
+                        return JsonNode.Parse(api.GetRunTrace(dispatched))!.AsObject();
+                    }
+                    var resaved = await Visual(new { operation = "save", id = "front-door", graph = read["graph"], expectedRevision = 1 });
+                    Check(resaved["ok"]!.GetValue<bool>() && resaved["result"]!["active"]!.GetValue<bool>(), "re-save rejected: " + resaved.ToJsonString());
+                    var copy = await Visual(new { operation = "save", id = "back-door", graph = read["graph"], expectedRevision = 0 });
+                    Check(copy["ok"]!.GetValue<bool>() && copy["result"]!["active"]!.GetValue<bool>(), "copy rejected: " + copy.ToJsonString());
+                    foreach (var (id, expected) in new[] { ("front-door", 2L), ("back-door", 1L) })
+                    {
+                        var viewed = await RunAndTrace(id);
+                        Check(viewed["run"]!["revision"]!.GetValue<string>() == revision, id + " does not share the first snapshot row, so the test proves nothing");
+                        Check(viewed["snapshot"]!["visualId"]!.GetValue<string>() == id && viewed["snapshot"]!["visualRevision"]!.GetValue<long>() == expected
+                            && viewed["run"]!["visualId"]!.GetValue<string>() == id && viewed["run"]!["visualRevision"]!.GetValue<long>() == expected, "snapshot identity differs from the run: " + viewed.ToJsonString());
+                    }
+
+                    // A library written outside a library save changes the embedded catalog: Init stores the regenerated
+                    // source at the same revision, the graph stays active, and its next run records the new snapshot.
+                    Directory.CreateDirectory(Path.Combine(root, ".storage", "hass_sharp", "libraries"));
+                    File.WriteAllText(Path.Combine(root, ".storage", "hass_sharp", "libraries", "helpers.json"),
+                        JsonSerializer.Serialize(new NodeLibraryDocument(1, "helpers", "Helpers", 1, "public static class Helpers { [Node(\"Noop\")] public static void Noop() { } }"), VisualStore.Json));
                     await api.Init(["binary_sensor.motion", "light.hall"]);
-                    Check((await Visual(new { operation = "read", id = "front-door" }))["result"]!["currentRevisionActive"]!.GetValue<bool>(), "graph not active after Init");
+                    var refreshed = (await Visual(new { operation = "read", id = "front-door" }))["result"]!;
+                    Check(refreshed["currentRevisionActive"]!.GetValue<bool>() && refreshed["revision"]!.GetValue<long>() == 2, "graph not active at its revision after Init: " + refreshed.ToJsonString());
+                    var after = await RunAndTrace("front-door");
+                    Check(after["run"]!["revision"]!.GetValue<string>() != revision && after["snapshot"]!["revision"]!.GetValue<string>() == after["run"]!["revision"]!.GetValue<string>()
+                        && after["snapshot"]!["catalog"]!["nodes"]!.AsObject().Any(p => p.Key.StartsWith("library:")) && after["snapshot"]!["visualRevision"]!.GetValue<long>() == 2, "run after the regenerated Init: " + after.ToJsonString());
                 }
                 finally { await api.UnloadAsync(); HassPath.HassConfiguration = previous; }
             });
@@ -301,5 +452,36 @@ static class HistoryTraceTests
         }
         finally { Directory.Delete(folder, true); }
         if (failures.Count != 0) throw new Exception(string.Join("\n", failures));
+    }
+}
+
+/// <summary>A clock that moves only when told; due timers fire synchronously inside <see cref="Advance"/>.</summary>
+sealed class ManualTime : TimeProvider
+{
+    readonly Lock gate = new();
+    readonly List<ManualTimer> timers = [];
+    DateTimeOffset now = new(2026, 11, 13, 0, 0, 0, TimeSpan.Zero);
+    public override DateTimeOffset GetUtcNow() { lock (gate) return now; }
+    public int Pending { get { lock (gate) return timers.Count(t => !t.Disposed); } }
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        lock (gate) { var timer = new ManualTimer(this, callback, state, now + dueTime); timers.Add(timer); return timer; }
+    }
+    public void Advance(TimeSpan by)
+    {
+        ManualTimer[] due;
+        lock (gate) { now += by; due = timers.Where(t => !t.Disposed && t.Due <= now).ToArray(); foreach (var t in due) timers.Remove(t); }
+        foreach (var timer in due) timer.Fire();
+    }
+    internal void Remove(ManualTimer timer) { lock (gate) timers.Remove(timer); }
+
+    internal sealed class ManualTimer(ManualTime owner, TimerCallback callback, object? state, DateTimeOffset due) : ITimer
+    {
+        public DateTimeOffset Due { get; private set; } = due;
+        public bool Disposed { get; private set; }
+        public void Fire() { if (!Disposed) callback(state); }
+        public bool Change(TimeSpan dueTime, TimeSpan period) { Due = owner.GetUtcNow() + dueTime; return !Disposed; }
+        public void Dispose() { Disposed = true; owner.Remove(this); }
+        public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
     }
 }

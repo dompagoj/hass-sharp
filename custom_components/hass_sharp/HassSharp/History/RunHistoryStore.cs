@@ -127,15 +127,23 @@ internal sealed class RunTracing : Migration
 /// <summary>One connection per operation, serialized writes; errors propagate to callers.</summary>
 public sealed class RunHistoryStore
 {
+    /// <summary>Completed runs kept, newest first.</summary>
+    public const int DefaultRetention = 10000;
+    /// <summary>Runs whose trace is kept, newest first; older runs keep their row but lose their trace (C8).</summary>
+    public const int TraceRetention = 1000;
     readonly Lock gate = new();
     readonly string path;
     readonly int retention;
-    public RunHistoryStore(string path, int retention = 10000)
+    readonly int traceRetention;
+    public RunHistoryStore(string path, int retention = DefaultRetention) : this(path, retention, TraceRetention) { }
+    internal RunHistoryStore(string path, int retention, int traceRetention)
     {
         if (retention < 1) throw new ArgumentOutOfRangeException(nameof(retention));
+        if (traceRetention < 1) throw new ArgumentOutOfRangeException(nameof(traceRetention));
         SqliteNative.Initialize();
         this.path = path;
         this.retention = retention;
+        this.traceRetention = traceRetention;
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         using var db = new HistoryContext(path);
         db.Database.Migrate();
@@ -215,6 +223,12 @@ public sealed class RunHistoryStore
                 foreach (var id in obsolete) db.Database.ExecuteSqlInterpolated($"DELETE FROM RunTraces WHERE RunId = {id}");
                 db.Database.ExecuteSqlRaw("DELETE FROM GraphSnapshots WHERE Revision NOT IN (SELECT Revision FROM Runs)");
             }
+            // Traces are large: only the newest traced runs keep theirs.
+            db.Database.ExecuteSqlInterpolated($"""
+                UPDATE Runs SET HasTrace = 0 WHERE RunId IN (SELECT t.RunId FROM RunTraces t JOIN Runs r ON r.RunId = t.RunId
+                  ORDER BY r.ReceivedUtc DESC, r.RunId DESC LIMIT -1 OFFSET {traceRetention})
+                """);
+            db.Database.ExecuteSqlInterpolated($"DELETE FROM RunTraces WHERE RunId IN (SELECT t.RunId FROM RunTraces t JOIN Runs r ON r.RunId = t.RunId WHERE r.HasTrace = 0)");
             transaction.Commit();
             if (obsolete.Length > 0) knownSnapshots.Clear();
             else if (snapshot != null) knownSnapshots.Add(snapshot.Revision);

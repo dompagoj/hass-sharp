@@ -70,7 +70,7 @@ class ScriptSyncRunner
             Action = scriptClass.GetConcatedMethodNameWithClass(methodInfo.Name), Cause = cause.ToString(),
             VisualId = compiled.VisualId, VisualRevision = compiled.VisualId == null ? null : compiled.VisualRevision,
             TriggerNodeId = trigger?.NodeId, TriggerLabel = trigger?.Label,
-            Trigger = TriggerSummary.Summarize(cause, payload), PlannedUtc = plannedUtc,
+            Trigger = Summary(cause, payload), PlannedUtc = plannedUtc,
         };
         var history = scriptClass.Script.ScriptManager.History;
         var snapshot = compiled is { VisualId: { } visualId, VisualRevision: { } visualRevision, VisualGraph: { } graph, VisualCatalog: { } catalog }
@@ -139,6 +139,20 @@ class ScriptSyncRunner
                 registration.Run.Completed.TrySetResult();
                 Save();
             }
+        }
+    }
+
+    // Test seam: replaced to prove a failing summary cannot stop a run.
+    internal static Func<InvocationCause, System.Text.Json.JsonElement, string> Summarize = TriggerSummary.Summarize;
+
+    // A summary that cannot be built must never stop the run from being recorded and executed.
+    static string Summary(InvocationCause cause, System.Text.Json.JsonElement payload)
+    {
+        try { return Summarize(cause, payload); }
+        catch (Exception ex)
+        {
+            try { Logger.Error($"Cannot summarise the {cause} trigger payload: {ex.Message}"); } catch { }
+            return TriggerSummary.KindOnly(cause);
         }
     }
 

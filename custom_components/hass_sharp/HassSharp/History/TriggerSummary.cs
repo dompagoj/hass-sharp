@@ -17,11 +17,7 @@ public static class TriggerSummary
     {
         var fields = new List<(string Key, string Value)>();
         void Add(string key, string? value) { if (value != null) fields.Add((key, value)); }
-        var kind = cause switch
-        {
-            InvocationCause.HomeAssistantTrigger => "ha", InvocationCause.Entity => "entity", InvocationCause.Schedule => "schedule",
-            InvocationCause.Manual => "manual", _ => "startup",
-        };
+        var kind = Kind(cause);
         if (kind == "ha")
         {
             Add("platform", Scalar(payload, "platform") ?? Scalar(payload, "trigger"));
@@ -52,6 +48,15 @@ public static class TriggerSummary
         }
     }
 
+    /// <summary>The summary of a payload that cannot be read: its kind only.</summary>
+    public static string KindOnly(InvocationCause cause) => new JsonObject { ["kind"] = Kind(cause) }.ToJsonString(Json);
+
+    static string Kind(InvocationCause cause) => cause switch
+    {
+        InvocationCause.HomeAssistantTrigger => "ha", InvocationCause.Entity => "entity", InvocationCause.Schedule => "schedule",
+        InvocationCause.Manual => "manual", _ => "startup",
+    };
+
     static JsonElement? Property(JsonElement json, string key) =>
         json.ValueKind == JsonValueKind.Object && json.TryGetProperty(key, out var value) ? value : null;
     static string? Scalar(JsonElement json, string key) => Property(json, key) switch
@@ -62,7 +67,7 @@ public static class TriggerSummary
     };
     static string? State(JsonElement json, string key) => Property(json, key) is { ValueKind: JsonValueKind.Object } state ? Scalar(state, "state") : null;
     // Never splits a surrogate pair; the ellipsis marks a shortened value.
-    static string Shorten(string value, int length)
+    internal static string Shorten(string value, int length)
     {
         if (length <= 1) return "";
         var end = length - 1;

@@ -77,7 +77,8 @@ public partial class HassSharpManager
         return System.Text.Json.JsonSerializer.Serialize(new
         {
             version = 1, run = RunJson(run), live = run.Status is "Pending" or "Running",
-            snapshot = snapshot == null ? null : new { revision = snapshot.Revision, visualId = snapshot.VisualId, visualRevision = snapshot.VisualRevision,
+            // The row is keyed by generated source, which holds neither the document id nor its revision: identity comes from the run.
+            snapshot = snapshot == null ? null : new { revision = snapshot.Revision, visualId = run.VisualId, visualRevision = run.VisualRevision,
                 graph = System.Text.Json.Nodes.JsonNode.Parse(snapshot.Graph), catalog = System.Text.Json.Nodes.JsonNode.Parse(snapshot.Catalog) },
             trace = trace == null ? null : System.Text.Json.Nodes.JsonNode.Parse(trace.Json),
         }, HistoryJson);
@@ -151,9 +152,16 @@ public partial class HassSharpManager
         try { Logger.Debug($"Received {next.Catalog.Count} Home Assistant service descriptions"); } catch { }
     }
 
-    // Home Assistant unloads the entry when it stops; runs it cancels are recorded with that reason.
-    public void Unload() { _languageLifetime.Cancel(); _userScriptManager.UnloadUserScripts(CancelReasons.Stopping); }
-    public Task UnloadAsync() { _languageLifetime.Cancel(); return _userScriptManager.UnloadUserScriptsAsync(CancelReasons.Stopping); }
+    // An entry unload is a reload or removal unless Home Assistant is stopping; runs it cancels record which.
+    static string UnloadReason(bool stopping) => stopping ? CancelReasons.Stopping : CancelReasons.Reloaded;
+    public void Unload(bool stopping = false) { _languageLifetime.Cancel(); _userScriptManager.UnloadUserScripts(UnloadReason(stopping)); }
+    public Task UnloadAsync(bool stopping = false) { _languageLifetime.Cancel(); return _userScriptManager.UnloadUserScriptsAsync(UnloadReason(stopping)); }
+
+    /// <summary>
+    /// Home Assistant is stopping (it does not unload config entries then): cancel every running and later
+    /// run with that reason. Scripts stay loaded; a later unload still cleans them up.
+    /// </summary>
+    public void CancelRunsForShutdown() => _userScriptManager.CancelRuns(CancelReasons.Stopping);
 
     public void GenerateHassEntities(string[] entityIds)
     {
