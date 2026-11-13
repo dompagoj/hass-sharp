@@ -22,8 +22,8 @@
   --hs-card-pad: 12px;
   --hs-cat: var(--hs-cat-code);
   position: relative;
-  min-width: 208px;
-  max-width: 320px;
+  min-width: 220px;
+  max-width: 340px;
   width: max-content;
   border: 1px solid color-mix(in oklab, var(--hs-cat) 30%, var(--hs-line));
   border-radius: 10px;
@@ -66,8 +66,11 @@
 .hs-app .hs-card__badge--warning { background: var(--hs-warning); }
 .hs-app .hs-card__badge:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
 .hs-app .hs-card__badge-icon { width: 14px; height: 14px; }
-.hs-app .hs-card__trace { flex: none; display: inline-flex; gap: 8px; color: var(--hs-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.hs-app .hs-card--trigger .hs-card__trace { color: inherit; }
+.hs-app .hs-card__trace { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 22px; padding: 0 8px; border-radius: 11px; background: color-mix(in oklab, var(--hs-trace, var(--hs-muted)) 14%, var(--hs-surface)); color: color-mix(in oklab, var(--hs-trace, var(--hs-muted)) 70%, var(--hs-text)); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hs-app .hs-card__trace--unreached { background: var(--hs-soft); color: var(--hs-muted); }
+.hs-app .hs-card__trace-icon { flex: none; width: 13px; height: 13px; }
+.hs-app .hs-card__trace-word { font-weight: 650; }
+.hs-app .hs-card__ms { color: var(--hs-muted); }
 .hs-app .hs-card__runs { font-weight: 650; }
 
 .hs-app .hs-card__body { display: grid; gap: 4px; padding: 8px var(--hs-card-pad) 12px; border-top: 1px solid color-mix(in oklab, var(--hs-cat) 18%, var(--hs-line)); }
@@ -78,6 +81,10 @@
 .hs-app .hs-pin-line { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; min-height: 24px; }
 .hs-app .hs-pin-label { overflow: hidden; color: color-mix(in oklab, var(--hs-text) 86%, var(--hs-surface)); text-overflow: ellipsis; white-space: nowrap; }
 .hs-app .hs-pin-cell--muted .hs-pin-label, .hs-app .hs-pin-cell--wire .hs-pin-label { color: var(--hs-muted); }
+/* An unset optional input: its label is a button that opens the editor in the row. */
+.hs-app .hs-pin-set { min-height: 24px; margin: 0 -4px; padding: 0 4px; border: 0; border-radius: 4px; background: none; font: inherit; text-align: left; cursor: pointer; }
+.hs-app .hs-pin-set:hover { color: var(--hs-text); text-decoration: underline dotted; text-underline-offset: 3px; }
+.hs-app .hs-pin-set:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 1px; color: var(--hs-text); }
 .hs-app .hs-pin-cell--exec .hs-pin-label { font-weight: 600; }
 .hs-app .hs-card__row--footer .hs-pin-label { color: var(--hs-port-error); }
 .hs-app .hs-required { margin-left: 2px; color: var(--hs-danger); }
@@ -114,20 +121,21 @@
 }
 .hs-app .hs-flow .hs-pin--data.hs-pin--connected::after { background: var(--hs-pin-color); }
 .hs-app .hs-flow .hs-pin--list::after { border-radius: 3px; }
+/* Execution pins: an arrow with a pointed right edge, hollow until connected, then filled. */
 .hs-app .hs-flow .hs-pin--exec::after {
-  left: -7px;
-  top: -7px;
-  width: 14px;
-  height: 14px;
+  left: -9px;
+  top: -9px;
+  width: 18px;
+  height: 18px;
   border: 0;
   border-radius: 0;
   background: var(--hs-pin-color);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 2.5h5.5L12 7l-4 4.5H2.5z' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 2.5h5.5L12 7l-4 4.5H2.5z' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='M2.5 3h6.5L16 9l-7 6H2.5z' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='M2.5 3h6.5L16 9l-7 6H2.5z' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 .hs-app .hs-flow .hs-pin--exec.hs-pin--connected::after {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 2.5h5.5L12 7l-4 4.5H2.5z' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 2.5h5.5L12 7l-4 4.5H2.5z' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='M2.5 3h6.5L16 9l-7 6H2.5z' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='M2.5 3h6.5L16 9l-7 6H2.5z' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 .hs-app .hs-flow .hs-pin:hover::after, .hs-app .hs-flow .hs-pin.connectingto::after { transform: scale(1.25); }
 .hs-app .hs-flow .hs-pin:focus { outline: none; }

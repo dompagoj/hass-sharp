@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createUniqueId, For, on, onCleanup, Show, type JSX } from 'solid-js'
+import { createEffect, createMemo, createSignal, createUniqueId, For, on, onCleanup, Show, type JSX } from 'solid-js'
 import { delegateEvents } from 'solid-js/web'
 import { useUpdateNodeInternals, type NodeProps } from '@dschz/solid-flow'
 import { inputValue, type Operand } from '../contract'
@@ -6,7 +6,7 @@ import { InputEditor } from '../InputEditor'
 import { icons } from '../icons'
 import { displayValue, valueSummary, widgetFor } from '../widgets'
 import { Pin } from './Pin'
-import { durationLabel, traceStatusLabel, useFlow, type InputView, type PinView, type RowView } from './flowModel'
+import { durationLabel, traceStatusLabel, traceText, useFlow, type InputView, type PinView, type RowView, type TraceStatus } from './flowModel'
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const Icon = (props: { paths: readonly string[]; class?: string }) => (
@@ -15,6 +15,10 @@ const Icon = (props: { paths: readonly string[]; class?: string }) => (
   </svg>
 )
 const clip = (text: string, max = 48) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
+/** The icon beside each trace status word. */
+const statusIcon: Record<TraceStatus, readonly string[]> = {
+  ok: icons.traceDone, error: icons.traceRecovered, failed: icons.traceFailed, running: icons.traceRunning, cancelled: icons.traceCancelled, stopped: icons.traceStopped,
+}
 
 /**
  * Keeps keys typed into a card's editor inside it: no node move, canvas shortcut, delete or Home Assistant
@@ -68,14 +72,10 @@ export function NodeCard(props: NodeProps) {
     const value = node ? inputValue(node, port, flow.catalog()) : undefined
     return record(value) && typeof value.kind === 'string' ? (value as Operand) : undefined
   }
-  const statusText = () => {
-    const status = reached()
-    if (!trace()) return ''
-    if (!status) return 'Not reached'
-    return [traceStatusLabel[status.status], status.runs > 1 && `${status.runs} times`, status.ms !== undefined && durationLabel(status.ms)].filter(Boolean).join(', ')
-  }
+  const statusText = () => (trace() ? traceText(reached()) : '')
 
   const InputCell = (cell: { input: InputView }) => {
+    let root!: HTMLDivElement
     const input = () => cell.input
     const literal = () => {
       const value = operand(input().port)
@@ -84,35 +84,79 @@ export function NodeCard(props: NodeProps) {
     const configured = () => {
       const value = operand(input().port)
       if (value?.kind === 'variable') return `Variable ${value.name}`
-      return literal() === undefined ? '' : valueSummary(widgetFor(input().spec, flow.catalog()), literal())
+      return literal() === undefined ? '' : valueSummary(widgetFor(input().spec, flow.catalog()), literal(), flow.names())
     }
     const traced = () => trace()?.value?.(id, input().port, 'in')
-    const chip = () => {
-      if (trace()) {
-        const value = traced()
-        if (value) return { text: `${clip(displayValue(value.v as never) || '—')}${value.trunc ? ' …' : ''}`, title: input().source }
-        return reached() ? { text: 'No value', muted: true } : undefined
-      }
-      if (input().mode === 'connected') return undefined
-      return configured() ? { text: clip(configured()) } : undefined
+    const canEdit = () => !flow.readOnly() && flow.editable()
+    // An unset optional input shows its label only; "Set <label>" opens its editor in the row until left unset.
+    const [expanded, setExpanded] = createSignal(false)
+    const muted = () => input().mode === 'muted'
+    const showEditor = () => canEdit() && (input().mode === 'value' || (muted() && expanded()))
+    const expand = () => {
+      // Queued before the button is replaced, so the editor has focus by the time `leave` looks.
+      queueMicrotask(() => root.querySelector<HTMLElement>('.hs-card-editor :is(input, select, textarea, button)')?.focus())
+      setExpanded(true)
     }
-    const showEditor = () => !flow.readOnly() && flow.editable() && (input().mode === 'value' || input().mode === 'muted')
-    const shown = () => {
+    // Focus left the row: an input still unset folds back to its label (one with a value keeps its editor anyway).
+    const leave = (event: FocusEvent) => {
+      if ((event.target as Element).classList.contains('hs-pin-set')) return
+      queueMicrotask(() => {
+        if (!expanded()) return
+        const active = (root.getRootNode() as Document | ShadowRoot).activeElement
+        if (!active || !root.contains(active)) setExpanded(false)
+      })
+    }
+    /** Read-only value chips. Traced values when the run recorded one; else what is configured; never a placeholder for a connected input. */
+    const shown = (): { text: string; title?: string; muted?: boolean } | undefined => {
       if (showEditor()) return undefined
-      const value = chip()
-      if (value || input().mode !== 'value') return value
-      return { text: configured() || 'Not set', muted: !configured() }
+      const value = traced()
+      if (value) return { text: `${clip(displayValue(value.v as never) || '—')}${value.trunc ? ' …' : ''}`, title: input().source }
+      if (input().mode === 'connected' || input().mode === 'wire') return undefined
+      if (configured()) return { text: clip(configured()) }
+      // A required input without a value says so (outside a run); an optional one shows its label only.
+      return input().mode === 'value' && !trace() ? { text: 'Not set', muted: true } : undefined
     }
     return (
-      <div class="hs-pin-cell hs-pin-cell--in" classList={{ [`hs-pin-cell--${input().mode}`]: true }} data-input-id={input().port}>
+      <div
+        ref={root}
+        class="hs-pin-cell hs-pin-cell--in"
+        classList={{ [`hs-pin-cell--${input().mode}`]: true, 'hs-pin-cell--expanded': muted() && expanded() }}
+        data-input-id={input().port}
+        on:focusout={leave}
+      >
         <div class="hs-pin-line">
           <Pin nodeId={id} pin={input().pin} errors={pinErrors(input().pin, input().port)} describedBy={errorsId} />
-          <span class="hs-pin-label">
-            {input().pin.label}
-            <Show when={input().spec.required && input().mode !== 'connected'}>
-              <span class="hs-required" aria-hidden="true" title="Required">*</span>
-            </Show>
-          </span>
+          <Show
+            when={canEdit() && muted() && !expanded()}
+            fallback={
+              <span class="hs-pin-label">
+                {input().pin.label}
+                <Show when={input().spec.required && input().mode !== 'connected'}>
+                  <span class="hs-required" aria-hidden="true" title="Required">*</span>
+                </Show>
+              </span>
+            }
+          >
+            <button
+              type="button"
+              class="hs-pin-label hs-pin-set nodrag nopan"
+              aria-label={`Set ${input().pin.label}`}
+              title={`Set ${input().pin.label}`}
+              on:click={(event: MouseEvent) => {
+                event.stopPropagation()
+                expand()
+              }}
+              on:keydown={(event: KeyboardEvent) => {
+                // The canvas takes Enter and Space for node selection; this button keeps them.
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                event.stopPropagation()
+                expand()
+              }}
+            >
+              {input().pin.label}
+            </button>
+          </Show>
           <Show when={input().mode === 'connected'}>
             <span class="hs-source-chip" style={{ '--hs-pin-color': input().pin.color }} title={`Connected to ${input().source}`}>
               {input().source}
@@ -183,7 +227,7 @@ export function NodeCard(props: NodeProps) {
           }}
           style={{ '--hs-cat': current().identity.color }}
           data-category={current().identity.key}
-          aria-describedby={current().problems.length ? errorsId : undefined}
+          aria-describedby={current().problems.length || trace() ? errorsId : undefined}
         >
           <header class="hs-card__head">
             <Show when={current().execIn}>{pin => <Pin nodeId={id} pin={pin()} errors={pinErrors(pin(), 'in')} describedBy={errorsId} />}</Show>
@@ -196,17 +240,18 @@ export function NodeCard(props: NodeProps) {
                 {current().summary}
               </span>
             </div>
-            <Show when={trace() && reached()}>
-              {status => (
-                <span class="hs-card__trace" title={statusText()}>
-                  <Show when={status().runs > 1}>
-                    <span class="hs-card__runs">×{status().runs}</span>
-                  </Show>
-                  <Show when={status().ms !== undefined}>
-                    <span>{durationLabel(status().ms!)}</span>
-                  </Show>
-                </span>
-              )}
+            <Show when={trace()}>
+              {/* Status icon and word, never colour alone; the card's accessible name carries the same text. */}
+              <span class="hs-card__trace" classList={{ [`hs-card__trace--${reached()?.status ?? 'unreached'}`]: true }} title={statusText()}>
+                <Icon paths={reached() ? statusIcon[reached()!.status] : icons.traceUnreached} class="hs-card__trace-icon" />
+                <span class="hs-card__trace-word">{reached() ? traceStatusLabel[reached()!.status] : 'Not reached'}</span>
+                <Show when={(reached()?.runs ?? 0) > 1}>
+                  <span class="hs-card__runs">×{reached()!.runs}</span>
+                </Show>
+                <Show when={reached()?.ms !== undefined}>
+                  <span class="hs-card__ms">{durationLabel(reached()!.ms!)}</span>
+                </Show>
+              </span>
             </Show>
             <Show when={current().problems.length}>
               <button
@@ -220,7 +265,7 @@ export function NodeCard(props: NodeProps) {
                   flow.locateProblem(id)
                 }}
               >
-                <Icon paths={icons.problem} class="hs-card__badge-icon" />
+                <Icon paths={current().errors ? icons.problem : icons.warning} class="hs-card__badge-icon" />
                 {current().problems.length}
               </button>
             </Show>

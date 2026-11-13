@@ -1,4 +1,4 @@
-import { dataOutputs, inputValue, nodeCatalog, type Graph, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { dataOutputs, inputValue, nodeCatalog, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 
 /** Registry names used to say "Hallway" rather than `light.hallway`; every list is optional. */
@@ -33,6 +33,18 @@ export function entityName(id: string, registry?: SummaryNames): string {
   if (id === 'all') return 'all entities'
   const dot = id.indexOf('.')
   return dot > 0 ? domainWords(id.slice(dot + 1)) : id
+}
+/**
+ * The label of a service field ("Brightness" for `brightness_pct` of `light.turn_on`) from the C4 services section,
+ * with the field key in words ("Brightness pct") as the fallback when the service is unknown or the field has no label
+ * of its own (Home Assistant without translations repeats the key as the label). Cards and the inspector share this text.
+ */
+export function serviceFieldLabel(serviceId: string, field: string, services?: ServicesSection): string {
+  const items = services?.items
+  const schema = items && Object.hasOwn(items, serviceId) ? items[serviceId] : undefined
+  const fieldSchema = schema && Object.hasOwn(schema.fields, field) ? schema.fields[field] : undefined
+  const label = text(fieldSchema?.label)
+  return label && label !== field ? label : domainWords(field)
 }
 const list = (items: string[]) => (items.length <= 2 ? items.join(' and ') : `${items[0]} +${items.length - 1}`)
 const strings = (value: unknown) =>

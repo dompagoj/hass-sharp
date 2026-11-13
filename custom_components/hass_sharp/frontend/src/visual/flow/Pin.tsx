@@ -35,7 +35,8 @@ export function Pin(props: { nodeId: string; pin: PinView; errors?: string[]; de
       isConnectable={!flow.readOnly()}
       class={classes()}
       style={{ '--hs-pin-color': props.pin.color }}
-      tabIndex={flow.readOnly() ? -1 : 0}
+      // Read-only pins stay reachable from the keyboard (their name says type and state); they do nothing.
+      tabIndex={0}
       aria-label={props.pin.name}
       aria-invalid={errors().length > 0 || undefined}
       aria-describedby={errors().length ? props.describedBy : undefined}

@@ -10,9 +10,10 @@ export type NameResolver = (kind: NamedKind, id: string) => string | undefined
 
 const count = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`
 const clip = (text: string, max = 40) => text.length > max ? text.slice(0, max - 1) + '…' : text
-/** Lists read "30, 60"; objects read "Object, 2 fields". */
+/** Lists read "30, 60"; objects read "Object, 2 fields"; a list item that is an object or a list reads the same way, never raw JSON. */
+const nested = (item: JsonValue) => Array.isArray(item) ? `List, ${count(item.length, 'item')}` : record(item) ? `Object, ${count(Object.keys(item).length, 'field')}` : displayValue(item)
 function plain(value: JsonValue): string {
-  if (Array.isArray(value)) return value.map(item => record(item) || Array.isArray(item) ? JSON.stringify(item) : displayValue(item)).join(', ')
+  if (Array.isArray(value)) return value.map(nested).join(', ')
   if (record(value)) return `Object, ${count(Object.keys(value).length, 'field')}`
   return displayValue(value)
 }
@@ -26,19 +27,28 @@ export const namesRegistryItems = (widget: Widget) => ['target', 'entity', 'devi
 export function valueSummary(widget: Widget, value: JsonValue | undefined, names?: NameResolver): string {
   if (value === undefined) return 'Not set'
   if (value === '') return 'Empty text'
-  const name = (kind: NamedKind, id: string) => names?.(kind, id) || id
+  // Entity ids read well enough without a name; device, area, floor and label ids may be GUIDs, so an unnamed one is
+  // only counted ("1 device"), never shown (design principle 2).
+  const named = (kind: NamedKind, list: string[]) => {
+    if (kind === 'entity') return list.map(id => names?.(kind, id) || id)
+    const known = list.map(id => names?.(kind, id)).filter((n): n is string => !!n)
+    const unnamed = list.length - known.length
+    return unnamed ? [...known, count(unnamed, kind)] : known
+  }
   switch (widget.kind) {
     case 'target': {
       const ids = targetIds(value)
-      const named = [...ids.entity_id.map(id => name('entity', id)), ...ids.device_id.map(id => name('device', id)), ...ids.area_id.map(id => name('area', id)),
-        ...ids.floor_id.map(id => name('floor', id)), ...ids.label_id.map(id => name('label', id))]
-      if (!named.length) return 'No target'
-      if (named.length <= 3) return clip(named.join(', '))
+      const total = ids.entity_id.length + ids.device_id.length + ids.area_id.length + ids.floor_id.length + ids.label_id.length
+      if (!total) return 'No target'
+      if (total <= 3) return clip([...named('entity', ids.entity_id), ...named('device', ids.device_id), ...named('area', ids.area_id),
+        ...named('floor', ids.floor_id), ...named('label', ids.label_id)].join(', '))
       return [count(ids.entity_id.length, 'entity', 'entities'), count(ids.device_id.length, 'device'), count(ids.area_id.length, 'area'),
         count(ids.floor_id.length, 'floor'), count(ids.label_id.length, 'label')].filter(text => !text.startsWith('0 ')).join(', ')
     }
-    case 'entity': case 'device': case 'area': case 'floor': case 'label':
-      return clip(strings(value).map(id => name(widget.kind as NamedKind, id)).join(', ') || plain(value))
+    case 'entity': case 'device': case 'area': case 'floor': case 'label': {
+      const ids = strings(value)
+      return clip(ids.length ? named(widget.kind as NamedKind, ids).join(', ') : plain(value))
+    }
     case 'select': case 'state': {
       const label = (item: JsonValue) => widget.options?.find(o => jsonEqual(o.value, item))?.label ?? displayValue(item)
       return clip(Array.isArray(value) ? value.map(label).join(', ') : label(value))

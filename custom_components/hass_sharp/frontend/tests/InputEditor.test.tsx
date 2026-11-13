@@ -239,8 +239,8 @@ it('renders the inline variant compactly with the mode menu closed', () => {
 it('summarises a value too large for a node card in the inline variant, naming registry items', async () => {
   const { host } = mount({ input: serviceInputs('light.turn_on').target, label: 'Target', variant: 'inline' },
     { kind: 'literal', type: 'target', value: { entity_id: ['light.hall', 'light.porch'], area_id: ['hall'] } })
-  // Ids stand in until the registry has loaded; then the area reads by its name.
-  expect(q(host, '.hs-input-editor__summary').textContent).toBe('light.hall, light.porch, hall')
+  // Entity ids stand in until the registry has loaded (an area is only counted); then the area reads by its name.
+  expect(q(host, '.hs-input-editor__summary').textContent).toBe('light.hall, light.porch, 1 area')
   await vi.waitFor(() => expect(q(host, '.hs-input-editor__summary').textContent).toBe('light.hall, light.porch, Hall'))
   expect(q(host, '.hs-input-editor__summary').title).toBe('light.hall, light.porch, Hall')
   expect(host.querySelector('.hs-chip')).toBeNull()

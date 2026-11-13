@@ -147,7 +147,7 @@ it('rejects a real incompatible data drag before edge creation and highlights th
   expect(target.getAttribute('title')).toBe('Condition requires Boolean; Value outputs Number')
   expect(el.querySelector('[aria-label="Search steps"]')).toBeNull()
 })
-it('uses the same category token on all five typed handles, edges, inspector rows and String entity refinements', async () => {
+it('colours pins, data wires and inspector rows by type: the five primitive tokens, the entity token for entity ids, and execution and error tokens', async () => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
   const el = host()
@@ -416,10 +416,10 @@ it('preserves declared input labels when source-derived custom CLR Boolean outpu
   expect(el.querySelector('[data-id="if"]')?.getAttribute('aria-label')).toContain('If')
   expect(el.textContent).toContain('Condition · Boolean · Required')
   expect(el.querySelector('[data-id="if"] .target[data-handleid="data:value"]')?.getAttribute('aria-label')).toBe(
-    'Input Condition, Yes/No, connected to Is on · Result',
+    'Input Condition, Yes/No, required, connected to Is on · Result',
   )
   expect(el.querySelector('[data-id="predicate"] .source[data-handleid="data:result"]')?.getAttribute('aria-label')).toBe(
-    'Output Result, bool, connected',
+    'Output Result, Yes/No, connected',
   )
   expect(el.querySelector('[data-id="if"] [data-input-id="value"] .hs-source-chip')?.textContent).toBe('Is on · Result')
   expect(el.textContent).toContain('From Is on')
@@ -428,4 +428,40 @@ it('preserves declared input labels when source-derived custom CLR Boolean outpu
   expect(el.querySelector('[data-id="describe"] .hs-flow-card')?.textContent).not.toContain('library:')
   expect(catalog.types.number.label).toBe('Number')
   expect(catalog.types['global::System.Double'].label).toBe('double')
+})
+
+import { typeLabel } from '../src/visual/typeLabels'
+it('names library types for people, never with CLR spelling', () => {
+  const catalog = richCatalogFixture.catalog as unknown as VisualCatalogSnapshot
+  const label = (id: string) => typeLabel(id, catalog)
+  // A library type of a primitive kind or category reads as that primitive.
+  expect(label('global::System.Boolean')).toBe('Yes/No')
+  expect(label('global::System.Int32')).toBe('Number')
+  expect(label('global::System.Double')).toBe('Number')
+  expect(label('global::System.Single')).toBe('Number')
+  expect(label('global::System.String')).toBe('Text')
+  // A nullable reads as its inner type.
+  expect(label('global::System.String?')).toBe('Text')
+  expect(label('global::System.Double?')).toBe('Number')
+  expect(label('global::NodeLib.Reading?')).toBe('Reading')
+  // Lists and enumerables of T read "List of T".
+  expect(label('global::System.String[]')).toBe('List of Text')
+  expect(label('global::System.String?[]')).toBe('List of Text')
+  expect(label('global::System.String[]?')).toBe('List of Text')
+  expect(label('global::System.Collections.Generic.IEnumerable<global::System.String>')).toBe('List of Text')
+  expect(label('global::System.Collections.Generic.IReadOnlyList<global::System.String>')).toBe('List of Text')
+  expect(label('global::System.Collections.Generic.IList<global::System.String>')).toBe('List of Text')
+  expect(label('global::System.Collections.Generic.IEnumerable<global::System.String?>')).toBe('List of Text')
+  // JSON objects and arrays.
+  expect(label('global::System.Text.Json.Nodes.JsonObject')).toBe('Object')
+  expect(label('global::System.Text.Json.Nodes.JsonArray')).toBe('List')
+  // Anything else: the last name segment in words.
+  expect(label('global::NodeLib.Reading')).toBe('Reading')
+  expect(label('global::NodeLib.IReading')).toBe('Reading')
+  expect(label('global::NodeLib.Mode')).toBe('Mode')
+  expect(label('global::System.IComparable')).toBe('Comparable')
+  expect(label('global::System.Object')).toBe('Object')
+  expect(label('global::HassSharp.EntityStateSnapshot')).toBe('Entity state')
+  // No type in the catalog is ever named with a namespace, global::, generic brackets, ? or [].
+  for (const id of Object.keys(catalog.types)) expect(label(id), id).not.toMatch(/global::|[.<>?[\]]|^(bool|int|double|float|string|object)$/)
 })

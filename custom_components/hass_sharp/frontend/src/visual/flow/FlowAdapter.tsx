@@ -11,6 +11,8 @@ import { connectData, nodeCatalog, setInput as writeInput, type Operand, type Vi
 import { canConnect, canCreateNode, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeEdge, updateNode, type EdgePort, type NodeKind, type PendingConnection, type VisualGraph } from '../graph'
 import { connectionIndex } from '../connectionIndex'
 import type { SummaryNames } from '../nodeSummary'
+import { registryNames, type NameResolver } from '../widgets'
+import type { Registry } from '../../registry'
 import { edgeTypes } from './Edges'
 import { NodeCard } from './NodeCard'
 import {
@@ -20,6 +22,7 @@ import {
   FlowContext,
   graphVariables,
   renderableGraph,
+  traceText,
   viewKey,
   type FlowContextValue,
   type FlowTrace,
@@ -48,7 +51,7 @@ type Connection = { source: string; target: string; sourceHandle?: string | null
 type HandleRef = { nodeId: string; handle: string; type: 'source' | 'target' }
 
 /** Registry names for summaries; only inside the app's providers (a bare adapter in a test has none). */
-function useNames(enabled: boolean): () => SummaryNames | undefined {
+function useNames(enabled: boolean): () => Registry | undefined {
   if (!enabled) return () => undefined
   const registry = useRegistry()
   // Reading `data` before the query settles would suspend the editor; names are only an improvement.
@@ -67,6 +70,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   const palette = () => catalogPalette(catalog())
   const editable = !!useContext(QueryClientContext) && !!useContext(HassCtx)
   const names = useNames(editable)
+  // Value chips name registry items the way the inline editors do (one resolver per registry snapshot).
+  const nameResolver = createMemo<NameResolver>(() => registryNames(names()))
   const change = (next: VisualGraph, options?: { coalesce?: string }) => {
     if (readOnly() || !props.onChange || next === graph()) return
     props.onChange(next, options)
@@ -162,7 +167,9 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     const from = origin()
     const states = new Map<string, PinState>()
     if (!from) return states
-    states.set(`${from.nodeId}|${from.handle}`, 'origin')
+    // Keys carry the side: inputs and outputs share handle ids (`data:value` on both sides of Set value).
+    states.set(`${from.nodeId}|${from.type}|${from.handle}`, 'origin')
+    const side = from.type === 'source' ? 'target' : 'source'
     const data = dataPortOf(from.handle) !== undefined
     for (const [id, entry] of views()) {
       if (id === from.nodeId) continue
@@ -181,7 +188,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
         } catch {
           ok = false
         }
-        states.set(`${id}|${pin.id}`, ok ? 'compatible' : 'incompatible')
+        states.set(`${id}|${side}|${pin.id}`, ok ? 'compatible' : 'incompatible')
       }
     }
     return states
@@ -285,12 +292,21 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
         () => props.trace?.focusNodeId,
         id => {
           if (!id) return
-          requestAnimationFrame(() => {
+          // Centre once the card has been measured (its size is unknown on the first frames), then leave the
+          // viewport to the user: this runs again only when focusNodeId changes.
+          let frames = 0, frame = 0
+          const centre = () => {
             const node = flow.getInternalNode(id)
-            if (!node) return
+            const width = node?.measured.width, height = node?.measured.height
+            if (!node || !width || !height) {
+              if (++frames < 60) frame = requestAnimationFrame(centre)
+              return
+            }
             const { x, y } = node.internals.positionAbsolute
-            void flow.setCenter(x + (node.measured.width ?? 0) / 2, y + (node.measured.height ?? 0) / 2, { zoom: Math.max(flow.getZoom(), 0.8), duration: 200 })
-          })
+            void flow.setCenter(x + width / 2, y + height / 2, { zoom: Math.max(flow.getZoom(), 0.8), duration: 200 })
+          }
+          frame = requestAnimationFrame(centre)
+          onCleanup(() => cancelAnimationFrame(frame))
         },
       ),
     )
@@ -422,8 +438,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   // Flow nodes carry only identity, position and selection; cards read everything else from their view.
   createEffect(
     on(
-      () => [graph(), props.selectedId, views()] as const,
-      ([current, selectedId, built]) =>
+      () => [graph(), props.selectedId, views(), props.trace] as const,
+      ([current, selectedId, built, trace]) =>
         untrack(() =>
           setNodes(
             reconcile(
@@ -437,7 +453,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
                     : node.position
                       ? { ...node.position }
                       : { x: 60 + index * 300, y: 100 },
-                domAttributes: { 'aria-label': built.get(node.id)?.view.label ?? node.id },
+                domAttributes: { 'aria-label': `${built.get(node.id)?.view.label ?? node.id}${trace ? `. Run: ${traceText(trace.nodes[node.id])}` : ''}` },
                 selected: node.id === selectedId,
               })),
               { key: 'id' },
@@ -485,7 +501,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     variables,
     editable: () => editable,
     trace: () => props.trace,
-    pinState: (nodeId, handle) => pinStates().get(`${nodeId}|${handle}`),
+    pinState: (nodeId, handle, type) => pinStates().get(`${nodeId}|${type}|${handle}`),
+    names: nameResolver,
     activateHandle,
     moved: gestureMoved,
     setInput: setNodeInput,

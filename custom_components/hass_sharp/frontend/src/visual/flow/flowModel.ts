@@ -13,9 +13,9 @@ import {
 import { connectionIndex } from '../connectionIndex'
 import { inputType, nodeInputs, outputPort, portLabel, type VisualGraph } from '../graph'
 import { nodeIdentity, type NodeIdentity } from '../icons'
-import { nodeSummary, type SummaryNames } from '../nodeSummary'
-import { typeColor, typeIsList, typeLabel } from '../typeLabels'
-import { targetIds, widgetFor } from '../widgets'
+import { nodeSummary, serviceFieldLabel, type SummaryNames } from '../nodeSummary'
+import { domainWords, typeColor, typeIsList, typeLabel } from '../typeLabels'
+import { targetIds, widgetFor, type NameResolver } from '../widgets'
 import type { VisualDiagnostic } from '../api'
 import type { TraceEventStatus, TraceValue } from '../../types'
 
@@ -128,8 +128,18 @@ const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
 /** Nodes whose `next` means "after the structure" are drawn with a named Done row instead of a header pin. */
 const structured = (node: GraphNode, catalog: VisualCatalogSnapshot) =>
   node.kind === 'parallel' || (Object.hasOwn(catalog.nodes, node.kind) && (catalog.nodes[node.kind].scopePorts?.length ?? 0) > 0)
+/** A branch id that reads as a name ("lights"), not a generated one (a GUID or long hex). */
+const readableBranch = (id: string) => /^[A-Za-z][A-Za-z0-9 _-]{0,23}$/.test(id) && !/^[0-9a-f]{8}-?[0-9a-f]{4}/i.test(id)
 export function execLabel(node: GraphNode, port: string, catalog: VisualCatalogSnapshot) {
   if (port === 'next' && structured(node, catalog)) return 'Done'
+  if (port.startsWith('branch:')) {
+    // A branch is named by its id when the id reads as a name, else by its position.
+    const id = port.slice(7)
+    if (readableBranch(id)) return domainWords(id.replaceAll('-', '_'))
+    const branches = Array.isArray(node.config.branches) ? node.config.branches : []
+    const index = branches.indexOf(id)
+    return `Branch ${index >= 0 ? index + 1 : branches.length + 1}`
+  }
   return portLabel(port)
 }
 const connectedText = (connected: boolean) => (connected ? 'connected' : 'not connected')
@@ -181,7 +191,8 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     }
   }
   const execInConnected = incoming.some(e => e.kind !== 'data')
-  const execIn: PinView | undefined = node.kind === 'trigger' || !known ? undefined : {
+  // Unknown kinds keep their execution input, so wires into a node whose library vanished still show.
+  const execIn: PinView | undefined = node.kind === 'trigger' ? undefined : {
     id: 'in', side: 'in', kind: 'exec', label: 'Execution input', name: `Execution input, ${connectedText(execInConnected)}`,
     color: 'var(--hs-port-execution)', list: false, connected: execInConnected, error: false,
   }
@@ -196,7 +207,8 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     const resolved = inputType(graph, node, port, input, catalog)
     const typeId = resolved ?? (input.types.length === 1 ? input.types[0] : undefined)
     const typeText = typeId ? typeLabel(typeId, catalog) : typeName(input.types, catalog) || 'Any value'
-    const label = input.label ?? port
+    const field = node.kind === 'service' && port.startsWith('field:') ? port.slice(6) : undefined
+    const label = field !== undefined ? serviceFieldLabel(text(node.config.service), field, catalog.services) : (input.label ?? port)
     const source = wire?.kind === 'data' ? `${nodeTitle(sourceNode, catalog, wire.source)} · ${sourceOutput?.label ?? wire.sourcePort}` : undefined
     const operand = inputValue(node, port, catalog) as Operand | undefined
     const unset = !record(operand) || operand.kind === 'unset'
@@ -206,7 +218,7 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
       port, spec: input, mode, source, sourceNode: wire?.source, errors,
       pin: {
         id: dataHandle(port), side: 'in', kind: 'data', label, typeId, typeName: typeText,
-        name: `Input ${label}, ${typeText}, ${source ? `connected to ${source}` : unset || mode === 'wire' ? 'not connected' : 'not connected, has a value'}`,
+        name: `Input ${label}, ${typeText}${input.required ? ', required' : ''}, ${source ? `connected to ${source}` : unset || mode === 'wire' ? 'not connected' : 'not connected, has a value'}`,
         color: typeId ? typeColor(typeId, catalog) : 'var(--hs-muted)', list: typeId ? typeIsList(typeId, catalog) : false,
         connected: !!wire, error: false, description: input.description,
       },
@@ -240,7 +252,7 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     execIn, next: headerNext ? execPin('next') : undefined, rows,
     footer: execPorts.includes('error') ? execPin('error') : undefined,
     problems, errors, warnings, targetEntityIds, unreachable: unreachable(node, ctx),
-    label: `${title}, ${identity.label}. ${summary}${problemText}`,
+    label: `${[`${title}, ${identity.label}`, summary].filter(Boolean).join('. ')}${problemText}`,
   }
 }
 
@@ -250,14 +262,28 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
  * equal view, so the adapter reuses it instead of deriving ports, summaries and diagnostics again.
  */
 export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionIndex(ctx.graph, ctx.catalog)): string {
-  const titles = (id: string) => nodeTitle(ctx.graph.nodes.find(n => n.id === id), ctx.catalog, id)
-  const wires = ctx.graph.edges
+  const { graph, catalog } = ctx
+  // The node's actual ports: inputs come from the node and, for loop results, from the owner loop's declarations.
+  const inputs = Object.entries(nodeInputs(graph, node, catalog)).map(([port, input]) => [
+    port, input.types, input.label ?? null, !!input.required, input.description ?? null, inputValue(node, port, catalog) ?? null,
+  ])
+  const outputs = Object.entries(dataOutputs(node, catalog)).map(([port, output]) => [port, output.type, output.label ?? null])
+  // Wires with what the card shows of their far end: the source title and output label (source chips, summary).
+  const wires = graph.edges
     .filter(e => e.source === node.id || e.target === node.id)
-    .map(e => (e.kind === 'data' ? ['d', e.source, e.sourcePort, e.target, e.targetPort, e.target === node.id ? titles(e.source) : ''] : ['x', e.source, e.port ?? '', e.target]))
+    .map(e => {
+      if (e.kind !== 'data') return ['x', e.source, e.port ?? '', e.target]
+      const from = e.target === node.id ? graph.nodes.find(n => n.id === e.source) : undefined
+      return ['d', e.source, e.sourcePort, e.target, e.targetPort, from ? nodeTitle(from, catalog) : '', from ? (dataOutputs(from, catalog)[e.sourcePort]?.label ?? null) : null]
+    })
+  // Unset ports resolve to undefined, which JSON would drop: keep them as null.
+  const resolved = Object.entries(index.analysis.resolved.get(node.id) ?? {}).map(([port, type]) => [port, type ?? null])
   const diagnostics = ctx.diagnostics.filter(d => d.nodeId === node.id).map(d => [d.severity, d.message, d.inputId ?? '', d.portId ?? ''])
   const rejected = ctx.rejected?.nodeId === node.id ? ctx.rejected : undefined
-  // Labels of the nodes a summary may name (wired sources) are already in `wires`.
-  return JSON.stringify([node.kind, node.label ?? null, node.config, wires, unreachable(node, ctx), index.analysis.resolved.get(node.id) ?? null, diagnostics, rejected ?? null])
+  return JSON.stringify([
+    node.kind, node.label ?? null, node.config, inputs, outputs, executionPorts(node, catalog), wires, unreachable(node, ctx), resolved, diagnostics,
+    rejected ?? null,
+  ])
 }
 
 /** Variables visible to inline editors: named `output`s of nodes with a value output (D7). */
@@ -307,8 +333,14 @@ export function durationLabel(ms: number): string {
   if (ms < 60000) return `${Math.round(ms / 100) / 10} s`
   return `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`
 }
+/** The word shown beside a trace status icon (never colour alone). */
 export const traceStatusLabel: Record<TraceStatus, string> = {
-  ok: 'Ran', error: 'Failed, error path taken', failed: 'Failed', running: 'Running', cancelled: 'Cancelled', stopped: 'Stopped the run',
+  ok: 'Done', error: 'Recovered', failed: 'Failed', running: 'Running', cancelled: 'Cancelled', stopped: 'Stopped',
+}
+/** A card's trace state in words: "Done, 3 times, 12 ms", or "Not reached". */
+export function traceText(status: { status: TraceStatus; runs: number; ms?: number } | undefined): string {
+  if (!status) return 'Not reached'
+  return [traceStatusLabel[status.status], status.runs > 1 && `${status.runs} times`, status.ms !== undefined && durationLabel(status.ms)].filter(Boolean).join(', ')
 }
 
 /** A pin's role while a wire is being dragged (or a pin was picked from the keyboard). */
@@ -323,7 +355,10 @@ export interface FlowContextValue {
   /** False without the query client and Home Assistant context (a bare adapter): editors become value chips. */
   editable(): boolean
   trace(): FlowTrace | undefined
+  /** The pin's role during a connection; `type` is its side (inputs and outputs share handle ids). */
   pinState(nodeId: string, handle: string, type: 'source' | 'target'): PinState | undefined
+  /** Registry names for value chips (ids where nothing is known). */
+  names(): NameResolver
   activateHandle(nodeId: string, handle: string, type: 'source' | 'target'): void
   /** True when the pointer moved since it went down (a drag, not a click). */
   moved(): boolean

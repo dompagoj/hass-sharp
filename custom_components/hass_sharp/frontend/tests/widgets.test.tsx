@@ -168,7 +168,7 @@ describe('values', () => {
   })
   it('summarises values too large for a node card', () => {
     const target = widgetFor(spec(['target', 'entity_id']))
-    expect(valueSummary(target, { entity_id: ['light.a', 'light.b'], area_id: 'hall' })).toBe('light.a, light.b, hall')
+    expect(valueSummary(target, { entity_id: ['light.a', 'light.b'], area_id: 'hall' })).toBe('light.a, light.b, 1 area')
     expect(valueSummary(target, { entity_id: ['light.a', 'light.b', 'light.c'], area_id: 'hall' })).toBe('3 entities, 1 area')
     expect(valueSummary(target, 'light.a')).toBe('light.a')
     expect(valueSummary(target, {})).toBe('No target')
@@ -179,17 +179,29 @@ describe('values', () => {
     expect(valueSummary({ kind: 'json', multiple: false }, [30, 60])).toBe('30, 60')
     expect(valueSummary({ kind: 'json', multiple: false }, { a: 1, b: 2 })).toBe('Object, 2 fields')
     expect(valueSummary({ kind: 'json', multiple: false }, { a: 1 })).toBe('Object, 1 field')
+    // List items that are objects or lists are described, never printed as JSON.
+    expect(valueSummary({ kind: 'json', multiple: false }, [{ a: 1, b: 2 }, [1, 2, 3], 'x'])).toBe('Object, 2 fields, List, 3 items, x')
+    expect(valueSummary({ kind: 'json', multiple: false }, [[1]])).toBe('List, 1 item')
     expect(valueSummary({ kind: 'select', multiple: true, options: [{ value: 'a', label: 'Apple' }, { value: 'b', label: 'Banana' }] }, ['a', 'b'])).toBe('Apple, Banana')
   })
-  it('names registry items in a summary, falling back to the id', () => {
+  it('names registry items in a summary: an unnamed entity shows its id, any other unnamed item is only counted', () => {
     const names = registryNames(createRegistry(registry))
     const target = widgetFor(spec(['target', 'entity_id']))
     expect(valueSummary(target, { entity_id: ['light.hall', 'light.gone'], area_id: 'hall' }, names)).toBe('Hall lamp, light.gone, Hall')
     expect(valueSummary(target, { device_id: 'dev1', floor_id: 'ground', label_id: ['night'] }, names)).toBe('Hub, Ground, Night')
     expect(valueSummary({ kind: 'area', multiple: true }, ['hall', 'attic'], names)).toBe('Hall, Attic')
     expect(valueSummary({ kind: 'entity', multiple: false }, 'switch.fan', names)).toBe('Fan')
-    expect(valueSummary({ kind: 'device', multiple: false }, 'dev2', names)).toBe('dev2')
-    expect(valueSummary({ kind: 'label', multiple: false }, 'night', registryNames(undefined))).toBe('night')
+    expect(valueSummary({ kind: 'device', multiple: false }, 'dev2', names)).toBe('1 device')
+    expect(valueSummary({ kind: 'label', multiple: false }, 'night', registryNames(undefined))).toBe('1 label')
+    // A device id is a 32-character GUID: never on screen, with or without a resolver.
+    const guid = '0123456789abcdef0123456789abcdef'
+    expect(valueSummary({ kind: 'device', multiple: true }, ['dev1', guid, 'other'], names)).toBe('Hub, 2 devices')
+    expect(valueSummary(target, { device_id: guid })).toBe('1 device')
+    expect(valueSummary(target, { entity_id: 'light.hall', device_id: [guid, 'dev1'] }, names)).toBe('Hall lamp, Hub, 1 device')
+    expect(valueSummary(target, { area_id: ['nowhere', 'gone'], floor_id: 'up', label_id: 'x' })).toBe('2 areas, 1 floor, 1 label')
+    expect(valueSummary({ kind: 'area', multiple: false }, 'nowhere')).toBe('1 area')
+    expect(valueSummary({ kind: 'floor', multiple: false }, 'up', names)).toBe('1 floor')
+    expect(valueSummary({ kind: 'entity', multiple: false }, 'light.gone')).toBe('light.gone')
   })
   it('names types for people', () => {
     expect(['string', 'number', 'boolean', 'object', 'array', 'entity_id', 'entity_id:light', 'entity_id:binary_sensor', 'target', 'global::HassSharp.EntityStateSnapshot']

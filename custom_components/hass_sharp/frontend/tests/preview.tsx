@@ -64,7 +64,7 @@ const typedDemo = (): Graph => {
   g = addNode(g, 'delay', 'delay-1', catalog)
   g = updateNode(g, 'delay-1', { position: { x: 840, y: 480 }, config: { ...config(g, 'delay-1'), seconds: lit('number', 300) } })
   g = addNode(g, 'service', 'service-2', catalog)
-  g = updateNode(g, 'service-2', { label: 'Lights off', position: { x: 1240, y: 480 }, config: { ...config(g, 'service-2'), service: 'light.turn_off', target: lit('target', { entity_id: 'light.hall_1' }) } })
+  g = updateNode(g, 'service-2', { label: 'Lights off', position: { x: 1240, y: 480 }, config: { ...config(g, 'service-2'), service: 'light.turn_off', target: lit('target', { entity_id: 'light.hall_1' }), fields: { transition: { kind: 'unset' } } } })
   g = connectNodes(connectNodes(g, 'condition-1', 'delay-1', 'false', catalog), 'delay-1', 'service-2', undefined, catalog)
   g = connectData(g, 'trigger-1', 'entity_id', 'condition-1', 'entity', catalog)
   const sample = fillGraphLayout(rich.cases[0].graph as Graph)
