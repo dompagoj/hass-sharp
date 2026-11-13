@@ -121,7 +121,7 @@ function RunOverview(props: { run: AutomationRun; model?: TraceModel }) {
       <Show when={props.model && Object.keys(props.model.trace.trigger ?? {}).length}>
         <div class="hs-trace-section">
           <h3 class="hs-insp-heading">Trigger data</h3>
-          <JsonTree value={props.model!.trace.trigger} label="Trigger data" />
+          <JsonTree value={props.model!.trace.trigger} label="Trigger data" leaf={traceLeaf(false)} />
         </div>
       </Show>
       <p class="hs-muted hs-insp-hint">{props.model ? 'Select a step on the canvas or in the timeline to see its values.' : 'No step-by-step record was kept for this run.'}</p>
@@ -178,6 +178,10 @@ function StepValues(props: {
           <label class="hs-insp-field__label" for={chooserId}>Which run</label>
           <select id={chooserId} class="hs-input" onChange={e => (e.currentTarget.value === 'whole' ? props.onSelectWholeRun() : props.onSelectEvent(Number(e.currentTarget.value)))}>
             <option value="whole" selected={whole()}>Whole run</option>
+            {/* The iteration or branch on view, when this step did not run in it: the control says so. */}
+            <Show when={!whole() && !props.event}>
+              <option value="none" selected disabled>{`${frameLabel()} (did not run)`}</option>
+            </Show>
             <For each={runs()}>{(run, index) => <option value={String(run.seq)} selected={!whole() && run.seq === props.event?.seq}>{choice(run, index())}</option>}</For>
           </select>
           <Show when={whole() && props.event && runs().length > 1}>
@@ -288,13 +292,14 @@ function PortList(props: {
 }
 
 /**
- * What the recorder writes inside a value in place of one it did not keep, shown in words: `"***"` under a name the
+ * Every value tree on the trace page (step values, the trigger data). What the recorder writes inside a value in
+ * place of one it did not keep, shown in words: `"***"` under a name the
  * secret rule matches (the same text under any other name is real), and, in a value marked cut, a C# type name for
  * one it could not read. A depth-capped `null` cannot be told from a real one and stays as it is.
  */
-const placeholders = (value: TraceValue): JsonLeaf => (name, v) => {
+const traceLeaf = (cut: boolean | undefined): JsonLeaf => (name, v) => {
   if (v === '***' && secretName(name)) return <span class="hs-trace-value--muted hs-trace-leaf" title="Not recorded because its name looks like a secret.">Hidden</span>
-  if (value.trunc && opaque(v)) return <span class="hs-trace-value--muted hs-trace-leaf">Could not be recorded</span>
+  if (cut && opaque(v)) return <span class="hs-trace-value--muted hs-trace-leaf">Could not be recorded</span>
   return undefined
 }
 
@@ -308,7 +313,7 @@ function ValueView(props: { value: TraceValue; label: string }) {
         </span>
       }>
         <span class="hs-trace-value hs-trace-value--muted">{valueText(props.value)}</span>
-        <JsonTree value={props.value.v} label={`${props.label} value`} leaf={placeholders(props.value)} />
+        <JsonTree value={props.value.v} label={`${props.label} value`} leaf={traceLeaf(props.value.trunc)} />
       </Show>
       <Show when={props.value.redacted}><span class="hs-trace-port__note">Not recorded because its name looks like a secret.</span></Show>
       <Show when={isCut(props.value)}><span class="hs-trace-port__note">Too large: only part of it was recorded.</span></Show>

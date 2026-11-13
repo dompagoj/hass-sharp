@@ -211,7 +211,7 @@ const hass = {
     if (message.type === 'get_services') return { light: { turn_on: {name:'Turn on',description:'Turn on a light'}, turn_off: {name:'Turn off',description:'Turn off a light'} }, climate: { set_temperature: {name:'Set temperature',description:'Change the target temperature'} } }
     if (message.type === 'hass_sharp/visual'||message.type==='hass_sharp/node_library') return visualBackend.callWS(message)
     if (message.type === 'hass_sharp/run_trace') {
-      if (dropTrace && ++traceReads % 3 === 0) throw { code: 'connection_lost', message: 'Connection lost' }
+      if (dropTrace && ++traceReads % 3 === 0) throw { code: 3, message: 'Connection lost' }
       return JSON.parse(JSON.stringify(traceResponse()))
     }
     if (diagnosticsFixture && message.type.endsWith('get_diagnostics')) {

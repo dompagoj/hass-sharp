@@ -84,6 +84,7 @@ export function TopBar(props: {
   const chip = () => saveChip(props.save ?? { saving: false, dirty: false, errors: 0 })
   const explanationId = createUniqueId()
   const run = children(() => props.run)
+  const status = children(() => props.status)
   return (
     <>
       <header class="hs-topbar">
@@ -132,7 +133,7 @@ export function TopBar(props: {
             />
           </div>
         </Show>
-        <Show when={!props.status} fallback={props.status}>
+        <Show when={!status()} fallback={status()}>
           <span class={`hs-save-chip hs-save-chip--${chip().tone}`} tabindex="0" title={chip().explanation} aria-describedby={explanationId}>
             <span class="hs-save-chip__text" role="status">{chip().text}</span>
             <span class="hs-save-chip__short" aria-hidden="true">{chip().short}</span>

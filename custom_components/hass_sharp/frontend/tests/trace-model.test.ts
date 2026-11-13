@@ -183,6 +183,12 @@ it('counts a while loop by its bodies, names its last condition check, and count
   expect(whiles.frameLabel('w#0:body')).toBe('Iteration 1 of 4')
   expect(whiles.frameLabel('w#3:condition')).toBe('Iteration 4 of 4 · Condition')
   expect(whiles.frameLabel('w#4:condition')).toBe('Final check')
+  // While the run goes on, or with steps missing, a body may still follow that check (or was dropped): no "Final check".
+  const whileEvents = whiles.trace.events
+  for (const extra of [{ complete: false }, { truncated: true, dropped: 3 }]) {
+    const open = traceModel({ ...whiles.trace, events: whileEvents, ...extra }, g, nodeCatalog)
+    expect(open.frameLabel('w#4:condition')).toBe('Iteration 5 of 5 · Condition')
+  }
   // The final check's picture: the condition steps ran, the body did not.
   const final = flowTrace(whiles, g, 'w#4:condition')
   expect(final.nodes.check).toBeDefined()

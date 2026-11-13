@@ -37,3 +37,12 @@ it('shares the snapshot while its revision is the same, and every event that did
   expect(done.live).toBe(false)
   expect(done.trace).toBe(next.trace)
 })
+
+it('passes through a reply with no data, and never shares with another run', () => {
+  const first = reply([event(1)])
+  expect(sharePoll(first, undefined)).toBeUndefined()
+  const other = reply([event(1)])
+  other.run = { ...other.run, runId: 'run-2' }
+  expect(sharePoll(first, other)).toBe(other)
+  expect(sharePoll(first, other).snapshot).not.toBe(first.snapshot)
+})

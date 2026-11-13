@@ -11,8 +11,14 @@ import { TracePage } from '../visual/trace/TracePage'
 
 /** While a run is pending or running, its trace is read again this often. */
 export const LIVE_POLL_MS = 2000
-/** After a read of a live run failed, the next one waits this long. */
+/** After a read of a live run got no answer, the next one waits this long. */
 export const RETRY_POLL_MS = 5000
+
+/**
+ * A read that got no answer (the connection dropped, Home Assistant restarting) rather than an error reply from the
+ * integration: the websocket library rejects those with a numeric code, the integration with a word.
+ */
+export const unanswered = (error: unknown) => typeof (error as { code?: unknown } | null)?.code !== 'string'
 
 /**
  * `/visual/:id/runs/:runId`: one run of a visual automation, read-only (contract C9 `run_trace`). The graph shown is
@@ -30,18 +36,25 @@ export function RunTraceView() {
     enabled: admin() && !!params.runId,
     staleTime: 0,
     // Each reply is kept as plain objects (no store reconciliation), sharing what did not change with the one before.
-    reconcile: (previous: RunTraceResponse | undefined, next: RunTraceResponse) => sharePoll(previous && unwrap(previous), next),
-    // A live run is read again until it ends; a failed read (the last good reply stays) is tried again, less often.
-    refetchInterval: query => (query.state.data?.live ? (query.state.status === 'error' ? RETRY_POLL_MS : LIVE_POLL_MS) : false),
+    // Solid Query also calls this with no data (another run's query starting): that passes through untouched.
+    reconcile: (previous: RunTraceResponse | undefined, next: RunTraceResponse | undefined) =>
+      previous === undefined || next === undefined ? next : sharePoll(unwrap(previous), next),
+    // A live run is read again until it ends. A read with no answer (the last good reply stays) is tried again, less
+    // often; an error reply is not, until the person asks.
+    refetchInterval: query => {
+      if (!query.state.data?.live) return false
+      if (query.state.status !== 'error') return LIVE_POLL_MS
+      return unanswered(query.state.error) ? RETRY_POLL_MS : false
+    },
   }))
   // Solid Query keeps results in a store; the graph and catalog are read (and copied by the validator) as plain data.
   const data = () => (trace.data ? unwrap(trace.data) : undefined)
   const visualId = () => data()?.run.visualId ?? params.id ?? ''
-  // The automation as it is now, only to say when this run used an earlier version.
+  // The automation as it is now, only to say when this run used an earlier version: read once the run says which.
   const current = useQuery(() => ({
     queryKey: ['visual-trace-document', visualId()],
     queryFn: () => api.read(visualId()),
-    enabled: admin() && !!visualId(),
+    enabled: admin() && !!data() && !!visualId(),
     staleTime: 30_000,
   }))
   const editorHref = () => `/visual/${encodeURIComponent(visualId())}`
@@ -60,8 +73,8 @@ export function RunTraceView() {
             currentRevision={current.data?.revision}
             editorHref={editorHref()}
             onBack={back}
-            paused={trace.isError && !trace.isFetching && response().live}
-            retrying={trace.isFetching}
+            paused={trace.isError && response().live ? (unanswered(trace.error) ? 'could not reach Home Assistant' : visualError(trace.error)) : undefined}
+            retrying={trace.isError && trace.isFetching}
             onRetry={() => void trace.refetch()}
           />
         )}

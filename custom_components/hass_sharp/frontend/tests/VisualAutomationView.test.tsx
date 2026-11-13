@@ -9,13 +9,13 @@ import { createGraph } from '../src/visual/graph'
 let dispose: (() => void) | undefined
 let client: QueryClient
 afterEach(() => { dispose?.(); client?.clear(); document.body.innerHTML = ''; vi.unstubAllGlobals() })
-function setup(saved = false, minimal = false) {
+function setup(saved = false, minimal = false, path?: string) {
   const fixture = visualFixture()
   if (saved) fixture.documents.set('motion', { version: 1, id: 'motion', revision: 4, graph: createGraph('Saved motion'), source: 'saved', sourceMap: [], automationId: 'visual:motion' })
   if (minimal) fixture.documents.get('motion')!.graph.nodes = fixture.documents.get('motion')!.graph.nodes.map(({ label, position, size, ...node }) => node as any)
   const root = document.createElement('div'); document.body.append(root)
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const history = createMemoryHistory(); history.set({ value: saved ? '/visual/motion' : '/visual/new' })
+  const history = createMemoryHistory(); history.set({ value: path ?? (saved ? '/visual/motion' : '/visual/new') })
   dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={{ ...fixture, user: { is_admin: true } } as any}>
     <MemoryRouter history={history} root={props => <><A href="/elsewhere">Leave</A><A href="/visual/new?name=Fresh">New visual</A>{props.children}</>}>
       <Route path="/visual/:id" component={VisualAutomationView} />
@@ -374,4 +374,22 @@ it('renders a save-time validation rejection and a structural diagnostic without
   edit(root, 'Changed')
   await vi.waitFor(() => expect(root.querySelector('.hs-problems')?.textContent).toContain('Only one outgoing edge per port is supported'))
   expect([...root.querySelectorAll('.hs-problems__step')].map(h => h.textContent)).toContain('This automation')
+})
+
+it('opens on the Runs tab when it is reached from a run (?drawer=runs), and stays closed once closed', async () => {
+  const { root } = setup(true, false, '/visual/motion?drawer=runs')
+  await saved(root, 4)
+  const runs = () => [...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith('Runs'))!
+  expect(root.querySelector('.hs-drawer')!.classList).toContain('hs-drawer--open')
+  expect(runs().getAttribute('aria-selected')).toBe('true')
+  runs().click()
+  expect(root.querySelector('.hs-drawer')!.classList).not.toContain('hs-drawer--open')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(root.querySelector('.hs-drawer')!.classList).not.toContain('hs-drawer--open')
+})
+
+it('opens with the drawer closed otherwise', async () => {
+  const { root } = setup(true)
+  await saved(root, 4)
+  expect(root.querySelector('.hs-drawer')!.classList).not.toContain('hs-drawer--open')
 })

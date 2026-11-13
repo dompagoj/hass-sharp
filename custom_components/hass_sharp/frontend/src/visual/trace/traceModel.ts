@@ -130,6 +130,7 @@ export function traceModel(trace: RunTrace, graph: Graph, catalog: VisualCatalog
   const byNode = new Map<string, TraceEvent[]>()
   for (const event of events) byNode.set(event.node, [...(byNode.get(event.node) ?? []), event])
   const nodes = new Map(graph.nodes.map(node => [node.id, node]))
+  const settled = trace.complete && !trace.truncated && !trace.dropped
   const eventsOf = (id: string) => byNode.get(id) ?? []
   const summary = (id: string) => (Object.hasOwn(trace.summary ?? {}, id) ? trace.summary[id] : undefined)
 
@@ -155,8 +156,9 @@ export function traceModel(trace: RunTrace, graph: Graph, catalog: VisualCatalog
     if (segment.kind === 'loop') {
       const bodies = iterations.get(`${parent}|${segment.node}`)
       const body = segment.part === 'body' || !!bodies?.has(segment.iteration)
-      // A condition checked with no body after it is the check that ended the loop.
-      if (!body) return 'Final check'
+      // A condition checked with no body after it is the check that ended the loop, once the whole run is recorded:
+      // while it runs, or with steps missing, a body may still follow (or have been dropped).
+      if (!body && settled) return 'Final check'
       const total = Math.max(bodies ? Math.max(...bodies) + 1 : 0, declaredCount(segment.node, parent) ?? 0, segment.iteration + 1)
       return `Iteration ${segment.iteration + 1} of ${total}${segment.part === 'condition' ? ' · Condition' : ''}`
     }

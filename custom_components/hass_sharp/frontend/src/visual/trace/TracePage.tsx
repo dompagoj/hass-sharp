@@ -1,7 +1,6 @@
 import { batch, createEffect, createMemo, createSignal, on, Show } from 'solid-js'
 import { delegateEvents } from 'solid-js/web'
 import { A } from '@solidjs/router'
-import { Button } from '../../components/Controls'
 import type { MenuItem } from '../../components/Menu'
 import { summarizeTrigger } from '../../components/TriggerSummary'
 import { BottomDrawer } from '../BottomDrawer'
@@ -40,9 +39,9 @@ export function TracePage(props: {
   currentRevision?: number
   editorHref: string
   onBack(): void
-  /** The last read of a live run failed: updates are paused until one succeeds. */
-  paused?: boolean
-  /** A read is under way (the "Try again" button waits for it). */
+  /** The last read of a live run failed, in words ("could not reach Home Assistant"): updates are paused until one succeeds. */
+  paused?: string
+  /** A read after the failed one is under way. */
   retrying?: boolean
   onRetry?(): void
 }) {
@@ -149,6 +148,27 @@ export function TracePage(props: {
     onEnter: () => setDrawerOpen(false),
     fallback: () => root.querySelector<HTMLElement>('.hs-flow'),
   })
+  // The paused note goes once a read succeeds: focus that was on its button moves to the page's title, never to the
+  // page.
+  let retryFocused = false
+  createEffect(
+    on(
+      () => !!props.paused,
+      (paused, was) => {
+        if (paused || !was) return
+        const focused = (root.getRootNode() as Document | ShadowRoot).activeElement
+        const lost = !focused || focused === root.ownerDocument.body || !focused.isConnected
+        if (retryFocused && lost)
+          queueMicrotask(() => {
+            const title = root.querySelector<HTMLElement>('.hs-topbar__heading')
+            if (!title) return
+            title.tabIndex = -1
+            title.focus()
+          })
+      },
+      { defer: true },
+    ),
+  )
   const keyboard = (event: KeyboardEvent) => {
     event.stopPropagation()
     if (typing(event.target as Element)) return
@@ -178,6 +198,7 @@ export function TracePage(props: {
       aria-label="Run trace"
       on:keydown={keyboard}
       on:keyup={event => event.stopPropagation()}
+      on:focusin={event => (retryFocused = !!(event.target as Element).closest?.('.hs-trace-paused__retry'))}
     >
       <TopBar
         name={name()}
@@ -195,12 +216,18 @@ export function TracePage(props: {
           <span>Started {runTime(run().startUtc ?? run().receivedUtc)}</span>
           <span>{props.response.live ? 'Running…' : `Took ${runDuration(run().durationMs)}`}</span>
         </p>
+        {/* Mounted from the first failed read until one succeeds: a retry changes its button, never removes it. */}
         <Show when={props.paused}>
-          <p class="hs-trace-strip__note hs-trace-strip__note--warning hs-trace-paused" role="status">
-            <Glyph paths={icons.warning} />
-            <span>Updates paused: could not reach Home Assistant.</span>
-            <Button class="hs-trace-paused__retry" busy={props.retrying} onClick={() => props.onRetry?.()}>Try again</Button>
-          </p>
+          {reason => (
+            <p class="hs-trace-strip__note hs-trace-strip__note--warning hs-trace-paused">
+              <Glyph paths={icons.warning} />
+              <span role="status">Updates paused: {reason().replace(/\.$/, '')}.</span>
+              <button type="button" class="hs-button hs-button--secondary hs-trace-paused__retry" aria-busy={props.retrying || undefined}
+                aria-disabled={props.retrying || undefined} onClick={() => !props.retrying && props.onRetry?.()}>
+                {props.retrying ? 'Trying…' : 'Try again'}
+              </button>
+            </p>
+          )}
         </Show>
         <Show when={reason()}>
           {text => <p class="hs-trace-strip__note" classList={{ 'hs-trace-strip__note--danger': run().status === 'Failed' || run().status === 'Interrupted' }}>
@@ -286,7 +313,7 @@ export function TracePage(props: {
                       get count() { return runs().events.length },
                       content: () => (
                         <Timeline model={runs()} graph={current()} catalog={catalog()} selectedNodeId={nodeId()} selectedSeq={seq()} live={props.response.live}
-                          paused={props.paused} onSelect={selectEvent} />
+                          paused={!!props.paused} onSelect={selectEvent} />
                       ),
                     },
                   ]}

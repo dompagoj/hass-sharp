@@ -107,6 +107,25 @@ function mount(trace: (message: any) => Promise<unknown>, options: { admin?: boo
 const card = (root: Element, id: string) => root.querySelector<HTMLElement>(`.solid-flow__node[data-id="${id}"]`)!
 const steps = (root: Element) => [...root.querySelectorAll<HTMLButtonElement>('.hs-trace-step')]
 const panel = (root: Element) => root.querySelector<HTMLElement>('[aria-label="Step values"]')!
+/** The option a closed select shows: the selected one, else (none selected) the first that is not disabled. */
+const shown = (select: HTMLSelectElement) => {
+  const options = [...select.options]
+  const selected = options.findIndex(option => option.selected)
+  return selected >= 0 ? selected : options.findIndex(option => !option.disabled)
+}
+/**
+ * Picks an option the way a person does: a disabled option cannot be picked, and picking the option already shown
+ * fires nothing (a browser fires "change" only when the selection changes).
+ */
+function choose(select: HTMLSelectElement, text: string) {
+  const index = [...select.options].findIndex(option => option.textContent === text)
+  expect(index, text).toBeGreaterThanOrEqual(0)
+  expect(select.options[index].disabled, `${text} is disabled`).toBe(false)
+  if (shown(select) === index) return
+  select.options[index].selected = true
+  select.dispatchEvent(new Event('input', { bubbles: true }))
+  select.dispatchEvent(new Event('change', { bubbles: true }))
+}
 const port = (root: Element, id: string) => panel(root).querySelector<HTMLElement>(`.hs-trace-port[data-port="${id}"]`)!
 
 it('shows the run\'s own graph read-only, with the path it took and the steps it never reached', async () => {
@@ -129,9 +148,12 @@ it('shows the run\'s own graph read-only, with the path it took and the steps it
   expect(root.querySelector('.hs-trace-strip')!.textContent).toContain('Motion in the hall · binary_sensor.motion: off → on')
   expect(root.querySelector<HTMLAnchorElement>('a.hs-trace-open')!.getAttribute('href')).toBe('/visual/heating')
   // The same revision as the automation now: no note, once the automation has been read.
-  await vi.waitFor(() => expect(callWS).toHaveBeenCalledWith(expect.objectContaining({ type: 'hass_sharp/visual', request: expect.objectContaining({ operation: 'read', id: 'heating' }) })))
-  await new Promise(resolve => setTimeout(resolve, 0))
+  await vi.waitFor(() => expect(client!.getQueryState(['visual-trace-document', 'heating'])?.status).toBe('success'))
+  // Its result reaches the page through Solid Query's notification (a later task): give it time to arrive.
+  await new Promise(resolve => setTimeout(resolve, 50))
   expect(root.textContent).not.toContain('earlier version')
+  // Read once, for the run's automation.
+  expect(callWS.mock.calls.filter(([message]) => message.type === 'hass_sharp/visual')).toHaveLength(1)
   // The timeline lists every recorded run of a step, iterations 1-based.
   expect(steps(root)).toHaveLength(7)
   expect(steps(root)[3].textContent).toContain('Iteration 1 of 3')
@@ -169,8 +191,7 @@ it('shows a selected step\'s recorded values with their sources, and switches it
   expect(panel(root).textContent).toContain('Showing its last run: Iteration 3 of 3.')
   const unreached = (id: string) => card(root, id).querySelector('.hs-card')!.classList.contains('hs-card--unreached')
   expect(unreached('note')).toBe(false)
-  chooser.value = chooser.options[2].value
-  chooser.dispatchEvent(new Event('change', { bubbles: true }))
+  choose(chooser, 'Iteration 2 of 3 · Recovered')
   await vi.waitFor(() => expect(port(root, 'field:brightness_pct').textContent).toContain('81'))
   expect(panel(root).querySelector('.hs-trace-error')!.textContent).toContain('light.kitchen is unavailable')
   expect(panel(root).textContent).not.toContain('InvalidOperationException')
@@ -182,8 +203,7 @@ it('shows a selected step\'s recorded values with their sources, and switches it
   await vi.waitFor(() => expect(card(root, 'service-1').querySelector('.hs-card')!.className).toContain('error'))
   expect(travelled('service-1:error->note')).toBe(true)
   // An iteration that did not fail: the step after the error did not run in it, nor was its wire travelled.
-  chooser.value = chooser.options[3].value
-  chooser.dispatchEvent(new Event('change', { bubbles: true }))
+  choose(chooser, 'Iteration 3 of 3')
   await vi.waitFor(() => expect(unreached('note')).toBe(true))
   expect(travelled('service-1:error->note')).toBe(false)
   expect(unreached('lights')).toBe(false)
@@ -191,11 +211,14 @@ it('shows a selected step\'s recorded values with their sources, and switches it
   // A dimmed step of the loop, chosen on the canvas, says it did not run in that iteration.
   card(root, 'note').dispatchEvent(new MouseEvent('click', { bubbles: true }))
   await vi.waitFor(() => expect(panel(root).textContent).toContain('This step did not run in Iteration 3 of 3.'))
-  // "Whole run" puts back the whole picture.
+  // The control says the same as the canvas: that iteration, which this step did not run in.
   const again = panel(root).querySelector<HTMLSelectElement>('select')!
-  again.value = 'whole'
-  again.dispatchEvent(new Event('change', { bubbles: true }))
+  expect(again.options[shown(again)].textContent).toBe('Iteration 3 of 3 (did not run)')
+  expect(again.options[shown(again)].disabled).toBe(true)
+  // "Whole run" can be chosen from there, and puts back the whole picture.
+  choose(again, 'Whole run')
   await vi.waitFor(() => expect(unreached('note')).toBe(false))
+  expect(again.options[shown(again)].textContent).toBe('Whole run')
   expect(travelled('service-1:error->note')).toBe(true)
 })
 
@@ -275,13 +298,15 @@ it('polls a live run every 2 seconds, keeps what was opened and the cards across
   expect(calls).toBe(4)
 })
 
-it('keeps the last reply when a read of a live run fails, says updates are paused, and goes on once a read succeeds', async () => {
+it('keeps the last reply when a read of a live run gets no answer, says updates are paused, and goes on once a read succeeds', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   let calls = 0
   const all = events()
+  // The websocket library rejects a request that got no answer with a numeric code.
+  const lost = { code: 3, message: 'Connection lost' }
   const { root } = mount(async () => {
     calls++
-    if (calls === 2) throw { code: 'unknown_error', message: 'Connection lost' }
+    if (calls === 2) throw lost
     const live = calls < 4
     return response({ live, run: run({ runId: 'run-1', status: live ? 'Running' : 'Succeeded', durationMs: live ? null : 900 }) }, { events: all.slice(0, calls + 2), complete: !live })
   })
@@ -295,12 +320,73 @@ it('keeps the last reply when a read of a live run fails, says updates are pause
   await vi.waitFor(() => expect(steps(root)).toHaveLength(5))
   expect(root.textContent).not.toContain('Updates paused')
   expect(root.textContent).toContain('updates every 2 seconds')
-  // "Try again" reads at once.
-  calls = 1
+})
+
+it('keeps "Try again" in place and focused while it reads, then moves focus to the title', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  let calls = 0
+  let release: (() => void) | undefined
+  const all = events()
+  const { root } = mount(async () => {
+    calls++
+    if (calls === 2) throw { code: 3, message: 'Connection lost' }
+    // The read "Try again" starts: it waits until released.
+    if (calls === 3) await new Promise<void>(resolve => (release = resolve))
+    return response({ live: true, run: run({ runId: 'run-1', status: 'Running', durationMs: null }) }, { events: all.slice(0, calls + 2), complete: false })
+  })
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
   await vi.advanceTimersByTimeAsync(2000)
-  await vi.waitFor(() => expect(root.textContent).toContain('Updates paused'))
+  await vi.waitFor(() => expect(root.querySelector('.hs-trace-paused')).not.toBeNull())
+  const note = root.querySelector('.hs-trace-paused')!
+  const status = note.querySelector('[role="status"]')!
+  const retry = note.querySelector<HTMLButtonElement>('.hs-trace-paused__retry')!
+  retry.focus(); retry.click()
+  await vi.waitFor(() => expect(release).toBeDefined())
+  // Reading: the same note, status and button, still focused, busy.
+  await vi.waitFor(() => expect(retry.textContent).toBe('Trying…'))
+  expect(retry.getAttribute('aria-busy')).toBe('true')
+  expect(root.querySelector('.hs-trace-paused')).toBe(note)
+  expect(note.querySelector('[role="status"]')).toBe(status)
+  expect(retry.isConnected).toBe(true)
+  expect(document.activeElement).toBe(retry)
+  // Pressing it again while it reads does nothing.
+  retry.click()
+  expect(calls).toBe(3)
+  release!()
+  await vi.waitFor(() => expect(root.querySelector('.hs-trace-paused')).toBeNull())
+  await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-topbar__heading')))
+})
+
+it('shows an error reply\'s own words, and waits for "Try again" before reading again', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  let calls = 0
+  const all = events()
+  const { root } = mount(async () => {
+    calls++
+    if (calls === 2) throw { code: 'not_found', message: 'Run run-1 was not found.' }
+    return response({ live: true, run: run({ runId: 'run-1', status: 'Running', durationMs: null }) }, { events: all.slice(0, calls + 2), complete: false })
+  })
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
+  await vi.advanceTimersByTimeAsync(2000)
+  await vi.waitFor(() => expect(root.textContent).toContain('Updates paused: Run run-1 was not found.'))
+  expect(root.textContent).not.toContain('could not reach')
+  await vi.advanceTimersByTimeAsync(12000)
+  expect(calls).toBe(2)
   root.querySelector<HTMLButtonElement>('.hs-trace-paused__retry')!.click()
-  await vi.waitFor(() => expect(root.textContent).not.toContain('Updates paused'))
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(5))
+  expect(root.textContent).not.toContain('Updates paused')
+})
+
+it('shows another run when the run id changes in place', async () => {
+  const { root, history } = mount(async message => (message.runId === 'run-1'
+    ? response()
+    : response({ run: run({ runId: 'run-2', visualId: 'heating', visualRevision: 4, actionLabel: 'Second run' }) }, { runId: 'run-2', events: events().slice(0, 3) })))
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(7))
+  const errors = vi.spyOn(console, 'error')
+  history.set({ value: '/visual/heating/runs/run-2' })
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
+  expect(root.querySelector('.hs-trace-strip')!.textContent).toContain('Second run')
+  expect(errors).not.toHaveBeenCalled()
 })
 
 it('opens a failed run on the step that failed, and says when the trace was cut or the automation changed since', async () => {
@@ -353,8 +439,7 @@ it('below 900px: the value panel is a sheet that a canvas selection folds to its
   await vi.waitFor(() => expect(document.activeElement).toBe(panel(root).querySelector('.hs-trace-node__title')))
   const chooser = panel(root).querySelector<HTMLSelectElement>('select')!
   chooser.focus()
-  chooser.value = chooser.options[1].value
-  chooser.dispatchEvent(new Event('change', { bubbles: true }))
+  choose(chooser, 'Iteration 1 of 3')
   await vi.waitFor(() => expect(port(root, 'field:brightness_pct').textContent).toContain('80'))
   expect(panel(root).dataset.open).toBe('true')
   expect(document.activeElement).toBe(chooser)
@@ -378,6 +463,17 @@ it('shows the recorder\'s placeholders inside a recorded value in words, and rea
   expect(leaves()).toContain('token Hidden')
   // A whole value cut to nothing could not be read.
   expect(port(root, 'extra').querySelector('.hs-trace-value')!.textContent).toBe('Could not be recorded')
+})
+
+it('reads the recorder\'s placeholders in the trigger data the same way', async () => {
+  const { root } = mount(async () => response({}, { trigger: { platform: 'webhook', token: '***', note: '***', json: { password: '***' } } }))
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(7))
+  const tree = panel(root).querySelector<HTMLElement>('[aria-label="Trigger data"]')!
+  const leaves = () => [...tree.querySelectorAll('.hs-json-leaf')].map(leaf => leaf.textContent)
+  expect(leaves()).toEqual(['platform "webhook"', 'token Hidden', 'note "***"'])
+  const json = tree.querySelector<HTMLDetailsElement>('details')!
+  json.open = true; json.dispatchEvent(new Event('toggle'))
+  expect(leaves()).toContain('password Hidden')
 })
 
 it('goes back to the automation\'s Runs tab, and reads the automation the run belongs to', async () => {

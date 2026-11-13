@@ -1,5 +1,5 @@
-import { batch, createEffect, createMemo, createSignal, createUniqueId, For, on, onCleanup, Show } from 'solid-js'
-import { A, useLocation } from '@solidjs/router'
+import { batch, createEffect, createMemo, createSignal, createUniqueId, For, on, onCleanup, Show, useContext } from 'solid-js'
+import { A, RouterContext } from '@solidjs/router'
 import { useQuery, useMutation } from '@tanstack/solid-query'
 import { useHass } from '../context'
 import type { AutomationRun, RunHistoryResponse, RunStatus, UserScriptClassDto } from '../types'
@@ -149,11 +149,10 @@ const RunPanel = (props: RunsProps) => {
   </div>
 }
 
-/** The run list can also stand alone, outside the app's routes: a link to a run needs the router. */
-const inRouter = () => { try { useLocation(); return true } catch { return false } }
 
 const RunRow = (props: { run: AutomationRun; now: number; open: boolean; onToggle: () => void }) => {
-  const routed = inRouter()
+  // The run list can also stand alone, outside the app's routes: a link to a run needs the router.
+  const routed = !!useContext(RouterContext)
   const bodyId = createUniqueId()
   const summary = () => props.run.trigger ? summarizeTrigger(props.run.trigger) : undefined
   return <li class={`hs-run-row hs-run-row--${props.run.status.toLowerCase()}`}>
