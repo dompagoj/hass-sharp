@@ -9,7 +9,11 @@ namespace HassSharp;
 
 public sealed record VisualDiagnostic(string? NodeId, string Message, int Severity = 3, int? StartLine = null, int? StartColumn = null, string? InputId = null, string? PortId = null);
 public sealed record VisualSourceMap(string NodeId, int StartLine, int EndLine);
-public sealed record VisualPreview(bool Valid, string Source, List<VisualSourceMap> SourceMap, List<VisualDiagnostic> Diagnostics);
+public sealed record VisualPreview(bool Valid, string Source, List<VisualSourceMap> SourceMap, List<VisualDiagnostic> Diagnostics)
+{
+    /// <summary>The pruned catalog JSON the generated class embeds (the run snapshot's catalog); never serialized.</summary>
+    [System.Text.Json.Serialization.JsonIgnore] public string? EmbeddedCatalog { get; init; }
+}
 
 /// <summary>V4-only compiler. Preview inspects syntax and symbols without emitting or executing user code.</summary>
 public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
@@ -49,6 +53,37 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         };
         return $"({type})({literal})";
     }
+    /// <summary>
+    /// The catalog a graph's generated class embeds (D10): only the node kinds the graph uses, every library node
+    /// kind, and the types any of them, the graph or (with a trigger) the <c>triggerOutputs</c> table name, closed
+    /// over refinement chains, <c>assignableTo</c> and element types. Every other section is kept whole. Built from
+    /// the catalog root only, so service schemas never reach it (D2).
+    /// </summary>
+    public static JsonObject EmbeddedCatalog(JsonObject graph,VisualCatalogSnapshot snapshot)
+    {
+        var root=snapshot.Root;var kinds=(graph["nodes"] as JsonArray??[]).Select(n=>Text(n,"kind")).ToHashSet(StringComparer.Ordinal);
+        var nodes=new JsonObject();
+        foreach(var (kind,spec) in root["nodes"] as JsonObject??[])if(kinds.Contains(kind)||spec?["sourceId"]!=null)nodes[kind]=spec?.DeepClone();
+        var types=root["types"] as JsonObject??[];var builtIn=VisualNodeCatalog.Root["types"] as JsonObject??[];
+        var pending=new Stack<string>(types.Where(t=>!builtIn.ContainsKey(t.Key)).Select(t=>t.Key));
+        void Strings(JsonNode? node){switch(node){case JsonObject o:foreach(var (_,v) in o)Strings(v);break;case JsonArray a:foreach(var v in a)Strings(v);break;case JsonValue v when v.TryGetValue<string>(out var text):pending.Push(text);break;}}
+        Strings(nodes);Strings(graph);if(kinds.Contains("trigger"))Strings(root["triggerOutputs"]);
+        var used=new HashSet<string>(StringComparer.Ordinal);
+        while(pending.TryPop(out var id)) {
+            foreach(var link in VisualTypes.Chain(root,id)) {
+                if(!used.Add(link)||types[link] is not JsonObject type)continue;
+                foreach(var related in (type["assignableTo"] as JsonArray??[]).Append(type["elementType"]))if(related is JsonValue v&&v.TryGetValue<string>(out var text))pending.Push(text);
+            }
+        }
+        var catalog=new JsonObject();
+        foreach(var (key,value) in root) {
+            if(key=="nodes")catalog[key]=nodes;
+            else if(key=="types")catalog[key]=new JsonObject(types.Where(t=>used.Contains(t.Key)).Select(t=>KeyValuePair.Create(t.Key,t.Value?.DeepClone())));
+            else if(key!="triggerOutputs"||kinds.Contains("trigger"))catalog[key]=value?.DeepClone();
+        }
+        VisualNodeCatalog.RefreshStructuralTypes(catalog);
+        return catalog;
+    }
     public VisualPreview Preview(JsonObject graph)=>Preview(graph,new NodeLibraryCompiler(diagnostics).Preview([]).Snapshot);
     public VisualPreview Preview(JsonObject graph,IEnumerable<NodeLibrarySource> sources) {
         var libraries=new NodeLibraryCompiler(diagnostics).Preview(sources);
@@ -82,6 +117,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             var roots=nodes.Where(n=>Text(n,"kind")=="trigger").OrderBy(n=>Text(n,"id"),StringComparer.Ordinal).ToArray();
             // Internal identifiers are deterministic and cannot shadow authored identifiers.
             var authored=graph.ToJsonString()+string.Join("\n",snapshot.Sources.Select(s=>s.Source));var prefix="__visual_";while(authored.Contains(prefix,StringComparison.Ordinal))prefix+="x";
+            var embedded=EmbeddedCatalog(graph,snapshot);var embeddedTypes=embedded["types"]!.AsObject();
             var run=prefix+"run";var handler=prefix+"node";var scope=prefix+"scope";var engine=prefix+"engine";var nodeId=prefix+"id";
             Add("#nullable enable");Section("$imports",Text(graph,"imports"));Add("public class VisualAutomation : global::HassSharp.Automation\n{");Section("$members",Text(graph,"members"));
             Add("public override global::HassSharp.AutomationConfiguration Configure() => new(");
@@ -102,8 +138,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 Add($"private delegate {ClrExpression(method.Method.ReturnType)} {name}({string.Join(",",method.Parameters.Select(p=>ClrExpression(p.Symbol.Type)+" @"+p.Name))});");
             }
             foreach(var root in roots)Section(Text(root,"id"),$"public global::System.Threading.Tasks.Task {VisualNodeCatalog.EffectiveTriggerMethod(root)}() => {run}({Q(Text(root,"id"))});");
-            Add($"private global::System.Threading.Tasks.Task {run}(string {nodeId}) => new global::HassSharp.VisualRuntime({Q(graph.ToJsonString())},{Q(snapshot.Catalog.ToJsonString())},new global::System.Collections.Generic.Dictionary<string,global::System.Type> {{");
-            foreach(var type in snapshot.Types.Values.OrderBy(t=>t.Id,StringComparer.Ordinal))Add($"[{Q(type.Id)}]=typeof({(type.Symbol.TypeKind==TypeKind.Dynamic ? "global::System.Object" : type.Symbol.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))}),");
+            Add($"private global::System.Threading.Tasks.Task {run}(string {nodeId}) => new global::HassSharp.VisualRuntime({Q(graph.ToJsonString())},{Q(embedded.ToJsonString())},new global::System.Collections.Generic.Dictionary<string,global::System.Type> {{");
+            foreach(var type in snapshot.Types.Values.Where(t=>embeddedTypes.ContainsKey(t.Id)).OrderBy(t=>t.Id,StringComparer.Ordinal))Add($"[{Q(type.Id)}]=typeof({(type.Symbol.TypeKind==TypeKind.Dynamic ? "global::System.Object" : type.Symbol.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))}),");
             Add($"}},TriggerData,CancellationToken,{handler},new global::System.Collections.Generic.HashSet<string>{{{string.Join(",",compiledConversions.Keys.Select(Q))}}},new global::System.Collections.Generic.Dictionary<string,string>{{{string.Join(",",comparisonTypes.Select(p=>"["+Q(p.Key)+"]="+Q(p.Value)))}}}).RunAsync({nodeId});");
             Add($"private async global::System.Threading.Tasks.Task {handler}(string {nodeId},global::HassSharp.VisualScope {scope},global::HassSharp.VisualRuntime {engine}) {{");
             var authoredNames = CSharpSyntaxTree.ParseText("class Authored {"+Text(graph,"members")+"}").GetRoot().DescendantTokens().Where(t=>t.IsKind(SyntaxKind.IdentifierToken)).Select(t=>t.ValueText).ToHashSet(StringComparer.Ordinal);
@@ -142,7 +178,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             foreach(var d in compilation.GetDiagnostics().Where(d=>d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning)) {
                 var location=d.Location.GetLineSpan();var line=location.StartLinePosition.Line+1;errors.Add(new(maps.FirstOrDefault(m=>line>=m.StartLine&&line<=m.EndLine)?.NodeId,d.GetMessage(),(int)d.Severity,line,location.StartLinePosition.Character+1));
             }
-            return new(!errors.Any(e=>e.Severity==3),source,maps,errors);
+            return new(!errors.Any(e=>e.Severity==3),source,maps,errors){EmbeddedCatalog=embedded.ToJsonString()};
         }catch(Exception e)when(e is ArgumentException or InvalidOperationException or FormatException or JsonException or TimeZoneNotFoundException){errors.Add(new(current,e.Message));return new(false,string.Join('\n',lines),maps,errors);}
     }
 }

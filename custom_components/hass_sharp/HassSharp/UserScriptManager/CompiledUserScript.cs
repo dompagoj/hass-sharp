@@ -10,6 +10,13 @@ public class CompiledUserScript
     public string? DesignatedRootType { get; set; }
     public long? VisualRevision { get; set; }
     public string? CatalogGeneration { get; set; }
+    /// <summary>The visual document id (the editor's <c>/visual/:id</c>); null for code automations.</summary>
+    public string? VisualId { get; set; }
+    /// <summary>Trigger method name to its graph node id and label (null when the node has none).</summary>
+    public IReadOnlyDictionary<string, VisualTrigger>? VisualTriggers { get; set; }
+    /// <summary>Graph and pruned catalog JSON stored as the revision's snapshot with its first run.</summary>
+    public string? VisualGraph { get; set; }
+    public string? VisualCatalog { get; set; }
 
     public required string FilePath { get; set; }
     public required string FileName { get; set; }
@@ -67,6 +74,8 @@ public class CompiledUserScript
         _unloaded = true;
     }
 }
+
+public sealed record VisualTrigger(string NodeId, string? Label);
 
 public class UserScriptDTO
 {

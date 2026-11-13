@@ -133,7 +133,7 @@ public sealed class VisualRuntime
     string? Next(string node,string port="next")=>flow.GetValueOrDefault((node,port));
     public async Task RunAsync(string root) {
         try {await Walk(root,new VisualScope{CancellationToken=lifetime.Token},0);external.ThrowIfCancellationRequested();}
-        catch(OperationCanceledException) when(Volatile.Read(ref stopped)!=0 && !external.IsCancellationRequested) {}
+        catch(OperationCanceledException) when(Volatile.Read(ref stopped)!=0 && !external.IsCancellationRequested) {if(InvocationContext.Current is {} run)run.Stopped=true;}
         finally {externalRegistration.Dispose();try{await externalCleanup;}catch when(external.IsCancellationRequested){}lifetime.Dispose();}
         if(!stopFailures.IsEmpty)throw new AggregateException("Stop cleanup failed after all branches drained.",stopFailures);
     }

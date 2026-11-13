@@ -50,9 +50,13 @@ class UserScriptManager
     public UserScript? GetUserScript(string scriptSlug)
     { lock (ActivationGate) return _userScripts.FirstOrDefault(s => s.CompiledScript.Slug() == scriptSlug); }
 
-    public void UnloadUserScripts() => _ = Observe(UnloadUserScriptsAsync());
+    public void UnloadUserScripts() => UnloadUserScripts(null);
+    public void UnloadUserScripts(string? reason) => _ = Observe(UnloadUserScriptsAsync(reason));
 
-    public Task UnloadUserScriptsAsync()
+    public Task UnloadUserScriptsAsync() => UnloadUserScriptsAsync(null);
+
+    /// <param name="reason">Recorded on the runs this cancels; see <see cref="CancelReasons"/>.</param>
+    public Task UnloadUserScriptsAsync(string? reason)
     {
         UserScript[] scripts;
         lock (ActivationGate)
@@ -66,7 +70,7 @@ class UserScriptManager
         }
         List<Exception> errors = [];
         foreach (var script in scripts)
-            try { script.CancelLifetime(); } catch (Exception error) { errors.Add(error); }
+            try { script.CancelLifetime(reason); } catch (Exception error) { errors.Add(error); }
         return CleanupScriptsAsync(scripts, errors);
     }
 
@@ -253,6 +257,7 @@ class UserScriptManager
 
             if (found != null)
             {
+                found.SetCancelReason(CancelReasons.Reloaded);
                 try { await found.ClearFromTrackingAsync(); } finally { found.Unload(); }
             }
             replacement.Start();
@@ -357,7 +362,7 @@ class UserScriptManager
         try
         {
             foreach (var script in deleting)
-                try { script.CancelLifetime(); } catch (Exception error) { errors.Add(error); }
+                try { script.CancelLifetime(CancelReasons.Reloaded); } catch (Exception error) { errors.Add(error); }
             await _updates.WaitAsync();
             try
             {

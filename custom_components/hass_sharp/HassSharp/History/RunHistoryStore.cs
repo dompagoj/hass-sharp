@@ -11,7 +11,14 @@ public sealed class InvocationRecord
     public string Revision { get; set; } = "";
     public string Action { get; set; } = "";
     public string Cause { get; set; } = "";
-    public string? Details { get; set; }
+    public string? VisualId { get; set; }
+    public long? VisualRevision { get; set; }
+    public string? TriggerNodeId { get; set; }
+    public string? TriggerLabel { get; set; }
+    /// <summary>Trigger summary JSON built by <see cref="TriggerSummary"/>: always valid, at most 2048 chars.</summary>
+    public string? Trigger { get; set; }
+    /// <summary>Set by <see cref="RunHistoryStore.SaveTrace"/> only; saving the record never changes it.</summary>
+    public bool HasTrace { get; set; }
     public DateTime? PlannedUtc { get; set; }
     public DateTime ReceivedUtc { get; set; } = DateTime.UtcNow;
     public DateTime? StartUtc { get; set; }
@@ -20,6 +27,9 @@ public sealed class InvocationRecord
     public string Status { get; set; } = "Pending";
     public string? Error { get; set; }
 }
+/// <summary>The graph and pruned catalog a visual revision ran, keyed by the run <c>Revision</c> (D10).</summary>
+public sealed record GraphSnapshot(string Revision, string VisualId, long VisualRevision, string Graph, string Catalog);
+public sealed record RunTraceRecord(string RunId, int Format, string Json, int EventCount, bool Truncated, DateTime UpdatedUtc);
 internal sealed class AutomationIdentity
 {
     public string Path { get; set; } = "";
@@ -81,6 +91,39 @@ internal sealed class CompletedRetentionIndex : Migration
     protected override void Down(MigrationBuilder m) => m.Sql("DROP INDEX IX_Runs_Completed");
 }
 
+[DbContext(typeof(HistoryContext))]
+[Migration("202611130004_RunTracing")]
+internal sealed class RunTracing : Migration
+{
+    protected override void Up(MigrationBuilder m)
+    {
+        m.Sql("""
+            ALTER TABLE Runs ADD COLUMN "VisualId" TEXT NULL;
+            ALTER TABLE Runs ADD COLUMN "VisualRevision" INTEGER NULL;
+            ALTER TABLE Runs ADD COLUMN "TriggerNodeId" TEXT NULL;
+            ALTER TABLE Runs ADD COLUMN "TriggerLabel" TEXT NULL;
+            ALTER TABLE Runs ADD COLUMN "Trigger" TEXT NULL;
+            ALTER TABLE Runs ADD COLUMN "HasTrace" INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE Runs DROP COLUMN "Details";
+            CREATE TABLE "RunTraces" ("RunId" TEXT NOT NULL PRIMARY KEY, "Format" INTEGER NOT NULL, "Json" TEXT NOT NULL,
+              "EventCount" INTEGER NOT NULL, "Truncated" INTEGER NOT NULL, "UpdatedUtc" TEXT NOT NULL);
+            CREATE TABLE "GraphSnapshots" ("Revision" TEXT NOT NULL PRIMARY KEY, "VisualId" TEXT NOT NULL,
+              "VisualRevision" INTEGER NOT NULL, "Graph" TEXT NOT NULL, "Catalog" TEXT NOT NULL, "CreatedUtc" TEXT NOT NULL);
+            """);
+    }
+    protected override void Down(MigrationBuilder m) => m.Sql("""
+        DROP TABLE "GraphSnapshots";
+        DROP TABLE "RunTraces";
+        ALTER TABLE Runs ADD COLUMN "Details" TEXT NULL;
+        ALTER TABLE Runs DROP COLUMN "HasTrace";
+        ALTER TABLE Runs DROP COLUMN "Trigger";
+        ALTER TABLE Runs DROP COLUMN "TriggerLabel";
+        ALTER TABLE Runs DROP COLUMN "TriggerNodeId";
+        ALTER TABLE Runs DROP COLUMN "VisualRevision";
+        ALTER TABLE Runs DROP COLUMN "VisualId";
+        """);
+}
+
 /// <summary>One connection per operation, serialized writes; errors propagate to callers.</summary>
 public sealed class RunHistoryStore
 {
@@ -136,29 +179,103 @@ public sealed class RunHistoryStore
     {
         lock (gate) { using var db = new HistoryContext(path); db.Identities.Where(i => i.Path == scriptPath).ExecuteDelete(); }
     }
-    public void Save(InvocationRecord run)
+    /// <summary>
+    /// Inserts or updates the run. A visual run passes its <paramref name="snapshot"/>; it is inserted with
+    /// the revision's first run (C8), in the same transaction, so retention never sees the run without it.
+    /// </summary>
+    public void Save(InvocationRecord run, GraphSnapshot? snapshot = null)
     {
         lock (gate)
         {
-            run.Details = Bound(run.Details); run.Error = Bound(run.Error);
+            run.Error = Bound(run.Error); run.TriggerLabel = Bound(run.TriggerLabel);
+            // The summary is never cut: a cut summary is not JSON.
+            if (run.Trigger?.Length > TriggerSummary.MaxLength) run.Trigger = null;
             using var db = new HistoryContext(path);
-            if (db.Runs.Any(r => r.RunId == run.RunId)) db.Runs.Update(run); else db.Runs.Add(run);
+            using var transaction = db.Database.BeginTransaction();
+            if (db.Runs.Any(r => r.RunId == run.RunId))
+            {
+                db.Runs.Update(run);
+                db.Entry(run).Property(r => r.HasTrace).IsModified = false;
+            }
+            else db.Runs.Add(run);
             db.SaveChanges();
+            if (snapshot != null && !knownSnapshots.Contains(snapshot.Revision))
+            {
+                db.Database.ExecuteSqlInterpolated($"""
+                    INSERT OR IGNORE INTO GraphSnapshots (Revision, VisualId, VisualRevision, Graph, Catalog, CreatedUtc)
+                    VALUES ({snapshot.Revision}, {snapshot.VisualId}, {snapshot.VisualRevision}, {snapshot.Graph}, {snapshot.Catalog}, {Timestamp(DateTime.UtcNow)})
+                    """);
+            }
             // Active runs are never removed. Retain the most recent completed attempts globally.
             var obsolete = db.Runs.Where(r => r.EndUtc != null).OrderByDescending(r => r.ReceivedUtc)
                 .ThenByDescending(r => r.RunId).Skip(retention).Select(r => r.RunId).ToArray();
-            if (obsolete.Length > 0) db.Runs.Where(r => obsolete.Contains(r.RunId)).ExecuteDelete();
+            if (obsolete.Length > 0)
+            {
+                db.Runs.Where(r => obsolete.Contains(r.RunId)).ExecuteDelete();
+                foreach (var id in obsolete) db.Database.ExecuteSqlInterpolated($"DELETE FROM RunTraces WHERE RunId = {id}");
+                db.Database.ExecuteSqlRaw("DELETE FROM GraphSnapshots WHERE Revision NOT IN (SELECT Revision FROM Runs)");
+            }
+            transaction.Commit();
+            if (obsolete.Length > 0) knownSnapshots.Clear();
+            else if (snapshot != null) knownSnapshots.Add(snapshot.Revision);
         }
     }
-    public List<InvocationRecord> Read(string automationId, int offset, int limit)
+    public List<InvocationRecord> Read(string automationId, int offset, int limit, IReadOnlyCollection<string>? statuses = null)
     {
         if (offset < 0 || limit < 1 || limit > 100) throw new ArgumentOutOfRangeException(nameof(limit));
         lock (gate)
         {
             using var db = new HistoryContext(path);
-            return db.Runs.AsNoTracking().Where(r => r.AutomationId == automationId)
-                .OrderByDescending(r => r.ReceivedUtc).ThenByDescending(r => r.RunId).Skip(offset).Take(limit).ToList();
+            var runs = db.Runs.AsNoTracking().Where(r => r.AutomationId == automationId);
+            if (statuses is { Count: > 0 }) runs = runs.Where(r => statuses.Contains(r.Status));
+            return runs.OrderByDescending(r => r.ReceivedUtc).ThenByDescending(r => r.RunId).Skip(offset).Take(limit).ToList();
         }
     }
+    public InvocationRecord? ReadRun(string runId)
+    {
+        lock (gate) { using var db = new HistoryContext(path); return db.Runs.AsNoTracking().SingleOrDefault(r => r.RunId == runId); }
+    }
+    /// <summary>Stores the run's single trace row (replacing the previous one) and marks the run as traced. False when the run is unknown.</summary>
+    public bool SaveTrace(string runId, string json, int eventCount, bool truncated)
+    {
+        lock (gate)
+        {
+            using var db = new HistoryContext(path);
+            using var transaction = db.Database.BeginTransaction();
+            if (db.Database.ExecuteSqlInterpolated($"UPDATE Runs SET HasTrace = 1 WHERE RunId = {runId}") == 0) return false;
+            db.Database.ExecuteSqlInterpolated($"""
+                INSERT INTO RunTraces (RunId, Format, Json, EventCount, Truncated, UpdatedUtc)
+                VALUES ({runId}, {TraceFormat}, {json}, {eventCount}, {truncated}, {Timestamp(DateTime.UtcNow)})
+                ON CONFLICT (RunId) DO UPDATE SET Format = excluded.Format, Json = excluded.Json,
+                  EventCount = excluded.EventCount, Truncated = excluded.Truncated, UpdatedUtc = excluded.UpdatedUtc
+                """);
+            transaction.Commit();
+            return true;
+        }
+    }
+    public RunTraceRecord? ReadTrace(string runId) => Query("SELECT RunId, Format, Json, EventCount, Truncated, UpdatedUtc FROM RunTraces WHERE RunId = $key", runId,
+        r => new RunTraceRecord(r.GetString(0), r.GetInt32(1), r.GetString(2), r.GetInt32(3), r.GetInt64(4) != 0, Parse(r.GetString(5))));
+    public GraphSnapshot? ReadSnapshot(string revision) => Query("SELECT Revision, VisualId, VisualRevision, Graph, Catalog FROM GraphSnapshots WHERE Revision = $key", revision,
+        r => new GraphSnapshot(r.GetString(0), r.GetString(1), r.GetInt64(2), r.GetString(3), r.GetString(4)));
+
+    public const int TraceFormat = 1;
+    readonly HashSet<string> knownSnapshots = new(StringComparer.Ordinal);
+    T? Query<T>(string sql, string key, Func<System.Data.Common.DbDataReader, T> read) where T : class
+    {
+        lock (gate)
+        {
+            using var db = new HistoryContext(path);
+            var connection = db.Database.GetDbConnection();
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            var parameter = command.CreateParameter(); parameter.ParameterName = "$key"; parameter.Value = key;
+            command.Parameters.Add(parameter);
+            using var reader = command.ExecuteReader();
+            return reader.Read() ? read(reader) : null;
+        }
+    }
+    static string Timestamp(DateTime utc) => utc.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+    static DateTime Parse(string value) => DateTime.Parse(value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
     static string? Bound(string? value) => value?.Length > 2048 ? value[..2048] : value;
 }

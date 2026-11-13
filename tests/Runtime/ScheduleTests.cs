@@ -25,7 +25,7 @@ static class ScheduleTests
             await callbacks[0](planned);
             var id = manager.GetUserScripts().Single().AutomationId;
             var record = history.Read(id, 0, 100).Single(r => r.Cause == "Schedule");
-            Check(record.Status == "Skipped" && record.PlannedUtc == DateTime.Parse(planned).ToUniversalTime() && record.Details!.Contains("noon"), "collision and planned history");
+            Check(record.Status == "Skipped" && record.PlannedUtc == DateTime.Parse(planned).ToUniversalTime() && record.Trigger == "{\"kind\":\"schedule\",\"scheduleId\":\"noon\",\"planned\":\"2026-11-12T12:00:00.0000000Z\"}", "collision and planned history");
             manager.UnloadUserScripts();
             Check(removed == 1, "schedule unsubscribe");
             await callbacks[0]("2026-11-13T12:00:00+00:00");

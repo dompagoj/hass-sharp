@@ -40,5 +40,10 @@ with tempfile.TemporaryDirectory() as folder:
     assert reopened.Identity('smoke.cs') == identity
     assert not reopened.ClaimOccurrence('smoke-occurrence')
     with sqlite3.connect(database) as connection:
-        assert connection.execute('SELECT count(*) FROM __EFMigrationsHistory').fetchone()[0] == 3
-print(f'PASS: packaged SQLite load, migrations, identity persistence, occurrence deduplication ({RuntimeInformation.RuntimeIdentifier})')
+        assert connection.execute('SELECT count(*) FROM __EFMigrationsHistory').fetchone()[0] == 4
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        assert {'Runs', 'Identities', 'ScheduleOccurrences', 'RunTraces', 'GraphSnapshots'} <= tables, tables
+        columns = {row[1] for row in connection.execute('PRAGMA table_info(Runs)')}
+        assert {'VisualId', 'VisualRevision', 'TriggerNodeId', 'TriggerLabel', 'Trigger', 'HasTrace'} <= columns, columns
+        assert 'Details' not in columns, columns
+print(f'PASS: packaged SQLite load, migrations, run tracing tables, identity persistence, occurrence deduplication ({RuntimeInformation.RuntimeIdentifier})')

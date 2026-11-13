@@ -67,7 +67,14 @@ class AuthoringService:
             raise PermissionError("Administrator required")
         return json.loads(await self.hass.async_add_executor_job(self.manager.RunNow, automation_id, class_name, method))
 
-    async def history(self, automation_id, offset, limit, *, is_admin):
+    async def history(self, automation_id, offset, limit, status=None, *, is_admin):
         if not is_admin:
             raise PermissionError("Administrator required")
-        return json.loads(await self.hass.async_add_executor_job(self.manager.GetRunHistory, automation_id, offset, limit))
+        statuses = list(status) if status else None
+        return json.loads(await self.hass.async_add_executor_job(self.manager.GetRunHistory, automation_id, offset, limit, statuses))
+
+    async def trace(self, run_id, *, is_admin):
+        """Run trace v1 (run, live flag, graph snapshot, stored trace), or None for an unknown run."""
+        if not is_admin:
+            raise PermissionError("Administrator required")
+        return json.loads(await self.hass.async_add_executor_job(self.manager.GetRunTrace, run_id))

@@ -39,7 +39,7 @@ public partial class HassSharpManager
                 {
                     var preview = new VisualGenerator(_diagnosticsProvider).Preview(document.Graph, libraries.Preview.Snapshot);
                     if (!preview.Valid) throw new VisualValidationException(preview);
-                    assemblies.Add(await CompileVisualDocument(document with { Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = libraries.Generation }));
+                    assemblies.Add(await CompileVisualDocument(document with { Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = libraries.Generation, EmbeddedCatalog = preview.EmbeddedCatalog }));
                     // Store the regenerated source so the running revision is recognised as current.
                     try { store.RefreshDerived(document.Id, document.Revision, preview.Source, preview.SourceMap, libraries.Generation); }
                     catch (Exception ex) { Logger.Error($"Cannot refresh stored source of visual document {document.Id}: {ex}"); }
@@ -52,7 +52,7 @@ public partial class HassSharpManager
                 }
             }
 
-            await _userScriptManager.UnloadUserScriptsAsync(); // Just in case, shouldnt be needed
+            await _userScriptManager.UnloadUserScriptsAsync(CancelReasons.Reloaded); // Just in case, shouldnt be needed
 
             if (assemblies.Count == 0)
                 Logger.Info("No user scripts found on initialization");
@@ -63,9 +63,35 @@ public partial class HassSharpManager
         finally { _visualGate.Release(); }
     }
 
-    public string GetRunHistory(string automationId, int offset, int limit) =>
-        System.Text.Json.JsonSerializer.Serialize(new { version = 1, offset, limit,
-            runs = _history.Read(automationId, offset, limit) }, HistoryJson);
+    /// <param name="statuses">Only runs with one of these statuses; null or empty for every run.</param>
+    public string GetRunHistory(string automationId, int offset, int limit, string[]? statuses) =>
+        System.Text.Json.JsonSerializer.Serialize(new { version = 2, offset, limit,
+            runs = _history.Read(automationId, offset, limit, statuses).Select(RunJson) }, HistoryJson);
+
+    /// <summary>Contract C9 <c>run_trace</c>, or JSON <c>null</c> for an unknown run.</summary>
+    public string GetRunTrace(string runId)
+    {
+        if (_history.ReadRun(runId) is not { } run) return "null";
+        var snapshot = run.VisualId == null ? null : _history.ReadSnapshot(run.Revision);
+        var trace = run.HasTrace ? _history.ReadTrace(runId) : null;
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            version = 1, run = RunJson(run), live = run.Status is "Pending" or "Running",
+            snapshot = snapshot == null ? null : new { revision = snapshot.Revision, visualId = snapshot.VisualId, visualRevision = snapshot.VisualRevision,
+                graph = System.Text.Json.Nodes.JsonNode.Parse(snapshot.Graph), catalog = System.Text.Json.Nodes.JsonNode.Parse(snapshot.Catalog) },
+            trace = trace == null ? null : System.Text.Json.Nodes.JsonNode.Parse(trace.Json),
+        }, HistoryJson);
+    }
+
+    // Contract C9 run shape; "actionLabel" is the trigger node label, else the method name.
+    static object RunJson(InvocationRecord run) => new
+    {
+        run.RunId, run.AutomationId, run.Revision, run.Action,
+        ActionLabel = run.TriggerLabel ?? run.Action[(run.Action.LastIndexOf("::", StringComparison.Ordinal) is var at and >= 0 ? at + 2 : 0)..],
+        run.TriggerNodeId, run.VisualId, run.VisualRevision, run.Cause,
+        Trigger = run.Trigger == null ? null : System.Text.Json.Nodes.JsonNode.Parse(run.Trigger),
+        run.PlannedUtc, run.ReceivedUtc, run.StartUtc, run.EndUtc, run.DurationMs, run.Status, run.Error, run.HasTrace,
+    };
 
     static readonly System.Text.Json.JsonSerializerOptions HistoryJson = new() { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase };
 
@@ -125,8 +151,9 @@ public partial class HassSharpManager
         try { Logger.Debug($"Received {next.Catalog.Count} Home Assistant service descriptions"); } catch { }
     }
 
-    public void Unload() { _languageLifetime.Cancel(); _userScriptManager.UnloadUserScripts(); }
-    public Task UnloadAsync() { _languageLifetime.Cancel(); return _userScriptManager.UnloadUserScriptsAsync(); }
+    // Home Assistant unloads the entry when it stops; runs it cancels are recorded with that reason.
+    public void Unload() { _languageLifetime.Cancel(); _userScriptManager.UnloadUserScripts(CancelReasons.Stopping); }
+    public Task UnloadAsync() { _languageLifetime.Cancel(); return _userScriptManager.UnloadUserScriptsAsync(CancelReasons.Stopping); }
 
     public void GenerateHassEntities(string[] entityIds)
     {

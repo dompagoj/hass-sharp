@@ -47,6 +47,12 @@ public partial class HassSharpManager
         compiled.DesignatedRootType = "VisualAutomation";
         compiled.VisualRevision = document.Revision;
         compiled.CatalogGeneration = document.CatalogGeneration;
+        // What a run records: its trigger node, and the graph/catalog snapshot a trace is viewed against.
+        compiled.VisualId = document.Id;
+        compiled.VisualTriggers = document.Graph["nodes"]!.AsArray().OfType<JsonObject>().Where(n => VisualNodeCatalog.Text(n, "kind") == "trigger")
+            .ToDictionary(VisualNodeCatalog.EffectiveTriggerMethod, n => new VisualTrigger(VisualNodeCatalog.Text(n, "id"), VisualNodeCatalog.Text(n, "label") is { Length: > 0 } label ? label : null), StringComparer.Ordinal);
+        compiled.VisualGraph = document.Graph.ToJsonString();
+        compiled.VisualCatalog = document.EmbeddedCatalog;
         return compiled;
     }
 
@@ -73,7 +79,13 @@ public partial class HassSharpManager
             var libraries = SavedLibraries();
             var authoring = AuthoringSnapshot(libraries.Preview.Snapshot);
             if (operation == "preview") result = new VisualGenerator(_diagnosticsProvider).Preview(request["graph"]!.AsObject(), authoring);
-            else if (operation == "list") result = store.List().Select(WithRuntimeIdentity).ToArray();
+            // Listing omits the generated source and its map; "read" returns them.
+            else if (operation == "list") result = store.List().Select(WithRuntimeIdentity).Select(document =>
+            {
+                var listed = JsonSerializer.SerializeToNode(document, VisualStore.Json)!.AsObject();
+                listed.Remove("source"); listed.Remove("sourceMap");
+                return listed;
+            }).ToArray();
             else
             {
                 var id = request["id"]!.GetValue<string>();

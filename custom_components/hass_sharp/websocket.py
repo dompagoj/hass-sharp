@@ -9,6 +9,9 @@ from . import dotnet_tasks, utils
 from .const import logger
 from .authoring import AuthoringService
 
+RUN_STATUSES = ("Pending", "Running", "Succeeded", "Failed", "Cancelled", "Skipped", "Interrupted", "Stopped")
+
+
 def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
     authoring = AuthoringService(hass_outer, hass_sharp)
     @websocket_api.decorators.async_response
@@ -65,11 +68,33 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
             connection.send_error(msg["id"], "unauthorized", "Administrator required")
             return
         try:
-            result = await authoring.history(msg["automationId"], msg["offset"], msg["limit"], is_admin=connection.user.is_admin)
+            result = await authoring.history(msg["automationId"], msg["offset"], msg["limit"], msg.get("status"), is_admin=connection.user.is_admin)
             connection.send_result(msg["id"], result)
         except Exception:
             logger.exception("Run history read failed")
             connection.send_error(msg["id"], "history_failed", "Could not read run history")
+
+    @websocket_api.decorators.async_response
+    async def websocket_run_trace(hass, connection, msg):
+        if not connection.user.is_admin:
+            connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        try:
+            result = await authoring.trace(msg["runId"], is_admin=connection.user.is_admin)
+        except Exception:
+            logger.exception("Run trace read failed")
+            connection.send_error(msg["id"], "trace_failed", "Could not read the run trace")
+            return
+        if result is None:
+            connection.send_error(msg["id"], "not_found", "Run not found")
+        else:
+            connection.send_result(msg["id"], result)
+
+    websocket_api.async_register_command(
+        hass_outer, "hass_sharp/run_trace", websocket_run_trace,
+        vol.Schema({vol.Required("id"): int, vol.Required("type"): "hass_sharp/run_trace",
+                    vol.Required("runId"): str})
+    )
 
     for command, handler, fields in (
         ("run_now", websocket_run_now, {
@@ -78,6 +103,7 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
         ("run_history", websocket_run_history, {
             vol.Optional("offset", default=0): vol.All(int, vol.Range(min=0)),
             vol.Optional("limit", default=50): vol.All(int, vol.Range(min=1, max=100)),
+            vol.Optional("status"): [vol.In(RUN_STATUSES)],
         }),
     ):
         websocket_api.async_register_command(

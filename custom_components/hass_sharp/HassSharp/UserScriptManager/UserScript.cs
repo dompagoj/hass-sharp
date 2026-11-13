@@ -65,9 +65,19 @@ class UserScript
 
     internal void Invalidate() { Active = false; Invalidated = true; }
 
-    internal void CancelLifetime() => _lifetimeCancellation.Cancel();
+    string? _cancelReason;
+    /// <summary>Why the lifetime was cancelled (the first reason given wins); null when unknown.</summary>
+    internal string? CancelReason => Volatile.Read(ref _cancelReason);
 
-    internal void RenewLifetime() => _lifetimeCancellation = new();
+    internal void SetCancelReason(string reason) => Interlocked.CompareExchange(ref _cancelReason, reason, null);
+
+    internal void CancelLifetime(string? reason = null)
+    {
+        if (reason != null) SetCancelReason(reason);
+        _lifetimeCancellation.Cancel();
+    }
+
+    internal void RenewLifetime() { _cancelReason = null; _lifetimeCancellation = new(); }
 
     public async Task FullCleanAsync()
     {

@@ -2,11 +2,22 @@ using System.Reflection;
 
 namespace HassSharp;
 
+/// <summary>The <c>error</c> of a cancelled run (C9), named by the place that cancels it.</summary>
+static class CancelReasons
+{
+    public const string Restarted = "Restarted by a newer trigger";
+    public const string Reloaded = "Automation reloaded";
+    public const string Stopping = "Home Assistant stopping";
+    public const string Unknown = "Invocation cancelled";
+}
+
 class ScriptSyncRunner
 {
     sealed class ActiveRun(CancellationTokenSource cancellation)
     {
         public CancellationTokenSource Cancellation { get; } = cancellation;
+        /// <summary>Set before this run alone is cancelled; a lifetime cancellation leaves it null.</summary>
+        public volatile string? CancelReason;
         public Task? CancellationTask { get; set; }
         public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public CancellationToken Token => Cancellation.Token;
@@ -48,23 +59,33 @@ class ScriptSyncRunner
         if (errors.Count > 0) throw new AggregateException(errors);
     }
 
-    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null, string? details = null)
+    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null)
     {
+        var compiled = scriptClass.Script.CompiledScript;
+        var trigger = compiled.VisualTriggers?.GetValueOrDefault(methodInfo.Name);
         var record = new InvocationRecord
         {
             RunId = runId ?? Guid.NewGuid().ToString("N"),
             AutomationId = scriptClass.Script.AutomationId, Revision = scriptClass.Script.Revision,
             Action = scriptClass.GetConcatedMethodNameWithClass(methodInfo.Name), Cause = cause.ToString(),
-            PlannedUtc = plannedUtc,
-            Details = details ?? (cause == InvocationCause.Entity ? UserScriptManager.CurrentTrigger.Value?.State.EntityId : null)
+            VisualId = compiled.VisualId, VisualRevision = compiled.VisualId == null ? null : compiled.VisualRevision,
+            TriggerNodeId = trigger?.NodeId, TriggerLabel = trigger?.Label,
+            Trigger = TriggerSummary.Summarize(cause, payload), PlannedUtc = plannedUtc,
         };
-        void Save() => scriptClass.Script.ScriptManager.History?.Save(record);
-        // Fail closed before registering work if history is unavailable.
-        Save();
+        var history = scriptClass.Script.ScriptManager.History;
+        var snapshot = compiled is { VisualId: { } visualId, VisualRevision: { } visualRevision, VisualGraph: { } graph, VisualCatalog: { } catalog }
+            ? new GraphSnapshot(record.Revision, visualId, visualRevision, graph, catalog) : null;
+        // Recording stays off without a store or for code automations (C10).
+        var sink = snapshot != null && history != null ? new RunTraceSink(history, record.RunId) : null;
+        void Save() => history?.Save(record);
+        // Fail closed before registering work if history is unavailable. The snapshot lands with the revision's first run.
+        history?.Save(record, snapshot);
         var registration = TryRegister(scriptClass, methodInfo, mode);
         if (registration == null)
         {
-            record.Status = scriptClass.Script.LifetimeToken.IsCancellationRequested ? "Cancelled" : "Skipped";
+            var cancelled = scriptClass.Script.LifetimeToken.IsCancellationRequested;
+            record.Status = cancelled ? "Cancelled" : "Skipped";
+            if (cancelled) record.Error = scriptClass.Script.CancelReason ?? CancelReasons.Unknown;
             record.EndUtc = DateTime.UtcNow;
             Save();
             return;
@@ -84,11 +105,15 @@ class ScriptSyncRunner
                 var timer = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
-                    await Execute(scriptClass, methodInfo, registration, new(record.RunId, cause, plannedUtc, payload));
-                    record.Status = "Succeeded";
+                    var context = new InvocationContext(record.RunId, cause, plannedUtc, payload) { TraceSink = sink };
+                    await Execute(scriptClass, methodInfo, registration, context);
+                    record.Status = context.Stopped ? "Stopped" : "Succeeded";
                 }
                 catch (OperationCanceledException) when (registration.Run.Token.IsCancellationRequested)
-                { record.Status = "Cancelled"; record.Error = "Invocation cancelled"; }
+                {
+                    record.Status = "Cancelled";
+                    record.Error = registration.Run.CancelReason ?? scriptClass.Script.CancelReason ?? CancelReasons.Unknown;
+                }
                 catch (Exception ex)
                 { record.Status = "Failed"; record.Error = ex.GetBaseException().Message; Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}"); }
                 finally { record.DurationMs = timer.Elapsed.TotalMilliseconds; }
@@ -145,6 +170,7 @@ class ScriptSyncRunner
         Task? restartCancellation = null;
         if (mode == AutomationMode.Restart && state.CurrentRun is { } runToRestart)
         {
+            runToRestart.CancelReason ??= CancelReasons.Restarted;
             restartCancellation = runToRestart.CancellationTask ??=
                 runToRestart.Cancellation.CancelAsync();
         }

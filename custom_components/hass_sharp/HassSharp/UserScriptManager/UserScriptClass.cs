@@ -86,7 +86,7 @@ class UserScriptClass
             if (!Script.Active || lifetime.IsCancellationRequested) return Task.CompletedTask;
             using var document = System.Text.Json.JsonDocument.Parse(payload);
             return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method),
-                _actions[method].Mode, InvocationCause.HomeAssistantTrigger, TriggerPayload.Native(document.RootElement), details: payload);
+                _actions[method].Mode, InvocationCause.HomeAssistantTrigger, TriggerPayload.Native(document.RootElement));
         }
     }
 
@@ -102,8 +102,7 @@ class UserScriptClass
             if (!_occurrences.TryAdd(occurrence, 0)) return Task.CompletedTask;
             if (Script.ScriptManager.History is { } history && !history.ClaimOccurrence(occurrence)) return Task.CompletedTask;
             return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method),
-                _actions[method].Mode, InvocationCause.Schedule, TriggerPayload.Schedule(scheduleId, utc), occurrence, utc,
-                System.Text.Json.JsonSerializer.Serialize(new { ScheduleId = scheduleId, OccurrenceId = occurrence }));
+                _actions[method].Mode, InvocationCause.Schedule, TriggerPayload.Schedule(scheduleId, utc), occurrence, utc);
         }
     }
 
