@@ -90,8 +90,12 @@ public sealed class VisualScope
     public CancellationToken CancellationToken {get;internal set;}
     internal bool? Condition;
     internal Dictionary<string,object?>? Updates;
+    /// <summary>Trace frame (C10): "" at top level, else parallel branch and loop iteration segments. Set only while traced.</summary>
+    internal string Frame="";
+    /// <summary>The traced event of the node running in this scope; null when the run is not traced.</summary>
+    internal VisualTrace.Event? Trace;
     internal VisualScope Clone(CancellationToken token) {
-        var copy=new VisualSnapshot();var result=new VisualScope{CancellationToken=token,Values=Values.Snapshot(copy),LastError=(Exception?)copy.Copy(LastError)};
+        var copy=new VisualSnapshot();var result=new VisualScope{CancellationToken=token,Values=Values.Snapshot(copy),LastError=(Exception?)copy.Copy(LastError),Frame=Frame};
         foreach(var pair in Outputs)result.Outputs.Add(pair.Key,copy.Copy(pair.Value));
         return result;
     }
@@ -117,6 +121,8 @@ public sealed class VisualRuntime
     Task externalCleanup=Task.CompletedTask;
     int steps;
     int stopped;
+    // Null unless the invocation carries a trace sink: every trace hook is behind this or scope.Trace.
+    VisualTrace? trace;
     readonly System.Collections.Concurrent.ConcurrentQueue<Exception> stopFailures = new();
     public VisualRuntime(string graphJson,string catalogJson,Dictionary<string,Type> types,JsonElement trigger,CancellationToken cancellation,Func<string,VisualScope,VisualRuntime,Task> custom,HashSet<string>? compiledConversions=null,Dictionary<string,string>? comparisonTypes=null) {
         this.comparisonTypes=comparisonTypes??[];
@@ -132,19 +138,26 @@ public sealed class VisualRuntime
     static string Text(JsonNode? node,string key,string fallback="")=>VisualNodeCatalog.Text(node,key,fallback);
     string? Next(string node,string port="next")=>flow.GetValueOrDefault((node,port));
     public async Task RunAsync(string root) {
+        trace=VisualTrace.Create(root,nodes.Keys,TraceInputType,TraceOutputType);
         try {await Walk(root,new VisualScope{CancellationToken=lifetime.Token},0);external.ThrowIfCancellationRequested();}
         catch(OperationCanceledException) when(Volatile.Read(ref stopped)!=0 && !external.IsCancellationRequested) {if(InvocationContext.Current is {} run)run.Stopped=true;}
-        finally {externalRegistration.Dispose();try{await externalCleanup;}catch when(external.IsCancellationRequested){}lifetime.Dispose();}
+        finally {trace?.Complete();externalRegistration.Dispose();try{await externalCleanup;}catch when(external.IsCancellationRequested){}lifetime.Dispose();}
         if(!stopFailures.IsEmpty)throw new AggregateException("Stop cleanup failed after all branches drained.",stopFailures);
     }
-    public T Input<T>(VisualScope scope,string node,string port) => (T)Coerce(Input(scope,node,port),typeof(T),$"{node}.{port}",false)!;
-    public object? Input(VisualScope scope,string node,string port) {
+    // Values are traced as the node sees them: after conversion, with the wire they came from.
+    public T Input<T>(VisualScope scope,string node,string port) {var value=(T)Coerce(Read(scope,node,port),typeof(T),$"{node}.{port}",false)!;if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
+    public object? Input(VisualScope scope,string node,string port) {var value=Read(scope,node,port);if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
+    void Traced(VisualScope scope,string node,string port,object? value)=>trace!.Input(scope.Trace!,node,port,value,data.TryGetValue((node,port),out var source)?source:null);
+    object? Read(VisualScope scope,string node,string port) {
         if(data.TryGetValue((node,port),out var source)) {
             if(!scope.Outputs.TryGetValue(source,out var value))throw new InvalidOperationException(absentTriggerOutputs.TryGetValue(source,out var reason)
                 ? $"Input {node}.{port}: trigger output {source.Item1}.{source.Item2} " + (reason==null?"is absent from this invocation's trigger payload.":$"cannot be read from this invocation's trigger payload: {reason}")
                 : $"Input {node}.{port}: producer output {source.Item1}.{source.Item2} has not executed in this invocation/scope.");
             return value;
         }
+        return Operand(scope,OperandOf(node,port),$"{node}.{port}");
+    }
+    JsonNode? OperandOf(string node,string port) {
         var n=nodes[node];var cfg=n["config"]!;JsonNode? operand;
         if(port.StartsWith("field:"))operand=cfg["fields"]?[port[6..]];
         else if(port.StartsWith("item:"))operand=cfg["items"]?[int.Parse(port[5..],CultureInfo.InvariantCulture)];
@@ -152,7 +165,24 @@ public sealed class VisualRuntime
         else if(Text(catalog["nodes"]?[Text(n,"kind")],"argumentStorage")=="arguments")operand=cfg["arguments"]?[port];
         else operand=cfg[port];
         if(operand==null || Text(operand,"kind")=="unset")operand=catalog["nodes"]?[Text(n,"kind")]?["inputs"]?[port]?["default"];
-        return Operand(scope,operand,$"{node}.{port}");
+        return operand;
+    }
+    // The declared type a trace shows for a port: the producer's output type for a wire, else the operand's.
+    string? TraceInputType(string node,string port) {
+        if(data.TryGetValue((node,port),out var source))return TraceOutputType(source.Item1,source.Item2);
+        var operand=OperandOf(node,port);
+        if(Text(operand,"kind")=="literal" && Text(operand,"type") is {Length:>0} literal)return literal;
+        if(Text(operand,"kind")=="variable")return variables.TryGetValue(Text(operand,"name"),out var producer)?TraceOutputType(producer,"value"):null;
+        return catalog["nodes"]?[Text(nodes[node],"kind")]?["inputs"]?[port]?["types"] is JsonArray {Count:1} types && types[0] is JsonValue only && only.TryGetValue<string>(out var type)?type:null;
+    }
+    string? TraceOutputType(string node,string port) {
+        var n=nodes[node];var kind=Text(n,"kind");var cfg=n["config"];
+        if(kind=="trigger")return VisualNodeCatalog.TriggerOutputs(n,catalog)[port] is JsonObject spec?Text(spec,"type"):null;
+        if(port.Split(':') is [var group and ("carry" or "export"),var name])
+            return (cfg?[group=="carry"?"carry":"exports"] as JsonArray??[]).OfType<JsonObject>().FirstOrDefault(d=>Text(d,"name")==name) is {} declaration?Text(declaration,"type"):null;
+        var declared=Text(catalog["nodes"]?[kind]?["outputs"]?[port],"type");
+        if(declared.StartsWith('$'))declared=Text(cfg,declared[1..]);
+        return declared==""?null:declared;
     }
     object? Operand(VisualScope scope,JsonNode? operand,string label) {
         if(Text(operand,"kind")=="variable") {
@@ -180,6 +210,7 @@ public sealed class VisualRuntime
         if(declared.StartsWith('$'))declared=Text(nodes[node]["config"],declared[1..]);
         if(declared!="")value=ConvertTo(value,declared,node+"."+port,false);
         scope.Outputs[(node,port)]=value;
+        if(scope.Trace!=null)trace!.Output(scope.Trace,node,port,value);
         if(port=="value" && Text(nodes[node]["config"],"output") is var name && name!="")scope.Values.Set(name,value);
     }
     public static object? Coerce(object? value,Type type,string label,bool convert) {
@@ -235,24 +266,27 @@ public sealed class VisualRuntime
             external.ThrowIfCancellationRequested();
             if(Volatile.Read(ref stopped)!=0)throw new OperationCanceledException(lifetime.Token);
             scope.CancellationToken.ThrowIfCancellationRequested();var n=nodes[id];var kind=Text(n,"kind");var cfg=n["config"]!;string? next=Next(id);
+            var ev=trace==null?null:scope.Trace=trace.Start(scope.Frame,id);var port="next";
             try {
                 if(Interlocked.Increment(ref steps)>100000)throw new InvalidOperationException($"Node {id}: graph execution limit 100000 steps exceeded.");
                 object? Get(string p)=>Input(scope,id,p);
                 double Number(string p,double min,double max,bool integer=false) {var v=Input<double>(scope,id,p);if(!double.IsFinite(v)||v<min||v>max||integer&&Math.Truncate(v)!=v)throw new InvalidOperationException($"Input {id}.{p} must be {(integer?"an integer":"finite")} in [{min}, {max}].");return v;}
                 switch(kind) {
                     case "trigger":Trigger(id,scope,n);break;
-                    case "if":next=Next(id,Input<bool>(scope,id,"value")?"true":"false");break;
-                    case "condition":next=Next(id,ReadEntity(Input<string>(scope,id,"entity")).State==Text(cfg,"state")?"true":"false");break;
+                    case "if":port=Input<bool>(scope,id,"value")?"true":"false";next=Next(id,port);break;
+                    case "condition":port=ReadEntity(Input<string>(scope,id,"entity")).State==Text(cfg,"state")?"true":"false";next=Next(id,port);break;
                     case "and":case "or":case "xor":var left=Input<bool>(scope,id,"left");var right=Input<bool>(scope,id,"right");Output(scope,id,kind=="and"?left&&right:kind=="or"?left||right:left^right);break;
                     case "not":Output(scope,id,!Input<bool>(scope,id,"value"));break;
                     case "compare":
                         if(!comparisonTypes.TryGetValue(id,out var common))throw new InvalidOperationException($"Node {id}: compiled comparison type is missing.");
-                        var clr=types[VisualTypes.RootId(catalog,common)];Output(scope,id,Compare(Coerce(Get("left"),clr,id+".left",false),Coerce(Get("right"),clr,id+".right",false),Text(cfg,"operator","eq")));break;
+                        var clr=types[VisualTypes.RootId(catalog,common)];var a=Coerce(Read(scope,id,"left"),clr,id+".left",false);var b=Coerce(Read(scope,id,"right"),clr,id+".right",false);
+                        if(ev!=null){Traced(scope,id,"left",a);Traced(scope,id,"right",b);}
+                        Output(scope,id,Compare(a,b,Text(cfg,"operator","eq")));break;
                     case "set_value":case "convert":if(compiledConversions.Contains(id))await custom(id,scope,this);else Output(scope,id,ConvertTo(Get("value"),Text(cfg,"type"),id+".value"));break;
                     case "read_entity":Output(scope,id,ReadEntity(Input<string>(scope,id,"entity")));break;
                     case "entity_field":Output(scope,id,EntityField(Input<EntityStateSnapshot>(scope,id,"entity"),cfg,id));break;
-                    case "delay":await Task.Delay(TimeSpan.FromSeconds(Number("seconds",0,4294967.294)),scope.CancellationToken);break;
-                    case "wait_until":var entity=Input<string>(scope,id,"entity");var expected=Get("right");await VisualValues.WaitUntil(()=>Compare(EntityField(ReadEntity(entity,true),cfg,id),expected,Text(cfg,"operator","eq")),Number("timeout",.001,86400),Number("interval",.001,3600),scope.CancellationToken);break;
+                    case "delay":await Waiting(scope,Task.Delay(TimeSpan.FromSeconds(Number("seconds",0,4294967.294)),scope.CancellationToken));break;
+                    case "wait_until":var entity=Input<string>(scope,id,"entity");var expected=Get("right");await Waiting(scope,VisualValues.WaitUntil(()=>Compare(EntityField(ReadEntity(entity,true),cfg,id),expected,Text(cfg,"operator","eq")),Number("timeout",.001,86400),Number("interval",.001,3600),scope.CancellationToken));break;
                     case "object":case "array":Output(scope,id,ConvertTo(Get("value"),kind,id,false));break;
                     case "object_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["fields"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get("field:"+p.Key))));break;
                     case "array_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["items"] as JsonArray??[]).Select((_,i)=>Get("item:"+i)).ToArray()));break;
@@ -262,17 +296,19 @@ public sealed class VisualRuntime
                     case "stop":Interlocked.Exchange(ref stopped,1);try{await lifetime.CancelAsync();}catch(Exception error){stopFailures.Enqueue(error);}throw new OperationCanceledException(lifetime.Token);
                     case "parallel":await Parallel(id,scope,depth);break;
                     case "repeat":case "while":case "until":case "foreach":await Loop(id,scope,depth);break;
-                    case "condition_result":scope.Condition=Input<bool>(scope,id,"value");return;
-                    case "loop_result":scope.Updates=(cfg["values"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get(p.Key));foreach(var edge in data.Where(p=>p.Key.Item1==id))scope.Updates[edge.Key.Item2]=Get(edge.Key.Item2);return;
-                    default:await custom(id,scope,this);break;
+                    case "condition_result":scope.Condition=Input<bool>(scope,id,"value");if(ev!=null)trace!.End(ev,"ok",null,null);return;
+                    case "loop_result":scope.Updates=(cfg["values"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get(p.Key));foreach(var edge in data.Where(p=>p.Key.Item1==id))scope.Updates[edge.Key.Item2]=Get(edge.Key.Item2);if(ev!=null)trace!.End(ev,"ok",null,null);return;
+                    default:await Waiting(scope,custom(id,scope,this));break;
                 }
                 external.ThrowIfCancellationRequested();
                 if(Volatile.Read(ref stopped)!=0)throw new OperationCanceledException(lifetime.Token);
                 scope.CancellationToken.ThrowIfCancellationRequested();
-            } catch(OperationCanceledException) when(scope.CancellationToken.IsCancellationRequested || external.IsCancellationRequested || Volatile.Read(ref stopped)!=0){throw;}
+                if(ev!=null)trace!.End(ev,"ok",port,null);
+            } catch(OperationCanceledException) when(scope.CancellationToken.IsCancellationRequested || external.IsCancellationRequested || Volatile.Read(ref stopped)!=0){if(ev!=null)trace!.End(ev,kind=="stop"?"stopped":"cancelled",null,null);throw;}
             catch(Exception error) {
-                if(Next(id,"error") is not {} recovery)throw;
+                if(Next(id,"error") is not {} recovery){if(ev!=null)trace!.End(ev,"failed",null,error);throw;}
                 scope.LastError=error;next=recovery;
+                if(ev!=null)trace!.End(ev,"error","error",error);
             }
             id=next;
         }
@@ -288,10 +324,15 @@ public sealed class VisualRuntime
         foreach(var (port,spec) in VisualNodeCatalog.TriggerOutputs(node,catalog)) {
             if(trigger.ValueKind==JsonValueKind.Undefined || !TryPointer(trigger,Text(spec,"pointer"),out var value) || value.ValueKind==JsonValueKind.Null) {absentTriggerOutputs[(id,port)]=null;continue;}
             var type=Text(spec,"type");var label=id+"."+port;
-            try {scope.Outputs[(id,port)]=types.GetValueOrDefault(VisualTypes.RootId(catalog,type))==typeof(EntityStateSnapshot)?EntityStateSnapshot.FromStateJson(value):ConvertTo(value,type,label,false);}
-            catch(Exception error) when(error is ArgumentException or InvalidOperationException){absentTriggerOutputs[(id,port)]=error.Message;}
+            object? output;
+            try {output=scope.Outputs[(id,port)]=types.GetValueOrDefault(VisualTypes.RootId(catalog,type))==typeof(EntityStateSnapshot)?EntityStateSnapshot.FromStateJson(value):ConvertTo(value,type,label,false);}
+            catch(Exception error) when(error is ArgumentException or InvalidOperationException){absentTriggerOutputs[(id,port)]=error.Message;continue;}
+            if(scope.Trace!=null)trace!.Output(scope.Trace,id,port,output);
         }
     }
+    // A node about to wait stores the trace first (C10), so the running event is readable during the wait.
+    Task Waiting(VisualScope scope,Task task) {if(scope.Trace!=null && !task.IsCompleted)trace!.Waiting();return task;}
+    Task<T> Waiting<T>(VisualScope scope,Task<T> task) {if(scope.Trace!=null && !task.IsCompleted)trace!.Waiting();return task;}
     static bool TryPointer(JsonElement json,string pointer,out JsonElement value) {
         value=json;
         foreach(var segment in pointer.Split('/').Skip(1)) {
@@ -326,14 +367,18 @@ public sealed class VisualRuntime
         }
         var service=Text(cfg,"service").Split('.');
         if(cfg["returnResponse"] is JsonValue flag && flag.TryGetValue<bool>(out var returnResponse) && returnResponse) {
-            var response=await HassServices.CallServiceAsync<JsonElement>(service[0],service[1],payload).WaitAsync(scope.CancellationToken);
+            var response=await Waiting(scope,HassServices.CallServiceAsync<JsonElement>(service[0],service[1],payload).WaitAsync(scope.CancellationToken));
             Output(scope,id,ConvertTo(response,"object",id+".response",false),"response");
-        } else await HassServices.CallServiceAsync(service[0],service[1],payload).WaitAsync(scope.CancellationToken);
+        } else await Waiting(scope,HassServices.CallServiceAsync(service[0],service[1],payload).WaitAsync(scope.CancellationToken));
     }
     async Task Parallel(string id,VisualScope parent,int depth) {
         using var cts=new CancellationTokenSource();
         Task cancelCleanup=Task.CompletedTask;using var registration=parent.CancellationToken.Register(()=>{cancelCleanup=cts.CancelAsync();});
-        var branches=nodes[id]["config"]!["branches"]!.AsArray().Select(b=>(Start:Next(id,"branch:"+b!.GetValue<string>()),Scope:parent.Clone(cts.Token))).ToArray();
+        var branches=nodes[id]["config"]!["branches"]!.AsArray().Select(b=> {
+            var branch=b!.GetValue<string>();var scope=parent.Clone(cts.Token);
+            if(trace!=null)scope.Frame=VisualTrace.Frame(parent.Frame,id+":branch:"+branch);
+            return (Start:Next(id,"branch:"+branch),Scope:scope);
+        }).ToArray();
         var failures=new System.Collections.Concurrent.ConcurrentQueue<Exception>();
         async Task Branch(string? start,VisualScope scope) {
             try {await Walk(start,scope,depth+1);}
@@ -357,18 +402,22 @@ public sealed class VisualRuntime
             if(items.Length>max)throw new InvalidOperationException($"Loop {id}: {items.Length} items exceed maximum {max}.");
             for(var i=0;i<items.Length;i++)items[i]=ConvertTo(items[i],Text(cfg,"itemType"),id+".item["+i+"]",false);count=items.Length;
         }
-        VisualScope Scope() {var scope=parent.Clone(parent.CancellationToken);var copy=new VisualSnapshot();foreach(var pair in state.Where(p=>p.Key.StartsWith("carry:")))scope.Outputs[(id,pair.Key)]=copy.Copy(pair.Value);return scope;}
-        async Task<bool> Condition() {var condition=Scope();await Walk(Next(id,"condition"),condition,depth+1);return condition.Condition??throw new InvalidOperationException($"Loop {id}: condition path did not return condition_result.");}
+        VisualScope Scope(int iteration,string part) {
+            var scope=parent.Clone(parent.CancellationToken);var copy=new VisualSnapshot();foreach(var pair in state.Where(p=>p.Key.StartsWith("carry:")))scope.Outputs[(id,pair.Key)]=copy.Copy(pair.Value);
+            if(trace!=null)scope.Frame=VisualTrace.Frame(parent.Frame,id+"#"+iteration.ToString(CultureInfo.InvariantCulture)+":"+part);
+            return scope;
+        }
+        async Task<bool> Condition(int iteration) {var condition=Scope(iteration,"condition");await Walk(Next(id,"condition"),condition,depth+1);return condition.Condition??throw new InvalidOperationException($"Loop {id}: condition path did not return condition_result.");}
         for(var iteration=0;;iteration++) {
             parent.CancellationToken.ThrowIfCancellationRequested();
             if(kind is "repeat" or "foreach" && iteration>=count)break;
-            if(kind=="while"&&!await Condition())break;
+            if(kind=="while"&&!await Condition(iteration))break;
             if(iteration>=max)throw new InvalidOperationException($"Loop {id}: maximum {max} iterations exceeded.");
-            var body=Scope();if(items!=null){body.Outputs[(id,"item")]=new VisualSnapshot().Copy(items[iteration]);body.Outputs[(id,"index")]=(double)iteration;}
+            var body=Scope(iteration,"body");if(items!=null){body.Outputs[(id,"item")]=new VisualSnapshot().Copy(items[iteration]);body.Outputs[(id,"index")]=(double)iteration;}
             await Walk(Next(id,"body"),body,depth+1);
             if(declarations.Count>0&&body.Updates==null)throw new InvalidOperationException($"Loop {id}: body did not return loop_result for declared carry/exports.");
             if(body.Updates!=null){var updates=new Dictionary<string,object?>();var copy=new VisualSnapshot();foreach(var pair in body.Updates)updates[pair.Key]=copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false));foreach(var pair in updates)state[pair.Key]=pair.Value;}
-            if(kind=="until"&&await Condition())break;
+            if(kind=="until"&&await Condition(iteration))break;
         }
         foreach(var pair in state.Where(p=>p.Key.StartsWith("export:")))Output(parent,id,pair.Value,pair.Key);
     }

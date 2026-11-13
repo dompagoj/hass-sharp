@@ -376,11 +376,13 @@ static class HistoryTraceTests
                     Check(run["status"]!.GetValue<string>() == "Stopped" && run["error"] == null, "stop node did not record Stopped: " + run.ToJsonString());
                     Check(run["actionLabel"]!.GetValue<string>() == "Front door opens" && run["triggerNodeId"]!.GetValue<string>() == "t"
                         && run["visualId"]!.GetValue<string>() == "front-door" && run["visualRevision"]!.GetValue<long>() == 1
-                        && run["trigger"]!.ToJsonString() == """{"kind":"manual"}""" && !run["hasTrace"]!.GetValue<bool>(), "visual run fields: " + run.ToJsonString());
+                        && run["trigger"]!.ToJsonString() == """{"kind":"manual"}""" && run["hasTrace"]!.GetValue<bool>(), "visual run fields: " + run.ToJsonString());
                     Check(History("Stopped")["runs"]!.AsArray().Count == 1 && History("Failed", "Succeeded")["runs"]!.AsArray().Count == 0, "status filter through the manager");
 
                     var trace = JsonNode.Parse(api.GetRunTrace(runId))!.AsObject();
-                    Check(trace["version"]!.GetValue<int>() == 1 && !trace["live"]!.GetValue<bool>() && trace["trace"] == null && trace["run"]!["runId"]!.GetValue<string>() == runId, "run_trace before a trace: " + trace.ToJsonString());
+                    // The recorder (Task 12) stored the run's trace: the stop node ended it.
+                    Check(trace["version"]!.GetValue<int>() == 1 && !trace["live"]!.GetValue<bool>() && trace["run"]!["runId"]!.GetValue<string>() == runId
+                        && trace["trace"]!["complete"]!.GetValue<bool>() && trace["trace"]!["events"]!.AsArray().Select(e => e!["status"]!.GetValue<string>()).SequenceEqual(["ok", "ok", "stopped"]), "run_trace of the recorded trace: " + trace.ToJsonString());
                     var snapshot = trace["snapshot"]!.AsObject();
                     var revision = run["revision"]!.GetValue<string>();
                     Check(snapshot["revision"]!.GetValue<string>() == revision && snapshot["visualId"]!.GetValue<string>() == "front-door" && snapshot["visualRevision"]!.GetValue<long>() == 1, "snapshot identity");

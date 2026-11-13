@@ -5,9 +5,10 @@ public interface IRunTraceSink
 {
     /// <param name="json">The complete trace document.</param>
     /// <param name="eventCount">Events in <paramref name="json"/>.</param>
-    /// <param name="truncated">True once the event cap dropped events.</param>
+    /// <param name="truncated">True once something was left out: events over a cap, values dropped to fit, or recording stopped.</param>
     /// <param name="final">The run ended: this write is stored at once and later writes are ignored.</param>
-    void Write(string json, int eventCount, bool truncated, bool final);
+    /// <param name="immediate">Store at once, ignoring the interval (a node starts waiting); a held write is replaced.</param>
+    void Write(string json, int eventCount, bool truncated, bool final, bool immediate = false);
 }
 
 /// <summary>
@@ -34,13 +35,13 @@ public sealed class RunTraceSink : IRunTraceSink
         this.store = store; this.runId = runId; this.interval = interval; this.time = time;
     }
 
-    public void Write(string json, int eventCount, bool truncated, bool final)
+    public void Write(string json, int eventCount, bool truncated, bool final, bool immediate = false)
     {
         lock (gate)
         {
             if (closed) return;
             var now = time.GetUtcNow();
-            if (final || last == null || now - last.Value >= interval)
+            if (final || immediate || last == null || now - last.Value >= interval)
             {
                 closed = final;
                 pending = null;
