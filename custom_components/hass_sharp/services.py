@@ -17,11 +17,20 @@ async def async_push(hass, manager):
     """Send `{domain: {service: description}}` as JSON; failures are logged, never raised."""
     try:
         descriptions = await async_get_all_descriptions(hass)
-        translations = await async_get_translations(hass, hass.config.language, "services", list(descriptions))
+        translations = await async_translations(hass, list(descriptions))
         payload = json.dumps(translated(descriptions, translations), cls=JSONEncoder)
         await hass.async_add_executor_job(manager.SetServiceDescriptions, payload)
     except Exception:
         logger.exception("Service description push failed")
+
+
+async def async_translations(hass, domains):
+    """Service translations, or none when they cannot be loaded: names are cosmetic, the catalog is not."""
+    try:
+        return await async_get_translations(hass, hass.config.language, "services", domains)
+    except Exception as err:
+        logger.warning("Service names could not be translated; sending them untranslated: %s", err)
+        return {}
 
 
 def translated(descriptions, translations):

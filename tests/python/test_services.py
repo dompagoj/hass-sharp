@@ -97,6 +97,18 @@ class ServiceDescriptions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload['script'], cached['script'])
         self.assertEqual(descriptions, cached)
 
+    async def test_translation_failure_still_pushes_untranslated_descriptions(self):
+        # Names are cosmetic: a broken translation file must not drop the whole catalog.
+        descriptions = {'light': {'turn_on': {'name': 'Turn on', 'fields': {'brightness_pct': {'selector': {}}}}}}
+        env, hass, _, _, _ = load_services(descriptions)
+        env['async_get_translations'].side_effect = RuntimeError('malformed en.json')
+        manager = NS(SetServiceDescriptions=Mock())
+        await env['async_push'](hass, manager)
+        manager.SetServiceDescriptions.assert_called_once()
+        self.assertEqual(json.loads(manager.SetServiceDescriptions.call_args.args[0]), descriptions)
+        env['logger'].warning.assert_called_once()
+        env['logger'].exception.assert_not_called()
+
     async def test_push_failure_is_logged_without_leaking(self):
         env, hass, _, _, _ = load_services()
         manager = NS(SetServiceDescriptions=Mock(side_effect=RuntimeError('managed failure')))
