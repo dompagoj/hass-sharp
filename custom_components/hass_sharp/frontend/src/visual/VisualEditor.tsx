@@ -144,7 +144,7 @@ export function VisualEditor(props: {
     ),
   )
   // Crossing 900px: the sheet comes back as its peek bar (never expanded); wider, the side panel shows.
-  createEffect(on(narrow, wide => setPanelOpen(!wide), { defer: true }))
+  createEffect(on(narrow, isNarrow => setPanelOpen(!isNarrow), { defer: true }))
   /** Opens the sheet or panel; a sheet moves the canvas so the step stays visible above it, and takes focus. */
   const openPanel = (focus = true) => {
     const wasOpen = panelOpen()
@@ -167,11 +167,10 @@ export function VisualEditor(props: {
   // ---- Step library, and adding a step.
   const [libraryCollapsed, setLibraryCollapsed] = createSignal(false)
   const [quickAddRequest, setQuickAddRequest] = createSignal(0)
-  const addStep = (kind: NodeKind) => {
+  const addStep = (kind: NodeKind, label?: string) => {
     const next = createNodeAt(graph(), kind, flow?.placeAtCentre() ?? { x: 60, y: 100 }, undefined, session.catalog())
     if (next === graph()) {
-      const label = session.catalog().nodes[kind]?.label ?? kind
-      flow?.notify(`Cannot add ${label}: this Home Assistant does not offer that step.`)
+      flow?.notify(`Cannot add ${label ?? 'that step'}: this Home Assistant does not offer it.`)
       return
     }
     commit(next)
@@ -349,7 +348,7 @@ export function VisualEditor(props: {
     >
       <TopBar
         name={graph().name}
-        onRename={name => commit({ ...graph(), name })}
+        onRename={(name, options) => commit({ ...graph(), name }, options)}
         onBack={props.onBack}
         save={{ saving: session.saving(), dirty: session.dirty(), errors: errorCount(), revision: session.document()?.revision }}
         busy={busy()}

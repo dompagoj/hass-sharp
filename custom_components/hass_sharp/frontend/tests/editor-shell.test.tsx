@@ -4,8 +4,10 @@ import { render } from 'solid-js/web'
 import { VisualEditor as RealVisualEditor } from '../src/visual/VisualEditor'
 import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { addNode, connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
-import { connectData } from '../src/visual/contract'
+import { connectData, nodeCatalog } from '../src/visual/contract'
 import { soon } from '../src/visual/soon'
+import { RunNowButton } from '../src/visual/RunNow'
+import { acceptedRun } from '../src/components/runDispatch'
 
 import { HassCtx } from '../src/context'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
@@ -180,38 +182,47 @@ it('runs an inspector "⋯" menu with arrows and Escape inside the editor while 
   } finally { disposeMenu(); document.removeEventListener('keydown', documentKeys) }
 })
 
-it('renames the automation in place: one undo step per edit, Enter commits, Escape and an empty name restore it', () => {
+it('renames the automation as it is typed: one undo step per visit, Escape and an empty name restore it', () => {
   const { host } = mount('Heating')
   const name = host.querySelector<HTMLInputElement>('input[aria-label="Automation name"]')!
   const type = (value: string) => { name.value = value; name.dispatchEvent(new Event('input', { bubbles: true })) }
+  const leave = () => { name.blur(); name.dispatchEvent(new FocusEvent('blur')) }
+  const closing = () => { const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented }
   expect(chip(host).textContent).toBe('Not saved')
-  // Typed text is a draft until Enter or leaving the field: one undo step for the whole edit.
-  name.focus(); type('Kit'); type('Kitchen')
-  expect(json(host).name).toBe('Heating')
-  expect(key(name, 'Enter').defaultPrevented).toBe(true)
-  expect(document.activeElement).not.toBe(name)
+  // One typed character, still in the field: the graph, the guard and the chip follow it.
+  name.focus(); type('Heatingx')
+  expect(document.activeElement).toBe(name)
   expect(chip(host).textContent).toBe('Unsaved changes')
   expect(chipTip(host)).toBe('Not saved yet; there are unsaved changes')
-  expect(host.querySelector('h1')!.textContent).toBe('Kitchen')
+  expect(closing()).toBe(true)
+  expect(host.querySelector('h1')!.textContent).toBe('Heatingx')
+  // Escape undoes the visit: nothing changed, nothing to undo.
+  expect(key(name, 'Escape').defaultPrevented).toBe(true)
+  expect(name.value).toBe('Heating')
+  expect(chip(host).textContent).toBe('Not saved')
+  expect(closing()).toBe(false)
+  expect(button(host, 'Undo').disabled).toBe(true)
+  leave()
+  // A visit is one undo step however many keys it took; Enter leaves the field.
+  name.focus(); type('Kit'); type('Kitchen')
   expect(json(host).name).toBe('Kitchen')
+  expect(key(name, 'Enter').defaultPrevented).toBe(true)
+  expect(document.activeElement).not.toBe(name)
+  leave()
+  name.focus(); type('Kitchen 2'); leave()
+  expect(json(host).name).toBe('Kitchen 2')
+  button(host, 'Undo').click()
+  expect(name.value).toBe('Kitchen')
   button(host, 'Undo').click()
   expect(name.value).toBe('Heating')
   expect(button(host, 'Undo').disabled).toBe(true)
   button(host, 'Redo').click()
   expect(name.value).toBe('Kitchen')
-  // Escape puts back the name it had and leaves no history.
-  name.focus(); type('Hallway')
-  expect(key(name, 'Escape').defaultPrevented).toBe(true)
+  // A name left blank goes back to the one the visit started from, with no new undo step.
+  name.focus(); type('Hall'); type('  '); leave()
   expect(name.value).toBe('Kitchen')
-  name.dispatchEvent(new FocusEvent('blur'))
   expect(json(host).name).toBe('Kitchen')
-  expect(button(host, 'Redo').disabled).toBe(true)
   button(host, 'Undo').click()
-  expect(json(host).name).toBe('Heating')
-  expect(button(host, 'Undo').disabled).toBe(true)
-  // An empty name is not kept.
-  name.focus(); type('  '); name.dispatchEvent(new FocusEvent('blur'))
-  expect(name.value).toBe('Heating')
   expect(json(host).name).toBe('Heating')
   expect(button(host, 'Undo').disabled).toBe(true)
 })
@@ -254,10 +265,17 @@ it('selects the step of a problem and focuses the field it is about', async () =
   } as any
   host.querySelector<HTMLInputElement>('input[aria-label="Node label"]')!.value = 'Motion'
   host.querySelector<HTMLInputElement>('input[aria-label="Node label"]')!.dispatchEvent(new Event('input', { bubbles: true }))
-  // Problems and unsaved changes are both shown; the explanation is in the chip's text for screen readers too.
+  // Problems and unsaved changes are both shown.
   await vi.waitFor(() => expect(chip(host).textContent).toBe('1 problem · Unsaved changes'))
   expect(host.querySelector('.hs-save-chip')!.getAttribute('tabindex')).toBe('0')
-  expect(host.querySelector('.hs-save-chip .hs-visually-hidden')!.textContent).toBe('. Not saved yet; there are unsaved changes')
+  // One live region with the state; the explanation is the chip's description, the short words are not read.
+  const saveChip = host.querySelector<HTMLElement>('.hs-save-chip')!
+  expect(saveChip.getAttribute('role')).toBeNull()
+  expect(saveChip.querySelectorAll('[role="status"]').length).toBe(1)
+  expect(saveChip.querySelector('[role="status"]')).toBe(chip(host))
+  expect(document.getElementById(saveChip.getAttribute('aria-describedby')!)!.textContent).toBe('Not saved yet; there are unsaved changes')
+  expect(saveChip.querySelector('.hs-save-chip__short')!.getAttribute('aria-hidden')).toBe('true')
+  expect(saveChip.querySelector('.hs-save-chip__short')!.textContent).toBe('1 problem · Unsaved')
   expect(drawerTab(host, 'Problems').textContent).toBe('Problems1')
   drawerTab(host, 'Problems').click()
   const message = button(host, 'Choose what to turn on.')
@@ -552,6 +570,53 @@ it('runs the one trigger that allows manual runs from the top bar, and the Runs 
   await vi.waitFor(() => expect(host.querySelector('.hs-run-list')?.textContent).toContain('Running'), { timeout: 5000 })
   await vi.waitFor(() => expect(host.querySelector('.hs-run-list')?.textContent).toContain('Succeeded'), { timeout: 8000 })
 }, 15000)
+
+it('returns the Runs tab to the newest unfiltered page and polls after a run started from the top bar', async () => {
+  const run = (runId: string, status: string) => ({ runId, automationId: 'visual:saved', revision: 'r', action: 'a', actionLabel: 'Entity changes', triggerNodeId: 'trigger-1', visualId: 'x', visualRevision: 1, cause: 'Manual', trigger: { kind: 'manual' }, plannedUtc: null, receivedUtc: new Date().toISOString(), startUtc: null, endUtc: null, durationMs: null, status, error: null, hasTrace: false })
+  let accepted = false
+  const reads: { offset: number; status?: string[] }[] = []
+  const { host } = mount('Run', {
+    saved: createGraph('Run'),
+    callWS: message => {
+      if (message.type === 'hass_sharp/run_now') { accepted = true; return Promise.resolve({ version: 1, runId: 'run-new' }) }
+      if (message.type !== 'hass_sharp/run_history') return undefined
+      reads.push({ offset: message.offset, status: message.status })
+      const runs = message.offset ? [] : accepted && !message.status ? [run('run-new', 'Running')] : Array.from({ length: 20 }, (_, i) => run(`old-${i}`, 'Failed'))
+      return Promise.resolve({ version: 2, offset: message.offset, limit: 20, runs })
+    },
+  })
+  const runNow = host.querySelector<HTMLButtonElement>('.hs-topbar__run')!
+  await vi.waitFor(() => expect(runNow.disabled).toBe(false))
+  drawerTab(host, 'Runs').click()
+  const status = () => host.querySelector<HTMLSelectElement>('.hs-history-tools select')!
+  await vi.waitFor(() => expect(button(host, 'Older').disabled).toBe(false))
+  status().value = 'Failed'; status().dispatchEvent(new Event('change', { bubbles: true }))
+  await vi.waitFor(() => expect(button(host, 'Older').disabled).toBe(false))
+  button(host, 'Older').click()
+  await vi.waitFor(() => expect(reads.at(-1)).toEqual({ offset: 20, status: ['Failed'] }))
+  runNow.click()
+  await vi.waitFor(() => expect(host.querySelector('.hs-run-list')?.textContent).toContain('Running'))
+  expect(status().value).toBe('')
+  expect(button(host, 'Newest').disabled).toBe(true)
+  // Still running: the first page is read again on the poll.
+  const before = reads.filter(read => !read.offset && !read.status).length
+  await vi.waitFor(() => expect(reads.filter(read => !read.offset && !read.status).length).toBeGreaterThan(before), { timeout: 5000 })
+}, 10000)
+
+it('forgets a run it started once the page leaves that automation for a new draft', async () => {
+  const graph = createGraph('Run')
+  const saved = { version: 1, id: 'a', revision: 1, graph, source: '', sourceMap: [], automationId: 'visual:a', currentRevisionActive: true, catalogGeneration: 'g' } as any
+  const [document_, setDocument] = createSignal<any>(saved)
+  const host = root()
+  const hass = { callWS: () => Promise.resolve({ version: 1, runId: 'run-a' }) }
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={hass as any}>
+    <RunNowButton document={document_()} catalog={nodeCatalog} dirty={false} onNotice={() => {}} />
+  </HassCtx.Provider></QueryClientProvider>, host)
+  host.querySelector<HTMLButtonElement>('.hs-topbar__run')!.click()
+  await vi.waitFor(() => expect(acceptedRun('visual:a')?.runId).toBe('run-a'))
+  setDocument(undefined)
+  expect(acceptedRun('visual:a')).toBeUndefined()
+})
 
 it('disables Run now when no trigger allows manual runs, and says why', async () => {
   const saved = updateNode(createGraph('Manual off'), 'trigger-1', { config: { type: 'entity', entity: 'binary_sensor.motion', manual: false, mode: 'Single' } })

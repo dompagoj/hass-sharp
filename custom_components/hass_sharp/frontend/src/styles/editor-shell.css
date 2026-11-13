@@ -67,8 +67,10 @@
 .hs-app .hs-save-chip--dirty { color: var(--hs-warning); background: color-mix(in oklab, var(--hs-warning) 11%, var(--hs-surface)); }
 .hs-app .hs-save-chip--danger { color: var(--hs-danger); background: color-mix(in oklab, var(--hs-danger) 10%, var(--hs-surface)); }
 .hs-app .hs-save-chip { position: relative; }
+/* The compact full-screen bar on a phone shows the short words; the full ones stay for screen readers. */
+.hs-app .hs-save-chip__short { display: none; }
 .hs-app .hs-save-chip:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
-/* Its explanation, shown on keyboard focus too (the mouse gets the title; screen readers its hidden text). */
+/* Its explanation, shown on keyboard focus too (the mouse gets the title; screen readers its description). */
 .hs-app .hs-save-chip:focus-visible::after { content: attr(title); position: absolute; z-index: 40; top: calc(100% + 8px); left: 0; width: max-content; max-width: 260px; padding: 4px 8px; border-radius: 5px; background: var(--hs-text); color: var(--hs-bg); font-size: 12px; font-weight: 500; line-height: 1.3; white-space: normal; }
 .hs-app .hs-topbar__actions { display: flex; align-items: center; gap: 4px; margin-left: auto; flex: none; }
 .hs-app .hs-topbar__actions > .hs-button { min-height: 40px; padding: 8px 16px; }
@@ -168,7 +170,7 @@
   .hs-app .hs-topbar__title { flex: 1 1 0; max-width: none; }
   .hs-app .hs-topbar__name { width: 100%; font-size: 16px; }
   .hs-app .hs-topbar__actions { width: 100%; justify-content: flex-end; }
-  .hs-app .hs-topbar__actions > .hs-button { padding: 8px 12px; }
+  .hs-app .hs-topbar__actions > .hs-button, .hs-app .hs-topbar__actions .hs-topbar__run { padding: 8px 12px; }
   .hs-app .hs-visual-workspace { grid-template-columns: minmax(0, 1fr); }
   .hs-app .hs-drawer__bar { padding-left: 4px; }
   .hs-app .hs-drawer__panel { height: min(44dvh, 320px); padding: 12px; }
@@ -176,8 +178,8 @@
   .hs-app .hs-visual--fullscreen .hs-topbar__actions { width: auto; }
   /* The compact bar keeps the save state, in its short words. */
   .hs-app .hs-visual--fullscreen .hs-save-chip { padding: 0 8px; }
-  .hs-app .hs-visual--fullscreen .hs-save-chip__text { font-size: 0; }
-  .hs-app .hs-visual--fullscreen .hs-save-chip__text::after { content: attr(data-short); font-size: 12px; }
+  .hs-app .hs-visual--fullscreen .hs-save-chip__text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .hs-app .hs-visual--fullscreen .hs-save-chip__short { display: inline; }
   .hs-app .hs-visual--fullscreen .hs-topbar__title { flex: 1 1 0; max-width: none; }
   /* On a phone the compact bar keeps room for the name: icon-only Exit, smaller history buttons. */
   .hs-app .hs-visual--fullscreen .hs-topbar__title { min-width: 64px; }

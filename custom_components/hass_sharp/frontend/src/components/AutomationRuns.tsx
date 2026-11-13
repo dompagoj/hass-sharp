@@ -1,4 +1,4 @@
-import { batch, createMemo, createSignal, createUniqueId, For, onCleanup, Show } from 'solid-js'
+import { batch, createEffect, createMemo, createSignal, createUniqueId, For, on, onCleanup, Show } from 'solid-js'
 import { A } from '@solidjs/router'
 import { useQuery, useMutation } from '@tanstack/solid-query'
 import { useHass } from '../context'
@@ -87,13 +87,15 @@ const RunPanel = (props: RunsProps) => {
       return runs.some(active) || awaitingResult ? 2000 : false
     },
   }))
+  // Each newly accepted run, started here or elsewhere (the editor's top bar), returns the list to the newest,
+  // unfiltered records so it is never hidden, and polls for its result.
+  createEffect(on(() => accepted()?.runId, runId => {
+    if (!runId) return
+    if (offset() || statusFilter()) batch(() => { setOffset(0); setStatusFilter('') })
+    else void history.refetch()
+  }, { defer: true }))
   const dispatch = useMutation(() => ({
     mutationFn: (action: RunAction) => dispatchRun(hass, props.automationId, action),
-    onSuccess: () => {
-      // Return to the newest, unfiltered records so an accepted attempt is never hidden.
-      if (offset() || statusFilter()) batch(() => { setOffset(0); setStatusFilter('') })
-      else void history.refetch()
-    },
   }))
   const runNow = () => {
     const action = selected()

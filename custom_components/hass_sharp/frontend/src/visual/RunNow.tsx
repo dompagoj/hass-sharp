@@ -1,4 +1,4 @@
-import { createSignal, createUniqueId, For, onCleanup, Show } from 'solid-js'
+import { createEffect, createSignal, createUniqueId, For, on, onCleanup, Show } from 'solid-js'
 import { useQueryClient } from '@tanstack/solid-query'
 import { Button } from '../components/Controls'
 import { dispatchRun, forgetAcceptedRun, runErrorMessage, type RunAction } from '../components/runDispatch'
@@ -76,7 +76,15 @@ export function RunNowButton(props: {
       : triggers().length > 1
         ? 'Choose a trigger to run the saved automation'
         : 'Run the saved automation now')
-  onCleanup(() => props.document && forgetAcceptedRun(props.document.automationId))
+  // The automation whose run this button started (captured then, not read at cleanup): forgotten when the page
+  // leaves it, for another automation or a new draft, or closes.
+  let started: string | undefined
+  const forget = () => {
+    if (started) forgetAcceptedRun(started)
+    started = undefined
+  }
+  createEffect(on(() => props.document?.automationId, id => id !== started && forget(), { defer: true }))
+  onCleanup(forget)
 
   const items = () => [...(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
   const close = (restore = true) => {
@@ -93,8 +101,11 @@ export function RunNowButton(props: {
     const doc = props.document
     if (!doc || running()) return
     setRunning(true)
+    const automationId = doc.automationId
     try {
-      await dispatchRun(hass, doc.automationId, choice.action, queryClient)
+      if (started !== automationId) forget()
+      started = automationId
+      await dispatchRun(hass, automationId, choice.action, queryClient)
       props.onNotice({ text: triggers().length > 1 ? `Run of ${choice.label} started. Its result is under Runs.` : 'Run started. Its result is under Runs.' })
     } catch (error) {
       props.onNotice({ text: `Run request failed: ${runErrorMessage(error)}`, error: true })

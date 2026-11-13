@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, Show, type JSX } from 'solid-js'
+import { children, createSignal, createUniqueId, onCleanup, Show, type JSX } from 'solid-js'
 import { Button, Icon } from '../components/Controls'
 import { Menu, type MenuItem } from '../components/Menu'
 import { ToolButton } from './flow/CanvasToolbar'
@@ -37,12 +37,14 @@ export function saveChip(state: SaveState) {
  * The editor's top bar: back, the name edited in place, the save state, Undo and Redo, Run now, Save and a "⋯"
  * menu. In full screen it is the compact floating bar (name, save state, Undo, Redo, Save, "Exit full screen").
  *
- * The name is a draft while it is edited: Enter or leaving the field commits it as one undo step; Escape puts back
- * the name it had and leaves no history; an empty name is not kept.
+ * The name is committed as it is typed, so the unsaved-changes guard and Save follow every keystroke; one visit to the
+ * field is one undo step (a coalesce key per visit). Escape undoes that step, Enter leaves the field, and a name left
+ * blank goes back to the one it had.
  */
 export function TopBar(props: {
   name: string
-  onRename(name: string): void
+  /** A typed name; every call of one visit to the field carries that visit's `coalesce` key. */
+  onRename(name: string, options: { coalesce: string }): void
   onBack?: () => void
   save: SaveState
   busy: boolean
@@ -59,22 +61,20 @@ export function TopBar(props: {
   onExitFullscreen(): void
   menu: MenuItem[]
 }) {
-  const [draft, setDraft] = createSignal<string>()
-  let before = ''
-  /** An edit starts from the name the automation has now. */
-  const start = () => {
-    if (draft() !== undefined) return
-    before = props.name
-    setDraft(props.name)
-  }
-  const commit = () => {
-    const text = draft()
-    if (text === undefined) return
-    setDraft(undefined)
-    const name = text.trim() ? text : before
-    if (name !== props.name) props.onRename(name)
+  // One visit to the name field: its coalesce key, the name it started from, and whether it has made an undo step.
+  let visits = 0
+  let visit: { key: string; before: string; changed: boolean } | undefined
+  const start = () => (visit ??= { key: `automation-name:${++visits}`, before: props.name, changed: false })
+  /** Takes back this visit's undo step, which puts back the name it started from. */
+  const restore = (input: HTMLInputElement) => {
+    const current = start()
+    if (current.changed) props.onUndo()
+    current.changed = false
+    input.value = props.name
   }
   const chip = () => saveChip(props.save)
+  const explanationId = createUniqueId()
+  const run = children(() => props.run)
   return (
     <>
       <header class="hs-topbar">
@@ -92,37 +92,41 @@ export function TopBar(props: {
             spellcheck={false}
             autocomplete="off"
             enterkeyhint="done"
-            value={draft() ?? props.name}
+            value={props.name}
             disabled={props.busy}
             onFocus={() => start()}
             onInput={event => {
-              const text = event.currentTarget.value
-              start()
-              setDraft(text)
+              const text = event.currentTarget.value, current = start()
+              // A blank name is not committed; leaving the field blank puts the earlier one back.
+              if (!text.trim() || text === props.name) return
+              props.onRename(text, { coalesce: current.key })
+              current.changed = true
             }}
             onKeyDown={event => {
               if (event.key === 'Enter') {
                 event.preventDefault()
-                commit()
                 event.currentTarget.blur()
-              } else if (event.key === 'Escape' && draft() !== undefined && draft() !== before) {
+              } else if (event.key === 'Escape' && visit && (visit.changed || event.currentTarget.value !== visit.before)) {
                 event.preventDefault()
-                setDraft(before)
-                event.currentTarget.value = before
+                restore(event.currentTarget)
               }
             }}
-            onBlur={commit}
+            onBlur={event => {
+              if (!event.currentTarget.value.trim()) restore(event.currentTarget)
+              visit = undefined
+            }}
           />
         </div>
-        <span class={`hs-save-chip hs-save-chip--${chip().tone}`} role="status" tabindex="0" title={chip().explanation}>
-          <span class="hs-save-chip__text" data-short={chip().short}>{chip().text}</span>
-          <span class="hs-visually-hidden">. {chip().explanation}</span>
+        <span class={`hs-save-chip hs-save-chip--${chip().tone}`} tabindex="0" title={chip().explanation} aria-describedby={explanationId}>
+          <span class="hs-save-chip__text" role="status">{chip().text}</span>
+          <span class="hs-save-chip__short" aria-hidden="true">{chip().short}</span>
+          <span id={explanationId} hidden>{chip().explanation}</span>
         </span>
         <div class="hs-topbar__actions">
           <ToolButton label="Undo" shortcut="Control+Z" icon={historyIcons.undo} disabled={!props.canUndo} onClick={props.onUndo} />
           <ToolButton label="Redo" shortcut="Control+Y" icon={historyIcons.redo} disabled={!props.canRedo} onClick={props.onRedo} />
-          <Show when={props.run}>
-            <div class="hs-fs-hide">{props.run}</div>
+          <Show when={run()}>
+            <div class="hs-fs-hide">{run()}</div>
           </Show>
           <Button variant="primary" class="hs-topbar__save" busy={props.save.saving} disabled={!props.canSave} onClick={() => props.onSave()}>
             Save

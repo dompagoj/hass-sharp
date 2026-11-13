@@ -5,7 +5,6 @@ import { nodeIdentity } from './icons'
 import { nodeCatalog, type VisualCatalogSnapshot } from './contract'
 import { NODE_DRAG_TYPE } from './nodeDrag'
 
-/** The type a step dragged from the library carries; the canvas adds that kind where it is dropped. */
 const chevron = { left: ['M15 5l-7 7 7 7'], right: ['M9 5l7 7-7 7'] }
 const plus = ['M12 5v14', 'M5 12h14']
 
@@ -14,8 +13,8 @@ export interface NodeLibraryPanelProps {
   /** Narrowed to a rail: an expand button and "Add step". */
   collapsed: boolean
   onCollapsedChange(collapsed: boolean): void
-  /** A step clicked (or chosen with Enter): the page adds it at the centre of the view. */
-  onAdd(kind: NodeKind): void
+  /** A step clicked (or chosen with Enter): the page adds it at the centre of the view. `label` is its library name. */
+  onAdd(kind: NodeKind, label: string): void
   /** "Add step": the canvas's quick-add palette (the library's stand-in on narrow screens and in the rail). */
   onQuickAdd(): void
   disabled?: boolean
@@ -113,7 +112,7 @@ export function NodeLibraryPanel(props: NodeLibraryPanelProps) {
                               aria-label={`Add ${item.label}`}
                               aria-describedby={describedBy}
                               draggable={true}
-                              onClick={() => props.onAdd(item.kind)}
+                              onClick={() => props.onAdd(item.kind, item.label)}
                               onDragStart={event => {
                                 event.dataTransfer?.setData(NODE_DRAG_TYPE, item.kind)
                                 if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy'
