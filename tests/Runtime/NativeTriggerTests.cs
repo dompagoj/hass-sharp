@@ -211,9 +211,10 @@ static class NativeTriggerTests
         await loading.WaitAsync(TimeSpan.FromSeconds(2));
         var old = manager.GetUserScripts().Single();
         await old.Classes.Single().StartupCompletion;
-        await calls[0].Fire("{\"trigger\":{\"id\":\"event\",\"event\":{\"data\":{\"value\":7}}},\"other\":[1,true]}");
-        Check(Probe.TriggerPayloads.TryDequeue(out var startup) && startup.ValueKind == JsonValueKind.Undefined, "startup has no native data");
-        Check(Probe.TriggerPayloads.TryDequeue(out var payload) && payload.GetProperty("other")[1].GetBoolean(), "full immutable native payload survives dispatch");
+        await calls[0].Fire("{\"trigger\":{\"id\":\"event\",\"event\":{\"data\":{\"value\":7}}},\"context\":{\"id\":\"ctx\"},\"other\":[1,true]}");
+        Check(Probe.TriggerPayloads.TryDequeue(out var startup) && startup.GetProperty("platform").GetString() == "startup", "startup carries its normalised payload");
+        Check(Probe.TriggerPayloads.TryDequeue(out var payload) && payload.GetProperty("event").GetProperty("data").GetProperty("value").GetInt32() == 7
+            && payload.GetProperty("context").GetProperty("id").GetString() == "ctx" && !payload.TryGetProperty("other", out _), "native payload is the trigger dict plus context");
         Check(Probe.Completed.Contains(InvocationCause.HomeAssistantTrigger), "native cause reaches policy runner");
         var updating = manager.UpdateUserScript(Compiled("replacement"));
         Check(!updating.IsCompleted, "replacement remains staged while attachment pending");
@@ -221,7 +222,7 @@ static class NativeTriggerTests
         try { await updating; throw new Exception("replacement should fail"); } catch (InvalidOperationException) { }
         Check(ReferenceEquals(old, manager.GetUserScripts().Single()), "failed replacement retains old runtime");
         await calls[0].Fire("{\"trigger\":{\"id\":\"still-live\"}}");
-        Check(Probe.TriggerPayloads.TryDequeue(out payload) && payload.GetProperty("trigger").GetProperty("id").GetString() == "still-live", "old subscription survives failed replacement");
+        Check(Probe.TriggerPayloads.TryDequeue(out payload) && payload.GetProperty("id").GetString() == "still-live", "old subscription survives failed replacement");
         updating = manager.UpdateUserScript(Compiled("cancelled"));
         var unloading = manager.UnloadUserScriptsAsync();
         Check(!unloading.IsCompleted, "unload drains pending registration");

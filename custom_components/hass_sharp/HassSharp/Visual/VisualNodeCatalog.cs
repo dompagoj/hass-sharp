@@ -48,7 +48,44 @@ public static class VisualNodeCatalog
         foreach (var (_, value) in ports) if (value is JsonObject port) port["type"] = ResolveType(Text(port, "type"), node);
         if (Text(spec, "dynamicOutputs") == "loop") foreach (var key in new[] { "carry", "exports" }) foreach (var item in Declarations(node, key))
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = new JsonObject { ["type"] = Text(item, "type"), ["description"] = $"{key} value {Text(item, "name")}", ["visibility"] = key == "carry" ? "loop" : "outside" };
+        if (Text(spec, "dynamicOutputs") == "trigger") foreach (var (key, value) in TriggerOutputs(node, snapshot?.Root ?? Root)) ports[key] = value?.DeepClone();
         return ports;
+    }
+    /// <summary>
+    /// Contract C6: the rows of <c>triggerOutputs</c> whose <c>|</c>-separated key lists the trigger type (or
+    /// <c>ha:&lt;platform&gt;</c>), after <c>*</c>. Each port keeps its JSON pointer; <c>refineFrom</c> narrows its type.
+    /// </summary>
+    internal static JsonObject TriggerOutputs(JsonObject node, JsonObject catalog)
+    {
+        var config = node["config"] as JsonObject;
+        var type = Text(config, "type", Text(catalog["nodes"]?[Text(node, "kind")]?["config"]?["type"], "default"));
+        var native = config?["trigger"] as JsonObject;
+        var key = type == "ha" ? "ha:" + (native?["trigger"] is JsonValue platform && platform.TryGetValue<string>(out var name) ? name : Text(native, "platform")) : type;
+        var ports = new JsonObject();
+        foreach (var (keys, rows) in catalog["triggerOutputs"] as JsonObject ?? [])
+            if (rows is JsonObject outputs && (keys == "*" || keys.Split('|').Contains(key)))
+                foreach (var (port, value) in outputs) if (value is JsonObject output)
+                {
+                    var copy = (JsonObject)output.DeepClone();
+                    if (Text(output, "refineFrom") is { Length: > 0 } path && Refined(catalog, Text(output, "type"), ConfigValue(config, path)) is { } refined) copy["type"] = refined;
+                    ports[port] = copy;
+                }
+        return ports;
+    }
+    static JsonNode? ConfigValue(JsonObject? config, string path) => path.Split('.').Aggregate((JsonNode?)config, (current, segment) => (current as JsonObject)?[segment]);
+    /// <summary><c>&lt;type&gt;:&lt;param&gt;</c> when the value, or every item of a non-empty list, is a literal of that one parametric type.</summary>
+    static string? Refined(JsonObject catalog, string type, JsonNode? value)
+    {
+        var items = value is JsonArray list ? list.ToArray() : [value];
+        string? refined = null;
+        foreach (var item in items)
+        {
+            if (!VisualTypes.ValidLiteral(catalog, type, item, true) || item is not JsonValue text || !text.TryGetValue<string>(out var literal) || literal.IndexOf('.') is not (> 0 and var dot)) return null;
+            var candidate = type + ":" + literal[..dot];
+            if (refined != null && refined != candidate || !VisualTypes.ValidLiteral(catalog, candidate, item, true)) return null;
+            refined = candidate;
+        }
+        return refined;
     }
     public static JsonObject DataInputs(JsonObject node, JsonObject? loopOwner = null, VisualCatalogSnapshot? snapshot = null)
     {

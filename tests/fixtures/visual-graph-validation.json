@@ -7379,5 +7379,548 @@
       ]
     },
     "valid": true
+  },
+  {
+    "name": "trigger to_state wires into entity_field",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "entity",
+            "entity": "light.kitchen"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "entity_field",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            },
+            "field": "state",
+            "type": "string"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "t:to_state:f:entity",
+          "kind": "data",
+          "source": "t",
+          "target": "f",
+          "sourcePort": "to_state",
+          "targetPort": "entity"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "native state trigger to_state wires into entity_field",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "ha",
+            "trigger": {
+              "trigger": "state",
+              "entity_id": "light.kitchen"
+            }
+          }
+        },
+        {
+          "id": "f",
+          "kind": "entity_field",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            },
+            "field": "state",
+            "type": "string"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "t:to_state:f:entity",
+          "kind": "data",
+          "source": "t",
+          "target": "f",
+          "sourcePort": "to_state",
+          "targetPort": "entity"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "light trigger entity_id does not reach an entity_id:switch input",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "ha",
+            "trigger": {
+              "trigger": "state",
+              "entity_id": "light.kitchen"
+            }
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              {
+                "name": "x",
+                "type": "entity_id:switch",
+                "initial": {
+                  "kind": "literal",
+                  "type": "entity_id:switch",
+                  "value": "switch.a"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "lr",
+          "kind": "loop_result",
+          "config": {
+            "values": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:body:lr",
+          "source": "r",
+          "target": "lr",
+          "port": "body"
+        },
+        {
+          "id": "t:entity_id:lr:carry:x",
+          "kind": "data",
+          "source": "t",
+          "target": "lr",
+          "sourcePort": "entity_id",
+          "targetPort": "carry:x"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "lr",
+    "inputId": "carry:x",
+    "contains": "type"
+  },
+  {
+    "name": "light entity trigger entity_id does not reach an entity_id:switch input",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "entity",
+            "entity": "light.kitchen"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              {
+                "name": "x",
+                "type": "entity_id:switch",
+                "initial": {
+                  "kind": "literal",
+                  "type": "entity_id:switch",
+                  "value": "switch.a"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "lr",
+          "kind": "loop_result",
+          "config": {
+            "values": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:body:lr",
+          "source": "r",
+          "target": "lr",
+          "port": "body"
+        },
+        {
+          "id": "t:entity_id:lr:carry:x",
+          "kind": "data",
+          "source": "t",
+          "target": "lr",
+          "sourcePort": "entity_id",
+          "targetPort": "carry:x"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "lr",
+    "inputId": "carry:x",
+    "contains": "type"
+  },
+  {
+    "name": "light trigger entity_id reaches an entity_id:light input",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "ha",
+            "trigger": {
+              "trigger": "state",
+              "entity_id": "light.kitchen"
+            }
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              {
+                "name": "x",
+                "type": "entity_id:light",
+                "initial": {
+                  "kind": "literal",
+                  "type": "entity_id:light",
+                  "value": "light.a"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "lr",
+          "kind": "loop_result",
+          "config": {
+            "values": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:body:lr",
+          "source": "r",
+          "target": "lr",
+          "port": "body"
+        },
+        {
+          "id": "t:entity_id:lr:carry:x",
+          "kind": "data",
+          "source": "t",
+          "target": "lr",
+          "sourcePort": "entity_id",
+          "targetPort": "carry:x"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "same-domain trigger entity list refines entity_id",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "ha",
+            "trigger": {
+              "trigger": "state",
+              "entity_id": [
+                "light.a",
+                "light.b"
+              ]
+            }
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              {
+                "name": "x",
+                "type": "entity_id:light",
+                "initial": {
+                  "kind": "literal",
+                  "type": "entity_id:light",
+                  "value": "light.a"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "lr",
+          "kind": "loop_result",
+          "config": {
+            "values": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:body:lr",
+          "source": "r",
+          "target": "lr",
+          "port": "body"
+        },
+        {
+          "id": "t:entity_id:lr:carry:x",
+          "kind": "data",
+          "source": "t",
+          "target": "lr",
+          "sourcePort": "entity_id",
+          "targetPort": "carry:x"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "mixed-domain trigger entity list does not refine entity_id",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "ha",
+            "trigger": {
+              "trigger": "state",
+              "entity_id": [
+                "light.a",
+                "switch.b"
+              ]
+            }
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              {
+                "name": "x",
+                "type": "entity_id:light",
+                "initial": {
+                  "kind": "literal",
+                  "type": "entity_id:light",
+                  "value": "light.a"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "lr",
+          "kind": "loop_result",
+          "config": {
+            "values": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:body:lr",
+          "source": "r",
+          "target": "lr",
+          "port": "body"
+        },
+        {
+          "id": "t:entity_id:lr:carry:x",
+          "kind": "data",
+          "source": "t",
+          "target": "lr",
+          "sourcePort": "entity_id",
+          "targetPort": "carry:x"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "lr",
+    "inputId": "carry:x",
+    "contains": "type"
+  },
+  {
+    "name": "trigger outputs follow the trigger type",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "entity_field",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            },
+            "field": "state",
+            "type": "string"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "t:to_state:f:entity",
+          "kind": "data",
+          "source": "t",
+          "target": "f",
+          "sourcePort": "to_state",
+          "targetPort": "entity"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "t",
+    "contains": "Unknown data output port"
+  },
+  {
+    "name": "trigger_data node is removed",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "d",
+          "kind": "trigger_data",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:d",
+          "source": "t",
+          "target": "d",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "contains": "Unknown node kind"
   }
 ]

@@ -48,7 +48,7 @@ class ScriptSyncRunner
         if (errors.Count > 0) throw new AggregateException(errors);
     }
 
-    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, string? runId = null, DateTime? plannedUtc = null, string? details = null, System.Text.Json.JsonElement triggerData = default)
+    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null, string? details = null)
     {
         var record = new InvocationRecord
         {
@@ -84,7 +84,7 @@ class ScriptSyncRunner
                 var timer = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
-                    await Execute(scriptClass, methodInfo, registration, cause, triggerData);
+                    await Execute(scriptClass, methodInfo, registration, new(record.RunId, cause, plannedUtc, payload));
                     record.Status = "Succeeded";
                 }
                 catch (OperationCanceledException) when (registration.Run.Token.IsCancellationRequested)
@@ -174,12 +174,11 @@ class ScriptSyncRunner
     static async Task Execute(
         UserScriptClass scriptClass,
         MethodInfo methodInfo,
-        RunRegistration registration, InvocationCause cause, System.Text.Json.JsonElement triggerData)
+        RunRegistration registration, InvocationContext context)
     {
         registration.Run.Token.ThrowIfCancellationRequested();
         scriptClass.Instance._cancellationToken.Value = registration.Run.Token;
-        UserScriptManager.CurrentCause.Value = cause;
-        UserScriptManager.CurrentTriggerData.Value = triggerData;
+        InvocationContext.Current = context;
         object? result;
         try { result = methodInfo.Invoke(scriptClass.Instance, null); }
         catch (TargetInvocationException ex) when (ex.InnerException != null)

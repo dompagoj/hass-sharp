@@ -32,8 +32,6 @@ class UserScriptManager
         catch (Exception ex) { Logger.Error($"Invocation history failure: {ex.Message}"); }
     }
 
-    public static readonly AsyncLocal<InvocationCause> CurrentCause = new();
-    public static readonly AsyncLocal<System.Text.Json.JsonElement> CurrentTriggerData = new();
     public static readonly AsyncLocal<TriggerContext?> CurrentTrigger = new();
 
     internal object ActivationGate { get; } = new();
@@ -181,20 +179,22 @@ class UserScriptManager
 
     public Task RunEntries(string entityId, TriggerContext trigger)
     {
+        // Built once per change and outside the gate: detaching attributes may take the GIL.
+        var payload = TriggerPayload.Entity(trigger.State, trigger.State.OldState);
         lock (ActivationGate)
         {
             var entries = DependencyTracking.GetEntries(entityId);
-            return Task.WhenAll(entries.Where(e => e.ScriptClass.Script.Active).Select(e => RunEntry(e, trigger)));
+            return Task.WhenAll(entries.Where(e => e.ScriptClass.Script.Active).Select(e => RunEntry(e, trigger, payload)));
         }
     }
 
-    public async Task RunEntry(DependencyEntry entry, TriggerContext trigger)
+    public async Task RunEntry(DependencyEntry entry, TriggerContext trigger, System.Text.Json.JsonElement payload)
     {
         var previousTrigger = CurrentTrigger.Value;
         CurrentTrigger.Value = trigger;
         try
         {
-            await entry.ScriptClass.RunMethod(entry.MethodName, InvocationCause.Entity);
+            await entry.ScriptClass.RunMethod(entry.MethodName, InvocationCause.Entity, payload: payload);
         }
         finally
         {

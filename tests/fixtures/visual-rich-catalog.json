@@ -3013,13 +3013,8 @@
           }
         },
         "inputs": {},
-        "outputs": {
-          "data": {
-            "type": "object",
-            "description": "Snapshot of the native or legacy trigger payload for this invocation.",
-            "label": "Trigger data"
-          }
-        },
+        "outputs": {},
+        "dynamicOutputs": "trigger",
         "execution": [
           "next"
         ],
@@ -3152,14 +3147,14 @@
       "custom": {
         "label": "Custom C#",
         "category": "Code",
-        "description": "Execute C# with values, responses and lastError available.",
+        "description": "Execute C# with values and lastError available.",
         "minGraphVersion": 5,
         "config": {
           "code": {
             "type": "string",
             "required": true,
             "default": "// Add your C# here",
-            "description": "C# statements with values, responses, lastError and normal Automation members available.",
+            "description": "C# statements with values, lastError and normal Automation members available.",
             "label": "Code"
           }
         },
@@ -4347,28 +4342,6 @@
           5
         ]
       },
-      "trigger_data": {
-        "label": "Trigger data",
-        "category": "Hass",
-        "description": "Read the current invocation trigger payload.",
-        "minGraphVersion": 5,
-        "config": {},
-        "inputs": {},
-        "outputs": {
-          "value": {
-            "type": "object",
-            "description": "The current invocation trigger payload snapshot.",
-            "label": "Trigger data"
-          }
-        },
-        "execution": [
-          "next",
-          "error"
-        ],
-        "runtimeVersions": [
-          5
-        ]
-      },
       "service_response": {
         "label": "Service response",
         "category": "Hass",
@@ -5060,6 +5033,145 @@
         ]
       }
     },
+    "triggerOutputs": {
+      "*": {
+        "data": {
+          "type": "object",
+          "pointer": "",
+          "label": "Trigger data",
+          "description": "Whole normalised trigger payload."
+        }
+      },
+      "entity": {
+        "entity_id": {
+          "type": "entity_id",
+          "pointer": "/entity_id",
+          "refineFrom": "entity",
+          "label": "Entity",
+          "description": "Entity whose state changed."
+        },
+        "to_state": {
+          "type": "global::HassSharp.EntityStateSnapshot",
+          "pointer": "/to_state",
+          "label": "New state",
+          "description": "Entity state after the change."
+        },
+        "from_state": {
+          "type": "global::HassSharp.EntityStateSnapshot",
+          "pointer": "/from_state",
+          "label": "Previous state",
+          "description": "Entity state before the change; absent when the entity had no previous state."
+        }
+      },
+      "daily|once": {
+        "planned": {
+          "type": "string",
+          "pointer": "/planned",
+          "label": "Planned time",
+          "description": "Planned occurrence as an ISO-8601 UTC timestamp."
+        }
+      },
+      "ha:state|ha:numeric_state|ha:template": {
+        "entity_id": {
+          "type": "entity_id",
+          "pointer": "/entity_id",
+          "refineFrom": "trigger.entity_id",
+          "label": "Entity",
+          "description": "Entity that fired the trigger."
+        },
+        "to_state": {
+          "type": "global::HassSharp.EntityStateSnapshot",
+          "pointer": "/to_state",
+          "label": "New state",
+          "description": "Entity state after the change."
+        },
+        "from_state": {
+          "type": "global::HassSharp.EntityStateSnapshot",
+          "pointer": "/from_state",
+          "label": "Previous state",
+          "description": "Entity state before the change; absent when the entity had no previous state."
+        }
+      },
+      "ha:zone": {
+        "entity_id": {
+          "type": "entity_id",
+          "pointer": "/entity_id",
+          "refineFrom": "trigger.entity_id",
+          "label": "Entity",
+          "description": "Entity that entered or left the zone."
+        },
+        "zone": {
+          "type": "string",
+          "pointer": "/zone/entity_id",
+          "label": "Zone",
+          "description": "Zone entity id."
+        },
+        "event": {
+          "type": "string",
+          "pointer": "/event",
+          "label": "Event",
+          "description": "Zone event: enter or leave."
+        }
+      },
+      "ha:event": {
+        "event_type": {
+          "type": "string",
+          "pointer": "/event/event_type",
+          "label": "Event type",
+          "description": "Type of the fired event."
+        },
+        "event_data": {
+          "type": "object",
+          "pointer": "/event/data",
+          "label": "Event data",
+          "description": "Data of the fired event."
+        }
+      },
+      "ha:time|ha:time_pattern": {
+        "now": {
+          "type": "string",
+          "pointer": "/now",
+          "label": "Time",
+          "description": "Time the trigger fired, as an ISO-8601 timestamp."
+        }
+      },
+      "ha:sun|ha:homeassistant": {
+        "event": {
+          "type": "string",
+          "pointer": "/event",
+          "label": "Event",
+          "description": "Event that fired the trigger."
+        }
+      },
+      "ha:webhook": {
+        "json": {
+          "type": "object",
+          "pointer": "/json",
+          "label": "JSON body",
+          "description": "Parsed JSON request body."
+        },
+        "query": {
+          "type": "object",
+          "pointer": "/query",
+          "label": "Query",
+          "description": "Request query parameters."
+        }
+      },
+      "ha:mqtt": {
+        "topic": {
+          "type": "string",
+          "pointer": "/topic",
+          "label": "Topic",
+          "description": "MQTT topic of the message."
+        },
+        "payload": {
+          "type": "string",
+          "pointer": "/payload",
+          "label": "Payload",
+          "description": "MQTT message payload."
+        }
+      }
+    },
     "edgeKinds": {
       "execution": {
         "required": [
@@ -5181,7 +5293,7 @@
         "carry:\u003Cname\u003E": "own body or condition descendants",
         "export:\u003Cname\u003E": "outside own body and condition; initialized for zero iterations"
       },
-      "parallelJoin": "All branch executions complete before next. Branch values, responses and lastError are isolated and never implicitly merged.",
+      "parallelJoin": "All branch executions complete before next. Branch values and lastError are isolated and never implicitly merged.",
       "loopConditionOrder": {
         "while": "before body",
         "until": "after body"

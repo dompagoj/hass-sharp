@@ -110,6 +110,7 @@ public sealed class VisualRuntime
     readonly Dictionary<string,string> comparisonTypes;
     readonly JsonElement trigger;
     readonly Dictionary<string,string> variables=[];
+    readonly Dictionary<(string,string),string?> absentTriggerOutputs=[];
     readonly CancellationToken external;
     readonly CancellationTokenSource lifetime;
     readonly CancellationTokenRegistration externalRegistration;
@@ -139,7 +140,9 @@ public sealed class VisualRuntime
     public T Input<T>(VisualScope scope,string node,string port) => (T)Coerce(Input(scope,node,port),typeof(T),$"{node}.{port}",false)!;
     public object? Input(VisualScope scope,string node,string port) {
         if(data.TryGetValue((node,port),out var source)) {
-            if(!scope.Outputs.TryGetValue(source,out var value))throw new InvalidOperationException($"Input {node}.{port}: producer output {source.Item1}.{source.Item2} has not executed in this invocation/scope.");
+            if(!scope.Outputs.TryGetValue(source,out var value))throw new InvalidOperationException(absentTriggerOutputs.TryGetValue(source,out var reason)
+                ? $"Input {node}.{port}: trigger output {source.Item1}.{source.Item2} " + (reason==null?"is absent from this invocation's trigger payload.":$"cannot be read from this invocation's trigger payload: {reason}")
+                : $"Input {node}.{port}: producer output {source.Item1}.{source.Item2} has not executed in this invocation/scope.");
             return value;
         }
         var n=nodes[node];var cfg=n["config"]!;JsonNode? operand;
@@ -237,8 +240,7 @@ public sealed class VisualRuntime
                 object? Get(string p)=>Input(scope,id,p);
                 double Number(string p,double min,double max,bool integer=false) {var v=Input<double>(scope,id,p);if(!double.IsFinite(v)||v<min||v>max||integer&&Math.Truncate(v)!=v)throw new InvalidOperationException($"Input {id}.{p} must be {(integer?"an integer":"finite")} in [{min}, {max}].");return v;}
                 switch(kind) {
-                    case "trigger":if(trigger.ValueKind!=JsonValueKind.Undefined)Output(scope,id,JsonNode.Parse(trigger.GetRawText()),"data");break;
-                    case "trigger_data":if(trigger.ValueKind==JsonValueKind.Undefined)throw new InvalidOperationException($"Node {id}: invocation trigger data is unavailable.");Output(scope,id,JsonNode.Parse(trigger.GetRawText()));break;
+                    case "trigger":Trigger(id,scope,n);break;
                     case "if":next=Next(id,Input<bool>(scope,id,"value")?"true":"false");break;
                     case "condition":next=Next(id,ReadEntity(Input<string>(scope,id,"entity")).State==Text(cfg,"state")?"true":"false");break;
                     case "and":case "or":case "xor":var left=Input<bool>(scope,id,"left");var right=Input<bool>(scope,id,"right");Output(scope,id,kind=="and"?left&&right:kind=="or"?left||right:left^right);break;
@@ -280,6 +282,26 @@ public sealed class VisualRuntime
         var triggerState=UserScriptManager.CurrentTrigger.Value?.State;
         var raw=!fresh && triggerState?.EntityId==entity ? triggerState : PyInterop.Entity(entity);
         return EntityStateSnapshot.From(raw??throw new InvalidOperationException($"Entity '{entity}' is unavailable."));
+    }
+    // Contract C6: each typed output reads its pointer from the normalised payload. A pointer that finds
+    // nothing or JSON null, or a value of another type, produces no output; only a consumer fails, naming it.
+    void Trigger(string id,VisualScope scope,JsonObject node) {
+        foreach(var (port,spec) in VisualNodeCatalog.TriggerOutputs(node,catalog)) {
+            if(trigger.ValueKind==JsonValueKind.Undefined || !TryPointer(trigger,Text(spec,"pointer"),out var value) || value.ValueKind==JsonValueKind.Null) {absentTriggerOutputs[(id,port)]=null;continue;}
+            var type=Text(spec,"type");var label=id+"."+port;
+            try {scope.Outputs[(id,port)]=types.GetValueOrDefault(VisualTypes.RootId(catalog,type))==typeof(EntityStateSnapshot)?EntityStateSnapshot.FromStateJson(value):ConvertTo(value,type,label,false);}
+            catch(Exception error) when(error is ArgumentException or InvalidOperationException){absentTriggerOutputs[(id,port)]=error.Message;}
+        }
+    }
+    static bool TryPointer(JsonElement json,string pointer,out JsonElement value) {
+        value=json;
+        foreach(var segment in pointer.Split('/').Skip(1)) {
+            var part=segment.Replace("~1","/").Replace("~0","~");
+            if(value.ValueKind==JsonValueKind.Object && value.TryGetProperty(part,out var child))value=child;
+            else if(value.ValueKind==JsonValueKind.Array && int.TryParse(part,NumberStyles.None,CultureInfo.InvariantCulture,out var index) && index<value.GetArrayLength())value=value[index];
+            else return false;
+        }
+        return true;
     }
     object? EntityField(EntityStateSnapshot entity,JsonNode cfg,string id) {
         object? value=Text(cfg,"field","state")=="state"?entity.State:entity.Attributes.GetProperty(Text(cfg,"attribute"));

@@ -28,7 +28,25 @@ public sealed class EntityStateSnapshot
     public static EntityStateSnapshot From(HasEntityState state, DateTimeOffset? lastUpdated = null) => new(
         state.EntityId, state.State, NormalizeAttributes(state.Attributes),
         DateTimeOffset.UnixEpoch.AddSeconds(state.LastChanged), DateTimeOffset.UnixEpoch.AddSeconds(state.LastReported), lastUpdated);
-    static JsonElement NormalizeAttributes(Dictionary<string, object>? attributes)
+    /// <summary>Converts a <c>State.as_dict</c> state. Missing attributes are empty; a missing last_reported falls back to last_updated, then last_changed.</summary>
+    public static EntityStateSnapshot FromStateJson(JsonElement state)
+    {
+        if (state.ValueKind != JsonValueKind.Object) throw new ArgumentException("Entity state must be a JSON object", nameof(state));
+        string Text(string key) => state.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString()!
+            : throw new ArgumentException($"Entity state requires string {key}", nameof(state));
+        DateTimeOffset? Time(string key)
+        {
+            if (!state.TryGetProperty(key, out var value) || value.ValueKind == JsonValueKind.Null) return null;
+            if (value.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(value.GetString(), System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal, out var time)) return time;
+            throw new ArgumentException($"Entity state {key} must be an ISO-8601 timestamp", nameof(state));
+        }
+        var attributes = state.TryGetProperty("attributes", out var raw) && raw.ValueKind != JsonValueKind.Null ? raw : JsonSerializer.SerializeToElement(new JsonObject());
+        var changed = Time("last_changed") ?? throw new ArgumentException("Entity state requires last_changed", nameof(state));
+        var updated = Time("last_updated");
+        return new(Text("entity_id"), Text("state"), attributes, changed, Time("last_reported") ?? updated ?? changed, updated);
+    }
+    internal static JsonElement NormalizeAttributes(Dictionary<string, object>? attributes)
     {
         var result = new JsonObject();
         if(attributes != null) foreach(var pair in attributes) result[pair.Key] = Normalize(pair.Value);

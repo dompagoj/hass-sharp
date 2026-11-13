@@ -13,8 +13,9 @@ public enum AutomationMode
 public abstract class Automation : UserScriptClassBase
 {
     public virtual AutomationConfiguration Configure() => new();
-    public InvocationCause Cause => UserScriptManager.CurrentCause.Value;
-    public System.Text.Json.JsonElement TriggerData => UserScriptManager.CurrentTriggerData.Value;
+    public InvocationCause Cause => InvocationContext.Current?.Cause ?? default;
+    /// <summary>The normalised trigger payload of the current run (contract C6); undefined outside a run.</summary>
+    public System.Text.Json.JsonElement TriggerData => InvocationContext.Current?.Payload ?? default;
 
     internal readonly AsyncLocal<CancellationToken> _cancellationToken = new();
     public CancellationToken CancellationToken => _cancellationToken.Value;

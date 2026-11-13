@@ -17,11 +17,11 @@ export interface InputSpec {
   enum?: JsonValue[]; enumLabels?: string[]; pattern?: string; minItems?: number; maxItems?: number; step?: number; unit?: string
   selector?: Record<string, unknown>; advanced?: boolean; section?: string | null; example?: JsonValue
 }
-export interface OutputSpec { label?: string; type: string; description: string; visibility?: string }
+export interface OutputSpec { label?: string; type: string; description: string; visibility?: string; pointer?: string; refineFrom?: string }
 export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 export interface TypeSpec { clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[] }
 export interface ParametricTypeSpec { param: string; valuePattern: string; label: string }
-export interface VisualCatalogSnapshot { version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; parametricTypes?: Record<string, ParametricTypeSpec>; nodes: Record<string, NodeSpec>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
+export interface VisualCatalogSnapshot { version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; parametricTypes?: Record<string, ParametricTypeSpec>; nodes: Record<string, NodeSpec>; triggerOutputs?: Record<string, Record<string, OutputSpec>>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
 /** Pass the server-produced catalog explicitly for each document; graph metadata is never type authority. */
 export const nodeCatalog = rawCatalog as unknown as VisualCatalogSnapshot
 const nodeSpec = (kind: unknown, catalog: VisualCatalogSnapshot = nodeCatalog) => typeof kind === 'string' && Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined
@@ -82,7 +82,37 @@ export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = no
     if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
     ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { type: item.type, label: item.name, description: `${key} value ${item.name}`, visibility: key === 'carry' ? 'loop' : 'outside' }
   }
+  if (spec?.dynamicOutputs === 'trigger') Object.assign(ports, triggerOutputs(node, catalog))
   return ports
+}
+/**
+ * Contract C6, mirrored by `VisualNodeCatalog.TriggerOutputs`: the rows of `triggerOutputs` whose `|`-separated
+ * key lists the trigger type (or `ha:<platform>`), after `*`. Each port keeps its JSON pointer; `refineFrom` narrows its type.
+ */
+export function triggerOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, OutputSpec> {
+  const type = text(node.config.type, text(nodeSpec(node.kind, catalog)?.config.type?.default))
+  const native = record(node.config.trigger) ? node.config.trigger : undefined
+  const key = type === 'ha' ? 'ha:' + (typeof native?.trigger === 'string' ? native.trigger : text(native?.platform)) : type
+  const ports = Object.create(null) as Record<string, OutputSpec>
+  for (const [keys, outputs] of Object.entries(catalog.triggerOutputs ?? {}))
+    if (record(outputs) && (keys === '*' || keys.split('|').includes(key)))
+      for (const [port, output] of Object.entries(outputs)) if (record(output)) {
+        const refined = output.refineFrom ? refinedType(output.type, configValue(node.config, output.refineFrom), catalog) : undefined
+        ports[port] = { ...output, ...(refined ? { type: refined } : {}) }
+      }
+  return ports
+}
+const configValue = (config: Record<string, unknown>, path: string) => path.split('.').reduce<unknown>((current, segment) => record(current) ? current[segment] : undefined, config)
+/** `<type>:<param>` when the value, or every item of a non-empty list, is a literal of that one parametric type. */
+function refinedType(type: string, value: unknown, catalog: VisualCatalogSnapshot): string | undefined {
+  let refined: string | undefined
+  for (const item of Array.isArray(value) ? value : [value]) {
+    if (!validLiteral(type, item, catalog) || typeof item !== 'string' || item.indexOf('.') <= 0) return
+    const candidate = `${type}:${item.slice(0, item.indexOf('.'))}`
+    if ((refined !== undefined && refined !== candidate) || !validLiteral(candidate, item, catalog)) return
+    refined = candidate
+  }
+  return refined
 }
 export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, InputSpec> {
   const spec = nodeSpec(node.kind, catalog)

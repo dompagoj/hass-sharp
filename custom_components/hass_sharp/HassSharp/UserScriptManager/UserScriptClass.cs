@@ -85,9 +85,8 @@ class UserScriptClass
         {
             if (!Script.Active || lifetime.IsCancellationRequested) return Task.CompletedTask;
             using var document = System.Text.Json.JsonDocument.Parse(payload);
-            var snapshot = document.RootElement.Clone();
             return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method),
-                _actions[method].Mode, InvocationCause.HomeAssistantTrigger, details: payload, triggerData: snapshot);
+                _actions[method].Mode, InvocationCause.HomeAssistantTrigger, TriggerPayload.Native(document.RootElement), details: payload);
         }
     }
 
@@ -103,7 +102,7 @@ class UserScriptClass
             if (!_occurrences.TryAdd(occurrence, 0)) return Task.CompletedTask;
             if (Script.ScriptManager.History is { } history && !history.ClaimOccurrence(occurrence)) return Task.CompletedTask;
             return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method),
-                _actions[method].Mode, InvocationCause.Schedule, occurrence, utc,
+                _actions[method].Mode, InvocationCause.Schedule, TriggerPayload.Schedule(scheduleId, utc), occurrence, utc,
                 System.Text.Json.JsonSerializer.Serialize(new { ScheduleId = scheduleId, OccurrenceId = occurrence }));
         }
     }
@@ -113,12 +112,19 @@ class UserScriptClass
     internal void Start() => StartupCompletion = Task.WhenAll(
         _actions.Values.Where(a => a.Startup).Select(a => RunMethod(a.Method, InvocationCause.Startup)));
 
-    internal Task RunMethod(string method, InvocationCause cause = InvocationCause.Manual, string? runId = null)
+    /// <param name="payload">The normalised trigger payload; manual and startup runs build their own when omitted.</param>
+    internal Task RunMethod(string method, InvocationCause cause = InvocationCause.Manual, string? runId = null, System.Text.Json.JsonElement? payload = null)
     {
         var action = _actions[method];
         if (cause == InvocationCause.Manual && !action.Manual)
             throw new InvalidOperationException("Manual invocation is disabled");
-        return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method), action.Mode, cause, runId);
+        var normalised = payload ?? cause switch
+        {
+            InvocationCause.Manual => TriggerPayload.Manual(),
+            InvocationCause.Startup => TriggerPayload.Startup(),
+            _ => throw new ArgumentException($"A {cause} run requires its trigger payload", nameof(payload))
+        };
+        return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method), action.Mode, cause, normalised, runId);
     }
 
     internal string GetConcatedMethodNameWithClass(string methodName) => $"{ClassName}::{methodName}";

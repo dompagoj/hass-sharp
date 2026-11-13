@@ -104,6 +104,42 @@ it('read entity exposes a concrete snapshot without scalar configuration', () =>
   expect(contract.dataOutputs(node).value.type).toBe('global::HassSharp.EntityStateSnapshot')
   expect(contract.nodeCatalog.nodes.read_entity.config.type).toBeUndefined()
 })
+it('trigger outputs follow the trigger type and refine entity ids from config', () => {
+  const snapshot = 'global::HassSharp.EntityStateSnapshot'
+  const describe = (config: Record<string, unknown>) => Object.entries(contract.dataOutputs({ id: 't', kind: 'trigger', config })).map(([port, output]) => `${port}=${output.type}`).join(',')
+  const states = (entity: string) => `data=object,entity_id=${entity},to_state=${snapshot},from_state=${snapshot}`
+  const ha = (trigger: Record<string, unknown>) => ({ type: 'ha', trigger })
+  const cases: [Record<string, unknown>, string][] = [
+    [{ type: 'manual' }, 'data=object'],
+    [{ type: 'startup' }, 'data=object'],
+    [{ type: 'daily', time: '07:30', timeZone: 'UTC' }, 'data=object,planned=string'],
+    [{ type: 'once', at: '2030-01-01T10:00:00Z' }, 'data=object,planned=string'],
+    [{ type: 'entity', entity: 'light.kitchen' }, states('entity_id:light')],
+    [{ entity: 'light.kitchen' }, states('entity_id:light')],
+    [{ type: 'entity' }, states('entity_id')],
+    [{ type: 'entity', entity: 'Light.Kitchen' }, states('entity_id')],
+    [ha({ trigger: 'state', entity_id: 'light.kitchen' }), states('entity_id:light')],
+    [ha({ platform: 'state', entity_id: 'light.kitchen' }), states('entity_id:light')],
+    [ha({ trigger: 'state', entity_id: ['light.a', 'light.b'] }), states('entity_id:light')],
+    [ha({ trigger: 'state', entity_id: ['light.a', 'switch.b'] }), states('entity_id')],
+    [ha({ trigger: 'state', entity_id: [] }), states('entity_id')],
+    [ha({ trigger: 'numeric_state', entity_id: 'sensor.temperature', above: 20 }), states('entity_id:sensor')],
+    [ha({ trigger: 'template', value_template: '{{ true }}' }), states('entity_id')],
+    [ha({ trigger: 'zone', entity_id: 'person.ana', zone: 'zone.home', event: 'enter' }), 'data=object,entity_id=entity_id:person,zone=string,event=string'],
+    [ha({ trigger: 'event', event_type: 'test' }), 'data=object,event_type=string,event_data=object'],
+    [ha({ trigger: 'time', at: '07:00:00' }), 'data=object,now=string'],
+    [ha({ trigger: 'time_pattern', minutes: '/5' }), 'data=object,now=string'],
+    [ha({ trigger: 'sun', event: 'sunset' }), 'data=object,event=string'],
+    [ha({ trigger: 'homeassistant', event: 'start' }), 'data=object,event=string'],
+    [ha({ trigger: 'webhook', webhook_id: 'hook' }), 'data=object,json=object,query=object'],
+    [ha({ trigger: 'mqtt', topic: 'a/b' }), 'data=object,topic=string,payload=string'],
+    [ha({ trigger: 'device', device_id: 'x' }), 'data=object'],
+  ]
+  for (const [config, expected] of cases) expect(describe(config), JSON.stringify(config)).toBe(expected)
+  const ports = contract.dataOutputs({ id: 't', kind: 'trigger', config: { type: 'entity', entity: 'light.kitchen' } })
+  expect([ports.to_state.pointer, ports.data.pointer]).toEqual(['/to_state', ''])
+  expect(contract.nodeCatalog.nodes.trigger_data).toBeUndefined()
+})
 it('accepts explicit per-document catalogs without contaminating built-ins', () => {
   const catalog = structuredClone(contract.nodeCatalog)
   catalog.types['global::Example.Reading'] = { description: 'Reading', assignableTo: ['global::Example.IReading'], nullable: false }
