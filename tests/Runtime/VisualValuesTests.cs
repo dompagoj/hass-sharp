@@ -3,6 +3,7 @@ using HassSharp;
 static class VisualValuesTests
 {
     static void Check(bool ok,string message){if(!ok)throw new Exception(message);}
+    [RuntimeSuite("--visual-values", Order = 7)]
     public static Task Run() => WaitUntilDeadline();
     static async Task WaitUntilDeadline()
     {

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { nodeCatalog } from '../src/visual/graphV4'
+import { nodeCatalog } from '../src/visual/contract'
 import { createRoot } from 'solid-js'
 import { createGraph, updateNode } from '../src/visual/graph'
 import { createVisualSession } from '../src/visual/session'

@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 static class BackendReviewTests
 {
     static void Check(bool ok, string message) { if (!ok) throw new Exception(message); }
+    [RuntimeSuite("--backend-review", Order = 1)]
     public static async Task Run()
     {
         var root = Path.Combine(Path.GetTempPath(), "backend-review-" + Guid.NewGuid());

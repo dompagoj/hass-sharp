@@ -3,6 +3,7 @@ static class HandoverTests
 {
     static void Check(bool ok, string message) { if (!ok) throw new Exception(message); }
     static CompiledUserScript Compiled() => new() { FilePath = "handover.cs", FileName = "handover", SourceCode = "test", Assembly = typeof(Probe).Assembly, WrittenToDisk = true };
+    [RuntimeSuite("--handover", Order = 2)]
     public static async Task Run()
     {
         foreach (var unload in new[] { false, true })

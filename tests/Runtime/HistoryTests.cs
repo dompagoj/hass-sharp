@@ -1,6 +1,7 @@
 using HassSharp;
 static class HistoryTests
 {
+    [RuntimeSuite("--history", Order = 4)]
     public static async Task Run()
     {
         var folder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());

@@ -31,6 +31,7 @@ static class VisualTests
     ],"edges":[{"id":"tc","source":"t","target":"c"},{"id":"cs","source":"c","target":"s","port":"true"}]}
     """)!.AsObject();
     static void Check(bool ok, string message) { if (!ok) throw new Exception(message); }
+    [RuntimeSuite("--visual", Order = 6)]
     public static async Task Run()
     {
         var diagnostics=new DiagnosticsProvider();diagnostics.GenerateHassEntities(["binary_sensor.motion","light.hall"]);

@@ -1,5 +1,5 @@
 import { For, Show } from 'solid-js'
-import { dataInputs, dataOutputs, executionPorts, type VisualCatalogSnapshot } from './graphV4'
+import { dataInputs, dataOutputs, executionPorts, type VisualCatalogSnapshot } from './contract'
 import { portLabel, typeCategory, typeColor, typeLabel } from './graph'
 
 export const LibraryPreview = (props: { catalog?: VisualCatalogSnapshot; sourceId: string; pending: boolean }) => {

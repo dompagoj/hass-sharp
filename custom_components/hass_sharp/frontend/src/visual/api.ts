@@ -1,6 +1,6 @@
 import type { HomeAssistant } from '../types'
 import type { VisualGraph } from './graph'
-import type { VisualCatalogSnapshot } from './graphV4'
+import type { VisualCatalogSnapshot } from './contract'
 
 export interface SourceRange {
   nodeId: string

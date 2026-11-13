@@ -11,6 +11,7 @@ static class VisualConversionReviewTests
         Assert(preview.Valid,"review library must compile: "+string.Join(";",preview.Diagnostics.Select(d=>d.Message)));
         return(preview.Snapshot,name=>preview.Snapshot.Methods.Values.Single(m=>m.Method.Name==name).Kind);
     }
+    [RuntimeSuite("--visual-conversion-review", Order = 9)]
     public static async Task Run(string? scenario=null) {
         var previous=HassPath.HassConfiguration;HassPath.HassConfiguration=Path.Combine(Path.GetTempPath(),"conversion-review-"+Guid.NewGuid());
         var logger=PyInterop.Log;PyInterop.Log=(_,_)=>{};

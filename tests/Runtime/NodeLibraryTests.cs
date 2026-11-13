@@ -34,6 +34,7 @@ public static class NodeLibraryTests
         public class Convertible { public static implicit operator Reading(Convertible value) => new("effect"); }
         public static class Conversions { [Node("Convertible")] public static Convertible Make() => new(); }
         """;
+    [RuntimeSuite("--node-library", Order = 10)]
     public static async Task Run()
     {
         var output = VisualNodeCatalog.DataOutputs(new JsonObject { ["kind"] = "read_entity", ["config"] = new JsonObject() });
@@ -176,6 +177,7 @@ public static class NodeLibraryTests
         Console.WriteLine("PASS rich node libraries: Roslyn discovery, docs, signatures, conversion, snapshots and graph validation");
         await RunReview(null);
     }
+    [RuntimeSuite("--node-library-review", RunByDefault = false)]
     public static async Task RunReview(string? scenario)
     {
         if (scenario is null or "generic")
@@ -253,6 +255,7 @@ public static class NodeLibraryTests
         }
     }
 
+    [RuntimeSuite("--node-library-expanding-child", RunByDefault = false)]
     public static void ExpandingGenericPreview()
     {
         var preview = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new("expanding", """

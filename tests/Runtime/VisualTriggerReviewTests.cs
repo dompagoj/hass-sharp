@@ -4,6 +4,7 @@ using HassSharp;
 
 public static class VisualTriggerReviewTests
 {
+    [RuntimeSuite("--visual-trigger-review", Order = 12)]
     public static async Task Run(string? only = null)
     {
         var previousPath = HassPath.HassConfiguration;

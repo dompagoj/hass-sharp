@@ -1,17 +1,34 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import cases from '../../../../tests/fixtures/visual-v4-validation.json'
-import * as contract from '../src/visual/graphV4'
-import type { GraphV4 } from '../src/visual/graphV4'
+import fixtureCases from '../../../../tests/fixtures/visual-graph-validation.json'
+import * as contract from '../src/visual/contract'
+import type { GraphV4 } from '../src/visual/contract'
 
-describe('shared v4 validation contract', () => {
+interface ValidationCase {
+  name: string; graph: unknown; valid: boolean; nodeId?: string; inputId?: string; contains?: string
+  warning?: string; services?: boolean; maxValidationMs?: number
+}
+const cases = fixtureCases as ValidationCase[]
+const servicesFixture = new URL('../../../../tests/fixtures/visual-services.json', import.meta.url)
+// Loaded for cases that opt in; the validator takes it once service-aware validation lands.
+function loadServices(name: string): unknown {
+  if (!existsSync(servicesFixture)) throw new Error(`Visual graph ${name}: case sets "services": true but tests/fixtures/visual-services.json is missing`)
+  return JSON.parse(readFileSync(servicesFixture, 'utf8'))
+}
+
+describe('shared visual graph validation contract', () => {
   for (const fixture of cases) it(fixture.name, () => {
+    if (fixture.services === true) loadServices(fixture.name)
     const started = performance.now()
-    const errors = contract.validateGraphV4(fixture.graph as GraphV4)
+    const diagnostics = contract.validateGraphV4(fixture.graph as GraphV4)
     if (fixture.maxValidationMs) expect(performance.now() - started).toBeLessThan(fixture.maxValidationMs)
+    const errors = diagnostics.filter(d => d.severity === 3)
     expect(errors.length === 0, JSON.stringify(errors)).toBe(fixture.valid)
     if (!fixture.valid) expect(errors.some(e =>
       (!fixture.nodeId || e.nodeId === fixture.nodeId) && (!fixture.inputId || e.inputId === fixture.inputId) &&
       (!fixture.contains || e.message.toLowerCase().includes(fixture.contains.toLowerCase())))).toBe(true)
+    const warning = fixture.warning
+    if (warning !== undefined) expect(diagnostics.some(d => d.severity === 2 && d.message.toLowerCase().includes(warning.toLowerCase())), `expected warning "${warning}", got ${JSON.stringify(diagnostics)}`).toBe(true)
   })
 })
 it('missing layout is deterministic and supplied positions remain unchanged', () => {

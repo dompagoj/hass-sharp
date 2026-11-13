@@ -15,6 +15,7 @@ static class NodeLibraryStoreTests
     }
     static JsonNode Result(JsonObject response) { Check(response["ok"]!.GetValue<bool>(), response.ToJsonString()); return response["result"]!; }
     static async Task<JsonObject> Visual(HassSharpManager m, object r) => JsonNode.Parse(await m.VisualRequest(JsonSerializer.Serialize(r)))!.AsObject();
+    [RuntimeSuite("--node-library-store", Order = 14)]
     public static async Task Run()
     {
         await RunOrderingReview();
@@ -106,6 +107,7 @@ static class NodeLibraryStoreTests
         }
         finally { await manager.UnloadAsync(); PyInterop.Log=log; HassPath.HassConfiguration=previous; }
     }
+    [RuntimeSuite("--node-library-ordering-review", RunByDefault = false)]
     public static async Task RunOrderingReview(string? scenario = null)
     {
         foreach (var change in scenario == null ? new[] { "edit", "create", "prefix-create" } : new[] { scenario })

@@ -5,7 +5,7 @@ import { NodeConfig } from '../src/visual/NodeConfig'
 import { NodeChooser } from '../src/visual/NodeChooser'
 import { TriggerConfig } from '../src/visual/TriggerConfig'
 import { addNode, createGraph, catalogPalette, catalogCategories, type VisualGraph } from '../src/visual/graph'
-import { nodeCatalog } from '../src/visual/graphV4'
+import { nodeCatalog } from '../src/visual/contract'
 import { HassCtx } from '../src/context'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 let dispose: () => void

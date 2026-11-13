@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { visualFixture } from './visual-fixture'
 import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
-import type { VisualCatalogSnapshot } from '../src/visual/graphV4'
+import type { VisualCatalogSnapshot } from '../src/visual/contract'
 it('provides realistic isolated library language envelopes and revisioned CRUD for browser acceptance', async () => {
   const fixture = visualFixture({ catalog: rich.catalog as unknown as VisualCatalogSnapshot, libraries: [{ id: 'shared', name: 'Shared.cs', source: rich.source, revision: 1 }] })
   const call = (operation: string, fields = {}) => fixture.callWS({ type: 'hass_sharp/node_library', request: { operation, ...fields } }) as Promise<any>

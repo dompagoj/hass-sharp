@@ -11,6 +11,7 @@ static class NativeTriggerTests
         var compiled = Compiled(); compiled.FilePath = name + ".cs"; compiled.FileName = name; return compiled;
     }
 
+    [RuntimeSuite("--native-trigger-review", RunByDefault = false)]
     public static async Task RunReview(string? scenario = null)
     {
         Probe.Mode = AutomationMode.Parallel;
@@ -189,6 +190,7 @@ static class NativeTriggerTests
         Console.WriteLine("PASS schedule registration and teardown publication/drain race");
     }
 
+    [RuntimeSuite("--native-trigger", Order = 3)]
     public static async Task Run()
     {
         Probe.Mode = AutomationMode.Parallel;

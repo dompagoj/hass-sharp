@@ -1,6 +1,6 @@
 import { createMemo, createSignal, createUniqueId, For, onCleanup, onMount, Show } from 'solid-js'
 import { catalogCategories, catalogPalette, portLabel, type NodeKind, type PendingConnection } from './graph'
-import { nodeCatalog, type VisualCatalogSnapshot } from './graphV4'
+import { nodeCatalog, type VisualCatalogSnapshot } from './contract'
 
 export function NodeChooser(props: {
   catalog?: VisualCatalogSnapshot

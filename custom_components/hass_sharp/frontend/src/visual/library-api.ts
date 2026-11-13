@@ -1,5 +1,5 @@
 import type { CompletionItem, Diagnostic, HomeAssistant } from '../types'
-import type { VisualCatalogSnapshot } from './graphV4'
+import type { VisualCatalogSnapshot } from './contract'
 import type { VisualDocument, VisualDiagnostic } from './api'
 
 export interface LibraryDocument { version: 1; id: string; name: string; revision: number; source: string }

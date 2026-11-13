@@ -30,7 +30,7 @@ import {
   type VisualCatalogSnapshot,
   type V4Operand,
   type DataEdge,
-} from './graphV4'
+} from './contract'
 import type { VisualDiagnostic } from './api'
 
 export function NodeConfig(props: {

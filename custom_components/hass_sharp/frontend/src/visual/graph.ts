@@ -17,7 +17,7 @@ import {
   type VisualCatalogSnapshot,
   type JsonValue,
   type InputSpec,
-} from './graphV4'
+} from './contract'
 export type VisualGraph = GraphV4
 export type GraphNode = V4Node
 export type GraphEdge = V4Edge
@@ -27,8 +27,8 @@ export type Operand = V4Operand
 export type ValueType = string
 export type NodeConfigData = Record<string, unknown>
 export const literal = (type: string, value: JsonValue): V4Operand => ({ kind: 'literal', type, value })
-export { effectiveTriggerMethod as triggerMethod } from './graphV4'
-import { effectiveTriggerMethod } from './graphV4'
+export { effectiveTriggerMethod as triggerMethod } from './contract'
+import { effectiveTriggerMethod } from './contract'
 export const catalogPalette = (catalog: VisualCatalogSnapshot = nodeCatalog) =>
   Object.entries(catalog.nodes).map(([kind, spec]) => ({ kind, ...spec }))
 export const catalogCategories = (catalog: VisualCatalogSnapshot = nodeCatalog) => [

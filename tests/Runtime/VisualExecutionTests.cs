@@ -27,6 +27,7 @@ static class VisualExecutionTests
             else await task.WaitAsync(TimeSpan.FromSeconds(10));
         } finally {compiled.Unload();}
     }
+    [RuntimeSuite("--visual-execution", Order = 8)]
     public static async Task Run()
     {
         var previous=HassPath.HassConfiguration; HassPath.HassConfiguration=Path.Combine(Path.GetTempPath(),"visual-v4-"+Guid.NewGuid());

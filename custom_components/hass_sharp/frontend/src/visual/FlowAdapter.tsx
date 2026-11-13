@@ -38,7 +38,7 @@ import {
   type PendingConnection,
   type VisualGraph,
 } from './graph'
-import { nodeCatalog, executionPorts, dataOutputs, connectData, type VisualCatalogSnapshot } from './graphV4'
+import { nodeCatalog, executionPorts, dataOutputs, connectData, type VisualCatalogSnapshot } from './contract'
 
 interface Props {
   catalog?: VisualCatalogSnapshot
@@ -395,8 +395,8 @@ export const FlowAdapter: Component<Props> = props => {
     onCleanup(() => {
       alive = false
     })
-    const inputs = () => node.data.inputs as [string, import('./graphV4').InputSpec][]
-    const outputs = () => node.data.outputs as [string, import('./graphV4').OutputSpec][]
+    const inputs = () => node.data.inputs as [string, import('./contract').InputSpec][]
+    const outputs = () => node.data.outputs as [string, import('./contract').OutputSpec][]
     const ports = () => node.data.ports as string[]
     const errors = () => node.data.errors as VisualDiagnostic[]
     const errorFor = (id: string) => errors().filter(d => d.inputId === id || d.portId === id)

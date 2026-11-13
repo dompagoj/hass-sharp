@@ -8,6 +8,7 @@ using static VisualExecutionTests;
 static class AuthoringAdapterTests
 {
     static async Task<JsonNode> Request(HassSharpManager manager, object request) => JsonNode.Parse(await manager.VisualRequest(JsonSerializer.Serialize(request)))!;
+    [RuntimeSuite("--authoring-adapter", Order = 13)]
     public static async Task Run()
     {
         var previous=HassPath.HassConfiguration;

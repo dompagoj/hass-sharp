@@ -1,6 +1,7 @@
 using HassSharp;
 static class ScheduleTests
 {
+    [RuntimeSuite("--schedule", Order = 5)]
     public static async Task Run()
     {
         var callbacks = new List<Func<string, Task>>();

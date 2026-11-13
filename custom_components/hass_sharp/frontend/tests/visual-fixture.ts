@@ -1,4 +1,4 @@
-import { nodeCatalog, type VisualCatalogSnapshot } from '../src/visual/graphV4'
+import { nodeCatalog, type VisualCatalogSnapshot } from '../src/visual/contract'
 import type { VisualDocument, VisualPreview } from '../src/visual/api'
 import type { VisualGraph } from '../src/visual/graph'
 

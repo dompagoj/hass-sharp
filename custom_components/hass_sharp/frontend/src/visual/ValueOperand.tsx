@@ -2,7 +2,7 @@ import { createUniqueId, createSignal, createEffect, on, For, Show } from 'solid
 import { EntityAutocomplete } from '../components/EntityAutocomplete'
 import { Field } from '../components/Controls'
 import { typeLabel, typeColor } from './graph'
-import type { InputSpec, JsonValue, V4Operand, VisualCatalogSnapshot } from './graphV4'
+import type { InputSpec, JsonValue, V4Operand, VisualCatalogSnapshot } from './contract'
 export function ConfigSelect(props: {
   label: string
   value: string

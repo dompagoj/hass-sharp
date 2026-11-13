@@ -1,6 +1,6 @@
 // Development-only fixture. No backend or Home Assistant services are called.
 import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
-import { fillGraphLayout, type GraphV4, type VisualCatalogSnapshot } from '../src/visual/graphV4'
+import { fillGraphLayout, type GraphV4, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { visualFixture as makeVisualFixture } from './visual-fixture'
 import { render } from 'solid-js/web'
 import App from '../src/App'

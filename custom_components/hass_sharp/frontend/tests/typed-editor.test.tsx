@@ -3,7 +3,7 @@ import { render } from 'solid-js/web'
 import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { NodeConfig } from '../src/visual/NodeConfig'
 import { addNode, connectNodes, createGraph, createGraphHistory, catalogPalette, updateNode } from '../src/visual/graph'
-import { nodeCatalog, type VisualCatalogSnapshot } from '../src/visual/graphV4'
+import { nodeCatalog, type VisualCatalogSnapshot } from '../src/visual/contract'
 let dispose: (() => void) | undefined
 afterEach(() => {
   dispose?.()
@@ -122,7 +122,7 @@ it('offers explicit null for nullable wire-only CLR types', () => {
   expect(config.arguments).toEqual({ result: { kind: 'literal', type: 'global::Example.Result?', value: null } })
 })
 
-import { connectData, dataOutputs } from '../src/visual/graphV4'
+import { connectData, dataOutputs } from '../src/visual/contract'
 import { createSignal } from 'solid-js'
 it('colors connected and literal input rows from their actual types rather than the first accepted union type', () => {
   const el = host()
@@ -448,7 +448,7 @@ it('preserves full branch/carry/export identifiers through native handles and ke
 })
 
 import richCatalogFixture from '../../../../tests/fixtures/visual-rich-catalog.json'
-import type { GraphV4 } from '../src/visual/graphV4'
+import type { GraphV4 } from '../src/visual/contract'
 it('preserves declared input labels when source-derived custom CLR Boolean outputs connect to unlabeled built-in nodes', () => {
   const el = host(),
     catalog = richCatalogFixture.catalog as unknown as VisualCatalogSnapshot

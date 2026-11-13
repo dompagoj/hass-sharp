@@ -2,7 +2,7 @@ import { batch, createEffect, createMemo, createSignal, onCleanup } from 'solid-
 import type { HomeAssistant } from '../types'
 import { createGraphHistory, serializeGraph, type VisualGraph } from './graph'
 import { visualApi, VisualApiError, visualError, type VisualDocument, type VisualPreview } from './api'
-import { nodeCatalog, validateGraphV4, type VisualCatalogSnapshot } from './graphV4'
+import { nodeCatalog, validateGraphV4, type VisualCatalogSnapshot } from './contract'
 import { createUuid } from './id'
 
 /** Owns graph/source pairs and their revisions. Never generates or persists source locally. */
