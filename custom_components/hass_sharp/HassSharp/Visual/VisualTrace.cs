@@ -104,7 +104,8 @@ sealed class VisualTrace
     readonly TimeProvider time;
     readonly string runId, root, startedUtc;
     readonly long origin;
-    readonly DateTimeOffset created;
+    readonly long created;
+    readonly Action<Action>? run;
     readonly byte[] trigger;
     readonly Func<string, string, string?> inputType, outputType;
     readonly ConcurrentDictionary<(string, string, bool), string?> types = new();
@@ -118,17 +119,17 @@ sealed class VisualTrace
     // Storing, all under gate: the state changed since the last store; a waiting node asked for a prompt store;
     // a writer is running; when the last document was built; the timer for a store not yet due.
     bool dirty, prompt, writing;
-    DateTimeOffset? lastStored;
+    TimeSpan? lastStored;
     ITimer? timer;
-    DateTimeOffset timerDue;
+    TimeSpan timerDue;
 
     VisualTrace(IRunTraceSink sink, InvocationContext context, string root, IEnumerable<string> nodes,
-        Func<string, string, string?> inputType, Func<string, string, string?> outputType, TimeProvider time)
+        Func<string, string, string?> inputType, Func<string, string, string?> outputType, TimeProvider time, Action<Action>? run)
     {
-        this.sink = sink; this.time = time; runId = context.RunId; this.root = root; this.inputType = inputType; this.outputType = outputType;
+        this.sink = sink; this.time = time; this.run = run; runId = context.RunId; this.root = root; this.inputType = inputType; this.outputType = outputType;
         startedUtc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture);
         origin = Stopwatch.GetTimestamp();
-        created = time.GetUtcNow();
+        created = time.GetTimestamp();
         try { (trigger, truncated) = TraceJson.Trigger(context.Payload); }
         catch (Exception error) { trigger = "{}"u8.ToArray(); truncated = true; Fail(error); }
         size = HeaderBytes + TraceJson.Length(runId) + TraceJson.Length(root) + trigger.Length;
@@ -136,14 +137,16 @@ sealed class VisualTrace
     }
 
     /// <summary>The recorder of the current run, or null when it has no sink (or another runtime already records it).</summary>
-    internal static VisualTrace? Create(string root, IEnumerable<string> nodes, Func<string, string, string?> inputType, Func<string, string, string?> outputType, TimeProvider? time = null)
+    /// <param name="time">The clock for store gaps and timers; the system clock by default.</param>
+    /// <param name="run">Runs the writer when a store is due; the thread pool by default (tests run it inline).</param>
+    internal static VisualTrace? Create(string root, IEnumerable<string> nodes, Func<string, string, string?> inputType, Func<string, string, string?> outputType, TimeProvider? time = null, Action<Action>? run = null)
     {
         if (InvocationContext.Current is not { TraceSink: { } sink } context) return null;
         try
         {
             if (!claimed.TryAdd(sink, context)) return null;
             Interlocked.Increment(ref Created);
-            return new VisualTrace(sink, context, root, nodes, inputType, outputType, time ?? TimeProvider.System);
+            return new VisualTrace(sink, context, root, nodes, inputType, outputType, time ?? TimeProvider.System, run);
         }
         catch (Exception error) { Log(context.RunId, error); return null; }
     }
@@ -311,18 +314,22 @@ sealed class VisualTrace
         {
             if (finalized) return;
             dirty = true; prompt |= immediate;
-            var now = time.GetUtcNow();
+            var now = Now();
             if (now >= Due()) { Disarm(); if (!writing) writing = start = true; }
             else Arm(now);
         }
-        if (start) ThreadPool.UnsafeQueueUserWorkItem(_ => Drain(), null);
+        if (!start) return;
+        if (run != null) run(Drain); else ThreadPool.UnsafeQueueUserWorkItem(_ => Drain(), null);
     }
 
-    // When the next store may happen (under gate).
-    DateTimeOffset Due() => lastStored is { } last ? last + (prompt ? ImmediateGap : RunTraceSink.Interval)
-        : prompt ? DateTimeOffset.MinValue : created + RunTraceSink.Interval;
+    // Monotonic: the time since the recorder was created, so a wall-clock step cannot delay a store.
+    TimeSpan Now() => time.GetElapsedTime(created);
 
-    void Arm(DateTimeOffset now)
+    // When the next store may happen (under gate).
+    TimeSpan Due() => lastStored is { } last ? last + (prompt ? ImmediateGap : RunTraceSink.Interval)
+        : prompt ? TimeSpan.Zero : RunTraceSink.Interval;
+
+    void Arm(TimeSpan now)
     {
         var due = Due();
         if (timer != null && timerDue <= due) return;
@@ -358,7 +365,7 @@ sealed class VisualTrace
                     lock (gate)
                     {
                         if (finalized || failed || !dirty) { writing = false; return; }
-                        var now = time.GetUtcNow();
+                        var now = Now();
                         if (now < Due()) { writing = false; Arm(now); return; }
                         try { Fault?.Invoke("build"); json = Build(false); }
                         catch (Exception error) { writing = false; Fail(error); return; }

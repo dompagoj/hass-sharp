@@ -95,17 +95,33 @@ and no trace.
 - `summary` has one row per node of the graph: how often it ran, how often it
   failed, and its last status.
 
-What a value records: only values that are already materialised are walked. These
-are JSON values, strings, numbers, booleans, dates, arrays, collections
-(`ICollection`, `IReadOnlyCollection`), dictionaries (`IDictionary`), entity states,
-exceptions (type and message), and the compiler-generated auto-properties of
-objects such as records. Auto-properties are read from their backing fields, so no
-getter runs. Anything else is recorded as its type name with `trunc: true`: a lazy
-sequence such as a LINQ query or iterator (never enumerated), a computed property,
-or a Python object. An object that has auto-properties and also computed ones keeps
-the auto-properties and is marked `trunc`. Tracing never runs automation code that
-could have side effects. A collection whose enumeration or an exception whose
-message throws only shortens the value.
+What a value records: tracing never runs automation code, so only values that
+are already materialised are walked:
+
+- JSON values, strings, numbers, booleans, dates and times, entity states, and
+  exceptions (type and message).
+- Arrays, and collections and dictionaries whose concrete type comes from the
+  .NET base library (such as `List<T>`, `HashSet<T>`, `Dictionary<K,V>`, queues,
+  and concurrent, immutable and frozen collections). A user-defined collection
+  type, including a subclass of a base-library collection, is not enumerated, and
+  neither is a base-library wrapper over another collection (such as
+  `ReadOnlyCollection<T>`).
+- The public fields and compiler-generated auto-properties of other objects,
+  such as records, plain classes and anonymous types. They are read from their
+  fields, so no getter runs. A computed property is left out and the object is
+  marked `trunc`. When a derived type hides a member with `new`, only the derived
+  member is recorded, and the object is marked `trunc`.
+
+A value with nothing readable is recorded as its C# type name (such as
+`global::System.Collections.ObjectModel.ReadOnlyCollection<int>`) with
+`trunc: true`. This applies to lazy sequences such as LINQ queries or iterators
+(never enumerated), user-defined collections, objects with only computed
+properties, and Python objects. Dictionary keys are strings, or are formatted by
+the base library (numbers, dates, enums). A key of any other type is written as
+its type name and position, such as `Key#0`, with `trunc`. A key that repeats
+after formatting gets its position appended. If a base-library enumerator or an
+exception's message throws, the value is shortened (the rest of the collection,
+or the message, is left out) and marked `trunc`.
 
 Caps:
 
@@ -121,29 +137,42 @@ Caps:
   marked `"trunc": true`. Only then are new events dropped.
 - The trigger payload is at most 16 KiB.
 
-Redaction: a property, dictionary key or port whose name is `password`,
-`passwd`, `secret`, `token`, `access_token`, `api_key`, `apikey`,
-`authorization`, `code` or `pin` is recorded as `"***"`. Names are matched
-without regard to case, and for a port, the name after `field:` is used, so the
-`code` field of `lock.unlock` is redacted. A redacted port's entry also has
-`redacted: true`. Inside any string, `token=<value>` becomes `token=***`, which
-covers, for example, an `entity_picture` URL. These rules apply to the trigger
+Redaction: a property, dictionary key or port is recorded as `"***"` when its
+name meets either of these conditions:
+
+- It is `password`, `passwd`, `passcode`, `secret`, `client_secret`, `token`,
+  `access_token`, `api_key`, `apikey`, `api-key`, `authorization`, `code` or
+  `pin`.
+- It ends in `_token`, `_secret`, `_password`, `_passcode` or `_key`, as in
+  `refresh_token`.
+
+Names are matched without regard to case. The short names match only exactly, so
+`zip_code` and `pincode` are kept. For a port, the name after `field:` is used,
+so the `code` field of `lock.unlock` is redacted. A redacted port's entry also
+has `redacted: true`. Inside any string, `token=<value>` becomes `token=***`,
+which covers, for example, an `entity_picture` URL. A redaction alone does not
+mark a value `trunc` or the trace `truncated`. These rules apply to the trigger
 payload, entity state attributes and nested objects alike, and the real value is
 never serialised. Redaction is by name only. It is a safeguard against the common
 cases, not a security boundary: a secret stored under another name, or inside an
 opaque string, is recorded as it is.
 
 Storing: nodes only mark the trace as changed, and a single writer builds the
-latest state and stores it, so stored documents never go backwards. While a run is
-going, the trace is stored at most once per second. When a node starts waiting
+latest state and stores it, so stored documents never go backwards. While a run
+is going, the trace is stored at most once per second. When a node starts waiting
 (delay, wait until, service calls, and asynchronous custom or library nodes), it
-is stored as soon as 500 ms have passed since the last store, or at once if nothing
-has been stored yet. A running run's trace can therefore be read while it waits,
-and many short waits cost at most two stores a second. The run's end stores the
-complete document, and nothing is stored after it. Recording never fails a run: a
-recorder error is logged once and stops recording, events already listed still
-get their final status, and the stored trace stays valid and is marked
-`truncated`.
+is stored as soon as 500 ms have passed since the last store, or at once if
+nothing has been stored yet. A running run's trace can therefore be read while it
+waits, and many short waits cost at most two stores a second. The gaps are
+measured on a monotonic clock, so a change to the system time does not delay
+them. The run's end stores the complete document, and nothing is stored after it.
+
+Recording never fails a run. A recorder error is logged once and stops
+recording. Events already listed still get their final status, and the stored
+trace stays valid and is marked `truncated`. If the final document itself cannot
+be built, a minimal document is stored instead. It is marked `complete` and
+`truncated`, its `dropped` counts every node start, and its trigger, events and
+summary are empty.
 
 Retention: traces are kept for the newest 1,000 runs that have one; older runs
 keep their record with `hasTrace` false. A pruned run's trace is deleted with it,

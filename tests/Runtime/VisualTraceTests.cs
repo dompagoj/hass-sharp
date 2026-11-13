@@ -256,16 +256,38 @@ static class VisualTraceTests
                 Check(selectedCut && pulled == 0 && JsonNode.Parse(selected) is JsonValue, "LINQ query enumerated: pulled " + pulled);
                 var effect = new Effect();
                 var (effectJson, effectCut) = TraceJson.Value(effect, TraceJson.MaxValueBytes);
-                Check(effectCut && effect.Calls == 0 && Same(JsonNode.Parse(effectJson), """{"Stored":2}"""), "getter with a side effect: " + effect.Calls + ", " + System.Text.Encoding.UTF8.GetString(effectJson));
-                var (anonymous, anonymousCut) = TraceJson.Value(new { A = 1 }, TraceJson.MaxValueBytes);
-                Check(anonymousCut && JsonNode.Parse(anonymous) is JsonValue, "an anonymous object has no auto-properties: " + System.Text.Encoding.UTF8.GetString(anonymous));
-                var (materialised, materialisedCut) = TraceJson.Value(new Dictionary<string, object?> { ["list"] = new List<int> { 1, 2 }, ["set"] = new HashSet<string> { "a" }, ["array"] = new[] { 3 }, [DayOfWeek.Monday.ToString()] = new Dictionary<DayOfWeek, int> { [DayOfWeek.Friday] = 5 }, ["keys"] = new Dictionary<Key, int> { [new Key()] = 1 } }, TraceJson.MaxValueBytes);
-                Check(!materialisedCut && Same(JsonNode.Parse(materialised), """{"list":[1,2],"set":["a"],"array":[3],"Monday":{"Friday":5},"keys":{"Key":1}}"""), "materialised collections: " + System.Text.Encoding.UTF8.GetString(materialised));
-                Check(Key.Formatted == 0, "a user key's formatting ran");
+                Check(effectCut && effect.Calls == 0 && Same(JsonNode.Parse(effectJson), """{"Stored":2,"Calls":0}"""), "getter with a side effect: " + effect.Calls + ", " + System.Text.Encoding.UTF8.GetString(effectJson));
+                // Public fields and anonymous types are read through their fields; a hidden (new) member appears once.
+                var (fields, fieldsCut) = TraceJson.Value(new Fields(), TraceJson.MaxValueBytes);
+                Check(!fieldsCut && Same(JsonNode.Parse(fields), """{"A":1,"B":"x"}"""), "public fields: " + System.Text.Encoding.UTF8.GetString(fields));
+                var (anonymous, anonymousCut) = TraceJson.Value(new { A = 1, B = "x" }, TraceJson.MaxValueBytes);
+                Check(!anonymousCut && Same(JsonNode.Parse(anonymous), """{"A":1,"B":"x"}"""), "anonymous object: " + System.Text.Encoding.UTF8.GetString(anonymous));
+                var (hidden, hiddenCut) = TraceJson.Value(new Derived(), TraceJson.MaxValueBytes);
+                Check(hiddenCut && Same(JsonNode.Parse(hidden), """{"X":"d"}"""), "hidden property: " + System.Text.Encoding.UTF8.GetString(hidden));
+                var (materialised, materialisedCut) = TraceJson.Value(new Dictionary<string, object?> { ["list"] = new List<int> { 1, 2 }, ["set"] = new HashSet<string> { "a" }, ["array"] = new[] { 3 }, [DayOfWeek.Monday.ToString()] = new Dictionary<DayOfWeek, int> { [DayOfWeek.Friday] = 5 }, ["queue"] = new Queue<double>([1.5]), ["sorted"] = new SortedDictionary<int, string> { [2] = "b" }, ["readings"] = new List<Reading> { new("hall", 1) } }, TraceJson.MaxValueBytes);
+                Check(!materialisedCut && Same(JsonNode.Parse(materialised), """{"list":[1,2],"set":["a"],"array":[3],"Monday":{"Friday":5},"queue":[1.5],"sorted":{"2":"b"},"readings":[{"Name":"hall","Value":1}]}"""), "materialised collections: " + System.Text.Encoding.UTF8.GetString(materialised));
+                // Keys the base library cannot format get their type and position, so they stay distinct; 1 and "1" too.
+                var (keys, keysCut) = TraceJson.Value(new Dictionary<Key, int> { [new Key()] = 1, [new Key()] = 2 }, TraceJson.MaxValueBytes);
+                Check(keysCut && Key.Formatted == 0 && Same(JsonNode.Parse(keys), """{"Key#0":1,"Key#1":2}"""), "user keys: " + System.Text.Encoding.UTF8.GetString(keys));
+                var (alike, alikeCut) = TraceJson.Value(new Dictionary<object, int> { [1] = 1, ["1"] = 2 }, TraceJson.MaxValueBytes);
+                Check(alikeCut && Same(JsonNode.Parse(alike), """{"1":1,"1#1":2}"""), "keys that format alike: " + System.Text.Encoding.UTF8.GetString(alike));
+
+                // A user-defined collection is never enumerated, nor is a base-library wrapper over one.
+                var list = new UserList();
+                foreach (var user in new object[] { list, new UserMap { ["a"] = 1 }, new System.Collections.ObjectModel.ReadOnlyCollection<int>(list) })
+                {
+                    var (opaque, opaqueCut) = TraceJson.Value(user, TraceJson.MaxValueBytes);
+                    Check(opaqueCut && JsonNode.Parse(opaque)!.GetValue<string>() == TraceJson.Kind(user) && list.Calls == 0, $"user collection {user.GetType().Name}: {list.Calls} calls, {System.Text.Encoding.UTF8.GetString(opaque)}");
+                }
+                // Readable C# type names, never assembly-qualified.
+                Check(TraceJson.Kind(list) == "global::VisualTraceTests.UserList" && TraceJson.Kind(new List<int>()) == "global::System.Collections.Generic.List<int>"
+                    && TraceJson.Kind(new Dictionary<string, Reading?>()) == "global::System.Collections.Generic.Dictionary<string, global::VisualTraceTests.Reading>"
+                    && TraceJson.Kind(new int?[0, 0]) == "int?[,]" && TraceJson.Kind(new KeyValuePair<int, string>[1]) == "global::System.Collections.Generic.KeyValuePair<int, string>[]",
+                    "type names: " + TraceJson.Kind(new Dictionary<string, Reading?>()) + " " + TraceJson.Kind(new int?[0, 0]));
+                var linq = S(JsonNode.Parse(selected));
+                Check(!linq.Contains("Version=") && !linq.Contains('`') && !linq.Contains("[["), "LINQ type name: " + linq);
 
                 // Failures inside the walk shorten the value instead of failing.
-                var (broken, brokenCut) = TraceJson.Value(new BrokenList(), TraceJson.MaxValueBytes);
-                Check(brokenCut && Same(JsonNode.Parse(broken), "null"), "a throwing GetEnumerator: " + System.Text.Encoding.UTF8.GetString(broken));
                 var (message, messageCut) = TraceJson.Value(new BrokenMessage(), TraceJson.MaxValueBytes);
                 Check(messageCut && Same(JsonNode.Parse(message), """{"type":"BrokenMessage","message":""}"""), "a throwing Exception.Message: " + System.Text.Encoding.UTF8.GetString(message));
                 foreach (var odd in new JsonNode?[] { JsonValue.Create(double.NaN), JsonValue.Create(double.PositiveInfinity), JsonValue.Create(12.5m), JsonValue.Create(7L), JsonValue.Create(DateTime.UnixEpoch), new JsonObject { ["nan"] = double.NaN } })
@@ -505,6 +527,8 @@ static class VisualTraceTests
                     Shape(doc);
                     var text = doc.ToJsonString();
                     Check(!text.Contains("s3cr3t") && !text.Contains("4321"), "a secret reached the trace: " + text);
+                    // A redaction hides nothing else, so it is not a cut: no value is trunc and the trace is not truncated.
+                    Check(!doc["truncated"]!.GetValue<bool>() && !text.Contains("\"trunc\""), "redaction marked the trace cut: " + text);
                     Check(sent.Count == 1 && JsonNode.Parse(sent[0])!["code"]!.GetValue<string>() == "4321", "the service did not get the real code: " + string.Join(",", sent));
                     var code = One(doc, "s")["inputs"]!["field:code"]!;
                     Check(S(code["v"]) == TraceJson.Redacted && code["redacted"]!.GetValue<bool>() && S(code["type"]) == "string", "field:code port: " + code.ToJsonString());
@@ -515,56 +539,71 @@ static class VisualTraceTests
                     Check(Same(o["v"], """{"user":"me","auth":{"Password":"***","pin":"***","deeper":[{"api_key":"***"}]},"note":"see token=*** here","Token":"***"}""") && o["redacted"] == null, "nested secrets: " + o.ToJsonString());
                     var (clr, _) = TraceJson.Value(new Credentials("me", "pw", new Credentials("you", "pw2")), TraceJson.MaxValueBytes);
                     Check(Same(JsonNode.Parse(clr), """{"User":"me","Password":"***","Inner":{"User":"you","Password":"***","Inner":null}}"""), "CLR secrets: " + System.Text.Encoding.UTF8.GetString(clr));
-                    var (map, _) = TraceJson.Value(new Dictionary<string, object> { ["Authorization"] = "Bearer x", ["PASSWD"] = 1, ["codes"] = 2 }, TraceJson.MaxValueBytes);
-                    Check(Same(JsonNode.Parse(map), """{"Authorization":"***","PASSWD":"***","codes":2}"""), "dictionary keys: " + System.Text.Encoding.UTF8.GetString(map));
+                    var names = new Dictionary<string, object>
+                    {
+                        ["Authorization"] = "Bearer x", ["PASSWD"] = 1, ["passcode"] = 2, ["api-key"] = 3, ["Client_Secret"] = 4, ["refresh_token"] = 5, ["Webhook_Secret"] = 6,
+                        ["wifi_password"] = 7, ["door_passcode"] = 8, ["private_key"] = 9,
+                        ["codes"] = 10, ["zip_code"] = 11, ["pincode"] = 12, ["tokens"] = 13, ["keyboard"] = 14, ["secretary"] = 15,
+                    };
+                    var (map, mapCut) = TraceJson.Value(names, TraceJson.MaxValueBytes);
+                    Check(!mapCut && Same(JsonNode.Parse(map), """{"Authorization":"***","PASSWD":"***","passcode":"***","api-key":"***","Client_Secret":"***","refresh_token":"***","Webhook_Secret":"***","wifi_password":"***","door_passcode":"***","private_key":"***","codes":10,"zip_code":11,"pincode":12,"tokens":13,"keyboard":14,"secretary":15}"""), "dictionary keys: " + System.Text.Encoding.UTF8.GetString(map));
+                    Check(TraceJson.Secret("field:refresh_token") && TraceJson.Secret("field:PIN") && !TraceJson.Secret("field:zip_code") && !TraceJson.Secret("field:pincode"), "port names");
+                    // token= redaction alone is not a cut, but a cut string still is.
+                    var (url, urlCut) = TraceJson.Value("/api/camera_proxy/camera.door?token=" + new string('a', 64), TraceJson.MaxValueBytes);
+                    var (longUrl, longCut) = TraceJson.Value("?token=" + new string('a', 64) + "&x=" + new string('b', 2000), TraceJson.MaxValueBytes);
+                    Check(!urlCut && S(JsonNode.Parse(url)) == "/api/camera_proxy/camera.door?token=***" && longCut && S(JsonNode.Parse(longUrl)).Length == TraceJson.MaxChars && S(JsonNode.Parse(longUrl)).StartsWith("?token=***&x=bbb"), "token= cut flag: " + S(JsonNode.Parse(url)));
                 }
                 finally { PyInterop.CallService = previousCall; }
             });
 
-            await Test("waits store at most once per 500 ms and a long wait is still stored promptly", async () =>
+            await Test("waits store at most once per 500 ms and a long wait is still stored promptly", () =>
             {
-                var time = new ManualTime();
+                // A manual clock and the writer run inline, so every store happens inside the call that makes it due.
+                var time = new Clock();
                 var sink = new Sink();
                 var prior = InvocationContext.Current;
                 InvocationContext.Current = new InvocationContext("run-manual", InvocationCause.Manual, null, TriggerPayload.Manual()) { TraceSink = sink };
                 VisualTrace trace;
-                try { trace = VisualTrace.Create("t", ["w", "long"], (_, _) => null, (_, _) => null, time)!; }
+                try { trace = VisualTrace.Create("t", ["w", "long"], (_, _) => null, (_, _) => null, time, run => run())!; }
                 finally { InvocationContext.Current = prior; }
                 // Nothing stored yet: the first wait is stored at once.
                 var first = trace.Start("", "w")!; trace.Waiting();
-                await Until(() => sink.Writes.Length == 1, "the first wait is stored at once");
-                Check(sink.Writes[0].Immediate && S(One(sink.Writes[0].Doc, "w")["status"]) == "running", "first wait: " + sink.Writes[0].Doc.ToJsonString());
+                Check(sink.Writes.Length == 1 && sink.Writes[0].Immediate && S(One(sink.Writes[0].Doc, "w")["status"]) == "running", "first wait: " + sink.Writes.Length);
                 trace.End(first, "ok", "next", null);
                 // A long wait 10 ms after that store is stored when the 500 ms gap ends.
                 time.Advance(TimeSpan.FromMilliseconds(10));
                 var wait = trace.Start("", "long")!; trace.Waiting();
-                await Task.Delay(100);
                 Check(sink.Writes.Length == 1, "stored inside the 500 ms gap: " + sink.Writes.Length);
                 time.Advance(TimeSpan.FromMilliseconds(489));
-                await Task.Delay(50);
                 Check(sink.Writes.Length == 1, "stored before the 500 ms gap ended");
                 time.Advance(TimeSpan.FromMilliseconds(1));
-                await Until(() => sink.Writes.Length == 2, "the long wait is stored when the gap ends");
+                Check(sink.Writes.Length == 2, "the long wait is not stored when the gap ends");
                 var shown = sink.Writes[1];
                 Check(shown.Immediate && S(One(shown.Doc, "long")["status"]) == "running" && S(One(shown.Doc, "w")["status"]) == "ok", "long wait: " + shown.Doc.ToJsonString());
                 time.Advance(TimeSpan.FromSeconds(5));
                 Check(sink.Writes.Length == 2, "stored without a change");
+                // The gaps are measured on the monotonic clock: stepping the wall clock back an hour delays nothing.
                 trace.End(wait, "ok", "next", null);
-                // 1,000 waits of 10 ms each: at most one store per 500 ms over the 10 s, not one per wait. (The loop
-                // outruns the thread pool, so fewer stores than that are fine; what matters is the bound.)
+                Check(sink.Writes.Length == 3, "an end more than a second after the last store is stored at once");
+                time.Wall(TimeSpan.FromHours(-1));
+                var stepped = trace.Start("", "w")!; trace.Waiting();
+                time.Advance(TimeSpan.FromMilliseconds(499));
+                Check(sink.Writes.Length == 3, "stored before the gap ended after a clock step");
+                time.Advance(TimeSpan.FromMilliseconds(1));
+                Check(sink.Writes.Length == 4 && S(Of(sink.Writes[3].Doc, "w")[^1]["status"]) == "running", "a wall-clock step back delayed the store");
+                trace.End(stepped, "ok", "next", null);
+                // 1,000 waits of 10 ms each over 10 s: one store per 500 ms, not one per wait.
+                time.Advance(TimeSpan.FromSeconds(2));
                 var before = sink.Writes.Length;
-                for (var i = 0; i < 1000; i++)
-                {
-                    var ev = trace.Start("", "w")!; trace.Waiting(); time.Advance(TimeSpan.FromMilliseconds(10)); trace.End(ev, "ok", "next", null);
-                    if (i % 10 == 0) await Task.Delay(1);
-                }
+                for (var i = 0; i < 1000; i++) { var ev = trace.Start("", "w")!; trace.Waiting(); time.Advance(TimeSpan.FromMilliseconds(10)); trace.End(ev, "ok", "next", null); }
+                var during = sink.Writes.Length - before;
+                Check(during == 10_000 / 500, "stores during 1,000 short waits: " + during);
                 trace.Complete();
                 var doc = sink.Final;
-                var during = sink.Writes.Length - 1 - before;
-                Check(during is >= 1 and <= 10_000 / 500 + 2, "stores during 1,000 short waits: " + during);
-                Check(Events(doc).Count == 1002 && doc["complete"]!.GetValue<bool>() && time.Pending == 0, $"final document: {Events(doc).Count} events, {time.Pending} timers");
-                trace.Waiting(); time.Advance(TimeSpan.FromSeconds(2)); await Task.Delay(50);
+                Check(Events(doc).Count == 1003 && doc["complete"]!.GetValue<bool>() && time.Pending == 0, $"final document: {Events(doc).Count} events, {time.Pending} timers");
+                trace.Waiting(); time.Advance(TimeSpan.FromSeconds(2));
                 Check(sink.Writes.Length == before + during + 1, "a store after the final document");
+                return Task.CompletedTask;
             });
 
             await Test("end to end through the manager: saved graph, run, run_trace", async () =>
@@ -614,13 +653,64 @@ static class VisualTraceTests
         public static int Formatted;
         public string ToString(string? format, IFormatProvider? provider) { Formatted++; return "formatted"; }
     }
-    public sealed class BrokenList : System.Collections.ICollection
+    /// <summary>A user collection whose enumeration has a side effect: tracing must never call it.</summary>
+    public sealed class UserList : IList<int>, System.Collections.ICollection
     {
-        public int Count => 1;
+        public int Calls;
+        IEnumerable<int> Items() { Calls++; yield return 1; }
+        public IEnumerator<int> GetEnumerator() => Items().GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+        public int this[int index] { get { Calls++; return 1; } set { } }
+        public int Count { get { Calls++; return 1; } }
+        public bool IsReadOnly => true;
         public bool IsSynchronized => false;
         public object SyncRoot => this;
-        public void CopyTo(Array array, int index) { }
-        public System.Collections.IEnumerator GetEnumerator() => throw new InvalidOperationException("enumerator");
+        public void Add(int item) { }
+        public void Clear() { }
+        public bool Contains(int item) { Calls++; return true; }
+        public void CopyTo(int[] array, int index) { Calls++; }
+        public void CopyTo(Array array, int index) { Calls++; }
+        public int IndexOf(int item) { Calls++; return 0; }
+        public void Insert(int index, int item) { }
+        public bool Remove(int item) => false;
+        public void RemoveAt(int index) { }
     }
+    public sealed class UserMap : Dictionary<string, int>;
+
+    /// <summary>A manual clock whose monotonic timestamp and wall clock move separately; timers fire inside <see cref="Advance"/>.</summary>
+    sealed class Clock : TimeProvider
+    {
+        readonly Lock gate = new();
+        readonly List<(TimerCallback Callback, object? State, TimeSpan Due, Timer Handle)> timers = [];
+        TimeSpan elapsed;
+        DateTimeOffset wall = new(2026, 11, 13, 0, 0, 0, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() { lock (gate) return wall; }
+        public override long GetTimestamp() { lock (gate) return elapsed.Ticks; }
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public int Pending { get { lock (gate) return timers.Count; } }
+        /// <summary>Steps only the wall clock, as an NTP correction would.</summary>
+        public void Wall(TimeSpan by) { lock (gate) wall += by; }
+        public void Advance(TimeSpan by)
+        {
+            (TimerCallback Callback, object? State, TimeSpan Due, Timer Handle)[] due;
+            lock (gate) { elapsed += by; wall += by; due = timers.Where(t => t.Due <= elapsed).ToArray(); timers.RemoveAll(t => t.Due <= elapsed); }
+            foreach (var timer in due) timer.Callback(timer.State);
+        }
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var handle = new Timer(this);
+            lock (gate) timers.Add((callback, state, elapsed + dueTime, handle));
+            return handle;
+        }
+        sealed class Timer(Clock owner) : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
+            public void Dispose() { lock (owner.gate) owner.timers.RemoveAll(t => t.Handle == this); }
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
+    }
+    public sealed class Fields { public int A = 1; public string B = "x"; }
+    public class Base { public int X { get; set; } = 1; }
+    public sealed class Derived : Base { public new string X { get; set; } = "d"; }
     public sealed class BrokenMessage : Exception { public override string Message => throw new InvalidOperationException("message"); }
 }

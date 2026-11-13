@@ -17,27 +17,44 @@ namespace HassSharp;
 /// more of a value than fits, so a huge value costs no more than its first few kilobytes.
 /// </summary>
 /// <remarks>
-/// Tracing must not change what an automation does, so the writer walks only materialised values: JSON types,
-/// arrays, collections, dictionaries and the compiler-generated auto-properties of objects (read from their
-/// backing fields, so no getter runs). A lazy sequence or anything else is written as its type name, marked
-/// <c>trunc</c>. Properties, dictionary keys and ports with a secret-looking name are written as <c>"***"</c>, and
-/// <c>token=</c> inside a string loses its value. The redaction is by name only.
+/// Tracing must not change what an automation does, so the writer walks only materialised values and runs no
+/// automation code: JSON types, arrays, collections and dictionaries whose concrete type comes from the base
+/// library, and the public fields and compiler-generated auto-properties of objects (read from their fields, so
+/// no getter runs). A user-defined collection, a lazy sequence or anything else is written as its type name,
+/// marked <c>trunc</c>. Properties, dictionary keys and ports with a secret-looking name are written as
+/// <c>"***"</c>, and <c>token=</c> inside a string loses its value. The redaction is by name only.
 /// </remarks>
 static class TraceJson
 {
     internal const int MaxDepth = 6, MaxItems = 50, MaxChars = 1000, MaxValueBytes = 4096;
     internal const string Redacted = "***";
     internal static readonly JsonWriterOptions Options = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
-    static readonly HashSet<string> secrets = new(["password", "passwd", "secret", "token", "access_token", "api_key", "apikey", "authorization", "code", "pin"], StringComparer.OrdinalIgnoreCase);
+    static readonly HashSet<string> secrets = new(["password", "passwd", "passcode", "secret", "client_secret", "token", "access_token", "api_key", "apikey", "api-key", "authorization", "code", "pin"], StringComparer.OrdinalIgnoreCase);
+    static readonly string[] secretSuffixes = ["_token", "_secret", "_password", "_passcode", "_key"];
     static readonly Regex tokenQuery = new("(token)=[^&\\s\"'#<>]*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     // Weakly keyed: library and script types live in collectible assemblies.
     static readonly ConditionalWeakTable<Type, Shape> shapes = new();
+    // The public key tokens of the .NET base library assemblies.
+    static readonly HashSet<string> frameworkKeys = ["7cec85d7bea7798e", "b03f5f7f11d50a3a", "cc7b13ffcd2ddd51"];
+    static readonly HashSet<string> collectionNamespaces = ["System.Collections", "System.Collections.Generic", "System.Collections.Concurrent", "System.Collections.Immutable", "System.Collections.Frozen", "System.Collections.Specialized"];
 
-    /// <summary>The auto-properties of a type, by backing field, and whether it has other public properties.</summary>
-    sealed record Shape((string Name, FieldInfo Field)[] Members, bool Partial);
+    enum Walk { Opaque, Items, Map, Members }
+
+    /// <summary>
+    /// How values of a type are written: not at all (its type name), as items, as a map, or as its readable members
+    /// (public fields and auto-properties by field); <c>Partial</c> when it also has public properties that are not read.
+    /// </summary>
+    sealed record Shape(Walk Walk, (string Name, FieldInfo Field)[] Members, bool Partial);
 
     /// <summary>A property, dictionary key or port name whose value is never recorded.</summary>
-    internal static bool Secret(string name) => secrets.Contains(name.StartsWith("field:", StringComparison.Ordinal) ? name[6..] : name);
+    internal static bool Secret(string name)
+    {
+        if (name.StartsWith("field:", StringComparison.Ordinal)) name = name[6..];
+        if (secrets.Contains(name)) return true;
+        foreach (var suffix in secretSuffixes)
+            if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
 
     /// <summary>An upper bound of the UTF-8 bytes one UTF-16 unit takes inside a JSON string.</summary>
     static int Bytes(char c) => c is >= ' ' and < (char)0x7f and not ('"' or '\\' or '<' or '>' or '&' or '\'' or '+' or '`') ? 1 : 6;
@@ -100,7 +117,29 @@ static class TraceJson
         _ => TypeName(value.GetType()),
     };
 
-    static string TypeName(Type type) => "global::" + (type.FullName ?? type.Name).Replace('+', '.');
+    static readonly Dictionary<Type, string> aliases = new()
+    {
+        [typeof(bool)] = "bool", [typeof(byte)] = "byte", [typeof(sbyte)] = "sbyte", [typeof(char)] = "char", [typeof(decimal)] = "decimal",
+        [typeof(double)] = "double", [typeof(float)] = "float", [typeof(int)] = "int", [typeof(uint)] = "uint", [typeof(long)] = "long",
+        [typeof(ulong)] = "ulong", [typeof(short)] = "short", [typeof(ushort)] = "ushort", [typeof(object)] = "object", [typeof(string)] = "string",
+    };
+
+    /// <summary>A C#-style name: <c>global::System.Collections.Generic.List&lt;int&gt;</c>, never assembly-qualified.</summary>
+    internal static string TypeName(Type type)
+    {
+        if (aliases.TryGetValue(type, out var alias)) return alias;
+        if (type.IsArray) return TypeName(type.GetElementType()!) + "[" + new string(',', type.GetArrayRank() - 1) + "]";
+        if (type.IsGenericParameter) return type.Name;
+        if (Nullable.GetUnderlyingType(type) is { } inner) return TypeName(inner) + "?";
+        var name = type.Name;
+        var tick = name.IndexOf('`');
+        if (tick >= 0) name = name[..tick];
+        if (type.IsGenericType) name += "<" + string.Join(", ", type.GetGenericArguments().Select(TypeName)) + ">";
+        var owner = type.DeclaringType is { } declaring && !type.IsGenericParameter
+            ? (declaring.IsGenericTypeDefinition ? "global::" + (declaring.Namespace is { } ns0 ? ns0 + "." : "") + declaring.Name.Split('`')[0] : TypeName(declaring))
+            : "global::" + type.Namespace;
+        return owner == "global::" ? owner + name : owner + "." + name;
+    }
 
     static bool Number(object value) => !value.GetType().IsEnum && Type.GetTypeCode(value.GetType()) is >= TypeCode.SByte and <= TypeCode.Decimal;
 
@@ -147,19 +186,52 @@ static class TraceJson
         return (buffer.WrittenSpan.ToArray(), cut);
     }
 
+    static readonly Shape opaque = new(Walk.Opaque, [], true);
+
     static Shape ShapeOf(Type type) => shapes.GetValue(type, t =>
     {
-        var members = new List<(string, FieldInfo)>(); var partial = false;
-        foreach (var property in t.GetProperties(BindingFlags.Instance | BindingFlags.Public))
+        // Python.NET objects are enumerable but must not be touched without the GIL.
+        if (t.Namespace?.StartsWith("Python", StringComparison.Ordinal) == true) return opaque;
+        if (t.IsArray) return new(Walk.Items, [], false);
+        var framework = Framework(t.Assembly);
+        // Only the base library's own collections are known to hold their items and to run no automation code
+        // while enumerated. Wrappers over another collection (System.Collections.ObjectModel) are not among them.
+        if (framework && t.Namespace is { } ns && collectionNamespaces.Contains(ns))
+        {
+            if (typeof(IDictionary).IsAssignableFrom(t)) return new(Walk.Map, [], false);
+            if (typeof(ICollection).IsAssignableFrom(t) || t.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() is var d && (d == typeof(ICollection<>) || d == typeof(IReadOnlyCollection<>))))
+                return new(Walk.Items, [], false);
+        }
+        if (typeof(IEnumerable).IsAssignableFrom(t) || framework || t.Namespace?.StartsWith("System", StringComparison.Ordinal) == true || t.Namespace?.StartsWith("Microsoft", StringComparison.Ordinal) == true)
+            return opaque;
+        var members = new List<(string, FieldInfo)>(); var names = new HashSet<string>(StringComparer.Ordinal); var partial = false;
+        void Add(string name, FieldInfo field) { if (names.Add(name)) members.Add((name, field)); else partial = true; }
+        // Most derived first, so a hiding (new) member wins and the hidden one only marks the value partial.
+        foreach (var property in t.GetProperties(BindingFlags.Instance | BindingFlags.Public).OrderBy(p => Distance(t, p.DeclaringType)))
         {
             if (!property.CanRead || property.GetMethod?.IsPublic != true || property.GetIndexParameters().Length > 0) continue;
-            // An auto-property's value lives in its compiler-generated backing field.
-            var field = FieldIn(t, $"<{property.Name}>k__BackingField");
-            if (field != null && field.IsDefined(typeof(CompilerGeneratedAttribute))) members.Add((property.Name, field));
+            // An auto-property's value lives in its compiler-generated backing field; an anonymous type's in <Name>i__Field.
+            var field = FieldIn(property.DeclaringType, $"<{property.Name}>k__BackingField") ?? FieldIn(property.DeclaringType, $"<{property.Name}>i__Field");
+            if (field != null && (field.IsDefined(typeof(CompilerGeneratedAttribute)) || t.IsDefined(typeof(CompilerGeneratedAttribute)))) Add(property.Name, field);
             else partial = true;
         }
-        return new([.. members], partial);
+        foreach (var field in t.GetFields(BindingFlags.Instance | BindingFlags.Public).OrderBy(f => Distance(t, f.DeclaringType))) Add(field.Name, field);
+        return members.Count == 0 && partial ? opaque : new(Walk.Members, [.. members], partial);
     });
+
+    static int Distance(Type type, Type? declaring)
+    {
+        var distance = 0;
+        for (var current = type; current != null && current != declaring; current = current.BaseType) distance++;
+        return distance;
+    }
+
+    static bool Framework(Assembly assembly)
+    {
+        if (assembly == typeof(object).Assembly) return true;
+        if (assembly.IsDynamic || assembly.GetName() is not { Name: { } name } identity || !name.StartsWith("System", StringComparison.Ordinal)) return false;
+        return identity.GetPublicKeyToken() is { Length: 8 } token && frameworkKeys.Contains(Convert.ToHexStringLower(token));
+    }
 
     static FieldInfo? FieldIn(Type? type, string name)
     {
@@ -214,9 +286,9 @@ static class TraceJson
                 case Guid guid: String(guid.ToString()); return;
             }
             var type = value.GetType();
-            // Python.NET containers are enumerable but must not be touched without the GIL.
-            if (type.Namespace?.StartsWith("Python", StringComparison.Ordinal) == true) { Opaque(type); return; }
-            if (depth >= MaxDepth && IsContainer(value)) { cut = true; w.WriteNullValue(); return; }
+            var shape = ShapeOf(type);
+            var special = value is EntityStateSnapshot or Exception;
+            if (depth >= MaxDepth && (special || shape.Walk != Walk.Opaque)) { cut = true; w.WriteNullValue(); return; }
             switch (value)
             {
                 case EntityStateSnapshot entity:
@@ -226,30 +298,26 @@ static class TraceJson
                     string message;
                     try { message = error.Message; } catch { message = ""; cut = true; }
                     Object(Pairs(("type", type.Name), ("message", message)), depth); return;
-                case IDictionary map: Guarded(map.GetEnumerator, items => Object(Entries(items), depth)); return;
-                case System.Array or ICollection: Guarded(((IEnumerable)value).GetEnumerator, items => Array(items, depth)); return;
             }
-            if (Materialised(type)) { Guarded(((IEnumerable)value).GetEnumerator, items => Array(items, depth)); return; }
-            if (value is IEnumerable || type.Assembly == typeof(object).Assembly || type.Namespace?.StartsWith("System", StringComparison.Ordinal) == true || type.Namespace?.StartsWith("Microsoft", StringComparison.Ordinal) == true)
-            { Opaque(type); return; }
-            var shape = ShapeOf(type);
-            if (shape.Members.Length == 0 && shape.Partial) { Opaque(type); return; }
-            if (shape.Partial) cut = true;
-            Object(Members(value, shape), depth);
+            switch (shape.Walk)
+            {
+                case Walk.Map: Guarded(((IDictionary)value).GetEnumerator, items => Object(Entries(items), depth)); return;
+                case Walk.Items: Guarded(((IEnumerable)value).GetEnumerator, items => Array(items, depth)); return;
+                case Walk.Members: if (shape.Partial) cut = true; Object(Members(value, shape), depth); return;
+                default: Opaque(type); return;
+            }
         }
-
-        static bool IsContainer(object value) => value is JsonObject or JsonArray or EntityStateSnapshot or Exception or IEnumerable
-            || value is JsonElement { ValueKind: JsonValueKind.Object or JsonValueKind.Array }
-            || value.GetType() is { IsPrimitive: false, IsEnum: false } t && t.Namespace?.StartsWith("System", StringComparison.Ordinal) != true;
-
-        // A generic ICollection<T> or IReadOnlyCollection<T> holds its items; any other sequence may be lazy.
-        static bool Materialised(Type type) => type.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() is var d && (d == typeof(ICollection<>) || d == typeof(IReadOnlyCollection<>)));
 
         void Guarded<T>(Func<T> open, Action<T> write)
         {
             T items;
             try { items = open(); } catch { cut = true; w.WriteNullValue(); return; }
             write(items);
+        }
+
+        void Dispose(object? items)
+        {
+            try { (items as IDisposable)?.Dispose(); } catch { cut = true; }
         }
 
         void Double(double d)
@@ -263,11 +331,13 @@ static class TraceJson
         void String(string text, bool longer = false)
         {
             if (!Fits(2)) { w.WriteNullValue(); return; }
-            var window = text.Length > 2 * MaxChars ? text[..(2 * MaxChars)] : text;
+            // Cut means something other than a redaction is missing: text past the window, or past a cap.
+            var over = longer || text.Length > 2 * MaxChars;
+            var window = over ? text[..Math.Min(text.Length, 2 * MaxChars)] : text;
             if (window.Contains("token=", StringComparison.OrdinalIgnoreCase)) window = tokenQuery.Replace(window, "$1=" + Redacted);
             var body = Free - 1 - Least - 2;
             var result = Cut(window, MaxChars, body);
-            if (longer || result.Length < text.Length)
+            if (over || result.Length < window.Length)
             {
                 cut = true;
                 // Cut by bytes rather than the character cap: nothing else fits either.
@@ -350,35 +420,46 @@ static class TraceJson
 
         void Object(IEnumerator<KeyValuePair<string, object?>> items, int depth)
         {
-            using var _ = items;
             w.WriteStartObject(); open++;
-            for (var count = 0; ; count++)
+            HashSet<string>? names = null;
+            try
             {
-                if (!Next(items)) break;
-                if (count == MaxItems) { cut = true; break; }
-                var key = items.Current.Key;
-                var name = Cut(key, MaxChars, long.MaxValue);
-                if (name.Length < key.Length) cut = true;
-                if (!Fits(Length(name) + 1)) break;
-                w.WritePropertyName(name);
-                if (Secret(key)) String(Redacted); else Value(items.Current.Value, depth + 1);
-                if (full) break;
+                for (var count = 0; ; count++)
+                {
+                    if (!Next(items)) break;
+                    if (count == MaxItems) { cut = true; break; }
+                    var key = items.Current.Key;
+                    var name = Cut(key, MaxChars, long.MaxValue);
+                    if (name.Length < key.Length) cut = true;
+                    // Distinct keys can format alike (1 and "1", or a key cut short): later ones get their position.
+                    if (!(names ??= new(StringComparer.Ordinal)).Add(name)) { name = Cut(name, MaxChars - 8, long.MaxValue) + "#" + count; names.Add(name); cut = true; }
+                    if (!Fits(Length(name) + 1)) break;
+                    w.WritePropertyName(name);
+                    if (Secret(key)) String(Redacted); else Value(items.Current.Value, depth + 1);
+                    if (full) break;
+                }
             }
+            finally { Dispose(items); }
             open--; w.WriteEndObject();
         }
 
         void Array(IEnumerator items, int depth)
         {
-            using var _ = items as IDisposable;
             w.WriteStartArray(); open++;
-            for (var count = 0; ; count++)
+            try
             {
-                if (!Next(items)) break;
-                if (count == MaxItems) { cut = true; break; }
-                if (!Fits(0)) break;
-                Value(items.Current, depth + 1);
-                if (full) break;
+                for (var count = 0; ; count++)
+                {
+                    if (!Next(items)) break;
+                    if (count == MaxItems) { cut = true; break; }
+                    if (!Fits(0)) break;
+                    object? item;
+                    try { item = items.Current; } catch { cut = true; break; }
+                    Value(item, depth + 1);
+                    if (full) break;
+                }
             }
+            finally { Dispose(items); }
             open--; w.WriteEndArray();
         }
 
@@ -401,21 +482,26 @@ static class TraceJson
             foreach (var item in e.EnumerateArray()) yield return item;
         }
 
-        static IEnumerator<KeyValuePair<string, object?>> Entries(IDictionaryEnumerator entries)
+        // A base-library dictionary's entries. Keys are strings, or formatted by the base library (numbers, dates,
+        // enums); any other key is named by its type and position, and the value is marked cut.
+        IEnumerator<KeyValuePair<string, object?>> Entries(IDictionaryEnumerator entries)
         {
-            using var _ = entries as IDisposable;
-            while (entries.MoveNext())
+            try
             {
-                var entry = entries.Entry;
-                // Only the base library's formatting is called; any other key is named by its type.
-                var key = entry.Key as string
-                    ?? (entry.Key is IFormattable f && (f.GetType().IsEnum || f.GetType().Assembly == typeof(object).Assembly)
-                        ? f.ToString(null, CultureInfo.InvariantCulture) : entry.Key?.GetType().Name);
-                yield return new(key ?? "", entry.Value);
+                for (var index = 0; entries.MoveNext(); index++)
+                {
+                    var entry = entries.Entry;
+                    var key = entry.Key as string;
+                    if (key == null && entry.Key is IFormattable f && (f.GetType().IsEnum || Framework(f.GetType().Assembly)))
+                        key = f.ToString(null, CultureInfo.InvariantCulture);
+                    if (key == null) { key = (entry.Key?.GetType().Name ?? "null") + "#" + index; cut = true; }
+                    yield return new(key, entry.Value);
+                }
             }
+            finally { Dispose(entries); }
         }
 
-        // Auto-properties, read from their backing fields: no getter runs.
+        // Public fields and auto-properties, read from their fields: no getter runs.
         static IEnumerator<KeyValuePair<string, object?>> Members(object value, Shape shape)
         {
             foreach (var (name, field) in shape.Members) yield return new(name, field.GetValue(value));
