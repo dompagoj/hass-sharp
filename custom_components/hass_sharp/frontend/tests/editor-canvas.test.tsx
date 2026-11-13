@@ -354,14 +354,55 @@ it('drops palette nodes at flow coordinates accounting for pan and zoom', () => 
   expect(json(host).nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: 200, y: 200 } })
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
 })
-it('opens on empty canvas click at pointer position and ignores right clicks', () => {
+it('clears the selection on an empty canvas click and opens quick-add on double-click, right-click and A', async () => {
   const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
   const pane = host.querySelector('.solid-flow__pane')!
-  pane.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 160, clientY: 170, button: 2 }))
-  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  const canvas = host.querySelector<HTMLElement>('.hs-flow')!
+  const node = () => host.querySelector('.solid-flow__node[data-id="trigger-1"]')!
+  await vi.waitFor(() => expect(node().classList).toContain('selected'))
   pane.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 160, clientY: 170, button: 0 }))
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  await vi.waitFor(() => expect(node().classList).not.toContain('selected'))
+  expect(host.querySelector<HTMLInputElement>('[aria-label="Node label"]')).toBeNull()
+  // Double-click: at the pointer, in flow coordinates.
+  pane.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 160, clientY: 170, button: 0 }))
+  expect(host.querySelector('[role="dialog"][aria-label="Add a step"]')).not.toBeNull()
   button(host, 'Create Delay').click()
   expect(json(host).nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: 200, y: 200 } })
+  expect(host.querySelector<HTMLInputElement>('[aria-label="Node label"]')!.value).toBe('Delay')
+  // Right-click opens it too, and Escape closes it without adding anything.
+  const count = json(host).nodes.length
+  pane.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 160, clientY: 170, button: 2 }))
+  const search = host.querySelector<HTMLInputElement>('[aria-label="Search steps"]')!
+  expect(document.activeElement).toBe(search)
+  search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  // A, pressed on the canvas, opens it at the pointer; typed in a field it is just a letter.
+  canvas.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 160, clientY: 170 }))
+  canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }))
+  expect(host.querySelector('[aria-label="Search steps"]')).not.toBeNull()
+  button(host, 'Create Delay').click()
+  expect(json(host).nodes).toHaveLength(count + 1)
+  host.querySelector<HTMLInputElement>('[aria-label="Node label"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }))
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+})
+it('opens quick-add on a long press of empty canvas, not after a moved touch', async () => {
+  const host = root()
+  const history = createGraphHistory(createGraph('Heating'))
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
+  const pane = host.querySelector('.solid-flow__pane')!
+  const touch = (x: number) => new Touch({ identifier: 1, target: pane, clientX: x, clientY: 170 })
+  const send = (type: string, x: number) => pane.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [touch(x)], changedTouches: [touch(x)] }))
+  send('touchstart', 160); send('touchmove', 200)
+  await new Promise(resolve => setTimeout(resolve, 650))
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  send('touchend', 200)
+  send('touchstart', 160)
+  await vi.waitFor(() => expect(host.querySelector('[aria-label="Search steps"]')).not.toBeNull(), { timeout: 1500 })
+  send('touchend', 160)
+  button(host, 'Create Delay').click()
+  // The first, moved touch panned the canvas 40 px to the right.
+  expect(history.graph().nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: Math.round((160 - 10 - 40) / 0.75), y: 200 } })
 })
 it('offers valid steps after an output drag and undoes node plus branch in one operation', async () => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
@@ -443,4 +484,183 @@ it('clears a touch connection canceled before a later touch release', async () =
   document.dispatchEvent(new TouchEvent('touchend', { bubbles: true, touches: [], changedTouches: [endFinger] }))
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
   expect(json(host).nodes).toHaveLength(3)
+})
+
+const key = (target: Element, key: string, init: KeyboardEventInit = {}) =>
+  target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }))
+const click = (target: Element, init: MouseEventInit = {}) => {
+  target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, view: window, ...init }))
+  window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, view: window, ...init }))
+  target.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, view: window, ...init }))
+}
+const fixedLayout = () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(200)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(100)
+}
+
+it('drops a data pin on empty canvas: lists only steps that take its type and wires the chosen one in one undo step', async () => {
+  fixedLayout()
+  const host = root()
+  const history = createGraphHistory(createGraph('Heating'))
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  const before = history.graph()
+  const pane = host.querySelector('.solid-flow__pane')!
+  vi.spyOn(document, 'elementFromPoint').mockReturnValue(pane)
+  const pin = host.querySelector('[data-id="trigger-1"] .source[data-handleid="data:entity_id"]')!
+  pin.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+  document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 160, clientY: 170 }))
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 160, clientY: 170 }))
+  const dialog = host.querySelector('[role="dialog"]')!
+  expect(dialog.getAttribute('aria-label')).toMatch(/^Connect .+ to…$/)
+  // Only steps with an input that takes the pin's type: no trigger, no Delay (its only input is a duration).
+  expect(host.querySelector('[aria-label="Create Entity changes"]')).toBeNull()
+  expect(host.querySelector('[aria-label="Create Delay"]')).toBeNull()
+  expect(host.querySelector('[aria-label="Create Set value"]')).not.toBeNull()
+  button(host, 'Create Set value').click()
+  const after = history.graph()
+  const created = after.nodes.at(-1)!
+  expect(created.kind).toBe('set_value')
+  expect(after.edges).toContainEqual(expect.objectContaining({ kind: 'data', source: 'trigger-1', sourcePort: 'entity_id', target: created.id }))
+  // The value is read after the trigger: the new step runs between the trigger and what came next.
+  expect(after.edges).toContainEqual(expect.objectContaining({ source: 'trigger-1', target: created.id }))
+  expect(after.edges).toContainEqual(expect.objectContaining({ source: created.id, target: 'condition-1' }))
+  history.undo()
+  expect(history.graph()).toEqual(before)
+})
+
+it('selects several steps with Shift-click and removes them with Delete in one undo step', async () => {
+  const host = root()
+  const history = createGraphHistory(createGraph('Heating'))
+  const selections: [string[], string | undefined][] = []
+  const primary = vi.fn()
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={primary} onSelectionChange={(ids, edge) => selections.push([ids, edge])} onChange={history.commit} />, host)
+  const node = (id: string) => host.querySelector<HTMLElement>(`.solid-flow__node[data-id="${id}"]`)!
+  click(node('trigger-1'))
+  expect(primary).toHaveBeenLastCalledWith('trigger-1')
+  click(node('service-1'), { shiftKey: true })
+  expect(selections.at(-1)).toEqual([['trigger-1', 'service-1'], undefined])
+  // More than one step selected: no primary step for the inspector.
+  expect(primary).toHaveBeenLastCalledWith(undefined)
+  await vi.waitFor(() => expect(node('service-1').classList).toContain('selected'))
+  expect(node('trigger-1').classList).toContain('selected')
+  key(node('service-1'), 'Delete')
+  expect(history.graph().nodes.map(n => n.id)).toEqual(['condition-1'])
+  expect(selections.at(-1)).toEqual([[], undefined])
+  history.undo()
+  expect(history.graph().nodes.map(n => n.id)).toEqual(['trigger-1', 'condition-1', 'service-1'])
+  expect(history.canUndo()).toBe(false)
+  // Shift-click toggles a selected step off again.
+  click(node('condition-1'))
+  click(node('service-1'), { shiftKey: true })
+  click(node('condition-1'), { shiftKey: true })
+  expect(selections.at(-1)).toEqual([['service-1'], undefined])
+  expect(primary).toHaveBeenLastCalledWith('service-1')
+})
+
+it('adds the cards a Shift-drag marquee touches to the selection, and the click that ends it keeps them', async () => {
+  fixedLayout()
+  const host = root()
+  const selections: string[][] = []
+  dispose = render(() => <FlowAdapter graph={createGraph('Heating')} onSelect={() => {}} onSelectionChange={ids => selections.push(ids)} onChange={() => {}} />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  const pane = host.querySelector('.solid-flow__pane')!
+  // The default viewport maps (x, y) on screen to ((x - 10) / 0.75, (y - 20) / 0.75): cards sit at x 60, 360, 660.
+  pane.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, shiftKey: true, isPrimary: true, clientX: 0, clientY: 0 }))
+  document.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 300, clientY: 120 }))
+  expect(host.querySelector('.hs-marquee')).not.toBeNull()
+  document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 300, clientY: 120 }))
+  pane.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, shiftKey: true, clientX: 300, clientY: 120 }))
+  expect(host.querySelector('.hs-marquee')).toBeNull()
+  expect(selections.at(-1)).toEqual(['trigger-1', 'condition-1'])
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__node[data-id="condition-1"]')!.classList).toContain('selected'))
+  expect(host.querySelector('.solid-flow__node[data-id="service-1"]')!.classList).not.toContain('selected')
+})
+
+it('copies, pastes and duplicates selected steps with their own wires, new ids, one undo step each', async () => {
+  const host = root()
+  const history = createGraphHistory(createGraph('Heating'))
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
+  const node = (id: string) => host.querySelector<HTMLElement>(`.solid-flow__node[data-id="${id}"]`)!
+  const canvas = host.querySelector<HTMLElement>('.hs-flow')!
+  click(node('condition-1'))
+  click(node('service-1'), { shiftKey: true })
+  key(node('service-1'), 'c', { ctrlKey: true })
+  expect(host.textContent).toContain('Copied 2 steps')
+  key(canvas, 'v', { metaKey: true })
+  await vi.waitFor(() => expect(history.graph().nodes).toHaveLength(5))
+  const pasted = history.graph().nodes.slice(3)
+  expect(pasted.map(n => n.kind)).toEqual(['condition', 'service'])
+  expect(pasted.map(n => n.id)).not.toContain('condition-1')
+  expect(pasted.map(n => n.position)).toEqual([{ x: 400, y: 140 }, { x: 700, y: 140 }])
+  // The wire between them is copied; the wire from the trigger, outside the copy, is not.
+  expect(history.graph().edges.slice(2)).toEqual([expect.objectContaining({ source: pasted[0].id, target: pasted[1].id, port: 'true' })])
+  // The pasted steps are now the selection; Ctrl+D duplicates them again.
+  key(node(pasted[1].id), 'd', { ctrlKey: true })
+  expect(history.graph().nodes).toHaveLength(7)
+  expect(history.graph().nodes.slice(5).map(n => n.position)).toEqual([{ x: 440, y: 180 }, { x: 740, y: 180 }])
+  history.undo(); expect(history.graph().nodes).toHaveLength(5)
+  history.undo(); expect(history.graph().nodes).toHaveLength(3)
+  expect(history.canUndo()).toBe(false)
+})
+
+it('tidies, snaps and shows a minimap from the toolbar', async () => {
+  fixedLayout()
+  const host = root()
+  let graph = addNode(addNode(createGraph('Heating'), 'delay', 'later'), 'delay', 'after')
+  graph = connectNodes(connectNodes(graph, 'service-1', 'later'), 'later', 'after')
+  graph = updateNode(graph, 'after', { position: { x: 10, y: 600 } })
+  const history = createGraphHistory(graph)
+  const changes = vi.fn(history.commit)
+  dispose = render(() => <FlowAdapter graph={history.graph()} selectedId="trigger-1" onSelect={() => {}} onChange={changes} />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  const tools = host.querySelector('[role="group"][aria-label="Canvas tools"]')!
+  expect([...tools.querySelectorAll('button')].map(b => b.getAttribute('aria-label'))).toEqual(['Add a step', 'Zoom in', 'Zoom out', 'Fit to view', 'Tidy layout', 'Snap to grid', 'Minimap'])
+  button(host, 'Tidy layout').click()
+  expect(changes).toHaveBeenCalledTimes(1)
+  const x = (id: string) => history.graph().nodes.find(n => n.id === id)!.position!.x
+  // Left to right in run order, on the grid.
+  expect(x('trigger-1')).toBeLessThan(x('condition-1'))
+  expect(x('service-1')).toBeLessThan(x('later'))
+  expect(x('later')).toBeLessThan(x('after'))
+  expect(history.graph().nodes.every(n => n.position!.x % 20 === 0 && n.position!.y % 20 === 0)).toBe(true)
+  button(host, 'Tidy layout').click()
+  expect(changes).toHaveBeenCalledTimes(1)
+  expect(host.textContent).toContain('Already tidy')
+  // Snap: the button is a toggle, and keyboard moves go a grid step at a time.
+  const snap = button(host, 'Snap to grid')
+  expect(snap.getAttribute('aria-pressed')).toBe('false')
+  snap.click()
+  expect(snap.getAttribute('aria-pressed')).toBe('true')
+  const start = x('trigger-1')
+  key(host.querySelector('.solid-flow__node[data-id="trigger-1"]')!, 'ArrowRight')
+  expect(x('trigger-1')).toBe(start + 20)
+  expect(host.querySelector('.solid-flow__minimap')).toBeNull()
+  button(host, 'Minimap').click()
+  expect(button(host, 'Minimap').getAttribute('aria-pressed')).toBe('true')
+  expect(host.querySelector('.solid-flow__minimap')).not.toBeNull()
+})
+
+it('keeps a read-only canvas inert while selection and viewport tools still work', async () => {
+  const host = root()
+  const changes = vi.fn()
+  const selections: string[][] = []
+  dispose = render(() => <FlowAdapter graph={createGraph('Heating')} readOnly onSelect={() => {}} onSelectionChange={ids => selections.push(ids)} onChange={changes} />, host)
+  const tools = host.querySelector('[role="group"][aria-label="Canvas tools"]')!
+  expect([...tools.querySelectorAll('button')].map(b => b.getAttribute('aria-label'))).toEqual(['Zoom in', 'Zoom out', 'Fit to view', 'Minimap'])
+  const node = host.querySelector<HTMLElement>('.solid-flow__node[data-id="trigger-1"]')!
+  const pane = host.querySelector('.solid-flow__pane')!
+  click(node)
+  expect(selections.at(-1)).toEqual(['trigger-1'])
+  for (const [k, init] of [['Delete', {}], ['Backspace', {}], ['a', {}], ['d', { ctrlKey: true }], ['v', { ctrlKey: true }], ['ArrowRight', {}]] as const) key(node, k, init)
+  pane.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 160, clientY: 170 }))
+  pane.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 160, clientY: 170 }))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  expect(changes).not.toHaveBeenCalled()
+  button(host, 'Minimap').click()
+  expect(host.querySelector('.solid-flow__minimap')).not.toBeNull()
+  button(host, 'Zoom in').click()
+  button(host, 'Fit to view').click()
+  expect(changes).not.toHaveBeenCalled()
 })

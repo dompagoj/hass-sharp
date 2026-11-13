@@ -192,7 +192,81 @@
 .hs-app .hs-node-errors p:last-child { margin: 0; }
 .hs-app .solid-flow__node:hover .hs-node-errors, .hs-app .solid-flow__node:focus-within .hs-node-errors { display: block; }
 
-.hs-app .hs-connection-error, .hs-app .hs-connection-prompt { position: absolute; z-index: 10; bottom: 8px; left: 56px; right: 8px; border: 1px solid currentColor; background: var(--hs-surface); border-radius: 6px; padding: 8px; font-size: 12px; pointer-events: none; }
+/* Canvas messages: the keyboard-connection prompt and short notices (copied, nothing to paste), at the top. */
+.hs-app .hs-connection-prompt, .hs-app .hs-canvas-notice { position: absolute; z-index: 10; top: 8px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 16px); margin: 0; border: 1px solid var(--hs-line); background: var(--hs-surface); color: var(--hs-text); border-radius: 6px; padding: 8px 12px; font-size: 12px; box-shadow: var(--hs-card-shadow); pointer-events: none; }
+.hs-app .hs-connection-prompt { border-color: var(--hs-accent); }
+.hs-app .hs-connection-prompt ~ .hs-canvas-notice { top: 48px; }
+
+/* Why a connection was refused, beside the pin that refused it. */
+.hs-app .hs-flow .hs-pin-refusal { position: absolute; z-index: 30; bottom: calc(100% + 6px); left: calc(-1 * var(--hs-card-pad)); width: max-content; max-width: 260px; padding: 6px 10px; border: 1px solid var(--hs-port-error); border-radius: 6px; background: var(--hs-surface); color: var(--hs-text); box-shadow: var(--hs-card-shadow-raised); font-size: 12px; font-weight: 400; line-height: 1.35; white-space: normal; pointer-events: none; }
+.hs-app .hs-flow .hs-pin-refusal::before { content: '!'; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-right: 6px; border-radius: 50%; background: var(--hs-port-error); color: var(--hs-surface); font-size: 11px; font-weight: 700; vertical-align: -3px; }
+.hs-app .hs-flow .hs-card__head > .hs-pin-refusal { left: 0; }
+
+/* Shift and drag on empty canvas. */
+.hs-app .hs-marquee { position: absolute; z-index: 5; border: 1px dashed var(--hs-accent); border-radius: 2px; background: color-mix(in oklab, var(--hs-accent) 10%, transparent); pointer-events: none; }
+.hs-app .hs-flow--marquee .solid-flow__pane { cursor: crosshair; }
+.hs-app .hs-flow:focus { outline: none; }
+.hs-app .hs-flow .solid-flow__pane { -webkit-touch-callout: none; }
+
+/* The floating toolbar: icon buttons named by their tooltips. */
+.hs-app .hs-flow .hs-canvas-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; max-width: calc(100% - 24px); margin: 12px; padding: 4px; border: 1px solid var(--hs-line); border-radius: 10px; background: var(--hs-surface); box-shadow: var(--hs-card-shadow); }
+.hs-app .hs-canvas-toolbar__rule { width: 1px; align-self: stretch; margin: 6px 4px; background: var(--hs-line); }
+.hs-app .hs-tool { position: relative; display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--hs-text); cursor: pointer; transition: background-color var(--hs-motion) ease-out; }
+.hs-app .hs-tool:hover { background: var(--hs-soft); }
+.hs-app .hs-tool:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 1px; }
+.hs-app .hs-tool[aria-pressed="true"] { background: color-mix(in oklab, var(--hs-accent) 16%, var(--hs-surface)); color: var(--hs-accent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hs-accent) 45%, transparent); }
+.hs-app .hs-tool:disabled { opacity: .45; cursor: default; }
+.hs-app .hs-tool__glyph { width: 20px; height: 20px; }
+.hs-app .hs-tool[data-tip]::after { content: attr(data-tip); position: absolute; z-index: 40; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: max-content; max-width: 220px; padding: 4px 8px; border-radius: 5px; background: var(--hs-text); color: var(--hs-bg); font-size: 12px; font-weight: 500; line-height: 1.3; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity var(--hs-motion) ease-out; }
+.hs-app .hs-tool[data-tip]:hover::after, .hs-app .hs-tool[data-tip]:focus-visible::after { opacity: 1; transition-delay: 300ms; }
+.hs-app .hs-canvas-toolbar .hs-tool:first-child[data-tip]::after { left: 0; transform: none; }
+
+/* The "Delete wire" button at the middle of a selected wire. */
+.hs-app .hs-wire-delete { position: absolute; pointer-events: all; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid var(--hs-port-error); border-radius: 50%; background: var(--hs-surface); color: var(--hs-port-error); box-shadow: var(--hs-card-shadow-raised); cursor: pointer; }
+.hs-app .hs-wire-delete:hover { background: color-mix(in oklab, var(--hs-port-error) 12%, var(--hs-surface)); }
+.hs-app .hs-wire-delete:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
+.hs-app .hs-wire-delete .hs-tool__glyph { width: 16px; height: 16px; }
+.hs-app .hs-wire-delete[data-tip]::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); width: max-content; padding: 4px 8px; border-radius: 5px; background: var(--hs-text); color: var(--hs-bg); font-size: 12px; opacity: 0; pointer-events: none; transition: opacity var(--hs-motion) ease-out; }
+.hs-app .hs-wire-delete:hover::after, .hs-app .hs-wire-delete:focus-visible::after { opacity: 1; }
+
+/* The minimap: cards in their category colour. */
+.hs-app .hs-flow .hs-minimap { margin: 12px; border: 1px solid var(--hs-line); border-radius: 8px; overflow: hidden; --xy-minimap-background-color: var(--hs-surface); --xy-minimap-mask-background-color: color-mix(in oklab, var(--hs-bg) 60%, transparent); --xy-minimap-mask-stroke-color: var(--hs-accent); --xy-minimap-mask-stroke-width: 2; --xy-minimap-node-stroke-color: transparent; }
+.hs-app .hs-flow .hs-minimap svg { display: block; }
+.hs-app .hs-flow .hs-minimap-node { fill: var(--hs-muted); }
+.hs-app .hs-flow .hs-minimap-node--trigger { fill: var(--hs-cat-trigger); }
+.hs-app .hs-flow .hs-minimap-node--hass { fill: var(--hs-cat-hass); }
+.hs-app .hs-flow .hs-minimap-node--flow { fill: var(--hs-cat-flow); }
+.hs-app .hs-flow .hs-minimap-node--logic { fill: var(--hs-cat-logic); }
+.hs-app .hs-flow .hs-minimap-node--data { fill: var(--hs-cat-data); }
+.hs-app .hs-flow .hs-minimap-node--code, .hs-app .hs-flow .hs-minimap-node--library { fill: var(--hs-cat-code); }
+
+/* Quick-add: a searchable palette at the pointer. */
+.hs-app .hs-quick-add { position: absolute; z-index: 50; display: flex; flex-direction: column; width: min(320px, calc(100% - 16px)); max-height: min(420px, calc(100% - 16px)); border: 1px solid var(--hs-line); border-radius: 10px; background: var(--hs-surface); color: var(--hs-text); box-shadow: var(--hs-card-shadow-raised); overflow: hidden; }
+.hs-app .hs-quick-add__title { margin: 0; padding: 10px 12px 6px; font-size: 12px; font-weight: 600; color: var(--hs-muted); }
+.hs-app .hs-quick-add > .hs-input { margin: 0 8px 6px; width: auto; }
+.hs-app .hs-quick-add__list { flex: 1; min-height: 0; overflow: auto; padding: 0 4px 6px; overscroll-behavior: contain; }
+.hs-app .hs-quick-add__category { display: flex; align-items: center; gap: 6px; padding: 8px 8px 4px; color: var(--hs-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.hs-app .hs-quick-add__category .hs-quick-add__glyph { width: 14px; height: 14px; color: var(--hs-cat); }
+.hs-app .hs-quick-add__option { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 8px; border: 0; border-radius: 7px; background: none; color: inherit; text-align: left; cursor: pointer; }
+.hs-app .hs-quick-add__option--active { background: var(--hs-soft); box-shadow: inset 3px 0 0 var(--hs-cat); }
+.hs-app .hs-quick-add__icon { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: color-mix(in oklab, var(--hs-cat) 18%, var(--hs-surface)); color: var(--hs-cat); }
+.hs-app .hs-quick-add__icon .hs-quick-add__glyph { width: 16px; height: 16px; }
+.hs-app .hs-quick-add__text { display: flex; flex-direction: column; min-width: 0; }
+.hs-app .hs-quick-add__text strong { font-size: 13px; font-weight: 600; }
+.hs-app .hs-quick-add__text small { overflow: hidden; color: var(--hs-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-quick-add__empty { margin: 0; padding: 12px; color: var(--hs-muted); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .hs-app .hs-tool, .hs-app .hs-tool[data-tip]::after, .hs-app .hs-wire-delete[data-tip]::after { transition: none; }
+}
+@media (max-width: 420px) {
+  .hs-app .hs-flow .hs-canvas-toolbar { margin: 8px; max-width: calc(100% - 16px); }
+  .hs-app .hs-tool { width: 36px; height: 36px; }
+}
+@media (pointer: coarse) {
+  .hs-app .hs-tool { width: 44px; height: 44px; }
+  .hs-app .hs-wire-delete { width: 44px; height: 44px; }
+  .hs-app .hs-tool[data-tip]::after { display: none; }
+}
 .hs-diagnostics { padding-inline-start: 1.2rem; }
 .hs-app .hs-canvas-column .hs-diagnostics { flex: none; max-height: 150px; overflow: auto; margin: 0; padding: 4px 10px; border-top: 1px solid var(--hs-line); list-style: none; background: var(--hs-surface); font-size: 11px; }
 .hs-app .hs-diagnostics .hs-button { padding: 5px 2px; text-align: left; white-space: normal; }

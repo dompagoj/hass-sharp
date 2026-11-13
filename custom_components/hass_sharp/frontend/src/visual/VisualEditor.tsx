@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
+import { delegateEvents } from 'solid-js/web'
 import { Button, Field, Status } from '../components/Controls'
 import { FlowAdapter } from './FlowAdapter'
 import { HelpDialog } from '../components/HelpDialog'
@@ -102,7 +103,7 @@ export function VisualEditor(props: {
   const categories = () => catalogCategories(session.catalog())
   const [librarySearch, setLibrarySearch] = createSignal('')
   const description = createMemo(() => palette().find(item => item.kind === paletteKind()))
-  const [selectedId, setSelectedId] = createSignal<string>('trigger-1')
+  const [selectedId, setSelectedId] = createSignal<string | undefined>('trigger-1')
   const [preview, setPreview] = createSignal<'code' | 'json'>('code')
   const selected = createMemo(() => graph().nodes.find(node => node.id === selectedId()))
   const edited = session.dirty
@@ -114,7 +115,10 @@ export function VisualEditor(props: {
   }
   onMount(() => window.addEventListener('beforeunload', beforeUnload))
   onCleanup(() => window.removeEventListener('beforeunload', beforeUnload))
-  const choose = (id: string) => {
+  // Each finished load of a saved graph fits the canvas to it.
+  const [loads, setLoads] = createSignal(0)
+  createEffect(on(session.loading, (loading, before) => before && !loading && setLoads(count => count + 1), { defer: true }))
+  const choose = (id?: string) => {
     setPaletteKind(undefined)
     setSelectedId(id)
     setSourceLine(undefined)
@@ -158,7 +162,12 @@ export function VisualEditor(props: {
   }
   return (
     <section
-      ref={editor}
+      // The editor stops keys at its root so they never reach Home Assistant's shortcuts. Solid runs delegated
+      // handlers (menus, the canvas library) at this root instead of the document, so they still see those keys.
+      ref={element => {
+        editor = element
+        delegateEvents(['keydown', 'keyup'], element as unknown as Document)
+      }}
       class="hs-visual"
       aria-label="Visual automation editor"
       on:keydown={keyboard}
@@ -290,6 +299,7 @@ export function VisualEditor(props: {
               onSelect={choose}
               onChange={commit}
               diagnostics={session.diagnostics()}
+              fitViewKey={loads() || undefined}
             />
             <ul class="hs-diagnostics" aria-label="Graph diagnostics">
               <For each={session.diagnostics().filter(d => d.severity > 0)}>

@@ -16,6 +16,27 @@ vi.mock('../src/visual/contract', async original => {
   return { ...actual, connectData: vi.fn(actual.connectData) }
 })
 
+// Records where the canvas centres the view (a run's focus node).
+const centred = vi.hoisted(() => ({ calls: [] as unknown[][] }))
+vi.mock('@dschz/solid-flow', async original => {
+  const actual = await original<typeof import('@dschz/solid-flow')>()
+  return {
+    ...actual,
+    useSolidFlow: () => {
+      const api = actual.useSolidFlow()
+      return new Proxy(api, {
+        get: (target, key) =>
+          key === 'setCenter'
+            ? (...args: Parameters<typeof api.setCenter>) => {
+                centred.calls.push(args)
+                return target.setCenter(...args)
+              }
+            : Reflect.get(target, key),
+      })
+    },
+  }
+})
+
 let dispose: (() => void) | undefined
 afterEach(async () => {
   dispose?.()
@@ -336,7 +357,7 @@ it('skips malformed nodes and edges instead of throwing', () => {
   expect([...el.querySelectorAll('.solid-flow__node')].map(n => n.getAttribute('data-id'))).toEqual(graph.nodes.map(n => n.id))
   // Hovering or picking an execution pin with malformed edges around still works.
   el.querySelector<HTMLElement>('[data-id="trigger-1"] [data-handleid="next"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-  expect(el.textContent).toContain('Select a destination port')
+  expect(el.textContent).toContain('Choose a pin to connect to')
 })
 
 it('validates a dropped data wire once, and only the connection index while hovering', async () => {
@@ -474,22 +495,61 @@ it('rebuilds a card when what it shows changes elsewhere: a loop carry adds a lo
   await vi.waitFor(() => expect(chip()).toBe('Running total · Value'))
 })
 
-it('applies the first canvas edit of a graph with malformed entries to the cleaned graph', () => {
-  const el = host()
+const brokenGraph = () => {
   const graph = createGraph('Broken')
   const broken = {
     ...graph,
     nodes: [null, { id: 'no-config', kind: 'delay' }, ...graph.nodes, graph.nodes[0]],
     edges: [null, { id: 'dangling', kind: 'execution', source: 'trigger-1', target: 'missing' }, ...graph.edges],
   } as unknown as VisualGraph
+  return { graph, broken }
+}
+/** The canvas edited `id` and nothing else: every malformed entry is still there, in place. */
+const keptMalformed = (broken: VisualGraph, next: VisualGraph, id: string) => {
+  expect(next.nodes).toHaveLength(broken.nodes.length)
+  next.nodes.forEach((node, i) => (node?.id === id ? expect(node).not.toBe(broken.nodes[i]) : expect(node).toBe(broken.nodes[i])))
+  expect(next.edges).toEqual(broken.edges)
+}
+
+it('applies a keyboard canvas edit of a graph with malformed entries to the original graph, keeping those entries', () => {
+  const el = host()
+  const { graph, broken } = brokenGraph()
   const changes: VisualGraph[] = []
   dispose = render(() => <FlowAdapter graph={broken} selectedId="service-1" onSelect={() => {}} onChange={next => changes.push(next)} />, el)
-  // An edit (here a keyboard move) is made on what the canvas shows: malformed nodes and edges are dropped.
+  // An edit (here a keyboard move) is made on what the canvas shows and applied to the graph as saved.
   el.querySelector('[data-id="service-1"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
   expect(changes).toHaveLength(1)
-  expect(changes[0].nodes.map(n => n.id)).toEqual(graph.nodes.map(n => n.id))
-  expect(changes[0].edges.map(e => e.id)).toEqual(graph.edges.map(e => e.id))
-  expect(changes[0].nodes.find(n => n.id === 'service-1')!.position!.x).toBe(graph.nodes.find(n => n.id === 'service-1')!.position!.x + 10)
+  keptMalformed(broken, changes[0], 'service-1')
+  expect(changes[0].nodes.find(n => n?.id === 'service-1')!.position!.x).toBe(graph.nodes.find(n => n.id === 'service-1')!.position!.x + 10)
+  // A wire made on the canvas keeps them too.
+  const pin = (id: string, handle: string) => el.querySelector<HTMLElement>(`[data-id="${id}"] [data-handleid="${handle}"]`)!
+  pin('service-1', 'error').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  pin('condition-1', 'in').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  expect(changes).toHaveLength(1)
+  pin('condition-1', 'false').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  pin('service-1', 'in').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  expect(changes).toHaveLength(2)
+  expect(changes[1].nodes).toEqual(broken.nodes)
+  expect(changes[1].edges.slice(0, broken.edges.length)).toEqual(broken.edges)
+  expect(changes[1].edges.at(-1)).toMatchObject({ source: 'condition-1', target: 'service-1', port: 'false' })
+})
+
+it('applies a mouse drag of a graph with malformed entries to the original graph, keeping those entries', async () => {
+  const el = host()
+  const { broken } = brokenGraph()
+  const changes: VisualGraph[] = []
+  dispose = render(() => <FlowAdapter graph={broken} onSelect={() => {}} onChange={next => changes.push(next)} />, el)
+  const node = el.querySelector<HTMLElement>('[data-id="trigger-1"]')!
+  node.dispatchEvent(new MouseEvent('mousedown', { clientX: 80, clientY: 110, button: 0, bubbles: true, view: window }))
+  for (const [x, y] of [[83, 113], [143, 143], [203, 173]]) window.dispatchEvent(new MouseEvent('mousemove', { clientX: x, clientY: y, buttons: 1, bubbles: true, view: window }))
+  window.dispatchEvent(new MouseEvent('mouseup', { clientX: 203, clientY: 173, button: 0, bubbles: true, view: window }))
+  await vi.waitFor(() => expect(changes).toHaveLength(1))
+  // The duplicate trigger entry is malformed (a repeated id) and is kept as it was.
+  expect(changes[0].nodes).toHaveLength(broken.nodes.length)
+  expect(changes[0].nodes.at(-1)).toBe(broken.nodes.at(-1))
+  expect(changes[0].nodes.slice(0, 2)).toEqual(broken.nodes.slice(0, 2))
+  expect(changes[0].nodes[2]!.position).toEqual({ x: 220, y: 180 })
+  expect(changes[0].edges).toEqual(broken.edges)
 })
 
 it('shows trace value chips only where the run recorded a value', async () => {
@@ -550,4 +610,87 @@ it('names branch rows by the branch name, else by position; keeps the execution 
   const icon = (id: string) => [...el.querySelectorAll(`[data-id="${id}"] .hs-card__badge path`)].map(p => p.getAttribute('d')).join(' ')
   expect(icon('rooms')).not.toBe(icon('temperature'))
   expect(el.querySelector('[data-id="rooms"] .hs-card__badge')?.classList).toContain('hs-card__badge--warning')
+})
+
+it('keeps an opened optional row open when focus moves to its own menu, even when the focus event comes late', async () => {
+  const el = host()
+  const [graph, setGraph] = createSignal(lightOn({ brightness_pct: lit('number', 50), transition: { kind: 'unset' } }))
+  dispose = render(() => providers(() => <FlowAdapter graph={graph()} catalog={withServices()} onSelect={() => {}} onChange={setGraph} />), el)
+  const cell = () => el.querySelector<HTMLElement>('[data-id="service-1"] [data-input-id="field:transition"]')!
+  cell().querySelector<HTMLButtonElement>('button.hs-pin-set')!.click()
+  await Promise.resolve()
+  const field = cell().querySelector<HTMLElement>('.hs-card-editor input')!
+  const menuButton = cell().querySelector<HTMLElement>('.hs-card-editor button[aria-label="Transition mode"]')!
+  expect(menuButton).not.toBeNull()
+  // Focus first lands on the body (the field blurred), then the browser reports where it went: the row's menu.
+  field.blur()
+  expect(document.activeElement).toBe(document.body)
+  field.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: menuButton }))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(cell().querySelector('.hs-card-editor')).not.toBeNull()
+  // A draft the editor refused keeps the row open even when focus leaves the card.
+  const input = cell().querySelector<HTMLInputElement>('.hs-card-editor input')!
+  input.setAttribute('aria-invalid', 'true')
+  const outside = el.appendChild(document.createElement('button'))
+  input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(cell().querySelector('.hs-card-editor')).not.toBeNull()
+  input.removeAttribute('aria-invalid')
+  input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }))
+  await vi.waitFor(() => expect(cell().querySelector('.hs-card-editor')).toBeNull())
+})
+
+it('centres a run on its focus node once: a new trace object for the same node leaves the view alone', async () => {
+  layout()
+  const el = host()
+  const trace = (focusNodeId: string): FlowTrace => ({ nodes: { [focusNodeId]: { status: 'ok', runs: 1 } }, edges: new Set(), focusNodeId })
+  const [current, setCurrent] = createSignal(trace('service-1'))
+  centred.calls = []
+  dispose = render(() => <FlowAdapter graph={createGraph('Run')} readOnly trace={current()} onSelect={() => {}} />, el)
+  await vi.waitFor(() => expect(centred.calls).toHaveLength(1))
+  setCurrent(trace('service-1'))
+  await new Promise(resolve => setTimeout(resolve, 100))
+  expect(centred.calls).toHaveLength(1)
+  setCurrent(trace('trigger-1'))
+  await vi.waitFor(() => expect(centred.calls).toHaveLength(2))
+})
+
+it('rebuilds a card whose wired input shows its source when only the source output changes: its type or its label', async () => {
+  const el = host()
+  let start = addNode(addNode(createGraph('Outputs'), 'set_value', 'source'), 'get_field', 'pick')
+  start = updateNode(start, 'source', { config: { type: 'object', value: lit('object', {}) } })
+  start = contract.connectData(connectNodes(connectNodes(start, 'service-1', 'source'), 'source', 'pick'), 'source', 'value', 'pick', 'value')
+  const [graph, setGraph] = createSignal(start)
+  dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, el)
+  const pin = () => el.querySelector<HTMLElement>('[data-id="pick"] .target[data-handleid="data:value"]')!
+  expect(pin().getAttribute('data-type')).toBe('object')
+  // An object or a list both fit: the wire stays, and the input now shows a list arriving.
+  setGraph(updateNode(graph(), 'source', { config: { type: 'array', value: lit('array', []) } }))
+  await vi.waitFor(() => expect(pin().getAttribute('data-type')).toBe('array'))
+  // A loop carry renamed (with its wire): the consumer's chip names the new output.
+  let loop = addNode(addNode(createGraph('Loop'), 'repeat', 'loop'), 'set_value', 'shown')
+  loop = updateNode(loop, 'loop', { config: { count: lit('number', 3), carry: [{ name: 'total', type: 'number', initial: lit('number', 0) }], exports: [] } })
+  loop = updateNode(loop, 'shown', { config: { type: 'number', value: lit('number', 0) } })
+  loop = contract.connectData(connectNodes(connectNodes(loop, 'service-1', 'loop'), 'loop', 'shown', 'body'), 'loop', 'carry:total', 'shown', 'value')
+  setGraph(loop)
+  const chip = () => el.querySelector('[data-id="shown"] [data-input-id="value"] .hs-source-chip')?.textContent
+  await vi.waitFor(() => expect(chip()).toMatch(/· total$/))
+  const renamed = updateNode(loop, 'loop', { config: { ...loop.nodes.find(n => n.id === 'loop')!.config, carry: [{ name: 'sum', type: 'number', initial: lit('number', 0) }] } })
+  setGraph({ ...renamed, edges: renamed.edges.map(e => (e.kind === 'data' ? { ...e, sourcePort: 'carry:sum' } : e)) })
+  await vi.waitFor(() => expect(chip()).toMatch(/· sum$/))
+})
+
+it('names a data wire into a service field by the field label, as the card row does', async () => {
+  layout()
+  const el = host()
+  const catalog = withServices(section => {
+    section.items['light.turn_on'].fields.brightness_pct.label = 'Brightness'
+  })
+  let graph = addNode(lightOn({ brightness_pct: lit('number', 50) }), 'set_value', 'level')
+  graph = updateNode(graph, 'level', { config: { type: 'number', value: lit('number', 80) } })
+  graph = connectNodes(connectNodes({ ...graph, edges: graph.edges.filter(e => e.target !== 'service-1') }, 'condition-1', 'level', 'true'), 'level', 'service-1')
+  graph = contract.connectData(graph, 'level', 'value', 'service-1', 'field:brightness_pct', catalog)
+  dispose = render(() => <FlowAdapter graph={graph} catalog={catalog} onSelect={() => {}} onChange={() => {}} />, el)
+  await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge[aria-label^="Data wire"]')).not.toBeNull())
+  expect(el.querySelector('.solid-flow__edge[aria-label^="Data wire"]')!.getAttribute('aria-label')).toBe('Data wire from Set value · Value to Call service · Brightness')
 })

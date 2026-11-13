@@ -22,7 +22,8 @@ const statusIcon: Record<TraceStatus, readonly string[]> = {
 
 /**
  * Keeps keys typed into a card's editor inside it: no node move, canvas shortcut, delete or Home Assistant
- * shortcut sees them. Solid delegates keyboard handlers to the document, so this boundary runs them itself first.
+ * shortcut sees them. Solid delegates keyboard handlers to an ancestor (the editor root, or the document), so this
+ * boundary runs the editor's own handlers itself first.
  */
 function EditorBoundary(props: { children: JSX.Element }) {
   const stop = (event: Event) => event.stopPropagation()
@@ -97,14 +98,27 @@ export function NodeCard(props: NodeProps) {
       queueMicrotask(() => root.querySelector<HTMLElement>('.hs-card-editor :is(input, select, textarea, button)')?.focus())
       setExpanded(true)
     }
-    // Focus left the row: an input still unset folds back to its label (one with a value keeps its editor anyway).
+    // Focus inside the editor keeps it open even when the input becomes unset under it ("Clear" in its menu).
+    const enter = (event: FocusEvent) => {
+      clearTimeout(pendingLeave)
+      if ((event.target as Element).closest('.hs-card-editor')) setExpanded(true)
+    }
+    // Focus left the row: an input still unset folds back to its label (one with a value keeps its editor anyway),
+    // unless its editor holds a draft it refused, which stays open with its error.
+    let pendingLeave: ReturnType<typeof setTimeout> | undefined
+    onCleanup(() => clearTimeout(pendingLeave))
+    const fold = (active: Element | null | undefined) => {
+      if (!expanded() || (active && root.contains(active))) return
+      if (root.querySelector('.hs-card-editor [aria-invalid="true"]')) return
+      setExpanded(false)
+    }
     const leave = (event: FocusEvent) => {
       if ((event.target as Element).classList.contains('hs-pin-set')) return
-      queueMicrotask(() => {
-        if (!expanded()) return
-        const active = (root.getRootNode() as Document | ShadowRoot).activeElement
-        if (!active || !root.contains(active)) setExpanded(false)
-      })
+      clearTimeout(pendingLeave)
+      const next = event.relatedTarget as Element | null
+      if (next) return fold(next)
+      // Some browsers report no next element (a click, or focus still on its way): look once focus has settled.
+      pendingLeave = setTimeout(() => fold((root.getRootNode() as Document | ShadowRoot).activeElement))
     }
     /** Read-only value chips. Traced values when the run recorded one; else what is configured; never a placeholder for a connected input. */
     const shown = (): { text: string; title?: string; muted?: boolean } | undefined => {
@@ -122,6 +136,7 @@ export function NodeCard(props: NodeProps) {
         class="hs-pin-cell hs-pin-cell--in"
         classList={{ [`hs-pin-cell--${input().mode}`]: true, 'hs-pin-cell--expanded': muted() && expanded() }}
         data-input-id={input().port}
+        on:focusin={enter}
         on:focusout={leave}
       >
         <div class="hs-pin-line">

@@ -123,3 +123,33 @@ it('reveals and focuses Advanced C# when selecting an imports or members diagnos
   expect(document.activeElement).toBe(host.querySelector(`[aria-label="${label}"]`))
  }
 })
+import { Menu } from '../src/components/Menu'
+it('runs an inspector "⋯" menu with arrows and Escape inside the editor while no key typed there reaches the document', async () => {
+  const host = root()
+  dispose = render(() => <VisualEditor name="Heating" />, host)
+  const documentKeys = vi.fn(); document.addEventListener('keydown', documentKeys)
+  // The inspector's own "⋯" menus come with its typed rows; mount the same Menu component into it.
+  const inspector = host.querySelector('aside[aria-label="Node inspector"]')!
+  const chosen = vi.fn()
+  const slot = inspector.appendChild(document.createElement('div'))
+  const disposeMenu = render(() => <Menu label="Value mode" items={[{ label: 'Value', onSelect: chosen }, { label: 'Variable…', onSelect: chosen }, { label: 'Clear', onSelect: chosen }]} />, slot)
+  try {
+    const trigger = inspector.querySelector<HTMLButtonElement>('button[aria-label="Value mode"]')!
+    trigger.focus()
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    const items = [...inspector.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')]
+    expect(document.activeElement).toBe(items[0])
+    items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    expect(document.activeElement).toBe(items[1])
+    items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(trigger)
+    expect(chosen).not.toHaveBeenCalled()
+    const label = host.querySelector<HTMLInputElement>('input[aria-label="Node label"]')!
+    label.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true }))
+    label.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }))
+    expect(documentKeys).not.toHaveBeenCalled()
+    expect(json(host).nodes).toHaveLength(3)
+  } finally { disposeMenu(); document.removeEventListener('keydown', documentKeys) }
+})

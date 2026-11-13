@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest'
 import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { NodeConfig } from '../src/visual/NodeConfig'
-import { NodeChooser } from '../src/visual/NodeChooser'
+import { QuickAdd } from '../src/visual/QuickAdd'
 import { TriggerConfig } from '../src/visual/TriggerConfig'
 import { ValueOperand } from '../src/visual/ValueOperand'
 import { addNode, createGraph, catalogPalette, catalogCategories, type VisualGraph } from '../src/visual/graph'
@@ -100,20 +100,21 @@ it('keeps trigger subscriptions required', () => {
   root.querySelector<HTMLButtonElement>('[aria-label="Entity ID"]')!.click()
   expect(root.textContent).not.toContain('No target')
 })
-it('categorizes every catalog node and filters chooser by category and search', () => {
+it('categorizes every catalog node and groups and filters the quick-add palette', () => {
   const root = host()
   let chosen = ''
-  dispose = render(() => <NodeChooser x={0} y={0} allowed={() => true} onClose={() => {}} onChoose={kind => (chosen = kind)} />, root)
+  dispose = render(() => <QuickAdd x={0} y={0} title="Add a step" allowed={() => true} onClose={() => {}} onChoose={kind => (chosen = kind)} />, root)
   expect(new Set(catalogPalette().map(item => item.category))).toEqual(new Set(catalogCategories()))
-  change(root, 'Step category', 'Logic')
-  const logic = catalogPalette().filter(n => n.category === 'Logic')
-  expect(root.querySelectorAll('[role="option"]')).toHaveLength(logic.length)
+  const groups = [...root.querySelectorAll('[role="group"]')]
+  expect(groups.map(group => group.querySelector('.hs-quick-add__category')!.textContent)).toEqual(catalogCategories().filter(c => catalogPalette().some(n => n.category === c)))
+  const logic = groups.find(group => group.querySelector('.hs-quick-add__category')!.textContent === 'Logic')!
+  expect(logic.querySelectorAll('[role="option"]')).toHaveLength(catalogPalette().filter(n => n.category === 'Logic').length)
   change(root, 'Search steps', 'Xor')
   expect(root.querySelectorAll('[role="option"]')).toHaveLength(1)
   root.querySelector('input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
   expect(chosen).toBe('xor')
-  change(root, 'Step category', 'Flow')
-  expect(root.textContent).toContain('No available steps')
+  change(root, 'Search steps', 'no such step anywhere')
+  expect(root.textContent).toContain('No step matches that search.')
 })
 it('offers typed named variables and keeps producer configuration unchanged', () => {
   let graph = addNode(addNode(addNode(createGraph('Values'), 'set_value', 'text'), 'and', 'boolean'), 'if', 'if')

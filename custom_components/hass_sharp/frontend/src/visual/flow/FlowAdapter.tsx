@@ -1,18 +1,22 @@
-import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, untrack, useContext, type Component } from 'solid-js'
-import { createStore, reconcile } from 'solid-js/store'
+import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, untrack, useContext, type Component, type JSX } from 'solid-js'
+import { createStore, produce, reconcile } from 'solid-js/store'
 import { QueryClientContext } from '@tanstack/solid-query'
-import { Background, Controls, SolidFlow, useSolidFlow, type Edge, type Node } from '@dschz/solid-flow'
+import { Background, MiniMap, SolidFlow, useSolidFlow, type Edge, type Node } from '@dschz/solid-flow'
 import flowStyles from '@dschz/solid-flow/styles?inline'
-import { NodeChooser } from '../NodeChooser'
+import { QuickAdd } from '../QuickAdd'
 import type { VisualDiagnostic } from '../api'
 import { HassCtx } from '../../context'
 import { useRegistry } from '../../registry'
 import { connectData, nodeCatalog, setInput as writeInput, type Operand, type VisualCatalogSnapshot } from '../contract'
-import { canConnect, canCreateNode, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeEdge, updateNode, type EdgePort, type NodeKind, type PendingConnection, type VisualGraph } from '../graph'
+import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeEdge, removeNode, updateNode, type NodeKind, type VisualGraph } from '../graph'
 import { connectionIndex } from '../connectionIndex'
+import { copySteps, pasteSteps, readSteps, writeSteps, type StepClipboard } from '../clipboard'
+import { applyLayout, tidyLayout } from '../layout'
 import type { SummaryNames } from '../nodeSummary'
 import { registryNames, type NameResolver } from '../widgets'
 import type { Registry } from '../../registry'
+import { addConnected, canAddFor, type PinRef } from './autoConnect'
+import { CanvasToolbar } from './CanvasToolbar'
 import { edgeTypes } from './Edges'
 import { NodeCard } from './NodeCard'
 import {
@@ -21,6 +25,8 @@ import {
   dataPortOf,
   FlowContext,
   graphVariables,
+  keepUnrendered,
+  nodeTitle,
   renderableGraph,
   traceText,
   viewKey,
@@ -28,6 +34,7 @@ import {
   type FlowTrace,
   type NodeView,
   type PinState,
+  type PinView,
   type ViewContext,
 } from './flowModel'
 
@@ -37,18 +44,35 @@ export interface FlowAdapterProps {
   /** A run or a saved version on view: nothing moves, connects, deletes or edits. */
   readOnly?: boolean
   selectedId?: string
+  /** The primary node: the selected node when exactly one is selected, else undefined. */
   onSelect(id?: string): void
+  /** Every change of the selection: the selected nodes, in the order they were selected, and a selected wire. */
+  onSelectionChange?(ids: string[], edgeId?: string): void
   onChange?(graph: VisualGraph, options?: { coalesce?: string }): void
   diagnostics?: VisualDiagnostic[]
   addStepRequest?: number
   /** Each new value fits the view to the graph. */
   fitViewKey?: unknown
   trace?: FlowTrace
+  /** Rendered at the end of the canvas toolbar (the editor page's "Full screen" button). */
+  toolbarExtra?: JSX.Element
 }
 
 type Point = { x: number; y: number }
 type Connection = { source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null }
-type HandleRef = { nodeId: string; handle: string; type: 'source' | 'target' }
+type Selection = { nodes: string[]; edge?: string }
+type Flow = ReturnType<typeof useSolidFlow>
+
+const GRID = 20
+const LONG_PRESS_MS = 550
+const fitOptions = { padding: 0.15, maxZoom: 1, minZoom: 0.5 }
+const sameSelection = (a: Selection, b: Selection) => a.edge === b.edge && a.nodes.length === b.nodes.length && a.nodes.every((id, i) => id === b.nodes[i])
+const samePin = (a: PinRef | undefined, b: PinRef | undefined) => a === b || (!!a && !!b && a.nodeId === b.nodeId && a.handle === b.handle && a.type === b.type)
+const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(value, high))
+const motion = () => (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 160)
+/** Focus is somewhere keys mean text or a list choice: canvas shortcuts leave those keys alone. */
+const typing = (target: Element) =>
+  !!target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="menu"], [role="listbox"], .hs-card-editor, .hs-quick-add')
 
 /** Registry names for summaries; only inside the app's providers (a bare adapter in a test has none). */
 function useNames(enabled: boolean): () => Registry | undefined {
@@ -61,9 +85,12 @@ function useNames(enabled: boolean): () => Registry | undefined {
 /**
  * The canvas. The rest of the app depends only on `VisualGraph`, never on Solid Flow stores or events: cards read
  * their view from a per-node cache keyed by node content, so a drag or a hover never re-derives ports or summaries.
+ * The adapter owns the selection (the library's would be wiped by every graph change, D1) and every way of making
+ * and removing wires, so the canvas is the one place connections are edited.
  */
 export const FlowAdapter: Component<FlowAdapterProps> = props => {
   let canvas!: HTMLDivElement
+  let flow: Flow | undefined
   const catalog = () => props.catalog ?? nodeCatalog
   const readOnly = () => !!props.readOnly
   const graph = createMemo(() => renderableGraph(props.graph))
@@ -72,14 +99,15 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   const names = useNames(editable)
   // Value chips name registry items the way the inline editors do (one resolver per registry snapshot).
   const nameResolver = createMemo<NameResolver>(() => registryNames(names()))
+  /** Every canvas edit is made on what the canvas shows and applied to the original graph (malformed entries stay). */
   const change = (next: VisualGraph, options?: { coalesce?: string }) => {
     if (readOnly() || !props.onChange || next === graph()) return
-    props.onChange(next, options)
+    props.onChange(graph() === props.graph ? next : keepUnrendered(props.graph, next), options)
   }
 
   const [rejected, setRejected] = createSignal<{ nodeId: string; handle: string; message: string }>()
-  const [activeHandle, setActiveHandle] = createSignal<HandleRef>()
-  const [dragFrom, setDragFrom] = createSignal<HandleRef>()
+  const [activeHandle, setActiveHandle] = createSignal<PinRef>()
+  const [dragFrom, setDragFrom] = createSignal<PinRef>()
   createEffect(
     on(
       () => [props.graph, catalog(), readOnly()] as const,
@@ -91,6 +119,14 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       { defer: true },
     ),
   )
+  const [notice, setNotice] = createSignal<string>()
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined
+  const notify = (text: string) => {
+    clearTimeout(noticeTimer)
+    setNotice(text)
+    noticeTimer = setTimeout(() => setNotice(undefined), 5000)
+  }
+  onCleanup(() => clearTimeout(noticeTimer))
 
   // Per-node views, rebuilt only for nodes whose content, wires, resolved types or diagnostics changed.
   let cache = new Map<string, { key: string; view: NodeView }>()
@@ -110,8 +146,56 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     return next
   })
   const variables = createMemo(() => graphVariables(graph(), catalog()))
+  const pinView = (pin: PinRef): PinView | undefined => {
+    const view = views().get(pin.nodeId)?.view
+    if (!view) return
+    const side = pin.type === 'source' ? 'out' : 'in'
+    const pins = [view.execIn, view.next, view.footer, ...view.rows.flatMap(row => [row.input?.pin, row.output])]
+    return pins.find(p => p?.id === pin.handle && p.side === side)
+  }
 
-  // Connections. Hover asks the connection index only; a drop runs the full check once, inside connectData (D12).
+  // ---- Selection: several nodes, or one wire. The last node selected is the primary one.
+  const [selection, setSelection] = createSignal<Selection>({ nodes: props.selectedId ? [props.selectedId] : [] }, { equals: sameSelection })
+  const selectedSet = createMemo(() => new Set(selection().nodes))
+  const primary = (current: Selection) => (current.nodes.length === 1 ? current.nodes[0] : undefined)
+  const select = (nodes: string[], edge?: string) => {
+    const next: Selection = { nodes: [...new Set(nodes)].filter(id => graph().nodes.some(n => n.id === id)), ...(edge ? { edge } : {}) }
+    setSelection(next)
+    props.onSelect(primary(next))
+  }
+  const toggle = (id: string) => {
+    const current = selection().nodes
+    select(current.includes(id) ? current.filter(other => other !== id) : [...current, id])
+  }
+  // The parent moved the primary selection (the inspector, a problem, a new node).
+  createEffect(
+    on(
+      () => props.selectedId,
+      id => {
+        if (id === primary(untrack(selection))) return
+        setSelection(id ? { nodes: [id] } : { nodes: [] })
+      },
+      { defer: true },
+    ),
+  )
+  // Removed nodes and wires leave the selection.
+  createEffect(
+    on(
+      graph,
+      current => {
+        const before = untrack(selection)
+        const nodes = before.nodes.filter(id => current.nodes.some(n => n.id === id))
+        const edge = before.edge && current.edges.some(e => e.id === before.edge) ? before.edge : undefined
+        if (nodes.length === before.nodes.length && edge === before.edge) return
+        setSelection({ nodes, ...(edge ? { edge } : {}) })
+        if (primary(before) !== primary({ nodes })) props.onSelect(primary({ nodes }))
+      },
+      { defer: true },
+    ),
+  )
+  createEffect(on(selection, current => props.onSelectionChange?.(current.nodes, current.edge), { defer: true }))
+
+  // ---- Connections. Hover asks the connection index only; a drop runs the full check once, inside connectData (D12).
   const quickError = (connection: Connection): string | undefined => {
     const current = graph()
     const source = current.nodes.find(n => n.id === connection.source),
@@ -120,20 +204,17 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     const output = dataPortOf(connection.sourceHandle),
       input = dataPortOf(connection.targetHandle)
     if (output !== undefined && input !== undefined) return dataConnectionError(current, source.id, output, target.id, input, catalog(), { quick: true })
-    if (output !== undefined || input !== undefined) return 'Execution and data ports cannot connect'
+    if (output !== undefined || input !== undefined) return 'Execution and data pins cannot connect'
     if (connection.targetHandle !== 'in' || !canConnect(current, source.id, target.id, connection.sourceHandle ?? undefined, catalog()))
-      return 'Execution connection is unavailable or creates a cycle'
+      return 'This output is already connected, or the wire would make a loop'
   }
-  const reject = (connection: Connection, message: string) => {
-    const handle = connection.targetHandle ?? 'in'
-    setRejected(current =>
-      current?.nodeId === connection.target && current.handle === handle && current.message === message ? current : { nodeId: connection.target, handle, message },
-    )
-  }
+  const reject = (target: { nodeId: string; handle: string }, message: string) =>
+    setRejected(current => (current?.nodeId === target.nodeId && current.handle === target.handle && current.message === message ? current : { ...target, message }))
   const connect = (connection: Connection) => {
     if (readOnly()) return
+    const refusedAt = { nodeId: connection.target, handle: connection.targetHandle ?? 'in' }
     const message = quickError(connection)
-    if (message) return reject(connection, message)
+    if (message) return reject(refusedAt, message)
     const output = dataPortOf(connection.sourceHandle),
       input = dataPortOf(connection.targetHandle)
     let next: VisualGraph
@@ -143,7 +224,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
           ? connectData(graph(), connection.source, output, connection.target, input, catalog())
           : connectNodes(graph(), connection.source, connection.target, connection.sourceHandle ?? undefined, catalog())
     } catch (error) {
-      return reject(connection, error instanceof Error ? error.message : String(error))
+      return reject(refusedAt, error instanceof Error ? error.message : String(error))
     }
     setRejected(undefined)
     setActiveHandle(undefined)
@@ -161,8 +242,9 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       to = type === 'target' ? { nodeId, handle, type } : start
     connect({ source: from.nodeId, sourceHandle: from.handle, target: to.nodeId, targetHandle: to.handle })
   }
-  // While a wire is dragged (or a pin is picked from the keyboard), pins it could end on glow; others dim.
-  const origin = () => dragFrom() ?? activeHandle()
+  // While a wire is dragged (or a pin is picked from the keyboard), pins it could end on glow; others dim. The
+  // states are worked out once per starting pin, never per pointer move.
+  const origin = createMemo(() => dragFrom() ?? activeHandle(), undefined, { equals: samePin })
   const pinStates = createMemo(() => {
     const from = origin()
     const states = new Map<string, PinState>()
@@ -171,7 +253,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     states.set(`${from.nodeId}|${from.type}|${from.handle}`, 'origin')
     const side = from.type === 'source' ? 'target' : 'source'
     const data = dataPortOf(from.handle) !== undefined
-    for (const [id, entry] of views()) {
+    for (const [id, entry] of untrack(views)) {
       if (id === from.nodeId) continue
       const view = entry.view
       const pins = from.type === 'source'
@@ -202,7 +284,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     change(updateNode(graph(), nodeId, { config: next.config }), options)
   }
   const locateProblem = (nodeId: string) => {
-    props.onSelect(nodeId)
+    select([nodeId])
     const problem = views().get(nodeId)?.view.problems[0]
     const port = problem?.inputId ?? problem?.portId
     // The inspector renders the selected node after this; focus its field for the problem.
@@ -216,6 +298,13 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       }),
     )
   }
+  const focusCanvas = () => canvas.focus({ preventScroll: true })
+  const removeWire = (id: string) => {
+    if (readOnly()) return
+    if (selection().edge === id) select([])
+    change(removeEdge(graph(), id, catalog()))
+    focusCanvas()
+  }
 
   // Alt-click removes a wire.
   const edgeClick = (event: MouseEvent) => {
@@ -227,54 +316,96 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     event.stopImmediatePropagation()
     pending = undefined
     setActiveHandle(undefined)
-    closeChooser()
+    closeQuickAdd()
     suppressPaneClick = true
-    change(removeEdge(graph(), id, catalog()))
+    removeWire(id)
     queueMicrotask(() => {
       suppressPaneClick = false
     })
   }
-  onMount(() => canvas.addEventListener('click', edgeClick, true))
-  onCleanup(() => canvas.removeEventListener('click', edgeClick, true))
 
-  const [chooser, setChooser] = createSignal<{ screen: Point; position: Point; pending?: PendingConnection }>()
-  let toFlow = (point: Point) => point
-  let pending: PendingConnection | undefined
+  // ---- Quick-add: double-click, right-click, long-press, `A`, the toolbar, "Add step", or a pin dropped on empty space.
+  const [quickAdd, setQuickAdd] = createSignal<{ screen: Point; position: Point; pin?: PinRef }>()
+  const toFlow = (point: Point) => (flow ? flow.screenToFlowPosition(point, { snapToGrid: false }) : point)
+  const [snap, setSnap] = createSignal(false)
+  const [minimap, setMinimap] = createSignal(false)
+  const place = (point: Point) => (snap() ? { x: Math.round(point.x / GRID) * GRID, y: Math.round(point.y / GRID) * GRID } : { x: Math.round(point.x), y: Math.round(point.y) })
+  let pending: PinRef | undefined
   const cancelPending = () => {
     pending = undefined
     setDragFrom(undefined)
   }
-  // XYFlow listens for touchend, but not touchcancel. A later release must not
-  // resurrect a canceled output-to-empty-space gesture.
-  onMount(() => canvas.ownerDocument.addEventListener('touchcancel', cancelPending, true))
-  onCleanup(() => canvas.ownerDocument.removeEventListener('touchcancel', cancelPending, true))
-  let gestureStart: Point | undefined
-  const [gestureMoved, setGestureMoved] = createSignal(false)
   let suppressPaneClick = false
-  const closeChooser = () => setChooser(undefined)
-  const openChooser = (screen: Point, connection?: PendingConnection) => {
-    if (readOnly()) return
-    setChooser({ screen, position: toFlow(screen), pending: connection })
+  const [gestureMoved, setGestureMoved] = createSignal(false)
+  let gestureStart: Point | undefined
+  let pointerHeld = false
+  let lastPointer: Point | undefined
+  const closeQuickAdd = () => setQuickAdd(undefined)
+  const centre = (): Point => {
+    const rect = canvas.getBoundingClientRect()
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
   }
-  const create = (kind: NodeKind, position: Point, connection?: PendingConnection) => {
-    closeChooser()
+  const openQuickAdd = (screen: Point, pin?: PinRef, position?: Point) => {
     if (readOnly()) return
-    const next = createNodeAt(graph(), kind, position, connection, catalog())
-    if (next !== graph()) {
+    setQuickAdd({ screen, position: position ?? toFlow(screen), pin })
+  }
+  /** Beside the pin's card: to its right for an output, to its left for an input. */
+  const besidePin = (pin: PinRef): Point | undefined => {
+    const node = flow?.getInternalNode(pin.nodeId)
+    if (!node) return
+    const { x, y } = node.internals.positionAbsolute
+    return pin.type === 'source' ? { x: x + (node.measured.width ?? 260) + 100, y } : { x: x - 360, y }
+  }
+  const quickAddTitle = (pin?: PinRef) => {
+    if (!pin) return 'Add a step'
+    const label = pinView(pin)?.label ?? ''
+    const title = nodeTitle(graph().nodes.find(n => n.id === pin.nodeId), catalog())
+    if (pin.type === 'source') return `Connect ${pin.handle === 'next' ? title : label} to…`
+    return dataPortOf(pin.handle) !== undefined ? `Get ${label} from…` : `Connect a step to ${title}`
+  }
+  const create = (kind: NodeKind) => {
+    const request = quickAdd()
+    closeQuickAdd()
+    if (readOnly() || !request) return
+    const position = place(request.position)
+    if (!request.pin) {
+      const next = createNodeAt(graph(), kind, position, undefined, catalog())
+      if (next === graph()) return
       change(next)
-      props.onSelect(next.nodes.at(-1)!.id)
+      select([next.nodes.at(-1)!.id])
+      return
     }
+    const result = addConnected(graph(), kind, position, request.pin, catalog())
+    if (!result) return
+    setActiveHandle(undefined)
+    change(result.graph)
+    select([result.nodeId])
+    if (result.error && result.refused) reject(result.refused, result.error)
   }
+
   const Viewport = () => {
-    const flow = useSolidFlow()
-    toFlow = point => flow.screenToFlowPosition(point, { snapToGrid: false })
+    const api = useSolidFlow()
+    flow = api
+    /** Runs once every card has been measured (their sizes are unknown on the first frames), or after a second. */
+    const whenMeasured = (run: () => void) => {
+      let frames = 0
+      let frame = 0
+      const step = () => {
+        const ready = graph().nodes.every(n => api.getInternalNode(n.id)?.measured.width)
+        if (!ready && ++frames < 60) {
+          frame = requestAnimationFrame(step)
+          return
+        }
+        run()
+      }
+      frame = requestAnimationFrame(step)
+      onCleanup(() => cancelAnimationFrame(frame))
+    }
     createEffect(
       on(
         () => props.addStepRequest,
         request => {
-          if (!request) return
-          const rect = canvas.getBoundingClientRect()
-          openChooser({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+          if (request) openQuickAdd(centre())
         },
       ),
     )
@@ -282,68 +413,56 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       on(
         () => props.fitViewKey,
         key => {
-          if (key === undefined) return
-          requestAnimationFrame(() => void flow.fitView({ padding: 0.15, maxZoom: 1 }))
+          if (key !== undefined) whenMeasured(() => void api.fitView(fitOptions))
         },
       ),
     )
+    // Centre the run's focus node once it is measured, then leave the viewport to the user: a new trace object for
+    // the same node (a live run polling) does not move the view again.
+    const focusNode = createMemo(() => props.trace?.focusNodeId)
     createEffect(
-      on(
-        () => props.trace?.focusNodeId,
-        id => {
-          if (!id) return
-          // Centre once the card has been measured (its size is unknown on the first frames), then leave the
-          // viewport to the user: this runs again only when focusNodeId changes.
-          let frames = 0, frame = 0
-          const centre = () => {
-            const node = flow.getInternalNode(id)
-            const width = node?.measured.width, height = node?.measured.height
-            if (!node || !width || !height) {
-              if (++frames < 60) frame = requestAnimationFrame(centre)
-              return
-            }
-            const { x, y } = node.internals.positionAbsolute
-            void flow.setCenter(x + width / 2, y + height / 2, { zoom: Math.max(flow.getZoom(), 0.8), duration: 200 })
-          }
-          frame = requestAnimationFrame(centre)
-          onCleanup(() => cancelAnimationFrame(frame))
-        },
-      ),
+      on(focusNode, id => {
+        if (!id) return
+        whenMeasured(() => {
+          const node = api.getInternalNode(id)
+          const width = node?.measured.width, height = node?.measured.height
+          if (!node || !width || !height) return
+          const { x, y } = node.internals.positionAbsolute
+          void api.setCenter(x + width / 2, y + height / 2, { zoom: Math.max(api.getZoom(), 0.8), duration: 200 })
+        })
+      }),
     )
     return null
   }
-  const emptyPane = (element: Element | null) => !!element && canvas.contains(element) && element.classList.contains('solid-flow__pane')
-  const chooserOffset = () => {
+  const emptyPane = (element: EventTarget | null) => element instanceof Element && canvas.contains(element) && element.classList.contains('solid-flow__pane')
+  const quickAddOffset = (screen: Point) => {
     const rect = canvas.getBoundingClientRect()
-    const point = chooser()!.screen
-    return {
-      x: Math.max(8, Math.min(point.x - rect.left, rect.width - 292)),
-      y: Math.max(8, Math.min(point.y - rect.top, rect.height - 340)),
-    }
+    const width = Math.min(320, Math.max(0, rect.width - 16)), height = Math.min(420, Math.max(0, rect.height - 16))
+    return { x: clamp(screen.x - rect.left, 8, rect.width - width - 8), y: clamp(screen.y - rect.top, 8, rect.height - height - 8) }
   }
 
   let touchDrag: { id: string; graph: VisualGraph } | undefined
   const [nodes, setNodes] = createStore<Node[]>([])
   const [edges, setEdges] = createStore<Edge[]>([])
+  /** One graph change for a finished drag, however many nodes it moved. */
   const commitGeometry = () => {
     if (readOnly()) return
-    const current = props.graph
+    const current = graph()
     const moved = current.nodes.map(node => {
-      if (!node || typeof node !== 'object') return node
       const flowNode = nodes.find(n => n.id === node.id)
       if (!flowNode) return node
       const same = node.position?.x === flowNode.position.x && node.position?.y === flowNode.position.y
       return same ? node : { ...node, position: { ...flowNode.position } }
     })
-    if (moved.some((node, i) => node !== current.nodes[i])) props.onChange?.({ ...current, nodes: moved })
+    if (moved.some((node, i) => node !== current.nodes[i])) change({ ...current, nodes: moved })
   }
   // Solid Flow 0.2.6 rebinds D3 touch handlers on every node update. Own only
   // single-touch node-body movement here; mouse and handles stay native.
   const TouchNodeDrag = () => {
-    const flow = useSolidFlow()
+    const api = useSolidFlow()
     let gesture: { identifier: number; origin: Point; start: Point; moved: boolean } | undefined
     let claimed = false
-    const point = (touch: Touch) => flow.screenToFlowPosition({ x: touch.clientX, y: touch.clientY }, { snapToGrid: false })
+    const point = (touch: Touch) => api.screenToFlowPosition({ x: touch.clientX, y: touch.clientY }, { snapToGrid: false })
     const consume = (event: TouchEvent) => {
       event.stopPropagation()
       event.preventDefault()
@@ -376,7 +495,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       consume(event)
       touchDrag = { id: node.id, graph: props.graph }
       gesture = { identifier: touch.identifier, origin: { ...node.position }, start: point(touch), moved: false }
-      props.onSelect(node.id)
+      if (!selectedSet().has(node.id) || selection().nodes.length !== 1) select([node.id])
     }
     const move = (event: TouchEvent) => {
       if (!claimed) return
@@ -394,8 +513,9 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       }
       const next = point(touch)
       const position = { x: gesture.origin.x + next.x - gesture.start.x, y: gesture.origin.y + next.y - gesture.start.y }
-      gesture.moved ||= position.x !== gesture.origin.x || position.y !== gesture.origin.y
-      setNodes(node => node.id === touchDrag!.id, 'position', position)
+      const snapped = snap() ? place(position) : position
+      gesture.moved ||= snapped.x !== gesture.origin.x || snapped.y !== gesture.origin.y
+      setNodes(node => node.id === touchDrag!.id, 'position', snapped)
     }
     const end = (event: TouchEvent) => {
       if (!claimed) return
@@ -438,8 +558,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   // Flow nodes carry only identity, position and selection; cards read everything else from their view.
   createEffect(
     on(
-      () => [graph(), props.selectedId, views(), props.trace] as const,
-      ([current, selectedId, built, trace]) =>
+      () => [graph(), views(), props.trace] as const,
+      ([current, built, trace]) =>
         untrack(() =>
           setNodes(
             reconcile(
@@ -454,7 +574,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
                       ? { ...node.position }
                       : { x: 60 + index * 300, y: 100 },
                 domAttributes: { 'aria-label': `${built.get(node.id)?.view.label ?? node.id}${trace ? `. Run: ${traceText(trace.nodes[node.id])}` : ''}` },
-                selected: node.id === selectedId,
+                selected: selectedSet().has(node.id),
               })),
               { key: 'id' },
             ),
@@ -484,6 +604,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
                   class: trace ? (travelled ? 'hs-wire-group hs-wire--travelled' : 'hs-wire-group hs-wire--idle') : 'hs-wire-group',
                   ariaLabel: `${view.label}${trace ? (travelled ? ', ran' : ', not taken') : ''}`,
                   zIndex: view.kind === 'exec' ? 1 : 0,
+                  selected: selection().edge === view.id,
                 }]
               }),
               { key: 'id' },
@@ -492,6 +613,213 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
         ),
     ),
   )
+  // The library marks selected nodes and wires on these objects; the adapter's selection is the source of truth.
+  const pushSelection = (current: Selection) => {
+    const chosen = new Set(current.nodes)
+    setNodes(produce(list => list.forEach(node => { if (!!node.selected !== chosen.has(node.id)) node.selected = chosen.has(node.id) })))
+    setEdges(produce(list => list.forEach(edge => { if (!!edge.selected !== (edge.id === current.edge)) edge.selected = edge.id === current.edge })))
+  }
+  createEffect(on(selection, pushSelection))
+
+  // ---- Multi-node actions: each is one graph change, so one undo step.
+  const targets = (target?: Element) => {
+    const id = target?.closest('.solid-flow__node')?.getAttribute('data-id')
+    return id && !selectedSet().has(id) ? [id] : selection().nodes
+  }
+  const deleteSelection = (target: Element) => {
+    if (readOnly()) return
+    const edgeId = target.closest('.solid-flow__edge')?.getAttribute('data-id')
+    if (edgeId) return removeWire(edgeId)
+    const ids = targets(target)
+    if (ids.length) {
+      let next = graph()
+      for (const id of ids) next = removeNode(next, id, catalog())
+      select([])
+      change(next)
+      focusCanvas()
+      return
+    }
+    const edge = selection().edge
+    if (edge) removeWire(edge)
+  }
+  const steps = (count: number) => `${count} step${count === 1 ? '' : 's'}`
+  const copy = (target: Element) => {
+    const data = copySteps(graph(), targets(target))
+    if (!data) return
+    void writeSteps(data)
+    notify(`Copied ${steps(data.nodes.length)}`)
+  }
+  let lastPaste: { data: StepClipboard; count: number } | undefined
+  const insert = (data: StepClipboard, placement: { at: Point } | { offset: Point }) => {
+    const result = pasteSteps(graph(), data, catalog(), placement, snap() ? GRID : undefined)
+    if ('error' in result) return notify(`Cannot paste: ${result.error}`)
+    change(result.graph)
+    select(result.ids)
+  }
+  const paste = async () => {
+    if (readOnly()) return
+    const data = await readSteps()
+    if (!data) return notify('Nothing to paste: copy steps first')
+    // At the pointer when it is over the canvas; from the keyboard alone, a little below the originals (further
+    // each time the same copy is pasted again).
+    if (lastPointer) return insert(data, { at: toFlow(lastPointer) })
+    const count = lastPaste && JSON.stringify(lastPaste.data) === JSON.stringify(data) ? lastPaste.count + 1 : 1
+    lastPaste = { data, count }
+    insert(data, { offset: { x: 40 * count, y: 40 * count } })
+  }
+  const duplicate = (target: Element) => {
+    if (readOnly()) return
+    const data = copySteps(graph(), targets(target))
+    if (data) insert(data, { offset: { x: 40, y: 40 } })
+  }
+  const tidy = () => {
+    if (readOnly()) return
+    const sizes = (id: string) => {
+      const measured = flow?.getInternalNode(id)?.measured
+      return measured?.width && measured.height ? { width: measured.width, height: measured.height } : undefined
+    }
+    const next = applyLayout(graph(), tidyLayout(graph(), catalog(), { sizes, grid: GRID }))
+    if (next === graph()) return notify('Already tidy')
+    change(next)
+    requestAnimationFrame(() => void flow?.fitView({ ...fitOptions, duration: motion() }))
+  }
+  const nudge = (ids: string[], [dx, dy]: [number, number], large: boolean) => {
+    const step = (snap() ? GRID : 10) * (large ? 4 : 1)
+    const moving = new Set(ids)
+    const next = { ...graph(), nodes: graph().nodes.map(node => (moving.has(node.id) ? { ...node, position: { x: (node.position?.x ?? 60) + dx * step, y: (node.position?.y ?? 100) + dy * step } } : node)) }
+    change(next)
+  }
+
+  // ---- Marquee: Shift and drag on empty canvas adds the cards it touches to the selection.
+  const [marquee, setMarquee] = createSignal<{ start: Point; end: Point; base: string[] }>()
+  let suppressClick = false
+  const inside = (a: Point, b: Point) => {
+    const p = toFlow(a), q = toFlow(b)
+    const left = Math.min(p.x, q.x), right = Math.max(p.x, q.x), top = Math.min(p.y, q.y), bottom = Math.max(p.y, q.y)
+    return graph().nodes.flatMap(node => {
+      const internal = flow?.getInternalNode(node.id)
+      const at = internal?.internals.positionAbsolute ?? node.position ?? { x: 0, y: 0 }
+      const width = internal?.measured.width ?? 0, height = internal?.measured.height ?? 0
+      return at.x <= right && at.x + width >= left && at.y <= bottom && at.y + height >= top ? [node.id] : []
+    })
+  }
+  const marqueeMove = (event: PointerEvent) => {
+    const current = marquee()
+    if (!current) return
+    const end = { x: event.clientX, y: event.clientY }
+    setMarquee({ ...current, end })
+    setSelection({ nodes: [...new Set([...current.base, ...inside(current.start, end)])] })
+  }
+  const marqueeEnd = (event: PointerEvent) => {
+    const current = marquee()
+    canvas.ownerDocument.removeEventListener('pointermove', marqueeMove, true)
+    canvas.ownerDocument.removeEventListener('pointerup', marqueeEnd, true)
+    canvas.ownerDocument.removeEventListener('pointercancel', marqueeEnd, true)
+    setMarquee(undefined)
+    if (!current) return
+    const end = event.type === 'pointercancel' ? current.end : { x: event.clientX, y: event.clientY }
+    select([...new Set([...current.base, ...inside(current.start, end)])])
+    // The click that ends the drag on the pane would clear the selection again.
+    suppressClick = true
+    setTimeout(() => (suppressClick = false))
+  }
+  const marqueeRect = () => {
+    const current = marquee()
+    if (!current) return
+    const rect = canvas.getBoundingClientRect()
+    return {
+      left: `${Math.min(current.start.x, current.end.x) - rect.left}px`,
+      top: `${Math.min(current.start.y, current.end.y) - rect.top}px`,
+      width: `${Math.abs(current.end.x - current.start.x)}px`,
+      height: `${Math.abs(current.end.y - current.start.y)}px`,
+    }
+  }
+
+  // ---- Pointer and touch gestures the library does not have.
+  let press: { timer: ReturnType<typeof setTimeout>; x: number; y: number } | undefined
+  let pressedAt = 0
+  const cancelPress = () => {
+    if (press) clearTimeout(press.timer)
+    press = undefined
+  }
+  const pressStart = (event: TouchEvent) => {
+    cancelPress()
+    if (readOnly() || event.touches.length !== 1 || !emptyPane(event.target)) return
+    const touch = event.touches[0]
+    press = {
+      x: touch.clientX,
+      y: touch.clientY,
+      timer: setTimeout(() => {
+        const at = press!
+        press = undefined
+        pressedAt = Date.now()
+        openQuickAdd({ x: at.x, y: at.y })
+      }, LONG_PRESS_MS),
+    }
+  }
+  const pressMove = (event: TouchEvent) => {
+    const touch = event.touches[0]
+    if (press && (event.touches.length !== 1 || !touch || Math.hypot(touch.clientX - press.x, touch.clientY - press.y) > 10)) cancelPress()
+  }
+  const pointerDownCapture = (event: PointerEvent) => {
+    pointerHeld = true
+    if (event.button !== 0 || !event.shiftKey || !event.isPrimary || !emptyPane(event.target)) return
+    event.stopPropagation()
+    event.preventDefault()
+    closeQuickAdd()
+    const start = { x: event.clientX, y: event.clientY }
+    setMarquee({ start, end: start, base: selection().nodes })
+    canvas.ownerDocument.addEventListener('pointermove', marqueeMove, true)
+    canvas.ownerDocument.addEventListener('pointerup', marqueeEnd, true)
+    canvas.ownerDocument.addEventListener('pointercancel', marqueeEnd, true)
+  }
+  // The marquee's pointer must not also pan the canvas (the library pans on mousedown).
+  const mouseDownCapture = (event: MouseEvent) => {
+    if (marquee()) event.stopPropagation()
+  }
+  const clickCapture = (event: MouseEvent) => {
+    if (suppressClick && emptyPane(event.target)) {
+      suppressClick = false
+      event.stopImmediatePropagation()
+      return
+    }
+    edgeClick(event)
+  }
+  const released = () => {
+    pointerHeld = false
+  }
+  const doubleClick = (event: MouseEvent) => {
+    if (emptyPane(event.target)) openQuickAdd({ x: event.clientX, y: event.clientY })
+  }
+  onMount(() => {
+    const doc = canvas.ownerDocument
+    canvas.addEventListener('click', clickCapture, true)
+    canvas.addEventListener('pointerdown', pointerDownCapture, true)
+    canvas.addEventListener('mousedown', mouseDownCapture, true)
+    canvas.addEventListener('dblclick', doubleClick)
+    canvas.addEventListener('touchstart', pressStart, { capture: true, passive: true })
+    canvas.addEventListener('touchmove', pressMove, { capture: true, passive: true })
+    // XYFlow listens for touchend, but not touchcancel. A later release must not
+    // resurrect a canceled output-to-empty-space gesture.
+    doc.addEventListener('touchcancel', cancelPending, true)
+    for (const type of ['touchend', 'touchcancel']) doc.addEventListener(type, cancelPress, true)
+    for (const type of ['pointerup', 'pointercancel']) doc.addEventListener(type, released, true)
+    onCleanup(() => {
+      cancelPress()
+      canvas.removeEventListener('click', clickCapture, true)
+      canvas.removeEventListener('pointerdown', pointerDownCapture, true)
+      canvas.removeEventListener('mousedown', mouseDownCapture, true)
+      canvas.removeEventListener('dblclick', doubleClick)
+      canvas.removeEventListener('touchstart', pressStart, true)
+      canvas.removeEventListener('touchmove', pressMove, true)
+      doc.removeEventListener('touchcancel', cancelPending, true)
+      for (const type of ['touchend', 'touchcancel']) doc.removeEventListener(type, cancelPress, true)
+      for (const type of ['pointerup', 'pointercancel']) doc.removeEventListener(type, released, true)
+      doc.removeEventListener('pointermove', marqueeMove, true)
+      doc.removeEventListener('pointerup', marqueeEnd, true)
+      doc.removeEventListener('pointercancel', marqueeEnd, true)
+    })
+  })
 
   const context: FlowContextValue = {
     readOnly,
@@ -504,48 +832,73 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     pinState: (nodeId, handle, type) => pinStates().get(`${nodeId}|${type}|${handle}`),
     names: nameResolver,
     activateHandle,
+    connecting: () => !!origin(),
+    refusal: (nodeId, handle) => {
+      const current = rejected()
+      return current?.nodeId === nodeId && current.handle === handle ? current.message : undefined
+    },
+    removeEdge: removeWire,
     moved: gestureMoved,
     setInput: setNodeInput,
     locateProblem,
   }
 
+  const consume = (event: KeyboardEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+  }
   const keyboard = (event: KeyboardEvent) => {
+    const target = event.target as Element
+    // Keys typed in a field, a menu, a list or the quick-add palette are theirs.
+    if (typing(target)) return
+    const command = event.ctrlKey || event.metaKey
+    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key
     if (event.key === 'Escape') {
       pending = undefined
       setActiveHandle(undefined)
       setDragFrom(undefined)
-      closeChooser()
+      setRejected(undefined)
+      closeQuickAdd()
     }
-    const target = event.target as Element
-    if (readOnly() && (event.key === 'Delete' || event.key === 'Backspace')) {
-      // Nothing is deleted from a run or saved version on view.
-      event.preventDefault()
-      event.stopPropagation()
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      // Nothing is deleted from a run or saved version on view; the key never reaches Home Assistant either.
+      consume(event)
+      deleteSelection(target)
+      return
+    }
+    if (!command && !event.altKey && key === 'a') {
+      if (readOnly()) return
+      consume(event)
+      const pin = activeHandle()
+      const at = pin ? besidePin(pin) : undefined
+      openQuickAdd(lastPointer && !pin ? lastPointer : centre(), pin, at)
+      return
+    }
+    if (command && !event.altKey && !event.shiftKey && (key === 'c' || key === 'v' || key === 'd')) {
+      consume(event)
+      if (key === 'c') copy(target)
+      else if (key === 'v') void paste()
+      else duplicate(target)
       return
     }
     if (target.closest('.solid-flow__handle')) return
     const id = target.closest('.solid-flow__node')?.getAttribute('data-id')
     if (!id) return
     if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      event.stopPropagation()
-      props.onSelect(id)
+      consume(event)
+      select([id])
       return
     }
     if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      props.onSelect(undefined)
+      consume(event)
+      select([])
       return
     }
     const delta: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
     const direction = delta[event.key]
-    const node = graph().nodes.find(n => n.id === id)
-    if (direction && node && props.selectedId === id && !readOnly()) {
-      event.preventDefault()
-      event.stopPropagation()
-      const step = event.shiftKey ? 40 : 10
-      change(updateNode(graph(), id, { position: { x: (node.position?.x ?? 60) + direction[0] * step, y: (node.position?.y ?? 100) + direction[1] * step } }))
+    if (direction && selectedSet().has(id) && !readOnly()) {
+      consume(event)
+      nudge(selection().nodes, direction, event.shiftKey)
     }
   }
 
@@ -554,15 +907,20 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       <div
         ref={canvas}
         class="hs-flow"
-        classList={{ 'hs-flow--readonly': readOnly(), 'hs-flow--traced': !!props.trace, 'hs-flow--connecting': !!origin() }}
+        classList={{ 'hs-flow--readonly': readOnly(), 'hs-flow--traced': !!props.trace, 'hs-flow--connecting': !!origin(), 'hs-flow--marquee': !!marquee() }}
+        tabindex="-1"
         aria-label={readOnly() ? 'Automation canvas, read only' : 'Automation canvas'}
         on:pointerdown={event => {
           gestureStart = { x: event.clientX, y: event.clientY }
           setGestureMoved(false)
+          // Keys pressed after clicking empty canvas reach the canvas shortcuts.
+          if (emptyPane(event.target)) focusCanvas()
         }}
         on:pointermove={event => {
+          lastPointer = { x: event.clientX, y: event.clientY }
           if (gestureStart && !gestureMoved() && Math.hypot(event.clientX - gestureStart.x, event.clientY - gestureStart.y) > 3) setGestureMoved(true)
         }}
+        on:pointerleave={() => (lastPointer = undefined)}
         onDragOver={event => {
           if (!readOnly() && event.dataTransfer?.types.includes('application/x-hass-sharp-node')) {
             event.preventDefault()
@@ -571,12 +929,25 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
         }}
         onDrop={event => {
           event.preventDefault()
+          if (readOnly()) return
           const kind = event.dataTransfer?.getData('application/x-hass-sharp-node') as NodeKind
-          if (palette().some(item => item.kind === kind)) create(kind, toFlow({ x: event.clientX, y: event.clientY }))
+          if (!palette().some(item => item.kind === kind)) return
+          const next = createNodeAt(graph(), kind, place(toFlow({ x: event.clientX, y: event.clientY })), undefined, catalog())
+          if (next === graph()) return
+          change(next)
+          select([next.nodes.at(-1)!.id])
         }}
-        onFocusIn={event => {
-          const id = (event.target as Element).closest('.solid-flow__node')?.getAttribute('data-id')
-          if (id && id !== props.selectedId) props.onSelect(id)
+        on:focusin={(event: FocusEvent) => {
+          // A pointer selects on click (Shift-click adds); focus moved by the keyboard selects what it lands on.
+          if (pointerHeld) return
+          const target = event.target as Element
+          const edge = target.closest('.solid-flow__edge')?.getAttribute('data-id')
+          if (edge) {
+            if (selection().edge !== edge) select([], edge)
+            return
+          }
+          const id = target.closest('.solid-flow__node')?.getAttribute('data-id')
+          if (id && !selectedSet().has(id)) select([id])
         }}
         on:keydown={keyboard}
       >
@@ -588,11 +959,15 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
           nodeTypes={{ card: NodeCard }}
           edgeTypes={edgeTypes}
           initialViewport={{ x: 10, y: 20, zoom: 0.75 }}
+          fitView
+          fitViewOptions={fitOptions}
           minZoom={0.25}
           maxZoom={1.5}
+          snapGrid={snap() ? [GRID, GRID] : undefined}
           nodesDraggable={!readOnly()}
           nodesConnectable={!readOnly()}
           disableKeyboardA11y={readOnly()}
+          zoomOnDoubleClick={false}
           autoPanOnNodeDrag={false}
           autoPanOnConnect={false}
           clickConnect={false}
@@ -600,57 +975,68 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
           noPanClass="nopan"
           noWheelClass="nowheel"
           onPaneClick={({ event }) => {
-            if (event.button === 0 && !gestureMoved() && !suppressPaneClick) openChooser({ x: event.clientX, y: event.clientY })
+            // Clicking empty canvas closes the palette and clears the selection; it never adds anything.
+            closeQuickAdd()
+            if (event.button !== 0 || gestureMoved() || suppressPaneClick || Date.now() - pressedAt < 800) return pushSelection(selection())
+            select([])
           }}
-          onMoveStart={closeChooser}
+          onPaneContextMenu={({ event }) => {
+            event.preventDefault()
+            // A long press already opened it (some browsers then send a context menu too).
+            if (Date.now() - pressedAt < 1000) return
+            openQuickAdd({ x: event.clientX, y: event.clientY })
+          }}
+          onMoveStart={closeQuickAdd}
           onMove={() => setGestureMoved(true)}
           onConnectStart={(_event, params) => {
-            closeChooser()
+            closeQuickAdd()
             setRejected(undefined)
             setActiveHandle(undefined)
-            if (params.nodeId && params.handleId && params.handleType) setDragFrom({ nodeId: params.nodeId, handle: params.handleId, type: params.handleType })
-            pending =
-              params.handleType === 'source' && params.nodeId && params.handleId && !params.handleId.startsWith('data:')
-                ? { source: params.nodeId, port: params.handleId as EdgePort }
-                : undefined
+            const pin = params.nodeId && params.handleId && params.handleType ? { nodeId: params.nodeId, handle: params.handleId, type: params.handleType } : undefined
+            setDragFrom(pin)
+            pending = pin
           }}
           onConnectEnd={(event, state) => {
-            const connection = pending
+            const pin = pending
             pending = undefined
             setDragFrom(undefined)
             suppressPaneClick = true
             queueMicrotask(() => {
               suppressPaneClick = false
             })
-            // Dropped on a pin that refused: say why on that pin.
+            // Dropped on a pin that refused: say why beside that pin.
             if (!state.isValid && state.toHandle && state.fromHandle && state.toHandle.nodeId !== state.fromHandle.nodeId) {
               const from = state.fromHandle, to = state.toHandle
               const conn = from.type === 'source'
                 ? { source: from.nodeId, sourceHandle: from.id, target: to.nodeId, targetHandle: to.id }
                 : { source: to.nodeId, sourceHandle: to.id, target: from.nodeId, targetHandle: from.id }
               const message = quickError(conn)
-              if (message) reject(conn, message)
+              if (message) reject({ nodeId: conn.target, handle: conn.targetHandle ?? 'in' }, message)
               return
             }
-            if (!connection || state.isValid || event.type === 'touchcancel') return
+            if (!pin || state.isValid || event.type === 'touchcancel' || readOnly()) return
             const point = 'changedTouches' in event ? event.changedTouches[0] : event
             if (!point) return
+            // Dropped on empty canvas: offer the steps that can connect to the pin.
             const root = canvas.getRootNode() as Document | ShadowRoot
-            const below = root.elementFromPoint?.(point.clientX, point.clientY)
-            if (emptyPane(below) && palette().some(item => canCreateNode(graph(), item.kind, connection, catalog()))) {
-              openChooser({ x: point.clientX, y: point.clientY }, connection)
-            }
+            const below = root.elementFromPoint?.(point.clientX, point.clientY) ?? null
+            if (emptyPane(below) && palette().some(item => canAddFor(graph(), item.kind, pin, catalog()))) openQuickAdd({ x: point.clientX, y: point.clientY }, pin)
           }}
           deleteKey={null}
           multiSelectionKey={null}
           selectionKey={null}
           panActivationKey={null}
           zoomActivationKey={null}
-          onNodeClick={({ node }) => props.onSelect(node.id)}
+          onNodeClick={({ node, event }) => {
+            if (gestureMoved()) return
+            if (event.shiftKey || event.metaKey || event.ctrlKey) toggle(node.id)
+            else select([node.id])
+          }}
           onNodeDragStart={({ targetNode }) => {
-            if (targetNode) props.onSelect(targetNode.id)
+            if (targetNode && !selectedSet().has(targetNode.id)) select([targetNode.id])
           }}
           onNodeDragStop={() => commitGeometry()}
+          onEdgeClick={({ edge }) => select([], edge.id)}
           isValidConnection={connection => !readOnly() && !quickError(connection)}
           onConnect={connect}
         >
@@ -658,28 +1044,52 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
           <Show when={!readOnly()}>
             <TouchNodeDrag />
           </Show>
-          <Background variant="dots" />
-          <Controls showLock={false} />
+          <Background variant="dots" gap={GRID} />
+          <CanvasToolbar
+            readOnly={readOnly()}
+            snap={snap()}
+            minimap={minimap()}
+            onAdd={() => openQuickAdd(centre())}
+            onZoomIn={() => void flow?.zoomIn({ duration: motion() })}
+            onZoomOut={() => void flow?.zoomOut({ duration: motion() })}
+            onFit={() => void flow?.fitView({ ...fitOptions, duration: motion() })}
+            onTidy={tidy}
+            onSnap={() => setSnap(value => !value)}
+            onMinimap={() => setMinimap(value => !value)}
+          >
+            {props.toolbarExtra}
+          </CanvasToolbar>
+          <Show when={minimap()}>
+            <MiniMap
+              class="hs-minimap"
+              pannable
+              zoomable
+              width={168}
+              height={112}
+              nodeClass={(node: Node) => `hs-minimap-node hs-minimap-node--${views().get(node.id)?.view.identity.key ?? 'code'}`}
+            />
+          </Show>
         </SolidFlow>
+        <Show when={marqueeRect()}>{style => <div class="hs-marquee" style={style()} aria-hidden="true" />}</Show>
         <Show when={activeHandle()}>
           <p class="hs-connection-prompt" role="status">
-            Select a destination port. Escape cancels.
+            Choose a pin to connect to: Tab moves between the pins that fit, A adds a new step, Escape cancels.
           </p>
         </Show>
-        <Show when={rejected()}>
-          <p class="hs-connection-error hs-error" role="alert">
-            {rejected()!.message}
+        <Show when={notice()}>
+          <p class="hs-canvas-notice" role="status">
+            {notice()}
           </p>
         </Show>
-        <Show when={!readOnly() && chooser()} keyed>
+        <Show when={!readOnly() && quickAdd()} keyed>
           {request => (
-            <NodeChooser
+            <QuickAdd
               catalog={catalog()}
-              {...chooserOffset()}
-              pending={request.pending}
-              allowed={kind => canCreateNode(graph(), kind, request.pending, catalog())}
-              onClose={closeChooser}
-              onChoose={kind => create(kind, request.position, request.pending)}
+              {...quickAddOffset(request.screen)}
+              title={quickAddTitle(request.pin)}
+              allowed={kind => canAddFor(graph(), kind, request.pin, catalog())}
+              onClose={closeQuickAdd}
+              onChoose={create}
             />
           )}
         </Show>

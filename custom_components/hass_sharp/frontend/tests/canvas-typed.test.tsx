@@ -4,6 +4,12 @@ import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { NodeConfig } from '../src/visual/NodeConfig'
 import { addNode, connectNodes, createGraph, createGraphHistory, catalogPalette, updateNode } from '../src/visual/graph'
 import { nodeCatalog, type VisualCatalogSnapshot } from '../src/visual/contract'
+import * as graphModule from '../src/visual/graph'
+// Counts the per-pin compatibility checks behind wire-drag highlighting.
+vi.mock('../src/visual/graph', async original => {
+  const actual = await original<typeof import('../src/visual/graph')>()
+  return { ...actual, dataConnectionError: vi.fn(actual.dataConnectionError) }
+})
 let dispose: (() => void) | undefined
 afterEach(() => {
   dispose?.()
@@ -464,4 +470,129 @@ it('names library types for people, never with CLR spelling', () => {
   expect(label('global::HassSharp.EntityStateSnapshot')).toBe('Entity state')
   // No type in the catalog is ever named with a namespace, global::, generic brackets, ? or [].
   for (const id of Object.keys(catalog.types)) expect(label(id), id).not.toMatch(/global::|[.<>?[\]]|^(bool|int|double|float|string|object)$/)
+})
+
+it('never recurses through a self-referencing element type, and names tuples and multi-dimensional arrays plainly', () => {
+  const catalog: VisualCatalogSnapshot = structuredClone(nodeCatalog)
+  catalog.types['global::NodeLib.Tree'] = { label: 'global::NodeLib.Tree', elementType: 'global::NodeLib.Tree' } as any
+  catalog.types['global::NodeLib.Forest'] = { label: 'global::NodeLib.Forest', elementType: 'global::NodeLib.Grove' } as any
+  catalog.types['global::NodeLib.Grove'] = { label: 'global::NodeLib.Grove', elementType: 'global::NodeLib.Forest' } as any
+  expect(typeLabel('global::NodeLib.Tree', catalog)).toBe('List of Object')
+  expect(typeLabel('global::NodeLib.Forest', catalog)).toBe('List of List of Object')
+  expect(typeLabel('global::(System.Int32, System.String)', catalog)).toBe('Object')
+  expect(typeLabel('(int Count, string Name)?', catalog)).toBe('Object')
+  expect(typeLabel('global::System.Int32[,]', catalog)).toBe('List')
+  expect(typeLabel('global::System.Double[,,]?', catalog)).toBe('List')
+})
+
+const press = (target: Element, key = 'Enter') => target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+it('connects an execution pin from the keyboard: Enter on the pin, Tab reaches only pins that fit, Enter on the target', () => {
+  const el = host()
+  const history = createGraphHistory(addNode(fixture(), 'delay', 'later'))
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, el)
+  const pin = (id: string, handle: string, side = '') => el.querySelector<HTMLElement>(`[data-id="${id}"] ${side}[data-handleid="${handle}"]`)!
+  press(pin('branch', 'true'))
+  expect(pin('branch', 'true').classList).toContain('hs-pin--origin')
+  expect(el.textContent).toContain('Choose a pin to connect to')
+  // The free step fits; wiring back into the chain would make a loop, so that pin leaves the Tab order.
+  expect(pin('later', 'in').classList).toContain('hs-pin--compatible')
+  expect(pin('later', 'in').tabIndex).toBe(0)
+  expect(pin('condition-1', 'in').classList).toContain('hs-pin--incompatible')
+  expect(pin('condition-1', 'in').tabIndex).toBe(-1)
+  // Data pins are not candidates for an execution wire, and leave the Tab order too.
+  expect(pin('temperature', 'data:value', '.target').className).not.toMatch(/hs-pin--(compatible|incompatible)/)
+  expect(pin('temperature', 'data:value', '.target').tabIndex).toBe(-1)
+  expect(pin('branch', 'true').tabIndex).toBe(0)
+  press(pin('later', 'in'))
+  expect(history.graph().edges.at(-1)).toMatchObject({ source: 'branch', target: 'later', port: 'true' })
+  expect(el.textContent).not.toContain('Choose a pin to connect to')
+  expect(pin('temperature', 'data:value', '.target').tabIndex).toBe(0)
+  // Escape cancels a picked pin.
+  press(pin('later', 'next'))
+  expect(pin('later', 'next').classList).toContain('hs-pin--origin')
+  press(pin('later', 'next'), 'Escape')
+  expect(pin('later', 'next').classList).not.toContain('hs-pin--origin')
+})
+
+it('connects a data pin from the keyboard and says why a refused one cannot connect, next to the target pin', () => {
+  const el = host()
+  let graph = addNode(addNode(createGraph('Data'), 'set_value', 'a'), 'set_value', 'b')
+  for (const id of ['a', 'b']) graph = updateNode(graph, id, { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 1 } } })
+  graph = addNode(graph, 'if', 'branch')
+  graph = connectNodes(connectNodes(connectNodes(graph, 'service-1', 'a'), 'a', 'b'), 'b', 'branch')
+  const history = createGraphHistory(graph)
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, el)
+  const pin = (id: string, side: string, handle = 'data:value') => el.querySelector<HTMLElement>(`[data-id="${id}"] .${side}[data-handleid="${handle}"]`)!
+  press(pin('a', 'source'))
+  expect(pin('b', 'target').classList).toContain('hs-pin--compatible')
+  press(pin('b', 'target'))
+  expect(history.graph().edges.at(-1)).toMatchObject({ kind: 'data', source: 'a', sourcePort: 'value', target: 'b', targetPort: 'value' })
+  // A Number cannot drive a Yes/No condition: nothing changes and the reason appears beside the condition's pin.
+  const before = history.graph()
+  press(pin('a', 'source'))
+  press(pin('branch', 'target'))
+  expect(history.graph()).toBe(before)
+  const callout = pin('branch', 'target').parentElement!.querySelector('.hs-pin-refusal')!
+  expect(callout.getAttribute('role')).toBe('alert')
+  expect(callout.textContent).toBe('Condition requires Boolean; Value outputs Number')
+  expect(el.querySelectorAll('.hs-pin-refusal')).toHaveLength(1)
+  press(el.querySelector('.hs-flow')!, 'Escape')
+  expect(el.querySelector('.hs-pin-refusal')).toBeNull()
+})
+
+it('deletes a selected wire with Delete, Backspace or the "Delete wire" button, one undo step each', async () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
+  const el = host()
+  const history = createGraphHistory(fixture())
+  const original = history.graph()
+  const edgeIds: (string | undefined)[] = []
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onSelectionChange={(_ids, edge) => edgeIds.push(edge)} onChange={history.commit} />, el)
+  await vi.waitFor(() => expect(el.querySelectorAll('.solid-flow__edge')).toHaveLength(original.edges.length))
+  const edge = (id: string) => el.querySelector<HTMLElement>(`.solid-flow__edge[data-id="${id}"]`)!
+  const remove = () => el.querySelector<HTMLButtonElement>('button[aria-label="Delete wire"]')
+  expect(remove()).toBeNull()
+  // Tab onto a wire selects it and shows its button; Delete removes it.
+  const [first, second, third] = original.edges.map(e => e.id)
+  edge(first).dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+  expect(edgeIds.at(-1)).toBe(first)
+  await vi.waitFor(() => expect(remove()).not.toBeNull())
+  press(edge(first), 'Delete')
+  expect(history.graph().edges.map(e => e.id)).toEqual([second, third, ...original.edges.slice(3).map(e => e.id)])
+  expect(edgeIds.at(-1)).toBeUndefined()
+  history.undo()
+  expect(history.graph()).toEqual(original)
+  // Selected by a click, Backspace on the canvas removes it.
+  edge(second).dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+  expect(edgeIds.at(-1)).toBe(second)
+  press(el.querySelector('.hs-flow')!, 'Backspace')
+  expect(history.graph().edges.some(e => e.id === second)).toBe(false)
+  history.undo()
+  // The button.
+  edge(third).dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+  await vi.waitFor(() => expect(remove()).not.toBeNull())
+  remove()!.click()
+  expect(history.graph().edges.some(e => e.id === third)).toBe(false)
+  history.undo()
+  expect(history.graph()).toEqual(original)
+  expect(history.canUndo()).toBe(false)
+})
+
+it('works out which pins a dragged wire fits once per starting pin, not on every pointer move', async () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
+  const el = host()
+  dispose = render(() => <FlowAdapter graph={fixture()} onSelect={() => {}} onChange={() => {}} />, el)
+  await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge')).not.toBeNull())
+  vi.spyOn(document, 'elementFromPoint').mockReturnValue(el.querySelector('.solid-flow__pane'))
+  const checks = vi.mocked(graphModule.dataConnectionError)
+  checks.mockClear()
+  const source = el.querySelector<HTMLElement>('[data-id="temperature"] .source[data-handleid="data:value"]')!
+  source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+  document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 50, clientY: 50 }))
+  const once = checks.mock.calls.length
+  expect(once).toBeGreaterThan(0)
+  for (let x = 60; x < 200; x += 20) document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: x }))
+  expect(checks.mock.calls.length).toBe(once)
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 200, clientY: 200 }))
 })

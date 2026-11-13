@@ -25,24 +25,31 @@ function clrWords(id: string): string {
  * enumerable of T as "List of <T>", a nullable as its inner type, and anything else as its last name segment in
  * words ("Reading"). Never a namespace, `global::`, generic brackets, `?` or `[]`.
  */
-export function typeLabel(typeId: string, catalog: VisualCatalogSnapshot = nodeCatalog): string {
+export function typeLabel(typeId: string, catalog: VisualCatalogSnapshot = nodeCatalog, seen: ReadonlySet<string> = new Set()): string {
   if (Object.hasOwn(builtIn, typeId)) return builtIn[typeId]
   const entity = /^entity_id:([a-z0-9_]+)$/.exec(typeId)
   if (entity) return `${domainWords(entity[1])} entity`
+  // A type that names itself as its own element (directly or through others) reads as a plain object.
+  if (seen.has(typeId)) return 'Object'
+  const inner = (id: string) => typeLabel(id, catalog, new Set([...seen, typeId]))
   const spec = resolveTypeSpec(typeId, catalog)
   // Nullable: the inner type's name.
-  if (typeId.endsWith('?')) return typeLabel(typeId.slice(0, -1), catalog)
-  if (spec?.elementType) return `List of ${typeLabel(spec.elementType, catalog)}`
-  if (typeId.endsWith('[]')) return `List of ${typeLabel(typeId.slice(0, -2), catalog)}`
+  if (typeId.endsWith('?')) return inner(typeId.slice(0, -1))
+  if (spec?.elementType) return `List of ${inner(spec.elementType)}`
+  if (typeId.endsWith('[]')) return `List of ${inner(typeId.slice(0, -2))}`
+  // Multi-dimensional arrays and tuples have no friendly element name: "List" and "Object".
+  if (/\[,+\]\??$/.test(typeId)) return 'List'
+  if (typeId.replace(/^global::/, '').startsWith('(')) return 'Object'
   const generic = collection.exec(typeId)
-  if (generic) return `List of ${typeLabel(generic[1], catalog)}`
+  if (generic) return `List of ${inner(generic[1])}`
   const kind = (spec?.literalKind ?? '').toLowerCase(), category = (spec?.category ?? '').toLowerCase()
   if (Object.hasOwn(primitiveNames, kind)) return primitiveNames[kind]
   if (category !== 'object' && Object.hasOwn(primitiveNames, category) && kind !== 'enum') return primitiveNames[category]
   // A label written for people keeps its text; a CLR spelling (a namespace, generics, `?`, `[]` or a C# keyword
   // such as `bool`) never does.
-  if (spec?.label && !/[.:<>?[\]]/.test(spec.label) && !csharpKeywords.has(spec.label)) return spec.label
-  return clrWords(typeId)
+  if (spec?.label && !/[.:<>?[\](),]/.test(spec.label) && !csharpKeywords.has(spec.label)) return spec.label
+  const words = clrWords(typeId)
+  return /[()[\],]/.test(words) ? 'Object' : words
 }
 
 const primitive: Record<string, string> = { boolean: 'boolean', number: 'number', string: 'string', object: 'object', array: 'array' }

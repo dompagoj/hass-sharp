@@ -121,6 +121,42 @@ export function renderableGraph(graph: VisualGraph): VisualGraph {
   return nodes.length === rawNodes.length && edges.length === rawEdges.length && graph.nodes === rawNodes ? graph : { ...graph, nodes, edges }
 }
 
+/**
+ * An edit made on the renderable graph, applied back onto the original: entries the canvas does not render
+ * (malformed or duplicate nodes, malformed or dangling edges) stay where they were, so no canvas edit drops them.
+ */
+export function keepUnrendered(original: VisualGraph, edited: VisualGraph): VisualGraph {
+  const rawNodes: unknown[] = Array.isArray(original?.nodes) ? original.nodes : []
+  const rawEdges: unknown[] = Array.isArray(original?.edges) ? original.edges : []
+  const ids = new Set<string>()
+  const shownNodes = rawNodes.map(node => {
+    if (!wellFormedNode(node) || !record(node.config) || ids.has(node.id)) return false
+    ids.add(node.id)
+    return true
+  })
+  const shownEdges = rawEdges.map(edge => wellFormedEdge(edge) && ids.has(edge.source) && ids.has(edge.target))
+  if (shownNodes.every(Boolean) && shownEdges.every(Boolean)) return edited
+  // Edited entries by id, in order (ids may repeat among edges); an id no longer present was removed by the edit.
+  const queue = <T extends { id: string }>(items: T[]) => {
+    const map = new Map<string, T[]>()
+    for (const item of items) map.set(item.id, [...(map.get(item.id) ?? []), item])
+    return map
+  }
+  const nodes = queue(edited.nodes), edges = queue(edited.edges)
+  const edgeIds = new Set(rawEdges.flatMap((edge, i) => (shownEdges[i] ? [(edge as GraphEdge).id] : [])))
+  const merge = <T extends { id: string }>(raw: unknown[], shown: boolean[], byId: Map<string, T[]>) =>
+    raw.flatMap((entry, i) => {
+      if (!shown[i]) return [entry as T]
+      const next = byId.get((entry as T).id)?.shift()
+      return next ? [next] : []
+    })
+  return {
+    ...edited,
+    nodes: [...merge(rawNodes, shownNodes, nodes), ...edited.nodes.filter(n => !ids.has(n.id))],
+    edges: [...merge(rawEdges, shownEdges, edges), ...edited.edges.filter(e => !edgeIds.has(e.id))],
+  }
+}
+
 export const nodeTitle = (node: GraphNode | undefined, catalog: VisualCatalogSnapshot, fallback = '') =>
   node ? (text(node.label) || (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].label : node.kind)) : fallback
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
@@ -274,7 +310,9 @@ export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionInd
     .map(e => {
       if (e.kind !== 'data') return ['x', e.source, e.port ?? '', e.target]
       const from = e.target === node.id ? graph.nodes.find(n => n.id === e.source) : undefined
-      return ['d', e.source, e.sourcePort, e.target, e.targetPort, from ? nodeTitle(from, catalog) : '', from ? (dataOutputs(from, catalog)[e.sourcePort]?.label ?? null) : null]
+      // The output's type too: a union input shows the type of the value wired into it.
+      const output = from ? dataOutputs(from, catalog)[e.sourcePort] : undefined
+      return ['d', e.source, e.sourcePort, e.target, e.targetPort, from ? nodeTitle(from, catalog) : '', output?.label ?? null, output?.type ?? null]
     })
   // Unset ports resolve to undefined, which JSON would drop: keep them as null.
   const resolved = Object.entries(index.analysis.resolved.get(node.id) ?? {}).map(([port, type]) => [port, type ?? null])
@@ -312,10 +350,13 @@ export function buildEdgeView(edge: GraphEdge, graph: VisualGraph, catalog: Visu
   if (edge.kind === 'data') {
     const output = dataOutputs(source, catalog)[edge.sourcePort]
     const input = nodeInputs(graph, target, catalog)[edge.targetPort]
+    // A service field is named as its card row names it ("Brightness"), never by its key.
+    const field = target.kind === 'service' && edge.targetPort.startsWith('field:') ? edge.targetPort.slice(6) : undefined
+    const inputLabel = field !== undefined ? serviceFieldLabel(text(target.config.service), field, catalog.services) : (input?.label ?? edge.targetPort)
     return {
       id: edge.id, source: edge.source, target: edge.target, sourceHandle: dataHandle(edge.sourcePort), targetHandle: dataHandle(edge.targetPort),
       kind: 'data', color: typeColor(output?.type ?? 'object', catalog), error: false,
-      label: `Data wire from ${nodeTitle(source, catalog)} · ${output?.label ?? edge.sourcePort} to ${nodeTitle(target, catalog)} · ${input?.label ?? edge.targetPort}`,
+      label: `Data wire from ${nodeTitle(source, catalog)} · ${output?.label ?? edge.sourcePort} to ${nodeTitle(target, catalog)} · ${inputLabel}`,
     }
   }
   const port = outputPort(source.kind, edge)
@@ -360,6 +401,12 @@ export interface FlowContextValue {
   /** Registry names for value chips (ids where nothing is known). */
   names(): NameResolver
   activateHandle(nodeId: string, handle: string, type: 'source' | 'target'): void
+  /** A wire is being dragged or a pin was picked from the keyboard: only pins it can end on stay in the Tab order. */
+  connecting(): boolean
+  /** Why the last connection to this input pin was refused, shown beside it. */
+  refusal(nodeId: string, handle: string): string | undefined
+  /** Removes a wire (its "Delete wire" button). */
+  removeEdge(id: string): void
   /** True when the pointer moved since it went down (a drag, not a click). */
   moved(): boolean
   setInput(nodeId: string, port: string, operand: Operand, options?: { coalesce?: string }): void
