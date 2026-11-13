@@ -1,80 +1,14 @@
-import { createMemo, createSignal, For, onMount, Show, type JSX } from 'solid-js'
-import { useHass } from '../context'
+import { createMemo, createUniqueId, For, Show, type JSX } from 'solid-js'
 import { ServicePicker } from '../components/ServicePicker'
 import { dataInputs, type GraphNode, type InputSpec, type Operand, type ServiceFieldSchema, type ServiceSchema, type VisualCatalogSnapshot } from './contract'
 import type { VisualGraph } from './graph'
-import { serviceFieldLabel } from './nodeSummary'
-import { domainWords } from './typeLabels'
+import { Errors, type FieldRow } from './InputRow'
+import { useServiceText } from './serviceText'
 import { SearchSelect } from './widgets/SearchSelect'
 
-type Localize = (key: string, ...args: unknown[]) => string
-type Translating = { localize?: Localize; loadBackendTranslation?: (category: string, integrations?: string | string[]) => Promise<unknown> }
+export type { FieldRow } from './InputRow'
+
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
-const split = (id: string) => { const dot = id.indexOf('.'); return dot > 0 ? [id.slice(0, dot), id.slice(dot + 1)] : [id, id] }
-
-export interface ServiceText {
-  serviceName(id: string, schema?: ServiceSchema): string
-  serviceDescription(id: string, schema?: ServiceSchema): string
-  fieldLabel(serviceId: string, field: string, schema?: ServiceSchema): string
-  fieldDescription(serviceId: string, field: string, schema?: ServiceSchema): string
-  sectionName(serviceId: string, section: string): string
-  /** The field's input spec with translated select option labels (`selector.select.translation_key`). */
-  localizeSpec(serviceId: string, spec: InputSpec): InputSpec
-}
-
-/**
- * Names of services, fields, sections and select options as Home Assistant shows them: `hass.localize` after
- * `loadBackendTranslation('services')` where the `hass` object offers it, else the services section's own text
- * (tests and the preview have no `localize`). Field labels fall back to `serviceFieldLabel`, as node cards do.
- */
-export function useServiceText(): ServiceText {
-  const hass = useHass() as unknown as Translating | undefined
-  const [localize, setLocalize] = createSignal<Localize | undefined>(typeof hass?.localize === 'function' ? hass.localize.bind(hass) : undefined)
-  onMount(() => {
-    const load = hass?.loadBackendTranslation
-    if (typeof load !== 'function') return
-    try {
-      // Home Assistant resolves to the localize function that includes the loaded category.
-      Promise.resolve(load.call(hass, 'services')).then(fn => { if (typeof fn === 'function') setLocalize(() => fn as Localize) }, () => {})
-    } catch {
-      // Names fall back to the services section.
-    }
-  })
-  const t = (key: string) => {
-    const f = localize()
-    if (!f) return ''
-    try {
-      const value = f(key)
-      return typeof value === 'string' && value !== key ? value.trim() : ''
-    } catch {
-      return ''
-    }
-  }
-  const base = (id: string) => { const [d, s] = split(id); return `component.${d}.services.${s}` }
-  return {
-    serviceName: (id, schema) => {
-      const [, s] = split(id)
-      const own = schema?.name?.trim()
-      return t(`${base(id)}.name`) || (own && own !== s ? own : domainWords(s))
-    },
-    serviceDescription: (id, schema) => t(`${base(id)}.description`) || schema?.description?.trim() || '',
-    fieldLabel: (serviceId, field, schema) =>
-      t(`${base(serviceId)}.fields.${field}.name`) || serviceFieldLabel(serviceId, field, schema ? { servicesGeneration: '', items: { [serviceId]: schema } } : undefined),
-    fieldDescription: (serviceId, field, schema) => {
-      const own = schema && Object.hasOwn(schema.fields, field) ? schema.fields[field].description?.trim() : ''
-      return t(`${base(serviceId)}.fields.${field}.description`) || own || ''
-    },
-    sectionName: (serviceId, section) => t(`${base(serviceId)}.sections.${section}.name`) || domainWords(section),
-    localizeSpec: (serviceId, spec) => {
-      const select = record(spec.selector) && record(spec.selector.select) ? spec.selector.select : undefined
-      const key = typeof select?.translation_key === 'string' ? select.translation_key : ''
-      if (!key || !Array.isArray(spec.enum)) return spec
-      const [d] = split(serviceId)
-      const labels = spec.enum.map((value, i) => t(`component.${d}.selector.${key}.options.${String(value)}`) || spec.enumLabels?.[i] || String(value))
-      return { ...spec, enumLabels: labels }
-    },
-  }
-}
 
 /** Fields in Home Assistant's display order (C4 `order`), with advanced fields last. */
 export function orderedFields(schema: ServiceSchema): [string, ServiceFieldSchema][] {
@@ -82,26 +16,11 @@ export function orderedFields(schema: ServiceSchema): [string, ServiceFieldSchem
     .sort(([, a], [, b]) => Number(!!a.advanced) - Number(!!b.advanced) || (a.order ?? 0) - (b.order ?? 0))
 }
 
-/** What the inspector's input row needs beyond the port: overrides for rows of service fields. */
-export interface FieldRow {
-  label?: string
-  description?: string
-  /** The spec to edit with, for a field that is not stored yet or a target filtered by the service. */
-  spec?: InputSpec
-  /** The value of a field that is not stored yet, and where its first change goes. */
-  value?: Operand
-  onChange?(operand: Operand, options?: { coalesce?: string }): void
-  onRemove?(): void
-  removeLabel?: string
-  /** Why the field cannot be removed (it is connected); undefined when it can. */
-  removeBlocked?: string
-}
-
 const unset: Operand = { kind: 'unset' }
 
 /**
  * The main section of a Call service node: the service, its target (filtered to what the service accepts), its
- * fields (required ones always present, optional ones added with "+ Add field" and removable) and "Use the
+ * fields (required ones always present, optional ones added with "+ Add field" and removable) and "Return
  * response". Changing the service keeps the fields the new service also has and adds its required ones. The panel
  * never connects or disconnects anything: a connected field is kept and cannot be removed here.
  */
@@ -114,8 +33,12 @@ export function ServiceFields(props: {
   row(port: string, extra: FieldRow): JSX.Element
   /** Focus the row of a port once it is shown. */
   focus(port: string): void
+  /** Validator messages about `service`, `returnResponse` or `fields`, which have no input row of their own. */
+  messages?(key: 'service' | 'returnResponse' | 'fields'): string[]
 }) {
   const text = useServiceText()
+  const pickerId = createUniqueId()
+  const messages = (key: 'service' | 'returnResponse' | 'fields') => props.messages?.(key) ?? []
   const serviceId = () => (typeof props.node.config.service === 'string' ? props.node.config.service : '')
   const items = () => props.catalog.services?.items
   const schema = createMemo(() => { const all = items(), id = serviceId(); return all && id && Object.hasOwn(all, id) ? all[id] : undefined })
@@ -204,14 +127,18 @@ export function ServiceFields(props: {
   }
   const response = () => schema()?.response
   const returning = () => props.node.config.returnResponse === true
+  // Locked only once it is as the service needs it (or while its output is connected); a stored "off" for a
+  // service that only answers stays switchable, so the validator's message can be acted on.
+  const responseLocked = () => returning() && (response() === 'only' || responseConnected())
 
   return (
     <div class="hs-insp-service">
-      <div class="hs-insp-field" data-input-id="service">
-        <ServicePicker value={serviceId()} services={props.catalog.services} onChange={chooseService} />
+      <div class="hs-insp-field" data-input-id="service" aria-invalid={messages('service').length > 0 || undefined}>
+        <ServicePicker id={pickerId} value={serviceId()} services={props.catalog.services} onChange={chooseService} invalid={messages('service').length > 0} />
         <Show when={known() && text.serviceDescription(serviceId(), schema())}>{description => <small class="hs-field-hint">{description()}</small>}</Show>
+        <Errors list={messages('service')} />
       </div>
-      <Show when={serviceId() && items() && !known()}>
+      <Show when={serviceId() && items() && !known() && !messages('service').length}>
         <p class="hs-insp-note hs-insp-note--warning" role="note">
           {serviceId()} is not available in this Home Assistant. Its fields are kept as they are and can still be edited.
         </p>
@@ -227,32 +154,32 @@ export function ServiceFields(props: {
           onChange: (operand, options) => write({ ...fields(), [key]: operand }, options),
         })}
       </For>
-      <Show when={addable().length}>
-        <div class="hs-insp-add">
-          <SearchSelect label="Add field" placeholder="+ Add field…" clearOnSelect options={addable()} onSelect={add} />
+      <Show when={addable().length || messages('fields').length}>
+        <div class="hs-insp-add" data-input-id="fields" aria-invalid={messages('fields').length > 0 || undefined}>
+          <Show when={addable().length}>
+            <SearchSelect label="Add field" placeholder="+ Add field…" clearOnSelect options={addable()} onSelect={add} />
+          </Show>
+          <Errors list={messages('fields')} />
         </div>
       </Show>
-      <Show when={response() === 'only' || response() === 'optional' || returning() || (serviceId() && !known())}>
-        <label class="hs-insp-toggle">
-          <input type="checkbox" role="switch" class="hs-switch" checked={response() === 'only' || returning()}
-            disabled={response() === 'only' || (returning() && responseConnected())}
-            onChange={event => {
-              const next = { ...props.node.config }
-              if (event.currentTarget.checked) next.returnResponse = true
-              else next.returnResponse = false
-              props.onChange(next)
-            }} />
-          <span>
-            <strong>Use the response</strong>
-            <small class="hs-field-hint">
-              {response() === 'only'
-                ? 'This service always answers, so its Response output is always there.'
-                : returning() && responseConnected()
-                  ? 'The Response output is connected; remove that connection on the canvas to turn this off.'
-                  : 'Adds a Response output with what the service answers.'}
-            </small>
-          </span>
-        </label>
+      <Show when={response() === 'only' || response() === 'optional' || returning() || (serviceId() && !known()) || messages('returnResponse').length}>
+        <div class="hs-insp-field" data-input-id="returnResponse" aria-invalid={messages('returnResponse').length > 0 || undefined}>
+          <label class="hs-insp-toggle">
+            <input type="checkbox" role="switch" class="hs-switch" checked={returning()} disabled={responseLocked()}
+              onChange={event => props.onChange({ ...props.node.config, returnResponse: event.currentTarget.checked })} />
+            <span>
+              <strong>Return response</strong>
+              <small class="hs-field-hint">
+                {response() === 'only'
+                  ? 'This service always answers, so its Response output is always there.'
+                  : returning() && responseConnected()
+                    ? 'The Response output is connected; remove that connection on the canvas to turn this off.'
+                    : 'Adds a Response output with what the service answers.'}
+              </small>
+            </span>
+          </label>
+          <Errors list={messages('returnResponse')} />
+        </div>
       </Show>
     </div>
   )

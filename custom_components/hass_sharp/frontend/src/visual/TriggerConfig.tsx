@@ -5,17 +5,11 @@ import type { VisualDiagnostic } from './api'
 import { domainWords } from './typeLabels'
 import { DraftField } from './widgets/common'
 import { fitsWidget, widgetFor, WidgetControl, type Widget } from './widgets'
+import { Glyph } from './Glyph'
 
 type Config = GraphNode['config']
 type Change = (config: Config, options?: { coalesce?: string }) => void
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
-
-/** A 24×24 stroke icon (the same drawing style as `icons.ts`). */
-export const Glyph = (props: { paths: readonly string[]; class?: string }) => (
-  <svg class={props.class ?? 'hs-insp-glyph'} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <For each={props.paths}>{d => <path d={d} />}</For>
-  </svg>
-)
 
 /** The trigger types people choose from: HassSharp's own and the common Home Assistant platforms. */
 interface Choice { id: string; name: string; explanation: string; icon: readonly string[] }
@@ -145,6 +139,44 @@ export function TriggerConfig(props: { node: GraphNode; onChange: Change; diagno
     else options[key] = value
     setNative('options', Object.keys(options).length ? options : undefined)
   }
+  // The type list is a radio group: arrow keys, Home and End move through it without choosing; Enter, Space or a
+  // click chooses; Escape closes it unchanged. Focus then returns to "Change".
+  let changeButton!: HTMLButtonElement
+  let choices: HTMLDivElement | undefined
+  const [pending, setPending] = createSignal('')
+  const radio = (id: string) => choices?.querySelector<HTMLInputElement>(`input[value="${id}"]`)
+  const openChoices = () => {
+    setPending(choice())
+    setChoosing(true)
+    queueMicrotask(() => radio(pending())?.focus())
+  }
+  const closeChoices = () => {
+    setChoosing(false)
+    queueMicrotask(() => changeButton.focus())
+  }
+  const pick = (id: string) => {
+    if (!choosing()) return
+    choose(id)
+    queueMicrotask(() => changeButton.focus())
+  }
+  const choicesKey = (event: KeyboardEvent) => {
+    const ids = triggerChoices.map(c => c.id)
+    const at = Math.max(0, ids.indexOf(pending()))
+    const move = { ArrowDown: at + 1, ArrowRight: at + 1, ArrowUp: at - 1, ArrowLeft: at - 1, Home: 0, End: ids.length - 1 }[event.key]
+    if (move !== undefined) {
+      event.preventDefault()
+      const next = ids[(move + ids.length) % ids.length]
+      setPending(next)
+      radio(next)?.focus()
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      pick(pending())
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      closeChoices()
+    }
+  }
   const choose = (id: string) => {
     setChoosing(false)
     if (native.includes(id)) return props.onChange({ ...config(), type: id })
@@ -178,15 +210,15 @@ export function TriggerConfig(props: { node: GraphNode; onChange: Change; diagno
         <div class="hs-when__current">
           <span class="hs-when__icon"><Glyph paths={current().icon} /></span>
           <span class="hs-when__text"><strong>{current().name}</strong><small>{current().explanation}</small></span>
-          <button type="button" class="hs-button hs-button--ghost hs-when__change" aria-expanded={choosing()} aria-label="Change trigger type"
-            onClick={() => setChoosing(!choosing())}>{choosing() ? 'Close' : 'Change'}</button>
+          <button ref={changeButton} type="button" class="hs-button hs-button--ghost hs-when__change" aria-expanded={choosing()} aria-label="Change trigger type"
+            onClick={() => (choosing() ? closeChoices() : openChoices())}>{choosing() ? 'Close' : 'Change'}</button>
         </div>
         <Show when={choosing()}>
-          <div class="hs-when__choices" role="radiogroup" aria-label="Trigger type">
+          <div ref={choices} class="hs-when__choices" role="radiogroup" aria-label="Trigger type" onKeyDown={choicesKey}>
             <For each={triggerChoices}>
               {item => (
-                <label class="hs-when__choice" classList={{ 'hs-when__choice--current': item.id === choice() }}>
-                  <input type="radio" name={`${props.node.id}-trigger-type`} value={item.id} checked={item.id === choice()} onChange={() => choose(item.id)} />
+                <label class="hs-when__choice" classList={{ 'hs-when__choice--current': item.id === choice() }} onClick={() => pick(item.id)}>
+                  <input type="radio" name={`${props.node.id}-trigger-type`} value={item.id} checked={item.id === pending()} onChange={() => setPending(item.id)} />
                   <span class="hs-when__icon"><Glyph paths={item.icon} /></span>
                   <span class="hs-when__text"><strong>{item.name}</strong><small>{item.explanation}</small></span>
                 </label>

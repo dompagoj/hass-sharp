@@ -46,14 +46,14 @@ function type(field: HTMLInputElement | HTMLTextAreaElement, value: string) {
 }
 
 /** The inspector over a graph history (and the canvas beside it when asked), as the editor wires them. */
-function mount(graph: VisualGraph, id: string | undefined, options: { canvas?: boolean; diagnostics?: VisualDiagnostic[]; catalog?: VisualCatalogSnapshot } = {}) {
+function mount(graph: VisualGraph, id: string | undefined, options: { canvas?: boolean; diagnostics?: VisualDiagnostic[]; catalog?: VisualCatalogSnapshot; hass?: Record<string, unknown>; edge?: string } = {}) {
   const el = host()
   const history = createGraphHistory(graph)
   const [selected, setSelected] = createSignal(id)
-  const [selection, setSelection] = createSignal<{ ids: string[]; edge?: string }>({ ids: id ? [id] : [] })
+  const [selection, setSelection] = createSignal<{ ids: string[]; edge?: string }>({ ids: id ? [id] : [], edge: options.edge })
   const current = options.catalog ?? catalog
   client = new QueryClient()
-  const hass = { callWS: async (message: { type: string }) => (message.type === 'hass_sharp/get_entities' ? structuredClone(registry) : {}) }
+  const hass = { callWS: async (message: { type: string }) => (message.type === 'hass_sharp/get_entities' ? structuredClone(registry) : {}), ...options.hass }
   dispose = render(
     () => (
       <QueryClientProvider client={client!}>
@@ -197,10 +197,13 @@ it('stores a domain-filtered entity with a type the validator accepts', async ()
   expect(validateGraph(history.graph(), catalog).filter(d => d.nodeId === 'service-1')).toEqual([])
 })
 
-it('"Use the response": always on for a service that only answers, a switch for an optional one, absent otherwise', async () => {
+const responseSwitch = (el: Element) =>
+  [...el.querySelectorAll<HTMLLabelElement>('.hs-inspector .hs-insp-toggle')].find(l => l.textContent?.includes('Return response'))?.querySelector('input')
+
+it('"Return response": locked on for a service that only answers, a switch for an optional one, absent otherwise', async () => {
   const graph = updateNode(createGraph('Response'), 'service-1', { config: { service: 'light.turn_on', target: lit('target', { entity_id: 'light.hall' }), fields: {} } })
   const { el, node } = mount(graph, 'service-1')
-  const toggle = () => [...el.querySelectorAll<HTMLLabelElement>('.hs-inspector .hs-insp-toggle')].find(l => l.textContent?.includes('Use the response'))?.querySelector('input')
+  const toggle = () => responseSwitch(el)
   expect(toggle()).toBeUndefined()
   await pickService(el, 'todo.get_items')
   expect(toggle()!.checked).toBe(true)
@@ -212,6 +215,42 @@ it('"Use the response": always on for a service that only answers, a switch for 
   toggle()!.click()
   expect(node().config.returnResponse).toBe(!before)
   expect(toggle()!.checked).toBe(!before)
+})
+
+it('"Return response" of a service that only answers, stored off, shows off and can be turned on', () => {
+  const graph = updateNode(createGraph('Response'), 'service-1', { config: { service: 'todo.get_items', target: lit('target', { entity_id: 'todo.list' }), fields: {} } })
+  const message = 'todo.get_items only returns a response; turn on Return response'
+  const diagnostics: VisualDiagnostic[] = [{ nodeId: 'service-1', message, severity: 3, inputId: 'returnResponse' } as VisualDiagnostic]
+  const { el, node } = mount(graph, 'service-1', { diagnostics })
+  const toggle = responseSwitch(el)!
+  expect(node().config.returnResponse).toBeUndefined()
+  expect(toggle.checked).toBe(false)
+  expect(toggle.disabled).toBe(false)
+  // The validator's message is under the switch, and its callout focuses it.
+  expect(row(el, 'returnResponse')!.textContent).toContain(message)
+  button(el.querySelector('.hs-insp-problems')!, message)!.click()
+  expect(document.activeElement).toBe(toggle)
+  toggle.click()
+  expect(node().config.returnResponse).toBe(true)
+  expect(responseSwitch(el)).toBe(toggle)
+  expect(toggle.checked).toBe(true)
+  expect(toggle.disabled).toBe(true)
+})
+
+it('shows messages about the service and its fields under the Service button and "+ Add field", and focuses them', () => {
+  const graph = updateNode(createGraph('Messages'), 'service-1', { config: { service: 'light.turn_on', target: lit('target', { entity_id: 'light.hall' }), fields: {} } })
+  const diagnostics = [
+    { nodeId: 'service-1', message: 'Service problem', severity: 2, inputId: 'service' },
+    { nodeId: 'service-1', message: 'Fields problem', severity: 3, inputId: 'fields' },
+  ] as VisualDiagnostic[]
+  const { el } = mount(graph, 'service-1', { diagnostics })
+  expect(row(el, 'service')!.querySelector('.hs-input-editor__errors')!.textContent).toContain('Service problem')
+  expect(row(el, 'fields')!.querySelector('.hs-input-editor__errors')!.textContent).toContain('Fields problem')
+  const problems = el.querySelector('.hs-insp-problems')!
+  button(problems, 'Service problem')!.click()
+  expect(document.activeElement).toBe(row(el, 'service')!.querySelector('button[aria-label="Service"]'))
+  button(problems, 'Fields problem')!.click()
+  expect(document.activeElement).toBe(row(el, 'fields')!.querySelector('input[aria-label="Add field"]'))
 })
 
 it('keeps values edited in the panel and on the node card in sync', async () => {
@@ -399,4 +438,293 @@ it('categorizes every catalog node and groups and filters the quick-add palette'
   search.value = 'no such step anywhere'
   search.dispatchEvent(new Event('input', { bubbles: true }))
   expect(root.textContent).toContain('No step matches that search.')
+})
+
+// ── The panel survives edits of the selected step (fix round 1, item 1) ──────────────────────────────
+
+const inspector = (el: Element) => el.querySelector('.hs-inspector')!
+const titleOf = (el: Element) => inspector(el).querySelector<HTMLInputElement>('input[aria-label="Node label"]')!
+const typeKeys = (field: HTMLInputElement, text: string) => {
+  for (const ch of text) {
+    field.value += ch
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+}
+/** Waits until focus is on `target`, so a test fails on focus that fell to the page. */
+const focused = (target: () => Element | null | undefined) => vi.waitFor(() => {
+  expect(document.activeElement).not.toBe(document.body)
+  expect(document.activeElement).toBe(target())
+})
+
+it('keeps the same title input focused while typing a whole word, keeps Advanced open, and makes one undo step', () => {
+  const { el, history, node } = mount(addNode(createGraph('Typing'), 'delay', 'wait'), 'wait')
+  const title = titleOf(el)
+  const before = node().label
+  title.value = ''
+  const advanced = inspector(el).querySelector<HTMLDetailsElement>('.hs-insp-advanced')!
+  advanced.open = true
+  title.focus()
+  typeKeys(title, 'Wa')
+  expect(node().label).toBe('Wa')
+  expect(titleOf(el)).toBe(title)
+  expect(document.activeElement).toBe(title)
+  expect(inspector(el).querySelector('.hs-insp-advanced')).toBe(advanced)
+  expect(advanced.open).toBe(true)
+  typeKeys(title, 'rm up')
+  expect(node().label).toBe('Warm up')
+  expect(document.activeElement).toBe(title)
+  // The whole word is one undo step.
+  history.undo()
+  expect(node().label).toBe(before)
+})
+
+it('lets a slider be dragged through several input events on one element', async () => {
+  const graph = updateNode(createGraph('Slider'), 'service-1', {
+    config: { service: 'light.turn_on', target: lit('target', { entity_id: 'light.hall' }), fields: { brightness_pct: lit('number', 10) } },
+  })
+  const { el, history, node } = mount(graph, 'service-1')
+  const slider = row(el, 'field:brightness_pct')!.querySelector<HTMLInputElement>('input[type="range"]')!
+  expect(slider).not.toBeNull()
+  slider.focus()
+  for (const value of [20, 35, 50]) {
+    slider.value = String(value)
+    slider.dispatchEvent(new Event('input', { bubbles: true }))
+    expect((node().config.fields as any).brightness_pct).toMatchObject({ kind: 'literal', value })
+    expect(row(el, 'field:brightness_pct')!.querySelector('input[type="range"]')).toBe(slider)
+    expect(document.activeElement).toBe(slider)
+  }
+  slider.dispatchEvent(new Event('change', { bubbles: true }))
+  expect((node().config.fields as any).brightness_pct).toMatchObject({ value: 50 })
+  history.undo()
+  expect((node().config.fields as any).brightness_pct).toMatchObject({ value: 10 })
+})
+
+it('keeps focus on a select after changing it, and keeps config keys it does not know', () => {
+  const graph = updateNode(addNode(createGraph('Select'), 'compare', 'compare'), 'compare', {})
+  const withExtra = { ...graph, nodes: graph.nodes.map(n => (n.id === 'compare' ? { ...n, config: { ...n.config, mystery: { kept: true } } } : n)) }
+  const { el, node } = mount(withExtra, 'compare')
+  const select = row(el, 'operator')!.querySelector<HTMLSelectElement>('select')!
+  select.focus()
+  select.value = 'ne'
+  select.dispatchEvent(new Event('change', { bubbles: true }))
+  expect(node().config.operator).toBe('ne')
+  expect(row(el, 'operator')!.querySelector('select')).toBe(select)
+  expect(document.activeElement).toBe(select)
+  expect(node().config.mystery).toEqual({ kept: true })
+})
+
+it('subscribes to the trigger platforms once across edits of the trigger', async () => {
+  const subscribeMessage = vi.fn(async () => () => {})
+  const { el, node } = mount(createGraph('Subscribe'), 'trigger-1', { hass: { connection: { subscribeMessage } } })
+  await vi.waitFor(() => expect(subscribeMessage).toHaveBeenCalledTimes(1))
+  const title = titleOf(el)
+  title.value = ''
+  title.focus()
+  typeKeys(title, 'Go')
+  button(inspector(el), 'Start over')?.click()
+  typeKeys(title, '!')
+  expect(node().label).toBe('Go!')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(subscribeMessage).toHaveBeenCalledTimes(1)
+})
+
+// ── Focus never falls to the page (item 4) ───────────────────────────────────────────────────────────
+
+const fieldRows = (el: Element) => [...inspector(el).querySelectorAll<HTMLElement>('.hs-insp-input[data-input-id^="field:"]')]
+
+it('after removing a service field, focuses the next row', async () => {
+  const graph = updateNode(createGraph('Next'), 'service-1', {
+    config: { service: 'light.turn_on', target: lit('target', { entity_id: 'light.hall' }), fields: { brightness_pct: lit('number', 10), transition: lit('number', 2) } },
+  })
+  const { el } = mount(graph, 'service-1')
+  const [first, second] = fieldRows(el)
+  first.querySelector<HTMLButtonElement>('.hs-insp-remove')!.click()
+  await vi.waitFor(() => expect(second.contains(document.activeElement)).toBe(true))
+})
+
+it('after removing the last service field, focuses the previous row', async () => {
+  const graph = updateNode(createGraph('Previous'), 'service-1', {
+    config: { service: 'light.turn_on', target: lit('target', { entity_id: 'light.hall' }), fields: { brightness_pct: lit('number', 10), transition: lit('number', 2) } },
+  })
+  const { el } = mount(graph, 'service-1')
+  const [first, second] = fieldRows(el)
+  second.querySelector<HTMLButtonElement>('.hs-insp-remove')!.click()
+  await vi.waitFor(() => expect(first.contains(document.activeElement)).toBe(true))
+})
+
+it('after removing the only service field, focuses "+ Add field"', async () => {
+  const graph = updateNode(createGraph('Add'), 'service-1', { config: { service: 'hass_sharp_test.odd_texts', fields: { odd_label: lit('string', 'x') } } })
+  const { el } = mount(graph, 'service-1')
+  fieldRows(el)[0].querySelector<HTMLButtonElement>('.hs-insp-remove')!.click()
+  await focused(() => inspector(el).querySelector('input[aria-label="Add field"]'))
+})
+
+it('after removing a field with no row or "+ Add field" left, focuses the title', async () => {
+  // A service with no target and no fields of its own, holding a field it does not know.
+  const graph = updateNode(createGraph('Title'), 'service-1', { config: { service: 'hass_sharp_test.respond_optionally', fields: { stray: lit('string', 'x') } } })
+  const { el } = mount(graph, 'service-1')
+  fieldRows(el)[0].querySelector<HTMLButtonElement>('.hs-insp-remove')!.click()
+  await focused(() => titleOf(el))
+})
+
+it('after removing a branch, focuses the next branch, else the add button', async () => {
+  const graph = updateNode(addNode(createGraph('Branches'), 'parallel', 'split'), 'split', { config: { branches: ['a', 'b', 'c'] } })
+  const { el, node } = mount(graph, 'split')
+  const list = () => [...row(el, 'branches')!.querySelectorAll('li')]
+  const second = list()[1]
+  list()[0].querySelector<HTMLButtonElement>('.hs-insp-remove')!.click()
+  expect(node().config.branches).toEqual(['b', 'c'])
+  await focused(() => second.querySelector('.hs-insp-remove'))
+  // The one branch that would be left cannot be removed, so after removing the last, focus goes to the add button.
+  list()[1].querySelector<HTMLButtonElement>('.hs-insp-remove')!.click()
+  expect(node().config.branches).toEqual(['b'])
+  await focused(() => button(row(el, 'branches')!, '+ Add branch'))
+})
+
+it('after removing the only object field, focuses the field name input', async () => {
+  const graph = updateNode(addNode(createGraph('Object'), 'object_create', 'obj'), 'obj', { config: { fields: { name: { kind: 'unset' } } } })
+  const { el, node } = mount(graph, 'obj')
+  button(row(el, 'fields')!, 'Remove field name')!.click()
+  expect(node().config.fields).toEqual({})
+  await focused(() => row(el, 'fields')!.querySelector('input[aria-label="Add a field named"]'))
+})
+
+it('after removing the last array item, focuses the item before it, else the add button', async () => {
+  const graph = updateNode(addNode(createGraph('Array'), 'array_create', 'arr'), 'arr', { config: { items: [lit('number', 1), lit('number', 2)] } })
+  const { el, node } = mount(graph, 'arr')
+  button(row(el, 'items')!, 'Remove last')!.click()
+  expect(node().config.items).toHaveLength(1)
+  await vi.waitFor(() => expect(row(el, 'item:0')!.contains(document.activeElement)).toBe(true))
+  button(row(el, 'items')!, 'Remove last')!.click()
+  await focused(() => button(row(el, 'items')!, '+ Add item'))
+})
+
+it('after removing a loop declaration, focuses the next one, else the name input', async () => {
+  const graph = updateNode(addNode(createGraph('Loop'), 'foreach', 'loop'), 'loop', {
+    config: { itemType: 'number', carry: [{ name: 'total', type: 'number', initial: lit('number', 0) }, { name: 'count', type: 'number', initial: lit('number', 0) }] },
+  })
+  const { el, node } = mount(graph, 'loop')
+  const section = () => row(el, 'carry')!
+  const rows = () => [...section().querySelectorAll<HTMLElement>('.hs-insp-declaration')]
+  const second = rows()[1]
+  button(section(), 'Remove total')!.click()
+  expect((node().config.carry as any[]).map(c => c.name)).toEqual(['count'])
+  expect(rows()[0]).toBe(second)
+  await vi.waitFor(() => expect(second.contains(document.activeElement)).toBe(true))
+  button(section(), 'Remove count')!.click()
+  await focused(() => section().querySelector('input[aria-label="New kept between iterations name"]'))
+})
+
+it('keeps a loop declaration\'s row and focus while its starting value is edited', () => {
+  const graph = updateNode(addNode(createGraph('Loop'), 'foreach', 'loop'), 'loop', {
+    config: { itemType: 'number', carry: [{ name: 'total', type: 'number', initial: lit('number', 0) }] },
+  })
+  const { el, node } = mount(graph, 'loop')
+  const declaration = row(el, 'carry')!.querySelector('.hs-insp-declaration')!
+  const field = declaration.querySelector<HTMLInputElement>('input')!
+  field.focus()
+  type(field, '5')
+  expect((node().config.carry as any[])[0].initial).toMatchObject({ value: 5 })
+  expect(row(el, 'carry')!.querySelector('.hs-insp-declaration')).toBe(declaration)
+})
+
+it('after Delete in the "⋯" menu, focuses the canvas; after Duplicate, the copy\'s title', async () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
+  const { el, history, selected } = mount(addNode(createGraph('Menu'), 'delay', 'wait'), 'wait', { canvas: true })
+  button(el, 'Node actions')!.click()
+  button(el, 'Duplicate')!.click()
+  const copy = history.graph().nodes.at(-1)!.id
+  expect(copy).not.toBe('wait')
+  await vi.waitFor(() => expect(selected()).toBe(copy))
+  await focused(() => [...inspector(el).querySelectorAll<HTMLElement>('.hs-insp-node')].find(n => n.dataset.nodeId === copy)?.querySelector('input[aria-label="Node label"]'))
+  button(el, 'Node actions')!.click()
+  button(el, 'Delete')!.click()
+  expect(history.graph().nodes.some(n => n.id === copy)).toBe(false)
+  await focused(() => el.querySelector('.hs-flow'))
+})
+
+it('after Delete in the several-steps view, focuses the canvas', async () => {
+  const el = host()
+  const history = createGraphHistory(createGraph('Many'))
+  client = new QueryClient()
+  dispose = render(() => (
+    <QueryClientProvider client={client!}>
+      <HassCtx.Provider value={{ callWS: async () => registry } as any}>
+        <div class="hs-visual-workspace">
+          <div class="hs-flow" tabindex="-1" aria-label="Automation canvas" />
+          <Inspector graph={history.graph()} catalog={catalog} diagnostics={[]} commit={history.commit} selectedIds={['condition-1', 'service-1']} onSelect={() => {}} />
+        </div>
+      </HassCtx.Provider>
+    </QueryClientProvider>
+  ), el)
+  button(el, 'Delete')!.click()
+  await focused(() => el.querySelector('.hs-flow'))
+})
+
+it('a "From …" pill and a wire end select their step and focus its title', async () => {
+  let graph = addNode(createGraph('Pills'), 'set_value', 'temperature')
+  graph = updateNode(graph, 'temperature', { config: { type: 'number', value: lit('number', 20) } })
+  graph = addNode(graph, 'compare', 'compare')
+  graph = connectData(graph, 'temperature', 'value', 'compare', 'left')
+  const { el, selected } = mount(graph, 'compare')
+  row(el, 'left')!.querySelector<HTMLButtonElement>('.hs-insp-pill')!.click()
+  expect(selected()).toBe('temperature')
+  await focused(() => titleOf(el))
+  expect(inspector(el).querySelector<HTMLElement>('.hs-insp-node')!.dataset.nodeId).toBe('temperature')
+  dispose?.()
+  document.body.innerHTML = ''
+  const wire = graph.edges.find(e => e.kind === 'data' && e.target === 'compare')!
+  const second = mount(graph, undefined, { edge: wire.id })
+  const ends = second.el.querySelectorAll<HTMLButtonElement>('.hs-insp-wire__end')
+  ends[1].click()
+  expect(second.selected()).toBe('compare')
+  await focused(() => titleOf(second.el))
+})
+
+it('closing the sheet focuses the selected step\'s card, and selecting it again reopens the sheet', async () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
+  const { el } = mount(addNode(createGraph('Sheet'), 'delay', 'wait'), 'wait', { canvas: true })
+  const aside = inspector(el)
+  const card = () => [...el.querySelectorAll<HTMLElement>('.solid-flow__node')].find(n => n.getAttribute('data-id') === 'wait')
+  await vi.waitFor(() => expect(card()).toBeDefined())
+  expect(aside.getAttribute('data-open')).toBe('true')
+  button(aside, 'Close panel')!.click()
+  expect(aside.getAttribute('data-open')).toBe('false')
+  await focused(card)
+  card()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  expect(aside.getAttribute('data-open')).toBe('true')
+  button(aside, 'Close panel')!.click()
+  card()!.click()
+  expect(aside.getAttribute('data-open')).toBe('true')
+})
+
+// ── Smaller items (items 7 and 10) ───────────────────────────────────────────────────────────────────
+
+it('groups "+ Add field" by section, with Advanced last', () => {
+  const graph = updateNode(createGraph('Sections'), 'service-1', { config: { service: 'hass_sharp_test.sectioned', fields: { level: lit('number', 1) } } })
+  const { el } = mount(graph, 'service-1')
+  const field = inspector(el).querySelector<HTMLInputElement>('input[aria-label="Add field"]')!
+  field.dispatchEvent(new FocusEvent('focus'))
+  field.value = ''
+  field.dispatchEvent(new Event('input', { bubbles: true }))
+  const groups = [...el.querySelectorAll('[aria-label="Add field options"] .hs-search-group')].map(g => g.textContent)
+  expect(groups).toEqual(['Extras', 'Advanced'])
+})
+
+it('shows the entity picker for a required entity input', () => {
+  const { el } = mount(createGraph('Entity'), 'condition-1')
+  const entity = row(el, 'entity')!
+  expect(entity).toBeDefined()
+  expect(entity.querySelector('button[aria-haspopup="dialog"]')).not.toBeNull()
+  expect(entity.textContent).not.toContain('Not set')
+})
+
+it('describes a setting by its hint only when the hint is shown, and does not make outputs tab stops', () => {
+  const { el } = mount(addNode(createGraph('Hints'), 'compare', 'compare'), 'compare')
+  for (const control of inspector(el).querySelectorAll('[aria-describedby]')) {
+    for (const id of control.getAttribute('aria-describedby')!.split(' ')) expect(document.getElementById(id), id).not.toBeNull()
+  }
+  expect(inspector(el).querySelectorAll('.hs-insp-output[tabindex]')).toHaveLength(0)
 })

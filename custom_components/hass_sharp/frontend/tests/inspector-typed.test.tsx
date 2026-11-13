@@ -44,7 +44,7 @@ it('shows typed inputs with friendly type chips and outputs, without an appearan
   expect(output.getAttribute('aria-label')).toContain('Number')
   expect(el.querySelector('[aria-label="Appearance"]')).toBeNull()
 })
-it('offers "No value" for nullable wire-only CLR types', () => {
+it('offers "Leave empty" for nullable wire-only CLR types', () => {
   const el = host(),
     catalog = structuredClone(nodeCatalog)
   catalog.types['global::Example.Result?'] = {
@@ -73,7 +73,7 @@ it('offers "No value" for nullable wire-only CLR types', () => {
     el,
   )
   const result = el.querySelector('.hs-insp-input[data-input-id="result"]')!
-  const none = [...result.querySelectorAll('label')].find(l => l.textContent?.includes('No value'))!.querySelector('input')!
+  const none = [...result.querySelectorAll('label')].find(l => l.textContent?.includes('Leave empty'))!.querySelector('input')!
   expect(none.checked).toBe(false)
   none.click()
   expect(config.arguments).toEqual({ result: { kind: 'literal', type: 'global::Example.Result?', value: null } })

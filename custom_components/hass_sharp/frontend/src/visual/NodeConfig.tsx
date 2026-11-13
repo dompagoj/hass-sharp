@@ -1,18 +1,18 @@
 import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js'
 import { Menu, type MenuItem } from '../components/Menu'
-import { InputEditor } from './InputEditor'
-import { ServiceFields, type FieldRow } from './ServiceFields'
-import { Glyph, TriggerAdvanced, TriggerConfig } from './TriggerConfig'
-import { buildNodeView, execLabel, graphVariables, type InputView } from './flow/flowModel'
-import { inputValue, resolveTypeSpec, setInput, words, type ConfigSpec, type GraphNode, type InputSpec, type Operand, type VisualCatalogSnapshot } from './contract'
+import { ServiceFields } from './ServiceFields'
+import { TriggerAdvanced, TriggerConfig } from './TriggerConfig'
+import { Glyph } from './Glyph'
+import { Errors, focusRow, InputRow, type RowContext } from './InputRow'
+import { ArrayItems, Branches, Declarations, ObjectFields, type StructureContext } from './StructureEditors'
+import { buildNodeView, graphVariables } from './flow/flowModel'
+import { words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
-import { typeColor, typeIsList, typeLabel } from './typeLabels'
+import { typeLabel } from './typeLabels'
 import { DraftField } from './widgets/common'
 import { WidgetControl } from './widgets'
 import type { VisualDiagnostic } from './api'
-
-export { Glyph } from './TriggerConfig'
 
 type Options = { coalesce?: string }
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -21,38 +21,6 @@ const operators: Record<string, string> = { eq: 'is equal to', ne: 'is not equal
 /** Config keys edited by a kind's own section, or not at all (`values` of a loop result are its inputs). */
 const ownConfig = new Set(['output', 'carry', 'exports', 'branches'])
 const kindConfig: Record<string, string[]> = { service: ['service', 'fields', 'returnResponse'], custom: ['code'], object_create: ['fields'], array_create: ['items'], loop_result: ['values'] }
-const closeIcon = ['M6 6l12 12', 'M18 6 6 18']
-
-/** The focusable control of an inspector row: the one its label names, else its first field, else any button. */
-export function focusRow(root: ParentNode | undefined, port: string) {
-  const row = root && [...root.querySelectorAll<HTMLElement>('[data-input-id]')].find(el => el.dataset.inputId === port)
-  if (!row) return false
-  const labelled = row.querySelector<HTMLLabelElement>('label[for]')
-  const target = (labelled?.htmlFor ? row.querySelector<HTMLElement>(`[id="${labelled.htmlFor}"]`) : null)
-    ?? row.querySelector<HTMLElement>('input:not([type="hidden"]),select,textarea')
-    ?? row.querySelector<HTMLElement>('button:not([aria-haspopup="menu"])')
-    ?? row
-  target.focus()
-  target.scrollIntoView?.({ block: 'nearest' })
-  return true
-}
-
-/** The friendly type of an input: its resolved type, else its declared types; never an unresolvable id. */
-export function inputTypeChip(view: InputView | undefined, spec: InputSpec | undefined, catalog: VisualCatalogSnapshot) {
-  const id = view?.pin.typeId
-  if (id && resolveTypeSpec(id, catalog)) return { text: typeLabel(id, catalog), color: typeColor(id, catalog), list: typeIsList(id, catalog) }
-  const types = (spec?.types ?? []).filter(t => resolveTypeSpec(t, catalog))
-  const names = [...new Set(types.map(t => typeLabel(t, catalog)))]
-  if (names.length === 1) return { text: names[0], color: typeColor(types[0], catalog), list: typeIsList(types[0], catalog) }
-  return { text: names.length && names.length <= 3 ? names.join(' or ') : 'Any value', color: 'var(--hs-muted)', list: false }
-}
-
-export const TypeChip = (props: { text: string; color: string; list?: boolean }) => (
-  <span class="hs-type-chip" style={{ '--hs-chip-color': props.color }} title={`Type: ${props.text}`}>
-    <span class="hs-type-chip__dot" classList={{ 'hs-type-chip__dot--list': !!props.list }} aria-hidden="true" />
-    {props.text}
-  </span>
-)
 
 export interface NodeConfigProps {
   node: GraphNode
@@ -73,9 +41,13 @@ export interface NodeConfigProps {
  * problems, the kind's main section (service, trigger, code or settings), its inputs, its outputs and a collapsed
  * Advanced section. Values are edited with the same `InputEditor` as the node card. Nothing here connects or
  * disconnects anything: a connected input is a read-only "From …" pill that selects its source.
+ *
+ * Every part reads the node through `props`, so the panel (and the focus, open sections and drags in it) survives
+ * edits of the node; the inspector replaces it only when another node is selected.
  */
 export function NodeConfig(props: NodeConfigProps) {
   let root!: HTMLDivElement
+  let title!: HTMLInputElement
   const descriptionId = createUniqueId()
   const spec = createMemo(() => (Object.hasOwn(props.catalog.nodes, props.node.kind) ? props.catalog.nodes[props.node.kind] : undefined))
   const view = createMemo(() => buildNodeView(props.node, { graph: props.graph, catalog: props.catalog, diagnostics: props.diagnostics ?? [] }))
@@ -97,90 +69,37 @@ export function NodeConfig(props: NodeConfigProps) {
     else next[key] = value
     props.onChange(next, options)
   }
-  const connected = (port: string) => props.graph.edges.some(e => e.kind === 'data' && e.target === props.node.id && e.targetPort === port)
   const copy = (text: string, done: string) => {
     void Promise.resolve(navigator.clipboard?.writeText?.(text)).then(() => setStatus(done), () => setStatus('Copying is not allowed here'))
   }
-  const Errors = (errors: { list: string[] }) => (
-    <Show when={errors.list.length}><ul class="hs-input-editor__errors"><For each={errors.list}>{m => <li>{m}</li>}</For></ul></Show>
-  )
 
-  /** One input: label and type chip, then its editor, a "From …" pill when connected, or "Not set". */
-  const Row = (row: { port: string } & FieldRow) => {
-    const input = () => inputs().get(row.port)
-    const inputSpec = () => row.spec ?? input()?.spec
-    const label = () => row.label ?? input()?.pin.label ?? words.portLabel(undefined, row.port)
-    const operand = () => row.value ?? (inputValue(props.node, row.port, props.catalog) as Operand | undefined)
-    const wired = () => input()?.mode === 'connected'
-    const [setting, setSetting] = createSignal(false)
-    // A service's target and the fields added on purpose always show their editor.
-    const muted = () => !wired() && !setting() && input()?.mode === 'muted' && !(kind() === 'service' && (row.port === 'target' || row.port.startsWith('field:')))
-    const errors = () => input()?.errors ?? []
-    const chip = () => inputTypeChip(input(), inputSpec(), props.catalog)
-    const editSpec = (): InputSpec | undefined => { const s = inputSpec(); return s && row.description !== undefined ? { ...s, description: row.description } : s }
-    // A wire-only type that accepts null (a nullable C# type) can still be given "no value" without a wire.
-    const nullable = () => input()?.mode === 'wire' && !!inputSpec()?.types.length && inputSpec()!.types.every(t => resolveTypeSpec(t, props.catalog)?.nullable === true)
-    const isNull = () => { const o = operand(); return o?.kind === 'literal' && o.value === null }
-    const change = (next: Operand, options?: Options) => {
-      if (row.onChange) return row.onChange(next, options)
-      const node = structuredClone(props.node)
-      if (row.port.startsWith('field:') && !record(node.config.fields)) node.config.fields = {}
-      setInput(node, row.port, next, props.catalog)
-      props.onChange(node.config, options)
-    }
-    return (
-      <div class="hs-insp-input" data-input-id={row.port} aria-invalid={errors().length > 0 || undefined}>
-        <Show when={!wired() && !muted() && editSpec()} fallback={<span class="hs-insp-input__label">{label()}</span>}>
-          {current => (
-            <InputEditor variant="panel" input={current()} value={operand()} label={label()} catalog={props.catalog} variables={variables()}
-              context={{ targetEntityIds: view().targetEntityIds }} errors={errors()} onChange={change} />
-          )}
-        </Show>
-        <TypeChip {...chip()} />
-        <Show when={row.onRemove}>
-          {remove => (
-            <button type="button" class="hs-button hs-button--ghost hs-insp-remove" aria-label={row.removeLabel ?? `Remove ${label()}`}
-              title={row.removeBlocked ?? row.removeLabel} disabled={!!row.removeBlocked} onClick={() => remove()()}>
-              <Glyph paths={closeIcon} />
-            </button>
-          )}
-        </Show>
-        <Show when={wired() && input()}>
-          {current => (
-            <>
-              <button type="button" class="hs-insp-pill" style={{ '--hs-chip-color': chip().color }}
-                aria-label={`${label()}, ${chip().text}, from ${current().source}. Select it on the canvas`}
-                title={`Select ${current().source?.split(' · ')[0]} on the canvas`} onClick={() => props.onSelect?.(current().sourceNode)}>
-                <span class="hs-type-chip__dot hs-type-chip__dot--filled" aria-hidden="true" />
-                <span>From {current().source}</span>
-              </button>
-              <Errors list={errors()} />
-            </>
-          )}
-        </Show>
-        <Show when={!wired() && nullable()}>
-          <label class="hs-insp-toggle hs-insp-null">
-            <input type="checkbox" role="switch" class="hs-switch" checked={isNull()}
-              onChange={e => change(e.currentTarget.checked ? { kind: 'literal', type: inputSpec()!.types[0], value: null } : { kind: 'unset' })} />
-            <span><strong>No value</strong><small class="hs-field-hint">Pass null instead of connecting a value.</small></span>
-          </label>
-        </Show>
-        <Show when={muted()}>
-          <div class="hs-insp-unset">
-            <span class="hs-muted">Not set</span>
-            <button type="button" class="hs-button hs-button--ghost" aria-label={`Set ${label()}`}
-              onClick={() => { setSetting(true); focus(row.port) }}>Set value</button>
-          </div>
-          <Show when={inputSpec()?.description}><small class="hs-field-hint">{inputSpec()!.description}</small></Show>
-          <Errors list={errors()} />
-        </Show>
-      </div>
-    )
+  const rows: RowContext = {
+    node: () => props.node,
+    catalog: () => props.catalog,
+    input: port => inputs().get(port),
+    variables,
+    targetEntityIds: () => view().targetEntityIds,
+    onChange: (config, options) => props.onChange(config, options),
+    onSelect: id => props.onSelect?.(id),
+    focus,
+    // A removed row with no neighbour: the service's "+ Add field", else the title.
+    fallback: () => root.querySelector<HTMLElement>('[data-input-id="fields"] input') ?? title,
   }
+  const structure: StructureContext = {
+    node: () => props.node,
+    graph: () => props.graph,
+    catalog: () => props.catalog,
+    set: (key, value) => set(key, value),
+    errorsFor,
+    focus,
+  }
+  // Messages about the service, its response or its fields as a whole, which have no input row.
+  const serviceMessages = (key: string) => problems().filter(d => d.inputId === key).map(d => d.message)
 
   /** A setting of the node that is not an input (an operator, a type, a level, a state). */
   const ConfigField = (field: { name: string; rule: ConfigSpec }) => {
     const id = createUniqueId(), hintId = `${id}-hint`
+    const hint = () => (field.rule.description ? hintId : undefined)
     const label = () => (field.rule.label && field.rule.label !== field.name ? field.rule.label : words.key(field.name))
     const value = () => props.node.config[field.name]
     const errors = () => errorsFor(field.name)
@@ -195,7 +114,7 @@ export function NodeConfig(props: NodeConfigProps) {
         <Show when={field.rule.enum || field.rule.enumSource} fallback={
           <Show when={field.rule.type === 'boolean'} fallback={
             <Show when={kind() === 'condition' && field.name === 'state'} fallback={
-              <DraftField id={id} label={label()} text={value() === undefined ? '' : String(value())} placeholder="Not set" describedBy={hintId}
+              <DraftField id={id} label={label()} text={value() === undefined ? '' : String(value())} placeholder="Not set" describedBy={hint()}
                 inputmode={number() ? 'decimal' : undefined} invalid={errors().length > 0}
                 commit={text => {
                   if (!number()) { set(field.name, text === '' && !field.rule.required ? undefined : text); return }
@@ -206,17 +125,17 @@ export function NodeConfig(props: NodeConfigProps) {
                 }} />
             }>
               <WidgetControl widget={{ kind: 'state', multiple: false }} value={typeof value() === 'string' ? (value() as string) : undefined} id={id} label={label()}
-                describedBy={hintId} invalid={errors().length > 0} disabled={false} compact={false} required={!!field.rule.required}
+                describedBy={hint()} invalid={errors().length > 0} disabled={false} compact={false} required={!!field.rule.required}
                 context={{ targetEntityIds: entityIds() }} commit={v => set(field.name, typeof v === 'string' ? v : undefined)} />
             </Show>
           }>
             <span class="hs-widget-row">
-              <input id={id} type="checkbox" role="switch" class="hs-switch" aria-describedby={hintId} checked={value() === true} onChange={e => set(field.name, e.currentTarget.checked)} />
+              <input id={id} type="checkbox" role="switch" class="hs-switch" aria-describedby={hint()} checked={value() === true} onChange={e => set(field.name, e.currentTarget.checked)} />
               <span class="hs-muted">{value() === undefined ? 'Not set' : value() ? 'Yes' : 'No'}</span>
             </span>
           </Show>
         }>
-          <select id={id} class="hs-input" aria-describedby={hintId} aria-invalid={errors().length > 0 || undefined}
+          <select id={id} class="hs-input" aria-describedby={hint()} aria-invalid={errors().length > 0 || undefined}
             onChange={e => set(field.name, e.currentTarget.value === '' ? undefined : e.currentTarget.value)}>
             <Show when={value() === undefined || !options().includes(String(value()))}>
               <option value="" selected>{value() === undefined ? 'Not set' : String(value())}</option>
@@ -241,20 +160,20 @@ export function NodeConfig(props: NodeConfigProps) {
   }, undefined, { equals: sameList })
 
   const menu = (): MenuItem[] => [
-    ...(props.onDuplicate ? [{ label: 'Duplicate', onSelect: props.onDuplicate }] : []),
+    ...(props.onDuplicate ? [{ label: 'Duplicate', onSelect: () => props.onDuplicate?.() }] : []),
     { label: 'Copy node ID', onSelect: () => copy(props.node.id, 'Node ID copied') },
-    ...(props.onDelete ? [{ label: 'Delete', onSelect: props.onDelete, danger: true }] : []),
+    ...(props.onDelete ? [{ label: 'Delete', onSelect: () => props.onDelete?.(), danger: true }] : []),
   ]
   const description = () => spec()?.description ?? 'This kind of step is not available. Its settings are kept.'
   const stored = () => JSON.stringify({ kind: props.node.kind, ...(props.node.label ? { label: props.node.label } : {}), config: props.node.config }, null, 2)
   const loop = () => !!spec()?.config.carry
 
   return (
-    <div class="hs-insp-node" ref={root} style={{ '--hs-cat': view().identity.color }}>
+    <div class="hs-insp-node" ref={root} data-node-id={props.node.id} style={{ '--hs-cat': view().identity.color }}>
       <header class="hs-insp-head" classList={{ 'hs-insp-head--trigger': kind() === 'trigger' }}>
         <span class="hs-insp-head__icon" title={view().identity.label}><Glyph paths={view().identity.icon} /></span>
         <div class="hs-insp-head__titles">
-          <input class="hs-insp-title" aria-label="Node label" aria-describedby={descriptionId} value={props.node.label ?? ''} placeholder={kindLabel()}
+          <input ref={title} class="hs-insp-title" aria-label="Node label" aria-describedby={descriptionId} value={props.node.label ?? ''} placeholder={kindLabel()}
             onInput={e => props.onGraphChange(updateNode(props.graph, props.node.id, { label: e.currentTarget.value || undefined }), { coalesce: `label:${props.node.id}` })} />
           <small class="hs-insp-kind">{kindLabel() === view().identity.label ? kindLabel() : `${kindLabel()} · ${view().identity.label}`}</small>
         </div>
@@ -288,8 +207,8 @@ export function NodeConfig(props: NodeConfigProps) {
 
       <div class="hs-insp-main">
         <Show when={kind() === 'service'}>
-          <ServiceFields node={props.node} graph={props.graph} catalog={props.catalog} onChange={props.onChange} focus={focus}
-            row={(port, extra) => <Row port={port} {...extra} />} />
+          <ServiceFields node={props.node} graph={props.graph} catalog={props.catalog} onChange={props.onChange} focus={focus} messages={serviceMessages}
+            row={(port, extra) => <InputRow port={port} ctx={rows} {...extra} />} />
         </Show>
         <Show when={kind() === 'trigger'}>
           <TriggerConfig node={props.node} onChange={props.onChange} diagnostics={props.diagnostics} />
@@ -303,18 +222,18 @@ export function NodeConfig(props: NodeConfigProps) {
           </div>
         </Show>
         <For each={configFields()}>{name => <ConfigField name={name} rule={spec()!.config[name]} />}</For>
-        <Show when={kind() === 'parallel'}><Branches /></Show>
-        <Show when={kind() === 'object_create'}><ObjectFields /></Show>
-        <Show when={kind() === 'array_create'}><ArrayItems /></Show>
+        <Show when={kind() === 'parallel'}><Branches ctx={structure} /></Show>
+        <Show when={kind() === 'object_create'}><ObjectFields ctx={structure} /></Show>
+        <Show when={kind() === 'array_create'}><ArrayItems ctx={structure} /></Show>
         <Show when={kind() !== 'service' && kind() !== 'trigger' && ports().length}>
           <section class="hs-insp-section" aria-label="Inputs">
             <h3 class="hs-insp-heading">Inputs</h3>
-            <For each={ports()}>{port => <Row port={port} />}</For>
+            <For each={ports()}>{port => <InputRow port={port} ctx={rows} />}</For>
           </section>
         </Show>
         <Show when={loop()}>
-          <Declarations key="carry" title="Kept between iterations" hint="Each iteration starts from the value the previous one finished with." />
-          <Declarations key="exports" title="Available after the loop" hint="Set inside the loop and read after it finishes." />
+          <Declarations ctx={structure} key="carry" title="Kept between iterations" hint="Each iteration starts from the value the previous one finished with." />
+          <Declarations ctx={structure} key="exports" title="Available after the loop" hint="Set inside the loop and read after it finishes." />
         </Show>
       </div>
 
@@ -328,7 +247,7 @@ export function NodeConfig(props: NodeConfigProps) {
                 const descId = createUniqueId()
                 return (
                   <Show when={outputs().some(p => p.id === pinId)}>
-                    <li class="hs-insp-output" tabindex="0" aria-label={pin().name} aria-describedby={pin().description ? descId : undefined} style={{ '--hs-chip-color': pin().color }}>
+                    <li class="hs-insp-output" aria-label={pin().name} aria-describedby={pin().description ? descId : undefined} style={{ '--hs-chip-color': pin().color }}>
                       <span class="hs-type-chip__dot" classList={{ 'hs-type-chip__dot--list': pin().list, 'hs-type-chip__dot--filled': pin().connected }} aria-hidden="true" />
                       <span class="hs-insp-output__name">{pin().label}</span>
                       <span class="hs-insp-output__type">{pin().typeName}</span>
@@ -381,7 +300,7 @@ export function NodeConfig(props: NodeConfigProps) {
     return (
       <fieldset class="hs-insp-group">
         <legend class="hs-insp-field__label">Shared C# for this automation</legend>
-        <For each={[['imports', 'Usings', 'using lines for every Custom C# step, for example using System.Globalization;'], ['members', 'Helper members', 'Fields, properties and methods every Custom C# step of this automation can use.']] as const}>
+        <For each={[['imports', 'Usings', 'Using lines for every Custom C# step, for example using System.Globalization;'], ['members', 'Helper members', 'Fields, properties and methods every Custom C# step of this automation can use.']] as const}>
           {([key, label, hint]) => (
             <div class="hs-insp-field">
               <label class="hs-insp-field__label" for={`${id}-${key}`}>{label}</label>
@@ -392,148 +311,6 @@ export function NodeConfig(props: NodeConfigProps) {
           )}
         </For>
       </fieldset>
-    )
-  }
-
-  /** The branches of a Parallel step; one that has steps attached is removed on the canvas first. */
-  function Branches() {
-    const branches = () => (Array.isArray(props.node.config.branches) ? props.node.config.branches.filter((b): b is string => typeof b === 'string') : [])
-    const used = (id: string) => props.graph.edges.some(e => e.kind !== 'data' && e.source === props.node.id && e.port === `branch:${id}`)
-    const add = () => {
-      const taken = new Set(branches())
-      const id = [...'abcdefghijklmnopqrstuvwxyz'].find(letter => !taken.has(letter)) ?? `branch_${branches().length + 1}`
-      set('branches', [...branches(), id])
-    }
-    return (
-      <div class="hs-insp-field" data-input-id="branches" aria-invalid={errorsFor('branches').length > 0 || undefined}>
-        <span class="hs-insp-field__label">Branches</span>
-        <ul class="hs-insp-list">
-          <For each={branches()}>
-            {id => {
-              const name = () => execLabel(props.node, `branch:${id}`, props.catalog)
-              return (
-                <li>
-                  <span>{name()}</span>
-                  <button type="button" class="hs-button hs-button--ghost hs-insp-remove" aria-label={`Remove ${name()}`} disabled={used(id) || branches().length <= 1}
-                    title={used(id) ? 'Remove its steps on the canvas first' : undefined} onClick={() => set('branches', branches().filter(b => b !== id))}>
-                    <Glyph paths={closeIcon} />
-                  </button>
-                </li>
-              )
-            }}
-          </For>
-        </ul>
-        <button type="button" class="hs-button hs-button--secondary hs-insp-add-button" onClick={add}>+ Add branch</button>
-        <small class="hs-field-hint">Branches run at the same time; Done runs once all of them have finished.</small>
-        <Errors list={errorsFor('branches')} />
-      </div>
-    )
-  }
-
-  /** The field names of a Create object step; each is an input below. */
-  function ObjectFields() {
-    const fields = () => (record(props.node.config.fields) ? props.node.config.fields : {})
-    return (
-      <div class="hs-insp-field" data-input-id="fields">
-        <span class="hs-insp-field__label">Fields</span>
-        <ul class="hs-insp-list">
-          <For each={Object.keys(fields())}>
-            {key => (
-              <li>
-                <code>{key}</code>
-                <button type="button" class="hs-button hs-button--ghost hs-insp-remove" aria-label={`Remove field ${key}`} disabled={connected(`field:${key}`)}
-                  title={connected(`field:${key}`) ? 'Remove its connection on the canvas first' : undefined}
-                  onClick={() => { const next = { ...fields() }; delete next[key]; set('fields', next) }}>
-                  <Glyph paths={closeIcon} />
-                </button>
-              </li>
-            )}
-          </For>
-        </ul>
-        <DraftField label="Add a field named" placeholder="+ Add field…" text="" clearOnCommit
-          commit={text => {
-            const name = text.trim()
-            if (!name) return
-            if (Object.hasOwn(fields(), name)) return 'There is already a field with this name.'
-            set('fields', { ...fields(), [name]: { kind: 'unset' } })
-            focus(`field:${name}`)
-          }} />
-      </div>
-    )
-  }
-
-  /** The items of a Create array step; each is an input below. */
-  function ArrayItems() {
-    const items = () => (Array.isArray(props.node.config.items) ? props.node.config.items : [])
-    const lastConnected = () => items().length > 0 && connected(`item:${items().length - 1}`)
-    return (
-      <div class="hs-insp-field" data-input-id="items">
-        <span class="hs-insp-field__label">Items</span>
-        <div class="hs-insp-field__row">
-          <span class="hs-muted">{items().length === 1 ? '1 item' : `${items().length} items`}</span>
-          <button type="button" class="hs-button hs-button--secondary hs-insp-add-button" onClick={() => { set('items', [...items(), { kind: 'unset' }]); focus(`item:${items().length}`) }}>+ Add item</button>
-          <button type="button" class="hs-button hs-button--ghost" disabled={!items().length || lastConnected()} title={lastConnected() ? 'Remove its connection on the canvas first' : undefined}
-            onClick={() => set('items', items().slice(0, -1))}>Remove last</button>
-        </div>
-      </div>
-    )
-  }
-
-  /** Values a loop keeps between iterations or makes available after it, each with its type and starting value. */
-  function Declarations(declared: { key: 'carry' | 'exports'; title: string; hint: string }) {
-    const list = () => (Array.isArray(props.node.config[declared.key]) ? (props.node.config[declared.key] as unknown[]).filter(record) : [])
-    const prefix = declared.key === 'carry' ? 'carry' : 'export'
-    const used = (name: string) => props.graph.edges.some(e => e.kind === 'data' && ((e.source === props.node.id && e.sourcePort === `${prefix}:${name}`) || e.targetPort === `${prefix}:${name}`))
-    const literalTypes = () => Object.keys(props.catalog.types).filter(t => resolveTypeSpec(t, props.catalog)?.literalKind)
-    const [name, setName] = createSignal('')
-    const [type, setType] = createSignal('number')
-    const [error, setError] = createSignal('')
-    const update = (index: number, patch: Record<string, unknown>) =>
-      set(declared.key, list().map((item, i) => (i === index ? { ...item, ...patch } : item)))
-    const add = () => {
-      const value = name().trim()
-      if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(value)) return setError('Use letters, digits and underscores, not starting with a digit.')
-      if (list().some(item => item.name === value)) return setError('That name is already used.')
-      setError('')
-      setName('')
-      set(declared.key, [...list(), { name: value, type: type(), initial: { kind: 'unset' } }])
-    }
-    return (
-      <section class="hs-insp-section" aria-label={declared.title} data-input-id={declared.key}>
-        <h3 class="hs-insp-heading">{declared.title}</h3>
-        <small class="hs-field-hint">{declared.hint}</small>
-        <For each={list()}>
-          {(item, index) => {
-            const itemName = String(item.name ?? '')
-            const itemType = typeof item.type === 'string' ? item.type : 'object'
-            return (
-              <div class="hs-insp-declaration">
-                <div class="hs-insp-field__row">
-                  <code>{itemName}</code>
-                  <TypeChip text={typeLabel(itemType, props.catalog)} color={typeColor(itemType, props.catalog)} />
-                  <button type="button" class="hs-button hs-button--ghost hs-insp-remove" aria-label={`Remove ${itemName}`} disabled={used(itemName)}
-                    title={used(itemName) ? 'Remove its connections on the canvas first' : undefined}
-                    onClick={() => set(declared.key, list().filter((_, i) => i !== index()))}>
-                    <Glyph paths={closeIcon} />
-                  </button>
-                </div>
-                <InputEditor variant="panel" label={`${itemName} starts at`} catalog={props.catalog}
-                  input={{ types: [itemType], required: true, description: 'Its value before the first iteration.' }}
-                  value={record(item.initial) ? (item.initial as Operand) : undefined} onChange={next => update(index(), { initial: next })} />
-              </div>
-            )
-          }}
-        </For>
-        <div class="hs-insp-declare">
-          <input class="hs-input" aria-label={`New ${declared.title.toLowerCase()} name`} placeholder="Name" value={name()} onInput={e => setName(e.currentTarget.value)}
-            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add() } }} />
-          <select class="hs-input" aria-label={`New ${declared.title.toLowerCase()} type`} onChange={e => setType(e.currentTarget.value)}>
-            <For each={literalTypes()}>{t => <option value={t} selected={t === type()}>{typeLabel(t, props.catalog)}</option>}</For>
-          </select>
-          <button type="button" class="hs-button hs-button--secondary" onClick={add}>Add</button>
-        </div>
-        <Show when={error()}><small class="hs-error" role="alert">{error()}</small></Show>
-      </section>
     )
   }
 }

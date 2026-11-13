@@ -1,6 +1,7 @@
-import { createEffect, createMemo, createSignal, For, on, Show, type JSX } from 'solid-js'
-import { NodeConfig, TypeChip } from './NodeConfig'
-import { Glyph } from './TriggerConfig'
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, type JSX } from 'solid-js'
+import { NodeConfig } from './NodeConfig'
+import { TypeChip } from './InputRow'
+import { Glyph } from './Glyph'
 import type { VisualDiagnostic } from './api'
 import { copySteps, pasteSteps } from './clipboard'
 import { dataOutputs, type GraphNode, type VisualCatalogSnapshot } from './contract'
@@ -54,7 +55,48 @@ export function Inspector(props: InspectorProps) {
   createEffect(on(() => [props.selected?.id, props.selectedEdgeId, ids().join(' '), props.description?.kind], () => setDismissed(false), { defer: true }))
   const hasContent = () => !!(props.description || props.selected || many() || edge())
   const open = () => (props.open ?? hasContent()) && !dismissed()
-  const close = () => { setDismissed(true); props.onClose?.() }
+  const workspace = (): ParentNode => aside.closest('.hs-visual-workspace') ?? aside.parentElement ?? document
+  const card = (id: string | undefined) =>
+    id ? [...workspace().querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.getAttribute('data-id') === id) : undefined
+  const canvas = () => workspace().querySelector<HTMLElement>('.hs-flow')
+  /** Focuses what `find` returns once the update that shows it has been rendered (it may take a frame). */
+  const focusSoon = (find: () => HTMLElement | null | undefined) => {
+    let tries = 0
+    const attempt = () => {
+      const target = find()
+      if (target?.isConnected) { target.focus(); target.scrollIntoView?.({ block: 'nearest' }); return }
+      if (++tries < 3) setTimeout(attempt, 0)
+    }
+    queueMicrotask(attempt)
+  }
+  const title = (id: string) => () =>
+    [...aside.querySelectorAll<HTMLElement>('.hs-insp-node')].find(el => el.dataset.nodeId === id)?.querySelector<HTMLElement>('input[aria-label="Node label"]')
+  /** Selects a step and moves focus to its title in the panel, so focus never falls to the page. */
+  const selectAndFocus = (id?: string) => {
+    props.onSelect?.(id)
+    if (id) focusSoon(title(id))
+    else focusSoon(canvas)
+  }
+  const close = () => {
+    const id = props.selected?.id
+    setDismissed(true)
+    props.onClose?.()
+    // Back to where the selection is: its card on the canvas, else the canvas.
+    focusSoon(() => card(id) ?? canvas())
+  }
+  // Selecting a step again (click, or Enter or Space on its card) brings a dismissed sheet back.
+  onMount(() => {
+    const scope = aside.closest('.hs-visual-workspace')
+    if (!scope) return
+    const reopen = (event: Event) => {
+      if (!dismissed() || !(event.target instanceof Element) || !event.target.closest('.solid-flow__node')) return
+      if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return
+      setDismissed(false)
+    }
+    scope.addEventListener('click', reopen, true)
+    scope.addEventListener('keydown', reopen, true)
+    onCleanup(() => { scope.removeEventListener('click', reopen, true); scope.removeEventListener('keydown', reopen, true) })
+  })
 
   const duplicate = (selection: string[]) => {
     const data = copySteps(props.graph, selection)
@@ -63,15 +105,16 @@ export function Inspector(props: InspectorProps) {
     if ('error' in result) return setStatus(result.error)
     props.commit(result.graph)
     setStatus(result.ids.length === 1 ? 'Duplicated' : `Duplicated ${result.ids.length} steps`)
-    if (selection.length === 1 && result.ids.length === 1) props.onSelect?.(result.ids[0])
+    if (selection.length === 1 && result.ids.length === 1) selectAndFocus(result.ids[0])
   }
   const remove = (selection: string[]) => {
     const next = selection.reduce((graph, id) => removeNode(graph, id, props.catalog), props.graph)
     props.commit(next)
-    props.onSelect?.(undefined)
+    // The panel that held focus goes away with the steps; the canvas keeps it.
+    selectAndFocus(undefined)
   }
   const tidy = (selection: string[]) => {
-    const canvas = aside.closest('.hs-visual-workspace') ?? document
+    const canvas = workspace()
     const sizes = (id: string) => {
       const card = [...canvas.querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.getAttribute('data-id') === id)
       return card?.offsetWidth && card.offsetHeight ? { width: card.offsetWidth, height: card.offsetHeight } : undefined
@@ -100,15 +143,21 @@ export function Inspector(props: InspectorProps) {
       <p class="hs-visually-hidden" role="status">{status()}</p>
       <Show when={props.description} fallback={
         <Show when={many()} fallback={
-          <Show when={props.selected} keyed fallback={
+          <Show when={props.selected?.id} keyed fallback={
             <Show when={edge()} fallback={<Overview />}>{current => <WireView edge={current()} />}</Show>
           }>
-            {node => (
-              <NodeConfig node={node} graph={props.graph} catalog={props.catalog} diagnostics={props.diagnostics}
-                onChange={(config, options) => props.commit(updateNode(props.graph, node.id, { config }), options)}
-                onGraphChange={props.commit} onSelect={props.onSelect}
-                onDuplicate={() => duplicate([node.id])} onDelete={() => remove([node.id])} />
-            )}
+            {id => {
+              // Keyed on the id, not the node: an edit of the step gives a new node object, and the panel (its
+              // focus, open sections, drags and subscriptions) must survive it. Everything reads the latest node.
+              let last = props.selected!
+              const node = createMemo(() => { const current = props.selected; if (current?.id === id) last = current; return last })
+              return (
+                <NodeConfig node={node()} graph={props.graph} catalog={props.catalog} diagnostics={props.diagnostics}
+                  onChange={(config, options) => props.commit(updateNode(props.graph, id, { config }), options)}
+                  onGraphChange={props.commit} onSelect={selectAndFocus}
+                  onDuplicate={() => duplicate([id])} onDelete={() => remove([id])} />
+              )
+            }}
           </Show>
         }>
           <section class="hs-insp-many" aria-label="Selection">
@@ -124,7 +173,7 @@ export function Inspector(props: InspectorProps) {
                   const node = () => props.graph.nodes.find(n => n.id === id)
                   return (
                     <li>
-                      <button type="button" class="hs-insp-link" onClick={() => props.onSelect?.(id)}>{nodeTitle(node(), props.catalog)}</button>
+                      <button type="button" class="hs-insp-link" onClick={() => selectAndFocus(id)}>{nodeTitle(node(), props.catalog)}</button>
                     </li>
                   )
                 }}
@@ -165,7 +214,7 @@ export function Inspector(props: InspectorProps) {
             <For each={triggers()}>
               {node => (
                 <li>
-                  <button type="button" class="hs-insp-trigger-line" onClick={() => props.onSelect?.(node.id)}>
+                  <button type="button" class="hs-insp-trigger-line" onClick={() => selectAndFocus(node.id)}>
                     <span class="hs-insp-trigger-line__icon" aria-hidden="true"><Glyph paths={icons.trigger} /></span>
                     <span>{nodeSummary(node, props.catalog, undefined, props.graph)}</span>
                   </button>
@@ -214,7 +263,7 @@ export function Inspector(props: InspectorProps) {
     const type = () => { const wire = data(), node = source(); return wire && node ? dataOutputs(node, props.catalog)[wire.sourcePort]?.type : undefined }
     const end = (node: GraphNode | undefined, port: string | undefined): JSX.Element => (
       <button type="button" class="hs-insp-wire__end" style={{ '--hs-cat': node ? nodeIdentity(node.kind, props.catalog).color : undefined }}
-        disabled={!node} onClick={() => node && props.onSelect?.(node.id)}>
+        disabled={!node} onClick={() => node && selectAndFocus(node.id)}>
         <span class="hs-insp-wire__node">{nodeTitle(node, props.catalog, 'Missing step')}</span>
         <Show when={port}><span class="hs-insp-wire__port">{port}</span></Show>
       </button>

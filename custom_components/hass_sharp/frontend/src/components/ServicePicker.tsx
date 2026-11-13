@@ -1,5 +1,5 @@
 import type { ServicesSection } from '../visual/contract'
-import { useServiceText, type ServiceText } from '../visual/ServiceFields'
+import { useServiceText, type ServiceText } from '../visual/serviceText'
 import { CatalogPicker, type CatalogItem } from './CatalogPicker'
 
 /** The services of the C4 services section as picker items: translated name, id and description. */

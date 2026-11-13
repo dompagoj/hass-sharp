@@ -153,3 +153,39 @@ it('shows the stored startup choice and manual runs in Advanced', () => {
   manual.click()
   expect(config().manual).toBe(false)
 })
+
+it('chooses the trigger type from the keyboard: arrows move without choosing, Enter chooses, Escape closes unchanged', async () => {
+  const { host, config } = mount({ type: 'entity', entity: 'binary_sensor.motion', mode: 'Single' })
+  const change = host.querySelector<HTMLButtonElement>('button[aria-label="Change trigger type"]')!
+  const group = () => host.querySelector<HTMLElement>('[role="radiogroup"][aria-label="Trigger type"]')
+  const radio = (id: string) => host.querySelector<HTMLInputElement>(`[aria-label="Trigger type"] input[value="${id}"]`)!
+  const key = (key: string) => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+  change.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(radio('entity')))
+  key('ArrowDown')
+  key('ArrowDown')
+  // The third type is focused and checked, but nothing is chosen yet.
+  expect(document.activeElement).toBe(radio(triggerChoices[2].id))
+  expect(radio(triggerChoices[2].id).checked).toBe(true)
+  expect(config().type).toBe('entity')
+  expect(group()).not.toBeNull()
+  key('Enter')
+  expect(config()).toMatchObject({ type: 'ha', trigger: { trigger: triggerChoices[2].id } })
+  expect(group()).toBeNull()
+  await vi.waitFor(() => expect(document.activeElement).toBe(change))
+  // Escape closes without changing.
+  change.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(radio(triggerChoices[2].id)))
+  key('ArrowUp')
+  key('Escape')
+  expect(group()).toBeNull()
+  expect(config()).toMatchObject({ type: 'ha', trigger: { trigger: triggerChoices[2].id } })
+  await vi.waitFor(() => expect(document.activeElement).toBe(change))
+  // Space chooses too.
+  change.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(radio(triggerChoices[2].id)))
+  key('End')
+  key(' ')
+  expect(config().type).toBe(triggerChoices.at(-1)!.id === 'other' ? 'ha' : triggerChoices.at(-1)!.id)
+  await vi.waitFor(() => expect(document.activeElement).toBe(change))
+})
