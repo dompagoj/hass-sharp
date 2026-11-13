@@ -49,6 +49,29 @@ static class AuthoringAdapterTests
             var candidate=new NodeLibraryCompiler(exampleDiagnostics).Preview([new(library["id"]!.GetValue<string>(),library["source"]!.GetValue<string>(),1)]);
             VisualExecutionTests.Check(candidate.Valid,"capability library source compiles");
             Clean(library["graph"]!.AsObject(),candidate.Snapshot,"complete read-entity/custom-library example");
+            // service_ports: the ports MCP shows for a service are the validator's own (DataInputs/DataOutputs).
+            manager.SetServiceDescriptions(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,"ha-service-descriptions.json")));
+            async Task<JsonNode> Ports(string service)=>JsonNode.Parse(await manager.NodeLibraryRequest(JsonSerializer.Serialize(new{operation="service_ports",service})))!;
+            static string[] Types(JsonNode? port)=>port!["types"]!.AsArray().Select(t=>t!.GetValue<string>()).ToArray();
+            var light=await Ports("light.turn_on");
+            VisualExecutionTests.Check(light["ok"]!.GetValue<bool>(),light.ToJsonString());
+            var lightResult=light["result"]!; var lightInputs=lightResult["inputs"]!.AsObject();
+            var lightFields=services.Section["items"]!["light.turn_on"]!["fields"]!.AsObject();
+            VisualExecutionTests.Check(lightResult["known"]!.GetValue<bool>() && lightResult["response"]!.GetValue<string>()=="none" && lightResult["hasTarget"]!.GetValue<bool>()
+                && Types(lightInputs["target"]).SequenceEqual(["target","entity_id:light"])
+                && lightInputs["field:brightness_pct"]!["max"]!.GetValue<double>()==100 && Types(lightInputs["field:brightness_pct"]).SequenceEqual(["number"])
+                && lightInputs.Count==lightFields.Count+1 && lightResult["outputs"]!.AsObject().Count==0,"service_ports light.turn_on: refined target, typed fields, no response: "+light.ToJsonString());
+            var fieldOrder=lightInputs.Select(p=>p.Key).Where(k=>k.StartsWith("field:")).Select(k=>lightFields[k[6..]]!["order"]!.GetValue<int>()).ToArray();
+            VisualExecutionTests.Check(fieldOrder.SequenceEqual(fieldOrder.Order()),"service_ports fields follow Home Assistant's order");
+            var forecast=(await Ports("weather.get_forecasts"))["result"]!;
+            VisualExecutionTests.Check(forecast["response"]!.GetValue<string>()=="only" && forecast["outputs"]!["response"]!["type"]!.GetValue<string>()=="object"
+                && Types(forecast["inputs"]!["target"]).SequenceEqual(["target","entity_id:weather"]),"service_ports weather.get_forecasts returns a response: "+forecast.ToJsonString());
+            var notify=(await Ports("notify.notify"))["result"]!;
+            VisualExecutionTests.Check(notify["known"]!.GetValue<bool>() && !notify["hasTarget"]!.GetValue<bool>() && notify["inputs"]!["field:target"]!=null
+                && notify["inputs"]!["field:message"]!["required"]!.GetValue<bool>(),"service_ports notify.notify: no target, its field named target is its own port: "+notify.ToJsonString());
+            var unknown=(await Ports("light.not_a_service"))["result"]!;
+            VisualExecutionTests.Check(!unknown["known"]!.GetValue<bool>() && unknown["response"]==null && unknown["inputs"]!.AsObject().Select(p=>p.Key).SequenceEqual(["target"])
+                && Types(unknown["inputs"]!["target"]).SequenceEqual(["target","entity_id"]) && unknown["outputs"]!.AsObject().Count==0,"service_ports unknown service keeps only the permissive target: "+unknown.ToJsonString());
             var ordinary=await new CodeCompiler(exampleDiagnostics).CompileSingleFile(Path.Combine(path,"example.cs"),examples["ordinaryCSharp"]!.GetValue<string>(),true); ordinary.Unload();
             var graph=G(N("l","log",new{value=Lit("string","safe")}));
             graph["nodes"]![0]!["position"]=new JsonObject{["x"]=12,["y"]=34};

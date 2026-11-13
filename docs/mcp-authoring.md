@@ -41,18 +41,24 @@ tool descriptions summarise the workflow below and the entity typing rule.
 2. Call `get_node_schema({kind})` for each node kind you add. It returns the node,
    the type table, `parametricTypes` and limits. For `trigger` it adds the
    `triggerOutputs` table. For `service`, pass `service` (`domain.service`) to get
-   that service's `field:<name>` inputs with types and constraints, its target
-   types (for example `["target","entity_id:light"]`), whether `returnResponse`
-   must be on or off, and its outputs. Without `kind` it returns the whole catalog.
+   the ports the validator gives that service (the library `service_ports`
+   operation): every `field:<name>` input with types and constraints, the target
+   types (for example `["target","entity_id:light"]`), `hasTarget`, the response
+   mode and the outputs. A graph's node has only the field ports whose keys are in
+   its `config.fields`. In port types, `$any` stands for every type and `$type`
+   (generally `$<name>`) for the type set in the node's `config.<name>`. Without
+   `kind` it returns the whole catalog.
 3. Use `discover` to find entities, services, devices, areas or installed trigger
    descriptions. Supply `kind`, optional `query`, `offset` (default 0) and `limit`
    (default 50, maximum 100); entities and services also take `domain`.
    Filtering happens before stable sorting/pagination. Services come from the same
    normalised schemas the validator uses: without `service`, one summary line per
    service (`id`, `name`, `description`, `hasTarget`, `response`); with `service`,
-   that service's complete schema, fields in Home Assistant's order. Discovery
-   never attaches triggers or calls services.
-4. `list` returns saved graphs, revisions, activation state and
+   that service's complete schema, fields in Home Assistant's order. A service that
+   is not registered (yet) gives `known: false` here and in `get_node_schema`.
+   Discovery never attaches triggers or calls services.
+4. `list` returns every saved document with its complete graph (named by
+   `graph.name`), revision, activation state and
    `triggers:[{triggerId,method,manual,runnable}]`, without the generated source.
    `read({id})` returns one complete document including `source` and `sourceMap`.
 5. `preview({graph})` validates and compiles a complete graph against the
@@ -71,12 +77,14 @@ tool descriptions summarise the workflow below and the entity typing rule.
    document, `{id,version:2,offset,limit,runs}`, newest first, optionally only runs
    with the given statuses. See [run history](backend/run-history.md) for the run
    fields.
-9. `trace({runId,node?,graph?})` reads one run's trace. By default it returns the
+9. `trace({runId,node?,graph?,offset?,limit?})` reads one run's trace. By default it returns the
    run, `live`, the snapshot identity (`revision`, `visualId`, `visualRevision`),
    and the trace's `rootNodeId`, `startedUtc`, `complete`, `truncated`, `dropped`,
-   `summary` and events in order without their values (node, frame, status, port,
-   `t`, `ms`, error). `node` returns that node's events with their `inputs` and
-   `outputs`; `graph: true` adds the graph revision that ran. The catalog stored
+   `summary` and a page of the events in order without their values (node, frame,
+   status, port, `t`, `ms`, error), with `totalEvents`. `node` returns that node's
+   events with their `inputs` and `outputs`, or `not_found` when it never ran;
+   `graph: true` adds the graph revision that ran. `offset` and `limit` page the
+   events; `limit` defaults to 100 without `node` and 10 with it, at most 500. The catalog stored
    with the snapshot is never returned. `trace` is `null` for a run without one.
 10. `delete({id,expectedRevision})` deletes a document and stops its runtime.
 

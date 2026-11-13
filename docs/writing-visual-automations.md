@@ -31,6 +31,10 @@ connected data ports. A connection replaces the input's own value. Use Custom C#
 nodes for calculations; graph imports and members and trigger override
 expressions provide the existing C# escape hatches. Null and absence are distinct.
 
+Read entity returns a detached `HassSharp.EntityStateSnapshot`. Use Entity field
+to extract a scalar state/attribute, or pass the snapshot directly to a typed
+custom method.
+
 If and State condition choose True/False paths; most actions also offer an Error path,
 which receives the failure instead of ending the run. Parallel branches and bounded
 loops have structured scopes. Branch/body outputs do not automatically escape. Loop carry values retain state across sequential iterations; explicit
@@ -91,7 +95,7 @@ the run, whatever started it:
 | Cause | Payload |
 |---|---|
 | Native HA trigger | Home Assistant's `trigger` variables plus `context` |
-| Entity change | `{platform: "entity", entity_id, from_state, to_state}`, states as `{entity_id, state, attributes, last_changed, last_updated}` |
+| Entity change | `{platform: "entity", entity_id, from_state, to_state}`, states as `{entity_id, state, attributes, last_changed, last_updated, last_reported}`, with `last_updated` always `null` |
 | Daily or once | `{platform: "schedule", schedule_id, planned}` with `planned` in ISO-8601 UTC |
 | Manual run or startup | `{platform: "manual"}` or `{platform: "startup"}` |
 
@@ -146,12 +150,8 @@ error, and its fields then accept any type. Loading saved automations at startup
 never depends on which services are registered, so a service that disappears
 later fails only when the node runs.
 
-Select real services and entity IDs using Home Assistant discovery rather than
-guessing fields.
-
-Read entity returns a detached `HassSharp.EntityStateSnapshot`. Use Entity field
-to extract a scalar state/attribute, or pass the snapshot directly to a typed
-custom method.
+Pick the service and entities from the editor's searchable lists rather than
+typing IDs: they list what this Home Assistant has registered.
 
 ## Harmless complete example
 

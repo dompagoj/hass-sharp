@@ -18,8 +18,8 @@ PROMPT = """HassSharp builds Home Assistant automations as typed node graphs (ve
 SEMANTICS = {
     "execution": "Execution edges {source, target, port} schedule nodes; port is one of the source node's execution ports (next by default). Data edges {kind: data, source, sourcePort, target, targetPort} read a value that an already executed node produced; they never run the producer. Outputs produced inside a parallel branch, loop body or loop condition are not visible outside it; a loop publishes values only through its declared exports. An input is a literal {kind: literal, type, value}, a variable {kind: variable, name} naming another node's config.output, {kind: unset}, or a data edge, which takes precedence.",
     "types": "Type ids are keys of catalog.types, or parametric ids <base>:<param> built from catalog.parametricTypes, such as entity_id:light (values matching ^light\\.[a-z0-9_]+$). A type with refines narrows its parent: entity_id:light refines entity_id, which refines string. A value of type S fits an input of type T when S is T; when T refines another type, S must be T or refine it (entity_id:light fits entity_id and string, entity_id does not fit entity_id:light); otherwise S's root type must be T or be listed in that root's assignableTo (CLR types are checked by the server). A literal must match the pattern of every type in its chain. Convert narrows explicitly: its config.type accepts any resolvable id and the value is checked at run time.",
-    "triggers": "A trigger's data outputs come from catalog.triggerOutputs: the '*' row (data: the whole normalised payload) plus every row whose |-separated key lists config.type (entity, daily, once) or, for type ha, 'ha:' + config.trigger.trigger (or platform). An entity_id output is typed entity_id:<domain> when the trigger names entities of one domain (config.entity, or trigger.entity_id). A value missing from the payload is not produced, and a node reading it fails at run time. Payloads: native HA triggers give Home Assistant's trigger variables plus context; entity {platform: entity, entity_id, from_state, to_state}; schedule {platform: schedule, schedule_id, planned}; manual and startup {platform}.",
-    "service": "Call service (kind service): config.service is 'domain.service'; config.target is an operand holding an entity id or a target object {entity_id, device_id, area_id, floor_id, label_id}; config.fields maps each field you set to an operand and every key becomes the input field:<key>; config.returnResponse true adds the response output. For a service Home Assistant knows, fields are typed and constrained by its schema: an unknown field, a missing required field, a target on a service without one, and a returnResponse that contradicts the service's response mode are errors. An unknown service is a warning and its fields accept any type.",
+    "triggers": "A trigger's data outputs come from catalog.triggerOutputs: the '*' row (data: the whole normalised payload) plus every row whose |-separated key lists config.type (entity, daily, once) or, for type ha, 'ha:' + config.trigger.trigger (or platform). An entity_id output is typed entity_id:<domain> when the trigger names entities of one domain (config.entity, or trigger.entity_id). A value missing from the payload is not produced, and a node reading it fails at run time. Payloads: native HA triggers give Home Assistant's trigger variables plus context; entity {platform: entity, entity_id, from_state, to_state}; schedule {platform: schedule, schedule_id, planned}; manual {platform: manual} and startup {platform: startup}. A manual run therefore has no entity or state values: a graph that reads a state trigger's entity_id, to_state or from_state outputs fails when run manually, so set that trigger's manual to false.",
+    "service": "Call service (kind service): config.service is 'domain.service'; config.target is an operand holding an entity id or a target object {entity_id, device_id, area_id, floor_id, label_id}; config.fields maps each field you set to an operand and every key becomes the input field:<key>; config.returnResponse true adds the response output. A field port exists only while its key is in config.fields: to wire a field, add its key with {kind: unset} and connect the edge to field:<key>. For a service Home Assistant knows, fields are typed and constrained by its schema, and a literal target object's entity_id values must be in the domains the service accepts. An unknown field, a missing required field, a target on a service without one, returnResponse true when the response mode is none, and false when it is only are errors. An unknown service is a warning and its fields accept any type.",
     "runs": "history returns run history version 2, newest first, optionally filtered by status: Pending, Running, Succeeded, Failed, Cancelled, Skipped, Interrupted or Stopped (a Stop node ended the run). A failed run's error is its message; a cancelled run's error is the reason. Runs with hasTrace have a per-node trace: call trace with the runId.",
     "csharp": "Custom C# nodes run statements with values, lastError, TriggerData (the normalised trigger payload) and normal Automation members; graph imports and members add usings and class members. A library source is namespace contents (wrapped in namespace NodeLib) whose public static [Node] methods become node kinds. Preview compiles without running user code.",
 }
@@ -62,21 +62,25 @@ PAGE = {p.Optional("offset", default=0): p.All(int, p.Range(min=0)), p.Optional(
 ID_FIELD = {p.Required("id"): ID}
 REV_FIELDS = {**ID_FIELD, p.Required("expectedRevision"): REVISION}
 SERVICE_ID = p.All(str, p.Match(r"^[a-z0-9_]+\.[a-z0-9_]+$"))
+# Default event pages: values-free events are small, events with values can be up to 16 KiB each.
+TRACE_PAGE, TRACE_NODE_PAGE = 100, 10
+UNKNOWN_SERVICE = "This service is not registered in Home Assistant (yet): preview warns and its fields accept any type. Check the id with discover."
 SPECS = {
     "get_capabilities": ({}, "Start here, once per session. Returns the supported graph version (5), the full node catalog, the authoring rules (semantics: execution and data edges, the type refinement rule, trigger outputs, the Call service node, run history) and complete example graphs that validate and compile. Copy their shapes instead of inventing node or operand formats."),
-    "get_node_schema": ({p.Optional("kind"): str, p.Optional("service"): SERVICE_ID}, "Ports and config of one node kind, with the type table and parametric types; omit kind for the whole catalog. Call it for every kind you add. For kind service, pass service ('domain.service') to get that service's field:<name> inputs with types and constraints, its target types and whether returnResponse must be on or off; ports come only from the fields you put in config.fields. For kind trigger the result includes triggerOutputs, which says which outputs each trigger type produces."),
+    "get_node_schema": ({p.Optional("kind"): str, p.Optional("service"): SERVICE_ID}, "Ports and config of one node kind, with the type table and parametric types; omit kind for the whole catalog. Call it for every kind you add. For kind service, pass service ('domain.service') to get the inputs and outputs the validator gives that service, every field:<name> with its types and constraints, its target types, hasTarget and its response mode; your node gets only the field ports whose keys you put in config.fields. For kind trigger the result includes triggerOutputs, which says which outputs each trigger type produces. In port types, $any means any type in the type table, and $<name> (usually $type) means the type id set in the node's config.<name>."),
     "discover": ({p.Required("kind"): p.In(["entities", "services", "devices", "areas", "triggers"]), p.Optional("query", default=""): str,
                   p.Optional("domain"): str, p.Optional("service"): SERVICE_ID, **PAGE},
-                 "Find real ids in this Home Assistant before writing them into a graph; filtering happens before stable sorting and paging. entities, devices, areas, triggers: matched by query (entities also by domain). services: without service, one line per service (id, name, description, hasTarget, response), narrowed by domain and query; with service ('domain.service'), that one service's full schema with fields in Home Assistant's order. Ask for one service at a time: the full set is very large. Never calls a service or attaches a trigger."),
-    "list": ({}, "List saved visual automations with id, name, revision, activation state and triggers [{triggerId, manual, runnable}]. Omits the generated source; read one document for that."),
+                 "Find real ids in this Home Assistant before writing them into a graph; filtering happens before stable sorting and paging. entities, devices, areas, triggers: matched by query (entities also by domain). services: without service, one line per service (id, name, description, hasTarget, response), narrowed by domain and query; with service ('domain.service'), that one service's full schema with fields in Home Assistant's order, or known false when it is not registered (yet). Ask for one service at a time: the full set is very large. Never calls a service or attaches a trigger."),
+    "list": ({}, "List every saved visual automation as a complete document: id, revision, the complete graph (its name is graph.name), activation state and triggers [{triggerId, manual, runnable}]. Only the generated source and its map are left out; read one document for those."),
     "read": (ID_FIELD, "Read one saved visual automation: its complete graph, revision (pass it as expectedRevision when saving), generated source and activation state (currentRevisionActive is true when the saved revision is the one running). Read before every edit; do not rebuild a graph from memory."),
     "preview": ({p.Required("graph"): GRAPH}, "Validate and compile a complete graph without saving, attaching triggers or running anything. Returns valid, diagnostics (nodeId, inputId, message; severity 3 is an error, 2 a warning) and the generated source. It checks service fields against Home Assistant's schemas and native triggers against Home Assistant: fix every error here before saving."),
     "save": ({**REV_FIELDS, p.Required("graph"): GRAPH}, "Save and activate a complete graph. A new id uses expectedRevision 0, an existing one the revision from read; a conflict means it changed meanwhile, so read again rather than retrying. Errors block the save, warnings do not. Activation can attach native, scheduled or startup triggers that control devices: get the user's consent first. The result reports saved and active separately, with activationError."),
     "delete": (REV_FIELDS, "Delete a saved visual automation at its exact revision and stop it. Ask the user first."),
     "run": ({**ID_FIELD, p.Required("triggerId"): str}, "Run one trigger of the saved, active revision now. triggerId is the trigger node id; list and read show which triggers are runnable. It can control devices: ask the user first. Returns runId; then call history and trace."),
-    "history": ({**ID_FIELD, p.Optional("status"): [p.In(RUN_STATUSES)], **PAGE}, "Run history (version 2) of one saved visual automation, newest first, optionally only runs with the given statuses. Each run has runId, status, error (the failure message, or why it was cancelled), trigger (what fired it), actionLabel (the trigger node), timing and hasTrace."),
-    "trace": ({p.Required("runId"): p.All(str, p.Length(min=1, max=64)), p.Optional("node"): str, p.Optional("graph", default=False): bool},
-              "Per-node trace of one run (runId from run or history). By default: the run, live (still running), whether the trace is complete or truncated, a summary per node and the events in order (node, frame, status, port taken, t and ms timing, error) without values. Pass node for that node's events with their input and output values; pass graph true for the graph revision that ran. Use it to find which node failed and with what value."),
+    "history": ({**ID_FIELD, p.Optional("status"): [p.In(RUN_STATUSES)], **PAGE}, "Run history (version 2) of one saved visual automation, newest first, optionally only runs with the given statuses. Each run has runId, status, error (the failure message, or why it was cancelled), trigger (a summary of what fired it), triggerNodeId (the id of the trigger node that started it), actionLabel (that trigger node's label, or the method name when it has none), timing and hasTrace."),
+    "trace": ({p.Required("runId"): p.All(str, p.Length(min=1, max=64)), p.Optional("node"): str, p.Optional("graph", default=False): bool,
+               p.Optional("offset", default=0): p.All(int, p.Range(min=0)), p.Optional("limit"): p.All(int, p.Range(min=1, max=500))},
+              f"Per-node trace of one run (runId from run or history). By default: the run, live (still running), whether the trace is complete or truncated, a summary per node and a page of the events in order (node, frame, status, port taken, t and ms timing, error) without values, with totalEvents. Pass node for that node's events with their input and output values (not_found when that node never ran); pass graph true for the graph revision that ran. offset and limit page the events (limit defaults to {TRACE_PAGE} without node and {TRACE_NODE_PAGE} with node). Use it to find which node failed and with what value."),
     "library_list": ({}, "List saved node library (C# NodeLib) sources and the saved catalog generation."),
     "library_read": (ID_FIELD, "Read one saved library source and its revision."),
     "library_preview": ({**ID_FIELD, p.Required("source"): str, p.Required("workspaceVersion"): str,
@@ -85,8 +89,6 @@ SPECS = {
     "library_delete": (REV_FIELDS, "Delete a library at its revision, only if the remaining libraries and every graph still compile; rebuilds and activates all graphs. Ask the user first."),
 }
 MUTATIONS = {"save", "delete", "run", "library_save", "library_delete"}
-# Input constraints a service field contributes to its field:<name> port (VisualNodeCatalog.ServiceFieldInput).
-FIELD_CONSTRAINTS = ("min", "max", "integer", "enum", "enumLabels", "pattern", "minItems", "maxItems", "step", "unit", "selector", "advanced", "section", "example")
 
 
 class HassSharpTool(llm.Tool):
@@ -151,7 +153,7 @@ class HassSharpTool(llm.Tool):
             data = await service_api.trace(args["runId"], is_admin=True)
             if data is None:
                 return error("not_found", "Run not found")
-            return {"version": 1, "ok": True, "result": trace_view(data, args.get("node"), args["graph"])}
+            return trace_view(data, args.get("node"), args["graph"], args["offset"], args.get("limit"))
         result = await service_api.visual({"operation": operation, **args}, is_admin=True)
         if result.get("ok"):
             data = result["result"]
@@ -181,46 +183,15 @@ async def node_schema(service_api, catalog, generation, args):
     if "service" in args:
         if node.get("dynamicInputs") != "service":
             return error("invalid_request", "service applies only to kind service")
-        services = await service_api.node_library({"operation": "services"}, is_admin=True)
-        if not services.get("ok"):
-            return services
-        schema = services["result"]["items"].get(args["service"])
-        result["service"] = service_ports(node, args["service"], schema) if schema is not None else {
-            "id": args["service"], "known": False,
-            "note": "Home Assistant has no such service: preview warns and its fields accept any type. Check the id with discover."}
+        # The validator's own ports for this service (VisualNodeCatalog.DataInputs/DataOutputs), never re-derived here.
+        ports = await service_api.node_library({"operation": "service_ports", "service": args["service"]}, is_admin=True)
+        if not ports.get("ok"):
+            return ports
+        result["service"] = ports["result"] if ports["result"].get("known") else {**ports["result"], "note": UNKNOWN_SERVICE}
     return {"version": 1, "ok": True, "result": result}
 
 
-def service_target_domains(schema):
-    """Entity domains the target accepts; empty when unrestricted (VisualNodeCatalog.ServiceTargetDomains)."""
-    filters = [f for f in ((schema.get("target") or {}).get("entity") or []) if isinstance(f, dict)]
-    domains = [[d for d in f.get("domain") or [] if isinstance(d, str) and d] for f in filters]
-    if not domains or any(not d for d in domains):
-        return []
-    return list(dict.fromkeys(d for group in domains for d in group))
-
-
-def service_ports(node, service, schema):
-    """The Call service ports one known service gives (contract C5), mirroring VisualNodeCatalog.DataInputs."""
-    domains = service_target_domains(schema)
-    target = None if schema.get("target") is None else {
-        **node["inputs"]["target"], "types": ["target", *("entity_id:" + d for d in domains)] if domains else ["target", "entity_id"]}
-    fields = {}
-    for key, field in sorted((schema.get("fields") or {}).items(), key=lambda item: item[1].get("order", 0)):
-        port = {"types": field.get("types", []), "required": field.get("required") is True,
-                "label": field.get("label") or key, "description": field.get("description") or "Service field " + key}
-        port.update({name: field[name] for name in FIELD_CONSTRAINTS if field.get(name) is not None})
-        fields["field:" + key] = port
-    response = schema.get("response", "none")
-    return {"id": service, "known": True, "name": schema.get("name"), "description": schema.get("description"),
-            "target": target, "fields": fields, "response": response,
-            "returnResponse": {"none": False, "only": True}.get(response, "either"),
-            "outputs": {} if response == "none" else {"response": node["outputs"]["response"]},
-            "note": "Put only the fields you set into config.fields; each key becomes input field:<key>. Required fields must be present. "
-                    + ("Leave target unset: this service takes none." if target is None else "Write a literal target with one of the target types.")}
-
-
-def trace_view(data, node, include_graph):
+def trace_view(data, node, include_graph, offset, limit):
     """run_trace without the catalog and, unless asked, without values or the graph: full traces are large."""
     snapshot = data.get("snapshot")
     if snapshot is not None:
@@ -231,12 +202,16 @@ def trace_view(data, node, include_graph):
         events = trace.get("events") or []
         view = {key: trace.get(key) for key in ("rootNodeId", "startedUtc", "complete", "truncated", "dropped", "summary")}
         if node is None:
-            view["events"] = [{key: value for key, value in event.items() if key not in ("inputs", "outputs")} for event in events]
+            events = [{key: value for key, value in event.items() if key not in ("inputs", "outputs")} for event in events]
         else:
+            events = [event for event in events if event.get("node") == node]
+            if not events:
+                return error("not_found", "That node has no events in this trace")
             view["node"] = node
-            view["events"] = [event for event in events if event.get("node") == node]
+        limit = limit or (TRACE_PAGE if node is None else TRACE_NODE_PAGE)
+        view.update(totalEvents=len(events), offset=offset, limit=limit, events=events[offset:offset + limit])
         result["trace"] = view
-    return result
+    return {"version": 1, "ok": True, "result": result}
 
 
 async def discover(hass, service_api, kind, query, offset, limit, domain=None, service=None):
@@ -255,10 +230,10 @@ async def discover(hass, service_api, kind, query, offset, limit, domain=None, s
         services = response["result"]["items"]
         if service is not None:
             entry = services.get(service)
-            if entry is None:
-                return error("not_found", "Service not found; discover services without service to list them")
-            entry = {**entry, "fields": dict(sorted((entry.get("fields") or {}).items(), key=lambda item: item[1].get("order", 0)))}
-            return {"version": 1, "ok": True, "result": {"kind": kind, "service": {"id": service, **entry}}}
+            # Same answer as get_node_schema: an unregistered service is a state to report, not a tool error.
+            entry = {"id": service, "known": False, "note": UNKNOWN_SERVICE} if entry is None else {
+                "id": service, "known": True, **entry, "fields": dict(sorted((entry.get("fields") or {}).items(), key=lambda item: item[1].get("order", 0)))}
+            return {"version": 1, "ok": True, "result": {"kind": kind, "service": entry}}
         items = [{"id": key, "name": entry.get("name"), "description": entry.get("description"),
                   "hasTarget": entry.get("target") is not None, "response": entry.get("response")}
                  for key, entry in services.items() if domain is None or entry.get("domain") == domain]

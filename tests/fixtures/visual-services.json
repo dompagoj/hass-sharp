@@ -1,5 +1,5 @@
 {
-  "servicesGeneration": "d91a0535194987007973d7ea38fcbb4d5f39e182db09489a7c09aa9c6b391798",
+  "servicesGeneration": "72a450956b2f1a069f3299dbb252fb08494edc4c14da0dd9985ce1b776ffe5d3",
   "items": {
     "climate.set_hvac_mode": {
       "domain": "climate",
@@ -1539,6 +1539,106 @@
           "maxItems": null,
           "default": null,
           "example": "Your Garage Door Friend",
+          "selector": {
+            "text": {
+              "multiline": false,
+              "multiple": false
+            }
+          },
+          "filter": null
+        }
+      }
+    },
+    "persistent_notification.create": {
+      "domain": "persistent_notification",
+      "service": "create",
+      "name": "create",
+      "description": "",
+      "target": null,
+      "response": "none",
+      "fields": {
+        "message": {
+          "label": "message",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": true,
+          "advanced": false,
+          "section": null,
+          "order": 0,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "Please check your configuration.yaml.",
+          "selector": {
+            "text": {
+              "multiline": false,
+              "multiple": false
+            }
+          },
+          "filter": null
+        },
+        "notification_id": {
+          "label": "notification_id",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 2,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": 1234,
+          "selector": {
+            "text": {
+              "multiline": false,
+              "multiple": false
+            }
+          },
+          "filter": null
+        },
+        "title": {
+          "label": "title",
+          "description": "",
+          "types": [
+            "string"
+          ],
+          "required": false,
+          "advanced": false,
+          "section": null,
+          "order": 1,
+          "min": null,
+          "max": null,
+          "integer": false,
+          "step": null,
+          "unit": null,
+          "enum": null,
+          "enumLabels": null,
+          "pattern": null,
+          "minItems": null,
+          "maxItems": null,
+          "default": null,
+          "example": "Test notification",
           "selector": {
             "text": {
               "multiline": false,

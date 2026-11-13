@@ -260,7 +260,7 @@
           "kind": "service",
           "label": "Notify",
           "config": {
-            "service": "notify.notify",
+            "service": "persistent_notification.create",
             "fields": {
               "title": {
                 "kind": "unset"

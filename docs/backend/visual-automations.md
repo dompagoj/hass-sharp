@@ -2,7 +2,7 @@
 
 Only graph version 5 is supported. Old graphs must be recreated; there is no
 upgrade UI, migration tool or backward-execution path. The document and API
-**envelope** remains version1. The canonical current guides are
+**envelope** remains version 1. The canonical current guides are
 [visual authoring](../writing-visual-automations.md),
 [custom C# node libraries](../node-libraries.md) and
 [administrator MCP](../mcp-authoring.md).
@@ -37,8 +37,8 @@ IDs match `[a-z0-9][a-z0-9_-]{0,79}`. Creation uses expectedRevision 0; updates 
 deletes require the exact stored revision. Changing graph.name renames a document
 without changing its ID/history identity. Errors include `validation` (mapped
 preview in detail), `conflict`, `not_found`, `invalid_request` and `storage`.
-Warnings (severity2) allow saves; errors (severity3) do not. A corrupt document
-can be explicitly deleted with expectedRevision0; that recovery value never
+Warnings (severity 2) allow saves; errors (severity 3) do not. A corrupt document
+can be explicitly deleted with expectedRevision 0; that recovery value never
 bypasses revision checking for a valid document.
 
 A document contains `{version:1,id,revision,graph,source,sourceMap,automationId}`
@@ -146,7 +146,8 @@ one are errors. An unknown service is a single warning and its fields accept eve
 type. Without a services section there is no service diagnostic at all.
 
 Service schemas are attached only to authoring validation of one graph (visual
-preview and save) and to the library `catalog` and `services` operations. Startup
+preview and save) and to the library `service_ports` operation; the `services`
+operation serves them, and `catalog` reports only their `servicesGeneration`. Startup
 loading and the rebuild after a library change validate without them, so whether
 an automation loads never depends on which integrations had registered services.
 The schemas never enter the catalog root, the generated source or the library
@@ -167,6 +168,7 @@ and administrator checks match visual authoring. Saved library documents are
 |---|---|---|
 | catalog | none | `{catalog,generation,servicesGeneration,saved:true,valid,diagnostics}` |
 | services | none | `{servicesGeneration,items}` |
+| service_ports | service | `{service,known,response,hasTarget,inputs,outputs}` |
 | list | none | `{documents,generation}` |
 | read | id | Document |
 | save | id, name, source, expectedRevision | `{saved:true,document,deleted:false,generation,catalog,automations}` |
@@ -191,6 +193,14 @@ logged, never fatal. `servicesGeneration` is the SHA-256 of the canonical items,
 independent of input key order; clients refetch when the catalog operation reports
 a new one. Number selectors never set `integer`, because Home Assistant does not
 enforce their step.
+
+`service_ports {service}` returns the ports a Call service node gets for one
+service, computed by the validator's own port code on a node that holds every
+schema field, not set, in Home Assistant's order, with `returnResponse` on when the
+service can return a response. `inputs` and `outputs` are those ports, `known`
+says whether the service is registered, `response` is its response mode (`null`
+when unknown) and `hasTarget` whether it takes a target. An unknown service keeps
+only the permissive target. MCP `get_node_schema` passes this result through.
 
 `automations` entries are `{id,saved:true,document,active,activationError}`. Every
 library mutation validates/regenerates all graphs and advances their revisions

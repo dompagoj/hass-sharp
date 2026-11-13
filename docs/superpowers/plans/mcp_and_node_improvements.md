@@ -1,3 +1,5 @@
+Superseded: this plan describes graph version 4. See docs/writing-visual-automations.md and docs/mcp-authoring.md for the current model.
+
 # HassSharp MCP and typed visual automations
 
 ## Summary

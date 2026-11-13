@@ -34,6 +34,24 @@ public partial class HassSharpManager
         try { return JsonNode.Parse(requestJson) is JsonObject request && request["operation"] is JsonValue op && op.TryGetValue<string>(out var name) && name == "services"; }
         catch { return false; }
     }
+    /// <summary>
+    /// The ports a Call service node gets for one service, computed by the validator's own DataInputs and
+    /// DataOutputs: every schema field is added to config.fields (not set, in Home Assistant's order), and
+    /// returnResponse is on when the service can return a response. Unknown services keep only the target.
+    /// </summary>
+    internal static object ServicePorts(string service, VisualCatalogSnapshot snapshot)
+    {
+        var schema = snapshot.Services?.Items[service] as JsonObject;
+        static int Order(JsonNode? field) => field?["order"] is JsonValue order && order.TryGetValue<int>(out var value) ? value : 0;
+        var fields = new JsonObject();
+        foreach (var (key, _) in (schema?["fields"] as JsonObject ?? []).OrderBy(f => Order(f.Value)).ThenBy(f => f.Key, StringComparer.Ordinal).ToArray())
+            fields[key] = new JsonObject { ["kind"] = "unset" };
+        var response = schema == null ? null : VisualNodeCatalog.Text(schema, "response", "none");
+        var node = new JsonObject { ["id"] = "service", ["kind"] = "service",
+            ["config"] = new JsonObject { ["service"] = service, ["fields"] = fields, ["returnResponse"] = response is "optional" or "only" } };
+        return new { service, known = schema != null, response, hasTarget = schema?["target"] is JsonObject,
+            inputs = VisualNodeCatalog.DataInputs(node, null, snapshot), outputs = VisualNodeCatalog.DataOutputs(node, snapshot) };
+    }
     static string RequiredString(JsonObject request, string key) => request[key]?.GetValue<string>() ?? throw new ArgumentException($"{key} is required");
 
     public async Task<string> NodeLibraryRequest(string requestJson)
@@ -48,6 +66,7 @@ public partial class HassSharpManager
             var saved = SavedLibraries();
             if (operation == "catalog") return Success(new { catalog = saved.Preview.Snapshot.Catalog, generation = saved.Generation, servicesGeneration = ServiceSchemas.Generation, saved = true, valid = saved.Preview.Valid, diagnostics = saved.Preview.Diagnostics });
             if (operation == "list") return Success(new { documents = saved.Documents, generation = saved.Generation });
+            if (operation == "service_ports") return Success(ServicePorts(RequiredString(request, "service"), AuthoringSnapshot(saved.Preview.Snapshot)));
             var id = RequiredString(request, "id"); NodeLibraryStore.ValidateId(id);
             var old = saved.Documents.SingleOrDefault(d => d.Id == id);
             if (operation == "read") return Success(old ?? throw new FileNotFoundException("Library document not found"));

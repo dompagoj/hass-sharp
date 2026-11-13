@@ -590,6 +590,25 @@
       }
     }
   },
+  "persistent_notification": {
+    "create": {
+      "fields": {
+        "message": {
+          "required": true,
+          "example": "Please check your configuration.yaml.",
+          "selector": {"text": {"multiline": false, "multiple": false}}
+        },
+        "title": {
+          "example": "Test notification",
+          "selector": {"text": {"multiline": false, "multiple": false}}
+        },
+        "notification_id": {
+          "example": 1234,
+          "selector": {"text": {"multiline": false, "multiple": false}}
+        }
+      }
+    }
+  },
   "homeassistant": {
     "turn_on": {
       "fields": {},

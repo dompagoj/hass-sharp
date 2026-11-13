@@ -40,6 +40,11 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
     SERVICES=json.loads((ROOT/'tests/fixtures/visual-services.json').read_text())
     async def library(self,request,is_admin):
         if request['operation']=='services': return {'version':1,'ok':True,'result':self.SERVICES}
+        if request['operation']=='service_ports':
+            # Shaped like the C# service_ports result; the adapter must pass it through, not re-derive it.
+            known=request['service'] in self.SERVICES['items']
+            return {'version':1,'ok':True,'result':{'service':request['service'],'known':known,'response':'none' if known else None,'hasTarget':known,
+                    'inputs':{'target':{'types':['target','entity_id:light'] if known else ['target','entity_id']}},'outputs':{}}}
         return {'version':1,'ok':True,'result':{'catalog':self.CATALOG,'generation':'g','servicesGeneration':self.SERVICES['servicesGeneration']}}
     async def asyncTearDown(self):
         await self.hass.async_stop()
@@ -123,7 +128,12 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         fields=result.data['result']['service']['fields']
         self.assertEqual([f['order'] for f in fields.values()],sorted(f['order'] for f in fields.values()))
         self.assertEqual(result.data['result']['service']['target']['entity'][0]['domain'],['light'])
-        self.assertEqual((await self.call('discover',{'kind':'services','service':'light.missing'})).data['error']['code'],'not_found')
+        self.assertTrue(result.data['result']['service']['known'])
+        unknown=(await self.call('discover',{'kind':'services','service':'light.missing'})).data['result']['service']
+        self.assertEqual(unknown,{'id':'light.missing','known':False,'note':self.adapter.UNKNOWN_SERVICE})
+        result=await self.call('discover',{'kind':'services','domain':'light','query':'turn_off'})
+        self.assertEqual([i['id'] for i in result.data['result']['items']],['light.turn_off'])
+        self.assertEqual(result.data['result']['total'],1)
         self.assertTrue((await self.call('discover',{'kind':'areas','domain':'light'})).error)
         self.assertTrue((await self.call('discover',{'kind':'entities','service':'light.turn_on'})).error)
         from homeassistant.helpers import area_registry, device_registry
@@ -163,16 +173,12 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.service.node_library.side_effect=self.library
         result=(await self.call('get_node_schema',{'kind':'service','service':'light.turn_on'})).data['result']
         self.assertIn('entity_id',result['parametricTypes'])
-        service=result['service']
-        self.assertEqual(service['target']['types'],['target','entity_id:light'])
-        self.assertEqual(service['fields']['field:brightness_pct']['max'],100)
-        self.assertNotIn('enum',service['fields']['field:brightness_pct'])
-        self.assertEqual(list(service['fields']),sorted(service['fields'],key=lambda k:self.SERVICES['items']['light.turn_on']['fields'][k[6:]]['order']))
-        self.assertEqual((service['returnResponse'],service['outputs']),(False,{}))
-        service=(await self.call('get_node_schema',{'kind':'service','service':'weather.get_forecasts'})).data['result']['service']
-        self.assertEqual((service['returnResponse'],list(service['outputs'])),(True,['response']))
-        self.assertIsNone((await self.call('get_node_schema',{'kind':'service','service':'notify.notify'})).data['result']['service']['target'])
-        self.assertFalse((await self.call('get_node_schema',{'kind':'service','service':'light.missing'})).data['result']['service']['known'])
+        self.service.node_library.assert_awaited_with({'operation':'service_ports','service':'light.turn_on'},is_admin=True)
+        self.assertEqual(result['service'],(await self.library({'operation':'service_ports','service':'light.turn_on'},True))['result'])
+        unknown=(await self.call('get_node_schema',{'kind':'service','service':'light.missing'})).data['result']['service']
+        self.assertEqual((unknown['known'],unknown['note']),(False,self.adapter.UNKNOWN_SERVICE))
+        self.assertEqual(unknown['inputs']['target']['types'],['target','entity_id'])
+        self.assertFalse(hasattr(self.adapter,'service_target_domains') or hasattr(self.adapter,'FIELD_CONSTRAINTS'))
         trigger=(await self.call('get_node_schema',{'kind':'trigger'})).data['result']
         self.assertEqual(trigger['triggerOutputs']['entity']['entity_id']['refineFrom'],'entity')
         self.assertNotIn('triggerOutputs',(await self.call('get_node_schema',{'kind':'log'})).data['result'])
@@ -218,5 +224,12 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('catalog',json.dumps(view))
         self.assertTrue(next(t for t in self.instance.tools if t.name=='hass_sharp__trace').annotations.read_only)
         self.assertTrue((await self.call('trace',{'runId':'r1','graph':'yes'})).error)
+        self.assertEqual((await self.call('trace',{'runId':'r1','node':'never_ran'})).data['error']['code'],'not_found')
+        view=(await self.call('trace',{'runId':'r1','offset':1,'limit':1})).data['result']['trace']
+        self.assertEqual(([e['node'] for e in view['events']],view['totalEvents'],view['offset'],view['limit']),(['svc'],2,1,1))
+        self.assertEqual((await self.call('trace',{'runId':'r1'})).data['result']['trace']['limit'],self.adapter.TRACE_PAGE)
+        self.assertEqual((await self.call('trace',{'runId':'r1','node':'svc'})).data['result']['trace']['limit'],self.adapter.TRACE_NODE_PAGE)
+        for args in ({'runId':'r1','limit':0},{'runId':'r1','limit':True},{'runId':'r1','offset':-1}):
+            self.assertTrue((await self.call('trace',args)).error)
 
 if __name__=='__main__': unittest.main()

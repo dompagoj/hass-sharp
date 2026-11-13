@@ -1,6 +1,6 @@
 # C# node libraries and rich graph types
 
-This extends `mcp_and_node_improvements.md` with the user's supplied editor references and clarifications: graph v4 only, arbitrary C# port types, a typed entity-state result that custom nodes can consume, and a full Roslyn-assisted custom node editor.
+This extends [`mcp_and_node_improvements.md`](../plans/mcp_and_node_improvements.md) with the user's supplied editor references and clarifications: graph v4 only, arbitrary C# port types, a typed entity-state result that custom nodes can consume, and a full Roslyn-assisted custom node editor.
 
 ## Authoring experience
 
