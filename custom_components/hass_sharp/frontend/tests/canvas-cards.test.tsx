@@ -732,6 +732,52 @@ it('keeps an opened optional row open for a tap on iOS, where the click comes in
   await vi.waitFor(() => expect(cell()!.querySelector('.hs-card-editor')).toBeNull())
 })
 
+it('ends each press by its own click on iOS, and folds the row when a press ends with focus outside it', async () => {
+  const el = host()
+  const [graph, setGraph] = createSignal(lightOn({ brightness_pct: lit('number', 50), transition: { kind: 'unset' } }))
+  dispose = render(() => providers(() => <FlowAdapter graph={graph()} catalog={withServices()} onSelect={() => {}} onChange={setGraph} />), el)
+  const cell = () => el.querySelector<HTMLElement>('[data-id="service-1"] [data-input-id="field:transition"]')
+  const editor = () => cell()?.querySelector('.hs-card-editor') ?? null
+  const open = async () => {
+    cell()!.querySelector<HTMLButtonElement>('button.hs-pin-set')!.click()
+    await Promise.resolve()
+    expect(editor()).not.toBeNull()
+  }
+  const wrapper = el.querySelector<HTMLElement>('.solid-flow__node[data-id="service-1"]')!
+  const menu = () => cell()!.querySelector<HTMLElement>('button[aria-label="Transition mode"]')!
+  const pointer = (target: Element, type: string, pointerId: number) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, pointerId, pointerType: 'touch' }))
+  const task = () => new Promise(resolve => setTimeout(resolve, 0))
+  await open()
+  // Two taps: the second starts before the first one's click arrives. That click ends only the first tap.
+  pointer(menu(), 'pointerdown', 1)
+  pointer(menu(), 'pointerup', 1)
+  pointer(menu(), 'pointerdown', 2)
+  menu().click()
+  await task()
+  wrapper.focus()
+  await task()
+  expect(editor()).not.toBeNull()
+  pointer(menu(), 'pointerup', 2)
+  menu().click()
+  await task()
+  expect(editor()).not.toBeNull()
+  // A tap on the row's padding: focus goes to the card, the click opens nothing, and the row folds once it lands.
+  pointer(cell()!, 'pointerdown', 3)
+  wrapper.focus()
+  pointer(cell()!, 'pointerup', 3)
+  expect(editor()).not.toBeNull()
+  cell()!.click()
+  await task()
+  expect(editor()).toBeNull()
+  // A cancelled press with focus gone folds it at once.
+  await open()
+  pointer(menu(), 'pointerdown', 4)
+  wrapper.focus()
+  expect(editor()).not.toBeNull()
+  pointer(menu(), 'pointercancel', 4)
+  expect(editor()).toBeNull()
+})
+
 it.each([
   ['accepts', 'Added State condition and connected Entity. Connect State condition into the flow to run it.'],
   ['refuses', 'Added State condition. Connect it into the flow, then connect Entity.'],

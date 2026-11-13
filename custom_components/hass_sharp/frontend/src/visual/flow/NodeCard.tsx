@@ -109,14 +109,15 @@ export function NodeCard(props: NodeProps) {
     // unless its editor holds a draft it refused, which stays open with its error.
     let pendingLeave: ReturnType<typeof setTimeout> | undefined
     onCleanup(() => clearTimeout(pendingLeave))
-    // A pointer went down inside the row and its click has not been delivered yet. Safari, the iOS web view and
-    // Firefox on macOS do not focus a clicked button: focus leaves for the card (or nowhere) before the click opens the
-    // menu, so the row must not fold under it. On iOS the click (and the mouse events that move focus) come in a later
-    // task, up to about 350 ms after `pointerup`, so the press lasts until its click, plus a macrotask; a cancelled
-    // press ends at once; a release that makes no click (outside the row) ends after `NO_CLICK_MS`, and then the row
-    // folds if focus is no longer in it.
-    let pressed: number | undefined
-    let release: ReturnType<typeof setTimeout> | undefined
+    // Presses that went down inside the row and have not ended. Safari, the iOS web view and Firefox on macOS do not
+    // focus a clicked button: focus leaves for the card (or nowhere) before the click opens the menu, so the row must
+    // not fold under a press. On iOS a tap's click (and the mouse events that move focus) come in a later task, up to
+    // about 350 ms after `pointerup`, and a second tap can start before the first one's click: clicks end released
+    // presses in order. A press ends after its click has been delivered (plus a macrotask), at once when cancelled, or
+    // `NO_CLICK_MS` after a release that makes no click (outside the row). When the last one ends, the row folds if
+    // focus is no longer in it (a press on its label or padding moves focus to the card).
+    type Press = { pointer: number; released: boolean; clicked: boolean; timer?: ReturnType<typeof setTimeout> }
+    let presses: Press[] = []
     const doc = () => root.ownerDocument
     const listen = (on: boolean) => {
       const method = on ? doc().addEventListener : doc().removeEventListener
@@ -124,41 +125,47 @@ export function NodeCard(props: NodeProps) {
       method.call(doc(), 'pointercancel', cancelled as EventListener, true)
       method.call(doc(), 'click', clicked, true)
     }
-    const end = (refold: boolean) => {
-      clearTimeout(release)
-      pressed = undefined
+    const finish = (done: Press) => {
+      clearTimeout(done.timer)
+      presses = presses.filter(press => press !== done)
+      if (presses.length) return
       listen(false)
-      if (refold) fold((root.getRootNode() as Document | ShadowRoot).activeElement)
+      fold((root.getRootNode() as Document | ShadowRoot).activeElement)
     }
-    const ours = (event: PointerEvent) => pressed !== undefined && (event.pointerId === undefined || event.pointerId === pressed)
+    /** The press this pointer event belongs to: the oldest one of that pointer still down. */
+    const held = (event: PointerEvent) => presses.find(press => !press.released && (event.pointerId === undefined || press.pointer === event.pointerId))
     function released(event: PointerEvent) {
-      if (!ours(event)) return
-      clearTimeout(release)
-      release = setTimeout(() => end(true), NO_CLICK_MS)
+      const press = held(event)
+      if (!press) return
+      press.released = true
+      press.timer = setTimeout(() => finish(press), NO_CLICK_MS)
     }
     function cancelled(event: PointerEvent) {
-      if (ours(event)) end(false)
+      const press = held(event)
+      if (press) finish(press)
     }
     function clicked() {
-      if (pressed === undefined) return
+      const press = presses.find(p => p.released && !p.clicked)
+      if (!press) return
+      press.clicked = true
+      clearTimeout(press.timer)
       // After this click has been delivered (its handlers run first).
-      clearTimeout(release)
-      release = setTimeout(() => end(false))
+      press.timer = setTimeout(() => finish(press))
     }
     const press = (event: PointerEvent) => {
-      clearTimeout(release)
-      // addEventListener ignores a listener that is already there: a second press never leaves them off.
+      // addEventListener ignores a listener that is already there.
       listen(true)
-      pressed = event.pointerId ?? 0
+      presses.push({ pointer: event.pointerId ?? 0, released: false, clicked: false })
     }
     onMount(() => root.addEventListener('pointerdown', press, true))
     onCleanup(() => {
-      clearTimeout(release)
+      for (const p of presses) clearTimeout(p.timer)
+      presses = []
       root.removeEventListener('pointerdown', press, true)
       listen(false)
     })
     const fold = (active: Element | null | undefined) => {
-      if (!expanded() || pressed !== undefined || (active && root.contains(active))) return
+      if (!expanded() || presses.length || (active && root.contains(active))) return
       if (root.querySelector('.hs-card-editor [aria-invalid="true"]')) return
       setExpanded(false)
     }

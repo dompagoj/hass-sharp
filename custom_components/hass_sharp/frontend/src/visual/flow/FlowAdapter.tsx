@@ -1045,7 +1045,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
           if (readOnly()) return
           const kind = event.dataTransfer?.getData('application/x-hass-sharp-node') as NodeKind
           if (!palette().some(item => item.kind === kind)) return
-          const next = createNodeAt(graph(), kind, place(toFlow({ x: event.clientX, y: event.clientY })), undefined, catalog())
+          const next = createNodeAt(graph(), kind, placeNew(toFlow({ x: event.clientX, y: event.clientY })), undefined, catalog())
           if (next === graph()) return
           change(next)
           select([next.nodes.at(-1)!.id])

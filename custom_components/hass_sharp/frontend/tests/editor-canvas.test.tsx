@@ -351,9 +351,14 @@ it('drops palette nodes at flow coordinates accounting for pan and zoom', () => 
   const data = new DataTransfer()
   button(host, 'About Delay').dispatchEvent(dragEvent('dragstart', data))
   const canvas = host.querySelector('[aria-label="Automation canvas"]')!
-  canvas.dispatchEvent(dragEvent('drop', data, 160, 170))
-  expect(json(host).nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: 200, y: 200 } })
+  // On empty space: exactly at the pointer.
+  canvas.dispatchEvent(dragEvent('drop', data, 160, 470))
+  expect(json(host).nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: 200, y: 600 } })
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
+  // On the trigger's card (at 60, 100; unmeasured cards count as 260 × 120): 40 px below it instead.
+  button(host, 'About Delay').dispatchEvent(dragEvent('dragstart', data))
+  canvas.dispatchEvent(dragEvent('drop', data, 160, 170))
+  expect(json(host).nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: 200, y: 100 + 120 + 40 } })
 })
 it('clears the selection on an empty canvas click and opens quick-add on double-click, right-click and A', async () => {
   const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
@@ -542,7 +547,6 @@ const adapter = async (graph: VisualGraph) => {
 }
 const unreachable = (graph: VisualGraph) => analyzeGraph(graph).diagnostics.filter(d => d.code === 'node.unreachable').map(d => d.nodeId)
 const title = (host: Element, id: string) => host.querySelector(`.solid-flow__node[data-id="${id}"] .hs-card__title`)?.textContent
-const plain = (label: string, pin = '.+') => new RegExp(`^Added ${label}\\. Connect it into the flow, then connect ${pin}\\.$`)
 
 it('puts a step with a next onto the one wire after a data output, then wires the value, and says where it went', async () => {
   const { host, history, before } = await adapter(createGraph('Heating'))
@@ -589,7 +593,7 @@ it.each([
   ['a data input on a step that does not run', (g: VisualGraph) => addNode(g, 'log', 'log'), 'log', 'target', 'value', 'Set value', undefined],
   ['a data output on a step that does not run',
     (g: VisualGraph) => updateNode(addNode(g, 'set_value', 'loose'), 'loose', { config: { type: 'string', value: { kind: 'literal', type: 'string', value: 'x' } } }), 'loose', 'source', 'value', 'Set value', 'Value'],
-] as const)('adds the step with no existing wire changed for %s, and says in plain words what happened', async (_, build, node, side, port, label, pin) => {
+] as const)('adds the step with no existing wire changed for %s, connects the value to it, and says to connect it into the flow', async (_, build, node, side, port, label, pin) => {
   const { host, history, before } = await adapter(build(createGraph('Heating')))
   dropOnPane(host, dataPin(host, node, side, port))
   button(host, `Create ${label}`).click()
@@ -597,39 +601,29 @@ it.each([
   const created = after.nodes.at(-1)!
   expect(after.nodes).toHaveLength(before.nodes.length + 1)
   expect(after.nodes.slice(0, -1).map(n => n.id)).toEqual(before.nodes.map(n => n.id))
-  // Every wire is as it was; the only possible addition is the value wire itself, when the editor accepts it.
+  // Every wire is as it was; the value wire to a step not in the flow yet is accepted (the step shows its own problem).
   expect(after.edges.slice(0, before.edges.length)).toEqual(before.edges)
-  const added = after.edges.slice(before.edges.length)
   const ends = side === 'source' ? { source: node, sourcePort: port, target: created.id } : { source: created.id, target: node, targetPort: port }
-  if (added.length) {
-    expect(added).toEqual([expect.objectContaining({ kind: 'data', ...ends })])
-    await vi.waitFor(() => expect(host.textContent).toMatch(new RegExp(`Added ${label} and connected ${pin ?? '.+'}\\. Connect ${label} into the flow to run it\\.`)))
-  } else {
-    const callout = side === 'source' ? created.id : node
-    await vi.waitFor(() => expect(host.querySelector(`[data-id="${callout}"] [role="alert"]`)?.textContent).toMatch(plain(label, pin)))
-  }
+  expect(after.edges.slice(before.edges.length)).toEqual([expect.objectContaining({ kind: 'data', ...ends })])
+  await vi.waitFor(() => expect(host.querySelector('.hs-canvas-notice')?.textContent).toMatch(new RegExp(`^Added ${label} and connected ${pin ?? '.+'}\\. Connect ${label} into the flow to run it\\.$`)))
   expect([...host.querySelectorAll('[role="alert"], [role="status"]')].map(e => e.textContent).join(' ')).not.toMatch(/boundary|scope|branch/i)
   history.undo()
   expect(history.graph()).toEqual(before)
 })
 
-it('offers only steps that can be placed there: no Condition result outside a loop condition', async () => {
-  fixedLayout()
-  const host = root()
-  let graph = addNode(createGraph('Heating'), 'and', 'both')
-  graph = connectNodes(graph, 'service-1', 'both')
-  const history = createGraphHistory(graph)
-  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
-  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+it.each([
+  ['its next is taken', (g: VisualGraph) => connectNodes(addNode(connectNodes(g, 'service-1', 'both'), 'delay', 'after'), 'both', 'after')],
+  ['the step does not run', (g: VisualGraph) => g],
+  ['its next fans out', (g: VisualGraph) => {
+    const wired = addNode(addNode(connectNodes(g, 'service-1', 'both'), 'delay', 'one'), 'delay', 'two')
+    return { ...wired, edges: [...wired.edges, { id: 'both->one', source: 'both', target: 'one' }, { id: 'both->two', source: 'both', target: 'two' }] }
+  }],
+] as const)('does not offer Condition result from a value output outside a loop condition when %s', async (_, build) => {
+  const { host } = await adapter(build(addNode(createGraph('Heating'), 'and', 'both')))
   dropOnPane(host, dataPin(host, 'both', 'source', 'value'))
+  expect(host.querySelector('.hs-quick-add')).not.toBeNull()
   expect(host.querySelector('[aria-label="Create If"]')).not.toBeNull()
   expect(host.querySelector('[aria-label="Create Condition result"]')).toBeNull()
-  button(host, 'Create If').click()
-  const created = history.graph().nodes.at(-1)!
-  expect(history.graph().edges.slice(-2)).toEqual([
-    expect.objectContaining({ source: 'both', target: created.id }),
-    expect.objectContaining({ kind: 'data', source: 'both', sourcePort: 'value', target: created.id, targetPort: 'value' }),
-  ])
 })
 
 it('selects several steps with Shift-click and removes them with Delete in one undo step', async () => {
@@ -936,4 +930,43 @@ it('stops trying to focus a new card once the user presses on the canvas', async
   hidden = false
   await new Promise(resolve => setTimeout(resolve, 100))
   expect(document.activeElement).not.toBe(host.querySelector(`.solid-flow__node[data-id="${created}"]`))
+})
+
+it('never adds a step on a card from the pointer either: quick-add and a library drop move below it, on the grid when snapping', async () => {
+  fixedLayout()
+  // Cards 110 high, off the 20 px grid, so only the snapping itself puts a step back on it.
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(110)
+  const host = root()
+  const history = createGraphHistory(createGraph('Heating'))
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  const pane = host.querySelector('.solid-flow__pane')!
+  const canvas = host.querySelector('.hs-flow')!
+  // Cards measure 200 × 110; the trigger sits at (60, 100). The pointer at (160, 170) is (200, 200) on the canvas.
+  pane.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 160, clientY: 170, button: 0 }))
+  button(host, 'Create Delay').click()
+  expect(history.graph().nodes.at(-1)!.position).toEqual({ x: 200, y: 100 + 110 + 40 })
+  // A library drop on the same spot goes below both.
+  const data = new DataTransfer()
+  data.setData('application/x-hass-sharp-node', 'delay')
+  /** The last step is clear of every other card by 20 px (a card not measured yet may count as 260 × 120). */
+  const clear = () => {
+    const graph = history.graph()
+    const last = graph.nodes.at(-1)!.position!
+    for (const node of graph.nodes.slice(0, -1)) {
+      const at = node.position!
+      expect(last.x < at.x + 220 && at.x < last.x + 220 && last.y < at.y + 130 && at.y < last.y + 130, node.id).toBe(false)
+    }
+    return last
+  }
+  canvas.dispatchEvent(dragEvent('drop', data, 160, 170))
+  expect(clear().x).toBe(200)
+  expect(clear().y).toBeGreaterThan(250)
+  // With snap on, (204, 204) snaps to (200, 200) and the step lands on the grid below the cards in the way.
+  button(host, 'Snap to grid').click()
+  canvas.dispatchEvent(dragEvent('drop', data, 163, 173))
+  const snapped = clear()
+  expect(snapped.x).toBe(200)
+  expect(snapped.y % 20).toBe(0)
+  expect(history.graph().nodes).toHaveLength(6)
 })

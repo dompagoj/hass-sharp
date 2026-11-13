@@ -123,8 +123,9 @@ function insertOn(graph: VisualGraph, edge: GraphEdge, id: string, catalog: Visu
  * the step is added where it was dropped with no wire changed, plus the value wire if the editor accepts one to a
  * step not in the flow yet (`notice` then says to connect it into the flow); if it does not, `error` says in plain
  * words what to connect.
- * Returns undefined when the kind cannot go there at all (its placement would be refused, as for a condition result
- * outside a loop condition).
+ * Every graph it would return is checked as the editor checks it: returns undefined when the step would carry a
+ * blocking problem wherever this puts it, in the flow or on its own (a condition result anywhere but a loop
+ * condition), so `canAddFor` does not offer the kind and a drop adds nothing.
  */
 export function addConnected(graph: VisualGraph, kind: string, position: Point, pin: PinRef, catalog: VisualCatalogSnapshot, id = createUuid()): Connected | undefined {
   const port = portFor(graph, kind, pin, catalog, id)
@@ -174,9 +175,11 @@ export function addConnected(graph: VisualGraph, kind: string, position: Point, 
    * The step where it was dropped, with no wire changed, and the value wire when the editor accepts it for a step
    * that is not in the flow yet; in plain words either way (never the validator's sentence about scopes).
    */
-  const alone = (): Connected => {
+  const alone = (): Connected | undefined => {
     const valued = tryValue(placed)
-    if (valued) return { graph: valued, nodeId: id, notice: `Added ${kindName} and connected ${pinName}. Connect ${kindName} into the flow to run it.` }
+    if (valued && !blocked(valued)) return { graph: valued, nodeId: id, notice: `Added ${kindName} and connected ${pinName}. Connect ${kindName} into the flow to run it.` }
+    // Not even on its own (a condition result outside a loop condition): it is not offered.
+    if (blocked(placed)) return
     return { graph: placed, nodeId: id, refused: { nodeId: wire[2], handle: `data:${wire[3]}` }, error: `Added ${kindName}. Connect it into the flow, then connect ${pinName}.` }
   }
   if (!ordered) return alone()
@@ -184,7 +187,7 @@ export function addConnected(graph: VisualGraph, kind: string, position: Point, 
   if (blocked(ordered)) return
   const connected = tryValue(ordered)
   // Never keep an execution wire that was only there for the value.
-  if (!connected) return alone()
+  if (!connected || blocked(connected)) return alone()
   return { graph: connected, nodeId: id, ...(between ? { notice: `Added ${kindName} between ${title(between[0])} and ${title(between[1])}` } : {}) }
 }
 
