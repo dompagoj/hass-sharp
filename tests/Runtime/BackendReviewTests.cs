@@ -69,7 +69,7 @@ static class BackendReviewTests
             }
             foreach (var symbol in new[] { "Dispatch", "stopped", "executed" })
                 await Test($"v4 internal controls preserve authored {symbol} binding", async () => {
-                    var graph = VisualTests.MemberBindingGraph(symbol); graph["version"] = 4;
+                    var graph = VisualTests.MemberBindingGraph(symbol); graph["version"] = 5;
                     var preview = generator.Preview(graph);
                     Check(preview.Valid, "v4 member preview rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
                     var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-binding-" + symbol + ".cs"), preview.Source, true);
@@ -81,7 +81,7 @@ static class BackendReviewTests
                 });
             foreach (var (symbol, internalName) in new[] { ("Dispatch", "@__hassSharpDispatch"), ("stopped", "__hassSharpStopped"), ("executed", "__hassSharpExecuted"), ("step", "__hassSharpStep") })
                 await Test($"v4 controls avoid authored prefix collision for {symbol}", async () => {
-                    var graph = VisualTests.MemberBindingGraph(symbol); graph["version"] = 4;
+                    var graph = VisualTests.MemberBindingGraph(symbol); graph["version"] = 5;
                     graph["members"] = graph["members"]!.GetValue<string>().Replace(symbol, internalName);
                     foreach (var node in graph["nodes"]!.AsArray().Skip(1))
                         node!["config"]!["code"] = node["config"]!["code"]!.GetValue<string>().Replace(symbol,internalName);
@@ -95,7 +95,7 @@ static class BackendReviewTests
                     } finally { compiled.Unload(); }
                 });
             await Test("v4 internal names avoid declarations inside interpolated strings", async () => {
-                var graph = VisualTests.MemberBindingGraph("step"); graph["version"] = 4;
+                var graph = VisualTests.MemberBindingGraph("step"); graph["version"] = 5;
                 graph["members"] = "public bool Completed;";
                 graph["nodes"]![1]!["config"]!["code"] = """Logger.Info($"interpolation:{int.TryParse("7", out var __hassSharpStep)} {__hassSharpStep}"); Completed = true;""";
                 graph["nodes"]![2]!["config"]!["code"] = "if (!Completed) throw new Exception(\"interpolation node did not run\");";

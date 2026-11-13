@@ -12,7 +12,7 @@ from .const import logger
 
 API_ID = "hass_sharp"
 MINIMUM_HA = "2026.11.0"
-PROMPT = """Discover entities, services and installed triggers; fetch capabilities and the current node schema before authoring graph v4. Read the current document/revision before editing. Preview complete graphs or NodeLib source, fix errors, then save using expectedRevision. Saving activates automations and can enable startup/native/scheduled effects: obtain the user's authorization for those effects. Run only a saved current active trigger with user authorization, then inspect history. Library changes rebuild every graph and advance graph revisions; refresh open documents. Never guess CLR assignability, trigger IDs or service data. Old graph formats are unsupported and must be recreated."""
+PROMPT = """Discover entities, services and installed triggers; fetch capabilities and the current node schema before authoring graph v5. Read the current document/revision before editing. Preview complete graphs or NodeLib source, fix errors, then save using expectedRevision. Saving activates automations and can enable startup/native/scheduled effects: obtain the user's authorization for those effects. Run only a saved current active trigger with user authorization, then inspect history. Library changes rebuild every graph and advance graph revisions; refresh open documents. Never guess CLR assignability, trigger IDs or service data. Old graph formats are unsupported and must be recreated."""
 
 
 @dataclass
@@ -45,7 +45,7 @@ NODE = p.Schema({p.Required("id"): str, p.Required("kind"): str,
 EDGE = p.Schema({p.Required("id"): str, p.Required("source"): str, p.Required("target"): str,
                  p.Optional("kind"): p.In(["data", "execution"]), p.Optional("port"): str,
                  p.Optional("sourcePort"): str, p.Optional("targetPort"): str})
-GRAPH = p.Schema({p.Required("version"): 4, p.Required("name"): str, p.Required("nodes"): [NODE], p.Required("edges"): [EDGE],
+GRAPH = p.Schema({p.Required("version"): 5, p.Required("name"): str, p.Required("nodes"): [NODE], p.Required("edges"): [EDGE],
                   p.Optional("imports"): str, p.Optional("members"): str})
 ID = p.All(str, p.Match(r"^[a-z0-9][a-z0-9_-]{0,79}$"))
 REVISION = p.All(int, p.Range(min=0))
@@ -125,7 +125,7 @@ class HassSharpTool(llm.Tool):
                     return error("not_found", "Node kind not found")
                 return {"version": 1, "ok": True, "result": {"kind": args["kind"], "node": node, "types": catalog["types"], "limits": catalog["limits"], "generation": response["result"]["generation"]}}
             examples = json.loads(await hass.async_add_executor_job(Path(__file__).with_name("authoring_examples.json").read_text))
-            return {"version": 1, "ok": True, "result": {"graphVersions": [4], "envelopeVersion": 1, "minimumHomeAssistant": MINIMUM_HA,
+            return {"version": 1, "ok": True, "result": {"graphVersions": [5], "envelopeVersion": 1, "minimumHomeAssistant": MINIMUM_HA,
                     "catalog": catalog, "generation": response["result"]["generation"], "guidance": PROMPT,
                     "semantics": "Control edges schedule execution; data edges read values and never execute producers. Branch/loop/try scopes restrict output visibility. Loop iterations use isolated frames; body outputs do not escape. Use server CLR assignableTo and nullable metadata; no implicit object downcasts. Custom methods see an invocation scope snapshot. C# custom code supports values, lastError and scoped outputs; libraries use Node/Port attributes in NodeLib. Preview compiles without running user code.",
                     "examples": examples}}

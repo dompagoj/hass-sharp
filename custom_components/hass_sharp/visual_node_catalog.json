@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "graphVersion": 4,
-  "runtimeSupport": "Graph v4 typed execution and structured scopes",
+  "graphVersion": 5,
+  "runtimeSupport": "Graph v5 typed execution and structured scopes",
   "limits": {
     "nodes": 256,
     "edges": 512,
@@ -79,6 +79,14 @@
       "literalKind": "string",
       "label": "Entity ID"
     },
+    "target": {
+      "refines": "object",
+      "clrType": "System.Text.Json.Nodes.JsonObject",
+      "literalKind": "object",
+      "label": "Target",
+      "category": "Object",
+      "description": "Home Assistant target"
+    },
     "global::HassSharp.EntityStateSnapshot": {
       "description": "Detached Home Assistant entity state",
       "clrType": "HassSharp.EntityStateSnapshot",
@@ -87,6 +95,13 @@
       "assignableTo": [
         "global::HassSharp.EntityStateSnapshot"
       ]
+    }
+  },
+  "parametricTypes": {
+    "entity_id": {
+      "param": "^[a-z0-9_]+$",
+      "valuePattern": "^{param}\\.[a-z0-9_]+$",
+      "label": "{Param} entity"
     }
   },
   "operandKinds": [
@@ -99,7 +114,7 @@
       "label": "Trigger",
       "category": "Hass",
       "description": "Start an invocation from HA, a legacy trigger, or manual run.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "type": {
           "type": "string",
@@ -188,14 +203,14 @@
         "next"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "condition": {
       "label": "State condition",
       "category": "Hass",
       "description": "Branch on an entity state.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "state": {
           "type": "string",
@@ -221,14 +236,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "service": {
       "label": "Call service",
       "category": "Hass",
       "description": "Call a service with typed target and data; capture its response.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "service": {
           "type": "string",
@@ -236,16 +251,6 @@
           "pattern": "^[a-z0-9_]+\\.[a-z0-9_]+$",
           "description": "Service identifier in domain.service form.",
           "label": "Service"
-        },
-        "response": {
-          "type": "string",
-          "description": "Optional legacy response dictionary key for custom C# access via responses.",
-          "label": "Response"
-        },
-        "entity": {
-          "type": "string",
-          "description": "Home Assistant entity ID.",
-          "label": "Entity"
         }
       },
       "inputs": {
@@ -288,14 +293,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "delay": {
       "label": "Delay",
       "category": "Flow",
       "description": "Wait for the given seconds.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {},
       "inputs": {
         "seconds": {
@@ -320,14 +325,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "custom": {
       "label": "Custom C#",
       "category": "Code",
       "description": "Execute C# with values, responses and lastError available.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "code": {
           "type": "string",
@@ -344,14 +349,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "if": {
       "label": "If",
       "category": "Logic",
       "description": "Choose a branch using a Boolean input.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {},
       "inputs": {
         "value": {
@@ -375,14 +380,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "and": {
       "label": "And",
       "category": "Logic",
       "description": "Combine two Boolean values.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "output": {
           "type": "string",
@@ -430,14 +435,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "or": {
       "label": "Or",
       "category": "Logic",
       "description": "Combine two Boolean values.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "output": {
           "type": "string",
@@ -485,14 +490,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "xor": {
       "label": "Xor",
       "category": "Logic",
       "description": "Combine two Boolean values.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "output": {
           "type": "string",
@@ -540,14 +545,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "not": {
       "label": "Not",
       "category": "Logic",
       "description": "Invert a Boolean value.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "output": {
           "type": "string",
@@ -582,14 +587,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "compare": {
       "label": "Compare",
       "category": "Logic",
       "description": "Compare operands with matching types; ordering requires numbers.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "operator": {
           "type": "string",
@@ -652,7 +657,7 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ],
       "comparison": {
         "leftInput": "left",
@@ -671,7 +676,7 @@
       "label": "Read entity",
       "category": "Hass",
       "description": "Read a detached, concrete Home Assistant entity-state snapshot.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "output": {
           "type": "string",
@@ -706,14 +711,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "set_value": {
       "label": "Set value",
       "category": "Data",
       "description": "Explicitly convert an input to the selected type.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "type": {
           "type": "string",
@@ -764,14 +769,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "convert": {
       "label": "Convert",
       "category": "Data",
       "description": "Explicitly convert an input to the selected type.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "type": {
           "type": "string",
@@ -822,27 +827,27 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "stop": {
       "label": "Stop",
       "category": "Flow",
       "description": "End the invocation.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {},
       "inputs": {},
       "outputs": {},
       "execution": [],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "log": {
       "label": "Log",
       "category": "Data",
       "description": "Log any typed value.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "level": {
           "type": "string",
@@ -878,14 +883,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "repeat": {
       "label": "Repeat",
       "category": "Flow",
       "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "maxIterations": {
           "type": "integer",
@@ -942,14 +947,14 @@
         "body"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "while": {
       "label": "While",
       "category": "Flow",
       "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "maxIterations": {
           "type": "integer",
@@ -992,14 +997,14 @@
         "condition"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "until": {
       "label": "Until",
       "category": "Flow",
       "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "maxIterations": {
           "type": "integer",
@@ -1042,14 +1047,14 @@
         "condition"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "foreach": {
       "label": "Foreach",
       "category": "Flow",
       "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "maxIterations": {
           "type": "integer",
@@ -1132,14 +1137,14 @@
         "body"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "parallel": {
       "label": "Parallel",
       "category": "Flow",
       "description": "Run isolated stable branches; next runs after all branches join.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "branches": {
           "type": "array",
@@ -1163,14 +1168,14 @@
       ],
       "dynamicExecution": "branches",
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "condition_result": {
       "label": "Condition result",
       "category": "Flow",
       "description": "Return a Boolean from the nearest while/until condition scope.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {},
       "inputs": {
         "value": {
@@ -1190,14 +1195,14 @@
       "outputs": {},
       "execution": [],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "loop_result": {
       "label": "Loop result",
       "category": "Flow",
       "description": "Finish one iteration, atomically updating named carry and exports.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "values": {
           "type": "object",
@@ -1211,14 +1216,14 @@
       "execution": [],
       "dynamicInputs": "loop",
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "wait_until": {
       "label": "Wait until",
       "category": "Hass",
       "description": "Poll live entity state or attribute until comparison succeeds.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "field": {
           "type": "string",
@@ -1319,7 +1324,7 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ],
       "comparison": {
         "typeConfig": "type",
@@ -1338,7 +1343,7 @@
       "label": "Object",
       "category": "Data",
       "description": "Produce a JSON literal.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {},
       "inputs": {
         "value": {
@@ -1367,14 +1372,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "array": {
       "label": "Array",
       "category": "Data",
       "description": "Produce a JSON literal.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {},
       "inputs": {
         "value": {
@@ -1403,14 +1408,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "object_create": {
       "label": "Create object",
       "category": "Data",
       "description": "Build an object from named typed fields.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "fields": {
           "type": "object",
@@ -1433,14 +1438,14 @@
       ],
       "dynamicInputs": "fields",
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "array_create": {
       "label": "Create array",
       "category": "Data",
       "description": "Build an array from ordered typed items.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "items": {
           "type": "array",
@@ -1463,14 +1468,14 @@
       ],
       "dynamicInputs": "items",
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "get_field": {
       "label": "Get field",
       "category": "Data",
       "description": "Extract a typed value using an RFC 6901 JSON pointer.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "pointer": {
           "type": "string",
@@ -1518,14 +1523,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "trigger_data": {
       "label": "Trigger data",
       "category": "Hass",
       "description": "Read the current invocation trigger payload.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {},
       "inputs": {},
       "outputs": {
@@ -1540,14 +1545,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "service_response": {
       "label": "Service response",
       "category": "Hass",
       "description": "Read a connected service response.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {},
       "inputs": {
         "response": {
@@ -1571,14 +1576,14 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     },
     "entity_field": {
       "label": "Entity field",
       "category": "Hass",
       "description": "Extract state or an attribute from an entity snapshot into a scalar or JSON type.",
-      "minGraphVersion": 4,
+      "minGraphVersion": 5,
       "config": {
         "field": {
           "type": "string",
@@ -1638,7 +1643,7 @@
         "error"
       ],
       "runtimeVersions": [
-        4
+        5
       ]
     }
   },
@@ -1681,15 +1686,7 @@
       },
       "type": {
         "type": "string",
-        "enum": [
-          "boolean",
-          "number",
-          "string",
-          "object",
-          "array",
-          "entity_id",
-          "global::HassSharp.EntityStateSnapshot"
-        ],
+        "enumSource": "types",
         "required": true
       },
       "initial": {
@@ -1718,7 +1715,8 @@
           "string",
           "object",
           "array",
-          "entity_id"
+          "entity_id",
+          "target"
         ],
         "constraintsSource": "types",
         "description": "Resolve each type in types: non-null values must satisfy literalKind and its pattern, numeric bounds, character or enumValues constraints. Null requires nullable=true. Types without literalKind accept only null when nullable; arbitrary CLR classes do not accept object JSON."

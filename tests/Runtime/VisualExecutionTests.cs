@@ -9,7 +9,7 @@ static class VisualExecutionTests
     internal static JsonObject N(string id,string kind, object? cfg=null) => new(){["id"]=id,["kind"]=kind,["config"]=cfg is JsonObject j ? j : JsonSerializer.SerializeToNode(cfg ?? new{})};
     internal static JsonObject E(string source,string target,string port="next") => new(){["id"]=Guid.NewGuid().ToString(),["source"]=source,["target"]=target,["port"]=port};
     internal static JsonObject D(string source,string target,string targetPort,string sourcePort="value") => new(){["id"]=Guid.NewGuid().ToString(),["kind"]="data",["source"]=source,["target"]=target,["sourcePort"]=sourcePort,["targetPort"]=targetPort};
-    internal static JsonObject G(params JsonObject[] nodes) => new(){["version"]=4,["name"]="Execution",["nodes"]=new JsonArray(new[]{N("t","trigger",new {type="manual"})}.Concat(nodes).ToArray<JsonNode>()),["edges"]=new JsonArray(new[]{"t"}.Concat(nodes.Select(n=>n["id"]!.GetValue<string>())).Zip(nodes.Select(n=>n["id"]!.GetValue<string>()),(a,b)=>(JsonNode)E(a,b)).ToArray())};
+    internal static JsonObject G(params JsonObject[] nodes) => new(){["version"]=5,["name"]="Execution",["nodes"]=new JsonArray(new[]{N("t","trigger",new {type="manual"})}.Concat(nodes).ToArray<JsonNode>()),["edges"]=new JsonArray(new[]{"t"}.Concat(nodes.Select(n=>n["id"]!.GetValue<string>())).Zip(nodes.Select(n=>n["id"]!.GetValue<string>()),(a,b)=>(JsonNode)E(a,b)).ToArray())};
     static JsonObject Custom(string id,string code) => N(id,"custom",new {code});
     static JsonObject Log(string id,object value) => N(id,"log",new {value=Lit("string",value)});
     internal static readonly DiagnosticsProvider Diagnostics = new();

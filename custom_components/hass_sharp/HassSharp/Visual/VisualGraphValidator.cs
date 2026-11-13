@@ -4,7 +4,7 @@ using static HassSharp.VisualNodeCatalog;
 
 namespace HassSharp;
 
-/// <summary>Pure graph v4 validation. Does not compile, attach triggers, or execute data dependencies.</summary>
+/// <summary>Pure graph validation for the catalog graph version. Does not compile, attach triggers, or execute data dependencies.</summary>
 public static class VisualGraphValidator
 {
     public static List<VisualDiagnostic> Validate(JsonObject graph, VisualCatalogSnapshot? snapshot = null) => new Validation(snapshot ?? VisualCatalogSnapshot.BuiltIn).Run(graph);
@@ -34,6 +34,7 @@ public static class VisualGraphValidator
         readonly Dictionary<string, (string Owner, string Port)[]> scopes = new(StringComparer.Ordinal);
         readonly Dictionary<(string Node, string Port), JsonObject> incoming = [];
         string[] Types => Root["types"]!.AsObject().Select(p => p.Key).ToArray();
+        bool KnownType(string type) => VisualTypes.Chain(Root, type).Count > 0;
         void Error(string? node, string message, string? input = null, string? port = null) => errors.Add(new(node, message, InputId: input, PortId: port));
         static bool Bool(JsonNode? node, string key, bool fallback = false) => node is JsonObject o && o[key] is JsonValue v && v.TryGetValue<bool>(out var result) ? result : fallback;
         static double? Number(JsonNode? value) => value is JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.Number && double.TryParse(v.ToJsonString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) ? number : null;
@@ -60,7 +61,8 @@ public static class VisualGraphValidator
         }
         public List<VisualDiagnostic> Run(JsonObject graph)
         {
-            if (Number(graph["version"]) != 4) { Error(null, "Expected graph version 4"); return errors; }
+            var version = Number(Root["graphVersion"]);
+            if (Number(graph["version"]) != version) { Error(null, $"Expected graph version {version}"); return errors; }
             if (string.IsNullOrWhiteSpace(Text(graph, "name"))) Error(null, "Graph name is required");
             if (graph["nodes"] is not JsonArray ns || graph["edges"] is not JsonArray es) { Error(null, "Nodes and edges arrays are required"); return errors; }
             if (ns.Count is < 1 or > 256 || es.Count > 512) { Error(null, "Graph limit: 1–256 nodes and at most 512 edges"); return errors; }
@@ -170,6 +172,10 @@ public static class VisualGraphValidator
                 if (!valid) Error(Id(node), $"Invalid {type} literal", port);
                 if (Number(value) is { } number && (Number(spec["min"]) is { } min && number < min || Number(spec["max"]) is { } max && number > max || Bool(spec, "integer") && Math.Truncate(number) != number))
                     Error(Id(node), $"Input must be {(Bool(spec, "integer") ? "an integer " : "")}between {spec["min"]?.ToString() ?? "-infinity"} and {spec["max"]?.ToString() ?? "infinity"}", port);
+                // Input constraints restrict authored literals only; a wire is constrained by its type.
+                if (spec["enum"] is JsonArray allowed && !allowed.Any(v => JsonNode.DeepEquals(v, value))) Error(Id(node), "Input must be one of the allowed values", port);
+                if (Text(spec, "pattern") is { Length: > 0 } pattern && value is JsonValue sv && sv.TryGetValue<string>(out var str) && !Match(str, pattern)) Error(Id(node), "Input has invalid format", port);
+                if (value is JsonArray list && (Number(spec["minItems"]) is { } minItems && list.Count < minItems || Number(spec["maxItems"]) is { } maxItems && list.Count > maxItems)) Error(Id(node), "Input item count is out of range", port);
             }
             else Error(Id(node), "Operand kind must be literal, variable or unset", port);
             if (type != null && !Strings(spec["types"]).Any(t => CompatibleTypes(type, t))) Error(Id(node), $"Incompatible input type {type}; expected {string.Join('/', Strings(spec["types"]))}", port);
@@ -212,8 +218,9 @@ public static class VisualGraphValidator
                 if (!valid) { Error(id, $"{field} must be {Text(rule, "type")}", field); continue; }
                 // Trigger type changes retain inactive fields so drafts and overrides are not lost.
                 if (kind == "trigger" && field == "at" && TriggerType(node, snapshot) != "once") continue;
-                var choices = Text(rule, "enumSource") == "types" ? new JsonArray(Types.Select(t => (JsonNode?)JsonValue.Create(t)).ToArray()) : rule["enum"] as JsonArray;
-                if (choices != null && !choices.Any(v => JsonNode.DeepEquals(v, value))) Error(id, field + " must be one of " + string.Join(", ", choices), field);
+                // Type choices accept every resolvable id, so a parametric type can be selected for narrowing.
+                if (Text(rule, "enumSource") == "types") { if (value is not JsonValue tv || !tv.TryGetValue<string>(out var typeId) || !KnownType(typeId)) Error(id, field + " must be one of " + string.Join(", ", Types), field); }
+                else if (rule["enum"] is JsonArray choices && !choices.Any(v => JsonNode.DeepEquals(v, value))) Error(id, field + " must be one of " + string.Join(", ", choices), field);
                 if (Number(value) is { } number && (Number(rule["min"]) is { } min && number < min || Number(rule["max"]) is { } max && number > max)) Error(id, $"{field} must be between {rule["min"]} and {rule["max"]}", field);
                 if (value is JsonValue text && text.TryGetValue<string>(out var str) && Text(rule, "pattern") is { Length: > 0 } pattern && !Match(str, pattern)) Error(id, field + " has invalid format", field);
                 if (value is JsonValue date && date.TryGetValue<string>(out var timestamp) && Text(rule, "format") == "date-time-offset" &&
@@ -265,7 +272,7 @@ public static class VisualGraphValidator
                     foreach (var decl in Declarations(node, group))
                     {
                         var name = Text(decl, "name"); var type = Text(decl, "type");
-                        if (!Match(name, Text(Root["structures"]?["loopDeclaration"]?["name"], "pattern")) || !names.Add(name) || !Types.Contains(type)) { Error(id, "Loop declarations require unique names and valid types", group); continue; }
+                        if (!Match(name, Text(Root["structures"]?["loopDeclaration"]?["name"], "pattern")) || !names.Add(name) || !KnownType(type)) { Error(id, "Loop declarations require unique names and valid types", group); continue; }
                         Operand(node, $"{group}.{name}.initial", decl["initial"], new JsonObject { ["types"] = new JsonArray(type), ["required"] = true });
                     }
                 }

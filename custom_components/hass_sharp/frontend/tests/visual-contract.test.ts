@@ -2,11 +2,11 @@ import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import fixtureCases from '../../../../tests/fixtures/visual-graph-validation.json'
 import * as contract from '../src/visual/contract'
-import type { GraphV4 } from '../src/visual/contract'
+import type { Graph } from '../src/visual/contract'
 
 interface ValidationCase {
   name: string; graph: unknown; valid: boolean; nodeId?: string; inputId?: string; contains?: string
-  warning?: string; services?: boolean; maxValidationMs?: number
+  warning?: string; services?: boolean; maxValidationMs?: number; catalogPatch?: Record<string, unknown>
 }
 const cases = fixtureCases as ValidationCase[]
 const servicesFixture = new URL('../../../../tests/fixtures/visual-services.json', import.meta.url)
@@ -16,11 +16,26 @@ function loadServices(name: string): unknown {
   return JSON.parse(readFileSync(servicesFixture, 'utf8'))
 }
 
+// A case may extend the built-in catalog, e.g. with input constraints no built-in node declares yet.
+function patched(patch: Record<string, unknown>): contract.VisualCatalogSnapshot {
+  const merge = (target: Record<string, unknown>, source: Record<string, unknown>) => {
+    for (const [key, value] of Object.entries(source)) {
+      const existing = target[key]
+      if (value && typeof value === 'object' && !Array.isArray(value) && existing && typeof existing === 'object' && !Array.isArray(existing))
+        merge(existing as Record<string, unknown>, value as Record<string, unknown>)
+      else target[key] = structuredClone(value)
+    }
+  }
+  const catalog = structuredClone(contract.nodeCatalog)
+  merge(catalog as unknown as Record<string, unknown>, patch)
+  return catalog
+}
+
 describe('shared visual graph validation contract', () => {
   for (const fixture of cases) it(fixture.name, () => {
     if (fixture.services === true) loadServices(fixture.name)
     const started = performance.now()
-    const diagnostics = contract.validateGraphV4(fixture.graph as GraphV4)
+    const diagnostics = contract.validateGraph(fixture.graph as Graph, fixture.catalogPatch ? patched(fixture.catalogPatch) : undefined)
     if (fixture.maxValidationMs) expect(performance.now() - started).toBeLessThan(fixture.maxValidationMs)
     const errors = diagnostics.filter(d => d.severity === 3)
     expect(errors.length === 0, JSON.stringify(errors)).toBe(fixture.valid)
@@ -32,7 +47,7 @@ describe('shared visual graph validation contract', () => {
   })
 })
 it('missing layout is deterministic and supplied positions remain unchanged', () => {
-  const graph = { version: 4 as const, name: 'Layout', nodes: [
+  const graph = { version: 5 as const, name: 'Layout', nodes: [
     { id: 'trigger/é', kind: 'trigger', config: { type: 'manual' }, position: { x: 13, y: 42 }, size: { width: 300, height: 100 } },
     { id: 'code', kind: 'custom', config: { code: 'x++;' } },
   ], edges: [] }
@@ -44,7 +59,7 @@ it('missing layout is deterministic and supplied positions remain unchanged', ()
   expect(contract.effectiveTriggerMethod(graph.nodes[0])).toBe('Run_747269676765722FC3A9')
 })
 it('connect replaces literals, disconnect remains unset, immutable snapshots enable undo', () => {
-  const graph = structuredClone(cases[0].graph) as GraphV4
+  const graph = structuredClone(cases[0].graph) as Graph
   graph.edges = graph.edges.filter(e => e.kind !== 'data')
   graph.nodes[2].config.value = { kind: 'literal', type: 'boolean', value: false }
   const connected = contract.connectData(graph, 'a', 'value', 'b', 'value')
@@ -52,17 +67,37 @@ it('connect replaces literals, disconnect remains unset, immutable snapshots ena
   expect(graph.nodes[2].config.value).toEqual({ kind: 'literal', type: 'boolean', value: false })
   const disconnected = contract.disconnectData(connected, 'b', 'value')
   expect(disconnected.nodes[2].config.value).toEqual({ kind: 'unset' })
-  expect(contract.validateGraphV4(disconnected)).toEqual(expect.arrayContaining([expect.objectContaining({ nodeId: 'b', inputId: 'value' })]))
+  expect(contract.validateGraph(disconnected)).toEqual(expect.arrayContaining([expect.objectContaining({ nodeId: 'b', inputId: 'value' })]))
 })
-it('v4 creation rejects other formats and consumes catalog defaults', () => {
-  expect(() => contract.addV4Node({ version: 3, nodes: [], edges: [] } as unknown as GraphV4, 'parallel', 'p')).toThrow(/version 4/i)
-  const graph = contract.addV4Node({ version: 4, name: 'New', nodes: [], edges: [] }, 'parallel', 'p')
+it('graph creation rejects other versions and consumes catalog defaults', () => {
+  for (const version of [3, 4]) expect(() => contract.addGraphNode({ version, nodes: [], edges: [] } as unknown as Graph, 'parallel', 'p')).toThrow(/version 5/i)
+  const graph = contract.addGraphNode({ version: 5, name: 'New', nodes: [], edges: [] }, 'parallel', 'p')
   expect(graph.nodes[0].config.branches).toEqual(['a', 'b'])
   expect(contract.executionPorts(graph.nodes[0])).toEqual(['branch:a', 'branch:b', 'next', 'error'])
 })
 it('replacing an invalid connection still rejects the same type error', () => {
-  const graph = structuredClone(cases.find(c => c.name === 'incompatible data type')!.graph) as GraphV4
+  const graph = structuredClone(cases.find(c => c.name === 'incompatible data type')!.graph) as Graph
   expect(() => contract.connectData(graph, 'a', 'value', 'b', 'value')).toThrow(/type/)
+})
+it('resolves parametric types and decides refinement before root assignability', () => {
+  expect(contract.resolveTypeSpec('entity_id:light')).toMatchObject({ refines: 'entity_id', pattern: '^light\\.[a-z0-9_]+$', label: 'Light entity', clrType: 'System.String', literalKind: 'string', category: 'String' })
+  expect(contract.typeChain('entity_id:light')).toEqual(['entity_id:light', 'entity_id', 'string'])
+  expect([contract.rootType('entity_id:binary_sensor'), contract.rootType('target')]).toEqual(['string', 'object'])
+  expect(contract.refinesType('entity_id:light', 'entity_id')).toBe(true)
+  expect(contract.refinesType('string', 'entity_id')).toBe(false)
+  for (const id of ['entity_id:Light', 'foo:bar', 'entity_id:', 'string:x', 'global::HassSharp.EntityStateSnapshot:x']) {
+    expect(contract.resolveTypeSpec(id)).toBeUndefined()
+    expect(contract.typeChain(id)).toEqual([])
+  }
+  expect(contract.resolveTypeSpec('global::HassSharp.EntityStateSnapshot')).toBeDefined()
+  const cases: [string, string, boolean][] = [
+    ['entity_id:light', 'entity_id', true], ['entity_id:light', 'string', true], ['target', 'object', true], ['entity_id', 'entity_id', true],
+    ['entity_id', 'entity_id:light', false], ['string', 'entity_id', false], ['entity_id:light', 'entity_id:switch', false], ['object', 'target', false], ['foo:bar', 'foo:bar', false],
+  ]
+  for (const [source, target, expected] of cases) expect(contract.isAssignable(source, target), `${source} -> ${target}`).toBe(expected)
+  expect(contract.validLiteral('entity_id:light', 'light.kitchen')).toBe(true)
+  expect(contract.validLiteral('entity_id:light', 'switch.x')).toBe(false)
+  expect(contract.validLiteral('entity_id:light', 'bad id')).toBe(false)
 })
 it('read entity exposes a concrete snapshot without scalar configuration', () => {
   const node = { id: 'r', kind: 'read_entity', config: {} }
@@ -73,44 +108,44 @@ it('accepts explicit per-document catalogs without contaminating built-ins', () 
   const catalog = structuredClone(contract.nodeCatalog)
   catalog.types['global::Example.Reading'] = { description: 'Reading', assignableTo: ['global::Example.IReading'], nullable: false }
   catalog.types['global::Example.IReading'] = { description: 'IReading', assignableTo: [], nullable: false }
-  expect(contract.compatibleTypes('global::Example.Reading', 'global::Example.IReading', catalog)).toBe(true)
-  expect(contract.compatibleTypes('global::Example.Reading', 'global::Example.IReading')).toBe(false)
-  expect(contract.compatibleTypes('invented', 'invented', catalog)).toBe(false)
+  expect(contract.isAssignable('global::Example.Reading', 'global::Example.IReading', catalog)).toBe(true)
+  expect(contract.isAssignable('global::Example.Reading', 'global::Example.IReading')).toBe(false)
+  expect(contract.isAssignable('invented', 'invented', catalog)).toBe(false)
 })
 
 import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
 const richCatalog = rich.catalog as unknown as contract.VisualCatalogSnapshot
 for (const fixture of rich.cases) it(`shared CLR catalog: ${fixture.name}`, () => {
-  const errors = contract.validateGraphV4(fixture.graph, richCatalog)
+  const errors = contract.validateGraph(fixture.graph, richCatalog)
   expect(errors.length === 0, JSON.stringify(errors)).toBe(fixture.valid)
   if (fixture.inputId) expect(errors.some(e => e.inputId === fixture.inputId)).toBe(true)
 })
 it('custom node creation and connections preserve reserved argument names', () => {
-  const original = rich.cases[0].graph as GraphV4
+  const original = rich.cases[0].graph as Graph
   const consumer = original.nodes[3]
   const connected = contract.connectData(original, 'describe', 'result', consumer.id, 'reading', richCatalog)
   expect(connected.nodes[3].config.arguments).toMatchObject({ reading: { kind: 'unset' }, type: { value: 3 }, output: { value: null }, service: { value: 'light.turn_on' } })
   expect(connected.nodes[3].config.type).toBeUndefined()
   expect(contract.disconnectData(connected, consumer.id, 'reading', richCatalog).nodes[3].config.arguments).toMatchObject({ reading: { kind: 'unset' } })
-  const created = contract.addV4Node({ version: 4, name: 'Create', nodes: [], edges: [] }, consumer.kind, 'c', richCatalog).nodes[0]
+  const created = contract.addGraphNode({ version: 5, name: 'Create', nodes: [], edges: [] }, consumer.kind, 'c', richCatalog).nodes[0]
   expect(created.config.arguments).toMatchObject({ type: { value: 3 }, output: { value: null }, service: { value: 'light.turn_on' } })
-  expect(contract.validateGraphV4(original).some(d => d.message === 'Unknown node kind')).toBe(true)
-  expect(contract.validateGraphV4(original, richCatalog)).toEqual([])
-  expect(contract.validateGraphV4(original).some(d => d.message === 'Unknown node kind')).toBe(true)
+  expect(contract.validateGraph(original).some(d => d.message === 'Unknown node kind')).toBe(true)
+  expect(contract.validateGraph(original, richCatalog)).toEqual([])
+  expect(contract.validateGraph(original).some(d => d.message === 'Unknown node kind')).toBe(true)
 })
 
 it('nullable non-finite compiler defaults remain omitted when creating custom nodes', () => {
   const kind = Object.entries(richCatalog.nodes).find(([, spec]) => spec.label === 'Nonfinite defaults')![0]
-  const node = contract.addV4Node({ version: 4, name: 'Defaults', nodes: [], edges: [] }, kind, 'd', richCatalog).nodes[0]
+  const node = contract.addGraphNode({ version: 5, name: 'Defaults', nodes: [], edges: [] }, kind, 'd', richCatalog).nodes[0]
   expect(node.config.arguments).toEqual({})
   for (const input of Object.values(richCatalog.nodes[kind].inputs)) expect(Object.hasOwn(input, 'default')).toBe(false)
 })
 
 it('rejects stale literal arguments after an optional custom parameter rename', () => {
-  const graph = structuredClone(rich.cases[0].graph) as GraphV4
+  const graph = structuredClone(rich.cases[0].graph) as Graph
   const consumer = graph.nodes[3]
   ;(consumer.config.arguments as Record<string, unknown>).removedParameter = { kind: 'literal', type: 'string', value: 'old value' }
-  expect(contract.validateGraphV4(graph, richCatalog)).toEqual(expect.arrayContaining([
+  expect(contract.validateGraph(graph, richCatalog)).toEqual(expect.arrayContaining([
     expect.objectContaining({ nodeId: consumer.id, inputId: 'removedParameter', message: 'Unknown custom argument' }),
   ]))
 })

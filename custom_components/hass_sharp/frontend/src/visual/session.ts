@@ -2,7 +2,7 @@ import { batch, createEffect, createMemo, createSignal, onCleanup } from 'solid-
 import type { HomeAssistant } from '../types'
 import { createGraphHistory, serializeGraph, type VisualGraph } from './graph'
 import { visualApi, VisualApiError, visualError, type VisualDocument, type VisualPreview } from './api'
-import { nodeCatalog, validateGraphV4, type VisualCatalogSnapshot } from './contract'
+import { nodeCatalog, validateGraph, type VisualCatalogSnapshot } from './contract'
 import { createUuid } from './id'
 
 /** Owns graph/source pairs and their revisions. Never generates or persists source locally. */
@@ -26,7 +26,7 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
   const [previewAttempt, setPreviewAttempt] = createSignal(0)
   const dirty = createMemo(() => serializeGraph(history.graph()) !== baseline())
   const diagnostics = createMemo(() => {
-    const local = validateGraphV4(history.graph(), catalog()).map(d => ({ ...d, startLine: null, startColumn: null }))
+    const local = validateGraph(history.graph(), catalog()).map(d => ({ ...d, startLine: null, startColumn: null }))
     const backend = preview()?.diagnostics ?? []
     return [
       ...local,
@@ -47,7 +47,7 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
     try {
       const result = await api.catalog()
       if (disposed || request !== catalogRequest) return
-      if (!result.catalog || result.catalog.graphVersion !== 4 || !result.valid) throw new Error('The saved node catalog is invalid')
+      if (!result.catalog || result.catalog.graphVersion !== nodeCatalog.graphVersion || !result.valid) throw new Error('The saved node catalog is invalid')
       batch(() => {
         if (result.generation !== catalogGeneration()) {
           setCatalog(result.catalog)
@@ -154,7 +154,8 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
     try {
       const saved = await api.read(documentId)
       if (disposed || current !== loadGeneration) return
-      if (saved.graph.version !== 4) throw new Error(`Unsupported graph version ${saved.graph.version}; only version 4 is supported`)
+      if (saved.graph.version !== nodeCatalog.graphVersion)
+        throw new Error(`Unsupported graph version ${saved.graph.version}; only version ${nodeCatalog.graphVersion} is supported`)
       batch(() => {
         history.reset(saved.graph)
         setDocument(saved)

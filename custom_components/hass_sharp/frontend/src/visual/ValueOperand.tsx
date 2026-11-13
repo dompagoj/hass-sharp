@@ -2,7 +2,7 @@ import { createUniqueId, createSignal, createEffect, on, For, Show } from 'solid
 import { EntityAutocomplete } from '../components/EntityAutocomplete'
 import { Field } from '../components/Controls'
 import { typeLabel, typeColor } from './graph'
-import type { InputSpec, JsonValue, V4Operand, VisualCatalogSnapshot } from './contract'
+import { refinesType, resolveTypeSpec, type InputSpec, type JsonValue, type Operand, type VisualCatalogSnapshot } from './contract'
 export function ConfigSelect(props: {
   label: string
   value: string
@@ -104,23 +104,24 @@ export function ValueOperand(props: {
   spec: InputSpec
   variables?: string[]
   catalog: VisualCatalogSnapshot
-  onChange: (value: V4Operand) => void
+  onChange: (value: Operand) => void
 }) {
   const variableId = createUniqueId()
-  const operand = () => props.value as V4Operand | undefined
+  const operand = () => props.value as Operand | undefined
   const mode = () => operand()?.kind ?? 'unset'
-  const type = () => (operand()?.kind === 'literal' ? (operand() as Extract<V4Operand, { kind: 'literal' }>).type : props.spec.types[0])
-  const value = () => (operand()?.kind === 'literal' ? (operand() as Extract<V4Operand, { kind: 'literal' }>).value : undefined)
-  const types = () => props.spec.types.filter(id => !!props.catalog.types[id]?.literalKind || props.catalog.types[id]?.nullable === true)
+  const type = () => (operand()?.kind === 'literal' ? (operand() as Extract<Operand, { kind: 'literal' }>).type : props.spec.types[0])
+  const value = () => (operand()?.kind === 'literal' ? (operand() as Extract<Operand, { kind: 'literal' }>).value : undefined)
+  const types = () =>
+    props.spec.types.filter(id => !!resolveTypeSpec(id, props.catalog)?.literalKind || resolveTypeSpec(id, props.catalog)?.nullable === true)
   const initialValue = (id: string): JsonValue => {
-    const spec = props.catalog.types[id]
+    const spec = resolveTypeSpec(id, props.catalog)!
     return !spec.literalKind && spec.nullable
       ? null
       : spec.literalKind === 'enum'
         ? (spec.enumValues?.[0] ?? '')
         : defaultLiteral(spec.literalKind)
   }
-  const spec = () => props.catalog.types[type()]
+  const spec = () => resolveTypeSpec(type(), props.catalog)
   const change = (value: JsonValue) => props.onChange({ kind: 'literal', type: type(), value })
   return (
     <div class="hs-operand" style={{ '--hs-value-color': typeColor(type(), props.catalog) }}>
@@ -194,8 +195,8 @@ export function ValueOperand(props: {
             <ConfigSelect
               label={props.label}
               value={String(value())}
-              options={(spec().enumValues ?? []).map(v => [String(v), String(v)] as const)}
-              onChange={v => change(spec().enumValues?.find(item => String(item) === v) ?? v)}
+              options={(spec()?.enumValues ?? []).map(v => [String(v), String(v)] as const)}
+              onChange={v => change(spec()?.enumValues?.find(item => String(item) === v) ?? v)}
             />
           </Show>
 
@@ -204,7 +205,7 @@ export function ValueOperand(props: {
           </Show>
           <Show when={spec()?.literalKind === 'string'}>
             <Show
-              when={type() === 'entity_id'}
+              when={refinesType(type(), 'entity_id', props.catalog)}
               fallback={
                 <Field
                   label={props.label}

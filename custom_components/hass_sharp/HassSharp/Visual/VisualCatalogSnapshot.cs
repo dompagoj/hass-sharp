@@ -37,15 +37,9 @@ public sealed class VisualCatalogSnapshot
         LibraryDiagnostics = libraryDiagnostics?.ToImmutableArray() ?? [];
     }
 
-    public bool IsAssignable(string source, string target)
-    {
-        if (catalog["types"] is not JsonObject known || !known.ContainsKey(source) || !known.ContainsKey(target)) return false;
-        // entity_id is a refinement: ordinary strings never implicitly acquire it.
-        if (target == "entity_id") return source == target;
-        if (Compilation != null && Types.TryGetValue(source, out var from) && Types.TryGetValue(target, out var to))
-            return StandardConversion(Compilation, from.Symbol, to.Symbol);
-        return source == target || (known[source]?["assignableTo"] as JsonArray ?? []).Any(t => t?.GetValue<string>() == target);
-    }
+    // Refinement is decided first; Roslyn only ever compares two root types.
+    public bool IsAssignable(string source, string target) => VisualTypes.IsAssignable(catalog, source, target, (root, to) =>
+        Compilation != null && Types.TryGetValue(root, out var from) && Types.TryGetValue(to, out var symbol) ? StandardConversion(Compilation, from.Symbol, symbol.Symbol) : null);
 
     internal static bool StandardConversion(CSharpCompilation compilation, ITypeSymbol source, ITypeSymbol target)
     {

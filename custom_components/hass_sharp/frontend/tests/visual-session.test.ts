@@ -120,7 +120,7 @@ it('reports local typed input errors immediately and rejects old graphs without 
  const {session}=setup(async req=>req.operation==='read'?ok({...document(),graph:{...graph(),version:3}}):ok(preview()))
  const before=session.history.graph()
  await session.load('motion')
- expect(session.error()).toContain('Unsupported graph version 3; only version 4 is supported')
+ expect(session.error()).toContain('Unsupported graph version 3; only version 5 is supported')
  expect(session.history.graph()).toEqual(before)
  session.history.commit(updateNode(before,'condition-1',{config:{entity:{kind:'unset'},state:'on'}}))
  expect(session.diagnostics()).toEqual(expect.arrayContaining([expect.objectContaining({nodeId:'condition-1',inputId:'entity',severity:3})]))
@@ -130,7 +130,7 @@ it('reports local typed input errors immediately and rejects old graphs without 
 it('refreshes document-owned catalogs and surfaces dependent graph revision conflicts',async()=>{
  let generation='one',revision=2
  const mutableCatalog=structuredClone(nodeCatalog)
- mutableCatalog.nodes['saved:custom']={label:'Saved custom',description:'Saved source method',category:'Library',minGraphVersion:4,config:{},inputs:{},outputs:{},execution:['next']}
+ mutableCatalog.nodes['saved:custom']={label:'Saved custom',description:'Saved source method',category:'Library',minGraphVersion:5,config:{},inputs:{},outputs:{},execution:['next']}
  const hass={callWS:async(message:any)=>message.type==='hass_sharp/node_library'?ok({catalog:mutableCatalog,generation,saved:true,valid:true,diagnostics:[]}):message.request.operation==='read'?ok({...document(revision),catalogGeneration:generation}):ok(preview())} as any
  const session=createRoot(d=>{dispose=d;return createVisualSession(hass,graph())})
  await flush();await session.load('motion');await flush()
@@ -163,7 +163,7 @@ it('ignores in-flight old catalogs and cleans up library/focus listeners',async(
  const hass={callWS:async(message:any)=>message.type==='hass_sharp/node_library'?new Promise(resolve=>pending.push(resolve)):ok(preview())} as any
  const session=createRoot(d=>{dispose=d;return createVisualSession(hass,graph())})
  const fresh=session.refreshCatalog();expect(pending).toHaveLength(2)
- const latest=structuredClone(nodeCatalog);latest.nodes['library:latest']={label:'Latest saved',description:'Current',category:'Library',minGraphVersion:4,config:{},inputs:{},outputs:{},execution:['next']}
+ const latest=structuredClone(nodeCatalog);latest.nodes['library:latest']={label:'Latest saved',description:'Current',category:'Library',minGraphVersion:5,config:{},inputs:{},outputs:{},execution:['next']}
  pending[1](ok({catalog:latest,generation:'latest',saved:true,valid:true,diagnostics:[]}));await fresh
  pending[0](ok({catalog:nodeCatalog,generation:'old',saved:true,valid:true,diagnostics:[]}));await flush()
  expect(session.catalogGeneration()).toBe('latest');expect(session.catalog().nodes['library:latest']).toBeDefined()

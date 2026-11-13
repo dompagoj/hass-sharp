@@ -47,7 +47,7 @@ public static class NodeLibraryFixture
             all[0]["config"]!["type"] = "manual";
             var edges = new JsonArray();
             for (var i = 0; i < all.Length - 1; i++) edges.Add(new JsonObject { ["id"] = "flow" + i, ["source"] = all[i]["id"]!.GetValue<string>(), ["target"] = all[i+1]["id"]!.GetValue<string>() });
-            return new() { ["version"] = 4, ["name"] = "Shared rich catalog", ["nodes"] = new JsonArray(all.Select(n => (JsonNode?)n).ToArray()), ["edges"] = edges };
+            return new() { ["version"] = 5, ["name"] = "Shared rich catalog", ["nodes"] = new JsonArray(all.Select(n => (JsonNode?)n).ToArray()), ["edges"] = edges };
         }
         void Wire(JsonObject graph, string source, string sourcePort, string target, string targetPort) => graph["edges"]!.AsArray().Add(new JsonObject { ["id"] = "wire" + graph["edges"]!.AsArray().Count, ["kind"] = "data", ["source"] = source, ["sourcePort"] = sourcePort, ["target"] = target, ["targetPort"] = targetPort });
         var cases = new JsonArray();

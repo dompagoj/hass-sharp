@@ -23,14 +23,14 @@ const fixture = () => {
   graph = connectNodes(graph, 'temperature', 'branch')
   return graph
 }
-it('creates only v4 graphs and derives custom palette entries from a document catalog', () => {
-  expect(createGraph('New').version).toBe(4)
+it('creates only v5 graphs and derives custom palette entries from a document catalog', () => {
+  expect(createGraph('New').version).toBe(5)
   const catalog: VisualCatalogSnapshot = structuredClone(nodeCatalog)
   catalog.nodes['custom:factory'] = {
     label: 'Factory',
     category: 'Library',
     description: 'Create an object',
-    minGraphVersion: 4,
+    minGraphVersion: 5,
     config: {},
     inputs: {},
     outputs: {},
@@ -100,7 +100,7 @@ it('offers explicit null for nullable wire-only CLR types', () => {
     label: 'Nullable consumer',
     description: 'Consumes a CLR result',
     category: 'Library',
-    minGraphVersion: 4,
+    minGraphVersion: 5,
     config: { arguments: { type: 'object', default: {} } },
     argumentStorage: 'arguments',
     inputs: { result: { label: 'Result', types: ['global::Example.Result?'], description: 'Nullable result', required: true } },
@@ -448,11 +448,11 @@ it('preserves full branch/carry/export identifiers through native handles and ke
 })
 
 import richCatalogFixture from '../../../../tests/fixtures/visual-rich-catalog.json'
-import type { GraphV4 } from '../src/visual/contract'
+import type { Graph } from '../src/visual/contract'
 it('preserves declared input labels when source-derived custom CLR Boolean outputs connect to unlabeled built-in nodes', () => {
   const el = host(),
     catalog = richCatalogFixture.catalog as unknown as VisualCatalogSnapshot
-  let graph = structuredClone(richCatalogFixture.cases[0].graph) as GraphV4
+  let graph = structuredClone(richCatalogFixture.cases[0].graph) as Graph
   const predicateKind = Object.entries(catalog.nodes).find(([, spec]) => spec.label === 'Is on')![0]
   graph = addNode(graph, predicateKind, 'predicate', catalog)
   graph = addNode(graph, 'if', 'if', catalog)

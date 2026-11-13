@@ -68,7 +68,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await self.call('list',{})).error)
         self.assertEqual(self.service.visual.await_count,1)
     async def test_editor_graph_schema_and_capability_examples(self):
-        graph={'version':4,'name':'Complete','imports':'using System;',
+        graph={'version':5,'name':'Complete','imports':'using System;',
                'nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'}},{'id':'log','kind':'log','config':{'value':{'kind':'literal','type':'string','value':'safe'}}}],
                'edges':[{'id':'flow','kind':'execution','source':'t','target':'log','port':'next'}]}
         self.assertFalse((await self.call('preview',{'graph':graph})).error)
@@ -76,7 +76,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.service.node_library.return_value['result']['generation']='catalog-generation'
         result=await self.call('get_capabilities',{})
         self.assertFalse(result.error,result.data)
-        self.assertEqual(result.data['result']['graphVersions'],[4])
+        self.assertEqual(result.data['result']['graphVersions'],[5])
         self.assertEqual(result.data['result']['examples']['library']['id'],'example')
 
     async def test_actual_registration_and_mcp_readonly_filter(self):

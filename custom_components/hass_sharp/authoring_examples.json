@@ -1,7 +1,7 @@
 {
   "graphs": [
     {
-      "version": 4,
+      "version": 5,
       "name": "Manual log",
       "nodes": [
         {
@@ -34,7 +34,7 @@
       ]
     },
     {
-      "version": 4,
+      "version": 5,
       "name": "Native event log",
       "nodes": [
         {
@@ -71,7 +71,7 @@
       ]
     },
     {
-      "version": 4,
+      "version": 5,
       "name": "Bounded loop",
       "nodes": [
         {
@@ -121,7 +121,7 @@
       ]
     },
     {
-      "version": 4,
+      "version": 5,
       "name": "CSharp log",
       "nodes": [
         {
@@ -155,7 +155,7 @@
     "name": "Example.cs",
     "source": "public interface IReading { string State { get; } }\npublic record Reading(string State) : IReading;\npublic static class Samples\n{\n    /// <summary>Describe a detached Home Assistant entity.</summary>\n    /// <param name=\"entity\">The current entity snapshot.</param>\n    /// <returns>A typed reading.</returns>\n    [Node(\"Describe\", Category = \"Examples\")]\n    [return: Port(\"Reading\")]\n    public static Reading Describe([Port(\"Entity state\")] EntityStateSnapshot entity) => new(entity.State);\n\n    /// <summary>Format a reading without changing devices.</summary>\n    [Node(\"Format reading\")]\n    public static string Format(IReading reading) => $\"State: {reading.State}\";\n}",
     "graph": {
-      "version": 4,
+      "version": 5,
       "name": "Read entity through typed library",
       "nodes": [
         {

@@ -48,8 +48,7 @@ public static class NodeLibraryTests
         Check(snapshot.Catalog["types"]!["global::System.Double"]!["label"]!.GetValue<string>() == "double", "canonical CLR type retains Roslyn display label");
         Check(snapshot.Catalog["types"]!["global::NodeLib.Reading"]!["label"]!.GetValue<string>() == "NodeLib.Reading", "arbitrary CLR type retains Roslyn display label");
         var structures = snapshot.Catalog["structures"]!;
-        var loopTypes = structures["loopDeclaration"]!["type"]!["enum"]!.AsArray().Select(t => t!.GetValue<string>()).ToArray();
-        Check(loopTypes.Contains("global::NodeLib.Reading"), "structural loop schema exposes registered custom CLR types");
+        Check(structures["loopDeclaration"]!["type"]!["enumSource"]?.GetValue<string>() == "types" && snapshot.Catalog["types"]!["global::NodeLib.Reading"] != null, "structural loop schema accepts registered custom CLR types");
         var literalTypes = structures["operand"]!["literal"]!["types"]!.AsArray().Select(t => t!.GetValue<string>()).ToArray();
         foreach (var type in new[] { "global::System.Int32", "global::NodeLib.Mode", "global::NodeLib.Reading?" })
             Check(literalTypes.Contains(type), "structural literal schema exposes representable CLR type: " + type);
@@ -90,7 +89,7 @@ public static class NodeLibraryTests
         Check(snapshot.Methods.Values.Where(m => m.Method.Name is "Wait" or "ValueWait" or "Consume").All(m => m.ResultType == null), "void and async void-like have no result");
         var created = VisualGraphContract.CreateNode(consume.Kind, "consumer", snapshot);
         Check(created["config"]!["arguments"]!["type"]!["value"]!.GetValue<int>() == 3 && created["config"]!["type"] == null, "reserved names stored in arguments");
-        var graph = JsonNode.Parse("""{"version":4,"name":"Rich","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}},{"id":"r","kind":"read_entity","config":{"entity":{"kind":"literal","type":"entity_id","value":"sensor.test"}}}],"edges":[{"id":"e","source":"t","target":"r"}]}""")!.AsObject();
+        var graph = JsonNode.Parse("""{"version":5,"name":"Rich","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}},{"id":"r","kind":"read_entity","config":{"entity":{"kind":"literal","type":"entity_id","value":"sensor.test"}}}],"edges":[{"id":"e","source":"t","target":"r"}]}""")!.AsObject();
         var custom = VisualGraphContract.CreateNode(read.Kind, "custom", snapshot);
         graph["nodes"]!.AsArray().Add(custom);
         graph["edges"]!.AsArray().Add(JsonNode.Parse("""{"id":"e2","source":"r","target":"custom"}"""));
@@ -117,7 +116,7 @@ public static class NodeLibraryTests
         Check(VisualGraphValidator.Validate(richGraph, snapshot).Count == 0, "rich value flows into generic built-in node");
         var literalMethod = snapshot.Methods.Values.Single(m => m.Method.Name == "Literal");
         var literalNode = VisualGraphContract.CreateNode(literalMethod.Kind, "literal", snapshot);
-        var literalGraph = JsonNode.Parse("""{"version":4,"name":"Literal","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}}],"edges":[{"id":"e","source":"t","target":"literal"}]}""")!.AsObject();
+        var literalGraph = JsonNode.Parse("""{"version":5,"name":"Literal","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}}],"edges":[{"id":"e","source":"t","target":"literal"}]}""")!.AsObject();
         literalGraph["nodes"]!.AsArray().Add(literalNode);
         foreach (var invalidNumber in new[] { 1.5, 2147483648d, -2147483649d })
         {
@@ -166,7 +165,7 @@ public static class NodeLibraryTests
         var defaultMethod = specialDefaults.Snapshot.Methods.Values.Single();
         var defaultNode = VisualGraphContract.CreateNode(defaultMethod.Kind, "defaults", specialDefaults.Snapshot);
         Check(defaultNode["config"]!["arguments"]!["number"] == null && defaultNode["config"]!["arguments"]!["large"] == null, "unrepresentable literal defaults remain omitted CLR defaults");
-        var defaultGraph = JsonNode.Parse("""{"version":4,"name":"Defaults","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}}],"edges":[{"id":"e","source":"t","target":"defaults"}]}""")!.AsObject();
+        var defaultGraph = JsonNode.Parse("""{"version":5,"name":"Defaults","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}}],"edges":[{"id":"e","source":"t","target":"defaults"}]}""")!.AsObject();
         defaultGraph["nodes"]!.AsArray().Add(defaultNode);
         Check(VisualGraphValidator.Validate(defaultGraph, specialDefaults.Snapshot).Count == 0, "nullable enum defaults and JSON defaults validate");
         var attributes = new Dictionary<string, object> { ["nested"] = new List<object> { "original" } };

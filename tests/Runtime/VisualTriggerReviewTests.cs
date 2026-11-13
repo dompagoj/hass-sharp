@@ -16,7 +16,7 @@ public static class VisualTriggerReviewTests
             diagnostics.GenerateHassEntities(["binary_sensor.motion"]);
             async Task<AutomationAction> Configure(JsonObject config)
             {
-                var graph = new JsonObject { ["version"] = 4, ["name"] = "Trigger review", ["nodes"] = new JsonArray(new JsonObject { ["id"] = "t", ["kind"] = "trigger", ["config"] = config }), ["edges"] = new JsonArray() };
+                var graph = new JsonObject { ["version"] = 5, ["name"] = "Trigger review", ["nodes"] = new JsonArray(new JsonObject { ["id"] = "t", ["kind"] = "trigger", ["config"] = config }), ["edges"] = new JsonArray() };
                 var preview = new VisualGenerator(diagnostics).Preview(graph);
                 if (!preview.Valid) throw new Exception(string.Join("; ", preview.Diagnostics));
                 var compiled = await new CodeCompiler(diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cs"), preview.Source, true);

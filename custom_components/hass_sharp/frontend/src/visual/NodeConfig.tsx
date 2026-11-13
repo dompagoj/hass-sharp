@@ -20,7 +20,7 @@ import {
 } from './graph'
 import {
   connectData,
-  compatibleTypes,
+  isAssignable,
   dataOutputs,
   disconnectData,
   executionPorts,
@@ -28,7 +28,7 @@ import {
   setInput,
   type ConfigSpec,
   type VisualCatalogSnapshot,
-  type V4Operand,
+  type Operand,
   type DataEdge,
 } from './contract'
 import type { VisualDiagnostic } from './api'
@@ -74,7 +74,7 @@ export function NodeConfig(props: {
     ),
   )
   const set = (key: string, value: unknown) => props.onChange({ ...props.node.config, [key]: value })
-  const setOperand = (key: string, value: V4Operand) => {
+  const setOperand = (key: string, value: Operand) => {
     const node = structuredClone(props.node)
     setInput(node, key, value, props.catalog)
     props.onChange(node.config)
@@ -245,7 +245,7 @@ export function NodeConfig(props: {
                           n =>
                             typeof n.config.output === 'string' &&
                             dataOutputs(n, props.catalog).value &&
-                            input.types.some(t => compatibleTypes(dataOutputs(n, props.catalog).value.type, t, props.catalog)),
+                            input.types.some(t => isAssignable(dataOutputs(n, props.catalog).value.type, t, props.catalog)),
                         )
                         .map(n => String(n.config.output))}
                       catalog={props.catalog}

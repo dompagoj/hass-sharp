@@ -13,7 +13,7 @@ public static class VisualGraphContractTests
             // Loaded for cases that opt in; the validator takes it once service-aware validation lands.
             if (fixture["services"]?.GetValue<bool>() == true) Services(name);
             var elapsed = System.Diagnostics.Stopwatch.StartNew();
-            var diagnostics = VisualGraphValidator.Validate(fixture["graph"]!.AsObject());
+            var diagnostics = VisualGraphValidator.Validate(fixture["graph"]!.AsObject(), fixture["catalogPatch"] is JsonObject patch ? Patched(patch) : null);
             if (fixture["maxValidationMs"] is { } limit && elapsed.ElapsedMilliseconds >= limit.GetValue<int>()) throw new Exception($"Visual graph {name}: validation exceeded bounded time");
             var errors = diagnostics.Where(d => d.Severity == 3).ToList();
             var valid = fixture["valid"]!.GetValue<bool>();
@@ -26,7 +26,7 @@ public static class VisualGraphContractTests
             if (fixture["warning"] is { } warning && !diagnostics.Any(d => d.Severity == 2 && d.Message.Contains(warning.GetValue<string>(), StringComparison.OrdinalIgnoreCase)))
                 throw new Exception($"Visual graph {name}: expected warning \"{warning.GetValue<string>()}\", got {string.Join("; ", diagnostics)}");
         }
-        var graph = JsonNode.Parse("""{"version":4,"name":"Layout","nodes":[{"id":"trigger/é","kind":"trigger","config":{"type":"manual"},"position":{"x":13,"y":42}},{"id":"d","kind":"delay","config":{"seconds":{"kind":"literal","type":"number","value":2}}}],"edges":[]}""")!.AsObject();
+        var graph = JsonNode.Parse("""{"version":5,"name":"Layout","nodes":[{"id":"trigger/é","kind":"trigger","config":{"type":"manual"},"position":{"x":13,"y":42}},{"id":"d","kind":"delay","config":{"seconds":{"kind":"literal","type":"number","value":2}}}],"edges":[]}""")!.AsObject();
         var laidOut = VisualGraphContract.FillMissingLayout(graph);
         if (graph["nodes"]![1]!["position"] != null || laidOut["nodes"]![0]!["position"]!["x"]!.GetValue<int>() != 13 || laidOut["nodes"]![1]!["position"]!["x"]!.GetValue<int>() != 360)
             throw new Exception("Visual graph layout must be immutable and preserve supplied positions while filling missing layout");
@@ -35,6 +35,20 @@ public static class VisualGraphContractTests
         if (created["config"]?["branches"]?.ToJsonString() != "[\"a\",\"b\"]") throw new Exception("Visual graph creation must use catalog defaults");
         Console.WriteLine($"PASS visual graph contract: {fixtures.Count} shared contract fixtures");
         return Task.CompletedTask;
+    }
+
+    // A case may extend the built-in catalog, e.g. with input constraints no built-in node declares yet.
+    static VisualCatalogSnapshot Patched(JsonObject patch)
+    {
+        static void Merge(JsonObject target, JsonObject source)
+        {
+            foreach (var (key, value) in source)
+                if (value is JsonObject child && target[key] is JsonObject existing) Merge(existing, child);
+                else target[key] = value?.DeepClone();
+        }
+        var catalog = VisualNodeCatalog.GetCatalog();
+        Merge(catalog, patch);
+        return new VisualCatalogSnapshot(catalog, [], [], [], null);
     }
 
     static JsonNode Services(string name)

@@ -4,8 +4,8 @@
   "source": "public interface IReading { }\npublic record Reading(string State) : IReading;\npublic enum Mode { Off, On }\npublic static class Samples\n{\n    /// \u003Csummary\u003ERead a typed state.\u003C/summary\u003E\n    /// \u003Cparam name=\u0022entity\u0022\u003EA detached snapshot.\u003C/param\u003E\n    /// \u003Creturns\u003EThe reading.\u003C/returns\u003E\n    [Node(\u0022Describe\u0022, Category = \u0022Fixture\u0022)]\n    public static Reading Describe([Port(\u0022Entity state\u0022)] EntityStateSnapshot entity) =\u003E new(entity.State);\n    [Node(\u0022Consume\u0022)]\n    public static void Consume(IReading reading, int type = 3, string? output = null, string service = \u0022light.turn_on\u0022, Mode mode = Mode.On) {}\n    [Node(\u0022Nullable\u0022)] public static Reading? Nullable() =\u003E null;\n    [Node(\u0022Required\u0022)] public static void Required(Reading reading) {}\n    [Node(\u0022Factory\u0022)] public static int Factory() =\u003E 4;\n    [Node(\u0022Widen\u0022)] public static void Widen(double number) {}\n    [Node(\u0022Is on\u0022)] public static bool IsOn(IReading reading) =\u003E true;\n    [Node(\u0022Nullable elements\u0022)] public static string?[] NullableElements() =\u003E new string?[] { null };\n    [Node(\u0022Required elements\u0022)] public static string[] RequiredElements() =\u003E new[] { \u0022text\u0022 };\n    [Node(\u0022Nullable array\u0022)] public static string[]? NullableArray() =\u003E null;\n    [Node(\u0022Required enumerable\u0022)] public static void RequiredEnumerable(IEnumerable\u003Cstring\u003E items) {}\n    [Node(\u0022Required readonly list\u0022)] public static void RequiredReadOnlyList(IReadOnlyList\u003Cstring\u003E items) {}\n    [Node(\u0022Required list\u0022)] public static void RequiredList(IList\u003Cstring\u003E items) {}\n    [Node(\u0022Nullable enumerable\u0022)] public static void NullableEnumerable(IEnumerable\u003Cstring?\u003E items) {}\n    [Node(\u0022Nonfinite defaults\u0022)] public static void NonfiniteDefaults(double? nan = double.NaN, float? positive = float.PositiveInfinity, double? negative = double.NegativeInfinity) {}\n}",
   "catalog": {
     "version": 1,
-    "graphVersion": 4,
-    "runtimeSupport": "Graph v4 typed execution and structured scopes",
+    "graphVersion": 5,
+    "runtimeSupport": "Graph v5 typed execution and structured scopes",
     "limits": {
       "nodes": 256,
       "edges": 512,
@@ -158,7 +158,6 @@
         "assignableTo": [
           "global::System.String",
           "string",
-          "entity_id",
           "global::System.String?",
           "global::System.IComparable",
           "global::System.IConvertible",
@@ -173,6 +172,26 @@
         ],
         "literalKind": "string",
         "label": "Entity ID"
+      },
+      "target": {
+        "refines": "object",
+        "clrType": "System.Text.Json.Nodes.JsonObject",
+        "literalKind": "object",
+        "label": "Target",
+        "category": "Object",
+        "description": "Home Assistant target",
+        "nullable": false,
+        "assignableTo": [
+          "global::System.Text.Json.Nodes.JsonObject",
+          "object",
+          "global::System.Object",
+          "global::System.Collections.IEnumerable",
+          "global::System.Collections.Generic.IDictionary\u003Cglobal::System.String, global::System.Text.Json.Nodes.JsonNode?\u003E",
+          "global::System.Collections.Generic.IList\u003Cglobal::System.Collections.Generic.KeyValuePair\u003Cglobal::System.String, global::System.Text.Json.Nodes.JsonNode?\u003E\u003E",
+          "global::System.Collections.Generic.ICollection\u003Cglobal::System.Collections.Generic.KeyValuePair\u003Cglobal::System.String, global::System.Text.Json.Nodes.JsonNode?\u003E\u003E",
+          "global::System.Collections.Generic.IEnumerable\u003Cglobal::System.Collections.Generic.KeyValuePair\u003Cglobal::System.String, global::System.Text.Json.Nodes.JsonNode?\u003E\u003E",
+          "global::System.Text.Json.Nodes.JsonNode"
+        ]
       },
       "global::HassSharp.EntityStateSnapshot": {
         "description": "Detached Home Assistant entity state",
@@ -2899,6 +2918,13 @@
         ]
       }
     },
+    "parametricTypes": {
+      "entity_id": {
+        "param": "^[a-z0-9_]\u002B$",
+        "valuePattern": "^{param}\\.[a-z0-9_]\u002B$",
+        "label": "{Param} entity"
+      }
+    },
     "operandKinds": [
       "literal",
       "variable",
@@ -2909,7 +2935,7 @@
         "label": "Trigger",
         "category": "Hass",
         "description": "Start an invocation from HA, a legacy trigger, or manual run.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "type": {
             "type": "string",
@@ -2998,14 +3024,14 @@
           "next"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "condition": {
         "label": "State condition",
         "category": "Hass",
         "description": "Branch on an entity state.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "state": {
             "type": "string",
@@ -3031,14 +3057,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "service": {
         "label": "Call service",
         "category": "Hass",
         "description": "Call a service with typed target and data; capture its response.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "service": {
             "type": "string",
@@ -3046,16 +3072,6 @@
             "pattern": "^[a-z0-9_]\u002B\\.[a-z0-9_]\u002B$",
             "description": "Service identifier in domain.service form.",
             "label": "Service"
-          },
-          "response": {
-            "type": "string",
-            "description": "Optional legacy response dictionary key for custom C# access via responses.",
-            "label": "Response"
-          },
-          "entity": {
-            "type": "string",
-            "description": "Home Assistant entity ID.",
-            "label": "Entity"
           }
         },
         "inputs": {
@@ -3098,14 +3114,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "delay": {
         "label": "Delay",
         "category": "Flow",
         "description": "Wait for the given seconds.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {},
         "inputs": {
           "seconds": {
@@ -3130,14 +3146,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "custom": {
         "label": "Custom C#",
         "category": "Code",
         "description": "Execute C# with values, responses and lastError available.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "code": {
             "type": "string",
@@ -3154,14 +3170,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "if": {
         "label": "If",
         "category": "Logic",
         "description": "Choose a branch using a Boolean input.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {},
         "inputs": {
           "value": {
@@ -3185,14 +3201,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "and": {
         "label": "And",
         "category": "Logic",
         "description": "Combine two Boolean values.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "output": {
             "type": "string",
@@ -3240,14 +3256,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "or": {
         "label": "Or",
         "category": "Logic",
         "description": "Combine two Boolean values.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "output": {
             "type": "string",
@@ -3295,14 +3311,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "xor": {
         "label": "Xor",
         "category": "Logic",
         "description": "Combine two Boolean values.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "output": {
             "type": "string",
@@ -3350,14 +3366,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "not": {
         "label": "Not",
         "category": "Logic",
         "description": "Invert a Boolean value.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "output": {
             "type": "string",
@@ -3392,14 +3408,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "compare": {
         "label": "Compare",
         "category": "Logic",
         "description": "Compare operands with matching types; ordering requires numbers.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "operator": {
             "type": "string",
@@ -3462,7 +3478,7 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ],
         "comparison": {
           "leftInput": "left",
@@ -3481,7 +3497,7 @@
         "label": "Read entity",
         "category": "Hass",
         "description": "Read a detached, concrete Home Assistant entity-state snapshot.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "output": {
             "type": "string",
@@ -3516,14 +3532,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "set_value": {
         "label": "Set value",
         "category": "Data",
         "description": "Explicitly convert an input to the selected type.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "type": {
             "type": "string",
@@ -3574,14 +3590,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "convert": {
         "label": "Convert",
         "category": "Data",
         "description": "Explicitly convert an input to the selected type.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "type": {
             "type": "string",
@@ -3632,27 +3648,27 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "stop": {
         "label": "Stop",
         "category": "Flow",
         "description": "End the invocation.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {},
         "inputs": {},
         "outputs": {},
         "execution": [],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "log": {
         "label": "Log",
         "category": "Data",
         "description": "Log any typed value.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "level": {
             "type": "string",
@@ -3688,14 +3704,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "repeat": {
         "label": "Repeat",
         "category": "Flow",
         "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "maxIterations": {
             "type": "integer",
@@ -3752,14 +3768,14 @@
           "body"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "while": {
         "label": "While",
         "category": "Flow",
         "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "maxIterations": {
             "type": "integer",
@@ -3802,14 +3818,14 @@
           "condition"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "until": {
         "label": "Until",
         "category": "Flow",
         "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "maxIterations": {
             "type": "integer",
@@ -3852,14 +3868,14 @@
           "condition"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "foreach": {
         "label": "Foreach",
         "category": "Flow",
         "description": "Sequential bounded loop with isolated body, carry and explicit exports.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "maxIterations": {
             "type": "integer",
@@ -3942,14 +3958,14 @@
           "body"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "parallel": {
         "label": "Parallel",
         "category": "Flow",
         "description": "Run isolated stable branches; next runs after all branches join.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "branches": {
             "type": "array",
@@ -3973,14 +3989,14 @@
         ],
         "dynamicExecution": "branches",
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "condition_result": {
         "label": "Condition result",
         "category": "Flow",
         "description": "Return a Boolean from the nearest while/until condition scope.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {},
         "inputs": {
           "value": {
@@ -4000,14 +4016,14 @@
         "outputs": {},
         "execution": [],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "loop_result": {
         "label": "Loop result",
         "category": "Flow",
         "description": "Finish one iteration, atomically updating named carry and exports.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "values": {
             "type": "object",
@@ -4021,14 +4037,14 @@
         "execution": [],
         "dynamicInputs": "loop",
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "wait_until": {
         "label": "Wait until",
         "category": "Hass",
         "description": "Poll live entity state or attribute until comparison succeeds.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "field": {
             "type": "string",
@@ -4129,7 +4145,7 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ],
         "comparison": {
           "typeConfig": "type",
@@ -4148,7 +4164,7 @@
         "label": "Object",
         "category": "Data",
         "description": "Produce a JSON literal.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {},
         "inputs": {
           "value": {
@@ -4177,14 +4193,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "array": {
         "label": "Array",
         "category": "Data",
         "description": "Produce a JSON literal.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {},
         "inputs": {
           "value": {
@@ -4213,14 +4229,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "object_create": {
         "label": "Create object",
         "category": "Data",
         "description": "Build an object from named typed fields.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "fields": {
             "type": "object",
@@ -4243,14 +4259,14 @@
         ],
         "dynamicInputs": "fields",
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "array_create": {
         "label": "Create array",
         "category": "Data",
         "description": "Build an array from ordered typed items.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "items": {
             "type": "array",
@@ -4273,14 +4289,14 @@
         ],
         "dynamicInputs": "items",
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "get_field": {
         "label": "Get field",
         "category": "Data",
         "description": "Extract a typed value using an RFC 6901 JSON pointer.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "pointer": {
             "type": "string",
@@ -4328,14 +4344,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "trigger_data": {
         "label": "Trigger data",
         "category": "Hass",
         "description": "Read the current invocation trigger payload.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {},
         "inputs": {},
         "outputs": {
@@ -4350,14 +4366,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "service_response": {
         "label": "Service response",
         "category": "Hass",
         "description": "Read a connected service response.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {},
         "inputs": {
           "response": {
@@ -4381,14 +4397,14 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "entity_field": {
         "label": "Entity field",
         "category": "Hass",
         "description": "Extract state or an attribute from an entity snapshot into a scalar or JSON type.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "config": {
           "field": {
             "type": "string",
@@ -4448,16 +4464,16 @@
           "error"
         ],
         "runtimeVersions": [
-          4
+          5
         ]
       },
       "library:shared:global%3A%3ANodeLib.Samples.Describe%28global%3A%3AHassSharp.EntityStateSnapshot%29": {
         "label": "Describe",
         "category": "Fixture",
         "description": "Read a typed state.",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4496,9 +4512,9 @@
         "label": "Consume",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4591,9 +4607,9 @@
         "label": "Nullable",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4621,9 +4637,9 @@
         "label": "Required",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4656,9 +4672,9 @@
         "label": "Factory",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4686,9 +4702,9 @@
         "label": "Widen",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4721,9 +4737,9 @@
         "label": "Is on",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4762,9 +4778,9 @@
         "label": "Nullable elements",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4792,9 +4808,9 @@
         "label": "Required elements",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4822,9 +4838,9 @@
         "label": "Nullable array",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4852,9 +4868,9 @@
         "label": "Required enumerable",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4887,9 +4903,9 @@
         "label": "Required readonly list",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4922,9 +4938,9 @@
         "label": "Required list",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4957,9 +4973,9 @@
         "label": "Nullable enumerable",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -4992,9 +5008,9 @@
         "label": "Nonfinite defaults",
         "category": "Custom",
         "description": "",
-        "minGraphVersion": 4,
+        "minGraphVersion": 5,
         "runtimeVersions": [
-          4
+          5
         ],
         "sourceId": "shared",
         "argumentStorage": "arguments",
@@ -5083,169 +5099,7 @@
         },
         "type": {
           "type": "string",
-          "enum": [
-            "boolean",
-            "number",
-            "string",
-            "object",
-            "array",
-            "entity_id",
-            "global::HassSharp.EntityStateSnapshot",
-            "global::System.Boolean",
-            "global::System.Double",
-            "global::System.String",
-            "global::System.Text.Json.Nodes.JsonObject",
-            "global::System.Text.Json.Nodes.JsonArray",
-            "global::NodeLib.Reading",
-            "global::NodeLib.IReading",
-            "global::System.Int32",
-            "global::System.String?",
-            "global::NodeLib.Mode",
-            "global::NodeLib.Reading?",
-            "global::System.String?[]",
-            "global::System.String[]",
-            "global::System.String[]?",
-            "global::System.Collections.Generic.IEnumerable\u003Cglobal::System.String\u003E",
-            "global::System.Collections.Generic.IReadOnlyList\u003Cglobal::System.String\u003E",
-            "global::System.Collections.Generic.IList\u003Cglobal::System.String\u003E",
-            "global::System.Collections.Generic.IEnumerable\u003Cglobal::System.String?\u003E",
-            "global::System.Double?",
-            "global::System.Single?",
-            "global::System.Single",
-            "global::System.IComparable",
-            "global::System.IConvertible",
-            "global::System.IComparable\u003Cglobal::System.Boolean\u003E",
-            "global::System.IEquatable\u003Cglobal::System.Boolean\u003E",
-            "global::System.ISpanParsable\u003Cglobal::System.Boolean\u003E",
-            "global::System.IParsable\u003Cglobal::System.Boolean\u003E",
-            "global::System.ValueType",
-            "global::System.Object",
-            "global::System.Numerics.IBinaryFloatingPointIeee754\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IBinaryNumber\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IBitwiseOperators\u003Cglobal::System.Double, global::System.Double, global::System.Double\u003E",
-            "global::System.Numerics.IFloatingPointIeee754\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IExponentialFunctions\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IFloatingPoint\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.INumber\u003Cglobal::System.Double\u003E",
-            "global::System.IComparable\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IComparisonOperators\u003Cglobal::System.Double, global::System.Double, global::System.Boolean\u003E",
-            "global::System.Numerics.IModulusOperators\u003Cglobal::System.Double, global::System.Double, global::System.Double\u003E",
-            "global::System.Numerics.ISignedNumber\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IHyperbolicFunctions\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.ILogarithmicFunctions\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IPowerFunctions\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IRootFunctions\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.ITrigonometricFunctions\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IFloatingPointConstants\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.INumberBase\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IAdditionOperators\u003Cglobal::System.Double, global::System.Double, global::System.Double\u003E",
-            "global::System.Numerics.IAdditiveIdentity\u003Cglobal::System.Double, global::System.Double\u003E",
-            "global::System.Numerics.IDecrementOperators\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IDivisionOperators\u003Cglobal::System.Double, global::System.Double, global::System.Double\u003E",
-            "global::System.IEquatable\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IEqualityOperators\u003Cglobal::System.Double, global::System.Double, global::System.Boolean\u003E",
-            "global::System.Numerics.IIncrementOperators\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IMultiplicativeIdentity\u003Cglobal::System.Double, global::System.Double\u003E",
-            "global::System.Numerics.IMultiplyOperators\u003Cglobal::System.Double, global::System.Double, global::System.Double\u003E",
-            "global::System.ISpanFormattable",
-            "global::System.IFormattable",
-            "global::System.ISpanParsable\u003Cglobal::System.Double\u003E",
-            "global::System.IParsable\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.ISubtractionOperators\u003Cglobal::System.Double, global::System.Double, global::System.Double\u003E",
-            "global::System.Numerics.IUnaryPlusOperators\u003Cglobal::System.Double, global::System.Double\u003E",
-            "global::System.Numerics.IUnaryNegationOperators\u003Cglobal::System.Double, global::System.Double\u003E",
-            "global::System.IUtf8SpanFormattable",
-            "global::System.IUtf8SpanParsable\u003Cglobal::System.Double\u003E",
-            "global::System.Numerics.IMinMaxValue\u003Cglobal::System.Double\u003E",
-            "global::System.Collections.Generic.IEnumerable\u003Cglobal::System.Char\u003E",
-            "global::System.Collections.IEnumerable",
-            "global::System.IComparable\u003Cglobal::System.String?\u003E",
-            "global::System.IEquatable\u003Cglobal::System.String?\u003E",
-            "global::System.ICloneable",
-            "global::System.ISpanParsable\u003Cglobal::System.String\u003E",
-            "global::System.IParsable\u003Cglobal::System.String\u003E",
-            "global::System.Collections.Generic.IDictionary\u003Cglobal::System.String, global::System.Text.Json.Nodes.JsonNode?\u003E",
-            "global::System.Collections.Generic.IList\u003Cglobal::System.Collections.Generic.KeyValuePair\u003Cglobal::System.String, global::System.Text.Json.Nodes.JsonNode?\u003E\u003E",
-            "global::System.Collections.Generic.ICollection\u003Cglobal::System.Collections.Generic.KeyValuePair\u003Cglobal::System.String, global::System.Text.Json.Nodes.JsonNode?\u003E\u003E",
-            "global::System.Collections.Generic.IEnumerable\u003Cglobal::System.Collections.Generic.KeyValuePair\u003Cglobal::System.String, global::System.Text.Json.Nodes.JsonNode?\u003E\u003E",
-            "global::System.Text.Json.Nodes.JsonNode",
-            "global::System.Collections.Generic.IList\u003Cglobal::System.Text.Json.Nodes.JsonNode?\u003E",
-            "global::System.Collections.Generic.ICollection\u003Cglobal::System.Text.Json.Nodes.JsonNode?\u003E",
-            "global::System.Collections.Generic.IEnumerable\u003Cglobal::System.Text.Json.Nodes.JsonNode?\u003E",
-            "global::System.IEquatable\u003Cglobal::NodeLib.Reading\u003E",
-            "global::System.Numerics.ISignedNumber\u003Cglobal::System.Int32\u003E",
-            "global::System.Numerics.IBinaryInteger\u003Cglobal::System.Int32\u003E",
-            "global::System.Numerics.IBinaryNumber\u003Cglobal::System.Int32\u003E",
-            "global::System.Numerics.IBitwiseOperators\u003Cglobal::System.Int32, global::System.Int32, global::System.Int32\u003E",
-            "global::System.Numerics.INumber\u003Cglobal::System.Int32\u003E",
-            "global::System.IComparable\u003Cglobal::System.Int32\u003E",
-            "global::System.Numerics.IComparisonOperators\u003Cglobal::System.Int32, global::System.Int32, global::System.Boolean\u003E",
-            "global::System.Numerics.IModulusOperators\u003Cglobal::System.Int32, global::System.Int32, global::System.Int32\u003E",
-            "global::System.Numerics.INumberBase\u003Cglobal::System.Int32\u003E",
-            "global::System.Numerics.IEqualityOperators\u003Cglobal::System.Int32, global::System.Int32, global::System.Boolean\u003E",
-            "global::System.Numerics.IAdditionOperators\u003Cglobal::System.Int32, global::System.Int32, global::System.Int32\u003E",
-            "global::System.Numerics.IAdditiveIdentity\u003Cglobal::System.Int32, global::System.Int32\u003E",
-            "global::System.Numerics.IDecrementOperators\u003Cglobal::System.Int32\u003E",
-            "global::System.Numerics.IDivisionOperators\u003Cglobal::System.Int32, global::System.Int32, global::System.Int32\u003E",
-            "global::System.IEquatable\u003Cglobal::System.Int32\u003E",
-            "global::System.Numerics.IIncrementOperators\u003Cglobal::System.Int32\u003E",
-            "global::System.Numerics.IMultiplicativeIdentity\u003Cglobal::System.Int32, global::System.Int32\u003E",
-            "global::System.Numerics.IMultiplyOperators\u003Cglobal::System.Int32, global::System.Int32, global::System.Int32\u003E",
-            "global::System.ISpanParsable\u003Cglobal::System.Int32\u003E",
-            "global::System.IParsable\u003Cglobal::System.Int32\u003E",
-            "global::System.Numerics.ISubtractionOperators\u003Cglobal::System.Int32, global::System.Int32, global::System.Int32\u003E",
-            "global::System.Numerics.IUnaryPlusOperators\u003Cglobal::System.Int32, global::System.Int32\u003E",
-            "global::System.Numerics.IUnaryNegationOperators\u003Cglobal::System.Int32, global::System.Int32\u003E",
-            "global::System.IUtf8SpanParsable\u003Cglobal::System.Int32\u003E",
-            "global::System.Numerics.IShiftOperators\u003Cglobal::System.Int32, global::System.Int32, global::System.Int32\u003E",
-            "global::System.Numerics.IMinMaxValue\u003Cglobal::System.Int32\u003E",
-            "global::System.Enum",
-            "global::System.Collections.IList",
-            "global::System.Collections.ICollection",
-            "global::System.Collections.IStructuralComparable",
-            "global::System.Collections.IStructuralEquatable",
-            "global::System.Collections.Generic.IList\u003Cglobal::System.String?\u003E",
-            "global::System.Collections.Generic.ICollection\u003Cglobal::System.String?\u003E",
-            "global::System.Collections.Generic.IReadOnlyList\u003Cglobal::System.String?\u003E",
-            "global::System.Collections.Generic.IReadOnlyCollection\u003Cglobal::System.String?\u003E",
-            "global::System.Array",
-            "global::System.Collections.Generic.ICollection\u003Cglobal::System.String\u003E",
-            "global::System.Collections.Generic.IReadOnlyCollection\u003Cglobal::System.String\u003E",
-            "global::System.Numerics.IBinaryFloatingPointIeee754\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IBinaryNumber\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IBitwiseOperators\u003Cglobal::System.Single, global::System.Single, global::System.Single\u003E",
-            "global::System.Numerics.IFloatingPointIeee754\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IExponentialFunctions\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IFloatingPoint\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.INumber\u003Cglobal::System.Single\u003E",
-            "global::System.IComparable\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IComparisonOperators\u003Cglobal::System.Single, global::System.Single, global::System.Boolean\u003E",
-            "global::System.Numerics.IModulusOperators\u003Cglobal::System.Single, global::System.Single, global::System.Single\u003E",
-            "global::System.Numerics.ISignedNumber\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IHyperbolicFunctions\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.ILogarithmicFunctions\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IPowerFunctions\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IRootFunctions\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.ITrigonometricFunctions\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IFloatingPointConstants\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.INumberBase\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IAdditionOperators\u003Cglobal::System.Single, global::System.Single, global::System.Single\u003E",
-            "global::System.Numerics.IAdditiveIdentity\u003Cglobal::System.Single, global::System.Single\u003E",
-            "global::System.Numerics.IDecrementOperators\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IDivisionOperators\u003Cglobal::System.Single, global::System.Single, global::System.Single\u003E",
-            "global::System.IEquatable\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IEqualityOperators\u003Cglobal::System.Single, global::System.Single, global::System.Boolean\u003E",
-            "global::System.Numerics.IIncrementOperators\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IMultiplicativeIdentity\u003Cglobal::System.Single, global::System.Single\u003E",
-            "global::System.Numerics.IMultiplyOperators\u003Cglobal::System.Single, global::System.Single, global::System.Single\u003E",
-            "global::System.ISpanParsable\u003Cglobal::System.Single\u003E",
-            "global::System.IParsable\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.ISubtractionOperators\u003Cglobal::System.Single, global::System.Single, global::System.Single\u003E",
-            "global::System.Numerics.IUnaryPlusOperators\u003Cglobal::System.Single, global::System.Single\u003E",
-            "global::System.Numerics.IUnaryNegationOperators\u003Cglobal::System.Single, global::System.Single\u003E",
-            "global::System.IUtf8SpanParsable\u003Cglobal::System.Single\u003E",
-            "global::System.Numerics.IMinMaxValue\u003Cglobal::System.Single\u003E"
-          ],
+          "enumSource": "types",
           "required": true
         },
         "initial": {
@@ -5275,6 +5129,7 @@
             "object",
             "array",
             "entity_id",
+            "target",
             "global::System.Boolean",
             "global::System.Double",
             "global::System.String",
@@ -5337,7 +5192,7 @@
     {
       "name": "entity snapshot to custom record to interface",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -5440,7 +5295,7 @@
     {
       "name": "CLR integer rejects fraction",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -5543,7 +5398,7 @@
     {
       "name": "CLR integer rejects overflow",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -5646,7 +5501,7 @@
     {
       "name": "enum rejects unknown numeric member",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -5749,7 +5604,7 @@
     {
       "name": "non-null CLR string rejects null literal",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -5852,7 +5707,7 @@
     {
       "name": "malformed arguments are diagnosed",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -5934,7 +5789,7 @@
     {
       "name": "nullable result cannot feed required reference",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -5991,7 +5846,7 @@
     {
       "name": "standard numeric widening",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6048,7 +5903,7 @@
     {
       "name": "arbitrary record is wire-only",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6092,7 +5947,7 @@
     {
       "name": "entity scalar extraction is separate",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6154,7 +6009,7 @@
     {
       "name": "nullable array elements reject RequiredEnumerable",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6211,7 +6066,7 @@
     {
       "name": "nullable array elements reject RequiredReadOnlyList",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6268,7 +6123,7 @@
     {
       "name": "nullable array elements reject RequiredList",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6325,7 +6180,7 @@
     {
       "name": "nullable array elements accept nullable enumerable",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6382,7 +6237,7 @@
     {
       "name": "required array elements accept required enumerable",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6439,7 +6294,7 @@
     {
       "name": "nonfinite nullable defaults remain optional",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6475,7 +6330,7 @@
     {
       "name": "CLR array foreach RequiredElements to string",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6559,7 +6414,7 @@
     {
       "name": "CLR array foreach NullableElements to string",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6643,7 +6498,7 @@
     {
       "name": "CLR array foreach NullableElements to global::System.String?",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6727,7 +6582,7 @@
     {
       "name": "CLR array foreach RequiredElements to number",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {
@@ -6811,7 +6666,7 @@
     {
       "name": "CLR array foreach NullableArray to string",
       "graph": {
-        "version": 4,
+        "version": 5,
         "name": "Shared rich catalog",
         "nodes": [
           {

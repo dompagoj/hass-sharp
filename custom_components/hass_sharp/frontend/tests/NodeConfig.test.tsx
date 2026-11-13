@@ -4,6 +4,7 @@ import { render } from 'solid-js/web'
 import { NodeConfig } from '../src/visual/NodeConfig'
 import { NodeChooser } from '../src/visual/NodeChooser'
 import { TriggerConfig } from '../src/visual/TriggerConfig'
+import { ValueOperand } from '../src/visual/ValueOperand'
 import { addNode, createGraph, catalogPalette, catalogCategories, type VisualGraph } from '../src/visual/graph'
 import { nodeCatalog } from '../src/visual/contract'
 import { HassCtx } from '../src/context'
@@ -49,32 +50,6 @@ function mount(graph: VisualGraph, id: string) {
   )
   return { root, node, graph: current }
 }
-it.each(['default', 'selected'])('clears a %s service entity explicitly and restores picker focus', async selection => {
-  const { root, node } = mount(createGraph('Service'), 'service-1')
-  const picker = root.querySelector<HTMLButtonElement>('[aria-label="Entity ID"]')!
-  picker.focus()
-  picker.click()
-  await Promise.resolve()
-  if (selection === 'selected') {
-    change(root, 'Search entities', 'light.kitchen')
-    ;[...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Use ID: light.kitchen')!.click()
-    expect(node().config.entity).toBe('light.kitchen')
-    picker.click()
-    await Promise.resolve()
-  }
-  expect(node().config.entity).toBe(selection === 'default' ? 'light.hall' : 'light.kitchen')
-  const clear = [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'No target')!
-  expect(clear).toBeDefined()
-  clear.click()
-  await Promise.resolve()
-  expect(node().config.entity).toBe('')
-  expect(document.activeElement).toBe(picker)
-  picker.click()
-  change(root, 'Search entities', 'light.other')
-  ;[...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Cancel')!.click()
-  expect(node().config.entity).toBe('')
-  expect(document.activeElement).toBe(picker)
-})
 it.each(['condition', 'read_entity', 'wait_until'])('keeps %s entity literal picker required', kind => {
   const { root } = mount(addNode(createGraph('Entity'), kind, 'required'), 'required')
   change(root, 'Entity source', 'literal')
@@ -82,6 +57,32 @@ it.each(['condition', 'read_entity', 'wait_until'])('keeps %s entity literal pic
   expect(root.textContent).not.toContain('No target')
   change(root, 'Search entities', '')
   expect(root.textContent).not.toContain('Use ID:')
+})
+it.each([
+  ['entity_id:light', true],
+  ['entity_id', true],
+  ['string', false],
+])('edits a %s literal with the entity picker only when it refines entity_id', (type, picker) => {
+  const root = host()
+  client = new QueryClient()
+  dispose = render(
+    () => (
+      <QueryClientProvider client={client}>
+        <HassCtx.Provider value={{ callWS: async () => ({ entities: [] }) } as any}>
+          <ValueOperand
+            label="Entity"
+            value={{ kind: 'literal', type, value: 'light.kitchen' }}
+            spec={{ types: [type], required: true, description: '' }}
+            catalog={nodeCatalog}
+            onChange={() => {}}
+          />
+        </HassCtx.Provider>
+      </QueryClientProvider>
+    ),
+    root,
+  )
+  expect(root.querySelector('[aria-label="Entity ID"]') !== null).toBe(picker)
+  expect(root.querySelector('input[aria-label="Entity"]') !== null).toBe(!picker)
 })
 it('keeps trigger subscriptions required', () => {
   const root = host()

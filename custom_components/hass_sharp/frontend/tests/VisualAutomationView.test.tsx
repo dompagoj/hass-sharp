@@ -179,7 +179,7 @@ it('authors two v4 triggers and C# sections, saves/reloads them, then dispatches
   button(root, 'Connect Next').click()
   const draft = json(root)
   const second = draft.nodes.at(-1)
-  expect(draft).toMatchObject({ version: 4, imports: 'using System.Globalization;', members: 'private string Prefix() => "Heating";' })
+  expect(draft).toMatchObject({ version: 5, imports: 'using System.Globalization;', members: 'private string Prefix() => "Heating";' })
   expect(draft.nodes[0]).toMatchObject({ id: 'trigger-1', config: { type: 'daily', time: '07:30', timeZone: 'Europe/Zagreb', mode: 'Restart' } })
   expect(second).toMatchObject({ kind: 'trigger', config: { type: 'manual' } })
   expect(draft.edges).toContainEqual({ id: `${second.id}->service-1`, source: second.id, target: 'service-1' })
@@ -238,7 +238,7 @@ it('edits all trigger kinds, boolean overrides and expressions without changing 
 
 it('rejects old saved graph versions without offering upgrade or overwriting the document',async()=>{
  const {root,fixture}=setup(true);fixture.documents.get('motion')!.graph.version=1 as any
- await vi.waitFor(()=>expect(root.textContent).toContain('Unsupported graph version 1; only version 4 is supported'))
+ await vi.waitFor(()=>expect(root.textContent).toContain('Unsupported graph version 1; only version 5 is supported'))
  expect(button(root,'Save graph').disabled).toBe(true)
  expect(root.textContent).not.toContain('Upgrade to')
  expect(fixture.documents.get('motion')!.revision).toBe(4)

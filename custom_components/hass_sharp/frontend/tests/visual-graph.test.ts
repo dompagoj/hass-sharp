@@ -13,7 +13,7 @@ describe('visual draft graph', () => {
   it('keeps JSON versioned and excludes canvas/library state', () => {
     const graph = updateNode(createGraph('Heating'), 'trigger-1', { size: { width: 300, height: 180 } })
     const value = JSON.parse(serializeGraph(graph))
-    expect(value).toMatchObject({ version: 4, name: 'Heating', nodes: [{ id: 'trigger-1', size: { width: 300, height: 180 } }, {}, {}] })
+    expect(value).toMatchObject({ version: 5, name: 'Heating', nodes: [{ id: 'trigger-1', size: { width: 300, height: 180 } }, {}, {}] })
     expect(value.nodes[0]).not.toHaveProperty('selected')
     expect(value).not.toHaveProperty('generatedSource')
   })
@@ -149,11 +149,11 @@ it('creates positioned nodes and exact output connections atomically, revalidati
   expect(createNodeAt(createGraph('Fresh'), 'delay', { x: 0, y: 0 }, { source: 'deleted', port: 'next' }).nodes).toHaveLength(3)
 })
 
-it('keeps typed nodes in v4 and preserves typed operands through history and serialization', () => {
+it('keeps typed nodes in v5 and preserves typed operands through history and serialization', () => {
   const legacy = createGraph('Typed')
   const graph = addNode(legacy, 'and', 'logic')
-  expect(graph.version).toBe(4)
-  expect(legacy.version).toBe(4)
+  expect(graph.version).toBe(5)
+  expect(legacy.version).toBe(5)
   expect(graph.nodes.at(-1)?.config.left).toEqual({ kind: 'literal', type: 'boolean', value: true })
   expect(JSON.parse(serializeGraph(graph))).toEqual(graph)
   expect(outputPorts('repeat')).toEqual(['body', 'next', 'error'])

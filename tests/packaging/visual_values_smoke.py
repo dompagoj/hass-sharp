@@ -122,7 +122,7 @@ for i, (source_id, source_port, target, target_port) in enumerate([
     ("entity", "value", "box", "state"), ("box", "result", "read", "box"), ("read", "result", "consume", "reading")
 ]):
     edges.append({"id": "d" + str(i), "kind": "data", "source": source_id, "sourcePort": source_port, "target": target, "targetPort": target_port})
-graph = JsonNode.Parse(json.dumps({"version": 4, "name": "Python snapshot", "nodes": nodes, "edges": edges}))
+graph = JsonNode.Parse(json.dumps({"version": 5, "name": "Python snapshot", "nodes": nodes, "edges": edges}))
 preview = VisualGenerator(diagnostics).Preview(graph, library.Snapshot)
 assert preview.Valid, str(preview.Diagnostics)
 PyInterop.Entity = Func[String, HasEntityState](lambda _: state)

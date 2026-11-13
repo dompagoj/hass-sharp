@@ -65,6 +65,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
         foreach (var diagnostic in compilation.GetDiagnostics(cancellationToken).Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning))
             Report(diagnostic.Location, diagnostic.GetMessage(), (int)diagnostic.Severity);
         var root = VisualNodeCatalog.GetCatalog();
+        var graphVersion = root["graphVersion"]!.GetValue<int>();
         var typeSymbols = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
         void Register(ITypeSymbol type)
         {
@@ -119,7 +120,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
                 }
                 root["nodes"]![kind] = new JsonObject {
                     ["label"] = title, ["category"] = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Category").Value.Value as string ?? "Custom",
-                    ["description"] = DocText(doc?.Element("summary")), ["minGraphVersion"] = 4, ["runtimeVersions"] = new JsonArray(4),
+                    ["description"] = DocText(doc?.Element("summary")), ["minGraphVersion"] = graphVersion, ["runtimeVersions"] = new JsonArray(graphVersion),
                     ["sourceId"] = source.Id, ["argumentStorage"] = "arguments", ["config"] = new JsonObject { ["arguments"] = new JsonObject { ["type"] = "object", ["default"] = new JsonObject(), ["description"] = "Typed method arguments" } },
                     ["inputs"] = input, ["outputs"] = result == null ? new JsonObject() : new JsonObject { ["result"] = new JsonObject { ["type"] = TypeIdentity(result), ["label"] = PortLabel(method.GetReturnTypeAttributes()) ?? "Result", ["description"] = DocText(doc?.Element("returns")) } },
                     ["execution"] = new JsonArray("next", "error") };
@@ -152,7 +153,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
             var bounds = NumericBounds(scalar.SpecialType);
             if (bounds is { } range) { type["min"] = range.Min; type["max"] = range.Max; }
             if (scalar.TypeKind == TypeKind.Enum) type["enumValues"] = new JsonArray(((INamedTypeSymbol)scalar).GetMembers().OfType<IFieldSymbol>().Where(f => f.HasConstantValue && Convert.ToDecimal(f.ConstantValue) is >= -9007199254740991 and <= 9007199254740991).Select(f => JsonSerializer.SerializeToNode(f.ConstantValue)).ToArray());
-            type["assignableTo"] = new JsonArray(typeSymbols.Where(pair => pair.Key != "entity_id" || id == "entity_id")
+            // Only roots are CLR conversion targets; refinements are decided by the chain before Roslyn.
+            type["assignableTo"] = new JsonArray(typeSymbols.Where(pair => types[pair.Key]?["refines"] == null)
                 .Where(pair => VisualCatalogSnapshot.StandardConversion(compilation, symbol, pair.Value)).Select(pair => (JsonNode?)JsonValue.Create(pair.Key)).ToArray());
         }
         VisualNodeCatalog.RefreshStructuralTypes(root);

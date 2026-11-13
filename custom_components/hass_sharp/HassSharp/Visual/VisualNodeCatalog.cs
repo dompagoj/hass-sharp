@@ -17,7 +17,8 @@ public static class VisualNodeCatalog
     internal static void RefreshStructuralTypes(JsonObject catalog)
     {
         var types = catalog["types"]!.AsObject();
-        catalog["structures"]!["loopDeclaration"]!["type"]!["enum"] = new JsonArray(types.Select(t => (JsonNode?)JsonValue.Create(t.Key)).ToArray());
+        // Loop declarations accept every resolvable type id, parametric ones included, so Convert can narrow.
+        catalog["structures"]!["loopDeclaration"]!["type"] = new JsonObject { ["type"] = "string", ["enumSource"] = "types", ["required"] = true };
         catalog["structures"]!["operand"]!["literal"]!["types"] = new JsonArray(types
             .Where(t => Text(t.Value, "literalKind") != "" || t.Value?["nullable"]?.GetValue<bool>() == true)
             .Select(t => (JsonNode?)JsonValue.Create(t.Key)).ToArray());
@@ -88,20 +89,6 @@ public static class VisualNodeCatalog
             : cfg?.TryGetPropertyValue(port, out value) ?? false;
     }
     internal static bool ValidLiteral(string type, JsonNode? value, bool present, VisualCatalogSnapshot snapshot) => ValidLiteral(type, value, present, snapshot.Root);
-    internal static bool ValidLiteral(string type, JsonNode? value, bool present, JsonObject catalog)
-    {
-        if (catalog["types"]?[type] is not JsonObject spec || !present) return false;
-        if (value == null) return spec["nullable"]?.GetValue<bool>() == true;
-        if (type == "entity_id") return value is JsonValue ev && ev.TryGetValue<string>(out var entity) && System.Text.RegularExpressions.Regex.IsMatch(entity, Text(spec, "pattern"));
-        var literal = Text(spec, "literalKind");
-        if (literal == "boolean") return value is JsonValue bv && bv.TryGetValue<bool>(out _);
-        if (literal == "string") return value is JsonValue sv && sv.TryGetValue<string>(out var text) && (spec["character"]?.GetValue<bool>() != true || text.Length == 1);
-        if (literal == "object") return value is JsonObject;
-        if (literal == "array") return value is JsonArray;
-        if (literal == "enum") return (spec["enumValues"] as JsonArray ?? []).Any(v => JsonNode.DeepEquals(v, value));
-        if (literal is "number" or "integer" && value is JsonValue nv && double.TryParse(nv.ToJsonString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var n) && double.IsFinite(n))
-            return (literal != "integer" || Math.Truncate(n) == n) && (spec["min"] == null || n >= spec["min"]!.GetValue<double>()) && (spec["max"] == null || n <= spec["max"]!.GetValue<double>());
-        return false;
-    }
+    internal static bool ValidLiteral(string type, JsonNode? value, bool present, JsonObject catalog) => VisualTypes.ValidLiteral(catalog, type, value, present);
 
 }

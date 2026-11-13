@@ -15,7 +15,7 @@ static class VisualTests
             _ => throw new ArgumentException(symbol)
         };
         return new JsonObject {
-            ["version"] = 4, ["name"] = "Member binding", ["members"] = members + " public bool Completed;",
+            ["version"] = 5, ["name"] = "Member binding", ["members"] = members + " public bool Completed;",
             ["nodes"] = new JsonArray(
                 new JsonObject { ["id"]="t", ["kind"]="trigger", ["config"]=new JsonObject { ["type"]="startup" } },
                 new JsonObject { ["id"]="c", ["kind"]="custom", ["config"]=new JsonObject { ["code"]=code } },
@@ -24,10 +24,10 @@ static class VisualTests
         };
     }
     public static JsonObject Graph() => JsonNode.Parse("""
-    {"version":4,"name":"Motion","nodes":[
+    {"version":5,"name":"Motion","nodes":[
       {"id":"t","kind":"trigger","config":{"type":"entity","entity":"binary_sensor.motion"}},
       {"id":"c","kind":"condition","config":{"entity":{"kind":"literal","type":"entity_id","value":"binary_sensor.motion"},"state":"on"}},
-      {"id":"s","kind":"service","config":{"service":"light.turn_on","entity":"light.hall"}}
+      {"id":"s","kind":"service","config":{"service":"light.turn_on","target":{"kind":"literal","type":"target","value":{"entity_id":"light.hall"}}}}
     ],"edges":[{"id":"tc","source":"t","target":"c"},{"id":"cs","source":"c","target":"s","port":"true"}]}
     """)!.AsObject();
     static void Check(bool ok, string message) { if (!ok) throw new Exception(message); }

@@ -1,32 +1,31 @@
 import { createSignal } from 'solid-js'
 import { createUuid } from './id'
 import {
-  addV4Node,
+  addGraphNode,
   executionPorts,
   dataInputs,
   dataOutputs,
   inputValue,
   setInput,
   connectData,
-  compatibleTypes,
+  isAssignable,
+  resolveTypeSpec,
   nodeCatalog,
-  type GraphV4,
-  type V4Node,
-  type V4Edge,
-  type V4Operand,
+  type Graph,
+  type GraphNode,
+  type GraphEdge,
+  type Operand,
   type VisualCatalogSnapshot,
   type JsonValue,
   type InputSpec,
 } from './contract'
-export type VisualGraph = GraphV4
-export type GraphNode = V4Node
-export type GraphEdge = V4Edge
+export type { GraphNode, GraphEdge, Operand } from './contract'
+export type VisualGraph = Graph
 export type NodeKind = string
 export type EdgePort = string
-export type Operand = V4Operand
 export type ValueType = string
 export type NodeConfigData = Record<string, unknown>
-export const literal = (type: string, value: JsonValue): V4Operand => ({ kind: 'literal', type, value })
+export const literal = (type: string, value: JsonValue): Operand => ({ kind: 'literal', type, value })
 export { effectiveTriggerMethod as triggerMethod } from './contract'
 import { effectiveTriggerMethod } from './contract'
 export const catalogPalette = (catalog: VisualCatalogSnapshot = nodeCatalog) =>
@@ -44,18 +43,20 @@ export const portLabels: Record<string, string> = {
 }
 export const portLabel = (id: string) => portLabels[id] ?? (id.startsWith('branch:') ? `Branch ${id.slice(7)}` : id)
 /** Display metadata never changes a node's stable source-derived kind or ID. */
-export const nodeLabel = (node: V4Node | undefined, catalog: VisualCatalogSnapshot = nodeCatalog, fallback = '') =>
+export const nodeLabel = (node: GraphNode | undefined, catalog: VisualCatalogSnapshot = nodeCatalog, fallback = '') =>
   node ? (node.label ?? catalog.nodes[node.kind]?.label ?? node.kind) : fallback
-export const typeLabel = (type: string, catalog: VisualCatalogSnapshot = nodeCatalog) =>
-  catalog.types[type]?.label ?? catalog.types[type]?.clrType ?? catalog.types[type]?.description ?? type
+export const typeLabel = (type: string, catalog: VisualCatalogSnapshot = nodeCatalog) => {
+  const spec = resolveTypeSpec(type, catalog)
+  return spec?.label ?? spec?.clrType ?? spec?.description ?? type
+}
 export const typeCategory = (type: string, catalog: VisualCatalogSnapshot = nodeCatalog) =>
-  (catalog.types[type]?.category ?? 'Object').toLowerCase()
+  (resolveTypeSpec(type, catalog)?.category ?? 'Object').toLowerCase()
 export const typeColor = (type: string, catalog: VisualCatalogSnapshot = nodeCatalog) => `var(--hs-port-${typeCategory(type, catalog)})`
 export const outputPorts = (kind: string, catalog: VisualCatalogSnapshot = nodeCatalog) => catalog.nodes[kind]?.execution ?? []
-export const edgePort = (edge: V4Edge) => (edge.kind === 'data' ? edge.sourcePort : (edge.port ?? 'next'))
-export const outputPort = (kind: string, edge: V4Edge) => (kind === 'condition' && edgePort(edge) === 'next' ? 'true' : edgePort(edge))
-export const outputType = (node: V4Node, catalog: VisualCatalogSnapshot = nodeCatalog) => dataOutputs(node, catalog).value?.type
-export const nodeSummary = (node: V4Node, catalog: VisualCatalogSnapshot = nodeCatalog) =>
+export const edgePort = (edge: GraphEdge) => (edge.kind === 'data' ? edge.sourcePort : (edge.port ?? 'next'))
+export const outputPort = (kind: string, edge: GraphEdge) => (kind === 'condition' && edgePort(edge) === 'next' ? 'true' : edgePort(edge))
+export const outputType = (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog) => dataOutputs(node, catalog).value?.type
+export const nodeSummary = (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog) =>
   catalog.nodes[node.kind]?.description ?? 'Unknown node kind'
 export const visualRunClasses = (graph: VisualGraph) => [
   {
@@ -78,9 +79,9 @@ export const visualActionLabels = (graph: VisualGraph, catalog: VisualCatalogSna
       ]),
   )
 export const addNode = (graph: VisualGraph, kind: string, id = createUuid(), catalog: VisualCatalogSnapshot = nodeCatalog) =>
-  addV4Node(graph, kind, id, catalog)
+  addGraphNode(graph, kind, id, catalog)
 export function createGraph(name: string): VisualGraph {
-  let graph: VisualGraph = { version: 4, name, nodes: [], edges: [] }
+  let graph: VisualGraph = { version: 5, name, nodes: [], edges: [] }
   for (const [index, kind] of ['trigger', 'condition', 'service'].entries()) {
     const id = `${kind}-1`
     graph = addNode(graph, kind, id)
@@ -89,7 +90,7 @@ export function createGraph(name: string): VisualGraph {
         ? { type: 'entity', entity: 'binary_sensor.motion', manual: true, mode: 'Single' }
         : kind === 'condition'
           ? { entity: literal('entity_id', 'binary_sensor.motion'), state: 'on' }
-          : { ...graph.nodes.at(-1)!.config, service: 'light.turn_on', entity: 'light.hall' }
+          : { ...graph.nodes.at(-1)!.config, service: 'light.turn_on', target: literal('target', { entity_id: 'light.hall' }) }
     graph = updateNode(graph, id, {
       config,
       ...(kind === 'trigger' ? { label: 'Entity changes' } : {}),
@@ -98,7 +99,7 @@ export function createGraph(name: string): VisualGraph {
   }
   return connectNodes(connectNodes(graph, 'trigger-1', 'condition-1'), 'condition-1', 'service-1')
 }
-export const updateNode = (graph: VisualGraph, id: string, patch: Partial<Omit<V4Node, 'id' | 'kind'>>): VisualGraph => ({
+export const updateNode = (graph: VisualGraph, id: string, patch: Partial<Omit<GraphNode, 'id' | 'kind'>>): VisualGraph => ({
   ...graph,
   nodes: graph.nodes.map(node => (node.id === id ? { ...node, ...patch } : node)),
 })
@@ -189,9 +190,9 @@ export function createNodeAt(
   return pending ? connectNodes(next, pending.source, next.nodes.at(-1)!.id, pending.port, catalog) : next
 }
 /** Resolve loop-result declarations from its nearest execution body owner. */
-export function loopOwner(graph: VisualGraph, node: V4Node): V4Node | undefined {
+export function loopOwner(graph: VisualGraph, node: GraphNode): GraphNode | undefined {
   const seen = new Set<string>()
-  const visit = (id: string): V4Node | undefined => {
+  const visit = (id: string): GraphNode | undefined => {
     if (seen.has(id)) return
     seen.add(id)
     for (const edge of graph.edges.filter(e => e.kind !== 'data' && e.target === id)) {
@@ -204,11 +205,11 @@ export function loopOwner(graph: VisualGraph, node: V4Node): V4Node | undefined 
   }
   return visit(node.id)
 }
-export const nodeInputs = (graph: VisualGraph, node: V4Node, catalog: VisualCatalogSnapshot = nodeCatalog) =>
+export const nodeInputs = (graph: VisualGraph, node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog) =>
   dataInputs(node, loopOwner(graph, node), catalog)
 export function inputType(
   graph: VisualGraph,
-  node: V4Node,
+  node: GraphNode,
   port: string,
   input: InputSpec,
   catalog: VisualCatalogSnapshot = nodeCatalog,
@@ -245,7 +246,7 @@ export function dataConnectionError(
   const output = dataOutputs(source, catalog)[sourcePort],
     input = nodeInputs(graph, target, catalog)[targetPort]
   if (!output || !input) return 'Unknown data port'
-  if (!input.types.some(t => compatibleTypes(output.type, t, catalog)))
+  if (!input.types.some(t => isAssignable(output.type, t, catalog)))
     return `${input.label ?? targetPort} requires ${input.types.map(t => typeLabel(t, catalog)).join(' / ')}; ${output.label ?? sourcePort} outputs ${typeLabel(output.type, catalog)}`
   try {
     connectData(graph, sourceId, sourcePort, targetId, targetPort, catalog)

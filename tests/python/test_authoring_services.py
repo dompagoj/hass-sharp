@@ -20,7 +20,7 @@ class AuthoringTests(unittest.IsolatedAsyncioTestCase):
         return env['AuthoringService'](None,types.SimpleNamespace(VisualRequest=object()))
     async def test_native_diagnostics_prevent_save_and_match_preview(self):
         service=self.service()
-        graph={'version':4,'name':'safe','nodes':[{'id':'t','kind':'trigger','config':{'type':'ha','trigger':{'trigger':'bad'}}}],'edges':[]}
+        graph={'version':5,'name':'safe','nodes':[{'id':'t','kind':'trigger','config':{'type':'ha','trigger':{'trigger':'bad'}}}],'edges':[]}
         preview=await service.visual({'operation':'preview','graph':graph},is_admin=True)
         self.assertFalse(preview['result']['valid'])
         self.assertEqual(preview['result']['diagnostics'][0]['severity'],3)
@@ -29,7 +29,7 @@ class AuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(r['operation']=='save' for r in self.requests))
     async def test_layout_is_preserved_for_authoritative_managed_store(self):
         service=self.service();self.native.return_value=[]
-        graph={'version':4,'name':'safe','nodes':[{'id':'b','kind':'trigger','config':{},'position':{'x':12,'y':34}},{'id':'a','kind':'log','config':{}}],'edges':[]}
+        graph={'version':5,'name':'safe','nodes':[{'id':'b','kind':'trigger','config':{},'position':{'x':12,'y':34}},{'id':'a','kind':'log','config':{}}],'edges':[]}
         original=copy.deepcopy(graph)
         await service.visual({'operation':'save','id':'safe','expectedRevision':0,'graph':graph},is_admin=True)
         saved=self.requests[-1]['graph']
@@ -44,7 +44,7 @@ class AuthoringTests(unittest.IsolatedAsyncioTestCase):
             entered.set();await release.wait()
             return [{'nodeId':'t','severity':2,'message':'warning'}]
         self.native.side_effect=validate
-        graph={'version':4,'name':'safe','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'}}],'edges':[]}
+        graph={'version':5,'name':'safe','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'}}],'edges':[]}
         task=asyncio.create_task(service.visual({'operation':'save','id':'safe','expectedRevision':0,'graph':graph},is_admin=True))
         await entered.wait();graph['name']='mutated';graph['nodes'][0]['config']['type']='startup';release.set()
         self.assertTrue((await task)['ok'])

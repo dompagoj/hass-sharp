@@ -163,10 +163,11 @@ public sealed class VisualRuntime
         return FromJson(operand!["value"],Text(operand,"type"),label);
     }
     object? FromJson(JsonNode? value,string type,string label) {
-        if(!types.TryGetValue(type,out var clr))throw new InvalidOperationException($"Unknown declared type {type} at {label}");
+        var root=VisualTypes.RootId(catalog,type);
+        if(!types.TryGetValue(root,out var clr))throw new InvalidOperationException($"Unknown declared type {type} at {label}");
         if(value==null)return ConvertTo(null,type,label,false);
         if(clr==typeof(JsonElement)) {
-            if(type=="object" && value is not JsonObject || type=="array" && value is not JsonArray)throw new InvalidOperationException($"{label} requires {type}");
+            if(root=="object" && value is not JsonObject || root=="array" && value is not JsonArray)throw new InvalidOperationException($"{label} requires {type}");
             return JsonSerializer.SerializeToElement(value);
         }
         var effective=Nullable.GetUnderlyingType(clr)??clr;
@@ -218,11 +219,14 @@ public sealed class VisualRuntime
     }
     static bool IsNumber(Type t)=>Type.GetTypeCode(t) is TypeCode.Char or >=TypeCode.SByte and <=TypeCode.Decimal;
     object? ConvertTo(object? value,string type,string label,bool convert=true) {
-        var result=Coerce(value,types[type],label,convert);
-        if(result==null && catalog["types"]?[type]?["nullable"]?.GetValue<bool>()!=true)throw new InvalidOperationException($"{label} requires non-null {type}, got null.");
-        if(type=="entity_id" && (result is not string s || !System.Text.RegularExpressions.Regex.IsMatch(s,"^[a-z0-9_]+\\.[a-z0-9_]+$")))throw new InvalidOperationException($"Cannot convert {label} to entity_id.");
-        if(type=="object" && result is not JsonObject || type=="array" && result is not JsonArray)throw new InvalidOperationException($"{label} requires JSON {type}.");
-        if(type=="number"&&result is double number&&!double.IsFinite(number))throw new InvalidOperationException($"{label} requires finite number.");return result;
+        var chain=VisualTypes.Chain(catalog,type);
+        if(chain.Count==0||!types.TryGetValue(chain[^1],out var clr))throw new InvalidOperationException($"Unknown declared type {type} at {label}");
+        var root=chain[^1];var result=Coerce(value,clr,label,convert);
+        if(result==null && VisualTypes.Resolve(catalog,type)?["nullable"]?.GetValue<bool>()!=true)throw new InvalidOperationException($"{label} requires non-null {type}, got null.");
+        // A refinement narrows only when the value satisfies every pattern in its chain.
+        foreach(var id in chain)if(VisualTypes.Resolve(catalog,id)?["pattern"] is JsonValue pattern && result!=null && (result is not string s || !System.Text.RegularExpressions.Regex.IsMatch(s,pattern.GetValue<string>(),System.Text.RegularExpressions.RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1))))throw new InvalidOperationException($"Cannot convert {label} to {type}.");
+        if(root=="object" && result is not JsonObject || root=="array" && result is not JsonArray)throw new InvalidOperationException($"{label} requires JSON {type}.");
+        if(root=="number"&&result is double number&&!double.IsFinite(number))throw new InvalidOperationException($"{label} requires finite number.");return result;
     }
     async Task Walk(string? id,VisualScope scope,int depth) {
         if(depth>8)throw new InvalidOperationException("Structured nesting limit is 8");
@@ -243,7 +247,7 @@ public sealed class VisualRuntime
                     case "not":Output(scope,id,!Input<bool>(scope,id,"value"));break;
                     case "compare":
                         if(!comparisonTypes.TryGetValue(id,out var common))throw new InvalidOperationException($"Node {id}: compiled comparison type is missing.");
-                        Output(scope,id,Compare(Coerce(Get("left"),types[common],id+".left",false),Coerce(Get("right"),types[common],id+".right",false),Text(cfg,"operator","eq")));break;
+                        var clr=types[VisualTypes.RootId(catalog,common)];Output(scope,id,Compare(Coerce(Get("left"),clr,id+".left",false),Coerce(Get("right"),clr,id+".right",false),Text(cfg,"operator","eq")));break;
                     case "set_value":case "convert":if(compiledConversions.Contains(id))await custom(id,scope,this);else Output(scope,id,ConvertTo(Get("value"),Text(cfg,"type"),id+".value"));break;
                     case "read_entity":Output(scope,id,ReadEntity(Input<string>(scope,id,"entity")));break;
                     case "entity_field":Output(scope,id,EntityField(Input<EntityStateSnapshot>(scope,id,"entity"),cfg,id));break;
@@ -291,12 +295,11 @@ public sealed class VisualRuntime
     async Task Service(string id,VisualScope scope,JsonNode cfg) {
         var payload=JsonNode.Parse(Input<JsonElement>(scope,id,"data").GetRawText())!.AsObject();var target=Input<JsonElement>(scope,id,"target");
         foreach(var p in target.EnumerateObject())payload[p.Name]=JsonNode.Parse(p.Value.GetRawText());
-        if(Text(cfg,"entity") is var entity&&entity!="")payload["entity_id"]=entity;
         var service=Text(cfg,"service").Split('.');
-        var needsResponse=Text(cfg,"response")!="" || data.Values.Contains((id,"response"));
-        if(needsResponse) {
+        // Until the node declares returnResponse, a wired response output is the only reason to request one.
+        if(data.Values.Contains((id,"response"))) {
             var response=await HassServices.CallServiceAsync<JsonElement>(service[0],service[1],payload).WaitAsync(scope.CancellationToken);
-            Output(scope,id,ConvertTo(response,"object",id+".response",false),"response");if(Text(cfg,"response") is var name&&name!="")scope.Responses[name]=response;
+            Output(scope,id,ConvertTo(response,"object",id+".response",false),"response");
         } else await HassServices.CallServiceAsync(service[0],service[1],payload).WaitAsync(scope.CancellationToken);
     }
     async Task Parallel(string id,VisualScope parent,int depth) {
