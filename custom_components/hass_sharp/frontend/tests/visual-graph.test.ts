@@ -210,3 +210,30 @@ describe('coalesced history commits', () => {
     dispose()
   }))
 })
+
+describe('coalesced commits that change nothing', () => {
+  const label = (history: ReturnType<typeof createGraphHistory>, text: string, coalesce?: string) =>
+    history.commit(updateNode(history.graph(), 'trigger-1', { label: text }), coalesce === undefined ? undefined : { coalesce })
+  it('a no-op commit does not start a merged run', () => createRoot(dispose => {
+    const history = createGraphHistory(createGraph('No-op'))
+    label(history, 'G1')
+    // A slider emits its current value on pointer down, then real values with the same key.
+    history.commit(history.graph(), { coalesce: 'k' })
+    label(history, 'G2', 'k')
+    history.undo()
+    expect(history.graph().nodes[0].label).toBe('G1')
+    history.undo()
+    expect(history.graph().nodes[0].label).toBe('Entity changes')
+    dispose()
+  }))
+  it('a no-op commit with the same key inside a run keeps the run', () => createRoot(dispose => {
+    const history = createGraphHistory(createGraph('No-op'))
+    label(history, 'a', 'k')
+    history.commit(history.graph(), { coalesce: 'k' })
+    label(history, 'ab', 'k')
+    history.undo()
+    expect(history.graph().nodes[0].label).toBe('Entity changes')
+    expect(history.canUndo()).toBe(false)
+    dispose()
+  }))
+})

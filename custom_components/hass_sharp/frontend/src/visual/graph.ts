@@ -195,8 +195,8 @@ export function loopOwner(graph: VisualGraph, node: GraphNode): GraphNode | unde
   const visit = (id: string): GraphNode | undefined => {
     if (seen.has(id)) return
     seen.add(id)
-    for (const edge of graph.edges.filter(e => e.kind !== 'data' && e.target === id)) {
-      const parent = graph.nodes.find(n => n.id === edge.source)
+    for (const edge of graph.edges.filter(e => e && e.kind !== 'data' && e.target === id)) {
+      const parent = graph.nodes.find(n => n?.id === edge.source)
       if (!parent) continue
       if (edge.kind !== 'data' && edge.port === 'body' && ['repeat', 'foreach', 'while', 'until'].includes(parent.kind)) return parent
       const found = visit(parent.id)
@@ -241,8 +241,8 @@ export function dataConnectionError(
   catalog: VisualCatalogSnapshot = nodeCatalog,
   options: { quick?: boolean } = {},
 ): string | undefined {
-  const source = graph.nodes.find(n => n.id === sourceId),
-    target = graph.nodes.find(n => n.id === targetId)
+  const source = graph.nodes.find(n => n?.id === sourceId),
+    target = graph.nodes.find(n => n?.id === targetId)
   if (!source || !target) return 'Connection endpoint missing'
   const index = connectionIndex(graph, catalog)
   const output = index.remember(JSON.stringify(['outputs', sourceId]), () => dataOutputs(source, catalog))[sourcePort],
@@ -276,12 +276,18 @@ export function createGraphHistory(initial: VisualGraph) {
     },
     canUndo: () => past().length > 0,
     canRedo: () => future().length > 0,
-    /** A commit without `coalesce`, with a different key, or any undo/redo ends the merged run. */
+    /**
+     * A commit without `coalesce`, with a different key, or any undo/redo ends the merged run. A commit that
+     * changes nothing never starts a run (its state was never stored); with the run's own key it keeps the run going.
+     */
     commit(next: VisualGraph, options: { coalesce?: string } = {}) {
       const key = options.coalesce
+      if (serializeGraph(next) === serializeGraph(graph())) {
+        if (key !== coalescing) coalescing = undefined
+        return
+      }
       const merge = key !== undefined && key === coalescing && past().length > 0
       coalescing = key
-      if (serializeGraph(next) === serializeGraph(graph())) return
       if (!merge) setPast([...past().slice(-99), graph()])
       setFuture([])
       setGraph(next)

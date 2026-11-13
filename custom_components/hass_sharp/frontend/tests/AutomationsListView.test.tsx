@@ -127,7 +127,7 @@ it('refreshes symbols once, reports progress and invalidates entity suggestions'
   let finish!: (value: unknown) => void
   const refresh = vi.fn(() => new Promise(resolve => { finish = resolve }))
   const { root } = setup(false, true, refresh)
-  client.setQueryData(['hass-entities'], [{ entity_id: 'light.old' }])
+  client.setQueryData(['hass-entities'], { entities: [{ entity_id: 'light.old' }], areas: [], devices: [], floors: [], labels: [] })
   const button = [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Refresh entity IDs')!
   expect(button).toBeDefined(); button.click(); button.click()
   expect(button.disabled).toBe(true); expect(refresh).toHaveBeenCalledTimes(1)

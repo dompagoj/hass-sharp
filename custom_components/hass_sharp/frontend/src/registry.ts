@@ -71,8 +71,10 @@ const accepts = (entity: EntityInfo, f: EntityFilter) =>
   (!f.deviceClass.length || (entity.device_class !== null && f.deviceClass.includes(entity.device_class))) &&
   (!f.supportedFeatures.length || f.supportedFeatures.some(feature => ((entity.supported_features ?? 0) & feature) !== 0))
 /**
- * A predicate over registry entities, as Home Assistant applies selector filters: an entity passes when any
- * alternative matches; within one, any listed domain, any device class and any supported feature bit. No filter accepts all.
+ * A predicate over registry entities, matching Home Assistant's frontend selector filtering: an entity passes when
+ * any alternative matches; within one, any listed domain and any device class. Each supported-features value matches
+ * when the entity shares any of its bits (`(features & value) !== 0`), and several values are OR-ed.
+ * No filter accepts all.
  */
 export function entityFilter(input: unknown): (entity: EntityInfo) => boolean {
   const alternatives = filters(input)

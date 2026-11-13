@@ -30,6 +30,7 @@ export interface ConnectionIndex {
   /**
    * Whether connectData(graph, source, sourcePort, target, targetPort) would succeed, without cloning the
    * graph or validating it again. Callers check that both ports exist and their types match first.
+   * Memoised per output -> input pair, including verdicts that fell back to connectData.
    */
   verdict(source: string, sourcePort: string, target: string, targetPort: string): ConnectionVerdict
 }
@@ -38,8 +39,6 @@ export interface ConnectionIndex {
 const blocking = /cycle|scope/
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const pairKey = (a: string | null, b: string) => JSON.stringify([a, b])
-// Inputs stored next to configuration a validator rule or output type also reads; wiring them changes more than one input.
-const sharedConfig = ['output', 'carry', 'exports', 'branches', 'itemType', 'values', 'fields', 'items', 'arguments']
 
 const cache = new WeakMap<Graph, WeakMap<VisualCatalogSnapshot, ConnectionIndex>>()
 
@@ -78,6 +77,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
   }
   const assignability = new Map<string, boolean>()
   const memo = new Map<string, unknown>()
+  const verdicts = new Map<string, ConnectionVerdict>()
   const index: ConnectionIndex = {
     analysis,
     assignable(source, target) {
@@ -92,80 +92,115 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       return memo.get(key) as T
     },
     verdict(sourceId, sourcePort, targetId, targetPort) {
-      const full = (): ConnectionVerdict => {
-        try {
-          connectData(graph, sourceId, sourcePort, targetId, targetPort, catalog)
-          return { fallback: true }
-        } catch (error) {
-          return { message: error instanceof Error ? error.message : String(error), fallback: true }
-        }
-      }
-      if (graph.version !== catalog.graphVersion) return { message: `Only graph version ${catalog.graphVersion} is supported`, fallback: false }
-      if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return full()
-      const target = graph.nodes.find(n => n.id === targetId), source = graph.nodes.find(n => n.id === sourceId)
-      if (!target) return { message: 'Target node missing', fallback: false }
-      const removed = new Set<number>()
-      graph.edges.forEach((e, i) => { if (e.kind === 'data' && e.target === targetId && e.targetPort === targetPort) removed.add(i) })
-      const edgeCount = graph.edges.length - removed.size + 1
-      const limited = !graph.nodes.length || graph.nodes.length > catalog.limits.nodes
-      if (!analysis.complete) {
-        // Both validations stop at the same limit diagnostic, so nothing is added; anything else needs the full check.
-        if (!diagnostics.some(d => d.message.startsWith('Graph limit'))) return full()
-        return limited || edgeCount > catalog.limits.edges ? { fallback: false } : full()
-      }
-      if (edgeCount > catalog.limits.edges) return { message: 'Graph limit: 1–256 nodes and at most 512 edges', fallback: false }
-      if (!source || analysis.nodes.get(sourceId) !== source || analysis.nodes.get(targetId) !== target) return full()
-      const spec = Object.hasOwn(catalog.nodes, target.kind) ? catalog.nodes[target.kind] : undefined
-      if (!spec || !storageIsPrivate(target, targetPort, spec)) return full()
-
-      const volatile = (o: DiagnosticOrigin) =>
-        (o.kind === 'edge' && removed.has(o.edge)) || o.kind === 'dataCycle' ||
-        (o.kind === 'operand' && o.node === targetId && o.port === targetPort) ||
-        (o.kind === 'comparison' && o.node === targetId) ||
-        (o.kind === 'serviceTarget' && o.node === targetId && targetPort === 'target')
-      const messages = new Set<string>()
-      // Carried-over diagnostics reject when they match connectData's filters.
-      for (const i of [...blockingAll, ...(byInput.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(sourceId, sourcePort)) ?? [])].sort((a, b) => a - b))
-        if (!volatile(origins[i])) messages.add(diagnostics[i].message)
-      // The new edge, as the validator types it.
-      const output = dataOutputs(source, catalog)[sourcePort]
-      const input = dataInputs(target, analysis.ownerOf(target), catalog)[targetPort]
-      if (!output) messages.add('Unknown data output port')
-      if (!input) messages.add('Unknown data input port')
-      if (output && input) {
-        if (!input.types.some(t => index.assignable(output.type, t))) messages.add(`Incompatible input type ${output.type}; expected ${input.types.join('/')}`)
-        if (!analysis.visible(source, target, output)) messages.add('Data cannot cross this structured scope')
-      }
-      if (sourceId === targetId || (hasDataCycle ? dataCycleAfter(analysis, sourceId, targetId, targetPort) : reach(targetId).has(sourceId))) messages.add('Data cycle is forbidden')
-      if (spec.comparison && input) {
-        const resolved = { ...analysis.resolved.get(targetId), [targetPort]: output?.type }
-        for (const d of comparisonDiagnostics(target, spec, resolved, catalog))
-          if (d.inputId === targetPort || !old.has(JSON.stringify(d))) messages.add(d.message)
-      }
-      // Mirrors validateService: a wired target on a known service without a target.
-      const service = target.config.service
-      if (targetPort === 'target' && spec.dynamicInputs === 'service' && catalog.services && typeof service === 'string' &&
-        new RegExp(spec.config.service?.pattern ?? '').test(service)) {
-        const schema = serviceSchema(target, catalog)
-        if (schema && !record(schema.target)) messages.add(`Service ${service} does not take a target`)
-      }
-      return messages.size ? { message: [...messages].join('; '), fallback: false } : { fallback: false }
+      const key = JSON.stringify([sourceId, sourcePort, targetId, targetPort])
+      let verdict = verdicts.get(key)
+      if (!verdict) verdicts.set(key, (verdict = decide(sourceId, sourcePort, targetId, targetPort)))
+      return verdict
     },
+  }
+  function decide(sourceId: string, sourcePort: string, targetId: string, targetPort: string): ConnectionVerdict {
+    const full = (): ConnectionVerdict => {
+      try {
+        connectData(graph, sourceId, sourcePort, targetId, targetPort, catalog)
+        return { fallback: true }
+      } catch (error) {
+        return { message: error instanceof Error ? error.message : String(error), fallback: true }
+      }
+    }
+    if (graph.version !== catalog.graphVersion) return { message: `Only graph version ${catalog.graphVersion} is supported`, fallback: false }
+    if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return full()
+    // connectData reads `kind` of every edge and throws on a null entry; reject such a graph without throwing from a hover.
+    if (graph.edges.some(e => e === null || e === undefined)) return { message: 'Every edge must be an object', fallback: false }
+    const target = graph.nodes.find(n => n?.id === targetId), source = graph.nodes.find(n => n?.id === sourceId)
+    if (!target) return { message: 'Target node missing', fallback: false }
+    const removed = new Set<number>()
+    graph.edges.forEach((e, i) => { if (record(e) && e.kind === 'data' && e.target === targetId && e.targetPort === targetPort) removed.add(i) })
+    const edgeCount = graph.edges.length - removed.size + 1
+    const limited = !graph.nodes.length || graph.nodes.length > catalog.limits.nodes
+    if (!analysis.complete) {
+      // Both validations stop at the same limit diagnostic, so nothing is added; anything else needs the full check.
+      if (!diagnostics.some(d => d.message.startsWith('Graph limit'))) return full()
+      return limited || edgeCount > catalog.limits.edges ? { fallback: false } : full()
+    }
+    if (edgeCount > catalog.limits.edges) return { message: 'Graph limit: 1–256 nodes and at most 512 edges', fallback: false }
+    if (!source || analysis.nodes.get(sourceId) !== source || analysis.nodes.get(targetId) !== target) return full()
+    const spec = Object.hasOwn(catalog.nodes, target.kind) ? catalog.nodes[target.kind] : undefined
+    if (!spec || !storageIsPrivate(target, targetPort, spec)) return full()
+
+    const volatile = (o: DiagnosticOrigin) =>
+      (o.kind === 'edge' && removed.has(o.edge)) || o.kind === 'dataCycle' ||
+      (o.kind === 'operand' && o.node === targetId && o.port === targetPort) ||
+      (o.kind === 'comparison' && o.node === targetId) ||
+      (o.kind === 'serviceTarget' && o.node === targetId && targetPort === 'target')
+    const messages = new Set<string>()
+    // Carried-over diagnostics reject when they match connectData's filters.
+    for (const i of [...blockingAll, ...(byInput.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(sourceId, sourcePort)) ?? [])].sort((a, b) => a - b))
+      if (!volatile(origins[i])) messages.add(diagnostics[i].message)
+    // The new edge, as the validator types it.
+    const output = dataOutputs(source, catalog)[sourcePort]
+    const input = dataInputs(target, analysis.ownerOf(target), catalog)[targetPort]
+    if (!output) messages.add('Unknown data output port')
+    if (!input) messages.add('Unknown data input port')
+    if (output && input) {
+      if (!input.types.some(t => index.assignable(output.type, t))) messages.add(`Incompatible input type ${output.type}; expected ${input.types.join('/')}`)
+      if (!analysis.visible(source, target, output)) messages.add('Data cannot cross this structured scope')
+    }
+    if (sourceId === targetId || (hasDataCycle ? dataCycleAfter(analysis, sourceId, targetId, targetPort) : reach(targetId).has(sourceId))) messages.add('Data cycle is forbidden')
+    if (spec.comparison && input) {
+      const resolved = { ...analysis.resolved.get(targetId), [targetPort]: output?.type }
+      for (const d of comparisonDiagnostics(target, spec, resolved, catalog))
+        if (d.inputId === targetPort || !old.has(JSON.stringify(d))) messages.add(d.message)
+    }
+    // Mirrors validateService: a wired target on a known service without a target.
+    const service = target.config.service
+    if (targetPort === 'target' && spec.dynamicInputs === 'service' && catalog.services && typeof service === 'string' &&
+      new RegExp(spec.config.service?.pattern ?? '').test(service)) {
+      const schema = serviceSchema(target, catalog)
+      if (schema && !record(schema.target)) messages.add(`Service ${service} does not take a target`)
+    }
+    return messages.size ? { message: [...messages].join('; '), fallback: false } : { fallback: false }
   }
   return index
 }
 
+type NodeSpec = VisualCatalogSnapshot['nodes'][string]
+/**
+ * Config keys of this node kind that something other than the input itself reads: the catalog config, and what
+ * contract.ts derives from config for the kind (ports, scopes, trigger rules, variable outputs).
+ */
+function sharedConfigKeys(kind: string, spec: NodeSpec): Set<string> {
+  const keys = new Set([...Object.keys(spec.config), 'output'])
+  if (spec.dynamicInputs === 'fields' || spec.dynamicInputs === 'service') keys.add('fields')
+  if (spec.dynamicInputs === 'service') for (const key of ['service', 'returnResponse']) keys.add(key)
+  if (spec.dynamicInputs === 'items') keys.add('items')
+  if (spec.dynamicOutputs === 'loop') for (const key of ['carry', 'exports']) keys.add(key)
+  if (spec.dynamicExecution === 'branches' || kind === 'parallel') keys.add('branches')
+  if (spec.dynamicOutputs === 'trigger' || kind === 'trigger') for (const key of ['type', 'trigger', 'entity', 'time', 'timeZone', 'at']) keys.add(key)
+  if (kind === 'foreach') keys.add('itemType')
+  if (kind === 'entity_field' || kind === 'wait_until') for (const key of ['field', 'attribute']) keys.add(key)
+  if (kind === 'get_field') keys.add('pointer')
+  if (spec.comparison) for (const key of [spec.comparison.typeConfig, spec.comparison.operatorConfig]) if (key) keys.add(key)
+  for (const output of Object.values(spec.outputs)) {
+    if (output.type.startsWith('$')) keys.add(output.type.slice(1))
+    if (output.when) keys.add(output.when)
+    if (output.refineFrom) keys.add(output.refineFrom.split('.')[0])
+  }
+  for (const input of Object.values(spec.inputs)) for (const type of input.types) if (type.startsWith('$') && type !== '$any') keys.add(type.slice(1))
+  return keys
+}
 /** True when setInput writes the operand where nothing but this input reads it. */
-function storageIsPrivate(node: GraphNode, port: string, spec: VisualCatalogSnapshot['nodes'][string]) {
-  if (spec.argumentStorage === 'arguments') return record(node.config.arguments)
+function storageIsPrivate(node: GraphNode, port: string, spec: NodeSpec) {
+  if (spec.argumentStorage === 'arguments') {
+    const args = node.config.arguments
+    if (record(args)) return true
+    // setInput replaces a malformed value with { [port]: operand }; that is private unless another input read something from it.
+    return port !== 'arguments' && (args === undefined || args === null ||
+      Object.keys(spec.inputs).every(other => other === port || (args as Record<string, unknown>)[other] === undefined))
+  }
   if (port.startsWith('field:')) return record(node.config.fields)
   if (port.startsWith('item:')) return Array.isArray(node.config.items)
   if (node.kind === 'loop_result') return node.config.values === undefined || record(node.config.values)
-  if (Object.hasOwn(spec.config, port) || sharedConfig.includes(port)) return false
-  if (spec.comparison && (spec.comparison.typeConfig === port || spec.comparison.operatorConfig === port)) return false
-  const outputs = Object.values(spec.outputs)
-  if (outputs.some(o => o.type === `$${port}` || o.when === port || o.refineFrom?.split('.')[0] === port)) return false
-  return !Object.values(spec.inputs).some(i => i.types.includes(`$${port}`))
+  return !sharedConfigKeys(node.kind, spec).has(port)
 }
 
 /** Whether the data edges, with the target input rewired to the new source, contain any cycle. */

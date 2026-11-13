@@ -24,6 +24,10 @@ it('filters entities by domain, device class and supported feature bits', () => 
   // 44 = 4 | 8 | 32: any listed bit matches, as in Home Assistant.
   expect(ids({ supportedFeatures: [16, 32] })).toEqual(['light.hall'])
   expect(ids({ supportedFeatures: [16] })).toEqual([])
+  // A multi-bit value matches on any shared bit (Home Assistant frontend): 48 = 16 | 32 shares 32 with 44; 3 shares none.
+  expect(ids({ supportedFeatures: [48] })).toEqual(['light.hall'])
+  expect(ids({ supportedFeatures: [3] })).toEqual([])
+  expect(ids({ supported_features: [3, 48] })).toEqual(['light.hall'])
   expect(ids({ target: { entity: { domain: 'light', supported_features: 4 } } })).toEqual(['light.hall'])
 })
 it('accepts any alternative and treats a missing or unrestricted filter as no filter', () => {

@@ -5,7 +5,7 @@ import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
 import * as contract from '../src/visual/contract'
 import type { Graph, VisualCatalogSnapshot } from '../src/visual/contract'
 import { connectionIndex } from '../src/visual/connectionIndex'
-import { createGraph, dataConnectionError, inputType, literal, nodeInputs, updateNode } from '../src/visual/graph'
+import { connectNodes, createGraph, dataConnectionError, inputType, literal, nodeInputs, updateNode } from '../src/visual/graph'
 
 interface ValidationCase { name: string; graph: unknown; services?: boolean; catalogPatch?: Record<string, unknown> }
 const services = servicesFixture as unknown as contract.ServicesSection
@@ -32,9 +32,13 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   if (!input.types.some(t => contract.isAssignable(output.type, t, catalog))) return 'type'
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
+// Pinned totals of the agreement runs below.
+const PAIRS = 549, ACCEPTED = 182, BY_VALIDATION = 122, SERVICES_ACCEPTED = 167, SERVICES_BY_VALIDATION = 121
+const RICH: Totals = { graphs: 21, pairs: 190, accepted: 38, rejected: 152, byValidation: 0, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 
-interface Totals { graphs: number; pairs: number; accepted: number; rejected: number; byValidation: number; fallbacks: number; skipped: string[] }
+interface Totals { graphs: number; pairs: number; accepted: number; rejected: number; byValidation: number; fallbacks: string[]; skipped: string[] }
+const totals = (): Totals => ({ graphs: 0, pairs: 0, accepted: 0, rejected: 0, byValidation: 0, fallbacks: [], skipped: [] })
 function agree(name: string, value: unknown, catalog: VisualCatalogSnapshot, totals: Totals) {
   const graph = value as Graph
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : undefined
@@ -49,10 +53,12 @@ function agree(name: string, value: unknown, catalog: VisualCatalogSnapshot, tot
       const actual = dataConnectionError(graph, source.id, sourcePort, target.id, targetPort, catalog, { quick: true })
       const label = `${name}: ${source.id}.${sourcePort} -> ${target.id}.${targetPort}`
       expect(actual === undefined, `${label}\nfull: ${expected}\nquick: ${actual}`).toBe(expected === undefined)
+      // Every pair, accepted or rejected, gets an index verdict; one that ran connectData itself is a fallback.
+      const verdict = connectionIndex(graph, catalog).verdict(source.id, sourcePort, target.id, targetPort)
+      if (verdict.fallback) totals.fallbacks.push(label)
+      if (expected === undefined) expect(verdict.message, label).toBeUndefined()
       if (expected !== undefined && expected !== 'type' && expected !== 'Unknown data port') {
-        const verdict = connectionIndex(graph, catalog).verdict(source.id, sourcePort, target.id, targetPort)
         totals.byValidation++
-        if (verdict.fallback) totals.fallbacks++
         // The index predicts the same diagnostics connectData adds, so the hover message matches the drop message.
         expect(parts(verdict.message), label).toEqual(parts(expected))
       }
@@ -66,21 +72,20 @@ describe('connection index agrees with connectData', () => {
   const cases = fixtureCases as ValidationCase[]
   // Every case runs with and without the services section: ports never depend on it (D3), only types and checks.
   for (const withServices of [false, true]) it(`for every fixture graph and output -> input pair (${withServices ? 'with' : 'without'} services)`, () => {
-    const totals: Totals = { graphs: 0, pairs: 0, accepted: 0, rejected: 0, byValidation: 0, fallbacks: 0, skipped: [] }
+    const sum = totals()
     for (const fixture of cases) {
       const base = fixture.catalogPatch ? patched(fixture.catalogPatch) : contract.nodeCatalog
-      agree(fixture.name, fixture.graph, withServices ? { ...base, services } : base, totals)
+      agree(fixture.name, fixture.graph, withServices ? { ...base, services } : base, sum)
     }
-    console.info(`connection index (${withServices ? 'services' : 'no services'}):`, JSON.stringify(totals))
-    expect(totals.graphs + totals.skipped.length).toBe(cases.length)
-    expect(totals.accepted).toBeGreaterThan(0)
-    expect(totals.rejected).toBeGreaterThan(0)
+    // Pinned: a fixture change that alters these is visible here. No fixture pair needs the full check.
+    expect(sum).toEqual(withServices
+      ? { graphs: 155, pairs: PAIRS, accepted: SERVICES_ACCEPTED, rejected: PAIRS - SERVICES_ACCEPTED, byValidation: SERVICES_BY_VALIDATION, fallbacks: [], skipped: [] }
+      : { graphs: 155, pairs: PAIRS, accepted: ACCEPTED, rejected: PAIRS - ACCEPTED, byValidation: BY_VALIDATION, fallbacks: [], skipped: [] })
   })
   it('for the shared CLR catalog graphs', () => {
-    const totals: Totals = { graphs: 0, pairs: 0, accepted: 0, rejected: 0, byValidation: 0, fallbacks: 0, skipped: [] }
-    for (const fixture of rich.cases) agree(fixture.name, fixture.graph, rich.catalog as unknown as VisualCatalogSnapshot, totals)
-    expect(totals.skipped).toEqual([])
-    expect(totals.pairs).toBeGreaterThan(0)
+    const sum = totals()
+    for (const fixture of rich.cases) agree(fixture.name, fixture.graph, rich.catalog as unknown as VisualCatalogSnapshot, sum)
+    expect(sum).toEqual(RICH)
   })
 })
 
@@ -125,5 +130,48 @@ describe('connection index', () => {
     const input = { types: ['boolean', 'string'], required: true, description: '' }
     expect(inputType(graph, consumer, 'left', input)).toBeUndefined()
     expect(connectionIndex(graph).resolvedType('consumer', 'right')).toBe('boolean')
+  })
+})
+
+describe('connection index fallbacks', () => {
+  // trigger -> array -> foreach (body: delay), so the array value is visible to the loop's Items input.
+  const loop = () => {
+    let graph = contract.addGraphNode(contract.addGraphNode({ version: 5, name: 'Loop', nodes: [], edges: [] }, 'trigger', 't'), 'array', 'list')
+    graph = contract.addGraphNode(contract.addGraphNode(graph, 'foreach', 'each'), 'delay', 'wait')
+    graph = updateNode(graph, 't', { config: { type: 'manual', manual: true, mode: 'Single' } })
+    return connectNodes(connectNodes(connectNodes(graph, 't', 'list'), 'list', 'each'), 'each', 'wait', 'body')
+  }
+  it('decides a ForEach Items input from the index, and memoises verdicts', () => {
+    const graph = loop()
+    expect(contract.validateGraph(graph).filter(d => d.severity === 3)).toEqual([])
+    const index = connectionIndex(graph)
+    const verdict = index.verdict('list', 'value', 'each', 'items')
+    expect(verdict).toEqual({ fallback: false })
+    expect(index.verdict('list', 'value', 'each', 'items')).toBe(verdict)
+    expect(fullCheck(graph, 'list', 'value', 'each', 'items', contract.nodeCatalog)).toBeUndefined()
+  })
+  it('falls back only for an input stored where configuration is read, and memoises that verdict too', () => {
+    // A patched catalog whose 'and' node also declares 'left' as configuration: wiring it would change that config.
+    const catalog = patched({ nodes: { and: { config: { left: { type: 'object' } } } } })
+    let graph = contract.addGraphNode(loop(), 'and', 'both', catalog)
+    graph = connectNodes(graph, 'each', 'both', 'next', catalog)
+    const index = connectionIndex(graph, catalog)
+    const verdict = index.verdict('each', 'index', 'both', 'left')
+    expect(verdict.fallback).toBe(true)
+    expect(index.verdict('each', 'index', 'both', 'left')).toBe(verdict)
+    expect(index.verdict('each', 'index', 'both', 'right').fallback).toBe(false)
+    expect(dataConnectionError(graph, 'each', 'index', 'both', 'left', catalog, { quick: true }) === undefined)
+      .toBe(fullCheck(graph, 'each', 'index', 'both', 'left', catalog) === undefined)
+  })
+  it('rejects instead of throwing when an edge entry is not an object', () => {
+    for (const junk of [null, undefined, 'junk', 7]) {
+      const graph = { ...loop(), edges: [...loop().edges, junk] } as unknown as Graph
+      const quick = () => dataConnectionError(graph, 'list', 'value', 'each', 'items', contract.nodeCatalog, { quick: true })
+      expect(quick, String(junk)).not.toThrow()
+      expect(quick() === undefined, String(junk)).toBe(fullCheck(graph, 'list', 'value', 'each', 'items', contract.nodeCatalog) === undefined)
+      expect(connectionIndex(graph).verdict('list', 'value', 'each', 'items').fallback).toBe(false)
+    }
+    const graph = { ...loop(), edges: [...loop().edges, null] } as unknown as Graph
+    expect(dataConnectionError(graph, 'list', 'value', 'each', 'items', contract.nodeCatalog, { quick: true })).toBe('Every edge must be an object')
   })
 })
