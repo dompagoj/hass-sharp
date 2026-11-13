@@ -1,0 +1,97 @@
+/*
+ * Run trace view (4px grid): the editor page's shell (editor-shell.css, inspector.css) in read-only form. The
+ * workspace has no step library: the canvas and the value panel. Step statuses use the --hs-trace-* tokens, always
+ * with an icon and a word.
+ */
+.hs-app .hs-trace .hs-visual-workspace { grid-template-columns: minmax(0, 1fr) auto; }
+.hs-app .hs-trace-status--ok { --hs-trace: var(--hs-trace-ok); }
+.hs-app .hs-trace-status--error { --hs-trace: var(--hs-trace-recovered); }
+.hs-app .hs-trace-status--failed { --hs-trace: var(--hs-trace-failed); }
+.hs-app .hs-trace-status--running { --hs-trace: var(--hs-trace-running); }
+.hs-app .hs-trace-status--cancelled, .hs-app .hs-trace-status--stopped { --hs-trace: var(--hs-trace-stopped); }
+
+/* Top bar: the name is a heading here, not a field; "Open in editor" is a link styled as a button. */
+.hs-app .hs-trace-title { min-width: 0; }
+.hs-app .hs-trace-title__name { margin: 0; padding: 4px 8px; overflow: hidden; font-size: 18px; font-weight: 650; letter-spacing: -.01em; line-height: 32px; text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-trace-open { min-height: 40px; padding: 8px 16px; text-decoration: none; }
+.hs-app .hs-trace .hs-topbar a.hs-button:focus-visible, .hs-app .hs-trace .hs-topbar button:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
+.hs-app .hs-trace .hs-save-chip--busy { color: var(--hs-trace-running); background: color-mix(in oklab, var(--hs-trace-running) 10%, var(--hs-surface)); }
+.hs-app .hs-trace .hs-save-chip--busy::before { animation: hs-run-pulse 1.4s ease-in-out infinite; }
+
+/* The run in one line under the top bar, then any notes about it. */
+.hs-app .hs-trace-strip { display: grid; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--hs-line); background: var(--hs-surface); font-size: 13px; flex: none; }
+.hs-app .hs-trace-strip__line { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; color: var(--hs-muted); }
+.hs-app .hs-trace-strip__trigger { color: var(--hs-text); font-weight: 600; overflow-wrap: anywhere; }
+.hs-app .hs-trace-strip__note { display: flex; align-items: flex-start; gap: 8px; margin: 0; overflow-wrap: anywhere; }
+.hs-app .hs-trace-strip__note--danger { color: var(--hs-danger); }
+.hs-app .hs-trace-strip__note--warning .hs-insp-glyph { color: var(--hs-warning); margin-top: 1px; }
+.hs-app .hs-trace-notrace { margin: 8px 12px; }
+.hs-app .hs-trace-missing { display: grid; gap: 8px; align-content: start; padding: 24px 16px; overflow: auto; }
+.hs-app .hs-trace-missing h2 { margin: 0; font-size: 16px; }
+.hs-app .hs-trace-missing p { margin: 0; color: var(--hs-muted); }
+.hs-app .hs-trace-missing__panel { max-width: 480px; margin-top: 8px; border: 1px solid var(--hs-line); border-radius: 12px; overflow: hidden; }
+.hs-app .hs-trace-missing__panel > .hs-inspector { border-left: 0; }
+
+/* Timeline: one row per recorded run of a step. */
+.hs-app .hs-trace-timeline { display: grid; gap: 8px; }
+.hs-app .hs-trace-timeline__list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.hs-app .hs-trace-step { display: grid; grid-template-columns: 104px minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; width: 100%; min-height: 40px; padding: 4px 8px 4px 12px; border: 0; border-left: 3px solid var(--hs-cat, var(--hs-line)); border-radius: 0 6px 6px 0; background: none; color: var(--hs-text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background var(--hs-motion) ease-out; }
+.hs-app .hs-trace-step:hover { background: var(--hs-soft); }
+.hs-app .hs-trace-step:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: -2px; }
+.hs-app .hs-trace-step--node { background: color-mix(in oklab, var(--hs-accent) 7%, var(--hs-surface)); }
+.hs-app .hs-trace-step--selected { background: color-mix(in oklab, var(--hs-accent) 15%, var(--hs-surface)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hs-accent) 45%, transparent); }
+.hs-app .hs-trace-step__status { display: inline-flex; align-items: center; gap: 6px; color: var(--hs-trace); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.hs-app .hs-trace-step__status .hs-insp-glyph { width: 14px; height: 14px; }
+.hs-app .hs-trace-step__main { display: grid; min-width: 0; }
+.hs-app .hs-trace-step__title { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-trace-step__detail { overflow: hidden; color: var(--hs-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-trace-step__time { display: grid; justify-items: end; color: var(--hs-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hs-app .hs-trace-step__ms { color: var(--hs-text); }
+.hs-app .hs-trace-timeline__end { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 8px 12px; border: 1px dashed color-mix(in oklab, var(--hs-warning) 50%, var(--hs-line)); border-radius: 8px; font-size: 13px; }
+.hs-app .hs-trace-timeline__end .hs-insp-glyph { color: var(--hs-warning); margin-top: 1px; }
+.hs-app .hs-trace-timeline__live { margin: 0; color: var(--hs-muted); font-size: 12px; }
+
+/* The value panel: the inspector's frame, with recorded values. */
+.hs-app .hs-trace-node__title { margin: 0; padding: 2px 0; font-size: 16px; font-weight: 650; overflow-wrap: anywhere; }
+.hs-app .hs-trace-node__title:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; border-radius: 4px; }
+.hs-app .hs-trace-node__status { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 8px 12px; border: 1px solid color-mix(in oklab, var(--hs-trace) 40%, var(--hs-line)); border-radius: 8px; background: color-mix(in oklab, var(--hs-trace) 8%, var(--hs-surface)); }
+.hs-app .hs-trace-node__status > .hs-insp-glyph { color: var(--hs-trace); margin-top: 2px; }
+.hs-app .hs-trace-node__status strong { color: var(--hs-trace); font-weight: 700; }
+.hs-app .hs-trace-error { display: grid; gap: 4px; padding: 8px 12px; border: 1px solid color-mix(in oklab, var(--hs-danger) 40%, var(--hs-line)); border-radius: 8px; background: color-mix(in oklab, var(--hs-danger) 7%, var(--hs-surface)); }
+.hs-app .hs-trace-error strong { color: var(--hs-danger); }
+.hs-app .hs-trace-error p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hs-app .hs-trace-error--recovered { border-color: color-mix(in oklab, var(--hs-trace-recovered) 45%, var(--hs-line)); background: color-mix(in oklab, var(--hs-trace-recovered) 8%, var(--hs-surface)); }
+.hs-app .hs-trace-error--recovered strong { color: var(--hs-trace-recovered); }
+.hs-app .hs-trace-section { display: grid; gap: 8px; min-width: 0; }
+.hs-app .hs-trace-overview .hs-run-fields > div { grid-template-columns: 96px minmax(0, 1fr); }
+.hs-app .hs-trace-ports { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.hs-app .hs-trace-port { display: grid; gap: 4px; min-width: 0; }
+.hs-app .hs-trace-port__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.hs-app .hs-trace-port__name { font-weight: 650; overflow-wrap: anywhere; }
+.hs-app .hs-trace-port__source { color: var(--hs-muted); font-size: 12px; overflow-wrap: anywhere; }
+.hs-app .hs-trace-port__from { min-height: 28px; padding: 2px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.hs-app .hs-trace-port__from:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
+.hs-app .hs-trace-port__value { display: grid; gap: 2px; min-width: 0; max-height: 320px; overflow: auto; padding: 6px 10px; border-radius: 8px; background: var(--hs-bg); }
+.hs-app .hs-trace-port__value .hs-json-tree { margin-top: 0; }
+.hs-app .hs-trace-value { overflow-wrap: anywhere; white-space: pre-wrap; font-variant-numeric: tabular-nums; }
+.hs-app .hs-trace-value--muted { color: var(--hs-muted); }
+.hs-app .hs-trace-port__note { color: var(--hs-muted); font-size: 12px; }
+
+/* JSON trees: the "N more" row of a long level. */
+.hs-app .hs-json-more__button { padding: 0; border: 0; background: none; color: var(--hs-accent); font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.hs-app .hs-json-more__button:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
+
+@media (max-width: 699px) {
+  .hs-app .hs-trace .hs-visual-workspace { grid-template-columns: minmax(0, 1fr); }
+  /* With the timeline open on a short screen the page scrolls rather than squeezing the canvas away. */
+  .hs-app .hs-trace .hs-visual-workspace { min-height: 240px; }
+  .hs-app .hs-trace-title__name { font-size: 16px; }
+  .hs-app .hs-trace-open { padding: 8px 12px; }
+  .hs-app .hs-trace-strip { padding: 8px 12px; }
+  .hs-app .hs-trace-step { grid-template-columns: auto minmax(0, 1fr) auto; }
+  /* The word stays for screen readers; the icon's shape tells the statuses apart on screen. */
+  .hs-app .hs-trace-step__word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hs-app .hs-trace *, .hs-app .hs-trace *::before { transition: none !important; animation: none !important; }
+}

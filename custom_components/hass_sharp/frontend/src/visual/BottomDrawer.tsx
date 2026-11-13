@@ -30,6 +30,8 @@ export function BottomDrawer(props: {
   tab: string
   onOpenChange(open: boolean): void
   onTabChange(id: string): void
+  /** The drawer's accessible name (the editor's: "Problems, code and runs"). */
+  label?: string
 }) {
   const id = createUniqueId()
   let bar!: HTMLDivElement
@@ -53,7 +55,7 @@ export function BottomDrawer(props: {
     tabButton(tab)?.focus()
   }
   return (
-    <section class="hs-drawer" classList={{ 'hs-drawer--open': props.open }} aria-label="Problems, code and runs">
+    <section class="hs-drawer" classList={{ 'hs-drawer--open': props.open }} aria-label={props.label ?? 'Problems, code and runs'}>
       <div ref={bar} class="hs-drawer__bar">
         <div class="hs-drawer__tabs" role="tablist" aria-label="Details" on:keydown={keys}>
           <For each={props.tabs}>

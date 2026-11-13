@@ -420,11 +420,15 @@ export interface RunHistoryResponse {
   runs: AutomationRun[]
 }
 export type TraceEventStatus = 'ok' | 'error' | 'failed' | 'running' | 'cancelled' | 'stopped'
-/** A recorded value; `trunc` marks a value cut to the trace caps, `src` an input that came from a wire. */
+/**
+ * A recorded value; `trunc` marks a value cut to the trace caps (no `v` when it did not fit at all, `null` where it
+ * was nested too deep), `redacted` one hidden because its name looks like a secret, `src` an input from a wire.
+ */
 export interface TraceValue {
   type: string
   v?: unknown
   trunc?: boolean
+  redacted?: boolean
   src?: { node: string; port: string }
 }
 export interface TraceEvent {
@@ -442,6 +446,8 @@ export interface TraceEvent {
   inputs?: Record<string, TraceValue>
   outputs?: Record<string, TraceValue>
   error?: { type: string; message: string }
+  /** Its values were dropped to keep the trace within its size cap (node, frame, status, port and timing stay). */
+  trunc?: boolean
 }
 export interface RunTrace {
   format: 1

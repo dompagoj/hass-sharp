@@ -7,5 +7,6 @@
 @import './styles/flow.css';
 @import './styles/inspector.css';
 @import './styles/runs.css';
+@import './styles/trace.css';
 @import './styles/library.css';
 @import './styles/widgets.css';

@@ -8,6 +8,7 @@ import { HassCtx } from './context'
 import { AutomationsListView } from './views/AutomationsListView'
 import { VisualAutomationView } from './views/VisualAutomationView'
 import { NodeLibraryView } from './views/NodeLibraryView'
+import { RunTraceView } from './views/RunTraceView'
 import { AutomationView } from './views/AutomationView'
 import { findCustomComponent } from './utils'
 
@@ -39,6 +40,7 @@ function App(props: { hass: HomeAssistant }) {
           <Route path="/automations" component={AutomationsListView} />
           <Route path="/automations/:id" component={AutomationView} />
           <Route path="/visual/:id" component={VisualAutomationView} />
+          <Route path="/visual/:id/runs/:runId" component={RunTraceView} />
           <Route path="/libraries" component={NodeLibraryView} />
           <Route path="/devices" component={TODOView} />
           <Route path="/entities" component={TODOView} />
