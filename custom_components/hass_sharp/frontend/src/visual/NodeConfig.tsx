@@ -388,32 +388,6 @@ export function NodeConfig(props: {
           {error()}
         </p>
       </Show>
-      <details aria-label="Appearance">
-        <summary>Appearance</summary>
-        <div class="hs-size-fields">
-          <For each={['width', 'height'] as const}>
-            {dimension => (
-              <Field
-                label={dimension === 'width' ? 'Width' : 'Height'}
-                aria-label={dimension === 'width' ? 'Width' : 'Height'}
-                type="number"
-                min={dimension === 'width' ? 180 : 100}
-                value={props.node.size?.[dimension] ?? (dimension === 'width' ? 220 : 112)}
-                onChange={e => {
-                  const value = Number(e.currentTarget.value)
-                  if (Number.isFinite(value) && value >= (dimension === 'width' ? 180 : 100))
-                    props.onGraphChange(
-                      updateNode(props.graph, props.node.id, {
-                        size: { width: props.node.size?.width ?? 220, height: props.node.size?.height ?? 112, [dimension]: value },
-                      }),
-                    )
-                  else e.currentTarget.value = String(props.node.size?.[dimension] ?? (dimension === 'width' ? 220 : 112))
-                }}
-              />
-            )}
-          </For>
-        </div>
-      </details>
     </div>
   )
 }

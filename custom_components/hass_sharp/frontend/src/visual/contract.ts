@@ -4,7 +4,7 @@ import rawCatalog from '../../../visual_node_catalog.json'
 export type DataType = string
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 export type Operand = { kind: 'literal'; type: DataType; value: JsonValue } | { kind: 'variable'; name: string } | { kind: 'unset' }
-export interface GraphNode { id: string; kind: string; config: Record<string, unknown>; label?: string; position?: { x: number; y: number }; size?: { width: number; height: number } }
+export interface GraphNode { id: string; kind: string; config: Record<string, unknown>; label?: string; position?: { x: number; y: number } }
 export interface ExecutionEdge { id: string; kind?: 'execution'; source: string; target: string; port?: string }
 export interface DataEdge { id: string; kind: 'data'; source: string; target: string; sourcePort: string; targetPort: string }
 export type GraphEdge = ExecutionEdge | DataEdge
@@ -545,7 +545,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
 }
 
 export function fillGraphLayout<T extends { nodes: GraphNode[] }>(graph: T): T {
-  return { ...graph, nodes: graph.nodes.map((node, i) => ({ ...node, position: node.position ?? { x: 60 + (i % 4) * 300, y: 100 + Math.floor(i / 4) * 180 }, size: node.size ?? { width: 220, height: 112 } })) }
+  return { ...graph, nodes: graph.nodes.map((node, i) => ({ ...node, position: node.position ?? { x: 60 + (i % 4) * 300, y: 100 + Math.floor(i / 4) * 180 } })) }
 }
 export function addGraphNode(graph: Graph, kind: string, id: string, catalog: VisualCatalogSnapshot = nodeCatalog): Graph {
   if (graph.version !== catalog.graphVersion) throw new Error(`Only graph version ${catalog.graphVersion} is supported`)

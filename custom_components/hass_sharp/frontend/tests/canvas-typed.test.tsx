@@ -39,16 +39,6 @@ it('creates only v5 graphs and derives custom palette entries from a document ca
   expect(catalogPalette(catalog).find(item => item.kind === 'custom:factory')?.label).toBe('Factory')
   expect(catalogPalette(nodeCatalog).some(item => item.kind === 'custom:factory')).toBe(false)
 })
-it('shows separate typed inputs/outputs, required condition semantics and collapsed appearance', () => {
-  const el = host()
-  const graph = fixture()
-  const node = graph.nodes.find(n => n.id === 'branch')!
-  dispose = render(() => <NodeConfig graph={graph} node={node} catalog={nodeCatalog} onChange={() => {}} onGraphChange={() => {}} />, el)
-  expect(el.textContent).toContain('Condition · Boolean · Required')
-  expect(el.textContent).toContain('True selects the True execution branch')
-  expect([...el.querySelectorAll('h3')].map(n => n.textContent)).toEqual(expect.arrayContaining(['Inputs', 'Outputs']))
-  expect(el.querySelector<HTMLDetailsElement>('[aria-label="Appearance"]')?.open).toBe(false)
-})
 it('renders typed labeled handles and rejects incompatible keyboard connection with exact target error', async () => {
   const el = host()
   const history = createGraphHistory(fixture())
@@ -56,7 +46,7 @@ it('renders typed labeled handles and rejects incompatible keyboard connection w
   const source = el.querySelector<HTMLElement>('[data-id="temperature"] .source[data-handleid="data:value"]')!
   const target = el.querySelector<HTMLElement>('[data-id="branch"] [data-handleid="data:value"]')!
   expect(source?.getAttribute('aria-label')).toContain('Number')
-  expect(target?.getAttribute('aria-label')).toContain('Boolean')
+  expect(target?.getAttribute('aria-label')).toContain('Yes/No')
   for (const handle of [source, target])
     handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
   expect(history.graph().edges.filter(e => e.kind === 'data')).toHaveLength(0)
@@ -85,43 +75,6 @@ it('removes only an Alt-primary-clicked native edge and restores it in one undo/
   expect(history.graph().edges).toHaveLength(original.edges.length - 1)
 })
 
-it('offers explicit null for nullable wire-only CLR types', () => {
-  const el = host(),
-    catalog = structuredClone(nodeCatalog)
-  catalog.types['global::Example.Result?'] = {
-    label: 'Example.Result?',
-    description: 'Nullable result',
-    nullable: true,
-    category: 'Object',
-    literalKind: null,
-    assignableTo: ['global::Example.Result?'],
-  }
-  catalog.nodes['library:nullable'] = {
-    label: 'Nullable consumer',
-    description: 'Consumes a CLR result',
-    category: 'Library',
-    minGraphVersion: 5,
-    config: { arguments: { type: 'object', default: {} } },
-    argumentStorage: 'arguments',
-    inputs: { result: { label: 'Result', types: ['global::Example.Result?'], description: 'Nullable result', required: true } },
-    outputs: {},
-    execution: ['next'],
-  }
-  const graph = addNode(createGraph('Nullable'), 'library:nullable', 'consumer', catalog)
-  let config = graph.nodes.at(-1)!.config
-  dispose = render(
-    () => (
-      <NodeConfig graph={graph} node={graph.nodes.at(-1)!} catalog={catalog} onChange={next => (config = next)} onGraphChange={() => {}} />
-    ),
-    el,
-  )
-  const mode = el.querySelector<HTMLSelectElement>('[aria-label="Result source"]')!
-  expect([...mode.options].map(o => o.value)).toContain('literal')
-  mode.value = 'literal'
-  mode.dispatchEvent(new Event('change', { bubbles: true }))
-  expect(config.arguments).toEqual({ result: { kind: 'literal', type: 'global::Example.Result?', value: null } })
-})
-
 import { connectData, dataOutputs } from '../src/visual/contract'
 import { createSignal } from 'solid-js'
 it('colors connected and literal input rows from their actual types rather than the first accepted union type', () => {
@@ -129,7 +82,8 @@ it('colors connected and literal input rows from their actual types rather than 
   const graph = fixture()
   dispose = render(() => <FlowAdapter graph={graph} onSelect={() => {}} onChange={() => {}} />, el)
   const input = el.querySelector<HTMLElement>('[data-id="temperature"] .target[data-handleid="data:value"]')!
-  expect(input.style.background).toBe('var(--hs-port-number)')
+  expect(input.style.getPropertyValue('--hs-pin-color')).toBe('var(--hs-port-number)')
+  expect(input.classList.contains('hs-pin--data')).toBe(true)
 })
 it.each(['mouse', 'touch'])('connects real typed handles with %s, clears literals, and keeps full undo/redo snapshots', async device => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
@@ -249,54 +203,28 @@ it('uses the same category token on all five typed handles, edges, inspector row
   )
   await vi.waitFor(() => expect(el.querySelectorAll('.solid-flow__edge')).toHaveLength(graph.edges.length))
   for (const type of ['boolean', 'number', 'string', 'object', 'array', 'entity_id']) {
-    const token = `var(--hs-port-${type === 'entity_id' ? 'string' : type})`
-    expect(el.querySelector<HTMLElement>(`[data-id="source-${type}"] .source[data-handleid="data:value"]`)!.style.background).toBe(token)
-    expect(el.querySelector<HTMLElement>(`[data-id="target-${type}"] .target[data-handleid="data:value"]`)!.style.background).toBe(token)
+    // Entity ids have their own colour on the canvas (they refine String, which the inspector still shows).
+    const token = `var(--hs-port-${type === 'entity_id' ? 'entity' : type})`
+    expect(el.querySelector<HTMLElement>(`[data-id="source-${type}"] .source[data-handleid="data:value"]`)!.style.getPropertyValue('--hs-pin-color')).toBe(token)
+    expect(el.querySelector<HTMLElement>(`[data-id="target-${type}"] .target[data-handleid="data:value"]`)!.style.getPropertyValue('--hs-pin-color')).toBe(token)
     const edge = graph.edges.find(e => e.kind === 'data' && e.source === `source-${type}`)!
     expect(
       [...el.querySelectorAll<SVGElement>('.solid-flow__edge')]
         .find(element => element.dataset.id === edge.id)!
-        .querySelector<SVGElement>('.solid-flow__edge-path')!.style.stroke,
+        .querySelector<SVGElement>('.solid-flow__edge-path')!.style.getPropertyValue('--hs-wire-color'),
     ).toBe(token)
   }
   for (const port of ['error', 'next']) {
     const token = `var(--hs-port-${port === 'error' ? 'error' : 'execution'})`
-    expect(el.querySelector<HTMLElement>(`[data-id="target-number"] .source[data-handleid="${port}"]`)!.style.background).toBe(token)
+    expect(el.querySelector<HTMLElement>(`[data-id="target-number"] .source[data-handleid="${port}"]`)!.style.getPropertyValue('--hs-pin-color')).toBe(token)
     const edge = graph.edges.find(e => e.kind !== 'data' && e.source === 'target-number' && (e.port ?? 'next') === port)!
-    expect([...el.querySelectorAll<SVGElement>('.solid-flow__edge')].find(element => element.dataset.id === edge.id)!.querySelector<SVGElement>('.solid-flow__edge-path')!.style.stroke).toBe(token)
+    expect([...el.querySelectorAll<SVGElement>('.solid-flow__edge')].find(element => element.dataset.id === edge.id)!.querySelector<SVGElement>('.solid-flow__edge-path')!.style.getPropertyValue('--hs-wire-color')).toBe(token)
     const row = [...el.querySelectorAll<HTMLElement>('.hs-port-row--execution')].find(element => element.querySelector('strong')?.textContent === `${port === 'error' ? 'On error' : 'Next'} · Execution`)!
     expect(row.style.getPropertyValue('--hs-value-color')).toBe(token)
   }
   expect(el.querySelector<HTMLElement>('.hs-typed-input[data-input-id="value"]')!.style.getPropertyValue('--hs-value-color')).toBe(
     'var(--hs-port-number)',
   )
-})
-
-it('highlights inspector connection mismatch with the same exact typed explanation', () => {
-  const el = host(),
-    graph = fixture()
-  let changed = false
-  dispose = render(
-    () => (
-      <NodeConfig
-        graph={graph}
-        node={graph.nodes.find(n => n.id === 'branch')!}
-        catalog={nodeCatalog}
-        onChange={() => {}}
-        onGraphChange={() => {
-          changed = true
-        }}
-      />
-    ),
-    el,
-  )
-  const select = el.querySelector<HTMLSelectElement>('[aria-label="Condition connection"]')!
-  select.value = JSON.stringify(['temperature', 'value'])
-  select.dispatchEvent(new Event('change', { bubbles: true }))
-  ;[...el.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Connect Condition')!.click()
-  expect(changed).toBe(false)
-  expect(el.querySelector('[data-input-id="value"]')?.getAttribute('aria-invalid')).toBe('true')
-  expect(el.textContent).toContain('Condition requires Boolean; Value outputs Number')
 })
 
 it('removes exactly the clicked data edge on Option-click, keeps its input unset and restores the entire imported graph', async () => {
@@ -488,41 +416,16 @@ it('preserves declared input labels when source-derived custom CLR Boolean outpu
   expect(el.querySelector('[data-id="if"]')?.getAttribute('aria-label')).toContain('If')
   expect(el.textContent).toContain('Condition · Boolean · Required')
   expect(el.querySelector('[data-id="if"] .target[data-handleid="data:value"]')?.getAttribute('aria-label')).toBe(
-    'Condition · Boolean input',
+    'Input Condition, Yes/No, connected to Is on · Result',
   )
   expect(el.querySelector('[data-id="predicate"] .source[data-handleid="data:result"]')?.getAttribute('aria-label')).toBe(
-    'Result · bool output',
+    'Output Result, bool, connected',
   )
+  expect(el.querySelector('[data-id="if"] [data-input-id="value"] .hs-source-chip')?.textContent).toBe('Is on · Result')
   expect(el.textContent).toContain('From Is on')
   expect(el.textContent).toContain('From Read entity')
   expect(el.textContent).toContain('To Consume')
   expect(el.querySelector('[data-id="describe"] .hs-flow-card')?.textContent).not.toContain('library:')
   expect(catalog.types.number.label).toBe('Number')
   expect(catalog.types['global::System.Double'].label).toBe('double')
-})
-it('clears a rejected inspector connection when a later literal edit resolves its context', () => {
-  const el = host(),
-    [graph, setGraph] = createSignal(fixture())
-  dispose = render(
-    () => (
-      <NodeConfig
-        graph={graph()}
-        node={graph().nodes.find(n => n.id === 'branch')!}
-        catalog={nodeCatalog}
-        onChange={config => setGraph(updateNode(graph(), 'branch', { config }))}
-        onGraphChange={setGraph}
-      />
-    ),
-    el,
-  )
-  const connection = el.querySelector<HTMLSelectElement>('[aria-label="Condition connection"]')!
-  connection.value = JSON.stringify(['temperature', 'value'])
-  connection.dispatchEvent(new Event('change', { bubbles: true }))
-  ;[...el.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Connect Condition')!.click()
-  expect(el.textContent).toContain('Condition requires Boolean; Value outputs Number')
-  const value = el.querySelector<HTMLSelectElement>('[aria-label="Condition"]')!
-  value.value = 'false'
-  value.dispatchEvent(new Event('change', { bubbles: true }))
-  expect(el.textContent).not.toContain('Condition requires Boolean; Value outputs Number')
-  expect(el.querySelector('[data-input-id="value"]')?.getAttribute('aria-invalid')).toBeNull()
 })

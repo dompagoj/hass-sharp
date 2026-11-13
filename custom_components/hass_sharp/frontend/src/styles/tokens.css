@@ -25,5 +25,39 @@
  --hs-port-execution: var(--hs-muted, #6c7583);
  --hs-port-error: var(--hs-danger, #d03651);
 }
+/*
+ * Node editor identity: the other type colours and the category colours. Each is a mid-tone hue mixed toward the
+ * theme's text colour, so it darkens in a light theme and lightens in a dark one, including Home Assistant themes
+ * that set their own colours. The explicit dark block covers the panel's own dark fallback.
+ */
+.hs-app, .hs-flow {
+ --hs-hue-mix: 80%;
+ --hs-port-entity: color-mix(in oklab, #d0457e var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-port-entity-state: color-mix(in oklab, #c08d12 var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-port-target: color-mix(in oklab, #6c9c1c var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-cat-trigger: color-mix(in oklab, #d4532c var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-cat-hass: color-mix(in oklab, #2f86d6 var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-cat-flow: color-mix(in oklab, #8a68dc var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-cat-logic: color-mix(in oklab, #c99312 var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-cat-data: color-mix(in oklab, #1f9a87 var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-cat-code: color-mix(in oklab, #6c778a var(--hs-hue-mix), var(--hs-text, #202535));
+ /* Node cards, pins and wires. */
+ --hs-card-shadow: 0 1px 2px #0000000f, 0 3px 10px #00000012;
+ --hs-card-shadow-raised: 0 2px 4px #00000014, 0 8px 22px #0000001f;
+ --hs-card-header-tint: 13%;
+ --hs-trace-ok: color-mix(in oklab, #2f9e5b var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-trace-recovered: color-mix(in oklab, #d38a10 var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-trace-failed: var(--hs-danger, #bb283f);
+ --hs-trace-running: color-mix(in oklab, #2f86d6 var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-trace-stopped: color-mix(in oklab, #6c778a var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-warning: color-mix(in oklab, #c27a00 85%, var(--hs-text, #202535));
+ --hs-motion: 140ms;
+}
+@media (prefers-color-scheme: dark) {
+  .hs-app, .hs-flow { --hs-hue-mix: 72%; --hs-card-shadow: 0 1px 2px #0000004d, 0 4px 14px #00000040; --hs-card-shadow-raised: 0 2px 6px #00000059, 0 10px 26px #00000059; --hs-card-header-tint: 20%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hs-app, .hs-flow { --hs-motion: 0ms; }
+}
 /* Execution port rows take the execution port colour; rows with an inline --hs-value-color override it. */
 .hs-app .hs-port-row--execution { --hs-value-color: var(--hs-port-execution); }

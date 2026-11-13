@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Sh
 import { Button, Field, Status } from '../components/Controls'
 import { FlowAdapter } from './FlowAdapter'
 import { HelpDialog } from '../components/HelpDialog'
-import { NodeConfig } from './NodeConfig'
+import { Inspector } from './Inspector'
 import { useEntities } from '../entities'
 import { useHass } from '../context'
 import { useQueryClient } from '@tanstack/solid-query'
@@ -21,7 +21,6 @@ import {
   removeEdge,
   removeNode,
   serializeGraph,
-  updateNode,
   visualRunClasses,
   visualActionLabels,
   type NodeKind,
@@ -323,43 +322,14 @@ export function VisualEditor(props: {
               </For>
             </ul>
           </div>
-          <aside class="hs-inspector" aria-label="Node inspector">
-            <Show when={description()}>
-              {item => (
-                <div class="hs-stack">
-                  <h2>{item().label}</h2>
-                  <p>{item().description}</p>
-                  <p>
-                    Inputs:{' '}
-                    {Object.entries(item().inputs)
-                      .map(([id, input]) => input.label ?? id)
-                      .join(', ') || 'None'}
-                  </p>
-                  <p>Outputs: {item().execution.map(portLabel).join(', ')}</p>
-                  <p class="hs-muted">Drag this node onto the canvas, or use Add step.</p>
-                </div>
-              )}
-            </Show>
-            <Show when={!description()}>
-              <Show when={selected()} fallback={<p class="hs-muted">Select a node to edit its inputs and outputs.</p>}>
-                {node => (
-                  <>
-                    <NodeConfig
-                      node={node()}
-                      graph={graph()}
-                      catalog={session.catalog()}
-                      diagnostics={session.diagnostics()}
-                      onChange={config => commit(updateNode(graph(), node().id, { config }))}
-                      onGraphChange={commit}
-                    />
-                    <Button variant="danger" onClick={() => commit(removeNode(graph(), node().id, session.catalog()))}>
-                      Delete step
-                    </Button>
-                  </>
-                )}
-              </Show>
-            </Show>
-          </aside>
+          <Inspector
+            description={description()}
+            selected={selected()}
+            graph={graph()}
+            catalog={session.catalog()}
+            diagnostics={session.diagnostics()}
+            commit={commit}
+          />
         </div>
         <details
           class="hs-graph-sections"

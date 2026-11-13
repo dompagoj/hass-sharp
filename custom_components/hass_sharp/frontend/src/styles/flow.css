@@ -1,31 +1,189 @@
-/* Visual canvas: Solid Flow host, node cards, handles, ports and canvas overlays. */
+/* Visual canvas: Solid Flow host, node cards, pins, wires, trace looks and canvas overlays. */
 .hs-app .hs-flow-toolbar { display: flex; align-items: center; gap: 8px; padding: 16px 0; flex-wrap: wrap; }
 .hs-app .hs-flow-toolbar .hs-muted { margin-left: auto; font-size: 11px; }
 .hs-app .hs-canvas-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .hs-app .hs-flow { height: 100%; min-height: 0; min-width: 0; position: relative; background: var(--hs-bg); }
 .hs-app .hs-canvas-column .hs-flow { flex: 1; min-height: 240px; }
-.hs-app .hs-flow .solid-flow { --xy-background-color: var(--hs-bg); --xy-node-color: var(--hs-text); --xy-node-background-color: var(--hs-surface); --xy-edge-stroke: var(--hs-muted); --xy-handle-background-color: var(--hs-accent); --xy-controls-button-background-color: var(--hs-surface); --xy-controls-button-color: var(--hs-text); --xy-controls-button-background-color-hover: var(--hs-soft); --xy-controls-button-color-hover: var(--hs-text); --xy-controls-button-border-color: var(--hs-line); --xy-attribution-background-color: var(--hs-surface); --xy-edge-label-background-color: var(--hs-surface); --xy-edge-label-color: var(--hs-muted); }
-.hs-app .hs-flow .solid-flow__node-automation { background: var(--hs-surface); border: 1px solid var(--hs-line); color: var(--hs-text); border-radius: 10px; box-shadow: 0 3px 12px #0001; }
-.hs-app .hs-flow .solid-flow__node-automation.selected { border-color: var(--hs-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--hs-accent) 25%, transparent); }
+.hs-app .hs-flow .solid-flow { --xy-background-color: var(--hs-bg); --xy-background-pattern-color: color-mix(in oklab, var(--hs-text) 22%, var(--hs-bg)); --xy-node-color: var(--hs-text); --xy-edge-stroke: var(--hs-muted); --xy-controls-button-background-color: var(--hs-surface); --xy-controls-button-color: var(--hs-text); --xy-controls-button-background-color-hover: var(--hs-soft); --xy-controls-button-color-hover: var(--hs-text); --xy-controls-button-border-color: var(--hs-line); --xy-attribution-background-color: var(--hs-surface); --xy-edge-label-background-color: var(--hs-surface); --xy-edge-label-color: var(--hs-muted); }
 .hs-app .hs-flow .solid-flow__controls-button { width: 44px; height: 44px; }
 .hs-app .hs-flow .solid-flow__attribution { color: var(--hs-muted); }
-.hs-app .hs-flow-card { height: 100%; display: flex; flex-direction: column; padding: 7px 10px; gap: 2px; overflow: hidden; border-radius: 7px; }
-.hs-app .hs-flow-card > strong { font-size: 12px; }
-.hs-app .hs-flow-card > span:last-child { color: var(--hs-muted); font: 11px/1.5 monospace; overflow-wrap: anywhere; overflow: hidden; }
-.hs-app .hs-flow-kind { font-size: 8px; letter-spacing: .03em; text-transform: uppercase; color: var(--hs-accent); }
-.hs-flow-card--error { outline: 2px solid var(--error-color, #bf3048); outline-offset: 2px; }
-.hs-app .hs-flow-card--error { outline: 2px solid var(--hs-port-error); outline-offset: 0; }
-.hs-app .hs-flow .solid-flow__handle { width: 12px; height: 12px; background: var(--hs-accent); border: 2px solid var(--hs-surface); }
-.hs-app .hs-flow .solid-flow__handle:focus-visible { outline: 3px solid var(--hs-accent); outline-offset: 3px; }
-.hs-app .hs-flow .solid-flow__handle[aria-invalid="true"] { outline: 3px solid var(--hs-port-error); outline-offset: 2px; }
-.hs-app .hs-flow .hs-port--false { background: var(--hs-muted); }
-.hs-app .hs-flow .hs-port--error { background: var(--hs-danger); }
-.hs-app .hs-port-label { position: absolute; right: 10px; transform: translateY(-50%); font-size: 10px; letter-spacing: 0; color: var(--hs-muted); background: transparent; padding: 0 2px; pointer-events: none; }
-.hs-app .hs-port-label--target { left: 9px; right: auto; }
-.hs-app .hs-port-label--source { right: 9px; left: auto; }
-.hs-app .hs-node-errors { display: none; position: absolute; z-index: 20; left: calc(100% + 12px); top: 0; min-width: 200px; max-width: 340px; width: max-content; padding: 10px 12px; border: 1px solid var(--hs-port-error); border-radius: 6px; background: var(--hs-surface); box-shadow: 0 4px 18px #0002; color: var(--hs-text); font-size: 12px; pointer-events: none; }
+
+/* Library previews still use the plain card. */
+.hs-app .hs-flow-card:not(.hs-card) { display: flex; flex-direction: column; padding: 8px 12px; gap: 4px; overflow: hidden; border-radius: 8px; }
+.hs-app .hs-flow-card:not(.hs-card) > strong { font-size: 12px; }
+
+/* The node wrapper is only a positioned box; the card draws itself. */
+.hs-app .hs-flow .solid-flow__node-card { padding: 0; border: 0; background: none; border-radius: 10px; }
+.hs-app .hs-flow .solid-flow__node-card:focus { outline: none; }
+.hs-app .hs-flow .solid-flow__node-card:focus-visible .hs-card { outline: 2px solid var(--hs-focus); outline-offset: 3px; }
+
+/* Card. */
+.hs-app .hs-card {
+  --hs-card-pad: 12px;
+  --hs-cat: var(--hs-cat-code);
+  position: relative;
+  min-width: 208px;
+  max-width: 320px;
+  width: max-content;
+  border: 1px solid color-mix(in oklab, var(--hs-cat) 30%, var(--hs-line));
+  border-radius: 10px;
+  background: var(--hs-surface);
+  color: var(--hs-text);
+  box-shadow: var(--hs-card-shadow);
+  font-size: 12px;
+  line-height: 16px;
+  transition: box-shadow var(--hs-motion) ease-out, border-color var(--hs-motion) ease-out, opacity var(--hs-motion) ease-out;
+}
+.hs-app .hs-flow .solid-flow__node:hover .hs-card { box-shadow: var(--hs-card-shadow-raised); }
+.hs-app .hs-flow .solid-flow__node.selected .hs-card { border-color: var(--hs-accent); box-shadow: 0 0 0 2px color-mix(in oklab, var(--hs-accent) 32%, transparent), var(--hs-card-shadow-raised); }
+.hs-app .hs-card.hs-flow-card--error { border-color: var(--hs-port-error); }
+.hs-app .hs-card.hs-card--warning { border-color: color-mix(in oklab, var(--hs-warning) 60%, var(--hs-line)); }
+
+.hs-app .hs-card__head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px var(--hs-card-pad);
+  border-radius: 9px 9px 0 0;
+  background: color-mix(in oklab, var(--hs-cat) var(--hs-card-header-tint), var(--hs-surface));
+}
+.hs-app .hs-card:not(:has(.hs-card__body)) .hs-card__head { border-radius: 9px; }
+.hs-app .hs-card__icon { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--hs-cat); color: var(--hs-surface); }
+.hs-app .hs-card__glyph { width: 16px; height: 16px; }
+.hs-app .hs-card__titles { flex: 1; display: grid; min-width: 0; }
+.hs-app .hs-card__title { overflow: hidden; font-size: 13px; font-weight: 650; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-card__summary { overflow: hidden; color: var(--hs-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-card__summary:empty { display: none; }
+/* Triggers start the automation: a solid header sets them apart from the steps they run. */
+.hs-app .hs-card--trigger .hs-card__head { background: var(--hs-cat); color: var(--hs-surface); }
+.hs-app .hs-card--trigger .hs-card__icon { background: color-mix(in oklab, var(--hs-surface) 22%, transparent); }
+.hs-app .hs-card--trigger .hs-card__summary { color: color-mix(in oklab, var(--hs-surface) 82%, var(--hs-cat)); }
+.hs-app .hs-card--unknown .hs-card__head { background: repeating-linear-gradient(-45deg, var(--hs-soft) 0 6px, var(--hs-surface) 6px 12px); }
+
+.hs-app .hs-card__badge { flex: none; display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 8px; border: 0; border-radius: 12px; background: var(--hs-port-error); color: var(--hs-surface); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.hs-app .hs-card__badge--warning { background: var(--hs-warning); }
+.hs-app .hs-card__badge:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
+.hs-app .hs-card__badge-icon { width: 14px; height: 14px; }
+.hs-app .hs-card__trace { flex: none; display: inline-flex; gap: 8px; color: var(--hs-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.hs-app .hs-card--trigger .hs-card__trace { color: inherit; }
+.hs-app .hs-card__runs { font-weight: 650; }
+
+.hs-app .hs-card__body { display: grid; gap: 4px; padding: 8px var(--hs-card-pad) 12px; border-top: 1px solid color-mix(in oklab, var(--hs-cat) 18%, var(--hs-line)); }
+.hs-app .hs-card__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: start; }
+.hs-app .hs-card__row--footer { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--hs-line); }
+.hs-app .hs-pin-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.hs-app .hs-pin-cell--out { align-items: flex-end; max-width: 168px; text-align: right; }
+.hs-app .hs-pin-line { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; min-height: 24px; }
+.hs-app .hs-pin-label { overflow: hidden; color: color-mix(in oklab, var(--hs-text) 86%, var(--hs-surface)); text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-pin-cell--muted .hs-pin-label, .hs-app .hs-pin-cell--wire .hs-pin-label { color: var(--hs-muted); }
+.hs-app .hs-pin-cell--exec .hs-pin-label { font-weight: 600; }
+.hs-app .hs-card__row--footer .hs-pin-label { color: var(--hs-port-error); }
+.hs-app .hs-required { margin-left: 2px; color: var(--hs-danger); }
+.hs-app .hs-source-chip { overflow: hidden; max-width: 160px; padding: 2px 8px; border-radius: 6px; background: color-mix(in oklab, var(--hs-pin-color) 13%, var(--hs-surface)); color: color-mix(in oklab, var(--hs-pin-color) 62%, var(--hs-text)); font-size: 11px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-card-editor { min-width: 0; max-width: 272px; cursor: auto; user-select: text; }
+.hs-app .hs-pin-value { display: flex; min-width: 0; max-width: 100%; }
+.hs-app .hs-value-chip { overflow: hidden; max-width: 100%; padding: 2px 8px; border: 1px solid var(--hs-line); border-radius: 6px; background: var(--hs-soft); color: var(--hs-text); font: 12px/18px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-value-chip--muted { border-style: dashed; background: none; color: var(--hs-muted); font-family: inherit; }
+
+/*
+ * Pins. The handle is a zero-size point on the card edge, so wires attach to the pin centre for every row height.
+ * ::after draws it; ::before is the 24 px target. Data pins are circles in their type colour (filled once
+ * connected, rounded squares for lists); execution pins are arrows.
+ */
+.hs-app .hs-flow .solid-flow__handle.hs-pin { position: absolute; top: 50%; width: 0; height: 0; min-width: 0; min-height: 0; border: 0; border-radius: 0; background: none; transform: none; z-index: 1; }
+.hs-app .hs-flow .hs-pin-line > .hs-pin--in { left: calc(-1 * var(--hs-card-pad) - 1px); }
+.hs-app .hs-flow .hs-pin-line > .hs-pin--out { right: calc(-1 * var(--hs-card-pad) - 1px); left: auto; }
+.hs-app .hs-flow .hs-card__head > .hs-pin--in { left: -1px; }
+.hs-app .hs-flow .hs-card__head > .hs-pin--out { right: -1px; left: auto; }
+.hs-app .hs-flow .hs-pin::before { content: ''; position: absolute; left: -12px; top: -12px; width: 24px; height: 24px; border-radius: 50%; }
+.hs-app .hs-flow .hs-pin::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: -6px;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--hs-pin-color);
+  border-radius: 50%;
+  background: var(--hs-surface);
+  pointer-events: none;
+  transition: transform var(--hs-motion) ease-out, opacity var(--hs-motion) ease-out, box-shadow var(--hs-motion) ease-out;
+}
+.hs-app .hs-flow .hs-pin--data.hs-pin--connected::after { background: var(--hs-pin-color); }
+.hs-app .hs-flow .hs-pin--list::after { border-radius: 3px; }
+.hs-app .hs-flow .hs-pin--exec::after {
+  left: -7px;
+  top: -7px;
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 0;
+  background: var(--hs-pin-color);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 2.5h5.5L12 7l-4 4.5H2.5z' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 2.5h5.5L12 7l-4 4.5H2.5z' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.hs-app .hs-flow .hs-pin--exec.hs-pin--connected::after {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 2.5h5.5L12 7l-4 4.5H2.5z' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 2.5h5.5L12 7l-4 4.5H2.5z' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.hs-app .hs-flow .hs-pin:hover::after, .hs-app .hs-flow .hs-pin.connectingto::after { transform: scale(1.25); }
+.hs-app .hs-flow .hs-pin:focus { outline: none; }
+.hs-app .hs-flow .hs-pin:focus-visible::before { outline: 2px solid var(--hs-focus); outline-offset: -2px; }
+.hs-app .hs-flow .hs-pin--invalid::after { box-shadow: 0 0 0 3px color-mix(in oklab, var(--hs-port-error) 45%, transparent); }
+.hs-app .hs-flow .hs-pin--invalid.hs-pin--exec::before { box-shadow: inset 0 0 0 2px var(--hs-port-error); }
+/* While a wire is dragged: pins it can end on grow, the rest fade. */
+.hs-app .hs-flow--connecting .hs-pin:not(.hs-pin--origin, .hs-pin--compatible)::after { opacity: .3; }
+.hs-app .hs-flow--connecting .hs-pin--compatible::after { transform: scale(1.3); }
+.hs-app .hs-flow--connecting .hs-pin--data.hs-pin--compatible::after { box-shadow: 0 0 0 4px color-mix(in oklab, var(--hs-pin-color) 30%, transparent); }
+.hs-app .hs-flow .hs-pin--origin::after { transform: scale(1.3); }
+
+/* Wires: execution wires are the thick neutral spine, data wires thinner in their type colour. */
+.hs-app .hs-flow .solid-flow__edge-path.hs-wire { stroke: var(--hs-wire-color); transition: stroke-width var(--hs-motion) ease-out, opacity var(--hs-motion) ease-out; }
+.hs-app .hs-flow .solid-flow__edge-path.hs-wire--exec { stroke-width: 3px; }
+.hs-app .hs-flow .solid-flow__edge-path.hs-wire--data { stroke-width: 2px; }
+.hs-app .hs-flow .solid-flow__edge-path.hs-wire--error { stroke-dasharray: 6 4; }
+.hs-app .hs-flow .solid-flow__edge:hover .solid-flow__edge-path.hs-wire--exec,
+.hs-app .hs-flow .solid-flow__edge.selected .solid-flow__edge-path.hs-wire--exec,
+.hs-app .hs-flow .solid-flow__edge:focus-visible .solid-flow__edge-path.hs-wire--exec { stroke: var(--hs-wire-color); stroke-width: 4.5px; }
+.hs-app .hs-flow .solid-flow__edge:hover .solid-flow__edge-path.hs-wire--data,
+.hs-app .hs-flow .solid-flow__edge.selected .solid-flow__edge-path.hs-wire--data,
+.hs-app .hs-flow .solid-flow__edge:focus-visible .solid-flow__edge-path.hs-wire--data { stroke: var(--hs-wire-color); stroke-width: 3.5px; }
+.hs-app .hs-flow .solid-flow__edge:focus-visible .solid-flow__edge-interaction { stroke: var(--hs-focus); stroke-opacity: .25; }
+.hs-app .hs-flow .solid-flow__connection-path { stroke: var(--hs-accent); stroke-width: 2.5px; stroke-dasharray: 6 4; }
+
+/* Read-only and trace looks. */
+.hs-app .hs-flow--readonly .solid-flow__node { cursor: default; }
+.hs-app .hs-card--unreachable { opacity: .62; }
+.hs-app .hs-card--unreachable .hs-card__head { background: var(--hs-soft); }
+.hs-app .hs-card--unreachable .hs-card__icon { background: var(--hs-muted); }
+.hs-app .hs-card--traced { --hs-trace: var(--hs-line); }
+.hs-app .hs-card--status-ok { --hs-trace: var(--hs-trace-ok); }
+.hs-app .hs-card--status-error { --hs-trace: var(--hs-trace-recovered); }
+.hs-app .hs-card--status-failed { --hs-trace: var(--hs-trace-failed); }
+.hs-app .hs-card--status-running { --hs-trace: var(--hs-trace-running); }
+.hs-app .hs-card--status-cancelled, .hs-app .hs-card--status-stopped { --hs-trace: var(--hs-trace-stopped); }
+.hs-app .hs-card--traced:not(.hs-card--unreached) { border-color: var(--hs-trace); box-shadow: 0 0 0 2px color-mix(in oklab, var(--hs-trace) 30%, transparent), var(--hs-card-shadow); }
+.hs-app .hs-card--traced.hs-card--focus { box-shadow: 0 0 0 4px color-mix(in oklab, var(--hs-trace) 45%, transparent), var(--hs-card-shadow-raised); }
+.hs-app .hs-card--status-running .hs-card__icon { animation: hs-pulse 1.2s ease-in-out infinite; }
+.hs-app .hs-card--unreached { border-style: dashed; box-shadow: none; opacity: .5; filter: saturate(.25); }
+.hs-app .hs-flow--traced .hs-wire--idle .solid-flow__edge-path { opacity: .22; }
+.hs-app .hs-flow--traced .hs-wire--travelled .solid-flow__edge-path.hs-wire--exec:not(.hs-wire--error) { stroke: var(--hs-trace-ok); }
+.hs-app .hs-flow--traced .hs-wire--travelled .solid-flow__edge-path.hs-wire--exec { stroke-width: 4px; }
+@keyframes hs-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) {
+  .hs-app .hs-card--status-running .hs-card__icon { animation: none; }
+}
+
+/* Problems and trace status, shown beside the hovered or focused card. */
+.hs-app .hs-node-errors { display: none; position: absolute; z-index: 20; left: calc(100% + 12px); top: 0; min-width: 200px; max-width: 320px; width: max-content; padding: 8px 12px; border: 1px solid var(--hs-port-error); border-radius: 8px; background: var(--hs-surface); box-shadow: var(--hs-card-shadow-raised); color: var(--hs-text); font-size: 12px; pointer-events: none; }
+.hs-app .hs-card--traced .hs-node-errors { border-color: var(--hs-trace); }
 .hs-app .hs-node-errors p { margin: 0 0 4px; }
-.hs-app .solid-flow__node:hover > .hs-node-errors, .hs-app .solid-flow__node:focus-within > .hs-node-errors, .hs-app .solid-flow__node:focus > .hs-node-errors { display: block; }
+.hs-app .hs-node-errors p:last-child { margin: 0; }
+.hs-app .solid-flow__node:hover .hs-node-errors, .hs-app .solid-flow__node:focus-within .hs-node-errors { display: block; }
+
 .hs-app .hs-connection-error, .hs-app .hs-connection-prompt { position: absolute; z-index: 10; bottom: 8px; left: 56px; right: 8px; border: 1px solid currentColor; background: var(--hs-surface); border-radius: 6px; padding: 8px; font-size: 12px; pointer-events: none; }
 .hs-diagnostics { padding-inline-start: 1.2rem; }
 .hs-app .hs-canvas-column .hs-diagnostics { flex: none; max-height: 150px; overflow: auto; margin: 0; padding: 4px 10px; border-top: 1px solid var(--hs-line); list-style: none; background: var(--hs-surface); font-size: 11px; }

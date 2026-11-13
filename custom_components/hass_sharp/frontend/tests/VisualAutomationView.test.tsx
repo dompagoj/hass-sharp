@@ -214,9 +214,11 @@ it('edits all trigger kinds, boolean overrides and expressions without changing 
     setControl(root, 'Trigger type', type)
     if (type === 'once') setControl(root, 'Once timestamp', '2026-12-01T07:30:00+01:00')
     if (type === 'entity') {
-      root.querySelector<HTMLButtonElement>('[aria-label="Entity ID"]')!.click()
-      setControl(root, 'Search entities', 'sensor.temperature')
-      button(root, 'Use ID: sensor.temperature').click()
+      root.querySelector<HTMLButtonElement>('.hs-inspector [aria-label="Entity ID"]')!.click()
+      // Cards on the canvas have their own entity pickers; this edits the trigger in the inspector.
+      const inspector = root.querySelector('.hs-inspector')!
+      setControl(inspector, 'Search entities', 'sensor.temperature')
+      button(inspector, 'Use ID: sensor.temperature').click()
     }
   }
   for (const mode of ['Single', 'Restart', 'Queued', 'Parallel']) {

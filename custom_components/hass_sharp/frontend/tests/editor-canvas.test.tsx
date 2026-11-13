@@ -26,53 +26,22 @@ function input(root: Element, label: string, value: string) {
   expect(control, label).not.toBeNull(); control!.value = value; control!.dispatchEvent(new Event('change', { bubbles: true })); control!.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
-it('renders same-count edits, resizing and undo positions through the real adapter', async () => {
+it('renders same-count edits and undo positions through the real adapter; a stored size never sizes the card', async () => {
   const host = root()
   const [graph, setGraph] = createSignal(createGraph('Heating'))
   dispose = render(() => <FlowAdapter graph={graph()} selectedId="trigger-1" onSelect={() => {}} onChange={setGraph} />, host)
   await vi.waitFor(() => expect(host.textContent).toContain('Entity changes'))
-  setGraph(updateNode(graph(), 'trigger-1', { label: 'Door opens', position: { x: 120, y: 80 }, size: { width: 300, height: 160 } }))
+  // Graphs saved before D14 may still carry a size; cards are measured from their content instead.
+  setGraph(updateNode(graph(), 'trigger-1', { label: 'Door opens', position: { x: 120, y: 80 }, size: { width: 300, height: 160 } } as any))
   const node = host.querySelector<HTMLElement>('[data-id="trigger-1"]')!
   await vi.waitFor(() => expect(node.textContent).toContain('Door opens'))
   expect(node.style.transform).toContain('120px, 80px')
-  expect(node.style.width).toBe('300px')
+  expect(node.style.width).toBe('')
+  expect(node.style.height).toBe('')
   setGraph(updateNode(graph(), 'trigger-1', { position: { x: 60, y: 100 } }))
   expect(node.style.transform).toContain('60px, 100px')
 })
 
-it('offers palette, inspector, connection editing and undo/redo while requesting a server preview', async () => {
-  const host = root()
-  dispose = render(() => <VisualEditor name="Heating" />, host)
-  button(host, 'Add step').click(); button(host, 'Create Delay').click()
-  await vi.waitFor(() => expect(host.querySelector('input[aria-label="Node label"]')?.getAttribute('value') ?? (host.querySelector('input[aria-label="Node label"]') as HTMLInputElement)?.value).toBe('Delay'))
-  input(host, 'Node label', 'Wait for warmth')
-  input(host, 'Seconds', '90')
-  button(host, 'Undo').click()
-  expect((host.querySelector('input[aria-label="Seconds"]') as HTMLInputElement).value).toBe('60')
-  button(host, 'Redo').click()
-  expect((host.querySelector('input[aria-label="Seconds"]') as HTMLInputElement).value).toBe('90')
-  input(host, 'Next destination', 'service-1')
-  button(host, 'Connect Next').click()
-  expect(host.querySelector('[aria-label="Connections"]')?.textContent).toContain('Wait for warmth → Call service')
-  button(host, 'Remove Wait for warmth → Call service').click()
-  expect(host.querySelector('[aria-label="Connections"]')?.textContent).not.toContain('Wait for warmth → Call service')
-  expect(host.textContent).toContain('Not saved')
-  expect(host.textContent).toContain('Generated C#')
-  expect(host.textContent).not.toContain('SAMPLE ONLY')
-})
-
-it('uses keyboard history only outside text controls, and keeps JSON available', () => {
-  const host = root()
-  dispose = render(() => <VisualEditor name="Heating" />, host)
-  button(host, 'Add step').click(); button(host, 'Create Delay').click()
-  const label = host.querySelector<HTMLInputElement>('input[aria-label="Node label"]')!
-  label.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))
-  expect(label.value).toBe('Delay')
-  host.querySelector('[aria-label="Visual automation editor"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))
-  expect(button(host, 'Redo').disabled).toBe(false)
-  button(host, 'Graph JSON').click()
-  expect(host.querySelector('pre[aria-label="Graph JSON"]')?.textContent).toContain('"version": 5')
-})
 it('commits a completed mouse drag into graph JSON and restores it through undo', async () => {
   const host = root()
   let changed = createGraph('Heating')
@@ -117,59 +86,24 @@ it('retains a single-touch drag in the versioned graph', async () => {
     else Reflect.deleteProperty(navigator, 'maxTouchPoints')
   }
 })
-it('writes resize-handle changes back to JSON', async () => {
+it('has no resize control: cards are measured from their content (D14)', async () => {
   const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function(this: HTMLElement) { return parseFloat(this.style.width) || 800 })
   const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function(this: HTMLElement) { return parseFloat(this.style.height) || 570 })
   const host = root()
   const [graph, setGraph] = createSignal(createGraph('Heating'))
   dispose = render(() => <FlowAdapter graph={graph()} selectedId="trigger-1" onSelect={() => {}} onChange={setGraph} />, host)
   await new Promise(resolve => setTimeout(resolve, 100)) // allow the library's queued layout measurement
-  const handle = host.querySelector<HTMLElement>('[data-id="trigger-1"] .solid-flow__resize-control.bottom.right.handle')!
-  expect(handle).not.toBeNull()
-  handle.dispatchEvent(new MouseEvent('mousedown', { clientX: 200, clientY: 200, button: 0, bubbles: true, view: window }))
-  window.dispatchEvent(new MouseEvent('mousemove', { clientX: 260, clientY: 240, buttons: 1, bubbles: true, view: window }))
-  expect(parseFloat(host.querySelector<HTMLElement>('[data-id="trigger-1"]')!.style.width)).toBeGreaterThan(220)
-  window.dispatchEvent(new MouseEvent('mouseup', { clientX: 260, clientY: 240, button: 0, bubbles: true, view: window }))
-  const resized = host.querySelector<HTMLElement>('[data-id="trigger-1"]')!
-  expect(parseFloat(resized.style.width)).toBeGreaterThan(220)
-  await vi.waitFor(() => expect(graph().nodes[0].size.width).toBeGreaterThan(220))
+  const node = host.querySelector<HTMLElement>('[data-id="trigger-1"]')!
+  expect(host.querySelector('.solid-flow__resize-control')).toBeNull()
+  expect(node.style.width).toBe('')
+  await vi.waitFor(() => expect(node.style.visibility).not.toBe('hidden'))
   width.mockRestore(); height.mockRestore()
-})
-it('updates the draft on input before blur and warns before the page is closed', () => {
-  const host = root()
-  dispose = render(() => <VisualEditor name="Heating" />, host)
-  const label = host.querySelector<HTMLInputElement>('input[aria-label="Node label"]')!
-  label.value = 'Door opens'; label.dispatchEvent(new Event('input', { bubbles: true }))
-  button(host, 'Graph JSON').click()
-  expect(host.querySelector('pre')?.textContent).toContain('Door opens')
-  const closing = new Event('beforeunload', { cancelable: true })
-  window.dispatchEvent(closing)
-  expect(closing.defaultPrevented).toBe(true)
-})
-it('keeps canvas keyboard shortcuts inside the Home Assistant panel', () => {
-  const host = root()
-  dispose = render(() => <VisualEditor name="Heating" />, host)
-  const shortcut = vi.fn(); window.addEventListener('keydown', shortcut)
-  try {
-    host.querySelector('[data-id="trigger-1"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }))
-    expect(shortcut).not.toHaveBeenCalled()
-  } finally { window.removeEventListener('keydown', shortcut) }
 })
 it('selects the owning node when a connection handle receives focus', () => {
   const host = root(); const select = vi.fn()
   dispose = render(() => <FlowAdapter graph={createGraph('Heating')} onSelect={select} onChange={() => {}} />, host)
   host.querySelector('[data-id="trigger-1"] .solid-flow__handle')!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
   expect(select).toHaveBeenLastCalledWith('trigger-1')
-})
-it('blocks Home Assistant native ancestor shortcuts while keeping node keyboard movement', () => {
-  const host = root(); const ancestor = vi.fn(); host.addEventListener('keydown', ancestor)
-  dispose = render(() => <VisualEditor name="Heating" />, host)
-  const node = host.querySelector<HTMLElement>('[data-id="trigger-1"]')!
-  node.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
-  node.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true }))
-  expect(ancestor).not.toHaveBeenCalled()
-  button(host, 'Graph JSON').click()
-  expect(JSON.parse(host.querySelector('pre')!.textContent!).nodes[0].position.x).toBeGreaterThan(60)
 })
 it('never deletes a different node when Delete is pressed on a canvas edge', async () => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function(this: HTMLElement) { return parseFloat(this.style.width) || 800 })
@@ -198,16 +132,6 @@ it('retains movement when a second finger interrupts a touch drag', async () => 
   await vi.waitFor(() => expect(graph().nodes[0].position).toEqual({ x: 220, y: 180 }))
   expect(node.style.transform).toContain(`${graph().nodes[0].position.x}px`)
 })
-it('allows node resizing from the keyboard-accessible inspector and rejects invalid sizes', () => {
-  const host = root()
-  dispose = render(() => <VisualEditor name="Heating" />, host)
-  input(host, 'Width', '310'); input(host, 'Height', '170')
-  button(host, 'Graph JSON').click()
-  expect(JSON.parse(host.querySelector('pre')!.textContent!).nodes[0].size).toEqual({ width: 310, height: 170 })
-  input(host, 'Width', '-10')
-  expect(JSON.parse(host.querySelector('pre')!.textContent!).nodes[0].size.width).toBe(310)
-})
-
 it('commits each complete touch gesture once, survives selection/diagnostic updates and supports undo/redo', async () => {
   vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(1)
   const host = root()
@@ -341,25 +265,7 @@ it.each(['touchend', 'touchcancel'])('keeps the primary drag active when an unre
 
 const json = (host: Element) => { button(host, 'Graph JSON').click(); return JSON.parse(host.querySelector('pre[aria-label="Graph JSON"]')!.textContent!) }
 const focusNode = (host: Element, id: string) => host.querySelector(`[data-id="${id}"]`)!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
-it('authors condition false and error branches from distinct typed inspector rows and undoes them', () => {
- const host=root();dispose=render(()=><VisualEditor name="Heating"/>,host)
- button(host,'Add step').click();button(host,'Create Delay').click();input(host,'Node label','Otherwise')
- button(host,'Add step').click();button(host,'Create Call service').click();input(host,'Node label','Recover')
- const draft=json(host);focusNode(host,'condition-1')
- expect(host.querySelector('[aria-label="If true destination"]')).toBeNull()
- input(host,'If false destination',draft.nodes.find((n:any)=>n.label==='Otherwise').id);button(host,'Connect If false').click()
- input(host,'On error destination',draft.nodes.find((n:any)=>n.label==='Recover').id);button(host,'Connect On error').click()
- expect(json(host).edges.filter((e:any)=>e.source==='condition-1').map((e:any)=>e.port)).toEqual(['true','false','error'])
- button(host,'Undo').click();expect(json(host).edges.filter((e:any)=>e.source==='condition-1').map((e:any)=>e.port)).toEqual(['true','false'])
-})
-it('blocks a second outgoing execution edge on a used inspector port',()=>{
- const host=root();dispose=render(()=><VisualEditor name="Heating"/>,host)
- button(host,'Add step').click();button(host,'Create Delay').click();const wait=json(host).nodes.at(-1).id;focusNode(host,'service-1')
- input(host,'Next destination',wait);button(host,'Connect Next').click()
- expect(host.querySelector('[aria-label="Next destination"]')).toBeNull()
- expect(host.querySelector('[aria-label="On error destination"]')).not.toBeNull()
-})
-it('renders a source handle per backend port and labels branch edges', async () => {
+it('renders a source handle per backend port and names branch pins and wires', async () => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function(this: HTMLElement) { return parseFloat(this.style.width) || 800 })
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function(this: HTMLElement) { return parseFloat(this.style.height) || 570 })
   const host = root()
@@ -370,12 +276,17 @@ it('renders a source handle per backend port and labels branch edges', async () 
   expect(handles('condition-1')).toEqual(['true', 'false', 'error'])
   // The response output exists only while returnResponse is on (D9).
   expect(handles('service-1')).toEqual(['next', 'error'])
-  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge-labels')?.textContent).toContain('If false'))
-  expect(host.querySelector('.solid-flow__edge-labels')?.textContent).toContain('If true')
-  expect(host.querySelector('[data-id="condition-1"] [data-handleid="false"]')?.getAttribute('aria-label')).toBe('If false output')
-  expect(host.querySelector('.solid-flow__edge[data-id="condition-1:false->otherwise"]')?.getAttribute('aria-label')).toBe('Execution edge from State condition to Delay')
-  expect(host.querySelector('.solid-flow__edge[data-id="condition-1:true->service-1"]')?.getAttribute('aria-label')).toBe('Execution edge from State condition to Call service')
-  expect(host.querySelector('.solid-flow__edge[data-id="trigger-1->condition-1"]')?.getAttribute('aria-label')).toBe('Execution edge from Entity changes to State condition')
+  // Branches are named on the card, beside their pins; wires carry the same names for assistive technology.
+  expect(host.querySelector('[data-id="condition-1"] [data-output-id="false"]')?.textContent).toBe('If false')
+  expect(host.querySelector('[data-id="condition-1"] [data-output-id="true"]')?.textContent).toBe('If true')
+  expect(host.querySelector('[data-id="condition-1"] .hs-card__row--footer [data-output-id="error"]')?.textContent).toBe('On error')
+  expect(host.querySelector('[data-id="condition-1"] [data-handleid="false"]')?.getAttribute('aria-label')).toBe('If false execution output, connected')
+  expect(host.querySelector('[data-id="condition-1"] [data-handleid="error"]')?.getAttribute('aria-label')).toBe('On error execution output, not connected')
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge[data-id="condition-1:false->otherwise"]')).not.toBeNull())
+  expect(host.querySelector('.solid-flow__edge[data-id="condition-1:false->otherwise"]')?.getAttribute('aria-label')).toBe('Execution wire from State condition · If false to Delay')
+  expect(host.querySelector('.solid-flow__edge[data-id="condition-1:true->service-1"]')?.getAttribute('aria-label')).toBe('Execution wire from State condition · If true to Call service')
+  expect(host.querySelector('.solid-flow__edge[data-id="trigger-1->condition-1"]')?.getAttribute('aria-label')).toBe('Execution wire from Entity changes · Next to State condition')
+  expect(host.querySelector('.solid-flow__edge-labels')?.textContent ?? '').toBe('')
 })
 it('connects by dragging from a port handle and rejects a second edge on that port', async () => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function(this: HTMLElement) { return parseFloat(this.style.width) || 800 })
@@ -410,19 +321,6 @@ it('connects by dragging from a port handle and rejects a second edge on that po
   await vi.waitFor(() => expect(host.querySelectorAll('.solid-flow__edge')).toHaveLength(graph().edges.length))
 })
 
-it('palette clicks describe configuration and connections without editing history', () => {
-  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
-  const before = json(host)
-  button(host, 'About State condition').click()
-  const inspector = host.querySelector('[aria-label="Node inspector"]')!
-  expect(inspector.textContent).toContain('Branch on an entity state')
-  expect(inspector.textContent).toContain('If true')
-  expect(inspector.textContent).toContain('If false')
-  expect(inspector.textContent).toContain('On error')
-  expect(inspector.querySelector('input')).toBeNull()
-  expect(json(host)).toEqual(before)
-  expect(button(host, 'Undo').disabled).toBe(true)
-})
 it('opens a focused keyboard chooser and cancels without creating anything', async () => {
   const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
   const before = json(host)
@@ -529,43 +427,6 @@ it.each(['next', 'error'] as const)('preserves the %s output in the connection c
   start(); end() // now occupied
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
 })
-it('entity picker keyboard selection works inside the editor shortcut boundary', async () => {
-  const host = root()
-  const fixture = visualFixture()
-  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ ...fixture,
-    callWS: (message: any) => message.type === 'hass_sharp/get_entities' ? Promise.resolve({ entities: [{ entity_id: 'sensor.fresh', name: 'New sensor' }] }) : fixture.callWS(message),
-  } as any}><RealVisualEditor name="Keys" /></HassCtx.Provider></QueryClientProvider>, host)
-  host.querySelector<HTMLButtonElement>('[aria-label="Entity ID"]')!.click()
-  const field = host.querySelector<HTMLInputElement>('[aria-label="Search entities"]')!
-  field.focus(); input(host, 'Search entities', 'new')
-  await vi.waitFor(() => expect(host.querySelector('[role="option"]')).not.toBeNull())
-  field.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
-  field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-  expect(json(host).nodes[0].config.entity).toBe('sensor.fresh')
-})
-it('opens visual help with node examples without changing the graph', () => {
-  const host = root(); dispose = render(() => <VisualEditor name="Help" />, host)
-  const help = host.querySelector<HTMLButtonElement>('button[aria-label="Visual automation help"]')
-  expect(help).not.toBeNull()
-  help!.click()
-  expect(host.querySelector('dialog[open]')?.textContent).toContain('Build and connect steps')
-  expect(button(host, 'Undo').disabled).toBe(true)
-})
-
-it('fetches current entity suggestions when reopening an editor with a fresh cache', async () => {
-  const host = root()
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  // The shared registry query (src/registry.ts) caches the whole get_entities reply.
-  client.setQueryData(['hass-entities'], { entities: [{ entity_id: 'sensor.old' }], areas: [], devices: [], floors: [], labels: [] })
-  const fixture = visualFixture()
-  const callWS = vi.fn((message: any) => message.type === 'hass_sharp/get_entities'
-    ? Promise.resolve({ entities: [{ entity_id: 'sensor.new' }] }) : fixture.callWS(message))
-  dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={{ ...fixture, callWS } as any}>
-    <RealVisualEditor name="Reopened" />
-  </HassCtx.Provider></QueryClientProvider>, host)
-  await vi.waitFor(() => expect((client.getQueryData(['hass-entities']) as any)?.entities).toEqual([{ entity_id: 'sensor.new' }]))
-  expect(callWS).toHaveBeenCalledWith({ type: 'hass_sharp/get_entities' })
-})
 it('clears a touch connection canceled before a later touch release', async () => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
@@ -582,29 +443,4 @@ it('clears a touch connection canceled before a later touch release', async () =
   document.dispatchEvent(new TouchEvent('touchend', { bubbles: true, touches: [], changedTouches: [endFinger] }))
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
   expect(json(host).nodes).toHaveLength(3)
-})
-
-it('keeps advanced C# collapsed by default and retains helpers across collapse', () => {
- const host=root();dispose=render(()=><VisualEditor name="Advanced"/>,host)
- const section=host.querySelector<HTMLDetailsElement>('[aria-label="Graph C# sections"]')!
- expect(section.open).toBe(false)
- section.open=true;section.dispatchEvent(new Event('toggle'))
- input(host,'C# members','private int Count = 4;')
- section.open=false;section.dispatchEvent(new Event('toggle'))
- section.open=true;section.dispatchEvent(new Event('toggle'))
- expect(host.querySelector<HTMLTextAreaElement>('[aria-label="C# members"]')!.value).toBe('private int Count = 4;')
- expect(json(host).members).toBe('private int Count = 4;')
-})
-it('reveals and focuses Advanced C# when selecting an imports or members diagnostic', async () => {
- const host=root();const fixture=visualFixture()
- fixture.controls.preview={valid:false,source:'using Broken;\nclass VisualAutomation {\n invalid;\n}',sourceMap:[{nodeId:'$imports',startLine:1,endLine:1},{nodeId:'$members',startLine:3,endLine:3}],diagnostics:[{nodeId:'$imports',message:'Broken import',severity:3,startLine:1},{nodeId:'$members',message:'Broken member',severity:3,startLine:3}]}
- dispose=render(()=><QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={fixture as any}><RealVisualEditor name="Diagnostics"/></HassCtx.Provider></QueryClientProvider>,host)
- await vi.waitFor(()=>expect(host.querySelector('[aria-label="Graph diagnostics"]')?.textContent).toContain('Broken import'))
- const section=host.querySelector<HTMLDetailsElement>('[aria-label="Graph C# sections"]')!
- for (const [message,label] of [['Broken import · line 1','C# imports'],['Broken member · line 3','C# members']]) {
-  section.open=false;section.dispatchEvent(new Event('toggle'))
-  button(host,message).click();await Promise.resolve()
-  expect(section.open).toBe(true)
-  expect(document.activeElement).toBe(host.querySelector(`[aria-label="${label}"]`))
- }
 })

@@ -1,6 +1,9 @@
 // Development-only fixture. No backend or Home Assistant services are called.
 import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
-import { fillGraphLayout, type Graph, type VisualCatalogSnapshot } from '../src/visual/contract'
+import services from '../../../../tests/fixtures/visual-services.json'
+import { connectData, fillGraphLayout, type Graph, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { addNode, connectNodes, createGraph, updateNode } from '../src/visual/graph'
+import { FlowAdapter, type FlowTrace } from '../src/visual/FlowAdapter'
 import { visualFixture as makeVisualFixture } from './visual-fixture'
 import { render } from 'solid-js/web'
 import App from '../src/App'
@@ -9,6 +12,8 @@ import type { AutomationRun, HomeAssistant, UserScriptDTO } from '../src/types'
 
 const diagnosticsFixture = new URLSearchParams(location.search).has('diagnostics')
 const shadowFixture = new URLSearchParams(location.search).has('shadow')
+// `?view=trace`: the canvas read-only with a sample run trace (the run view itself is a later task).
+const traceFixture = new URLSearchParams(location.search).get('view') === 'trace'
 const scripts: UserScriptDTO[] = [
   { fileName: 'BathroomHeating.cs', automationId: 'fixture-bathroom', revision: 'fixture-revision', classes: [{ name: 'Home.BathroomHeating', methods: ['Execute'] }] },
   { fileName: 'EveningLights.cs', classes: [{ name: 'Home.EveningLights', methods: ['Configure', 'ExecuteAsync'] }] },
@@ -47,7 +52,26 @@ const runs: AutomationRun[] = Array.from({ length: 23 }, (_, i) => ({
 ;(window as any).setPreviewTheme('light')
 const visualBackend = makeVisualFixture({catalog:rich.catalog as unknown as VisualCatalogSnapshot,libraries:[{id:rich.sourceId,name:'Typed sample.cs',revision:rich.revision,source:rich.source}, {id:'helper',name:'Helper.cs',revision:1,source:'public static class Factory { public static Reading Make(string? label, int count = 1) => new(label ?? ""); public static Reading Read(EntityStateSnapshot entity) => Samples.Describe(entity); }'}]})
 const typedFixture=new URLSearchParams(location.search).has('typed')
-if(typedFixture)visualBackend.documents.set('typed-demo',{version:1,id:'typed-demo',revision:1,graph:fillGraphLayout(rich.cases[0].graph as Graph),source:'// Typed fixture generated on the server',sourceMap:[],automationId:'visual:typed-demo',currentRevisionActive:true,catalogGeneration:'saved-fixture'})
+// Node cards: a state trigger, light.turn_on with a target and two fields, a condition with both branches, a delay,
+// a connected and an unconnected input, and the rich library sample below them.
+const typedDemo = (): Graph => {
+  const catalog = rich.catalog as unknown as VisualCatalogSnapshot, lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
+  const config = (graph: Graph, id: string) => graph.nodes.find(n => n.id === id)!.config
+  let g = createGraph('Motion lights')
+  g = updateNode(g, 'trigger-1', { label: 'Motion in the hall', config: { type: 'entity', entity: 'binary_sensor.hall_0', manual: true, mode: 'Single' }, position: { x: 40, y: 80 } })
+  g = updateNode(g, 'condition-1', { position: { x: 420, y: 80 } })
+  g = updateNode(g, 'service-1', { position: { x: 840, y: 20 }, config: { ...config(g, 'service-1'), service: 'light.turn_on', target: lit('target', { entity_id: 'light.hall_1' }), fields: { brightness_pct: lit('number', 80), transition: lit('number', 2) } } })
+  g = addNode(g, 'delay', 'delay-1', catalog)
+  g = updateNode(g, 'delay-1', { position: { x: 840, y: 480 }, config: { ...config(g, 'delay-1'), seconds: lit('number', 300) } })
+  g = addNode(g, 'service', 'service-2', catalog)
+  g = updateNode(g, 'service-2', { label: 'Lights off', position: { x: 1240, y: 480 }, config: { ...config(g, 'service-2'), service: 'light.turn_off', target: lit('target', { entity_id: 'light.hall_1' }) } })
+  g = connectNodes(connectNodes(g, 'condition-1', 'delay-1', 'false', catalog), 'delay-1', 'service-2', undefined, catalog)
+  g = connectData(g, 'trigger-1', 'entity_id', 'condition-1', 'entity', catalog)
+  const sample = fillGraphLayout(rich.cases[0].graph as Graph)
+  return { ...g, nodes: [...g.nodes, ...sample.nodes.map((node, i) => ({ ...node, position: { x: 40 + i * 400, y: 820 } }))], edges: [...g.edges, ...sample.edges] }
+}
+if(typedFixture)visualBackend.controls.services = services as unknown as ServicesSection
+if(typedFixture)visualBackend.documents.set('typed-demo',{version:1,id:'typed-demo',revision:1,graph:typedDemo(),source:'// Typed fixture generated on the server',sourceMap:[],automationId:'visual:typed-demo',currentRevisionActive:true,catalogGeneration:'saved-fixture'})
 ;(window as any).visualFixture = visualBackend
 const visualFixture = new URLSearchParams(location.search).get('view') === 'visual'
 const libraryFixture = new URLSearchParams(location.search).get('view') === 'library'
@@ -106,7 +130,13 @@ if (shadowFixture) {
   // injection cannot cross this boundary; keep the preview's real app styling.
   for (const style of document.querySelectorAll('style, link[rel="stylesheet"]')) previewRoot.append(style.cloneNode(true))
 }
-render(() => <App hass={hass} />, previewRoot)
+const sampleTrace: FlowTrace = {
+  nodes: { 'trigger-1': { status: 'ok', runs: 1, ms: 3 }, 'condition-1': { status: 'ok', runs: 1, ms: 1 }, 'delay-1': { status: 'running', runs: 1 }, t: { status: 'ok', runs: 1 }, r: { status: 'ok', runs: 1, ms: 12 }, describe: { status: 'error', runs: 1, ms: 40 }, consume: { status: 'failed', runs: 2, ms: 1250 } },
+  edges: new Set(['trigger-1->condition-1', 'condition-1:false->delay-1', 'flow0', 'flow1', 'flow2', 'wire3', 'wire4']),
+  focusNodeId: 'consume',
+  value: (node, port, side) => node === 'delay-1' && port === 'seconds' ? { type: 'number', v: 300 } : node === 'condition-1' && port === 'entity' ? { type: 'entity_id', v: 'binary_sensor.hall_0' } : node === 'r' && side === 'out' ? { type: 'object', v: { state: '21.5', attributes: { unit: 'C' } }, trunc: true } : undefined,
+}
+render(() => traceFixture ? <div class="hs-app" style={{ height: '100%' }}><FlowAdapter graph={typedDemo()} catalog={rich.catalog as unknown as VisualCatalogSnapshot} readOnly trace={sampleTrace} onSelect={() => {}} /></div> : <App hass={hass} />, previewRoot)
 // Browser smoke checks can inspect the real Monaco model without replacing it.
 import * as monaco from 'monaco-editor'
 ;(window as any).previewCode = () => monaco.editor.getModels().map(model => model.getValue())
