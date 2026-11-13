@@ -94,7 +94,7 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
             connection.send_error(msg["id"], "unauthorized", "Administrator required")
             return
         try:
-            connection.send_result(msg["id"], {"entities": utils.get_hass_entity_suggestions(hass)})
+            connection.send_result(msg["id"], utils.get_hass_entity_registry(hass))
         except Exception:
             logger.exception("Entity discovery failed")
             connection.send_error(msg["id"], "entities_failed", "Could not load entities; try again")

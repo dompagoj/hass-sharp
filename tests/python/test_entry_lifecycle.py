@@ -14,7 +14,8 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         calls=[]
         state=types.SimpleNamespace(ready=True,close=lambda:calls.append('unregister'))
         bridge=types.SimpleNamespace(close=lambda:calls.append('close'),async_shutdown=AsyncMock())
-        hass=types.SimpleNamespace(data={'hass_sharp_llm':{'entry':state},'hass_sharp_native_triggers':{'entry':bridge}},config_entries=types.SimpleNamespace(async_unload_platforms=AsyncMock(return_value=True)))
+        stop_services=Mock(side_effect=lambda:calls.append('services'))
+        hass=types.SimpleNamespace(data={'hass_sharp_llm':{'entry':state},'hass_sharp_native_triggers':{'entry':bridge},'hass_sharp_services':{'entry':stop_services}},config_entries=types.SimpleNamespace(async_unload_platforms=AsyncMock(return_value=True)))
         env={'utils':types.SimpleNamespace(get_hass_sharp_manager=lambda h:types.SimpleNamespace(UnloadAsync=object())), 'dotnet_tasks':types.SimpleNamespace(async_run_dotnet_task=AsyncMock()),'frontend':types.SimpleNamespace(async_remove_panel=Mock())}
         exec(compile(ast.Module(body=[fn],type_ignores=[]),'<entry>','exec'),env)
         self.assertTrue(await env['async_unload_entry'](hass,types.SimpleNamespace(entry_id='entry')))
@@ -23,6 +24,8 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(state.ready)
         bridge.async_shutdown.assert_awaited_once()
         env['frontend'].async_remove_panel.assert_called_once()
+        stop_services.assert_called_once()
+        self.assertNotIn('entry',hass.data['hass_sharp_services'])
     def test_panel_registration_is_entry_owned_and_minimum_guard_precedes_runtime(self):
         tree=ast.parse(pathlib.Path('custom_components/hass_sharp/__init__.py').read_text())
         setup=next(n for n in tree.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='async_setup')
@@ -55,7 +58,12 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
             state=State(service);state_instances.append(state);return state
         def register(hass,state):
             self.assertTrue(state.ready);registration.append(state)
-        runner=AsyncMock()
+        order=[]
+        runner=AsyncMock(side_effect=lambda hass,method,*args:order.append('init' if method is manager.Init else 'other'))
+        stops=[]
+        def track(hass,target):
+            self.assertIs(target,manager);stop=Mock();stops.append(stop);return stop
+        services=types.SimpleNamespace(async_push=AsyncMock(side_effect=lambda h,m:order.append('push')),async_track=track)
         panel=Mock();remove=Mock()
         env=dict(json=json,Action=Delegate,Func=Delegate,Int32=int,String=str,Task=object,
                  HasEntityState=object,PyInterop=types.SimpleNamespace(),Event=Delegate,EventStateChangedData=object,
@@ -64,13 +72,19 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
                  native_triggers=types.SimpleNamespace(NativeTriggerBridge=lambda h:bridge),
                  dotnet_tasks=types.SimpleNamespace(async_run_dotnet_task=runner),
                  frontend=types.SimpleNamespace(async_register_built_in_panel=panel,async_remove_panel=remove),
-                 llm=types.SimpleNamespace(EntryState=state_factory,register=register),AuthoringService=lambda h,m:None)
+                 llm=types.SimpleNamespace(EntryState=state_factory,register=register),AuthoringService=lambda h,m:None,
+                 services=services)
         exec(compile(tree,'<entry>','exec'),env)
         entry=types.SimpleNamespace(entry_id='test')
         self.assertTrue(await env['async_setup_entry'](hass,entry))
         self.assertTrue(state_instances[-1].ready)
+        services.async_push.assert_awaited_once_with(hass,manager)
+        self.assertEqual(order[:2],['push','init'])
+        self.assertIs(hass.data['hass_sharp_services']['test'],stops[-1])
         await env['async_unload_entry'](hass,entry)
         self.assertTrue(state_instances[-1].closed)
+        stops[-1].assert_called_once()
+        self.assertNotIn('test',hass.data['hass_sharp_services'])
         self.assertTrue(await env['async_setup_entry'](hass,entry))
         self.assertEqual(panel.call_count,2)
         self.assertEqual(len(registration),2)
@@ -84,5 +98,8 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(state_instances[-1].closed)
         self.assertNotIn('test',hass.data['hass_sharp_llm'])
         self.assertNotIn('test',hass.data['hass_sharp_native_triggers'])
+        self.assertEqual(len(stops),3)
+        stops[-1].assert_called_once()
+        self.assertNotIn('test',hass.data['hass_sharp_services'])
         self.assertEqual(hass.config_entries.async_unload_platforms.await_count,3)
         self.assertEqual(bridge.async_shutdown.await_count,3)

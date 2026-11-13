@@ -532,7 +532,7 @@ it('entity picker keyboard selection works inside the editor shortcut boundary',
   const host = root()
   const fixture = visualFixture()
   dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ ...fixture,
-    callWS: (message: any) => message.type === 'hass_sharp/get_entities' ? Promise.resolve({ entities: [{ entity_id: 'sensor.fresh', friendly_name: 'New sensor' }] }) : fixture.callWS(message),
+    callWS: (message: any) => message.type === 'hass_sharp/get_entities' ? Promise.resolve({ entities: [{ entity_id: 'sensor.fresh', name: 'New sensor' }] }) : fixture.callWS(message),
   } as any}><RealVisualEditor name="Keys" /></HassCtx.Provider></QueryClientProvider>, host)
   host.querySelector<HTMLButtonElement>('[aria-label="Entity ID"]')!.click()
   const field = host.querySelector<HTMLInputElement>('[aria-label="Search entities"]')!

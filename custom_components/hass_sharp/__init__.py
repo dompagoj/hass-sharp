@@ -15,7 +15,7 @@ from homeassistant.core import Event, EventStateChangedData, HomeAssistant, call
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
 
-from . import scheduling, dotnet_downloader, dotnet_tasks, http, native_triggers, utils, websocket
+from . import scheduling, dotnet_downloader, dotnet_tasks, http, native_triggers, services, utils, websocket
 from .const import logger
 
 os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "true"
@@ -252,6 +252,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         PyInterop.SubscribeToEntityTracking = Action[String](subscribe_to_entity_change)
 
         await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+        await services.async_push(hass, hass_sharp)
+        hass.data.setdefault("hass_sharp_services", {})[entry.entry_id] = services.async_track(hass, hass_sharp)
         await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.Init, utils.get_hass_entities(hass))
         register_panel(hass)
         state.ready = True
@@ -259,6 +261,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     except BaseException:
         state.close()
         hass.data["hass_sharp_llm"].pop(entry.entry_id, None)
+        stop_services = hass.data.get("hass_sharp_services", {}).pop(entry.entry_id, None)
+        if stop_services is not None:
+            stop_services()
         frontend.async_remove_panel(hass, "hass-sharp")
         native_bridge.close()
         try:
@@ -286,6 +291,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if state is not None:
         state.close()
         hass.data["hass_sharp_llm"].pop(entry.entry_id, None)
+    stop_services = hass.data.get("hass_sharp_services", {}).pop(entry.entry_id, None)
+    if stop_services is not None:
+        stop_services()
 
     native_bridge = hass.data.get("hass_sharp_native_triggers", {}).pop(entry.entry_id, None)
     if native_bridge is not None:
