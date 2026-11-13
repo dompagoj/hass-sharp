@@ -119,6 +119,19 @@ static class VisualTraceTests
         }
         try
         {
+            await Test("secret names match the shared fixture the trace view reads", () =>
+            {
+                // tests/fixtures/trace-secret-names.json is also read by the frontend's secretName: both rules must agree with it.
+                var rows = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "trace-secret-names.json")))!["names"]!.AsArray();
+                Check(rows.Count > 0, "no secret-name rows");
+                foreach (var row in rows)
+                {
+                    var name = S(row!["name"]); var expected = row["secret"]!.GetValue<bool>();
+                    Check(TraceJson.Secret(name) == expected, $"secret name {name}: expected {expected}");
+                }
+                return Task.CompletedTask;
+            });
+
             await Test("linear run records events, ports, inputs with src, outputs and timings", async () =>
             {
                 var graph = G(N("a", "not", new { value = Lit("boolean", false) }), N("b", "and", new { left = Unset(), right = Lit("boolean", true) }), N("l", "log", new { value = Unset() }));

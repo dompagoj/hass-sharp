@@ -33,6 +33,8 @@ function graph(): Graph {
   g = connectNodes(g, 'condition-1', 'off', 'false')
   g = connectNodes(g, 'lights', 'service-1', 'body')
   g = connectNodes(g, 'service-1', 'note', 'error')
+  // A value wire into a step whose values were too large to record: it cannot be shown as travelled.
+  g = { ...g, edges: [...g.edges, { id: 'lights.item->note.value', kind: 'data', source: 'lights', sourcePort: 'item', target: 'note', targetPort: 'value' }] }
   return g
 }
 const lights = ['light.hall', 'light.kitchen', 'light.landing']
@@ -43,9 +45,15 @@ function events(): TraceEvent[] {
     { node: 'lights', frame: '', t: 3, ms: 900, status: 'ok', port: 'next', inputs: { items: { type: 'array', v: lights } } },
     ...lights.flatMap((light, i): Omit<TraceEvent, 'seq'>[] => [
       { node: 'service-1', frame: `lights#${i}:body`, t: 4 + i * 300, ms: 250 + i, status: i === 1 ? 'error' : 'ok', port: i === 1 ? 'error' : 'next',
-        inputs: { target: { type: 'entity_id', v: light, src: { node: 'lights', port: 'item' } }, 'field:brightness_pct': { type: 'number', v: 80 + i }, 'field:api_key': { type: 'string', v: '***', redacted: true } },
+        inputs: { target: { type: 'entity_id', v: light, src: { node: 'lights', port: 'item' } }, 'field:brightness_pct': { type: 'number', v: 80 + i }, 'field:api_key': { type: 'string', v: '***', redacted: true },
+          'field:data': { type: 'object', v: { color: { rgb: { r: 255, g: 180 + i } }, level: i } } },
         ...(i === 1 ? { error: { type: 'InvalidOperationException', message: `${light} is unavailable` } } : {}) },
-      ...(i === 1 ? [{ node: 'note', frame: `lights#${i}:body`, t: 260 + i * 300, ms: 1, status: 'ok' as const, port: 'next', trunc: true }] : []),
+      ...(i === 1 ? [{ node: 'note', frame: `lights#${i}:body`, t: 260 + i * 300, ms: 1, status: 'ok' as const, port: 'next', trunc: true,
+        // What the recorder writes in place of values it did not keep, inside a value and as a whole value.
+        inputs: {
+          value: { type: 'object', v: { api_key: '***', note: '***', reader: 'global::Hall.Reader', state: { token: '***' } }, trunc: true },
+          extra: { type: 'object', v: null, trunc: true },
+        } }] : []),
     ]),
   ]
   return list.map((event, i) => ({ ...event, seq: i + 1 }))
@@ -72,16 +80,16 @@ const layout = () => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
 }
-function mount(trace: (message: any) => Promise<unknown>, options: { admin?: boolean; revision?: number } = {}) {
+function mount(trace: (message: any) => Promise<unknown>, options: { admin?: boolean; revision?: number; path?: string } = {}) {
   layout()
   const root = document.createElement('div'); root.className = 'hs-app'; document.body.append(root)
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const history = createMemoryHistory()
-  history.set({ value: '/visual/heating/runs/run-1' })
+  history.set({ value: options.path ?? '/visual/heating/runs/run-1' })
   const callWS = vi.fn(async (message: any) => {
     if (message.type === 'hass_sharp/run_trace') return trace(message)
     if (message.type === 'hass_sharp/visual' && message.request.operation === 'read')
-      return { version: 1, ok: true, result: { id: 'heating', revision: options.revision ?? 4, graph: graph() } }
+      return { version: 1, ok: true, result: { id: message.request.id, revision: options.revision ?? 4, graph: graph() } }
     return []
   })
   dispose = render(() => (
@@ -89,7 +97,7 @@ function mount(trace: (message: any) => Promise<unknown>, options: { admin?: boo
       <HassCtx.Provider value={{ callWS, user: { is_admin: options.admin ?? true } } as any}>
         <MemoryRouter history={history}>
           <Route path="/visual/:id/runs/:runId" component={RunTraceView} />
-          <Route path="/visual/:id" component={() => <p>Editor page</p>} />
+          <Route path="/visual/:id" component={() => <p class="editor-page">Editor page</p>} />
         </MemoryRouter>
       </HassCtx.Provider>
     </QueryClientProvider>
@@ -120,6 +128,9 @@ it('shows the run\'s own graph read-only, with the path it took and the steps it
   expect(root.querySelector('.hs-save-chip')!.textContent).toContain('Succeeded')
   expect(root.querySelector('.hs-trace-strip')!.textContent).toContain('Motion in the hall · binary_sensor.motion: off → on')
   expect(root.querySelector<HTMLAnchorElement>('a.hs-trace-open')!.getAttribute('href')).toBe('/visual/heating')
+  // The same revision as the automation now: no note, once the automation has been read.
+  await vi.waitFor(() => expect(callWS).toHaveBeenCalledWith(expect.objectContaining({ type: 'hass_sharp/visual', request: expect.objectContaining({ operation: 'read', id: 'heating' }) })))
+  await new Promise(resolve => setTimeout(resolve, 0))
   expect(root.textContent).not.toContain('earlier version')
   // The timeline lists every recorded run of a step, iterations 1-based.
   expect(steps(root)).toHaveLength(7)
@@ -152,14 +163,40 @@ it('shows a selected step\'s recorded values with their sources, and switches it
   // Its runs are marked in the timeline.
   expect(steps(root).filter(step => step.classList.contains('hs-trace-step--node'))).toHaveLength(3)
   const chooser = panel(root).querySelector<HTMLSelectElement>('select')!
-  expect([...chooser.options].map(o => o.textContent)).toEqual(['Iteration 1 of 3', 'Iteration 2 of 3 · Recovered', 'Iteration 3 of 3'])
-  chooser.value = chooser.options[1].value
+  expect([...chooser.options].map(o => o.textContent)).toEqual(['Whole run', 'Iteration 1 of 3', 'Iteration 2 of 3 · Recovered', 'Iteration 3 of 3'])
+  // The whole run is on view until an iteration is chosen; the panel says which run it shows.
+  expect(chooser.selectedIndex).toBe(0)
+  expect(panel(root).textContent).toContain('Showing its last run: Iteration 3 of 3.')
+  const unreached = (id: string) => card(root, id).querySelector('.hs-card')!.classList.contains('hs-card--unreached')
+  expect(unreached('note')).toBe(false)
+  chooser.value = chooser.options[2].value
   chooser.dispatchEvent(new Event('change', { bubbles: true }))
   await vi.waitFor(() => expect(port(root, 'field:brightness_pct').textContent).toContain('81'))
   expect(panel(root).querySelector('.hs-trace-error')!.textContent).toContain('light.kitchen is unavailable')
   expect(panel(root).textContent).not.toContain('InvalidOperationException')
   expect(card(root, 'service-1').querySelector('[data-input-id="field:brightness_pct"] .hs-value-chip')?.textContent).toBe('81')
   expect(steps(root).find(step => step.getAttribute('aria-current') === 'true')!.textContent).toContain('Iteration 2 of 3')
+  expect(chooser.selectedIndex).toBe(2)
+  // The canvas shows that iteration: the recovered status, the error wire it took.
+  const travelled = (id: string) => root.querySelector(`.solid-flow__edge[data-id="${id}"]`)!.outerHTML.includes('hs-wire--travelled')
+  await vi.waitFor(() => expect(card(root, 'service-1').querySelector('.hs-card')!.className).toContain('error'))
+  expect(travelled('service-1:error->note')).toBe(true)
+  // An iteration that did not fail: the step after the error did not run in it, nor was its wire travelled.
+  chooser.value = chooser.options[3].value
+  chooser.dispatchEvent(new Event('change', { bubbles: true }))
+  await vi.waitFor(() => expect(unreached('note')).toBe(true))
+  expect(travelled('service-1:error->note')).toBe(false)
+  expect(unreached('lights')).toBe(false)
+  expect(travelled('condition-1:true->lights')).toBe(true)
+  // A dimmed step of the loop, chosen on the canvas, says it did not run in that iteration.
+  card(root, 'note').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await vi.waitFor(() => expect(panel(root).textContent).toContain('This step did not run in Iteration 3 of 3.'))
+  // "Whole run" puts back the whole picture.
+  const again = panel(root).querySelector<HTMLSelectElement>('select')!
+  again.value = 'whole'
+  again.dispatchEvent(new Event('change', { bubbles: true }))
+  await vi.waitFor(() => expect(unreached('note')).toBe(false))
+  expect(travelled('service-1:error->note')).toBe(true)
 })
 
 it('selects and centres a step chosen in the timeline, and keeps focus on the timeline', async () => {
@@ -169,7 +206,8 @@ it('selects and centres a step chosen in the timeline, and keeps focus on the ti
   note.focus(); note.click()
   await vi.waitFor(() => expect(card(root, 'note').querySelector('.hs-card')!.classList).toContain('hs-card--focus'))
   expect(panel(root).querySelector('.hs-trace-node__title')!.textContent).toBe('Log')
-  expect(panel(root).textContent).toContain('Some values were too large to record.')
+  expect(panel(root).textContent).toContain('Some values were too large to record, so their wires are not highlighted.')
+  expect(root.querySelector('.solid-flow__edge[data-id="lights.item->note.value"]')!.outerHTML).not.toContain('hs-wire--travelled')
   expect(document.activeElement).toBe(note)
   // Arrow keys move along the timeline.
   note.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
@@ -186,26 +224,83 @@ it('selects and centres a step chosen in the timeline, and keeps focus on the ti
   expect(card(root, 'lights').classList).toContain('selected')
 })
 
-it('polls a live run every 2 seconds and stops once it has finished', async () => {
+it('polls a live run every 2 seconds, keeps what was opened and the cards across polls, and stops once it has finished', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  let calls = 0
+  const all = events()
+  // 1: up to the second iteration's note; 2: the same again; 3: one more event; 4: the end.
+  const counts = [6, 6, 7]
+  const { root } = mount(async () => {
+    calls++
+    const live = calls <= counts.length
+    const shown = live ? all.slice(0, counts[calls - 1]) : all
+    return response({ live, run: run({ runId: 'run-1', status: live ? 'Running' : 'Succeeded', durationMs: live ? null : 900 }) }, { events: shown, complete: !live })
+  })
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(6))
+  expect(root.querySelector('.hs-save-chip')!.textContent).toContain('Running')
+  expect(root.textContent).toContain('Still running')
+  // On "Turn on": choose the first of its runs, and open a recorded value two levels deep.
+  card(root, 'service-1').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe('Turn on'))
+  const chooser = () => panel(root).querySelector<HTMLSelectElement>('select')!
+  chooser().value = chooser().options[1].value
+  chooser().dispatchEvent(new Event('change', { bubbles: true }))
+  await vi.waitFor(() => expect(port(root, 'field:brightness_pct').textContent).toContain('80'))
+  const level = (depth: number) => [...port(root, 'field:data').querySelectorAll<HTMLDetailsElement>('details')][depth]
+  const toggle = (details: HTMLDetailsElement) => { details.open = true; details.dispatchEvent(new Event('toggle')) }
+  toggle(level(0)); toggle(level(1))
+  const opened = [level(0), level(1)]
+  expect(port(root, 'field:data').textContent).toContain('g 180')
+  const cards = [...root.querySelectorAll('.solid-flow__node .hs-card')]
+  const viewport = root.querySelector<HTMLElement>('.solid-flow__viewport')!.style.transform
+  const values = panel(root).querySelector('.hs-trace-node')
+  // Two polls: one with nothing new, one that adds an event.
+  await vi.advanceTimersByTimeAsync(2000)
+  await vi.waitFor(() => expect(calls).toBe(2))
+  await vi.advanceTimersByTimeAsync(2000)
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(7))
+  expect(chooser().selectedIndex).toBe(1)
+  expect(chooser().options[chooser().selectedIndex].textContent).toBe('Iteration 1 of 3')
+  expect(port(root, 'field:brightness_pct').textContent).toContain('80')
+  expect(panel(root).querySelector('.hs-trace-node')).toBe(values)
+  expect(level(0)).toBe(opened[0])
+  expect(level(1)).toBe(opened[1])
+  expect(opened.every(details => details.open)).toBe(true)
+  expect(port(root, 'field:data').textContent).toContain('g 180')
+  expect([...root.querySelectorAll('.solid-flow__node .hs-card')].every((el, i) => el === cards[i])).toBe(true)
+  expect(root.querySelector<HTMLElement>('.solid-flow__viewport')!.style.transform).toBe(viewport)
+  await vi.advanceTimersByTimeAsync(2000)
+  await vi.waitFor(() => expect(root.querySelector('.hs-save-chip')!.textContent).toContain('Succeeded'))
+  await vi.advanceTimersByTimeAsync(6000)
+  expect(calls).toBe(4)
+})
+
+it('keeps the last reply when a read of a live run fails, says updates are paused, and goes on once a read succeeds', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   let calls = 0
   const all = events()
   const { root } = mount(async () => {
     calls++
-    const live = calls < 3
-    const shown = live ? all.slice(0, calls + 2) : all
-    return response({ live, run: run({ runId: 'run-1', status: live ? 'Running' : 'Succeeded', durationMs: live ? null : 900 }) }, { events: shown, complete: !live })
+    if (calls === 2) throw { code: 'unknown_error', message: 'Connection lost' }
+    const live = calls < 4
+    return response({ live, run: run({ runId: 'run-1', status: live ? 'Running' : 'Succeeded', durationMs: live ? null : 900 }) }, { events: all.slice(0, calls + 2), complete: !live })
   })
   await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
-  expect(root.querySelector('.hs-save-chip')!.textContent).toContain('Running')
-  expect(root.textContent).toContain('Still running')
   await vi.advanceTimersByTimeAsync(2000)
-  await vi.waitFor(() => expect(steps(root)).toHaveLength(4))
+  await vi.waitFor(() => expect(root.textContent).toContain('Updates paused: could not reach Home Assistant.'))
+  expect(steps(root)).toHaveLength(3)
+  expect(root.textContent).toContain('updates paused')
+  // Still tried again (less often), and the note goes once a read succeeds.
+  await vi.advanceTimersByTimeAsync(5000)
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(5))
+  expect(root.textContent).not.toContain('Updates paused')
+  expect(root.textContent).toContain('updates every 2 seconds')
+  // "Try again" reads at once.
+  calls = 1
   await vi.advanceTimersByTimeAsync(2000)
-  await vi.waitFor(() => expect(steps(root)).toHaveLength(7))
-  expect(root.querySelector('.hs-save-chip')!.textContent).toContain('Succeeded')
-  await vi.advanceTimersByTimeAsync(6000)
-  expect(calls).toBe(3)
+  await vi.waitFor(() => expect(root.textContent).toContain('Updates paused'))
+  root.querySelector<HTMLButtonElement>('.hs-trace-paused__retry')!.click()
+  await vi.waitFor(() => expect(root.textContent).not.toContain('Updates paused'))
 })
 
 it('opens a failed run on the step that failed, and says when the trace was cut or the automation changed since', async () => {
@@ -258,7 +353,7 @@ it('below 900px: the value panel is a sheet that a canvas selection folds to its
   await vi.waitFor(() => expect(document.activeElement).toBe(panel(root).querySelector('.hs-trace-node__title')))
   const chooser = panel(root).querySelector<HTMLSelectElement>('select')!
   chooser.focus()
-  chooser.value = chooser.options[0].value
+  chooser.value = chooser.options[1].value
   chooser.dispatchEvent(new Event('change', { bubbles: true }))
   await vi.waitFor(() => expect(port(root, 'field:brightness_pct').textContent).toContain('80'))
   expect(panel(root).dataset.open).toBe('true')
@@ -267,4 +362,31 @@ it('below 900px: the value panel is a sheet that a canvas selection folds to its
   panel(root).querySelector<HTMLButtonElement>('.hs-insp-close')!.click()
   await vi.waitFor(() => expect(panel(root).dataset.open).toBe('false'))
   await vi.waitFor(() => expect(document.activeElement).toBe(card(root, 'service-1')))
+})
+
+it('shows the recorder\'s placeholders inside a recorded value in words, and real text as it is', async () => {
+  const { root } = mount(async () => response())
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(7))
+  steps(root)[5].click()
+  await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe('Log'))
+  const leaves = () => [...port(root, 'value').querySelectorAll('.hs-json-leaf')].map(leaf => leaf.textContent)
+  // A secret name's "***" is hidden; the same text under another name is real; an unreadable value is not a type name.
+  expect(leaves()).toEqual(['api_key Hidden', 'note "***"', 'reader Could not be recorded'])
+  expect(port(root, 'value').textContent).not.toContain('global::')
+  const state = port(root, 'value').querySelector<HTMLDetailsElement>('details')!
+  state.open = true; state.dispatchEvent(new Event('toggle'))
+  expect(leaves()).toContain('token Hidden')
+  // A whole value cut to nothing could not be read.
+  expect(port(root, 'extra').querySelector('.hs-trace-value')!.textContent).toBe('Could not be recorded')
+})
+
+it('goes back to the automation\'s Runs tab, and reads the automation the run belongs to', async () => {
+  const { root, callWS, history } = mount(async () => response({ run: run({ runId: 'run-1', visualId: 'heating', visualRevision: 4 }) }), { path: '/visual/old-name/runs/run-1', revision: 5 })
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(7))
+  expect(root.querySelector<HTMLAnchorElement>('a.hs-trace-open')!.getAttribute('href')).toBe('/visual/heating')
+  await vi.waitFor(() => expect(root.textContent).toContain('This run used an earlier version'))
+  expect(callWS).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ operation: 'read', id: 'heating' }) }))
+  root.querySelector<HTMLButtonElement>('[aria-label="Back to the automation’s runs"]')!.click()
+  await vi.waitFor(() => expect(root.querySelector('.editor-page')).not.toBeNull())
+  expect(history.get()).toBe('/visual/heating?drawer=runs')
 })

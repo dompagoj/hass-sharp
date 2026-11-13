@@ -25,6 +25,8 @@ export function Timeline(props: {
   selectedNodeId?: string
   selectedSeq?: number
   live: boolean
+  /** The last read of the live run failed. */
+  paused?: boolean
   onSelect(event: TraceEvent): void
 }) {
   let list: HTMLOListElement | undefined
@@ -112,7 +114,7 @@ export function Timeline(props: {
         </p>
       </Show>
       <Show when={props.live}>
-        <p class="hs-trace-timeline__live" role="status">Still running · updates every 2 seconds</p>
+        <p class="hs-trace-timeline__live" role="status">{props.paused ? 'Still running · updates paused' : 'Still running · updates every 2 seconds'}</p>
       </Show>
     </div>
   )

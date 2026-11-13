@@ -20,6 +20,7 @@ export function VisualAutomationView() {
     <VisualEditor documentId={route.id && route.id !== 'new' ? route.id : undefined} onDirtyChange={setDirty}
       onSaved={doc => { if (route.id === 'new') navigate(`/visual/${doc.id}`, { replace: true }) }}
       onBack={() => navigate('/automations')}
+      drawer={params.drawer === 'runs' ? 'runs' : undefined}
       name={typeof params.name === 'string' && params.name.trim() ? params.name : 'Untitled visual automation'} />
     <Dialog open={!!leave()} title="Unsaved changes" width="small" onClose={() => setLeave(undefined)} footer={<>
       <Button onClick={() => setLeave(undefined)}>Keep editing</Button>

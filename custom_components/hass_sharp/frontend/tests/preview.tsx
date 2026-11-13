@@ -11,9 +11,12 @@ import type { AutomationRun, HomeAssistant, RunTrace, RunTraceResponse, TraceEve
 
 const diagnosticsFixture = new URLSearchParams(location.search).has('diagnostics')
 const shadowFixture = new URLSearchParams(location.search).has('shadow')
-// `?view=trace`: the run trace view with a sample run (`&live=1`: the same run arriving step by step).
+// `?view=trace`: the run trace view with a sample run (`&live=1`: the same run arriving step by step; `&drop=1` with
+// it: every third read of the live run fails, as when the connection drops).
 const traceFixture = new URLSearchParams(location.search).get('view') === 'trace'
 const liveTrace = new URLSearchParams(location.search).has('live')
+const dropTrace = new URLSearchParams(location.search).has('drop')
+let traceReads = 0
 const scripts: UserScriptDTO[] = [
   { fileName: 'BathroomHeating.cs', automationId: 'fixture-bathroom', revision: 'fixture-revision', classes: [{ name: 'Home.BathroomHeating', methods: ['Execute'] }] },
   { fileName: 'EveningLights.cs', classes: [{ name: 'Home.EveningLights', methods: ['Configure', 'ExecuteAsync'] }] },
@@ -207,7 +210,10 @@ const hass = {
     if (message.type === 'hass_sharp/get_entities') return { entities: Array.from({length:80},(_,i)=>({entity_id: `${i%2?'light':'binary_sensor'}.hall_${i}`, name: `Hall ${i%2?'lamp':'motion'} ${i}`})) }
     if (message.type === 'get_services') return { light: { turn_on: {name:'Turn on',description:'Turn on a light'}, turn_off: {name:'Turn off',description:'Turn off a light'} }, climate: { set_temperature: {name:'Set temperature',description:'Change the target temperature'} } }
     if (message.type === 'hass_sharp/visual'||message.type==='hass_sharp/node_library') return visualBackend.callWS(message)
-    if (message.type === 'hass_sharp/run_trace') return JSON.parse(JSON.stringify(traceResponse()))
+    if (message.type === 'hass_sharp/run_trace') {
+      if (dropTrace && ++traceReads % 3 === 0) throw { code: 'connection_lost', message: 'Connection lost' }
+      return JSON.parse(JSON.stringify(traceResponse()))
+    }
     if (diagnosticsFixture && message.type.endsWith('get_diagnostics')) {
       const start = message.source.indexOf('MissingName')
       if (start < 0) return []

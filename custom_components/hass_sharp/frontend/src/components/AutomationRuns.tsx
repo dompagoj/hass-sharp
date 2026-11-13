@@ -1,5 +1,5 @@
 import { batch, createEffect, createMemo, createSignal, createUniqueId, For, on, onCleanup, Show } from 'solid-js'
-import { A } from '@solidjs/router'
+import { A, useLocation } from '@solidjs/router'
 import { useQuery, useMutation } from '@tanstack/solid-query'
 import { useHass } from '../context'
 import type { AutomationRun, RunHistoryResponse, RunStatus, UserScriptClassDto } from '../types'
@@ -149,7 +149,11 @@ const RunPanel = (props: RunsProps) => {
   </div>
 }
 
+/** The run list can also stand alone, outside the app's routes: a link to a run needs the router. */
+const inRouter = () => { try { useLocation(); return true } catch { return false } }
+
 const RunRow = (props: { run: AutomationRun; now: number; open: boolean; onToggle: () => void }) => {
+  const routed = inRouter()
   const bodyId = createUniqueId()
   const summary = () => props.run.trigger ? summarizeTrigger(props.run.trigger) : undefined
   return <li class={`hs-run-row hs-run-row--${props.run.status.toLowerCase()}`}>
@@ -167,8 +171,9 @@ const RunRow = (props: { run: AutomationRun; now: number; open: boolean; onToggl
         </span>
         <Icon name="chevron" />
       </button>
-      <Show when={props.run.hasTrace && props.run.visualId}>{visualId =>
-        <A class="hs-run-trace" href={`/visual/${encodeURIComponent(visualId())}/runs/${encodeURIComponent(props.run.runId)}`}>View trace</A>
+      {/* Any run of a visual automation opens on its graph; without a trace it has no recorded values. */}
+      <Show when={routed && props.run.visualId}>{visualId =>
+        <A class="hs-run-trace" href={`/visual/${encodeURIComponent(visualId())}/runs/${encodeURIComponent(props.run.runId)}`}>{props.run.hasTrace ? 'View trace' : 'View run'}</A>
       }</Show>
     </div>
     <Show when={props.open}><div id={bodyId} class="hs-run-body">

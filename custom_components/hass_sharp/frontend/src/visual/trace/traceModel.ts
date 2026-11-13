@@ -1,17 +1,15 @@
-import { dataOutputs, inputValue, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../contract'
-import { execLabel, nodeTitle, type FlowTrace, type TraceStatus } from '../flow/flowModel'
-import { nodeInputs, outputPort, portLabel } from '../graph'
-import { serviceFieldLabel } from '../nodeSummary'
+import type { Graph, VisualCatalogSnapshot } from '../contract'
+import { execLabel, type FlowTrace, type TraceStatus } from '../flow/flowModel'
+import { outputPort } from '../graph'
 import type { RunTrace, TraceEvent, TraceValue } from '../../types'
 
 /**
  * A run trace (contract C10) read against the graph it ran: per-step status and run counts, the wires it travelled,
  * frames (loop iterations and parallel branches) in words, and the value of a port in a chosen frame.
  *
- * A frame is the context a step ran in: `""` at top level, else `/`-joined segments. Two frames *conflict* when they
- * are different iterations of the same loop; anything else (an enclosing frame, another parallel branch) can be seen
- * together. "The selected frame" is the one the person picked: steps show their run in a frame that does not conflict
- * with it, the latest such run when there are several.
+ * A frame is the context a step ran in: `""` at top level, else `/`-joined segments. The canvas shows a *picture*: the
+ * whole run (frame `""`), or one chosen iteration or branch. In a chosen picture, a run inside that loop or parallel
+ * counts only when it ran in the chosen iteration or branch ({@link framesAgree}); everything outside is unchanged.
  */
 
 export type FrameSegment =
@@ -33,41 +31,53 @@ export function parseFrame(frame: string): FrameSegment[] {
   })
 }
 
-/** False only when the frames are different iterations of the same loop (at the first place they differ). */
-export function compatibleFrames(a: string, b: string): boolean {
-  if (a === b || !a || !b) return true
-  const x = parseFrame(a), y = parseFrame(b)
+/**
+ * Whether a run in `frame` belongs to the picture of the `chosen` frame: false only where both pass through the same
+ * loop in different iterations, or the same parallel in different branches. A loop's condition and body of one
+ * iteration belong together; a run outside the chosen loop or parallel always belongs.
+ */
+export function framesAgree(frame: string, chosen: string): boolean {
+  if (!frame || !chosen || frame === chosen) return true
+  const x = parseFrame(frame), y = parseFrame(chosen)
   for (let i = 0; i < Math.min(x.length, y.length); i++) {
     const s = x[i], t = y[i]
     if (s.raw === t.raw) continue
-    if (s.kind === 'loop' && t.kind === 'loop' && s.node === t.node) {
-      if (s.iteration !== t.iteration) return false
-      continue
-    }
+    if (s.kind === 'loop' && t.kind === 'loop' && s.node === t.node) return s.iteration === t.iteration
+    if (s.kind === 'branch' && t.kind === 'branch' && s.node === t.node) return false
     return true
   }
   return true
 }
 
+/**
+ * Whether a step belongs to the loops and parallels of the chosen frame, so that the chosen iteration or branch
+ * applies to it: it owns one of them, or one of its runs (`frames`) passed through one of them.
+ */
+export function inChosenFrame(nodeId: string, frames: string[], chosen: string): boolean {
+  if (!chosen) return false
+  const segments = parseFrame(chosen)
+  if (segments.some(s => s.kind !== 'other' && s.node === nodeId)) return true
+  return frames.some(frame => {
+    const first = parseFrame(frame)[0], top = segments[0]
+    return !!first && (first.raw === top.raw || (first.kind !== 'other' && top.kind === first.kind && top.node === first.node))
+  })
+}
+
 /** `frame` is `ancestor` or inside it. */
 export const withinFrame = (frame: string, ancestor: string) => !ancestor || frame === ancestor || frame.startsWith(`${ancestor}/`)
 
-/**
- * The frame to show after picking a run of a step: the run's own frame, unless the current one is inside it (picking
- * a step outside a loop keeps the iteration that was being looked at).
- */
-export const nextFrame = (current: string, picked: string) => (withinFrame(current, picked) ? current : picked)
-
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
+/** A value the recorder could not read is written as its C# type name. */
+export const opaque = (v: unknown) => typeof v === 'string' && v.startsWith('global::')
 
 /** A recorded value in words: what a card's chip says and what the panel shows for anything that is not a tree. */
 export function valueText(value: TraceValue): string {
   if (value.redacted) return 'Hidden'
   if (!('v' in value) || value.v === undefined) return 'Too large to record'
   const v = value.v
-  if (v === null) return value.trunc ? 'Not recorded (too deep)' : 'No value'
-  // A value the recorder could not read is written as its type name.
-  if (value.trunc && typeof v === 'string' && v.startsWith('global::')) return 'Could not be recorded'
+  // The recorder caps depth only below the top level: a whole value cut to nothing could not be read.
+  if (v === null) return value.trunc ? 'Could not be recorded' : 'No value'
+  if (value.trunc && opaque(v)) return 'Could not be recorded'
   if (Array.isArray(v)) return `List · ${plural(v.length, 'item')}`
   if (typeof v === 'object') return `Object · ${plural(Object.keys(v).length, 'field')}`
   if (typeof v === 'string') return v === '' ? 'Empty text' : v
@@ -77,11 +87,19 @@ export function valueText(value: TraceValue): string {
 /** True when the panel shows the value as a tree. */
 export const isTree = (value: TraceValue) => !value.redacted && value.v !== null && typeof value.v === 'object'
 /** The value was cut (as opposed to not recorded at all, which {@link valueText} already says). */
-export const isCut = (value: TraceValue) =>
-  !!value.trunc && !value.redacted && 'v' in value && value.v !== null && !(typeof value.v === 'string' && value.v.startsWith('global::'))
+export const isCut = (value: TraceValue) => !!value.trunc && !value.redacted && 'v' in value && value.v !== null && !opaque(value.v)
+/** {@link valueText} says the value is missing rather than showing it. */
+export const isPlaceholder = (value: TraceValue) => !!value.redacted || value.v === undefined || value.v === null || (!!value.trunc && opaque(value.v))
 
 /** What a card's chip receives: the words of {@link valueText}, with `trunc` only where part of a value is shown. */
 export const chipValue = (value: TraceValue): TraceValue => ({ type: value.type, v: valueText(value), trunc: isCut(value) || undefined, src: value.src })
+
+/** The run as the canvas shows it for one frame. */
+interface Picture {
+  /** Each step's runs in the picture, in the order they started. */
+  runs: Map<string, TraceEvent[]>
+  edges: Set<string>
+}
 
 export interface TraceModel {
   trace: RunTrace
@@ -89,12 +107,17 @@ export interface TraceModel {
   events: TraceEvent[]
   eventsOf(nodeId: string): TraceEvent[]
   event(seq: number | undefined): TraceEvent | undefined
-  /** The step's latest run in a frame that does not conflict with `frame`. */
+  /** The step's latest run in the picture of `frame` (`""`: the whole run). */
   eventIn(nodeId: string, frame: string): TraceEvent | undefined
   /** How many times the step ran (the summary counts runs whose event was not kept). */
   runs(nodeId: string): number
   reached(nodeId: string): boolean
+  /** The step ran in the picture of `frame`; one counted only by the summary ran somewhere, so it counts. */
+  reachedIn(nodeId: string, frame: string): boolean
+  /** The wires the whole run travelled. */
   edges: Set<string>
+  /** The wires travelled in the picture of `frame`. */
+  edgesIn(frame: string): Set<string>
   /** "Iteration 3 of 12 · Branch Lights"; `""` at top level. */
   frameLabel(frame: string): string
   /** The port's value in the frame: recorded on the step, else read by a step downstream (a loop's item). */
@@ -110,12 +133,13 @@ export function traceModel(trace: RunTrace, graph: Graph, catalog: VisualCatalog
   const eventsOf = (id: string) => byNode.get(id) ?? []
   const summary = (id: string) => (Object.hasOwn(trace.summary ?? {}, id) ? trace.summary[id] : undefined)
 
-  // Iterations seen per loop, keyed by the frame the loop ran in and its id.
+  // Iterations per loop, from its bodies (a while loop checks its condition once more than it runs its body),
+  // keyed by the frame the loop ran in and its id.
   const iterations = new Map<string, Set<number>>()
   for (const event of events) {
     const segments = parseFrame(event.frame)
     segments.forEach((segment, i) => {
-      if (segment.kind !== 'loop') return
+      if (segment.kind !== 'loop' || segment.part !== 'body') return
       const key = `${segments.slice(0, i).map(s => s.raw).join('/')}|${segment.node}`
       iterations.set(key, (iterations.get(key) ?? new Set()).add(segment.iteration))
     })
@@ -129,8 +153,11 @@ export function traceModel(trace: RunTrace, graph: Graph, catalog: VisualCatalog
   }
   const segmentLabel = (segment: FrameSegment, parent: string) => {
     if (segment.kind === 'loop') {
-      const seen = iterations.get(`${parent}|${segment.node}`)
-      const total = Math.max(seen ? Math.max(...seen) + 1 : 0, declaredCount(segment.node, parent) ?? 0, segment.iteration + 1)
+      const bodies = iterations.get(`${parent}|${segment.node}`)
+      const body = segment.part === 'body' || !!bodies?.has(segment.iteration)
+      // A condition checked with no body after it is the check that ended the loop.
+      if (!body) return 'Final check'
+      const total = Math.max(bodies ? Math.max(...bodies) + 1 : 0, declaredCount(segment.node, parent) ?? 0, segment.iteration + 1)
       return `Iteration ${segment.iteration + 1} of ${total}${segment.part === 'condition' ? ' · Condition' : ''}`
     }
     if (segment.kind === 'branch') {
@@ -145,33 +172,48 @@ export function traceModel(trace: RunTrace, graph: Graph, catalog: VisualCatalog
     return segments.map((segment, i) => segmentLabel(segment, segments.slice(0, i).map(s => s.raw).join('/'))).join(' · ')
   }
 
-  const eventIn = (id: string, frame: string) => eventsOf(id).filter(event => compatibleFrames(event.frame, frame)).at(-1)
-
-  const edges = new Set<string>()
-  for (const edge of graph.edges) {
-    const source = nodes.get(edge.source)
-    if (!source) continue
-    if (edge.kind === 'data') {
-      if (eventsOf(edge.target).some(e => Object.values(e.inputs ?? {}).some(v => v.src?.node === edge.source && v.src.port === edge.sourcePort)))
-        edges.add(edge.id)
-      continue
+  const travelledEdges = (runsOf: (id: string) => TraceEvent[]) => {
+    const edges = new Set<string>()
+    for (const edge of graph.edges) {
+      const source = nodes.get(edge.source)
+      if (!source) continue
+      if (edge.kind === 'data') {
+        if (runsOf(edge.target).some(e => Object.values(e.inputs ?? {}).some(v => v.src?.node === edge.source && v.src.port === edge.sourcePort)))
+          edges.add(edge.id)
+        continue
+      }
+      const port = outputPort(source.kind, edge)
+      const entered = (match: (segment: FrameSegment) => boolean) =>
+        runsOf(edge.target).some(e => { const last = parseFrame(e.frame).at(-1); return !!last && match(last) })
+      const travelled =
+        runsOf(source.id).some(e => e.port === port) ||
+        ((port === 'body' || port === 'condition') && entered(s => s.kind === 'loop' && s.node === source.id && s.part === port)) ||
+        (port.startsWith('branch:') && entered(s => s.kind === 'branch' && s.node === source.id && s.branch === port.slice(7)))
+      if (travelled) edges.add(edge.id)
     }
-    const port = outputPort(source.kind, edge)
-    const entered = (match: (segment: FrameSegment) => boolean) =>
-      eventsOf(edge.target).some(e => { const last = parseFrame(e.frame).at(-1); return !!last && match(last) })
-    const travelled =
-      eventsOf(source.id).some(e => e.port === port) ||
-      ((port === 'body' || port === 'condition') && entered(s => s.kind === 'loop' && s.node === source.id && s.part === port)) ||
-      (port.startsWith('branch:') && entered(s => s.kind === 'branch' && s.node === source.id && s.branch === port.slice(7)))
-    if (travelled) edges.add(edge.id)
+    return edges
   }
+
+  const pictures = new Map<string, Picture>()
+  const picture = (frame: string): Picture => {
+    let shown = pictures.get(frame)
+    if (!shown) {
+      const runs = new Map<string, TraceEvent[]>()
+      for (const [id, list] of byNode) runs.set(id, frame ? list.filter(e => framesAgree(e.frame, frame)) : list)
+      shown = { runs, edges: travelledEdges(id => runs.get(id) ?? []) }
+      pictures.set(frame, shown)
+    }
+    return shown
+  }
+  const eventIn = (id: string, frame: string) => picture(frame).runs.get(id)?.at(-1)
+  const reached = (id: string) => eventsOf(id).length > 0 || (summary(id)?.count ?? 0) > 0
 
   const value = (id: string, port: string, side: 'in' | 'out', frame: string): TraceValue | undefined => {
     const own = eventIn(id, frame)
     const recorded = side === 'in' ? own?.inputs?.[port] : own?.outputs?.[port]
     if (recorded || side === 'in') return recorded
     // Not recorded as an output (a loop's item and index, a trigger's outputs): what a step downstream read from it.
-    const readers = events.filter(e => compatibleFrames(e.frame, frame) && (!own || withinFrame(e.frame, own.frame)))
+    const readers = events.filter(e => framesAgree(e.frame, frame) && (!own || withinFrame(e.frame, own.frame)))
     for (const reader of readers.reverse()) {
       const read = Object.values(reader.inputs ?? {}).find(v => v.src?.node === id && v.src.port === port)
       if (read) return { type: read.type, v: read.v, trunc: read.trunc, redacted: read.redacted }
@@ -185,58 +227,36 @@ export function traceModel(trace: RunTrace, graph: Graph, catalog: VisualCatalog
     event: seq => (seq === undefined ? undefined : bySeq.get(seq)),
     eventIn,
     runs: id => Math.max(summary(id)?.count ?? 0, eventsOf(id).length),
-    reached: id => eventsOf(id).length > 0 || (summary(id)?.count ?? 0) > 0,
-    edges,
+    reached,
+    reachedIn: (id, frame) => (eventsOf(id).length ? !!eventIn(id, frame) : reached(id)),
+    edges: picture('').edges,
+    edgesIn: frame => picture(frame).edges,
     frameLabel,
     value,
   }
 }
 
-/** The canvas's `trace` prop for the selected frame: statuses and durations of the runs shown, chips in words. */
+/**
+ * The canvas's `trace` prop for a picture (`frame` `""`: the whole run): statuses and durations of the runs shown, the
+ * wires travelled, chips in words. A step that did not run in a chosen iteration or branch is left out (dimmed).
+ */
 export function flowTrace(model: TraceModel, graph: Graph, frame: string, focusNodeId?: string): FlowTrace {
   const nodes: FlowTrace['nodes'] = {}
   for (const node of graph.nodes) {
-    if (!model.reached(node.id)) continue
-    const shown = model.eventIn(node.id, frame) ?? model.eventsOf(node.id).at(-1)
+    if (!model.reachedIn(node.id, frame)) continue
+    const shown = model.eventIn(node.id, frame)
     const status: TraceStatus = shown?.status ?? model.trace.summary[node.id]?.last ?? 'ok'
-    nodes[node.id] = { status, runs: model.runs(node.id), ...(shown?.ms !== undefined ? { ms: shown.ms } : {}) }
+    const all = model.eventsOf(node.id)
+    const runs = frame && all.length ? all.filter(e => framesAgree(e.frame, frame)).length : model.runs(node.id)
+    nodes[node.id] = { status, runs, ...(shown?.ms !== undefined ? { ms: shown.ms } : {}) }
   }
   return {
     nodes,
-    edges: model.edges,
+    edges: model.edgesIn(frame),
     focusNodeId,
     value: (nodeId, port, side) => {
       const value = model.value(nodeId, port, side, frame)
       return value ? chipValue(value) : undefined
     },
   }
-}
-
-// ---- Words for the value panel.
-
-const own = <T,>(record: Record<string, T> | undefined, key: string) => (record && Object.hasOwn(record, key) ? record[key] : undefined)
-const text = (value: unknown) => (typeof value === 'string' ? value : '')
-
-export function inputLabel(graph: Graph, node: GraphNode, port: string, catalog: VisualCatalogSnapshot): string {
-  if (node.kind === 'service' && port.startsWith('field:')) return serviceFieldLabel(text(node.config.service), port.slice(6), catalog.services)
-  return own(nodeInputs(graph, node, catalog), port)?.label ?? portLabel(port)
-}
-export const outputLabel = (node: GraphNode | undefined, port: string, catalog: VisualCatalogSnapshot) =>
-  (node ? own(dataOutputs(node, catalog), port)?.label : undefined) ?? portLabel(port)
-
-/** Where an input's value came from: "From Motion · Entity", "Variable level" or "Value". */
-export function inputSource(graph: Graph, node: GraphNode, port: string, value: TraceValue, catalog: VisualCatalogSnapshot): string {
-  if (value.src) {
-    const source = graph.nodes.find(n => n.id === value.src!.node)
-    return `From ${nodeTitle(source, catalog, 'a removed step')} · ${outputLabel(source, value.src.port, catalog)}`
-  }
-  const operand = inputValue(node, port, catalog) as { kind?: unknown; name?: unknown } | undefined
-  if (operand?.kind === 'variable' && typeof operand.name === 'string') return `Variable ${operand.name}`
-  return 'Value'
-}
-
-/** The order the panel lists a step's inputs in: the step's own order, then anything else that was recorded. */
-export function inputOrder(graph: Graph, node: GraphNode, recorded: Record<string, unknown>, catalog: VisualCatalogSnapshot): string[] {
-  const declared = Object.keys(nodeInputs(graph, node, catalog))
-  return [...declared.filter(port => Object.hasOwn(recorded, port)), ...Object.keys(recorded).filter(port => !declared.includes(port))]
 }

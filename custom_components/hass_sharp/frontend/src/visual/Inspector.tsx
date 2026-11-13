@@ -128,12 +128,7 @@ export function Inspector(props: InspectorProps) {
       <Show when={peek()}>
         <PeekBar />
       </Show>
-      <div class="hs-insp-sheet-bar">
-        <SheetGrip onClose={close} />
-        <button type="button" class="hs-button hs-button--ghost hs-insp-close" aria-label="Close panel" onClick={close}>
-          <Glyph paths={['M6 6l12 12', 'M18 6 6 18']} />
-        </button>
-      </div>
+      <SheetBar onClose={close} />
       <p class="hs-visually-hidden" role="status">{status()}</p>
       <Show when={many()} fallback={
         <Show when={props.selected?.id} keyed fallback={
@@ -204,17 +199,7 @@ export function Inspector(props: InspectorProps) {
       setDismissed(false)
     }
     return (
-      <button type="button" class="hs-insp-peek" aria-expanded="false" aria-label={`Edit ${title()}`} title={line() || undefined}
-        style={{ '--hs-cat': identity()?.color }} onClick={expand}>
-        <span class="hs-insp-peek__icon" aria-hidden="true">
-          <Glyph paths={identity()?.icon ?? (many() ? icons.flow : icons.data)} />
-        </span>
-        <span class="hs-insp-peek__text">
-          <strong>{title()}</strong>
-          <Show when={line()}><small>{line()}</small></Show>
-        </span>
-        <span class="hs-insp-peek__edit" aria-hidden="true">Edit</span>
-      </button>
+      <SheetPeek title={title()} line={line()} icon={identity()?.icon ?? (many() ? icons.flow : icons.data)} color={identity()?.color} verb="Edit" onOpen={expand} />
     )
   }
 
@@ -307,7 +292,7 @@ export function Inspector(props: InspectorProps) {
 }
 
 /** The bottom sheet's handle: tap closes it, so does a downward drag of more than 80px. */
-function SheetGrip(props: { onClose(): void }) {
+export function SheetGrip(props: { onClose(): void }) {
   let start: number | undefined
   return (
     <button type="button" class="hs-insp-grip" aria-hidden="true" tabindex="-1"
@@ -315,6 +300,38 @@ function SheetGrip(props: { onClose(): void }) {
       onPointerUp={e => { const moved = start === undefined ? 0 : e.clientY - start; start = undefined; if (moved > 80 || Math.abs(moved) < 6) props.onClose() }}
       onPointerCancel={() => { start = undefined }}>
       <span aria-hidden="true" />
+    </button>
+  )
+}
+
+/** The sheet's top bar (shown where the panel is a sheet or floats): its handle and the close button. */
+export function SheetBar(props: { onClose(): void }) {
+  return (
+    <div class="hs-insp-sheet-bar">
+      <SheetGrip onClose={props.onClose} />
+      <button type="button" class="hs-button hs-button--ghost hs-insp-close" aria-label="Close panel" onClick={() => props.onClose()}>
+        <Glyph paths={['M6 6l12 12', 'M18 6 6 18']} />
+      </button>
+    </div>
+  )
+}
+
+/**
+ * The sheet's first stage: what is selected in one line and what tapping it does (`verb`, "Edit" or "Show"); tapping
+ * it opens the panel. Only shown (CSS) where the panel is a sheet or floats.
+ */
+export function SheetPeek(props: { title: string; line?: string; icon: readonly string[]; color?: string; verb: string; label?: string; onOpen(): void }) {
+  return (
+    <button type="button" class="hs-insp-peek" aria-expanded="false" aria-label={props.label ?? `${props.verb} ${props.title}`} title={props.line || undefined}
+      style={{ '--hs-cat': props.color }} onClick={() => props.onOpen()}>
+      <span class="hs-insp-peek__icon" aria-hidden="true">
+        <Glyph paths={props.icon} />
+      </span>
+      <span class="hs-insp-peek__text">
+        <strong>{props.title}</strong>
+        <Show when={props.line}><small>{props.line}</small></Show>
+      </span>
+      <span class="hs-insp-peek__edit" aria-hidden="true">{props.verb}</span>
     </button>
   )
 }

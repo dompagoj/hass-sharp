@@ -1,4 +1,4 @@
-import { createSignal, onCleanup } from 'solid-js'
+import { createEffect, createSignal, on, onCleanup } from 'solid-js'
 import { ToolButton } from './flow/CanvasToolbar'
 
 /** Drawn on a 24×24 grid as strokes, like the canvas toolbar's icons. */
@@ -62,6 +62,68 @@ export function createFullscreen(element: () => HTMLElement | undefined) {
   }
 }
 export type Fullscreen = ReturnType<typeof createFullscreen>
+
+/**
+ * Full screen for a page (the editor, a run's trace): entering remembers what had focus and calls `onEnter` first (to
+ * fold away what full screen hides); `F` toggles and Escape leaves the maximised fallback (through {@link
+ * FullscreenPage.keydown}, called from the page root's key handler). Focus never falls to the page: entering moves it
+ * from what folded away to the bar's "Exit full screen", and leaving moves it from there back to what opened full
+ * screen, else to `fallback()`.
+ */
+export function createFullscreenPage(options: {
+  root: () => HTMLElement
+  fullscreen: Fullscreen
+  onEnter?(): void
+  /** After leaving, before focus moves. */
+  onExit?(): void
+  /** Where focus goes when what opened full screen is gone (the canvas). */
+  fallback(): HTMLElement | null | undefined
+}) {
+  const { fullscreen } = options
+  let opener: HTMLElement | null = null
+  const activeElement = () => (options.root().getRootNode() as Document | ShadowRoot).activeElement as HTMLElement | null
+  const refocus = (element: HTMLElement | null) =>
+    element?.isConnected && element !== options.root().ownerDocument.body ? element.focus({ preventScroll: true }) : options.fallback()?.focus({ preventScroll: true })
+  const enter = () => {
+    opener = activeElement()
+    options.onEnter?.()
+    void fullscreen.enter()
+  }
+  const toggle = () => (fullscreen.active() ? void fullscreen.exit() : enter())
+  createEffect(
+    on(
+      fullscreen.active,
+      active => {
+        const root = options.root(), focused = activeElement()
+        const lost = !focused || focused === root.ownerDocument.body
+        if (active) {
+          // What had focus may be folded away (the "⋯" menu, the library, the drawer): the bar's exit button takes it.
+          if (lost || focused.closest('.hs-fs-hide, .hs-lib__panel, .hs-drawer__panel')) queueMicrotask(() => root.querySelector<HTMLElement>('.hs-topbar__exit')?.focus())
+          return
+        }
+        options.onExit?.()
+        // The exit button goes away with full screen: back to what opened it, else the fallback.
+        if (lost || focused.closest('.hs-topbar__exit')) queueMicrotask(() => refocus(opener))
+      },
+      { defer: true },
+    ),
+  )
+  /** `F` toggles full screen (true: the key was used); Escape leaves the maximised fallback. */
+  const keydown = (event: KeyboardEvent): boolean => {
+    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && key === 'f') {
+      event.preventDefault()
+      if (!event.repeat) toggle()
+      return true
+    }
+    // Escape leaves the maximised fallback only when nothing on the way (a menu, the drawer, the canvas) used it.
+    // The browser's own full screen leaves on Escape by itself.
+    if (event.key === 'Escape' && fullscreen.maximised()) setTimeout(() => !event.defaultPrevented && fullscreen.maximised() && void fullscreen.exit())
+    return false
+  }
+  return { enter, toggle, keydown }
+}
+export type FullscreenPage = ReturnType<typeof createFullscreenPage>
 
 /** The canvas toolbar's "Full screen" toggle (shortcut F), pressed while full screen is on. */
 export function FullscreenButton(props: { fullscreen: Fullscreen; onToggle?: () => void }) {

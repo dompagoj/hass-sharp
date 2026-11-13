@@ -1,19 +1,21 @@
-import { batch, createEffect, createMemo, createSignal, on, onCleanup, Show } from 'solid-js'
+import { batch, createEffect, createMemo, createSignal, on, Show } from 'solid-js'
 import { delegateEvents } from 'solid-js/web'
 import { A } from '@solidjs/router'
-import { Icon } from '../../components/Controls'
-import { Menu, type MenuItem } from '../../components/Menu'
+import { Button } from '../../components/Controls'
+import type { MenuItem } from '../../components/Menu'
 import { summarizeTrigger } from '../../components/TriggerSummary'
 import { BottomDrawer } from '../BottomDrawer'
 import { FlowAdapter, type FlowControls } from '../flow/FlowAdapter'
-import { createFullscreen, fullscreenIcons, FullscreenButton } from '../fullscreen'
+import { createFullscreen, createFullscreenPage, FullscreenButton } from '../fullscreen'
 import { Glyph } from '../Glyph'
 import { icons } from '../icons'
+import { media } from '../media'
 import { nodeCatalog } from '../contract'
+import { TopBar } from '../TopBar'
 import type { RunStatus, RunTraceResponse, TraceEvent } from '../../types'
 import { Timeline } from './Timeline'
 import { runDuration, runTime, TraceInspector } from './TraceInspector'
-import { flowTrace, nextFrame, traceModel } from './traceModel'
+import { flowTrace, inChosenFrame, traceModel } from './traceModel'
 
 /** Focus is where keys mean text or a choice in a list: the page's shortcuts leave those keys alone. */
 const typing = (target: Element) =>
@@ -23,28 +25,26 @@ const tones: Record<RunStatus, string> = {
   Succeeded: 'saved', Failed: 'danger', Interrupted: 'danger', Cancelled: 'dirty', Stopped: 'dirty', Skipped: 'dirty', Running: 'busy', Pending: 'busy',
 }
 
-/** A media query as a signal (false where `matchMedia` is missing). */
-function media(query: string) {
-  const list = typeof window.matchMedia === 'function' ? window.matchMedia(query) : undefined
-  const [matches, setMatches] = createSignal(!!list?.matches)
-  const update = () => setMatches(!!list?.matches)
-  list?.addEventListener?.('change', update)
-  onCleanup(() => list?.removeEventListener?.('change', update))
-  return matches
-}
-
 /**
- * A run on view, read-only: the editor page's shape with the run in place of editing. The top bar has back, the
- * automation's name, the run's status, "Open in editor" and a "⋯" menu; the canvas shows the graph as it was for this
- * run with the path it took; the value panel sits where the inspector does; the timeline is in the bottom drawer.
- * The page root is the keyboard boundary, as in the editor; `F` toggles full screen.
+ * A run on view, read-only: the editor page's shape with the run in place of editing. The top bar ({@link TopBar},
+ * read-only) has back, the automation's name, the run's status, "Open in editor" and a "⋯" menu; the canvas shows the
+ * graph as it was for this run with the path it took; the value panel sits where the inspector does; the timeline is
+ * in the bottom drawer. The page root is the keyboard boundary, as in the editor; `F` toggles full screen.
+ *
+ * The canvas shows the whole run until an iteration or branch is chosen (a timeline row, the panel's "Which run"):
+ * then the steps and wires of that loop or parallel show that iteration or branch only.
  */
 export function TracePage(props: {
   response: RunTraceResponse
-  /** The automation's revision now, when known: an older run says it used an earlier version. */
+  /** The automation's revision now, when known: a run of another revision says it used an earlier version. */
   currentRevision?: number
   editorHref: string
   onBack(): void
+  /** The last read of a live run failed: updates are paused until one succeeds. */
+  paused?: boolean
+  /** A read is under way (the "Try again" button waits for it). */
+  retrying?: boolean
+  onRetry?(): void
 }) {
   let root!: HTMLElement
   let flow: FlowControls | undefined
@@ -57,9 +57,8 @@ export function TracePage(props: {
     return trace && current ? traceModel(trace, current, catalog()) : undefined
   })
   const name = () => graph()?.name || run().actionLabel || 'Automation run'
-  const activeElement = () => (root.getRootNode() as Document | ShadowRoot).activeElement as HTMLElement | null
 
-  // ---- Selection: a step, the run of it on view, and the frame (iteration or branch) the canvas shows.
+  // ---- Selection: a step, the run of it on view, and the frame (iteration or branch; "" the whole run) the canvas shows.
   const [nodeId, setNodeId] = createSignal<string>()
   const [seq, setSeq] = createSignal<number>()
   const [frame, setFrame] = createSignal('')
@@ -68,24 +67,33 @@ export function TracePage(props: {
     const current = model()?.event(seq())
     return current && current.node === nodeId() ? current : undefined
   }
+  /** One run chosen (a timeline row, the panel's chooser): its step, and its iteration or branch on the canvas. */
   const show = (picked: TraceEvent) => batch(() => {
     setNodeId(picked.node)
     setSeq(picked.seq)
-    setFrame(current => nextFrame(current, picked.frame))
+    setFrame(picked.frame)
   })
-  /** A step chosen on the canvas: its run in the frame on view (else its latest); the view stays where it is. */
+  /**
+   * A step chosen on the canvas or through a "From …" source; the view stays where it is. Inside the loop or parallel
+   * of the chosen iteration or branch it shows its run there (none: it did not run there); anywhere else, or with
+   * nothing chosen, the canvas shows the whole run and the panel the step's last run.
+   */
   const selectNode = (id?: string) => {
     const runs = model()
-    const picked = id ? (runs?.eventIn(id, frame()) ?? runs?.eventsOf(id).at(-1)) : undefined
     batch(() => {
       setFocusId(undefined)
-      if (picked) show(picked)
-      else {
-        setNodeId(id)
-        setSeq(undefined)
-      }
+      setNodeId(id)
+      if (!id || !runs) return void setSeq(undefined)
+      if (inChosenFrame(id, runs.eventsOf(id).map(e => e.frame), frame())) return void setSeq(runs.eventIn(id, frame())?.seq)
+      setFrame('')
+      setSeq(runs.eventsOf(id).at(-1)?.seq)
     })
   }
+  /** The whole run again (the chooser's first option): the step's last run in the panel. */
+  const showWholeRun = () => batch(() => {
+    setFrame('')
+    setSeq(nodeId() ? model()?.eventsOf(nodeId()!).at(-1)?.seq : undefined)
+  })
   /** A run chosen in the timeline: its step is selected and centred. */
   const selectEvent = (picked: TraceEvent) => {
     const again = focusId() === picked.node
@@ -94,7 +102,7 @@ export function TracePage(props: {
     // Already the focus node: the canvas centres only on a change, so bring it back into view if it was panned away.
     if (again) flow?.reveal(picked.node, root.querySelector('.hs-canvas-area')?.getBoundingClientRect().bottom ?? innerHeight)
   }
-  // A failed run opens on the step that failed.
+  // A failed run opens on the step that failed (in the iteration or branch it failed in).
   createEffect(
     on(model, (current, before) => {
       if (before || !current) return
@@ -124,7 +132,7 @@ export function TracePage(props: {
     action()
   }
   createEffect(on(() => [nodeId(), seq()], () => { if (!(selectingInPanel && panelOpen())) setPanelOpen(!narrow()) }, { defer: true }))
-  createEffect(on(narrow, wide => setPanelOpen(!wide), { defer: true }))
+  createEffect(on(narrow, isNarrow => setPanelOpen(!isNarrow), { defer: true }))
   const openPanel = () => {
     setPanelOpen(true)
     // The step's title, else (the run's overview) the close button: focus never stays on the peek bar that goes away.
@@ -135,47 +143,29 @@ export function TracePage(props: {
   const [drawerOpen, setDrawerOpen] = createSignal(!narrow())
 
   // ---- Full screen: the drawer folds away; a compact bar keeps the name, the status and "Exit full screen".
-  let opener: HTMLElement | null = null
-  const toggleFullscreen = () => {
-    if (fullscreen.active()) return void fullscreen.exit()
-    opener = activeElement()
-    setDrawerOpen(false)
-    void fullscreen.enter()
-  }
-  createEffect(
-    on(
-      fullscreen.active,
-      active => {
-        const focused = activeElement()
-        const lost = !focused || focused === root.ownerDocument.body
-        if (active) {
-          if (lost || focused.closest('.hs-fs-hide, .hs-drawer__panel')) queueMicrotask(() => root.querySelector<HTMLElement>('.hs-topbar__exit')?.focus())
-          return
-        }
-        if (lost || focused.closest('.hs-topbar__exit'))
-          queueMicrotask(() => (opener?.isConnected ? opener : root.querySelector<HTMLElement>('.hs-flow'))?.focus({ preventScroll: true }))
-      },
-      { defer: true },
-    ),
-  )
+  const fullscreenPage = createFullscreenPage({
+    root: () => root,
+    fullscreen,
+    onEnter: () => setDrawerOpen(false),
+    fallback: () => root.querySelector<HTMLElement>('.hs-flow'),
+  })
   const keyboard = (event: KeyboardEvent) => {
     event.stopPropagation()
     if (typing(event.target as Element)) return
-    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key
-    if (!event.ctrlKey && !event.metaKey && !event.altKey && key === 'f') {
-      event.preventDefault()
-      if (!event.repeat) toggleFullscreen()
-      return
-    }
-    // Escape leaves the maximised fallback only when nothing on the way (a menu, the drawer, the canvas) used it.
-    if (event.key === 'Escape' && fullscreen.maximised()) setTimeout(() => !event.defaultPrevented && fullscreen.maximised() && void fullscreen.exit())
+    fullscreenPage.keydown(event)
   }
-  const menu = (): MenuItem[] => (fullscreen.active() ? [] : [{ label: 'Full screen', onSelect: toggleFullscreen }])
+  const menu = (): MenuItem[] => (fullscreen.active() ? [] : [{ label: 'Full screen', onSelect: fullscreenPage.enter }])
 
-  const earlier = () => props.currentRevision !== undefined && snapshot() !== undefined && snapshot()!.visualRevision < props.currentRevision
+  const earlier = () => props.currentRevision !== undefined && snapshot() !== undefined && snapshot()!.visualRevision !== props.currentRevision
   const triggerLine = () => [run().actionLabel, run().trigger && summarizeTrigger(run().trigger!)].filter(Boolean).join(' · ')
   const reason = () => (run().error && run().status !== 'Succeeded' ? run().error!.split('\n', 1)[0] : undefined)
   const dropped = () => props.response.trace?.dropped ?? 0
+  const status = () => (
+    <span class={`hs-save-chip hs-save-chip--${tones[run().status] ?? 'busy'}`}>
+      <span class="hs-save-chip__text" role="status"><span class="hs-visually-hidden">Run status: </span>{run().status}</span>
+      <span class="hs-save-chip__short" aria-hidden="true">{run().status}</span>
+    </span>
+  )
 
   return (
     <section
@@ -189,36 +179,29 @@ export function TracePage(props: {
       on:keydown={keyboard}
       on:keyup={event => event.stopPropagation()}
     >
-      <header class="hs-topbar">
-        <button type="button" class="hs-topbar__icon hs-fs-hide" aria-label="Back" title="Back" onClick={() => props.onBack()}>
-          <Icon name="arrow" />
-        </button>
-        <div class="hs-topbar__title hs-trace-title">
-          <h1 class="hs-trace-title__name">{name()}</h1>
-        </div>
-        <span class={`hs-save-chip hs-save-chip--${tones[run().status] ?? 'busy'}`} role="status">
-          <span class="hs-visually-hidden">Run status: </span>
-          {run().status}
-        </span>
-        <div class="hs-topbar__actions">
-          <A class="hs-button hs-button--secondary hs-fs-hide hs-trace-open" href={props.editorHref}>Open in editor</A>
-          <Show when={fullscreen.active()}>
-            <button type="button" class="hs-button hs-button--secondary hs-topbar__exit" aria-label="Exit full screen" title="Exit full screen (F)" onClick={() => void fullscreen.exit()}>
-              <Glyph paths={fullscreenIcons.exit} class="hs-topbar__exit-icon" />
-              <span class="hs-topbar__exit-text">Exit full screen</span>
-            </button>
-          </Show>
-          <div class="hs-fs-hide hs-topbar__more">
-            <Menu label="More actions" items={menu()} />
-          </div>
-        </div>
-      </header>
+      <TopBar
+        name={name()}
+        onBack={() => props.onBack()}
+        backLabel="Back to the automation’s runs"
+        status={status()}
+        actions={<A class="hs-button hs-button--secondary hs-fs-hide hs-trace-open" href={props.editorHref}>Open in editor</A>}
+        fullscreen={fullscreen.active()}
+        onExitFullscreen={() => void fullscreen.exit()}
+        menu={menu()}
+      />
       <div class="hs-trace-strip hs-fs-hide">
         <p class="hs-trace-strip__line">
           <span class="hs-trace-strip__trigger">{triggerLine()}</span>
           <span>Started {runTime(run().startUtc ?? run().receivedUtc)}</span>
           <span>{props.response.live ? 'Running…' : `Took ${runDuration(run().durationMs)}`}</span>
         </p>
+        <Show when={props.paused}>
+          <p class="hs-trace-strip__note hs-trace-strip__note--warning hs-trace-paused" role="status">
+            <Glyph paths={icons.warning} />
+            <span>Updates paused: could not reach Home Assistant.</span>
+            <Button class="hs-trace-paused__retry" busy={props.retrying} onClick={() => props.onRetry?.()}>Try again</Button>
+          </p>
+        </Show>
         <Show when={reason()}>
           {text => <p class="hs-trace-strip__note" classList={{ 'hs-trace-strip__note--danger': run().status === 'Failed' || run().status === 'Interrupted' }}>
             {run().status === 'Cancelled' ? `Cancelled: ${text()}` : text()}
@@ -243,7 +226,7 @@ export function TracePage(props: {
             <h2>This run can no longer be shown on the canvas</h2>
             <p>The automation as it was for this run is no longer stored. Its summary is below.</p>
             <div class="hs-trace-missing__panel">
-              <TraceInspector run={run()} catalog={catalog()} onSelectNode={() => {}} onSelectEvent={() => {}} docked open onOpen={() => {}} onClose={() => {}} />
+              <TraceInspector run={run()} catalog={catalog()} frame="" onSelectNode={() => {}} onSelectEvent={() => {}} onSelectWholeRun={() => {}} docked open onOpen={() => {}} onClose={() => {}} />
             </div>
           </div>
         }
@@ -264,7 +247,7 @@ export function TracePage(props: {
                   trace={trace()}
                   selectedId={nodeId()}
                   onSelect={selectNode}
-                  toolbarExtra={<FullscreenButton fullscreen={fullscreen} onToggle={toggleFullscreen} />}
+                  toolbarExtra={<FullscreenButton fullscreen={fullscreen} onToggle={fullscreenPage.toggle} />}
                   controls={controls => (flow = controls)}
                 />
               </div>
@@ -273,13 +256,15 @@ export function TracePage(props: {
                 graph={current()}
                 catalog={catalog()}
                 model={model()}
+                frame={frame()}
                 selectedNodeId={nodeId()}
                 event={event()}
                 onSelectNode={id => inPanel(() => selectNode(id))}
                 onSelectEvent={value => {
                   const picked = model()?.event(value)
-                  if (picked) inPanel(() => batch(() => { setNodeId(picked.node); setSeq(picked.seq); setFrame(picked.frame) }))
+                  if (picked) inPanel(() => show(picked))
                 }}
+                onSelectWholeRun={() => inPanel(showWholeRun)}
                 docked={!floating()}
                 open={panelOpen()}
                 onOpen={openPanel}
@@ -300,7 +285,8 @@ export function TracePage(props: {
                       label: 'Timeline',
                       get count() { return runs().events.length },
                       content: () => (
-                        <Timeline model={runs()} graph={current()} catalog={catalog()} selectedNodeId={nodeId()} selectedSeq={seq()} live={props.response.live} onSelect={selectEvent} />
+                        <Timeline model={runs()} graph={current()} catalog={catalog()} selectedNodeId={nodeId()} selectedSeq={seq()} live={props.response.live}
+                          paused={props.paused} onSelect={selectEvent} />
                       ),
                     },
                   ]}

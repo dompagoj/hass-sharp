@@ -210,16 +210,20 @@ it('explains an empty filtered page and clears the filter after a manual dispatc
   expect(calls.at(-1)).toEqual({ type: 'hass_sharp/run_history', automationId: 'automation-1', offset: 0, limit: 20 })
 })
 
-it('links to the trace view only when the run has a trace', async () => {
+it('links every run of a visual automation to its trace view, named by whether values were recorded', async () => {
   const { root } = setup(async () => page([
     record({ runId: 'with trace', visualId: 'heating/1', hasTrace: true }),
-    record({ runId: 'no-trace', hasTrace: false }),
+    record({ runId: 'no-trace', visualId: 'heating/1', hasTrace: false }),
+    record({ runId: 'code', visualId: null, hasTrace: false }),
   ]))
-  await vi.waitFor(() => expect(rows(root)).toHaveLength(2))
+  await vi.waitFor(() => expect(rows(root)).toHaveLength(3))
   const link = rows(root)[0].querySelector<HTMLAnchorElement>('a.hs-run-trace')!
   expect(link.textContent).toBe('View trace')
   expect(link.getAttribute('href')).toBe('/visual/heating%2F1/runs/with%20trace')
-  expect(rows(root)[1].querySelector('a')).toBeNull()
+  const graphOnly = rows(root)[1].querySelector<HTMLAnchorElement>('a.hs-run-trace')!
+  expect(graphOnly.textContent).toBe('View run')
+  expect(graphOnly.getAttribute('href')).toBe('/visual/heating%2F1/runs/no-trace')
+  expect(rows(root)[2].querySelector('a')).toBeNull()
 })
 
 it('still renders v1-shaped rows from the current backend', async () => {

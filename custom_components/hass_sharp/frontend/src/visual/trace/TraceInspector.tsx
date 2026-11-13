@@ -1,7 +1,8 @@
 import { createMemo, createUniqueId, For, Show, type JSX } from 'solid-js'
-import { JsonTree } from '../../components/JsonTree'
+import { JsonTree, type JsonLeaf } from '../../components/JsonTree'
 import { TriggerSummary } from '../../components/TriggerSummary'
 import { Glyph } from '../Glyph'
+import { SheetBar, SheetPeek } from '../Inspector'
 import { TypeChip } from '../InputRow'
 import type { Graph, GraphNode, VisualCatalogSnapshot } from '../contract'
 import { durationLabel, execLabel, nodeTitle, traceStatusLabel, traceText } from '../flow/flowModel'
@@ -9,7 +10,8 @@ import { icons, nodeIdentity } from '../icons'
 import { focusSoon } from '../soon'
 import { typeColor, typeIsList, typeLabel } from '../typeLabels'
 import type { AutomationRun, TraceEvent, TraceValue } from '../../types'
-import { inputLabel, inputOrder, inputSource, isCut, isTree, outputLabel, valueText, type TraceModel } from './traceModel'
+import { isCut, isPlaceholder, isTree, opaque, valueText, type TraceModel } from './traceModel'
+import { inputLabel, inputOrder, inputSource, outputLabel, secretName } from './traceWords'
 import { statusIcon } from './Timeline'
 
 export const runTime = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—')
@@ -24,10 +26,14 @@ export interface TraceInspectorProps {
   selectedNodeId?: string
   /** The selected run of the selected step. */
   event?: TraceEvent
+  /** The iteration or branch the canvas shows; `""` the whole run. */
+  frame: string
   /** Selects a step on the canvas (a "From …" source). */
   onSelectNode(id: string): void
   /** Shows another run of the selected step (the iteration or branch chooser). */
   onSelectEvent(seq: number): void
+  /** Back to the whole run (the chooser's first option). */
+  onSelectWholeRun(): void
   /** A side panel beside the canvas; otherwise a sheet (below 900px) or a floating panel (full screen). */
   docked: boolean
   open: boolean
@@ -63,14 +69,10 @@ export function TraceInspector(props: TraceInspectorProps) {
       <Show when={peek()}>
         <PeekBar />
       </Show>
-      <div class="hs-insp-sheet-bar">
-        <SheetGrip onClose={close} />
-        <button type="button" class="hs-button hs-button--ghost hs-insp-close" aria-label="Close panel" onClick={close}>
-          <Glyph paths={['M6 6l12 12', 'M18 6 6 18']} />
-        </button>
-      </div>
+      <SheetBar onClose={close} />
       <Show when={node()?.id} keyed fallback={<RunOverview run={props.run} model={props.model} />}>
-        {_id => <StepValues node={node()!} graph={props.graph!} catalog={props.catalog} model={props.model} event={props.event} onSelectSource={selectSource} onSelectEvent={props.onSelectEvent} />}
+        {_id => <StepValues node={node()!} graph={props.graph!} catalog={props.catalog} model={props.model} event={props.event} frame={props.frame}
+          onSelectSource={selectSource} onSelectEvent={props.onSelectEvent} onSelectWholeRun={props.onSelectWholeRun} />}
       </Show>
     </aside>
   )
@@ -86,17 +88,7 @@ export function TraceInspector(props: TraceInspectorProps) {
       return traceText(props.event ? { status: props.event.status, runs: props.model.runs(current.id), ms: props.event.ms } : undefined)
     }
     return (
-      <button type="button" class="hs-insp-peek" aria-expanded="false" aria-label={`Show values of ${title()}`} title={line() || undefined}
-        style={{ '--hs-cat': identity()?.color }} onClick={() => props.onOpen()}>
-        <span class="hs-insp-peek__icon" aria-hidden="true">
-          <Glyph paths={identity()?.icon ?? icons.flow} />
-        </span>
-        <span class="hs-insp-peek__text">
-          <strong>{title()}</strong>
-          <Show when={line()}><small>{line()}</small></Show>
-        </span>
-        <span class="hs-insp-peek__edit" aria-hidden="true">Show</span>
-      </button>
+      <SheetPeek title={title()} line={line()} icon={identity()?.icon ?? icons.flow} color={identity()?.color} verb="Show" label={`Show values of ${title()}`} onOpen={() => props.onOpen()} />
     )
   }
 }
@@ -144,13 +136,22 @@ function StepValues(props: {
   catalog: VisualCatalogSnapshot
   model?: TraceModel
   event?: TraceEvent
+  frame: string
   onSelectSource(id: string): void
   onSelectEvent(seq: number): void
+  onSelectWholeRun(): void
 }) {
   const chooserId = createUniqueId()
   const identity = () => nodeIdentity(props.node.kind, props.catalog)
-  const kindLabel = () => (Object.hasOwn(props.catalog.nodes, props.node.kind) ? props.catalog.nodes[props.node.kind].label : props.node.kind)
+  // A kind this catalog does not know is still a step; its title (its own label) says which.
+  const kindLabel = () => (Object.hasOwn(props.catalog.nodes, props.node.kind) ? props.catalog.nodes[props.node.kind].label : 'Step')
   const runs = () => props.model?.eventsOf(props.node.id) ?? []
+  const whole = () => props.frame === ''
+  // Another run or the whole run can be chosen: more than one run, or one iteration or branch is on view.
+  const chooser = () => runs().length > 1 || (!whole() && runs().length > 0)
+  const frameLabel = () => props.model?.frameLabel(props.frame) ?? ''
+  // Values that were too large to record take their wires' highlight with them.
+  const readsValues = () => props.graph.edges.some(e => e.kind === 'data' && e.target === props.node.id)
   const count = () => props.model?.runs(props.node.id) ?? 0
   const inputs = () => props.event?.inputs ?? {}
   const outputs = () => props.event?.outputs ?? {}
@@ -172,7 +173,23 @@ function StepValues(props: {
           <span class="hs-insp-kind">{kindLabel()}</span>
         </div>
       </header>
-      <Show when={props.model && props.event} fallback={<p class="hs-insp-note">{props.model ? 'This step did not run.' : 'No values were recorded for this run.'}</p>}>
+      <Show when={chooser()}>
+        <div class="hs-insp-field">
+          <label class="hs-insp-field__label" for={chooserId}>Which run</label>
+          <select id={chooserId} class="hs-input" onChange={e => (e.currentTarget.value === 'whole' ? props.onSelectWholeRun() : props.onSelectEvent(Number(e.currentTarget.value)))}>
+            <option value="whole" selected={whole()}>Whole run</option>
+            <For each={runs()}>{(run, index) => <option value={String(run.seq)} selected={!whole() && run.seq === props.event?.seq}>{choice(run, index())}</option>}</For>
+          </select>
+          <Show when={whole() && props.event && runs().length > 1}>
+            <span class="hs-insp-meta">Showing its last run{props.model!.frameLabel(props.event!.frame) ? `: ${props.model!.frameLabel(props.event!.frame)}` : ''}.</span>
+          </Show>
+        </div>
+      </Show>
+      <Show when={props.model && props.event} fallback={
+        <p class="hs-insp-note">
+          {!props.model ? 'No values were recorded for this run.' : runs().length && !whole() ? `This step did not run in ${frameLabel()}.` : 'This step did not run.'}
+        </p>
+      }>
         {_shown => {
           const event = () => props.event!
           return (
@@ -187,14 +204,6 @@ function StepValues(props: {
                   <Show when={count() > 1}> · ran {count().toLocaleString()} times</Show>
                 </span>
               </p>
-              <Show when={runs().length > 1}>
-                <div class="hs-insp-field">
-                  <label class="hs-insp-field__label" for={chooserId}>Which run</label>
-                  <select id={chooserId} class="hs-input" value={String(event().seq)} onChange={e => props.onSelectEvent(Number(e.currentTarget.value))}>
-                    <For each={runs()}>{(run, index) => <option value={String(run.seq)}>{choice(run, index())}</option>}</For>
-                  </select>
-                </div>
-              </Show>
               <Show when={event().error}>
                 {error => (
                   <div class="hs-trace-error" classList={{ 'hs-trace-error--recovered': event().status === 'error' }} role="note">
@@ -204,7 +213,9 @@ function StepValues(props: {
                 )}
               </Show>
               <Show when={event().trunc}>
-                <p class="hs-insp-note hs-insp-note--warning">Some values were too large to record.</p>
+                <p class="hs-insp-note hs-insp-note--warning">
+                  {readsValues() ? 'Some values were too large to record, so their wires are not highlighted.' : 'Some values were too large to record.'}
+                </p>
               </Show>
               <Show when={path()}>{text => <p class="hs-insp-meta">{text()}</p>}</Show>
               <PortList
@@ -276,33 +287,31 @@ function PortList(props: {
   )
 }
 
+/**
+ * What the recorder writes inside a value in place of one it did not keep, shown in words: `"***"` under a name the
+ * secret rule matches (the same text under any other name is real), and, in a value marked cut, a C# type name for
+ * one it could not read. A depth-capped `null` cannot be told from a real one and stays as it is.
+ */
+const placeholders = (value: TraceValue): JsonLeaf => (name, v) => {
+  if (v === '***' && secretName(name)) return <span class="hs-trace-value--muted hs-trace-leaf" title="Not recorded because its name looks like a secret.">Hidden</span>
+  if (value.trunc && opaque(v)) return <span class="hs-trace-value--muted hs-trace-leaf">Could not be recorded</span>
+  return undefined
+}
+
 /** A recorded value: a tree for objects and lists, words for anything else; never a placeholder as if it were data. */
 function ValueView(props: { value: TraceValue; label: string }) {
   return (
     <div class="hs-trace-port__value">
       <Show when={isTree(props.value)} fallback={
-        <span class="hs-trace-value" classList={{ 'hs-trace-value--muted': props.value.redacted || props.value.v === undefined || props.value.v === null || valueText(props.value) === 'Could not be recorded' }}>
+        <span class="hs-trace-value" classList={{ 'hs-trace-value--muted': isPlaceholder(props.value) }}>
           {valueText(props.value)}
         </span>
       }>
         <span class="hs-trace-value hs-trace-value--muted">{valueText(props.value)}</span>
-        <JsonTree value={props.value.v} label={`${props.label} value`} />
+        <JsonTree value={props.value.v} label={`${props.label} value`} leaf={placeholders(props.value)} />
       </Show>
       <Show when={props.value.redacted}><span class="hs-trace-port__note">Not recorded because its name looks like a secret.</span></Show>
       <Show when={isCut(props.value)}><span class="hs-trace-port__note">Too large: only part of it was recorded.</span></Show>
     </div>
-  )
-}
-
-/** The bottom sheet's handle: a tap closes it, so does a downward drag of more than 80px. */
-function SheetGrip(props: { onClose(): void }) {
-  let start: number | undefined
-  return (
-    <button type="button" class="hs-insp-grip" aria-hidden="true" tabindex="-1"
-      onPointerDown={e => { start = e.clientY; e.currentTarget.setPointerCapture?.(e.pointerId) }}
-      onPointerUp={e => { const moved = start === undefined ? 0 : e.clientY - start; start = undefined; if (moved > 80 || Math.abs(moved) < 6) props.onClose() }}
-      onPointerCancel={() => { start = undefined }}>
-      <span aria-hidden="true" />
-    </button>
   )
 }

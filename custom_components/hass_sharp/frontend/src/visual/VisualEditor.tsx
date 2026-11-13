@@ -14,7 +14,8 @@ import { Inspector, type InspectorLastRun } from './Inspector'
 import { focusRow } from './InputRow'
 import { NodeLibraryPanel } from './NodeLibraryPanel'
 import { BottomDrawer, CodePanel, ProblemsPanel } from './BottomDrawer'
-import { createFullscreen, FullscreenButton } from './fullscreen'
+import { createFullscreen, createFullscreenPage, FullscreenButton } from './fullscreen'
+import { media } from './media'
 import { createVisualSession } from './session'
 import type { VisualDiagnostic, VisualDocument } from './api'
 import { createGraph, createNodeAt, serializeGraph, visualActionLabels, type NodeKind } from './graph'
@@ -22,21 +23,11 @@ import { RunNowButton } from './RunNow'
 import { soon } from './soon'
 import { createNotice, TopBar } from './TopBar'
 
-type DrawerTab = 'problems' | 'code' | 'runs'
+export type DrawerTab = 'problems' | 'code' | 'runs'
 /** Focus is where keys mean text or a choice in a list: the page's shortcuts leave those keys alone. */
 const typing = (target: Element) =>
   !!target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="menu"], [role="listbox"], .hs-card-editor, .hs-quick-add, dialog')
 const failedStatuses = new Set(['Failed', 'Interrupted'])
-
-/** A media query as a signal (false where `matchMedia` is missing). */
-function media(query: string) {
-  const list = typeof window.matchMedia === 'function' ? window.matchMedia(query) : undefined
-  const [matches, setMatches] = createSignal(!!list?.matches)
-  const update = () => setMatches(!!list?.matches)
-  list?.addEventListener?.('change', update)
-  onCleanup(() => list?.removeEventListener?.('change', update))
-  return matches
-}
 
 /**
  * The visual editor page: the top bar ({@link TopBar}), the step library, the canvas, the inspector and a bottom
@@ -51,6 +42,8 @@ export function VisualEditor(props: {
   onSaved?: (document: VisualDocument) => void
   /** Back to the list; the page shows no back button without it. */
   onBack?: () => void
+  /** Opens with the bottom drawer on this tab (a run's trace goes back to the Runs tab). */
+  drawer?: DrawerTab
 }) {
   const hass = useHass()
   const session = createVisualSession(hass, createGraph(props.name))
@@ -68,9 +61,6 @@ export function VisualEditor(props: {
   const canvas = () => editor.querySelector<HTMLElement>('.hs-flow')
   const inspector = () => editor.querySelector<HTMLElement>('.hs-inspector')
   const card = (id: string) => [...editor.querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.dataset.id === id)
-  /** Focus back to `element` while it is still on the page, else to the canvas: never to the page body. */
-  const refocus = (element?: HTMLElement | null) =>
-    element?.isConnected && element !== editor.ownerDocument.body ? element.focus({ preventScroll: true }) : canvas()?.focus({ preventScroll: true })
 
   createEffect(() => props.onDirtyChange?.(session.dirty()))
   createEffect(
@@ -178,8 +168,8 @@ export function VisualEditor(props: {
   }
 
   // ---- The bottom drawer.
-  const [drawerOpen, setDrawerOpen] = createSignal(false)
-  const [drawerTab, setDrawerTab] = createSignal<DrawerTab>('problems')
+  const [drawerOpen, setDrawerOpen] = createSignal(!!props.drawer)
+  const [drawerTab, setDrawerTab] = createSignal<DrawerTab>(props.drawer ?? 'problems')
   const [codeView, setCodeView] = createSignal<'code' | 'json'>('code')
   const shownProblems = () => session.diagnostics().filter(d => d.severity > 0)
   const errorCount = () => session.diagnostics().filter(d => d.severity === 3).length
@@ -253,35 +243,21 @@ export function VisualEditor(props: {
 
   // ---- Full screen: the library and the drawer fold away; the inspector floats; a compact bar stays.
   let libraryBefore = false
-  let fullscreenOpener: HTMLElement | null = null
-  const enterFullscreen = () => {
-    fullscreenOpener = activeElement()
-    libraryBefore = libraryCollapsed()
-    batch(() => {
-      setLibraryCollapsed(true)
-      setDrawerOpen(false)
-    })
-    void fullscreen.enter()
-  }
-  const toggleFullscreen = () => (fullscreen.active() ? void fullscreen.exit() : enterFullscreen())
-  createEffect(
-    on(
-      fullscreen.active,
-      active => {
-        const focused = activeElement()
-        if (active) {
-          // What had focus may be folded away (the "⋯" menu, the library, the drawer): the bar's exit button takes it.
-          if (!focused || focused === editor.ownerDocument.body || focused.closest('.hs-fs-hide, .hs-lib__panel, .hs-drawer__panel'))
-            queueMicrotask(() => editor.querySelector<HTMLElement>('.hs-topbar__exit')?.focus())
-          return
-        }
-        setLibraryCollapsed(libraryBefore)
-        // The exit button goes away with full screen: back to what opened it, else the canvas.
-        if (!focused || focused === editor.ownerDocument.body || focused.closest('.hs-topbar__exit')) queueMicrotask(() => refocus(fullscreenOpener))
-      },
-      { defer: true },
-    ),
-  )
+  const fullscreenPage = createFullscreenPage({
+    root: () => editor,
+    fullscreen,
+    onEnter: () => {
+      libraryBefore = libraryCollapsed()
+      batch(() => {
+        setLibraryCollapsed(true)
+        setDrawerOpen(false)
+      })
+    },
+    onExit: () => setLibraryCollapsed(libraryBefore),
+    fallback: canvas,
+  })
+  const enterFullscreen = fullscreenPage.enter
+  const toggleFullscreen = fullscreenPage.toggle
 
   // ---- Keys at the page root.
   const keyboard = (event: KeyboardEvent) => {
@@ -297,14 +273,7 @@ export function VisualEditor(props: {
       else history.undo()
       return
     }
-    if (!command && !event.altKey && key === 'f') {
-      event.preventDefault()
-      if (!event.repeat) toggleFullscreen()
-      return
-    }
-    // Escape leaves the maximised fallback only when nothing on the way (a menu, the drawer, the canvas) used it.
-    // The browser's own full screen leaves on Escape by itself.
-    if (event.key === 'Escape' && fullscreen.maximised()) setTimeout(() => !event.defaultPrevented && fullscreen.maximised() && void fullscreen.exit())
+    fullscreenPage.keydown(event)
   }
   // Enter on a step's card (the card itself, not an editor inside it) opens the sheet; the canvas selects the step.
   const cardEnter = (event: KeyboardEvent) => {
