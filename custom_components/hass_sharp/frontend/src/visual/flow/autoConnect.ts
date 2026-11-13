@@ -1,7 +1,7 @@
-import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, type GraphNode, type VisualCatalogSnapshot } from '../contract'
-import { canConnect, connectNodes, nodeInputs, updateNode, type VisualGraph } from '../graph'
+import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, type GraphEdge, type GraphNode, type VisualCatalogSnapshot } from '../contract'
+import { canConnect, connectNodes, nodeInputs, outputPort, removeEdge, updateNode, type VisualGraph } from '../graph'
 import { createUuid } from '../id'
-import { dataPortOf } from './flowModel'
+import { dataPortOf, nodeTitle } from './flowModel'
 
 /** A pin a new step is connected to: the node, the handle id and the side (`source` is an output). */
 export interface PinRef {
@@ -17,6 +17,8 @@ export interface Connected {
   error?: string
   /** The input that would have taken the value wire, for the callout. */
   refused?: { nodeId: string; handle: string }
+  /** Where the step was put into the flow ("Added Delay between Motion in the hall and State condition"). */
+  notice?: string
 }
 
 const freeId = (graph: VisualGraph) => {
@@ -81,48 +83,109 @@ function pinLabel(graph: VisualGraph, pin: PinRef, catalog: VisualCatalogSnapsho
   return label || data
 }
 
+/** Steps that run: reached from a trigger along execution wires. */
+function running(graph: VisualGraph): Set<string> {
+  const reached = new Set(graph.nodes.filter(n => n.kind === 'trigger').map(n => n.id))
+  const queue = [...reached]
+  while (queue.length) {
+    const id = queue.shift()!
+    for (const edge of graph.edges) if (edge.kind !== 'data' && edge.source === id && !reached.has(edge.target)) {
+      reached.add(edge.target)
+      queue.push(edge.target)
+    }
+  }
+  return reached
+}
+
+/** `graph` with the execution wire `edge` replaced by source → `id` (same port) and `id` next → its old target. */
+function insertOn(graph: VisualGraph, edge: GraphEdge, id: string, catalog: VisualCatalogSnapshot): VisualGraph | undefined {
+  const source = graph.nodes.find(n => n.id === edge.source)
+  if (!source) return
+  const port = outputPort(source.kind, edge)
+  const without = removeEdge(graph, edge.id, catalog)
+  const head = connectNodes(without, edge.source, id, port, catalog)
+  const tail = connectNodes(head, id, edge.target, 'next', catalog)
+  return head === without || tail === head ? undefined : tail
+}
+
 /**
- * Adds a `kind` step at `position` connected to the pin, as one graph change, without changing or removing any wire
- * already there:
- * - an execution pin gets its wire;
- * - a data output feeds the new step, which also runs after the pin's step when that port (`next`, or `body` for a
- *   value only the body sees) is free;
- * - a data input is fed by the new step, which also runs just before the pin's step when nothing runs that step yet.
- * The value wire is validated once. When it is refused (a step that does not run yet cannot pass a value) the step is
- * still added where it was dropped, without the value wire, and `error` says what to do.
+ * Adds a `kind` step at `position` connected to the pin, as one graph change.
+ *
+ * An execution pin gets its wire. For a data pin the new step must run on the same path as the pin's step for the
+ * value wire to be valid, so it is put into the flow where that changes nothing else:
+ * - from a data output: into the free `next` (or `body`, for a value only a loop body sees) of the pin's step; or,
+ *   when that port has exactly one wire, onto that wire (pin's step → new step → what ran next), if the new kind has
+ *   a `next`;
+ * - from a data input: onto the one execution wire into the pin's step (what ran before → new step → pin's step), if
+ *   the new kind has a `next`.
+ * Then the value wire is made, and `notice` says where the step was put. When there is no such place (the new kind has
+ * no `next`, the pin's step has several incoming wires, or does not run at all) or the value wire is refused there,
+ * the step is added where it was dropped with no wire changed, plus the value wire if the editor accepts one to a
+ * step not in the flow yet (`notice` then says to connect it into the flow); if it does not, `error` says in plain
+ * words what to connect.
+ * Returns undefined when the kind cannot go there at all (its placement would be refused, as for a condition result
+ * outside a loop condition).
  */
 export function addConnected(graph: VisualGraph, kind: string, position: Point, pin: PinRef, catalog: VisualCatalogSnapshot, id = createUuid()): Connected | undefined {
   const port = portFor(graph, kind, pin, catalog, id)
   if (port === undefined) return
   const placed = updateNode(addGraphNode(graph, kind, id, catalog), id, { position })
+  const blocked = (value: VisualGraph) => analyzeGraph(value, catalog).diagnostics.some(d => d.nodeId === id && d.severity === 3 && blockingDiagnostic(d))
   const data = dataPortOf(pin.handle)
   if (data === undefined) {
     const wired = pin.type === 'source' ? connectNodes(placed, pin.nodeId, id, pin.handle, catalog) : connectNodes(placed, id, pin.nodeId, port, catalog)
-    return { graph: wired, nodeId: id }
+    return blocked(wired) ? undefined : { graph: wired, nodeId: id }
   }
   const pinNode = placed.nodes.find(n => n.id === pin.nodeId)!
-  let ordered = placed
-  let wire: [string, string, string, string]
-  if (pin.type === 'source') {
+  const added = placed.nodes.find(n => n.id === id)!
+  const hasNext = executionPorts(added, catalog).includes('next')
+  const runs = running(graph).has(pin.nodeId)
+  const title = (nodeId: string) => nodeTitle(placed.nodes.find(n => n.id === nodeId), catalog, nodeId)
+  let ordered: VisualGraph | undefined
+  let between: [string, string] | undefined
+  if (runs && pin.type === 'source') {
     const run = runPortFor(dataOutputs(pinNode, catalog)[data]?.visibility)
-    // connectNodes leaves the graph as it was when the port is taken or the wire would make a loop.
-    if (executionPorts(pinNode, catalog).includes(run)) ordered = connectNodes(placed, pin.nodeId, id, run, catalog)
-    wire = [pin.nodeId, data, id, port]
-  } else {
-    const added = placed.nodes.find(n => n.id === id)!
-    const runs = placed.edges.some(e => e.kind !== 'data' && e.target === pin.nodeId)
-    if (!runs && executionPorts(added, catalog).includes('next')) ordered = connectNodes(placed, id, pin.nodeId, 'next', catalog)
-    wire = [id, port, pin.nodeId, data]
+    const taken = placed.edges.filter(e => e.kind !== 'data' && e.source === pin.nodeId && outputPort(pinNode.kind, e) === run)
+    if (!executionPorts(pinNode, catalog).includes(run)) ordered = undefined
+    else if (!taken.length) {
+      const wired = connectNodes(placed, pin.nodeId, id, run, catalog)
+      ordered = wired === placed ? undefined : wired
+    } else if (taken.length === 1 && hasNext) {
+      ordered = insertOn(placed, taken[0], id, catalog)
+      if (ordered) between = [pin.nodeId, taken[0].target]
+    }
+  } else if (runs) {
+    const into = placed.edges.filter(e => e.kind !== 'data' && e.target === pin.nodeId)
+    if (into.length === 1 && hasNext) {
+      ordered = insertOn(placed, into[0], id, catalog)
+      if (ordered) between = [into[0].source, pin.nodeId]
+    }
   }
-  const refused = { nodeId: wire[2], handle: `data:${wire[3]}` }
-  try {
-    return { graph: connectData(ordered, ...wire, catalog), nodeId: id }
-  } catch (error) {
-    // Without an execution wire the new step does not run yet, so it cannot pass or receive a value.
-    if (ordered === placed)
-      return { graph: placed, nodeId: id, refused, error: `Added ${kindLabel(kind, catalog)}. Connect it into the flow, then connect ${pinLabel(graph, pin, catalog)}.` }
-    return { graph: ordered, nodeId: id, refused, error: error instanceof Error ? error.message : String(error) }
+  const wire: [string, string, string, string] = pin.type === 'source' ? [pin.nodeId, data, id, port] : [id, port, pin.nodeId, data]
+  const kindName = kindLabel(kind, catalog), pinName = pinLabel(graph, pin, catalog)
+  const tryValue = (value: VisualGraph) => {
+    try {
+      return connectData(value, ...wire, catalog)
+    } catch {
+      return undefined
+    }
   }
+  /**
+   * The step where it was dropped, with no wire changed, and the value wire when the editor accepts it for a step
+   * that is not in the flow yet; in plain words either way (never the validator's sentence about scopes).
+   */
+  const alone = (): Connected => {
+    const valued = tryValue(placed)
+    if (valued) return { graph: valued, nodeId: id, notice: `Added ${kindName} and connected ${pinName}. Connect ${kindName} into the flow to run it.` }
+    return { graph: placed, nodeId: id, refused: { nodeId: wire[2], handle: `data:${wire[3]}` }, error: `Added ${kindName}. Connect it into the flow, then connect ${pinName}.` }
+  }
+  if (!ordered) return alone()
+  // The kind cannot run there at all (a condition result outside a loop condition): it is not offered.
+  if (blocked(ordered)) return
+  const connected = tryValue(ordered)
+  // Never keep an execution wire that was only there for the value.
+  if (!connected) return alone()
+  return { graph: connected, nodeId: id, ...(between ? { notice: `Added ${kindName} between ${title(between[0])} and ${title(between[1])}` } : {}) }
 }
 
 /**
@@ -131,8 +194,5 @@ export function addConnected(graph: VisualGraph, kind: string, position: Point, 
  */
 export function canAddFor(graph: VisualGraph, kind: string, pin: PinRef | undefined, catalog: VisualCatalogSnapshot): boolean {
   if (!pin) return Object.hasOwn(catalog.nodes, kind)
-  const id = freeId(graph)
-  const result = addConnected(graph, kind, { x: 0, y: 0 }, pin, catalog, id)
-  if (!result) return false
-  return !analyzeGraph(result.graph, catalog).diagnostics.some(d => d.nodeId === id && d.severity === 3 && blockingDiagnostic(d))
+  return !!addConnected(graph, kind, { x: 0, y: 0 }, pin, catalog, freeId(graph))
 }

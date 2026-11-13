@@ -14,6 +14,8 @@ const Icon = (props: { paths: readonly string[]; class?: string }) => (
     <For each={props.paths}>{d => <path d={d} />}</For>
   </svg>
 )
+/** How long a released press with no click keeps a row open (iOS sends the click up to ~350 ms after release). */
+const NO_CLICK_MS = 700
 const clip = (text: string, max = 48) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
 /** The icon beside each trace status word. */
 const statusIcon: Record<TraceStatus, readonly string[]> = {
@@ -107,31 +109,53 @@ export function NodeCard(props: NodeProps) {
     // unless its editor holds a draft it refused, which stays open with its error.
     let pendingLeave: ReturnType<typeof setTimeout> | undefined
     onCleanup(() => clearTimeout(pendingLeave))
-    // A pointer went down inside the row and its click has not finished yet. Safari, the iOS web view and Firefox on
-    // macOS do not focus a clicked button: focus leaves for the card (or nowhere) before the click opens the menu, so
-    // the row must not fold under it. A pointer that goes down inside the row never folds it.
+    // A pointer went down inside the row and its click has not been delivered yet. Safari, the iOS web view and
+    // Firefox on macOS do not focus a clicked button: focus leaves for the card (or nowhere) before the click opens the
+    // menu, so the row must not fold under it. On iOS the click (and the mouse events that move focus) come in a later
+    // task, up to about 350 ms after `pointerup`, so the press lasts until its click, plus a macrotask; a cancelled
+    // press ends at once; a release that makes no click (outside the row) ends after `NO_CLICK_MS`, and then the row
+    // folds if focus is no longer in it.
     let pressed: number | undefined
     let release: ReturnType<typeof setTimeout> | undefined
+    const doc = () => root.ownerDocument
     const listen = (on: boolean) => {
-      for (const type of ['pointerup', 'pointercancel']) (on ? root.ownerDocument.addEventListener : root.ownerDocument.removeEventListener).call(root.ownerDocument, type, ended as EventListener, true)
+      const method = on ? doc().addEventListener : doc().removeEventListener
+      method.call(doc(), 'pointerup', released as EventListener, true)
+      method.call(doc(), 'pointercancel', cancelled as EventListener, true)
+      method.call(doc(), 'click', clicked, true)
     }
-    function ended(event: PointerEvent) {
-      if (pressed === undefined || (event.pointerId !== undefined && event.pointerId !== pressed)) return
-      listen(false)
-      // After the click this release produces has been delivered (it follows in the same task).
+    const end = (refold: boolean) => {
       clearTimeout(release)
-      release = setTimeout(() => (pressed = undefined))
+      pressed = undefined
+      listen(false)
+      if (refold) fold((root.getRootNode() as Document | ShadowRoot).activeElement)
+    }
+    const ours = (event: PointerEvent) => pressed !== undefined && (event.pointerId === undefined || event.pointerId === pressed)
+    function released(event: PointerEvent) {
+      if (!ours(event)) return
+      clearTimeout(release)
+      release = setTimeout(() => end(true), NO_CLICK_MS)
+    }
+    function cancelled(event: PointerEvent) {
+      if (ours(event)) end(false)
+    }
+    function clicked() {
+      if (pressed === undefined) return
+      // After this click has been delivered (its handlers run first).
+      clearTimeout(release)
+      release = setTimeout(() => end(false))
     }
     const press = (event: PointerEvent) => {
       clearTimeout(release)
-      if (pressed === undefined) listen(true)
+      // addEventListener ignores a listener that is already there: a second press never leaves them off.
+      listen(true)
       pressed = event.pointerId ?? 0
     }
     onMount(() => root.addEventListener('pointerdown', press, true))
     onCleanup(() => {
       clearTimeout(release)
       root.removeEventListener('pointerdown', press, true)
-      if (pressed !== undefined) listen(false)
+      listen(false)
     })
     const fold = (active: Element | null | undefined) => {
       if (!expanded() || pressed !== undefined || (active && root.contains(active))) return

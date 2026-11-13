@@ -367,16 +367,19 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     if (restore || focused) refocus(request.returnTo)
   }
   let focusFrame = 0
+  /** Pointer presses on the canvas so far: a press after a step was added means the user has moved on. */
+  let presses = 0
   onCleanup(() => cancelAnimationFrame(focusFrame))
   /** Focuses a new step's card once it is on the canvas (a parent may apply the change a little later). */
   const focusCard = (id: string) => {
     cancelAnimationFrame(focusFrame)
     let frames = 0
     const from = activeElement()
+    const pressed = presses
     const attempt = () => {
       const card = [...canvas.querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.getAttribute('data-id') === id)
-      // The user has moved on meanwhile: leave their focus alone.
-      if (activeElement() !== from && activeElement() !== card) return
+      // The user has moved on meanwhile (focus went elsewhere, or they pressed on the canvas): leave it alone.
+      if (presses !== pressed || (activeElement() !== from && activeElement() !== card)) return
       // A card is hidden until it has been measured, and a hidden card does not take focus: try again next frame.
       card?.focus({ preventScroll: true })
       if ((!card || activeElement() !== card) && ++frames < 60) focusFrame = requestAnimationFrame(attempt)
@@ -392,6 +395,49 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     const focused = activeElement()
     const returnTo = focused instanceof HTMLElement && focused !== canvas.ownerDocument.body && !focused.closest('.hs-quick-add') ? focused : quickAdd()?.returnTo
     setQuickAdd({ screen, position: position ?? toFlow(screen), pin, returnTo })
+  }
+  // ---- Room for new steps: an added step never covers a card already there.
+  type Rect = Point & { width: number; height: number }
+  const near = (a: Rect, b: Rect, margin = 20) =>
+    a.x < b.x + b.width + margin && b.x < a.x + a.width + margin && a.y < b.y + b.height + margin && b.y < a.y + a.height + margin
+  const cards = (): Rect[] =>
+    graph().nodes.map((node, index) => {
+      const internal = flow?.getInternalNode(node.id)
+      const at = internal?.internals.positionAbsolute ?? node.position ?? { x: 60 + index * 300, y: 100 }
+      return { x: at.x, y: at.y, width: internal?.measured.width || 260, height: internal?.measured.height || 120 }
+    })
+  /** The size of a typical card on this canvas (the median measured one), for a step not drawn yet. */
+  const typicalSize = () => {
+    const measured = graph().nodes.flatMap(node => {
+      const size = flow?.getInternalNode(node.id)?.measured
+      return size?.width && size.height ? [size as { width: number; height: number }] : []
+    })
+    if (!measured.length) return { width: 260, height: 120 }
+    const middle = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]
+    return { width: middle(measured.map(m => m.width)), height: middle(measured.map(m => m.height)) }
+  }
+  /**
+   * How far down `boxes` (moved together) must go so that none comes within 20 px of a card already there: each
+   * time one does, they move to 40 px below that card. On the grid when snapping is on.
+   */
+  const roomBelow = (boxes: Rect[]) => {
+    const others = cards()
+    let dy = 0
+    for (let i = 0; i < others.length; i++) {
+      let hit: [Rect, Rect] | undefined
+      for (const box of boxes) {
+        const other = others.find(o => near({ ...box, y: box.y + dy }, o))
+        if (other) { hit = [box, other]; break }
+      }
+      if (!hit) break
+      dy = hit[1].y + hit[1].height + 40 - hit[0].y
+    }
+    return snap() ? Math.ceil(dy / GRID) * GRID : Math.round(dy)
+  }
+  /** Where a new step asked for at `point` goes: there, or below the cards in the way. */
+  const placeNew = (point: Point) => {
+    const at = place(point)
+    return { x: at.x, y: at.y + roomBelow([{ ...at, ...typicalSize() }]) }
   }
   /** Beside the pin's card: to its right for an output, to its left for an input. */
   const besidePin = (pin: PinRef): Point | undefined => {
@@ -412,7 +458,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     const request = quickAdd()
     closeQuickAdd(true)
     if (readOnly() || !request) return
-    const position = place(request.position)
+    const position = placeNew(request.position)
     if (!request.pin) {
       const next = createNodeAt(graph(), kind, position, undefined, catalog())
       if (next === graph()) return
@@ -429,6 +475,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     selectAdded([result.nodeId])
     focusCard(result.nodeId)
     if (result.error && result.refused) reject(result.refused, result.error)
+    if (result.notice) notify(result.notice)
   }
 
   const Viewport = () => {
@@ -701,7 +748,11 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   const insert = (data: StepClipboard, placement: { at: Point } | { offset: Point }, verb = 'Pasted') => {
     const result = pasteSteps(graph(), data, catalog(), placement, snap() ? GRID : undefined)
     if ('error' in result) return notify(`Cannot ${verb === 'Pasted' ? 'paste' : 'duplicate'}: ${result.error}`)
-    change(result.graph)
+    // Moved down together, below any card the copies would cover.
+    const added = new Set(result.ids)
+    const size = typicalSize()
+    const dy = roomBelow(result.graph.nodes.filter(node => added.has(node.id)).map(node => ({ x: node.position?.x ?? 0, y: node.position?.y ?? 0, ...size })))
+    change(dy ? { ...result.graph, nodes: result.graph.nodes.map(node => (added.has(node.id) ? { ...node, position: { x: node.position?.x ?? 0, y: (node.position?.y ?? 0) + dy } } : node)) } : result.graph)
     selectAdded(result.ids)
     if (result.unnamed) notify(`${verb} ${steps(result.ids.length)}; variable names were not copied`)
   }
@@ -812,6 +863,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   }
   const pointerDownCapture = (event: PointerEvent) => {
     pointerHeld = true
+    presses++
     if (event.button !== 0 || !event.shiftKey || !event.isPrimary || !emptyPane(event.target)) return
     event.stopPropagation()
     event.preventDefault()

@@ -680,6 +680,88 @@ it('keeps an opened optional row open while a click inside it lands, where a cli
   expect(cell()!.querySelector('.hs-card-editor')).not.toBeNull()
 })
 
+it('keeps an opened optional row open for a tap on iOS, where the click comes in a later task, and never leaves it stuck open', async () => {
+  const el = host()
+  const [graph, setGraph] = createSignal(lightOn({ brightness_pct: lit('number', 50), transition: { kind: 'unset' } }))
+  dispose = render(() => providers(() => <FlowAdapter graph={graph()} catalog={withServices()} onSelect={() => {}} onChange={setGraph} />), el)
+  const cell = () => el.querySelector<HTMLElement>('[data-id="service-1"] [data-input-id="field:transition"]')
+  const open = async () => {
+    cell()!.querySelector<HTMLButtonElement>('button.hs-pin-set')!.click()
+    await Promise.resolve()
+    expect(cell()!.querySelector('.hs-card-editor')).not.toBeNull()
+  }
+  await open()
+  const wrapper = el.querySelector<HTMLElement>('.solid-flow__node[data-id="service-1"]')!
+  const field = () => cell()!.querySelector<HTMLElement>('.hs-card-editor input')!
+  const menu = () => cell()!.querySelector<HTMLElement>('button[aria-label="Transition mode"]')!
+  const pointer = (target: Element, type: string, pointerId = 1) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, pointerId, pointerType: 'touch' }))
+  const task = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
+  // pointerdown and pointerup with touchend; a task later focus moves to the card, then the click arrives.
+  pointer(menu(), 'pointerdown')
+  pointer(menu(), 'pointerup')
+  await task()
+  field().dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: wrapper }))
+  await task()
+  expect(cell()!.querySelector('.hs-card-editor')).not.toBeNull()
+  menu().click()
+  await task()
+  expect(cell()!.querySelector('[role="menu"]')).not.toBeNull()
+  // A press released outside the row makes no click: once the wait is over, the row folds (focus is elsewhere).
+  menu().click()
+  await task()
+  const outside = el.appendChild(document.createElement('button'))
+  pointer(menu(), 'pointerdown')
+  outside.focus()
+  pointer(outside, 'pointerup')
+  await task(100)
+  expect(cell()!.querySelector('.hs-card-editor')).not.toBeNull()
+  await vi.waitFor(() => expect(cell()!.querySelector('.hs-card-editor')).toBeNull(), { timeout: 1500 })
+  // Two quick presses (the second before the first one's wait is over) do not leave the row open for good.
+  await open()
+  pointer(menu(), 'pointerdown')
+  pointer(menu(), 'pointerup')
+  pointer(menu(), 'pointerdown', 2)
+  pointer(menu(), 'pointerup', 2)
+  outside.focus()
+  await vi.waitFor(() => expect(cell()!.querySelector('.hs-card-editor')).toBeNull(), { timeout: 1500 })
+  // A cancelled press (the page scrolled instead) ends at once.
+  await open()
+  pointer(menu(), 'pointerdown')
+  pointer(menu(), 'pointercancel')
+  outside.focus()
+  await vi.waitFor(() => expect(cell()!.querySelector('.hs-card-editor')).toBeNull())
+})
+
+it.each([
+  ['accepts', 'Added State condition and connected Entity. Connect State condition into the flow to run it.'],
+  ['refuses', 'Added State condition. Connect it into the flow, then connect Entity.'],
+] as const)('adds a step from a data pin outside the flow and says what happened when the editor %s its value wire', async (verdict, message) => {
+  layout()
+  const el = host()
+  const [graph, setGraph] = createSignal(createGraph('Pins'))
+  dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, el)
+  await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge')).not.toBeNull())
+  const before = graph()
+  // Only the drop's own value wire is decided here; every other check is the real one.
+  const real = vi.mocked(contract.connectData).getMockImplementation()!
+  vi.mocked(contract.connectData).mockImplementation((g, source, output, target, input, catalog) => {
+    if (source !== 'trigger-1' || target === 'condition-1') return real(g, source, output, target, input, catalog)
+    if (verdict === 'refuses') throw new Error('Left cannot use this value here: it is across a loop or parallel branch boundary')
+    return { ...g, edges: [...g.edges, { id: 'value', kind: 'data', source, sourcePort: output, target, targetPort: input }] }
+  })
+  vi.spyOn(document, 'elementFromPoint').mockReturnValue(el.querySelector('.solid-flow__pane'))
+  el.querySelector('[data-id="trigger-1"] .source[data-handleid="data:entity_id"]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+  document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 160, clientY: 470 }))
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 160, clientY: 470 }))
+  button(el, 'Create State condition').click()
+  const created = graph().nodes.at(-1)!.id
+  // State condition has no plain next: it is not put into the flow, and no wire there changes.
+  expect(graph().edges.slice(0, before.edges.length)).toEqual(before.edges)
+  expect(graph().edges.slice(before.edges.length)).toEqual(verdict === 'accepts' ? [expect.objectContaining({ kind: 'data', source: 'trigger-1', target: created })] : [])
+  await vi.waitFor(() => expect(el.textContent).toContain(message))
+  expect(el.textContent).not.toContain('boundary')
+})
+
 it('centres a run on its focus node once: a new trace object for the same node leaves the view alone', async () => {
   layout()
   const el = host()

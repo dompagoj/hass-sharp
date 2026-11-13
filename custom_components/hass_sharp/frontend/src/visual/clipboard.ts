@@ -67,11 +67,25 @@ const system = (): SystemClipboard | undefined => {
 }
 
 /**
+ * The page lost focus since this tab's copy (the user may have copied elsewhere). Until then this tab's copy is the
+ * newest there can be, so a paste uses it without reading the system clipboard, which would ask for permission.
+ */
+let leftSinceCopy = false
+let watching = false
+const watchFocus = () => {
+  if (watching || typeof window === 'undefined') return
+  watching = true
+  window.addEventListener('blur', () => (leftSinceCopy = true))
+}
+
+/**
  * Keeps the copy in memory, and also puts it on the system clipboard (JSON with the marker) where the browser has
  * the API and allows it, so it can be pasted into another tab. A missing or denied clipboard is never an error.
  */
 export async function writeSteps(data: StepClipboard): Promise<void> {
   memory = structuredClone(data)
+  leftSinceCopy = false
+  watchFocus()
   try {
     await system()?.writeText?.(JSON.stringify(data))
   } catch {
@@ -80,10 +94,12 @@ export async function writeSteps(data: StepClipboard): Promise<void> {
 }
 
 /**
- * The newer of this tab's copy and steps on the system clipboard (a copy made in another tab after this one), when
- * the system clipboard is readable; this tab's copy when it is not. Never throws.
+ * Steps to paste. This tab's copy while the page has kept focus since it was made; otherwise (no copy here, or the
+ * user went elsewhere, perhaps to copy in another tab) the newer of this tab's copy and steps on the system
+ * clipboard, when it is readable. Never throws.
  */
 export async function readSteps(): Promise<StepClipboard | undefined> {
+  if (memory && !leftSinceCopy) return structuredClone(memory)
   let shared: StepClipboard | undefined
   try {
     const text = await system()?.readText?.()

@@ -149,3 +149,18 @@ it('gives each trigger\'s flow its own band, in the order of the triggers, and l
   const tidied = applyLayout(graph, positions)
   expect(applyLayout(tidied, tidyLayout(tidied))).toBe(tidied)
 })
+
+it('lays out a flow without a trigger the same way whatever the stored positions', () => {
+  let graph = createGraph('Loose')
+  graph = { ...graph, nodes: [], edges: [] }
+  for (const id of ['first', 'second', 'joined', 'other', 'next']) graph = addNode(graph, 'delay', id)
+  graph = connectNodes(connectNodes(graph, 'first', 'joined'), 'second', 'joined')
+  // A second flow, below, so the bands are ordered by position.
+  graph = connectNodes(graph, 'other', 'next')
+  const at = (positions: Record<string, [number, number]>): VisualGraph => ({ ...graph, nodes: graph.nodes.map(n => ({ ...n, position: { x: positions[n.id][0], y: positions[n.id][1] } })) })
+  const below = { other: [0, 900], next: [400, 900] } as Record<string, [number, number]>
+  const one = tidyLayout(at({ first: [0, 0], second: [0, 400], joined: [400, 200], ...below }))
+  // The same corner, the two roots swapped.
+  const two = tidyLayout(at({ first: [0, 400], second: [0, 0], joined: [400, 200], ...below }))
+  expect(two).toEqual(one)
+})

@@ -80,25 +80,32 @@ it('pastes a second trigger the validator allows, and refuses what the editor wo
   expect('error' in full && full.error).toMatch(/^Graph limit/)
 })
 
-it('takes the newer of this tab\'s copy and the system clipboard\'s, and never throws when it is missing, denied or huge', async () => {
+it('pastes this tab\'s copy without reading the system clipboard while the page kept focus, else the newer of the two', async () => {
   const graph = sample()
   const now = vi.spyOn(Date, 'now')
   now.mockReturnValue(1000)
   const copy = copySteps(graph, ['log'])!
   let stored = ''
-  vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn(async (text: string) => { stored = text }), readText: vi.fn(async () => stored) } })
+  const readText = vi.fn(async () => stored)
+  vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn(async (text: string) => { stored = text }), readText } })
   await writeSteps(copy)
   expect(parseSteps(stored)).toEqual(copy)
+  // Same tab, focus never left: no permission prompt, this copy.
+  stored = JSON.stringify(copySteps(graph, ['value']))
   expect(await readSteps()).toEqual(copy)
-  // Another tab copied later: its steps win.
+  expect(readText).not.toHaveBeenCalled()
+  // The user went elsewhere and another tab copied later: its steps win.
+  window.dispatchEvent(new Event('blur'))
   now.mockReturnValue(2000)
   const later = copySteps(graph, ['value'])!
   stored = JSON.stringify(later)
   expect(await readSteps()).toEqual(later)
+  expect(readText).toHaveBeenCalledTimes(1)
   // An older copy on the system clipboard does not replace this tab's newer one.
   now.mockReturnValue(3000)
   const newest = copySteps(graph, ['value', 'log'])!
   await writeSteps(newest)
+  window.dispatchEvent(new Event('blur'))
   stored = JSON.stringify(later)
   expect(await readSteps()).toEqual(newest)
   // Unrelated or oversized clipboard text is not steps; this tab's copy is pasted.
@@ -109,11 +116,23 @@ it('takes the newer of this tab\'s copy and the system clipboard\'s, and never t
   // Denied.
   vi.stubGlobal('navigator', { clipboard: { writeText: () => Promise.reject(new Error('denied')), readText: () => Promise.reject(new Error('denied')) } })
   await expect(writeSteps(copy)).resolves.toBeUndefined()
+  window.dispatchEvent(new Event('blur'))
   expect(await readSteps()).toEqual(copy)
   // Missing.
   vi.stubGlobal('navigator', {})
   await expect(writeSteps(newest)).resolves.toBeUndefined()
+  window.dispatchEvent(new Event('blur'))
   expect(await readSteps()).toEqual(newest)
+})
+
+it('reads the system clipboard when this tab has no copy (steps copied in another tab)', async () => {
+  vi.resetModules()
+  const fresh = await import('../src/visual/clipboard')
+  const steps = fresh.copySteps(sample(), ['log'])!
+  const readText = vi.fn(async () => JSON.stringify(steps))
+  vi.stubGlobal('navigator', { clipboard: { readText } })
+  expect(await fresh.readSteps()).toEqual(steps)
+  expect(readText).toHaveBeenCalledTimes(1)
 })
 
 it('does not copy a C# variable name, so a pasted step never publishes the same variable as its original', () => {

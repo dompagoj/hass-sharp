@@ -100,7 +100,7 @@ export function tidyLayout(graph: VisualGraph, catalog: VisualCatalogSnapshot = 
   const before = (a: string, b: string) => at(a).y - at(b).y || at(a).x - at(b).x || index.get(a)! - index.get(b)!
   const lead = (members: string[]) => {
     const triggers = members.filter(id => byId.get(id)!.kind === 'trigger')
-    return (triggers.length ? triggers : members).sort(before)[0]
+    return [...(triggers.length ? triggers : members)].sort(before)[0]
   }
   const connected = [...groups.values()].filter(members => members.length > 1)
   const hasTrigger = (members: string[]) => members.some(id => byId.get(id)!.kind === 'trigger')
