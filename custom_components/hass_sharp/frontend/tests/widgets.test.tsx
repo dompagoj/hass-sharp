@@ -7,14 +7,19 @@ import { HassCtx } from '../src/context'
 import type { EntityInfo } from '../src/entities'
 import { EntityAutocomplete } from '../src/components/EntityAutocomplete'
 import { CatalogPicker } from '../src/components/CatalogPicker'
-import { dataInputs, nodeCatalog, validLiteral, type GraphNode, type InputSpec, type Operand, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { createGraph, updateNode } from '../src/visual/graph'
+import { dataInputs, nodeCatalog, validateGraph, validLiteral, type GraphNode, type InputSpec, type JsonValue, type Operand, type ServiceFieldSchema, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { InputEditor } from '../src/visual/InputEditor'
-import { entityPredicate, literalFor, targetValue, widgetFor } from '../src/visual/widgets'
+import { typeLabel } from '../src/visual/typeLabels'
+import {
+  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, targetValue, valueSummary, widgetFor,
+  type ValueKind, type Widget,
+} from '../src/visual/widgets'
 
 const catalog: VisualCatalogSnapshot = { ...nodeCatalog, services: servicesFixture as unknown as ServicesSection }
-const serviceInputs = (service: string, fields: string[]) => {
+const serviceInputs = (service: string, fields: string[], snapshot = catalog) => {
   const node: GraphNode = { id: 's', kind: 'service', config: { service, fields: Object.fromEntries(fields.map(f => [f, { kind: 'unset' }])), returnResponse: false } }
-  return dataInputs(node, undefined, catalog)
+  return dataInputs(node, undefined, snapshot)
 }
 const field = (service: string, name: string) => serviceInputs(service, [name])[`field:${name}`]
 const spec = (types: string[], extra: Partial<InputSpec> = {}): InputSpec => ({ types, required: false, description: '', ...extra })
@@ -30,7 +35,7 @@ const registry = {
     entity('climate.outside_bathroom_vtrv', { name: 'Bathroom TRV', state_options: ['off', 'heat', 'auto'] }),
     entity('climate.living', { state_options: ['off', 'cool'] }),
   ],
-  areas: [{ area_id: 'hall', name: 'Hall', floor_id: 'ground' }], devices: [{ id: 'dev1', name: 'Hub', area_id: null }],
+  areas: [{ area_id: 'hall', name: 'Hall', floor_id: 'ground' }, { area_id: 'attic', name: 'Attic', floor_id: null }], devices: [{ id: 'dev1', name: 'Hub', area_id: null }],
   floors: [{ floor_id: 'ground', name: 'Ground' }], labels: [{ label_id: 'night', name: 'Night' }],
 }
 let dispose: (() => void) | undefined
@@ -58,8 +63,9 @@ describe('widgetFor', () => {
     expect(widgetFor(field('light.turn_on', 'rgb_color'), catalog)).toMatchObject({ kind: 'color' })
     expect(widgetFor(field('light.turn_on', 'color_temp_kelvin'), catalog)).toMatchObject({ kind: 'number', slider: true, min: 2000, max: 6500, unit: 'K' })
     expect(widgetFor(field('light.turn_on', 'white'), catalog)).toMatchObject({ kind: 'constant', options: [{ value: true, label: 'Enabled' }] })
-    expect(widgetFor(field('light.turn_on', 'hs_color'), catalog)).toMatchObject({ kind: 'json' })
-    expect(widgetFor(serviceInputs('light.turn_on', []).target, catalog)).toMatchObject({ kind: 'target', domains: ['light'] })
+    // An object selector accepts every simple kind: a kind switch that starts at "List or object".
+    expect(widgetFor(field('light.turn_on', 'hs_color'), catalog)).toEqual({ kind: 'mixed', multiple: false, kinds: ['text', 'number', 'boolean', 'json'], defaultKind: 'json' })
+    expect(widgetFor(serviceInputs('light.turn_on', []).target, catalog)).toMatchObject({ kind: 'target', domains: ['light'], entityString: true })
   })
   it('maps the C3 rows the fixture has no field for', () => {
     expect(widgetFor(selector(['entity_id:light'], { entity: { domain: 'light' } }))).toMatchObject({ kind: 'entity', multiple: false, domains: ['light'] })
@@ -68,13 +74,21 @@ describe('widgetFor', () => {
       expect(widgetFor(selector(['string'], { [name]: {} }))).toEqual({ kind: name, multiple: false })
       expect(widgetFor(selector(['string', 'array'], { [name]: { multiple: true } }))).toEqual({ kind: name, multiple: true })
     }
-    expect(widgetFor(selector(['target'], { target: { entity: { domain: 'cover' } } }))).toMatchObject({ kind: 'target' })
-    expect(widgetFor(selector(['number', 'object'], { duration: { enable_day: true } }))).toEqual({ kind: 'duration', multiple: false, days: true })
+    expect(widgetFor(selector(['target'], { target: { entity: { domain: 'cover' } } }))).toMatchObject({ kind: 'target', entityString: false })
+    expect(widgetFor(selector(['number', 'object'], { duration: { enable_day: true } }))).toEqual({ kind: 'duration', multiple: false, days: true, objectForm: true })
+    expect(widgetFor(selector(['number'], { duration: {} }))).toEqual({ kind: 'duration', multiple: false, days: false, objectForm: false })
     for (const name of ['time', 'date', 'datetime']) expect(widgetFor(selector(['string'], { [name]: {} }))).toEqual({ kind: name, multiple: false })
     expect(widgetFor(selector(['array'], { text: { multiple: true } }))).toMatchObject({ kind: 'text', multiple: true })
     expect(widgetFor(selector(['string'], { select: { custom_value: true, options: ['a', 'b'] } }))).toMatchObject({ kind: 'text', options: [{ value: 'a' }, { value: 'b' }] })
-    expect(widgetFor(selector(['number'], { color_temp: { unit: 'mired' } }))).toMatchObject({ kind: 'number', slider: true, min: 153, max: 500, unit: 'mired' })
-    for (const name of ['object', 'template', 'media', 'action', 'unknown_thing']) expect(widgetFor(selector(['object', 'array', 'string', 'number', 'boolean'], { [name]: {} })).kind).toBe('json')
+    const any = ['object', 'array', 'string', 'number', 'boolean']
+    expect(widgetFor(selector(any, { template: {} }))).toEqual({ kind: 'text', multiple: false, multiline: true })
+    expect(literalFor(selector(any, { template: {} }), '{{ states("sun.sun") }}').type).toBe('string')
+    for (const name of ['object', 'media', 'action', 'unknown_thing']) expect(widgetFor(selector(any, { [name]: {} }))).toMatchObject({ kind: 'mixed', defaultKind: 'json' })
+  })
+  it('defaults a colour temperature to mired, as Home Assistant does', () => {
+    expect(widgetFor(selector(['number'], { color_temp: {} }))).toMatchObject({ kind: 'number', slider: true, min: 153, max: 500, unit: 'mired' })
+    expect(widgetFor(selector(['number'], { color_temp: { min_mireds: 200, max_mireds: 400 } }))).toMatchObject({ min: 200, max: 400, unit: 'mired' })
+    expect(widgetFor(selector(['number'], { color_temp: { unit: 'kelvin', min_mireds: 200 } }))).toMatchObject({ min: 2000, max: 6500, unit: 'K' })
   })
   it('falls back to constraints and types without a selector', () => {
     expect(widgetFor(spec(['string'], { enum: ['a', 'b'], enumLabels: ['Alpha', 'Beta'] }))).toEqual({ kind: 'select', multiple: false, options: [{ value: 'a', label: 'Alpha' }, { value: 'b', label: 'Beta' }] })
@@ -83,20 +97,29 @@ describe('widgetFor', () => {
     expect(widgetFor(spec(['string'])).kind).toBe('text')
     expect(widgetFor(spec(['entity_id']))).toMatchObject({ kind: 'entity', domains: [] })
     expect(widgetFor(spec(['entity_id:light']))).toMatchObject({ kind: 'entity', domains: ['light'] })
-    expect(widgetFor(spec(['target', 'entity_id:light']))).toMatchObject({ kind: 'target', domains: ['light'] })
-    expect(widgetFor(spec(['target', 'entity_id']))).toMatchObject({ kind: 'target', domains: [] })
+    expect(widgetFor(spec(['target', 'entity_id:light']))).toMatchObject({ kind: 'target', domains: ['light'], entityString: true })
+    expect(widgetFor(spec(['target']))).toMatchObject({ kind: 'target', entityString: false })
     expect(widgetFor(spec(['object', 'array'])).kind).toBe('json')
-    expect(widgetFor(spec(Object.keys(nodeCatalog.types))).kind).toBe('json')
+    expect(widgetFor(spec(['string', 'number']))).toEqual({ kind: 'mixed', multiple: false, kinds: ['text', 'number'], defaultKind: 'text' })
+    expect(widgetFor(spec(Object.keys(nodeCatalog.types)))).toMatchObject({ kind: 'mixed', kinds: ['text', 'number', 'boolean', 'json'], defaultKind: 'text' })
     expect(widgetFor(spec(['global::HassSharp.EntityStateSnapshot'])).kind).toBe('none')
+  })
+  it('says which widgets are light enough for a node card', () => {
+    const light: Widget[] = [{ kind: 'toggle', multiple: false }, { kind: 'number', multiple: false, slider: true }, { kind: 'text', multiple: false },
+      { kind: 'select', multiple: false }, { kind: 'entity', multiple: false }, { kind: 'area', multiple: false }, { kind: 'state', multiple: false },
+      { kind: 'duration', multiple: false, days: false }, { kind: 'mixed', multiple: false }]
+    const heavy: Widget[] = [{ kind: 'target', multiple: false }, { kind: 'duration', multiple: false, days: true }, { kind: 'text', multiple: false, multiline: true },
+      { kind: 'json', multiple: false }, { kind: 'color', multiple: false }, { kind: 'entity', multiple: true }, { kind: 'select', multiple: true }]
+    expect(light.filter(inlineWidget)).toEqual(light)
+    expect(heavy.filter(inlineWidget)).toEqual([])
   })
 })
 
-describe('literalFor', () => {
-  const valid = (input: InputSpec, operand: Operand) => operand.kind === 'literal' && validLiteral(operand.type, operand.value) && input.types.includes(operand.type)
+describe('values', () => {
   it('authors an entity_id:light input with that exact type', () => {
     const input = spec(['entity_id:light'])
     expect(literalFor(input, 'light.hall')).toEqual({ kind: 'literal', type: 'entity_id:light', value: 'light.hall' })
-    expect(valid(input, literalFor(input, 'light.hall'))).toBe(true)
+    expect(validLiteral('entity_id:light', 'light.hall')).toBe(true)
     // No accepted type takes a switch: keep the shaped type so the validator can explain it.
     expect(literalFor(input, 'switch.fan').type).toBe('entity_id:light')
   })
@@ -108,19 +131,113 @@ describe('literalFor', () => {
     expect(literalFor(spec(['entity_id:light', 'array']), ['light.hall', 'light.porch']).type).toBe('array')
     expect(literalFor(spec(['number', 'object']), 90).type).toBe('number')
     expect(literalFor(spec(['number', 'object']), { minutes: 1 }).type).toBe('object')
-    expect(literalFor(spec(Object.keys(nodeCatalog.types)), 'light.hall').type).toBe('string')
   })
-})
-
-describe('target values', () => {
+  it('types a mixed value by its chosen kind, not by its text', () => {
+    const any = spec(Object.keys(nodeCatalog.types))
+    expect(commitLiteral(any, '01', { kind: 'text' })).toEqual({ kind: 'literal', type: 'string', value: '01' })
+    expect(commitLiteral(any, 1, { kind: 'number' })).toEqual({ kind: 'literal', type: 'number', value: 1 })
+    expect(commitLiteral(any, true, { kind: 'boolean' })).toEqual({ kind: 'literal', type: 'boolean', value: true })
+    expect(commitLiteral(any, [1], { kind: 'json' })).toEqual({ kind: 'literal', type: 'array', value: [1] })
+  })
   it('keeps the shape a target already has and uses the object form for new values', () => {
     const ids = (entity_id: string[], extra: Record<string, string[]> = {}) => ({ entity_id, device_id: [], area_id: [], floor_id: [], label_id: [], ...extra })
     expect(targetValue('light.hall', ids(['light.porch']))).toBe('light.porch')
+    // A target-only input never keeps the string form: the validator would reject it.
+    expect(targetValue('light.hall', ids(['light.porch']), false)).toEqual({ entity_id: ['light.porch'] })
     expect(targetValue('light.hall', ids(['light.hall', 'light.porch']))).toEqual({ entity_id: ['light.hall', 'light.porch'] })
     expect(targetValue(undefined, ids(['light.hall']))).toEqual({ entity_id: ['light.hall'] })
     expect(targetValue({ entity_id: 'light.hall' }, ids(['light.hall'], { area_id: ['hall'] }))).toEqual({ entity_id: 'light.hall', area_id: ['hall'] })
     expect(targetValue({ entity_id: ['light.hall'] }, ids([]))).toBeUndefined()
   })
+  it('keeps the stored duration shape and writes new values as Home Assistant does', () => {
+    const both = widgetFor(selector(['number', 'object'], { duration: {} })), days = widgetFor(selector(['number', 'object'], { duration: { enable_day: true } }))
+    const seconds = widgetFor(selector(['number'], { duration: {} }))
+    expect(durationValue(both, 30, 3690)).toBe(3690)
+    expect(durationValue(both, { minutes: 1 }, 3690)).toEqual({ hours: 1, minutes: 1, seconds: 30 })
+    expect(durationValue(both, undefined, 90)).toEqual({ hours: 0, minutes: 1, seconds: 30 })
+    expect(durationValue(days, undefined, 90061)).toEqual({ days: 1, hours: 1, minutes: 1, seconds: 1 })
+    expect(durationValue(seconds, undefined, 90)).toBe(90)
+    expect(durationValue(both, { seconds: 1 }, 0.1 + 0.2)).toEqual({ hours: 0, minutes: 0, seconds: 0.3 })
+  })
+  it('starts from a valid service default and ignores an invalid one', () => {
+    const level = field('hass_sharp_test.sectioned', 'level')
+    expect(initialValue(widgetFor(level), { ...level, default: 3 })).toBe(3)
+    expect(initialValue(widgetFor(level), { ...level, default: 30 })).toBe(1)
+    expect(initialValue(widgetFor(spec(['boolean'])), spec(['boolean'], { default: { kind: 'literal', type: 'boolean', value: true } }))).toBe(true)
+  })
+  it('summarises values too large for a node card', () => {
+    const target = widgetFor(spec(['target', 'entity_id']))
+    expect(valueSummary(target, { entity_id: ['light.a', 'light.b'], area_id: 'hall' })).toBe('2 entities, 1 area')
+    expect(valueSummary(target, 'light.a')).toBe('light.a')
+    expect(valueSummary(widgetFor(selector(['number', 'object'], { duration: { enable_day: true } })), { days: 1, hours: 2, minutes: 0, seconds: 5 })).toBe('1 d 2 h 5 s')
+    expect(valueSummary(widgetFor(selector(['string'], { text: { multiline: true } })), 'first\nsecond')).toBe('first …')
+    expect(valueSummary({ kind: 'color', multiple: false }, [255, 0, 0])).toBe('RGB 255, 0, 0')
+    expect(valueSummary({ kind: 'json', multiple: false }, undefined)).toBe('Not set')
+  })
+  it('names types for people', () => {
+    expect(['string', 'number', 'boolean', 'object', 'array', 'entity_id', 'entity_id:light', 'entity_id:binary_sensor', 'target', 'global::HassSharp.EntityStateSnapshot']
+      .map(t => typeLabel(t))).toEqual(['Text', 'Number', 'Yes/No', 'Object', 'List', 'Entity', 'Light entity', 'Binary sensor entity', 'Target', 'Entity state'])
+    expect(typeLabel('global::Library.Things.Gadget')).toBe('Gadget')
+    expect(typeLabel('global::My.Thing', { ...nodeCatalog, types: { ...nodeCatalog.types, 'global::My.Thing': { description: 'x', label: 'My thing' } } })).toBe('My thing')
+  })
+})
+
+// Item: every service field of the fixture, with the value its widget emits, passes the validator.
+const multiSelect: ServiceFieldSchema = {
+  label: 'Choices', description: '', types: ['array'], required: false, advanced: false, section: null, order: 0, min: null, max: null, integer: false,
+  step: null, unit: null, enum: ['a', 'b'], enumLabels: null, pattern: null, minItems: null, maxItems: null, default: null, example: null,
+  selector: { select: { multiple: true, options: ['a', 'b'] } }, filter: null,
+}
+const fixtureServices = (servicesFixture as unknown as ServicesSection).items
+// The fixture has no multi-select field, so one is added here, shaped as the C# normaliser writes it.
+const services: ServicesSection = { ...(servicesFixture as unknown as ServicesSection), items: { ...fixtureServices,
+  'hass_sharp_test.multi_select': { domain: 'hass_sharp_test', service: 'multi_select', name: 'Multi select', description: '', target: null, response: 'none', fields: { choices: multiSelect } } } }
+/**
+ * Fields whose widget value the validator still rejects. Only the multi-select `enum` case belongs here: both
+ * validators compare the whole list with `enum`; the validator change that applies `enum` to each item removes it.
+ */
+const expectedRejections = ['hass_sharp_test.multi_select.choices: sample']
+function sample(widget: Widget): { value: JsonValue; kind?: ValueKind } {
+  const one = (value: JsonValue) => ({ value: widget.multiple ? [value] : value })
+  switch (widget.kind) {
+    case 'toggle': return { value: true }
+    case 'number': return { value: widget.min !== undefined && widget.max !== undefined ? (widget.min + widget.max) / 2 : widget.min ?? 1 }
+    case 'text': return one('hello')
+    case 'select': case 'constant': return one(widget.options![0].value)
+    case 'entity': return one(`${widget.domains?.[0] ?? 'light'}.kitchen`)
+    case 'state': return one('heat')
+    case 'device': case 'area': case 'floor': case 'label': return one('abc')
+    case 'target': return { value: { entity_id: [`${widget.domains?.[0] ?? 'light'}.kitchen`] } }
+    case 'duration': return { value: durationValue(widget, undefined, 90) }
+    case 'time': return { value: '10:30:00' }
+    case 'date': return { value: '2026-11-13' }
+    case 'datetime': return { value: '2026-11-13 10:30:00' }
+    case 'color': return { value: [255, 0, 0] }
+    case 'mixed': return widget.defaultKind === 'json' ? { value: {}, kind: 'json' } : { value: 'hello', kind: widget.defaultKind }
+    case 'json': return { value: {} }
+    case 'none': throw new Error('a service field always has a value widget')
+  }
+}
+it('every fixture service field accepts the value its widget emits', () => {
+  const snapshot: VisualCatalogSnapshot = { ...nodeCatalog, services }
+  const rejected: string[] = [], checked: string[] = []
+  for (const [id, service] of Object.entries(services.items)) for (const name of Object.keys(service.fields)) {
+    const input = serviceInputs(id, [name], snapshot)[`field:${name}`]
+    const widget = widgetFor(input, snapshot), choice = sample(widget)
+    const start = initialValue(widget, input, snapshot)
+    const cases: [string, Operand][] = [['sample', commitLiteral(input, choice.value, choice, snapshot)], ...(start === undefined ? [] : [['initial', literalFor(input, start, snapshot)] as [string, Operand]])]
+    for (const [label, operand] of cases) {
+      const graph = updateNode(createGraph('Fixture'), 'service-1', { config: { service: id, fields: { [name]: operand }, returnResponse: service.response === 'only' } })
+      const errors = validateGraph(graph, snapshot).filter(d => d.severity === 3 && d.nodeId === 'service-1' && d.inputId === `field:${name}`)
+      const key = `${id}.${name}: ${label}`
+      checked.push(key)
+      if (errors.length) rejected.push(key)
+      if (errors.length && !expectedRejections.includes(key)) expect.fail(`${key} ${JSON.stringify(operand)} was rejected: ${errors.map(e => e.message).join('; ')}`)
+    }
+  }
+  expect(checked.length).toBeGreaterThan(30)
+  // An exception that starts passing must be removed from the list.
+  expect(rejected).toEqual(expectedRejections)
 })
 
 describe('pickers', () => {
@@ -140,6 +257,21 @@ describe('pickers', () => {
     expect(value()).toBe('light.hall')
     plain.click()
     await vi.waitFor(() => expect(host.querySelectorAll('dialog[open] [role="option"]')).toHaveLength(registry.entities.length))
+  })
+  it('applies the domain rule to typed entity IDs too', async () => {
+    const [value, setValue] = createSignal('')
+    const widget = widgetFor(spec(['entity_id:light']))
+    expect(manualEntityError(widget)('light.attic')).toBeUndefined()
+    expect(manualEntityError(widgetFor(selector(['entity_id'], { entity: { domain: ['switch', 'binary_sensor'] } })))('light.x')).toBe('light.x cannot be used here: only switch or binary sensor entities fit.')
+    const { host } = mount(() => <EntityAutocomplete value={value()} onChange={setValue} label="Lamp" filter={entityPredicate(widget)} manualError={manualEntityError(widget)} />)
+    host.querySelector<HTMLButtonElement>('.hs-picker-field')!.click()
+    const search = host.querySelector<HTMLInputElement>('input[aria-label="Search entities"]')!
+    search.value = 'switch.unlisted'; search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(host.querySelector('[role="alert"]')!.textContent).toBe('switch.unlisted cannot be used here: only light entities fit.')
+    expect([...host.querySelectorAll('button')].some(b => b.textContent?.startsWith('Use ID'))).toBe(false)
+    search.value = 'light.unlisted'; search.dispatchEvent(new Event('input', { bubbles: true }))
+    ;[...host.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Use ID: light.unlisted')!.click()
+    expect(value()).toBe('light.unlisted')
   })
   it('respects the selector filter (device class, features) as well as domains', () => {
     const accepts = entityPredicate(widgetFor(selector(['entity_id'], { entity: { domain: 'light', supported_features: 4 } })))
@@ -177,5 +309,20 @@ describe('pickers', () => {
     await Promise.resolve()
     expect(host.querySelector('input[aria-label="HVAC mode"]')).not.toBeNull()
     expect(host.querySelector('select[aria-label="HVAC mode"]')).toBeNull()
+  })
+  it('searches registry items as you type and chooses with the keyboard', async () => {
+    const changes: Operand[] = []
+    const { host } = mount(() => <InputEditor input={selector(['string'], { area: {} })} value={undefined} onChange={o => changes.push(o)} variant="panel" label="Area" />)
+    const box = host.querySelector<HTMLInputElement>('input[role="combobox"][aria-label="Area"]')!
+    expect(box.placeholder).toBe('Not set')
+    await vi.waitFor(() => { box.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); expect(host.querySelectorAll('[role="option"]')).toHaveLength(2) })
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(host.querySelector('[role="listbox"]')).toBeNull()
+    box.value = 'att'; box.dispatchEvent(new Event('input', { bubbles: true }))
+    expect([...host.querySelectorAll('[role="option"]')].map(o => o.textContent)).toEqual(['Attic'])
+    expect(box.getAttribute('aria-activedescendant')).toBe(host.querySelector('[role="option"]')!.id)
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(changes).toEqual([{ kind: 'literal', type: 'string', value: 'attic' }])
+    expect(jsonEqual({ a: 1, b: 2 }, { b: 2, a: 1 })).toBe(true)
   })
 })

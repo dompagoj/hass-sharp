@@ -28,6 +28,7 @@
 .hs-app .hs-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .hs-app .hs-chip small { color: var(--hs-muted); }
 .hs-app .hs-chip-remove { display: grid; place-items: center; width: 24px; height: 24px; flex: none; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--hs-muted); font-size: 16px; line-height: 1; }
+.hs-app .hs-chips-host:empty { display: none; }
 .hs-app .hs-chip-remove:hover:not(:disabled) { background: var(--hs-surface); color: var(--hs-text); }
 
 /* Inline (node card): smaller controls, no label row; the menu sits after the control. */
@@ -37,4 +38,16 @@
 .hs-app .hs-input-editor--inline .hs-field { gap: 0; }
 .hs-app .hs-input-editor--inline .hs-input-editor__errors { font-size: 11px; }
 .hs-app .hs-input-editor--inline .hs-code-input { min-height: 56px; }
-.hs-app .hs-input-editor--inline .hs-chip-remove { width: 20px; height: 20px; }
+.hs-app .hs-input-editor--inline .hs-chip-remove { width: 24px; height: 24px; }
+
+/* Mixed values (Text / Number / Yes/No / List or object), searchable pickers and inline summaries. */
+.hs-app .hs-mixed { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; min-width: 0; }
+.hs-app .hs-mixed .hs-kind-switch { flex: 0 0 auto; width: auto; max-width: 9.5em; }
+.hs-app .hs-mixed-value { display: grid; gap: 4px; flex: 1 1 140px; min-width: 0; }
+.hs-app .hs-search-select { min-width: 0; }
+.hs-app .hs-search-select .hs-suggestions [role="option"] { flex-direction: row; justify-content: space-between; align-items: baseline; gap: 8px; }
+.hs-app .hs-search-group { padding: 6px 10px 2px; font-size: 11px; font-weight: 650; color: var(--hs-muted); }
+.hs-app .hs-search-current { font-weight: 650; }
+.hs-app .hs-input-editor__summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hs-text); }
+.hs-app .hs-input-editor--inline .hs-search-select .hs-suggestions { min-width: 200px; }
+.hs-app .hs-mixed--block .hs-mixed-value { flex-basis: 100%; }

@@ -1,24 +1,26 @@
-import { createUniqueId, For, Index, Show, type JSX } from 'solid-js'
+import { createEffect, createSignal, createUniqueId, For, Index, on, Show, type JSX } from 'solid-js'
 import type { JsonValue } from '../contract'
-import { Chips, DraftField, dragSession, type WidgetProps } from './common'
-import { displayValue, jsonEqual, type WidgetOption } from './model'
+import { Chips, DraftField, dragSession, textPlaceholder, type WidgetProps } from './common'
+import { displayValue, jsonEqual } from './json'
+import { durationParts, durationSeconds, durationValue, valueKind, type ValueKind, type WidgetKind, type WidgetOption } from './model'
 
-const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const numberText = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/
 /** Parse a typed number; undefined for empty text, NaN for anything that is not a finite number. */
 const parseNumber = (text: string) => text.trim() === '' ? undefined : numberText.test(text.trim()) && Number.isFinite(Number(text)) ? Number(text) : Number.NaN
 const items = (value: JsonValue | undefined): JsonValue[] => Array.isArray(value) ? value : value === undefined ? [] : [value]
+/** The decimal keypad has no minus sign on some phones; offer it only when values cannot be negative. */
+const decimalMode = (min: number | undefined) => min !== undefined && min >= 0 ? 'decimal' as const : undefined
 
 export function ToggleWidget(props: WidgetProps) {
   return <span class="hs-widget-row">
     <input id={props.id} type="checkbox" role="switch" class="hs-switch" aria-label={props.label} checked={props.value === true}
       aria-describedby={props.describedBy} aria-invalid={props.invalid || undefined} disabled={props.disabled}
       onChange={event => props.commit(event.currentTarget.checked)} />
-    <Show when={props.value === undefined}><span class="hs-muted">Not set</span></Show>
+    <span class="hs-muted">{props.value === undefined ? 'Not set' : props.value === true ? 'Yes' : 'No'}</span>
   </span>
 }
 
-/** A constant selector: the only allowed value is either included or the input is left unset. */
+/** A constant selector: the only allowed value is either included or the input is left not set. */
 export function ConstantWidget(props: WidgetProps) {
   const option = () => props.widget.options?.[0]
   return <span class="hs-widget-row">
@@ -32,26 +34,30 @@ export function ConstantWidget(props: WidgetProps) {
 export function NumberWidget(props: WidgetProps) {
   const unit = () => props.widget.unit
   const value = () => typeof props.value === 'number' ? props.value : undefined
+  const shown = () => value() === undefined ? 'Not set' : `${value()}${unit() ? ' ' + unit() : ''}`
   const session = dragSession(() => props.id, (v, o) => props.commit(v, o))
   return <Show when={props.widget.slider} fallback={<span class="hs-widget-row">
-    <DraftField id={props.id} label={props.label} inputmode="decimal" text={value() === undefined ? displayValue(props.value) : String(value())}
-      placeholder={props.compact ? undefined : 'Not set'} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
+    <DraftField id={props.id} label={props.label} inputmode={decimalMode(props.widget.min)} text={value() === undefined ? displayValue(props.value) : String(value())}
+      placeholder="Not set" describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
       commit={text => {
         const parsed = parseNumber(text)
-        if (Number.isNaN(parsed)) return 'Enter a finite number.'
+        if (Number.isNaN(parsed)) return 'Enter a number.'
         props.commit(parsed)
       }} />
     <Show when={unit()}><span class="hs-unit">{unit()}</span></Show>
   </span>}>
     <span class="hs-widget-row hs-slider">
       <input id={props.id} type="range" class="hs-range" aria-label={props.label} min={props.widget.min} max={props.widget.max} step={props.widget.step ?? 'any'}
-        value={value() ?? props.widget.min} aria-valuetext={value() === undefined ? 'Not set' : `${value()}${unit() ? ' ' + unit() : ''}`}
+        value={value() ?? props.widget.min} aria-valuetext={shown()}
         aria-describedby={props.describedBy} aria-invalid={props.invalid || undefined} disabled={props.disabled}
         onInput={event => session.move(Number(event.currentTarget.value))} onChange={event => session.end(Number(event.currentTarget.value))} />
-      <output class="hs-slider-value" for={props.id}>{value() === undefined ? 'Not set' : `${value()}${unit() ? ' ' + unit() : ''}`}</output>
+      <output class="hs-slider-value" for={props.id}>{shown()}</output>
     </span>
   </Show>
 }
+
+/** An emptied field: the empty text when the input is required (clearing a text is a real action), else not set. */
+const emptyText = (props: WidgetProps, text: string) => text === '' && !props.required ? undefined : text
 
 /** Text; a `custom_value` select offers its options as suggestions. Several values become chips. */
 export function TextWidget(props: WidgetProps) {
@@ -60,22 +66,22 @@ export function TextWidget(props: WidgetProps) {
   return <>
     <Show when={props.widget.multiple} fallback={
       <DraftField id={props.id} label={props.label} text={displayValue(props.value)} multiline={props.widget.multiline} list={suggestions()}
-        describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
-        commit={text => { props.commit(text === '' ? undefined : text) }} />}>
-      <ListWidget {...props} add={add => <DraftField id={props.id} label={`Add to ${props.label}`} text="" clearOnCommit list={suggestions()} describedBy={props.describedBy}
+        placeholder={textPlaceholder(props.value)} shortcutHint={!props.compact} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
+        commit={text => { props.commit(emptyText(props, text)) }} />}>
+      <ListWidget {...props} add={add => <DraftField id={props.id} label={`Add to ${props.label}`} text="" placeholder="Add…" clearOnCommit list={suggestions()} describedBy={props.describedBy}
         invalid={props.invalid} disabled={props.disabled} commit={text => { if (text.trim()) add(text) }} />} />
     </Show>
     <Show when={suggestions()}><datalist id={listId}><For each={props.widget.options}>{o => <option value={displayValue(o.value)}>{o.label}</option>}</For></datalist></Show>
   </>
 }
 
-/** A list value: the current items as chips and an `add` control. */
+/** A list value: the current items as chips and an `add` control (which carries `props.id`). */
 export function ListWidget(props: WidgetProps & { add(add: (item: JsonValue) => void): JSX.Element; labelFor?: (item: JsonValue) => string }) {
   const list = () => items(props.value)
   const add = (item: JsonValue) => { if (!list().some(v => jsonEqual(v, item))) props.commit([...list(), item]) }
   const remove = (key: string) => { const next = list().filter((_, i) => String(i) !== key); props.commit(next.length ? next : undefined) }
   return <div class="hs-widget-list">
-    <Chips label={props.label} disabled={props.disabled} onRemove={remove}
+    <Chips label={props.label} disabled={props.disabled} onRemove={remove} fallbackFocusId={props.id}
       items={list().map((item, i) => ({ key: String(i), label: props.labelFor?.(item) ?? displayValue(item), title: displayValue(item) }))} />
     {props.add(add)}
   </div>
@@ -108,46 +114,48 @@ export function SelectWidget(props: WidgetProps) {
   </Show>
 }
 
-/** Seconds of a duration literal: a number of seconds or Home Assistant's `{days, hours, minutes, seconds, milliseconds}`. */
-export function durationSeconds(value: JsonValue | undefined): number | undefined {
-  if (typeof value === 'number') return value
-  if (!record(value)) return
-  const part = (key: string) => typeof value[key] === 'number' ? value[key] as number : 0
-  return part('days') * 86400 + part('hours') * 3600 + part('minutes') * 60 + part('seconds') + part('milliseconds') / 1000
-}
-/** Hours, minutes and seconds (and days); one change on blur or Enter of a box, always as a number of seconds. */
+/** Hours, minutes and seconds (and days); one change on blur or Enter of a box, in the shape already stored. */
 export function DurationWidget(props: WidgetProps) {
   const seconds = () => durationSeconds(props.value)
-  const units = () => [...(props.widget.days ? [['days', 86400]] as const : []), ['hours', 3600], ['minutes', 60], ['seconds', 1]] as const
-  const parts = () => {
-    let rest = seconds() ?? 0
-    return units().map(([, size]) => { const whole = size === 1 ? rest : Math.floor(rest / size); rest -= whole * size; return whole })
-  }
-  return <span class="hs-duration" role="group" aria-label={props.label} aria-describedby={props.describedBy}>
-    <For each={units()}>{([unit], i) => <label class="hs-duration-part">
-      <DraftField id={i() === 0 ? props.id : undefined} label={`${props.label} ${unit}`} inputmode="decimal" text={seconds() === undefined ? '' : String(parts()[i()])}
-        invalid={props.invalid} disabled={props.disabled}
+  const units = () => [...(props.widget.days ? ['days'] as const : []), 'hours', 'minutes', 'seconds'] as const
+  const sizes = { days: 86400, hours: 3600, minutes: 60, seconds: 1 }
+  const parts = () => durationParts(props.widget, seconds() ?? 0)
+  return <span class="hs-duration" role="group" aria-label={props.label}>
+    <For each={units()}>{(unit, i) => <label class="hs-duration-part">
+      <DraftField id={i() === 0 ? props.id : undefined} label={`${props.label} ${unit}`} inputmode="decimal" text={seconds() === undefined ? '' : String(parts()[unit])}
+        placeholder={i() === 0 && seconds() === undefined ? 'Not set' : undefined} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
         commit={text => {
           const parsed = parseNumber(text)
-          if (Number.isNaN(parsed) || (parsed ?? 0) < 0) return 'Enter a positive number.'
-          const next = parts().map((p, j) => j === i() ? parsed ?? 0 : p)
-          props.commit(units().reduce((sum, [, size], j) => sum + next[j] * size, 0))
+          if (Number.isNaN(parsed) || (parsed ?? 0) < 0) return 'Enter 0 or more.'
+          const next = { ...parts(), [unit]: parsed ?? 0 }
+          props.commit(durationValue(props.widget, props.value, units().reduce((sum, u) => sum + next[u] * sizes[u], 0)))
         }} />
       <span class="hs-unit" aria-hidden="true">{props.compact ? unit[0] : unit}</span>
     </label>}</For>
   </span>
 }
 
-/** Time, date and date-time pickers; each reports one change on blur or Enter. */
+const dateTime = /^(\d{4}-\d{2}-\d{2})([T ])(\d{2}:\d{2}(?::\d{2})?)(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/
+/**
+ * Time, date and date-time pickers; each reports one change on blur or Enter. A stored date-time keeps its
+ * separator and offset (shown as a suffix in the panel); new values are written as Home Assistant does, with a space.
+ */
 export function DateTimeWidget(props: WidgetProps) {
   const type = () => props.widget.kind === 'datetime' ? 'datetime-local' : props.widget.kind
-  // datetime-local shows `YYYY-MM-DDTHH:MM[:SS]` without an offset; Home Assistant also writes a space.
-  const text = () => {
-    const raw = displayValue(props.value)
-    return props.widget.kind === 'datetime' ? raw.replace(' ', 'T').replace(/(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/, '') : raw
-  }
-  return <DraftField id={props.id} label={props.label} type={type()} step={props.widget.kind === 'date' ? undefined : '1'} text={text()}
-    describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled} commit={value => { props.commit(value === '' ? undefined : value) }} />
+  const stored = () => props.widget.kind === 'datetime' && typeof props.value === 'string' ? dateTime.exec(props.value) : null
+  const text = () => { const m = stored(); return m ? `${m[1]}T${m[3]}` : displayValue(props.value) }
+  const suffix = () => stored()?.[5] ?? ''
+  return <span class="hs-widget-row">
+    <DraftField id={props.id} label={props.label} type={type()} step={props.widget.kind === 'date' ? undefined : '1'} text={text()} placeholder={textPlaceholder(props.value)}
+      describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
+      commit={value => {
+        if (value === '') { props.commit(undefined); return }
+        if (props.widget.kind !== 'datetime') { props.commit(value); return }
+        const m = /^(\d{4}-\d{2}-\d{2})[T ](.+)$/.exec(value)
+        props.commit(m ? `${m[1]}${stored()?.[2] ?? ' '}${m[2]}${suffix()}` : value)
+      }} />
+    <Show when={suffix() && !props.compact}><span class="hs-unit" title="Time zone offset kept from the stored value">{suffix() === 'Z' ? 'UTC' : suffix()}</span></Show>
+  </span>
 }
 
 const hex = (value: JsonValue | undefined) => Array.isArray(value) && value.length === 3 && value.every(v => typeof v === 'number')
@@ -164,13 +172,56 @@ export function ColorWidget(props: WidgetProps) {
   </span>
 }
 
-/** Fallback editor for any JSON value. Parse errors are shown and the text is kept. */
+/** Editor for lists and objects. Parse errors are shown and the text is kept. */
 export function JsonWidget(props: WidgetProps) {
   return <DraftField id={props.id} label={props.label} multiline class="hs-code-input" text={props.value === undefined ? '' : JSON.stringify(props.value, null, 2)}
-    describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
+    placeholder="Not set" shortcutHint={!props.compact} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
     commit={text => {
       if (text.trim() === '') { props.commit(undefined); return }
       try { props.commit(JSON.parse(text) as JsonValue) }
-      catch (error) { return `Invalid JSON: ${error instanceof Error ? error.message : String(error)}` }
+      catch (error) { return `Not valid JSON: ${error instanceof Error ? error.message : String(error)}` }
     }} />
+}
+
+const kindLabels: Record<ValueKind, string> = { text: 'Text', number: 'Number', boolean: 'Yes/No', json: 'List or object' }
+const widgetKinds: Record<ValueKind, WidgetKind> = { text: 'text', number: 'number', boolean: 'toggle', json: 'json' }
+/** A value converted to another kind, when that is lossless. */
+function convert(value: JsonValue | undefined, kind: ValueKind): JsonValue | undefined {
+  if (value === undefined || valueKind(value) === kind) return value
+  if (kind === 'text' && (typeof value === 'number' || typeof value === 'boolean')) return String(value)
+  if (kind === 'number' && typeof value === 'string' && numberText.test(value.trim())) return Number(value)
+  if (kind === 'boolean' && (value === 'true' || value === 'false')) return value === 'true'
+  return undefined
+}
+/**
+ * A value of one of several simple kinds. The kind switch, not the text, decides the type ("01" stays text); it
+ * starts from the stored value's kind, else the widget's default. Only "List or object" uses the JSON editor.
+ */
+export function MixedWidget(props: WidgetProps) {
+  const kinds = () => props.widget.kinds ?? ['text']
+  const initial = () => valueKind(props.value) ?? props.widget.defaultKind ?? kinds()[0]
+  const [kind, setKind] = createSignal<ValueKind>(initial())
+  createEffect(on(() => props.value, value => { const k = valueKind(value); if (k) setKind(k) }, { defer: true }))
+  const commit = (value: JsonValue | undefined, options?: { coalesce?: string }) =>
+    props.commit(value, value === undefined ? options : { ...options, kind: kind() })
+  const switchTo = (next: ValueKind) => {
+    const converted = convert(props.value, next)
+    setKind(next)
+    if (converted !== undefined && !jsonEqual(converted, props.value)) props.commit(converted, { kind: next })
+  }
+  const shown = () => valueKind(props.value) === kind() ? props.value : undefined
+  const child = (): WidgetProps => ({ ...props, value: shown(), commit, widget: { kind: widgetKinds[kind()], multiple: false } })
+  return <span class="hs-mixed" classList={{ 'hs-mixed--block': kind() === 'json' }}>
+    <Show when={kinds().length > 1}>
+      <select class="hs-input hs-kind-switch" aria-label={`${props.label} kind`} disabled={props.disabled} onChange={event => switchTo(event.currentTarget.value as ValueKind)}>
+        <For each={kinds()}>{k => <option value={k} selected={k === kind()}>{kindLabels[k]}</option>}</For>
+      </select>
+    </Show>
+    <span class="hs-mixed-value">
+      <Show when={kind() === 'text'}><TextWidget {...child()} /></Show>
+      <Show when={kind() === 'number'}><NumberWidget {...child()} /></Show>
+      <Show when={kind() === 'boolean'}><ToggleWidget {...child()} /></Show>
+      <Show when={kind() === 'json'}><JsonWidget {...child()} /></Show>
+    </span>
+  </span>
 }

@@ -45,6 +45,8 @@ export interface CatalogPickerProps {
   hideLabel?: boolean
   /** Text of the field button instead of the current selection (when the selection is shown elsewhere, as chips). */
   buttonText?: string
+  /** Explains why a typed ID cannot be used (for example an entity of the wrong domain); undefined accepts it. */
+  manualError?: (id: string) => string | undefined
   id?: string
   describedBy?: string
   invalid?: boolean
@@ -78,6 +80,8 @@ export function CatalogPicker(props: CatalogPickerProps) {
     void props.refresh()
   }
   const manual = () => search().trim()
+  const manualId = () => manual() && /^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/.test(manual()) ? manual() : undefined
+  const rejected = () => manualId() ? props.manualError?.(manualId()!) : undefined
   const keyboard = (event: KeyboardEvent) => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
@@ -103,7 +107,7 @@ export function CatalogPicker(props: CatalogPickerProps) {
     <Dialog open={open()} title={`Choose ${noun()}`} width="large" onClose={() => setOpen(false)} footer={<>
       <Button onClick={() => setOpen(false)}>{props.multiple ? 'Done' : 'Cancel'}</Button>
       <Show when={props.clearLabel}><Button onClick={() => props.multiple ? props.onChangeValues?.([]) : choose('')}>{props.clearLabel}</Button></Show>
-      <Show when={manual() && /^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/.test(manual()) && !(props.multiple && values().includes(manual()))}>
+      <Show when={manualId() && !rejected() && !(props.multiple && values().includes(manual()))}>
         <Button onClick={() => choose(manual())}>{props.multiple ? 'Add ID' : 'Use ID'}: {manual()}</Button>
       </Show>
     </>}>
@@ -117,6 +121,7 @@ export function CatalogPicker(props: CatalogPickerProps) {
           <For each={domains()}>{item => <option value={item}>{item}</option>}</For>
         </select>
       </div>
+      <Show when={rejected()}><p class="hs-error" role="alert">{rejected()}</p></Show>
       <Show when={props.loading}><p role="status">Loading {props.kind}…</p></Show>
       <Show when={props.error}><p role="alert">Could not load {props.kind}. <Button onClick={() => void props.refresh()}>Retry</Button></p></Show>
       <Show when={!props.loading && !props.error && !matches().length}>
