@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { createRoot } from 'solid-js'
+import servicesFixture from '../../../../tests/fixtures/visual-services.json'
+import { nodeCatalog, validateGraph, type ServicesSection } from '../src/visual/contract'
 import { addNode, canConnect, connectNodes, createGraph, createGraphHistory, edgePort, outputPort, outputPorts, removeEdge, removeNode, updateNode, serializeGraph, visualRunClasses, visualActionLabels } from '../src/visual/graph'
 
 describe('visual draft graph', () => {
+  it('creates service nodes with empty fields, no response and the C5 ports', () => {
+    const created = addNode({ version: 5, name: 'New', nodes: [], edges: [] }, 'service', 'call').nodes[0]
+    expect(created.config).toEqual({ fields: {}, returnResponse: false })
+    const starter = createGraph('Heating').nodes.find(n => n.id === 'service-1')!
+    expect(starter.config).toEqual({ fields: {}, returnResponse: false, service: 'light.turn_on', target: { kind: 'literal', type: 'target', value: { entity_id: 'light.hall' } } })
+    const services = servicesFixture as unknown as ServicesSection
+    expect(validateGraph(createGraph('Heating'))).toEqual([])
+    expect(validateGraph(createGraph('Heating'), { ...nodeCatalog, services })).toEqual([])
+    expect(nodeCatalog.nodes.service_response).toBeUndefined()
+  })
   it('updates position/config without mutating an earlier history snapshot', () => {
     const before = createGraph('Heating')
     const after = updateNode(before, 'trigger-1', { position: { x: 210, y: 90 }, label: 'Door opens', config: { entity: 'binary_sensor.door' } })

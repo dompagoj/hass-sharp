@@ -197,6 +197,31 @@ public static class VisualGraphValidator
             terminalActive.Remove(key); terminalMemo[key] = valid;
             return valid;
         }
+        /// <summary>
+        /// Contract C5. Without a services section (Init, library rebuild) there is no service diagnostic at all;
+        /// an unknown service is one warning. Field and target types were already refined by DataInputs.
+        /// </summary>
+        void Service(JsonObject node, JsonObject spec, JsonObject cfg, string id)
+        {
+            if (snapshot.Services is not { } services || cfg["service"] is not JsonValue sv || !sv.TryGetValue<string>(out var service) || !Match(service, Text(spec["config"]?["service"], "pattern"))) return;
+            if (services.Items[service] is not JsonObject schema) { errors.Add(new(id, $"Unknown service {service}; fields are not type-checked", 2, InputId: "service")); return; }
+            var known = schema["fields"] as JsonObject ?? [];
+            var fields = cfg["fields"] as JsonObject ?? [];
+            foreach (var (key, _) in fields) if (!known.ContainsKey(key)) Error(id, $"Service {service} has no field {key}", "field:" + key);
+            foreach (var (key, field) in known) if (Bool(field, "required") && !fields.ContainsKey(key)) Error(id, $"Service {service} requires field {key}", "fields");
+            var wired = incoming.ContainsKey((id, "target"));
+            if (schema["target"] is not JsonObject && (wired || cfg["target"] is JsonObject set && Text(set, "kind") != "unset")) Error(id, $"Service {service} does not take a target", "target");
+            var response = Text(schema, "response", "none"); var returnResponse = Bool(cfg, "returnResponse");
+            if (returnResponse && response == "none") Error(id, $"Service {service} returns no response; turn off Return response", "returnResponse");
+            if (!returnResponse && response == "only") Error(id, $"Service {service} only returns a response; turn on Return response", "returnResponse");
+            // A literal target object is checked by its entity_id domains; device, area, floor and label ids are not.
+            var domains = ServiceTargetDomains(schema);
+            if (domains.Length == 0 || wired || cfg["target"] is not JsonObject operand || Text(operand, "kind") != "literal" || operand["value"] is not JsonObject value) return;
+            JsonNode?[] entities = value["entity_id"] switch { JsonArray list => list.ToArray(), JsonValue single => [single], _ => [] };
+            foreach (var entity in entities)
+                if (entity is JsonValue ev && ev.TryGetValue<string>(out var entityId) && entityId is not ("all" or "none") && !domains.Contains(entityId.Split('.')[0]))
+                    Error(id, $"Service {service} cannot target {entityId}; expected a {string.Join(" or ", domains)} entity", "target");
+        }
         void ValidateNode(JsonObject node)
         {
             var spec = Spec(node); if (spec == null) return;
@@ -248,6 +273,7 @@ public static class VisualGraphValidator
                 if (Strings(comparison["orderingOperators"]).Contains(Text(cfg, Text(comparison, "operatorConfig"))) && left != orderingType)
                     Error(id, $"Ordering comparison requires {orderingType} type", leftInput != "" ? leftInput : typeConfig);
             }
+            if (Text(spec, "dynamicInputs") == "service") Service(node, spec, cfg, id);
             if (cfg.ContainsKey("output") && !Match(Text(cfg, "output"), "^[A-Za-z_][A-Za-z0-9_]{0,63}$")) Error(id, "Invalid variable output name", "output");
             if (kind == "trigger")
             {

@@ -17,11 +17,26 @@ export interface InputSpec {
   enum?: JsonValue[]; enumLabels?: string[]; pattern?: string; minItems?: number; maxItems?: number; step?: number; unit?: string
   selector?: Record<string, unknown>; advanced?: boolean; section?: string | null; example?: JsonValue
 }
-export interface OutputSpec { label?: string; type: string; description: string; visibility?: string; pointer?: string; refineFrom?: string }
+/** `when` names a boolean config key; the output exists only while it is true. */
+export interface OutputSpec { label?: string; type: string; description: string; visibility?: string; pointer?: string; refineFrom?: string; when?: string }
 export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 export interface TypeSpec { clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[] }
 export interface ParametricTypeSpec { param: string; valuePattern: string; label: string }
-export interface VisualCatalogSnapshot { version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; parametricTypes?: Record<string, ParametricTypeSpec>; nodes: Record<string, NodeSpec>; triggerOutputs?: Record<string, Record<string, OutputSpec>>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
+/** Contract C4: one normalised Home Assistant service field. */
+export interface ServiceFieldSchema {
+  label: string; description: string; types: string[]; required: boolean; advanced: boolean; section: string | null; order: number
+  min: number | null; max: number | null; integer: boolean; step: number | null; unit: string | null; enum: JsonValue[] | null; enumLabels: string[] | null
+  pattern: string | null; minItems: number | null; maxItems: number | null; default: JsonValue; example: JsonValue; selector: Record<string, unknown> | null; filter: Record<string, unknown> | null
+}
+export interface ServiceTargetFilter { domain: string[]; deviceClass: string[]; supportedFeatures: number[] }
+export interface ServiceSchema {
+  domain: string; service: string; name: string; description: string
+  target: { entity: ServiceTargetFilter[]; device: Record<string, unknown>[] } | null
+  response: 'none' | 'optional' | 'only'; fields: Record<string, ServiceFieldSchema>
+}
+/** Contract C4: the services section, keyed by `domain.service`. Never part of the catalog root. */
+export interface ServicesSection { servicesGeneration: string; items: Record<string, ServiceSchema> }
+export interface VisualCatalogSnapshot { services?: ServicesSection; version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; parametricTypes?: Record<string, ParametricTypeSpec>; nodes: Record<string, NodeSpec>; triggerOutputs?: Record<string, Record<string, OutputSpec>>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
 /** Pass the server-produced catalog explicitly for each document; graph metadata is never type authority. */
 export const nodeCatalog = rawCatalog as unknown as VisualCatalogSnapshot
 const nodeSpec = (kind: unknown, catalog: VisualCatalogSnapshot = nodeCatalog) => typeof kind === 'string' && Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined
@@ -83,7 +98,27 @@ export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = no
     ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { type: item.type, label: item.name, description: `${key} value ${item.name}`, visibility: key === 'carry' ? 'loop' : 'outside' }
   }
   if (spec?.dynamicOutputs === 'trigger') Object.assign(ports, triggerOutputs(node, catalog))
+  // An output with `when` exists only while that boolean config is true (D3, D9).
+  for (const [key, port] of Object.entries(ports)) if (port.when && node.config[port.when] !== true) delete ports[key]
   return ports
+}
+/** The C4 entry of the node's configured service, or undefined without a services section or for an unknown service. */
+export function serviceSchema(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): ServiceSchema | undefined {
+  const items = catalog.services?.items, service = node.config.service
+  return items && typeof service === 'string' && Object.hasOwn(items, service) ? items[service] : undefined
+}
+/** Entity domains the service's target accepts; empty when any entity filter, or the target itself, is unrestricted by domain. */
+export function serviceTargetDomains(schema: ServiceSchema): string[] {
+  const filters = (Array.isArray(schema.target?.entity) ? schema.target.entity : []).filter(record)
+  const domains = filters.map(f => (Array.isArray(f.domain) ? f.domain : []).filter((d): d is string => typeof d === 'string' && d !== ''))
+  return !domains.length || domains.some(d => !d.length) ? [] : [...new Set(domains.flat())]
+}
+const serviceFieldConstraints = ['min', 'max', 'integer', 'enum', 'enumLabels', 'pattern', 'minItems', 'maxItems', 'step', 'unit', 'selector', 'advanced', 'section', 'example'] as const
+/** A known service field as an input spec, so catalog literal constraints (C2) apply to it. */
+function serviceFieldInput(key: string, field: ServiceFieldSchema): InputSpec {
+  const port: InputSpec = { types: [...(field.types ?? [])], required: field.required === true, label: text(field.label, key), description: text(field.description) || `Service field ${key}` }
+  for (const name of serviceFieldConstraints) if (field[name] !== null && field[name] !== undefined) Object.assign(port, { [name]: structuredClone(field[name]) })
+  return port
 }
 /**
  * Contract C6, mirrored by `VisualNodeCatalog.TriggerOutputs`: the rows of `triggerOutputs` whose `|`-separated
@@ -121,6 +156,18 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
   const types = Object.keys(catalog.types)
   const dynamic = spec?.dynamicInputs
   if (dynamic === 'fields' && record(node.config.fields)) for (const key of Object.keys(node.config.fields)) ports[`field:${key}`] = { types, required: true, label: key, description: `Object field ${key}` }
+  if (dynamic === 'service') {
+    // Ports are the keys of config.fields (D3); a known service only refines their types and the target's.
+    const schema = serviceSchema(node, catalog)
+    if (record(node.config.fields)) for (const key of Object.keys(node.config.fields)) {
+      const field = schema && record(schema.fields) && Object.hasOwn(schema.fields, key) ? schema.fields[key] : undefined
+      ports[`field:${key}`] = record(field) ? serviceFieldInput(key, field) : { types, required: false, label: key, description: `Service field ${key}` }
+    }
+    if (schema && ports.target) {
+      const domains = serviceTargetDomains(schema)
+      ports.target.types = ['target', ...(domains.length ? domains.map(d => `entity_id:${d}`) : ['entity_id'])]
+    }
+  }
   if (dynamic === 'items' && Array.isArray(node.config.items)) node.config.items.forEach((_, i) => { ports[`item:${i}`] = { types, required: true, label: `Item ${i}`, description: `Array item ${i}` } })
   if (dynamic === 'loop' && loopOwner) for (const key of ['carry', 'exports'] as const) for (const item of declarations(loopOwner, key)) {
     if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
@@ -201,6 +248,7 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
   const scopePort = (node: GraphNode, port: string) => catalogScopePort(node, port, catalog)
   const errors: GraphDiagnostic[] = []
   const error = (nodeId: string | null, message: string, inputId?: string, portId?: string) => { errors.push({ nodeId, message, severity: 3, ...(inputId ? { inputId } : {}), ...(portId ? { portId } : {}) }) }
+  const warning = (nodeId: string, message: string, inputId: string) => { errors.push({ nodeId, message, severity: 2, inputId }) }
   if (!record(value) || value.version !== catalog.graphVersion) { error(null, `Expected graph version ${catalog.graphVersion}`); return errors }
   if (typeof value.name !== 'string' || !value.name.trim()) error(null, 'Graph name is required')
   if (!Array.isArray(value.nodes) || !Array.isArray(value.edges)) { error(null, 'Nodes and edges arrays are required'); return errors }
@@ -327,6 +375,32 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
     terminalActive.delete(memoKey); terminalMemo.set(memoKey, valid)
     return valid
   }
+  /**
+   * Contract C5, mirrored by VisualGraphValidator.Service. Without a services section (Init, library rebuild)
+   * there is no service diagnostic at all; an unknown service is one warning. dataInputs already refined the types.
+   */
+  function validateService(node: GraphNode, spec: NodeSpec) {
+    const service = node.config.service, services = catalog.services
+    if (!services || typeof service !== 'string' || !matches(service, spec.config.service?.pattern ?? '')) return
+    const schema = serviceSchema(node, catalog)
+    if (!schema) { warning(node.id, `Unknown service ${service}; fields are not type-checked`, 'service'); return }
+    const known = record(schema.fields) ? schema.fields : {}
+    const fields = record(node.config.fields) ? node.config.fields : {}
+    for (const name of Object.keys(fields)) if (!Object.hasOwn(known, name)) error(node.id, `Service ${service} has no field ${name}`, `field:${name}`)
+    for (const [name, field] of Object.entries(known)) if (record(field) && field.required === true && !Object.hasOwn(fields, name)) error(node.id, `Service ${service} requires field ${name}`, 'fields')
+    const wired = incoming.has(key(node.id, 'target')), target = node.config.target
+    if (!record(schema.target) && (wired || (record(target) && target.kind !== 'unset'))) error(node.id, `Service ${service} does not take a target`, 'target')
+    const response = text(schema.response, 'none'), returnResponse = node.config.returnResponse === true
+    if (returnResponse && response === 'none') error(node.id, `Service ${service} returns no response; turn off Return response`, 'returnResponse')
+    if (!returnResponse && response === 'only') error(node.id, `Service ${service} only returns a response; turn on Return response`, 'returnResponse')
+    // A literal target object is checked by its entity_id domains; device, area, floor and label ids are not.
+    const domains = serviceTargetDomains(schema)
+    if (!domains.length || wired || !record(target) || target.kind !== 'literal' || !record(target.value)) return
+    const entities = Array.isArray(target.value.entity_id) ? target.value.entity_id : target.value.entity_id === undefined ? [] : [target.value.entity_id]
+    for (const entity of entities)
+      if (typeof entity === 'string' && entity !== 'all' && entity !== 'none' && !domains.includes(entity.split('.')[0]))
+        error(node.id, `Service ${service} cannot target ${entity}; expected a ${domains.join(' or ')} entity`, 'target')
+  }
   for (const node of nodes.values()) {
     const spec = nodeSpec(node.kind); if (!spec) continue
     for (const [field, rule] of Object.entries(spec.config)) {
@@ -356,6 +430,7 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
       if (left && right && !(isAssignable(left, right) || isAssignable(right, left))) error(node.id, 'Comparison operands must have matching types', rule.rightInput)
       if (rule.orderingOperators.includes(text(node.config[rule.operatorConfig])) && left !== rule.orderingType) error(node.id, `Ordering comparison requires ${rule.orderingType} type`, rule.leftInput ?? rule.typeConfig)
     }
+    if (spec.dynamicInputs === 'service') validateService(node, spec)
     if (node.config.output !== undefined && (typeof node.config.output !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(node.config.output))) error(node.id, 'Invalid variable output name', 'output')
     if (node.kind === 'trigger') {
       const type = node.config.type ?? spec.config.type.default

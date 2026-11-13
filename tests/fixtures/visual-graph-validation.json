@@ -4144,7 +4144,7 @@
     "contains": "operand"
   },
   {
-    "name": "optional service data explicit null rejected",
+    "name": "optional service field explicit null rejected",
     "graph": {
       "version": 5,
       "name": "Review regressions",
@@ -4161,7 +4161,9 @@
           "kind": "service",
           "config": {
             "service": "light.turn_on",
-            "data": null
+            "fields": {
+              "brightness_pct": null
+            }
           }
         }
       ],
@@ -4176,7 +4178,7 @@
     },
     "valid": false,
     "nodeId": "s",
-    "inputId": "data",
+    "inputId": "field:brightness_pct",
     "contains": "operand"
   },
   {
@@ -7922,5 +7924,1259 @@
     "valid": false,
     "nodeId": "d",
     "contains": "Unknown node kind"
+  },
+  {
+    "name": "service known field accepted",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "brightness_pct": {
+                "kind": "literal",
+                "type": "number",
+                "value": 40
+              }
+            },
+            "returnResponse": false,
+            "service": "light.turn_on",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.hall"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "service unknown field rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "glow": {
+                "kind": "literal",
+                "type": "number",
+                "value": 3
+              }
+            },
+            "returnResponse": false,
+            "service": "light.turn_on",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.hall"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "field:glow",
+    "contains": "Service light.turn_on has no field glow"
+  },
+  {
+    "name": "service required field missing rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {},
+            "returnResponse": false,
+            "service": "notify.notify"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "fields",
+    "contains": "Service notify.notify requires field message"
+  },
+  {
+    "name": "service required field unset rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "message": {
+                "kind": "unset"
+              }
+            },
+            "returnResponse": false,
+            "service": "notify.notify"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "field:message",
+    "contains": "Input is required"
+  },
+  {
+    "name": "service wrong literal field type rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "brightness_pct": {
+                "kind": "literal",
+                "type": "string",
+                "value": "40"
+              }
+            },
+            "returnResponse": false,
+            "service": "light.turn_on",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.hall"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "field:brightness_pct",
+    "contains": "Incompatible input type string; expected number"
+  },
+  {
+    "name": "service field bounds come from the schema",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "brightness_pct": {
+                "kind": "literal",
+                "type": "number",
+                "value": 140
+              }
+            },
+            "returnResponse": false,
+            "service": "light.turn_on",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.hall"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "field:brightness_pct",
+    "contains": "between 0 and 100"
+  },
+  {
+    "name": "service field options come from the schema",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "type": {
+                "kind": "literal",
+                "type": "string",
+                "value": "weekly"
+              }
+            },
+            "returnResponse": true,
+            "service": "weather.get_forecasts",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "weather.home"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "field:type",
+    "contains": "allowed values"
+  },
+  {
+    "name": "service switch entity wired into light target rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "e",
+          "kind": "set_value",
+          "config": {
+            "type": "entity_id:switch",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id:switch",
+              "value": "switch.fan"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {},
+            "returnResponse": false,
+            "service": "light.turn_on",
+            "target": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "e"
+        },
+        {
+          "id": "e:next",
+          "source": "e",
+          "target": "s"
+        },
+        {
+          "id": "e:value:s:target",
+          "kind": "data",
+          "source": "e",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "target"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "Incompatible input type entity_id:switch; expected target/entity_id:light"
+  },
+  {
+    "name": "service light entity wired into light target accepted",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "e",
+          "kind": "set_value",
+          "config": {
+            "type": "entity_id:light",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id:light",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {},
+            "returnResponse": false,
+            "service": "light.turn_on",
+            "target": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "e"
+        },
+        {
+          "id": "e:next",
+          "source": "e",
+          "target": "s"
+        },
+        {
+          "id": "e:value:s:target",
+          "kind": "data",
+          "source": "e",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "target"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "service literal switch entity target rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {},
+            "returnResponse": false,
+            "service": "light.turn_on",
+            "target": {
+              "kind": "literal",
+              "type": "entity_id:switch",
+              "value": "switch.fan"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "Incompatible input type entity_id:switch"
+  },
+  {
+    "name": "service literal light entity target accepted",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {},
+            "returnResponse": false,
+            "service": "light.turn_on",
+            "target": {
+              "kind": "literal",
+              "type": "entity_id:light",
+              "value": "light.hall"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "service literal target of the wrong domain rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {},
+            "returnResponse": false,
+            "service": "climate.set_hvac_mode",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.hall"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "Service climate.set_hvac_mode cannot target light.hall; expected a climate entity"
+  },
+  {
+    "name": "service literal target list with one wrong domain rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {},
+            "returnResponse": false,
+            "service": "climate.set_hvac_mode",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": [
+                  "climate.office",
+                  "light.hall"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "cannot target light.hall"
+  },
+  {
+    "name": "service literal target of the right domain accepted",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "hvac_mode": {
+                "kind": "literal",
+                "type": "string",
+                "value": "off"
+              }
+            },
+            "returnResponse": false,
+            "service": "climate.set_hvac_mode",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "climate.outside_bathroom_vtrv"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "service literal target area is not domain checked",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {},
+            "returnResponse": false,
+            "service": "climate.set_hvac_mode",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "area_id": "bathroom",
+                "device_id": "abc"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "service target on a target-less service rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "message": {
+                "kind": "literal",
+                "type": "string",
+                "value": "Door open"
+              }
+            },
+            "returnResponse": false,
+            "service": "notify.notify",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.hall"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "Service notify.notify does not take a target"
+  },
+  {
+    "name": "service field named target is not the target input",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "message": {
+                "kind": "literal",
+                "type": "string",
+                "value": "Door open"
+              },
+              "target": {
+                "kind": "literal",
+                "type": "string",
+                "value": "phone"
+              }
+            },
+            "returnResponse": false,
+            "service": "notify.notify"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "service field named target beside a target input rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "message": {
+                "kind": "literal",
+                "type": "string",
+                "value": "Door open"
+              },
+              "target": {
+                "kind": "literal",
+                "type": "string",
+                "value": "phone"
+              }
+            },
+            "returnResponse": false,
+            "service": "notify.notify",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.hall"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "does not take a target"
+  },
+  {
+    "name": "service returnResponse on a service without response rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {},
+            "returnResponse": true,
+            "service": "light.turn_on",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "light.hall"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "returnResponse",
+    "contains": "Service light.turn_on returns no response; turn off Return response"
+  },
+  {
+    "name": "service missing returnResponse on a response-only service rejected",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "type": {
+                "kind": "literal",
+                "type": "string",
+                "value": "daily"
+              }
+            },
+            "returnResponse": false,
+            "service": "weather.get_forecasts",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "weather.home"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "returnResponse",
+    "contains": "Service weather.get_forecasts only returns a response; turn on Return response"
+  },
+  {
+    "name": "service response-only service with returnResponse accepted",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "service": "weather.get_forecasts",
+            "fields": {
+              "type": {
+                "kind": "literal",
+                "type": "string",
+                "value": "daily"
+              }
+            },
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "weather.home"
+              }
+            },
+            "returnResponse": true
+          }
+        },
+        {
+          "id": "g",
+          "kind": "get_field",
+          "config": {
+            "value": {
+              "kind": "unset"
+            },
+            "pointer": "/weather.home",
+            "type": "object"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        },
+        {
+          "id": "s:next",
+          "source": "s",
+          "target": "g"
+        },
+        {
+          "id": "s:response:g:value",
+          "kind": "data",
+          "source": "s",
+          "target": "g",
+          "sourcePort": "response",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "service optional response either way accepted",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {},
+            "returnResponse": true,
+            "service": "hass_sharp_test.respond_optionally"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "unknown service warns and stays valid",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "anything": {
+                "kind": "literal",
+                "type": "number",
+                "value": 1
+              }
+            },
+            "returnResponse": false,
+            "service": "foo.bar",
+            "target": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "switch.fan"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": true,
+    "warning": "Unknown service foo.bar; fields are not type-checked"
+  },
+  {
+    "name": "no services section gives no service diagnostic",
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "glow": {
+                "kind": "literal",
+                "type": "string",
+                "value": "x"
+              }
+            },
+            "returnResponse": true,
+            "service": "light.turn_on",
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "switch.fan"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "unknown service without services section gives no diagnostic",
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "fields": {
+              "anything": {
+                "kind": "literal",
+                "type": "number",
+                "value": 1
+              }
+            },
+            "returnResponse": false,
+            "service": "foo.bar"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        }
+      ]
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "service response output requires returnResponse",
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "service": "test.query",
+            "fields": {},
+            "returnResponse": false
+          }
+        },
+        {
+          "id": "g",
+          "kind": "get_field",
+          "config": {
+            "value": {
+              "kind": "unset"
+            },
+            "pointer": "/x",
+            "type": "object"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next",
+          "source": "t",
+          "target": "s"
+        },
+        {
+          "id": "s:next",
+          "source": "s",
+          "target": "g"
+        },
+        {
+          "id": "s:response:g:value",
+          "kind": "data",
+          "source": "s",
+          "target": "g",
+          "sourcePort": "response",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "contains": "Unknown data output port"
   }
 ]

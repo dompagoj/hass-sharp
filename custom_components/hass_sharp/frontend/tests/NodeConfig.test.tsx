@@ -154,12 +154,12 @@ it('preserves intermediate numeric input, element identity/focus and invalid cle
   expect(root.textContent).toContain('Enter a finite number')
 })
 it('edits object and array literal JSON and explicit unset without discarding unknown config', () => {
-  const graph = addNode(createGraph('Objects'), 'service', 'call')
+  const graph = addNode(createGraph('Objects'), 'object', 'call')
   graph.nodes.at(-1)!.config.extra = { keep: true }
   const { root, node } = mount(graph, 'call')
-  change(root, 'Service data', '{"brightness":120}')
-  expect(node().config.data).toEqual({ kind: 'literal', type: 'object', value: { brightness: 120 } })
-  change(root, 'Service data source', 'unset')
-  expect(node().config.data).toEqual({ kind: 'unset' })
+  change(root, 'Object', '{"brightness":120}')
+  expect(node().config.value).toEqual({ kind: 'literal', type: 'object', value: { brightness: 120 } })
+  change(root, 'Object source', 'unset')
+  expect(node().config.value).toEqual({ kind: 'unset' })
   expect(node().config.extra).toEqual({ keep: true })
 })

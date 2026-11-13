@@ -237,56 +237,53 @@
     "service": {
       "label": "Call service",
       "category": "Hass",
-      "description": "Call a service with typed target and data; capture its response.",
+      "description": "Call a Home Assistant service with typed target and fields.",
       "minGraphVersion": 5,
       "config": {
         "service": {
           "type": "string",
           "required": true,
           "pattern": "^[a-z0-9_]+\\.[a-z0-9_]+$",
-          "description": "Service identifier in domain.service form.",
-          "label": "Service"
+          "label": "Service",
+          "description": "Service identifier in domain.service form."
+        },
+        "fields": {
+          "type": "object",
+          "default": {},
+          "label": "Fields",
+          "description": "Service field operands keyed by field name."
+        },
+        "returnResponse": {
+          "type": "boolean",
+          "default": false,
+          "label": "Return response",
+          "description": "Request the service response."
         }
       },
       "inputs": {
         "target": {
           "types": [
-            "object"
+            "target",
+            "entity_id"
           ],
           "required": false,
-          "description": "Home Assistant service target object, such as entity_id, device_id or area_id.",
-          "default": {
-            "kind": "literal",
-            "type": "object",
-            "value": {}
-          },
-          "label": "Target"
-        },
-        "data": {
-          "types": [
-            "object"
-          ],
-          "required": false,
-          "description": "Parameters passed to the selected service.",
-          "default": {
-            "kind": "literal",
-            "type": "object",
-            "value": {}
-          },
-          "label": "Service data"
+          "label": "Target",
+          "description": "Entities, devices, areas or labels the service acts on."
         }
       },
       "outputs": {
         "response": {
           "type": "object",
-          "description": "Home Assistant service response object after the call completes.",
-          "label": "Response"
+          "label": "Response",
+          "description": "Service response object.",
+          "when": "returnResponse"
         }
       },
       "execution": [
         "next",
         "error"
       ],
+      "dynamicInputs": "service",
       "runtimeVersions": [
         5
       ]
@@ -1511,37 +1508,6 @@
           "type": "$type",
           "description": "Extracted JSON value checked against the configured result type.",
           "label": "Value"
-        }
-      },
-      "execution": [
-        "next",
-        "error"
-      ],
-      "runtimeVersions": [
-        5
-      ]
-    },
-    "service_response": {
-      "label": "Service response",
-      "category": "Hass",
-      "description": "Read a connected service response.",
-      "minGraphVersion": 5,
-      "config": {},
-      "inputs": {
-        "response": {
-          "types": [
-            "object"
-          ],
-          "required": true,
-          "description": "Object received from a service node response output.",
-          "label": "Response"
-        }
-      },
-      "outputs": {
-        "value": {
-          "type": "object",
-          "description": "The connected service response object.",
-          "label": "Response"
         }
       },
       "execution": [

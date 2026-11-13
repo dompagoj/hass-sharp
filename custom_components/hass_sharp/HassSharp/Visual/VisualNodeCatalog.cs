@@ -49,7 +49,32 @@ public static class VisualNodeCatalog
         if (Text(spec, "dynamicOutputs") == "loop") foreach (var key in new[] { "carry", "exports" }) foreach (var item in Declarations(node, key))
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = new JsonObject { ["type"] = Text(item, "type"), ["description"] = $"{key} value {Text(item, "name")}", ["visibility"] = key == "carry" ? "loop" : "outside" };
         if (Text(spec, "dynamicOutputs") == "trigger") foreach (var (key, value) in TriggerOutputs(node, snapshot?.Root ?? Root)) ports[key] = value?.DeepClone();
+        // An output with "when" exists only while that boolean config is true (D3, D9).
+        foreach (var key in ports.Where(p => Text(p.Value, "when") is { Length: > 0 } when && !((node["config"] as JsonObject)?[when] is JsonValue on && on.TryGetValue<bool>(out var enabled) && enabled)).Select(p => p.Key).ToArray())
+            ports.Remove(key);
         return ports;
+    }
+    /// <summary>The C4 entry of the node's configured service, or null without a services section or for an unknown service.</summary>
+    internal static JsonObject? ServiceSchema(JsonObject node, VisualCatalogSnapshot? snapshot) =>
+        snapshot?.Services is { } services && (node["config"] as JsonObject)?["service"] is JsonValue id && id.TryGetValue<string>(out var service) ? services.Items[service] as JsonObject : null;
+    /// <summary>Entity domains the service's target accepts; empty when any entity filter, or the target itself, is unrestricted by domain.</summary>
+    internal static string[] ServiceTargetDomains(JsonObject schema)
+    {
+        var filters = (schema["target"]?["entity"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
+        var domains = filters.Select(f => (f["domain"] as JsonArray ?? []).OfType<JsonValue>().Select(d => d.TryGetValue<string>(out var s) ? s : "").Where(s => s != "").ToArray()).ToArray();
+        return domains.Length == 0 || domains.Any(d => d.Length == 0) ? [] : domains.SelectMany(d => d).Distinct().ToArray();
+    }
+    static readonly string[] ServiceFieldConstraints = ["min", "max", "integer", "enum", "enumLabels", "pattern", "minItems", "maxItems", "step", "unit", "selector", "advanced", "section", "example"];
+    /// <summary>A known service field as an input spec, so catalog literal constraints (C2) apply to it.</summary>
+    static JsonObject ServiceFieldInput(string key, JsonObject field)
+    {
+        var port = new JsonObject
+        {
+            ["types"] = field["types"]?.DeepClone() ?? new JsonArray(), ["required"] = field["required"] is JsonValue r && r.TryGetValue<bool>(out var required) && required,
+            ["label"] = Text(field, "label", key), ["description"] = Text(field, "description") is { Length: > 0 } description ? description : "Service field " + key
+        };
+        foreach (var name in ServiceFieldConstraints) if (field[name] is { } value) port[name] = value.DeepClone();
+        return port;
     }
     /// <summary>
     /// Contract C6: the rows of <c>triggerOutputs</c> whose <c>|</c>-separated key lists the trigger type (or
@@ -102,6 +127,19 @@ public static class VisualNodeCatalog
         var dynamic = Text(spec, "dynamicInputs");
         if (dynamic == "fields" && node["config"]?["fields"] is JsonObject fields)
             foreach (var (key, _) in fields) ports["field:" + key] = Input(all, true, "Object field " + key);
+        if (dynamic == "service")
+        {
+            // Ports are the keys of config.fields (D3); a known service only refines their types and the target's.
+            var schema = ServiceSchema(node, snapshot);
+            if (node["config"]?["fields"] is JsonObject serviceFields)
+                foreach (var (key, _) in serviceFields)
+                    ports["field:" + key] = schema?["fields"]?[key] is JsonObject field ? ServiceFieldInput(key, field) : Input(all, false, "Service field " + key);
+            if (schema != null && ports["target"] is JsonObject target)
+            {
+                string[] types = ServiceTargetDomains(schema) is { Length: > 0 } domains ? ["target", .. domains.Select(d => "entity_id:" + d)] : ["target", "entity_id"];
+                target["types"] = new JsonArray(types.Select(t => (JsonNode?)JsonValue.Create(t)).ToArray());
+            }
+        }
         if (dynamic == "items" && node["config"]?["items"] is JsonArray items)
             for (var i = 0; i < items.Count; i++) ports["item:" + i] = Input(all, true, "Array item " + i);
         if (dynamic == "loop" && loopOwner != null) foreach (var key in new[] { "carry", "exports" }) foreach (var item in Declarations(loopOwner, key))

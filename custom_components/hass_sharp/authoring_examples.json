@@ -148,6 +148,104 @@
           "port": "next"
         }
       ]
+    },
+    {
+      "version": 5,
+      "name": "Service fields and response",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "trigger",
+          "config": {
+            "type": "manual",
+            "manual": true
+          }
+        },
+        {
+          "id": "dim",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on",
+            "fields": {
+              "brightness_pct": {
+                "kind": "literal",
+                "type": "number",
+                "value": 40
+              },
+              "transition": {
+                "kind": "literal",
+                "type": "number",
+                "value": 2
+              }
+            },
+            "returnResponse": false,
+            "target": {
+              "kind": "literal",
+              "type": "entity_id:light",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "forecast",
+          "kind": "service",
+          "config": {
+            "service": "weather.get_forecasts",
+            "fields": {
+              "type": {
+                "kind": "literal",
+                "type": "string",
+                "value": "daily"
+              }
+            },
+            "returnResponse": true,
+            "target": {
+              "kind": "literal",
+              "type": "target",
+              "value": {
+                "entity_id": "weather.home"
+              }
+            }
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "flow-dim",
+          "source": "start",
+          "target": "dim",
+          "port": "next"
+        },
+        {
+          "id": "flow-forecast",
+          "source": "dim",
+          "target": "forecast",
+          "port": "next"
+        },
+        {
+          "id": "flow-log",
+          "source": "forecast",
+          "target": "log",
+          "port": "next"
+        },
+        {
+          "id": "response-log",
+          "kind": "data",
+          "source": "forecast",
+          "target": "log",
+          "sourcePort": "response",
+          "targetPort": "value"
+        }
+      ]
     }
   ],
   "library": {

@@ -10,10 +10,11 @@ public static class VisualGraphContractTests
         foreach (var fixture in fixtures)
         {
             var name = fixture!["name"]!.GetValue<string>();
-            // Loaded for cases that opt in; the validator takes it once service-aware validation lands.
-            if (fixture["services"]?.GetValue<bool>() == true) Services(name);
+            // A case opts into the golden services section; otherwise the snapshot has none, as at Init.
+            var snapshot = fixture["catalogPatch"] is JsonObject patch ? Patched(patch) : VisualCatalogSnapshot.BuiltIn;
+            if (fixture["services"]?.GetValue<bool>() == true) snapshot = snapshot.WithServices(Services(name));
             var elapsed = System.Diagnostics.Stopwatch.StartNew();
-            var diagnostics = VisualGraphValidator.Validate(fixture["graph"]!.AsObject(), fixture["catalogPatch"] is JsonObject patch ? Patched(patch) : null);
+            var diagnostics = VisualGraphValidator.Validate(fixture["graph"]!.AsObject(), snapshot);
             if (fixture["maxValidationMs"] is { } limit && elapsed.ElapsedMilliseconds >= limit.GetValue<int>()) throw new Exception($"Visual graph {name}: validation exceeded bounded time");
             var errors = diagnostics.Where(d => d.Severity == 3).ToList();
             var valid = fixture["valid"]!.GetValue<bool>();
@@ -25,6 +26,8 @@ public static class VisualGraphContractTests
                 throw new Exception($"Visual graph {name}: expected precise diagnostic, got {string.Join("; ", errors)}");
             if (fixture["warning"] is { } warning && !diagnostics.Any(d => d.Severity == 2 && d.Message.Contains(warning.GetValue<string>(), StringComparison.OrdinalIgnoreCase)))
                 throw new Exception($"Visual graph {name}: expected warning \"{warning.GetValue<string>()}\", got {string.Join("; ", diagnostics)}");
+            if (fixture["noDiagnostics"]?.GetValue<bool>() == true && diagnostics.Count > 0)
+                throw new Exception($"Visual graph {name}: expected no diagnostics, got {string.Join("; ", diagnostics)}");
         }
         var graph = JsonNode.Parse("""{"version":5,"name":"Layout","nodes":[{"id":"trigger/é","kind":"trigger","config":{"type":"manual"},"position":{"x":13,"y":42}},{"id":"d","kind":"delay","config":{"seconds":{"kind":"literal","type":"number","value":2}}}],"edges":[]}""")!.AsObject();
         var laidOut = VisualGraphContract.FillMissingLayout(graph);
@@ -51,10 +54,17 @@ public static class VisualGraphContractTests
         return new VisualCatalogSnapshot(catalog, [], [], [], null);
     }
 
-    static JsonNode Services(string name)
+    // The golden tests/fixtures/visual-services.json is the normalised form of ha-service-descriptions.json
+    // (the service schema suite keeps them equal); parse the raw input and confirm it is that golden.
+    static ServiceSchemaCatalog? services;
+    static ServiceSchemaCatalog Services(string name)
     {
+        if (services != null) return services;
         var path = Path.Combine(AppContext.BaseDirectory, "visual-services.json");
         if (!File.Exists(path)) throw new Exception($"Visual graph {name}: case sets \"services\": true but tests/fixtures/visual-services.json is missing");
-        return JsonNode.Parse(File.ReadAllText(path))!;
+        var golden = JsonNode.Parse(File.ReadAllText(path))!;
+        var parsed = ServiceSchemaCatalog.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ha-service-descriptions.json")), _ => { });
+        if (!JsonNode.DeepEquals(parsed.Section, golden)) throw new Exception($"Visual graph {name}: ha-service-descriptions.json no longer normalises to visual-services.json");
+        return services = parsed;
     }
 }

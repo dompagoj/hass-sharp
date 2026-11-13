@@ -1,20 +1,16 @@
-import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import fixtureCases from '../../../../tests/fixtures/visual-graph-validation.json'
+import servicesFixture from '../../../../tests/fixtures/visual-services.json'
 import * as contract from '../src/visual/contract'
 import type { Graph } from '../src/visual/contract'
 
 interface ValidationCase {
   name: string; graph: unknown; valid: boolean; nodeId?: string; inputId?: string; contains?: string
-  warning?: string; services?: boolean; maxValidationMs?: number; catalogPatch?: Record<string, unknown>
+  warning?: string; noDiagnostics?: boolean; services?: boolean; maxValidationMs?: number; catalogPatch?: Record<string, unknown>
 }
 const cases = fixtureCases as ValidationCase[]
-const servicesFixture = new URL('../../../../tests/fixtures/visual-services.json', import.meta.url)
-// Loaded for cases that opt in; the validator takes it once service-aware validation lands.
-function loadServices(name: string): unknown {
-  if (!existsSync(servicesFixture)) throw new Error(`Visual graph ${name}: case sets "services": true but tests/fixtures/visual-services.json is missing`)
-  return JSON.parse(readFileSync(servicesFixture, 'utf8'))
-}
+// The golden services section (tests/fixtures/visual-services.json), attached to the snapshot of cases that opt in.
+const services = servicesFixture as unknown as contract.ServicesSection
 
 // A case may extend the built-in catalog, e.g. with input constraints no built-in node declares yet.
 function patched(patch: Record<string, unknown>): contract.VisualCatalogSnapshot {
@@ -33,9 +29,11 @@ function patched(patch: Record<string, unknown>): contract.VisualCatalogSnapshot
 
 describe('shared visual graph validation contract', () => {
   for (const fixture of cases) it(fixture.name, () => {
-    if (fixture.services === true) loadServices(fixture.name)
+    // Without "services" the snapshot has no services section, as at Init.
+    let catalog = fixture.catalogPatch ? patched(fixture.catalogPatch) : contract.nodeCatalog
+    if (fixture.services === true) catalog = { ...catalog, services }
     const started = performance.now()
-    const diagnostics = contract.validateGraph(fixture.graph as Graph, fixture.catalogPatch ? patched(fixture.catalogPatch) : undefined)
+    const diagnostics = contract.validateGraph(fixture.graph as Graph, catalog)
     if (fixture.maxValidationMs) expect(performance.now() - started).toBeLessThan(fixture.maxValidationMs)
     const errors = diagnostics.filter(d => d.severity === 3)
     expect(errors.length === 0, JSON.stringify(errors)).toBe(fixture.valid)
@@ -44,6 +42,7 @@ describe('shared visual graph validation contract', () => {
       (!fixture.contains || e.message.toLowerCase().includes(fixture.contains.toLowerCase())))).toBe(true)
     const warning = fixture.warning
     if (warning !== undefined) expect(diagnostics.some(d => d.severity === 2 && d.message.toLowerCase().includes(warning.toLowerCase())), `expected warning "${warning}", got ${JSON.stringify(diagnostics)}`).toBe(true)
+    if (fixture.noDiagnostics) expect(diagnostics).toEqual([])
   })
 })
 it('missing layout is deterministic and supplied positions remain unchanged', () => {
@@ -184,4 +183,33 @@ it('rejects stale literal arguments after an optional custom parameter rename', 
   expect(contract.validateGraph(graph, richCatalog)).toEqual(expect.arrayContaining([
     expect.objectContaining({ nodeId: consumer.id, inputId: 'removedParameter', message: 'Unknown custom argument' }),
   ]))
+})
+
+describe('service node ports (C5)', () => {
+  const withServices = { ...contract.nodeCatalog, services }
+  const node = (config: Record<string, unknown>) => ({ id: 's', kind: 'service', config: { fields: {}, returnResponse: false, ...config } })
+  it('has one field port per config.fields key, typed from a known service', () => {
+    const light = node({ service: 'light.turn_on', fields: { brightness_pct: { kind: 'unset' }, glow: { kind: 'unset' } } })
+    const inputs = contract.dataInputs(light, undefined, withServices)
+    expect(Object.keys(inputs)).toEqual(['target', 'field:brightness_pct', 'field:glow'])
+    expect(inputs['field:brightness_pct']).toMatchObject({ types: ['number'], required: false, min: 0, max: 100, integer: false, unit: '%', step: 1 })
+    expect(inputs['field:brightness_pct']).not.toHaveProperty('section')
+    expect(inputs['field:glow'].types).toEqual(Object.keys(contract.nodeCatalog.types))
+    expect(inputs.target.types).toEqual(['target', 'entity_id:light'])
+    expect(contract.dataInputs(node({ service: 'notify.notify', fields: { target: { kind: 'unset' } } }), undefined, withServices)).toMatchObject({ target: { types: ['target', 'entity_id'] }, 'field:target': { label: 'target', required: false } })
+    expect(contract.dataInputs(node({ service: 'homeassistant.turn_on' }), undefined, withServices).target.types).toEqual(['target', 'entity_id'])
+  })
+  it('keeps ports and permissive types without a services section or for an unknown service', () => {
+    for (const [catalog, service] of [[contract.nodeCatalog, 'light.turn_on'], [withServices, 'foo.bar']] as const) {
+      const inputs = contract.dataInputs(node({ service, fields: { brightness_pct: { kind: 'unset' } } }), undefined, catalog)
+      expect(Object.keys(inputs)).toEqual(['target', 'field:brightness_pct'])
+      expect(inputs.target.types).toEqual(['target', 'entity_id'])
+      expect(inputs['field:brightness_pct']).toMatchObject({ types: Object.keys(contract.nodeCatalog.types), required: false })
+    }
+  })
+  it('exposes the response output only while returnResponse is true', () => {
+    expect(Object.keys(contract.dataOutputs(node({ service: 'weather.get_forecasts' })))).toEqual([])
+    expect(contract.dataOutputs(node({ service: 'weather.get_forecasts', returnResponse: true })).response).toMatchObject({ type: 'object', when: 'returnResponse' })
+    expect(Object.keys(contract.dataOutputs(node({ service: 'weather.get_forecasts', returnResponse: 'yes' })))).toEqual([])
+  })
 })

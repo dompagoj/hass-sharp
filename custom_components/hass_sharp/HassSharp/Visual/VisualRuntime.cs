@@ -257,7 +257,6 @@ public sealed class VisualRuntime
                     case "object_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["fields"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get("field:"+p.Key))));break;
                     case "array_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["items"] as JsonArray??[]).Select((_,i)=>Get("item:"+i)).ToArray()));break;
                     case "get_field":var json=Input<JsonElement>(scope,id,"value");var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}Output(scope,id,ConvertTo(json,Text(cfg,"type"),id,false));break;
-                    case "service_response":Output(scope,id,ConvertTo(Get("response"),"object",id,false));break;
                     case "service":await Service(id,scope,cfg);break;
                     case "log":PyInterop.Log(Text(cfg,"level","Info") switch{"Debug"=>10,"Warn"=>30,"Error"=>40,_=>20},Convert.ToString(Get("value"),CultureInfo.InvariantCulture)??"null");break;
                     case "stop":Interlocked.Exchange(ref stopped,1);try{await lifetime.CancelAsync();}catch(Exception error){stopFailures.Enqueue(error);}throw new OperationCanceledException(lifetime.Token);
@@ -312,12 +311,21 @@ public sealed class VisualRuntime
         var left=Convert.ToDouble(a,CultureInfo.InvariantCulture);var right=Convert.ToDouble(b,CultureInfo.InvariantCulture);
         return op switch{"lt"=>left<right,"le"=>left<=right,"gt"=>left>right,"ge"=>left>=right,_=>throw new InvalidOperationException("Unknown comparison")};
     }
+    // An optional input contributes only when it is wired or its operand is not unset.
+    bool Supplied(string id,string port,JsonNode? operand)=>data.ContainsKey((id,port)) || operand is JsonObject && Text(operand,"kind")!="unset";
+    static JsonNode? Json(object? value)=>value switch{null=>null,JsonNode node=>node.DeepClone(),JsonElement element=>JsonNode.Parse(element.GetRawText()),_=>JsonSerializer.SerializeToNode(value)};
+    /// <summary>Contract C5: fields by name, then the target (a string is an entity_id, an object is flattened); a response only with returnResponse.</summary>
     async Task Service(string id,VisualScope scope,JsonNode cfg) {
-        var payload=JsonNode.Parse(Input<JsonElement>(scope,id,"data").GetRawText())!.AsObject();var target=Input<JsonElement>(scope,id,"target");
-        foreach(var p in target.EnumerateObject())payload[p.Name]=JsonNode.Parse(p.Value.GetRawText());
+        var payload=new JsonObject();
+        foreach(var (name,operand) in cfg["fields"] as JsonObject??[])if(Supplied(id,"field:"+name,operand))payload[name]=Json(Input(scope,id,"field:"+name));
+        if(Supplied(id,"target",cfg["target"])) {
+            var target=Json(Input(scope,id,"target"));
+            if(target is JsonValue entity && entity.TryGetValue<string>(out var entityId))payload["entity_id"]=entityId;
+            else if(target is JsonObject properties)foreach(var (name,value) in properties)payload[name]=value?.DeepClone();
+            else throw new InvalidOperationException($"Input {id}.target requires an entity id or a target object.");
+        }
         var service=Text(cfg,"service").Split('.');
-        // Until the node declares returnResponse, a wired response output is the only reason to request one.
-        if(data.Values.Contains((id,"response"))) {
+        if(cfg["returnResponse"] is JsonValue flag && flag.TryGetValue<bool>(out var returnResponse) && returnResponse) {
             var response=await HassServices.CallServiceAsync<JsonElement>(service[0],service[1],payload).WaitAsync(scope.CancellationToken);
             Output(scope,id,ConvertTo(response,"object",id+".response",false),"response");
         } else await HassServices.CallServiceAsync(service[0],service[1],payload).WaitAsync(scope.CancellationToken);
