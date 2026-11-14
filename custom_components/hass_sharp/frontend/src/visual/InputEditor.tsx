@@ -32,7 +32,8 @@ export interface InputEditorProps {
   catalog?: VisualCatalogSnapshot
   /**
    * A stored value of another type than the input's (a Constant's value from before its Type set the value's type) is
-   * shown in the input's own number or text editor, as text, and committing it stores it as the input's type.
+   * shown in the input's own number, text or yes/no editor, as text, and committing it stores it as the input's type
+   * (a yes/no from the text true or false, any case).
    */
   retype?: boolean
 }
@@ -60,7 +61,7 @@ export function InputEditor(props: InputEditorProps) {
   // A Constant's stored text or number of another kind than its Type is shown in the Type's own editor (see `retype`).
   const stale = () => {
     const value = literal(), kind = widget().kind, stored = operand()
-    return !!props.retype && (kind === 'number' || kind === 'text') && !widget().multiple && (typeof value === 'string' || typeof value === 'number')
+    return !!props.retype && (kind === 'number' || kind === 'text' || kind === 'toggle') && !widget().multiple && (typeof value === 'string' || typeof value === 'number')
       && (!fitsWidget(widget(), value) || (stored.kind === 'literal' && !props.input.types.includes(stored.type)))
   }
   // A stored value of another shape stays editable as JSON instead of being misread by the widget.

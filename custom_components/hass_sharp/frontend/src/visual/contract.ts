@@ -356,7 +356,7 @@ export const words = {
   },
   /** A time of day as the daily trigger runs it: 24-hour HH:MM. */
   timeOfDay: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$',
-  timeOfDayMessage: (label: string) => `${label} must be a time of day as HH:MM, from 00:00 to 23:59`,
+  timeOfDayMessage: (label: string) => `${label} must be HH:MM in 24-hour time, from 00:00 to 23:59`,
   /** A Get field path with a ~ that is not ~0 or ~1. */
   pathTilde: 'Path has a ~ that is not followed by 0 or 1; inside a name, write ~0 for a ~ and ~1 for a /, such as /data/on~1off for the name on/off',
   /**
@@ -419,8 +419,13 @@ export const words = {
   },
   /** A wire whose value is not visible where it arrives. */
   scopeData: (subject: string) => `${subject} cannot use this value here: it is on the other side of a loop or parallel branch boundary`,
-  /** A wire into an input the step does not have. */
-  unknownInput: (port: string) => `This value wire goes into ${words.portLabel(undefined, port)}, which this step does not have`,
+  /** A wire into an input the step (of this kind) does not have; a Constant's value says what to do instead. */
+  unknownInput: (port: string, kind?: string) => kind === 'constant' && port === 'value' ? words.intoConstant : `This value wire goes into ${words.portLabel(undefined, port)}, which this step does not have`,
+  /** A wire into a Constant: it takes a typed-in value only, and Convert is the step that changes a value's type. */
+  intoConstant: "Nothing can be connected to a Constant; remove this connection, or use Convert to change a value's type",
+  /** A Constant whose stored value is of another type than its Type (a graph from before the Type set it): how to repair it. */
+  constantRetyped: (label: string, type: string, expected: string, catalog: VisualCatalogSnapshot = nodeCatalog) =>
+    `${label} is ${typeLabel(type, catalog)}, but this Constant's Type is ${typeLabel(expected, catalog)}; type the value again, or change Type`,
   /** A Custom C# node whose stored signature is not one the compiler writes. */
   malformedSignature: 'The pins of this node cannot be read; open Edit code and apply it',
   /** A Custom C# node whose stored signature is not what its code gives (only the backend, which compiles it, knows). */
@@ -433,19 +438,22 @@ export const words = {
   exposedValue: 'Steps no longer expose values to C# by name; connect a wire from this step to each step that uses its value',
   variable: (subject: string) => `${subject} reads a variable, and variables are gone; connect a wire to it instead`,
   entitiesExpression: 'Entities expression is gone; choose the entity in Entity',
-  schedulesExpression: 'Schedules expression is gone; set the time in Time',
+  schedulesExpression: 'Schedules expression is gone; set the time in Time of day',
 }
 /** The service a service node calls, named in its messages; undefined for other nodes or without a service id. */
 const serviceName = (node: GraphNode, catalog: VisualCatalogSnapshot) => nodeSpec(node.kind, catalog)?.dynamicInputs === 'service' && typeof node.config.service === 'string' && node.config.service ? node.config.service : undefined
 /** What a message about one input of the node starts with: the service and a colon on a service node, then the input's label. */
 export const inputSubject = (node: GraphNode, spec: InputSpec | undefined, port: string, catalog: VisualCatalogSnapshot = nodeCatalog) => {
-  const service = serviceName(node, catalog)
+  const service = serviceTitle(node, catalog)
   return (service ? service + ': ' : '') + words.portLabel(spec, port)
 }
-/** A service as people know it: its name where the services section describes it, else its id; undefined for other nodes. */
+/**
+ * A service as every message names it: its name and then its id in brackets where the services section describes it
+ * ("Turn on (light.turn_on)"), else its id alone; undefined for other nodes.
+ */
 const serviceTitle = (node: GraphNode, catalog: VisualCatalogSnapshot) => {
   const service = serviceName(node, catalog), schema = serviceSchema(node, catalog)
-  return service && schema ? words.serviceName(schema, service) : service
+  return service && schema ? `${words.serviceName(schema, service)} (${service})` : service
 }
 /**
  * The message for a wire into a service's target that brings an entity of a domain the service does not take, worded
@@ -479,12 +487,12 @@ export function serviceTargetDiagnostics(node: GraphNode, connected: (port: stri
   const service = serviceName(node, catalog), schema = serviceSchema(node, catalog), wired = connected('target'), target = node.config.target
   const targetSet = wired || (record(target) && target.kind !== 'unset')
   const pattern = nodeSpec(node.kind, catalog)?.config.service?.pattern ?? ''
-  if (schema && service && matches(service, pattern) && !record(schema.target) && targetSet) error(`${service} does not take a target`)
+  if (schema && service && matches(service, pattern) && !record(schema.target) && targetSet) error(`${serviceTitle(node, catalog)} does not take a target`)
   if (!targetSet) return errors
   if (!wired && record(target) && target.kind === 'literal' && record(target.value))
     for (const key of Object.keys(target.value)) if (!targetKeys.includes(key)) error(targetKeyMessage(key))
   if (record(node.config.fields)) for (const key of Object.keys(node.config.fields))
-    if (targetKeys.includes(key)) error(`${service ?? 'This service'} has a target, so it cannot also have a field named ${key}`)
+    if (targetKeys.includes(key)) error(`${serviceTitle(node, catalog) ?? 'This service'} has a target, so it cannot also have a field named ${key}`)
   return errors
 }
 /**
@@ -703,7 +711,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     const source = nodes.get(edge.source)!, target = nodes.get(edge.target)!
     const output = dataOutputs(source)[edge.sourcePort], input = connectable(dataInputs(target, ownerOf(target))[edge.targetPort])
     if (!output) error(source.id, 'Unknown data output port', undefined, edge.sourcePort, 'port.unknownOutput')
-    if (!input) error(target.id, words.unknownInput(edge.targetPort), edge.targetPort, edge.targetPort, 'port.unknownInput')
+    if (!input) error(target.id, words.unknownInput(edge.targetPort, target.kind), edge.targetPort, edge.targetPort, 'port.unknownInput')
     if (incoming.has(key(target.id, edge.targetPort))) error(target.id, 'Only one data source per input', edge.targetPort, edge.targetPort, 'port.inputTaken')
     incoming.set(key(target.id, edge.targetPort), edge)
     if (output && input) {
@@ -738,11 +746,11 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       const valid = validLiteral(type, v, catalog)
       if (!valid) {
         // A number that does not fit a narrower number type (2.5 for a C# int) says what does fit.
-        const own = typeof v === 'number' && knownType(type) && numeric(type, catalog) ? resolveTypeSpec(type, catalog) : undefined
+        const ownType = typeof v === 'number' && Number.isFinite(v) && knownType(type) && numeric(type, catalog) ? resolveTypeSpec(type, catalog) : undefined
         error(node.id, typeof raw.type !== 'string' || raw.type === '' ? `${subject} has a value without a type` : !knownType(type) ? `${subject} has a value of unknown type ${words.name(type)}`
-          : own ? `${subject} must be ${words.range(own.min, own.max, own.literalKind === 'integer')}` : `${subject} is not a valid ${typeLabel(type, catalog)} value`, port)
+          : ownType ? `${subject} must be ${words.range(ownType.min, ownType.max, ownType.literalKind === 'integer')}` : `${subject} is not a valid ${typeLabel(type, catalog)} value`, port)
       }
-      if (typeof v === 'number' && ((spec.min !== undefined && v < spec.min) || (spec.max !== undefined && v > spec.max) || (spec.integer && !Number.isInteger(v)))) error(node.id, `${subject} must be ${words.range(spec.min, spec.max, spec.integer === true)}`, port)
+      if (typeof v === 'number' && Number.isFinite(v) && ((spec.min !== undefined && v < spec.min) || (spec.max !== undefined && v > spec.max) || (spec.integer && !Number.isInteger(v)))) error(node.id, `${subject} must be ${words.range(spec.min, spec.max, spec.integer === true)}`, port)
       // A number typed into a pin of a narrower number type (a C# int, say) must fit that type, as it must when it runs.
       if (valid && typeof v === 'number' && Number.isFinite(v) && numeric(type, catalog)) {
         const fits = spec.types.filter(t => t !== type && isAssignable(type!, t))
@@ -769,7 +777,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     } else error(node.id, `${subject} has an invalid value`, port)
     // A value of unknown type was reported above; it is not also a mismatch. Nor is a value for an input that accepts no
     // known type (a Constant whose Type is missing or unknown): that is reported where the type is set.
-    if (type && knownType(type) && spec.types.some(knownType) && !spec.types.some(t => isAssignable(type!, t))) error(node.id, words.incompatible(subject, type, spec.types, catalog), port)
+    if (type && knownType(type) && spec.types.some(knownType) && !spec.types.some(t => isAssignable(type!, t)))
+      error(node.id, node.kind === 'constant' && port === 'value' ? words.constantRetyped(label, type, spec.types.find(knownType)!, catalog) : words.incompatible(subject, type, spec.types, catalog), port)
     return type
   }
   // Memoize by the full analysis context. Shared successors are visited once,
@@ -800,12 +809,12 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (!schema) { warning(node.id, `${service} is not available in this Home Assistant, so its fields cannot be checked`, 'service'); return }
     const known = record(schema.fields) ? schema.fields : {}
     const fields = record(node.config.fields) ? node.config.fields : {}
-    for (const name of Object.keys(fields)) if (!Object.hasOwn(known, name)) error(node.id, `${service} has no field ${words.name(name)}`, `field:${name}`)
+    for (const name of Object.keys(fields)) if (!Object.hasOwn(known, name)) error(node.id, `${serviceTitle(node, catalog)} has no field ${words.name(name)}`, `field:${name}`)
     for (const [name, field] of Object.entries(known)) if (record(field) && field.required === true && !Object.hasOwn(fields, name)) error(node.id, `${serviceTitle(node, catalog)} needs ${words.portLabel(field, name)}`, 'fields')
     const wired = incoming.has(key(node.id, 'target')), target = node.config.target
     const response = text(schema.response, 'none'), returnResponse = node.config.returnResponse === true
-    if (returnResponse && response === 'none') error(node.id, `${service} returns no response; turn off Return response`, 'returnResponse')
-    if (!returnResponse && response === 'only') error(node.id, `${service} only returns a response; turn on Return response`, 'returnResponse')
+    if (returnResponse && response === 'none') error(node.id, `${serviceTitle(node, catalog)} returns no response; turn off Return response`, 'returnResponse')
+    if (!returnResponse && response === 'only') error(node.id, `${serviceTitle(node, catalog)} only returns a response; turn on Return response`, 'returnResponse')
     // A target value object is checked by its entity_id domains; device, area, floor and label ids are not.
     const domains = serviceTargetDomains(schema)
     if (!domains.length || wired || !record(target) || target.kind !== 'literal' || !record(target.value)) return

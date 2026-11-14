@@ -1,4 +1,4 @@
-import { customSignature, dataOutputs, inputValue, nodeCatalog, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { customSignature, dataInputs, dataOutputs, inputValue, nodeCatalog, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 import { stateField, stateLabel } from './widgets/states'
 
@@ -94,7 +94,8 @@ interface Context {
 /** What an input currently reads: a literal or the wired output's label; undefined when not set. */
 function operandText(ctx: Context, port: string): string | undefined {
   const edge = ctx.graph?.edges.find(e => e?.kind === 'data' && e.target === ctx.node.id && e.targetPort === port)
-  if (edge?.kind === 'data') {
+  // A wire into an input that takes a value only (a Constant's, from an older graph) does not work: it reads its value.
+  if (edge?.kind === 'data' && dataInputs(ctx.node, undefined, ctx.catalog)[port]?.connectable !== false) {
     const source = ctx.graph!.nodes.find(n => n?.id === edge.source)
     const output = source ? dataOutputs(source, ctx.catalog)[edge.sourcePort] : undefined
     return (output?.label ?? edge.sourcePort).toLowerCase()

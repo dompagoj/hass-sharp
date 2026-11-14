@@ -136,11 +136,13 @@ CLR assignability, nullability, literal choices, labels and XML documentation.
 Library arguments live in `config.arguments`; built-in input values follow their
 catalog definitions. An input marked `connectable: false` takes only a literal:
 both validators refuse a data edge into it as into an input the node does not
-have (Constant's `value`, typed `$type` from `config.type`). Data edges read previously produced values and do not execute
-a producing step. Control edges schedule steps. Value nodes (catalog `pure: true`:
-constant, object, array, object_create, array_create, get_field, entity_field,
-convert, and, or, xor, not, compare, last_error, and any `[Node(Pure = true)]`
-method) take no execution edges; the runtime works out
+have (Constant's `value`, typed `$type` from `config.type`); for a Constant the
+message says that nothing can be connected to it and points to Convert. Data
+edges read previously produced values and do not execute a producing step.
+Control edges schedule steps. Value nodes (catalog `pure: true`: constant,
+object, array, object_create, array_create, get_field, entity_field, convert,
+and, or, xor, not, compare, last_error, and any `[Node(Pure = true)]` method)
+take no execution edges; the runtime works out
 the value nodes a step reads, in post-order and in the step's scope, just before
 that step runs, counting each against the step limit and recording it in the trace
 with `src` set to the value node. A failure is the reading step's failure, named

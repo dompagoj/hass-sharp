@@ -44,7 +44,8 @@ function documentationText(node: Node): string {
   if (node.nodeType !== Node.ELEMENT_NODE) return node.textContent ?? ''
   const element = node as Element
   const reference = element.getAttribute('cref') ?? element.getAttribute('langword') ?? (/^(type)?paramref$/.test(element.tagName) ? element.getAttribute('name') : null)
-  if (reference && !element.textContent) return reference.replace(/^\w:/, '').replace(/^global::/, '').replace(/\(.*$/, '').replace(/`\d+$/, '').split('.').pop() ?? reference
+  // Roslyn writes an unresolved reference as `!:Name`, and a method's generic arity with two backticks (``1).
+  if (reference && !element.textContent) return reference.replace(/^[\w!]:/, '').replace(/^global::/, '').replace(/\(.*$/, '').replace(/`+\d+$/, '').split('.').pop() ?? reference
   return Array.from(element.childNodes).map(documentationText).join('')
 }
 

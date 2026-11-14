@@ -40,9 +40,14 @@ node fails, the step reading it fails (and takes its own Error path). A value no
 that no step reads is a warning.
 
 A Constant gives a value you type: its card and panel show a Type select and an
-editor for a value of that type. Changing the Type keeps the value when it is
-still a value of the new type and clears it otherwise (one undo step). Nothing can
-be connected into a Constant; use Convert to change the type of a connected value.
+editor for a value of that type. Its value must be a value of its Type: a value of
+another type (from a graph saved before the Constant had a Type, say) is shown in
+the Type's editor with a problem until you type it again or change the Type.
+Changing the Type keeps the value when it is still a value of the new type and
+clears it otherwise (one undo step). A Constant takes no connection: it has no
+input pin, and a wire into one from an older graph is a problem whose Remove
+connection action removes it. To change the type of a connected value, use
+Convert.
 
 Inputs can be values you type, explicit unset values, or connected data ports. A
 connection replaces the input's own value. A step's value reaches another step only

@@ -9,6 +9,10 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+if importlib.util.find_spec('homeassistant') is None:
+    # The bridge imports Home Assistant's trigger helpers; run these inside the HA container or a venv with it.
+    raise unittest.SkipTest('Requires Home Assistant (the homeassistant package is not installed)')
+
 spec = importlib.util.spec_from_file_location('native_triggers', Path('custom_components/hass_sharp/native_triggers.py'))
 native = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = native

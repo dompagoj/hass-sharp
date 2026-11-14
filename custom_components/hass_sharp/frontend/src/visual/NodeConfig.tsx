@@ -6,7 +6,7 @@ import { Glyph } from './Glyph'
 import { Errors, focusRow, InputRow, type RowContext } from './InputRow'
 import { ArrayItems, Branches, Declarations, ObjectFields, type StructureContext } from './StructureEditors'
 import { buildNodeView } from './flow/flowModel'
-import { constantTypes, retypeConstant } from './constant'
+import { constantTypeLabels, constantTypes, retypeConstant } from './constant'
 import { RemoveWire } from './RemoveWire'
 import { graphTypes } from './connectionIndex'
 import { customSignature, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
@@ -117,7 +117,9 @@ export function NodeConfig(props: NodeConfigProps) {
     const types = () => field.rule.enumSource === 'types' || field.name === 'type' || field.name === 'itemType'
     // A Constant offers only the types a value can be typed in for; a Convert or a loop any type.
     const options = () => (field.rule.enumSource === 'types' ? (kind() === 'constant' && field.name === 'type' ? constantTypes(props.catalog) : Object.keys(props.catalog.types)) : (field.rule.enum ?? []).map(String))
-    const optionLabel = (option: string) => (types() ? typeLabel(option, props.catalog) : field.name === 'operator' ? operators[option] ?? option : words.key(option))
+    // A Constant's Type list names no two entries alike ("Number (int)" beside Number).
+    const constantLabels = createMemo(() => (kind() === 'constant' && field.name === 'type' ? constantTypeLabels(props.catalog, typeof value() === 'string' ? (value() as string) : undefined) : undefined))
+    const optionLabel = (option: string) => (types() ? constantLabels()?.get(option) ?? typeLabel(option, props.catalog) : field.name === 'operator' ? operators[option] ?? option : words.key(option))
     const number = () => field.rule.type === 'integer' || field.rule.type === 'number'
     const entityIds = () => { const entity = props.node.config.entity; return record(entity) && entity.kind === 'literal' && typeof entity.value === 'string' ? [entity.value] : [] }
     return (
@@ -155,7 +157,7 @@ export function NodeConfig(props: NodeConfigProps) {
               else set(field.name, next)
             }}>
             <Show when={value() === undefined || !options().includes(String(value()))}>
-              <option value="" selected>{value() === undefined ? 'Not set' : types() ? typeLabel(String(value()), props.catalog) : String(value())}</option>
+              <option value="" selected>{value() === undefined ? 'Not set' : types() ? optionLabel(String(value())) : String(value())}</option>
             </Show>
             <For each={options()}>{option => <option value={option} selected={String(value()) === option}>{optionLabel(option)}</option>}</For>
           </select>

@@ -144,7 +144,7 @@ public static class ServiceNodeTests
 
                 var preview = await Visual(manager, new { operation = "preview", graph });
                 Check(preview["ok"]!.GetValue<bool>() && !preview["result"]!["valid"]!.GetValue<bool>()
-                    && preview["result"]!["diagnostics"]!.AsArray().Any(d => d!["message"]!.GetValue<string>() == "light.turn_on has no field glow" && d["inputId"]?.GetValue<string>() == "field:glow"),
+                    && preview["result"]!["diagnostics"]!.AsArray().Any(d => d!["message"]!.GetValue<string>() == "Turn on (light.turn_on) has no field glow" && d["inputId"]?.GetValue<string>() == "field:glow"),
                     "authoring preview reports the unknown field: " + preview.ToJsonString());
 
                 var library = JsonNode.Parse(await manager.NodeLibraryRequest(JsonSerializer.Serialize(new

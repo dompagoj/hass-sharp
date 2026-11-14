@@ -114,7 +114,7 @@ public static class VisualGraphValidator
         internal const string ExposedValue = "Steps no longer expose values to C# by name; connect a wire from this step to each step that uses its value";
         internal static string Variable(string subject) => $"{subject} reads a variable, and variables are gone; connect a wire to it instead";
         internal const string EntitiesExpression = "Entities expression is gone; choose the entity in Entity";
-        internal const string SchedulesExpression = "Schedules expression is gone; set the time in Time";
+        internal const string SchedulesExpression = "Schedules expression is gone; set the time in Time of day";
         /// <summary>A name or id quoted as written, without surrounding whitespace; <c>Unnamed</c> when nothing is left.</summary>
         internal static string Name(string name) => Trimmed(name) is { Length: > 0 } trimmed ? trimmed : "Unnamed";
         /// <summary>JavaScript's whitespace (as <c>String.prototype.trim</c> removes it), spelled out: .NET's differs at U+FEFF.</summary>
@@ -128,7 +128,7 @@ public static class VisualGraphValidator
         }
         /// <summary>A time of day as the daily trigger runs it: 24-hour HH:MM.</summary>
         internal const string TimeOfDay = "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$";
-        internal static string TimeOfDayMessage(string label) => $"{label} must be a time of day as HH:MM, from 00:00 to 23:59";
+        internal static string TimeOfDayMessage(string label) => $"{label} must be HH:MM in 24-hour time, from 00:00 to 23:59";
         /// <summary>A daily trigger's time zone that this machine does not know (the generator checks it, not the validators).</summary>
         internal static string UnknownTimeZone(string zone) => $"Time zone {Name(zone)} is not known; use a name such as Europe/Zagreb or UTC";
         /// <summary>A Get field path with a ~ that is not ~0 or ~1.</summary>
@@ -236,6 +236,11 @@ public static class VisualGraphValidator
             return Text(spec, "label") is { Length: > 0 } label && label != key && label.Trim().Length > 0 ? label : KeyWords(key);
         }
         /// <summary>A type mismatch: the accepted types (named, at most four) and the one given, unless that is unknown.</summary>
+        /// <summary>A wire into a Constant: it takes a typed-in value only, and Convert is the step that changes a value's type.</summary>
+        internal const string IntoConstant = "Nothing can be connected to a Constant; remove this connection, or use Convert to change a value's type";
+        /// <summary>A Constant whose stored value is of another type than its Type (a graph from before the Type set it): how to repair it.</summary>
+        internal static string ConstantRetyped(JsonObject catalog, string label, string type, string expected) =>
+            $"{label} is {TypeLabel(catalog, type)}, but this Constant's Type is {TypeLabel(catalog, expected)}; type the value again, or change Type";
         internal static string Incompatible(JsonObject catalog, string subject, string type, IEnumerable<string> expected)
         {
             if (VisualTypes.Chain(catalog, type).Count == 0) return $"{subject} is connected to a value of unknown type";
@@ -278,9 +283,12 @@ public static class VisualGraphValidator
         }
         /// <summary>The service a service node calls, named in its messages; null for other nodes or without a service id.</summary>
         string? ServiceName(JsonObject node) => Text(Spec(node), "dynamicInputs") == "service" && Text(Config(node), "service") is { Length: > 0 } service ? service : null;
-        string Prefix(JsonObject node) => ServiceName(node) is { } service ? service + ": " : "";
-        /// <summary>A service as people know it: its name where the services section describes it, else its id.</summary>
-        string ServiceTitle(string service) => snapshot.Services?.Items[service] is JsonObject schema ? Words.ServiceName(schema, service) : service;
+        string Prefix(JsonObject node) => ServiceName(node) is { } service ? ServiceTitle(service) + ": " : "";
+        /// <summary>
+        /// A service as every message names it: its name and then its id in brackets where the services section
+        /// describes it ("Turn on (light.turn_on)"), else its id alone.
+        /// </summary>
+        string ServiceTitle(string service) => snapshot.Services?.Items[service] is JsonObject schema ? $"{Words.ServiceName(schema, service)} ({service})" : service;
         /// <summary>
         /// The message for a wire into a service's target that brings an entity of a domain the service does not take,
         /// worded as the value case is; null for any other mismatch.
@@ -404,7 +412,7 @@ public static class VisualGraphValidator
                 var sp = Text(edge, "sourcePort"); var tp = Text(edge, "targetPort");
                 var output = DataOutputs(source)[sp]; var input = Connectable(DataInputs(target, Owner(target))[tp]);
                 if (output == null) Error(Id(source), "Unknown data output port", port: sp, code: "port.unknownOutput");
-                if (input == null) Error(Id(target), $"This value wire goes into {Words.PortLabel(null, tp)}, which this step does not have", tp, tp, "port.unknownInput");
+                if (input == null) Error(Id(target), Kind(target) == "constant" && tp == "value" ? Words.IntoConstant : $"This value wire goes into {Words.PortLabel(null, tp)}, which this step does not have", tp, tp, "port.unknownInput");
                 if (!incoming.TryAdd((Id(target), tp), edge)) Error(Id(target), "Only one data source per input", tp, tp, "port.inputTaken");
                 if (output != null && input != null)
                 {
@@ -505,7 +513,8 @@ public static class VisualGraphValidator
             }
             else Error(Id(node), $"{subject} has an invalid value", port);
             // An input that accepts no known type (a Constant whose Type is missing or unknown) is reported where that type is set.
-            if (type != null && KnownType(type) && Strings(spec["types"]).Any(KnownType) && !Strings(spec["types"]).Any(t => CompatibleTypes(type, t))) Error(Id(node), Words.Incompatible(Root, subject, type, Strings(spec["types"])), port);
+            if (type != null && KnownType(type) && Strings(spec["types"]).Any(KnownType) && !Strings(spec["types"]).Any(t => CompatibleTypes(type, t)))
+                Error(Id(node), Kind(node) == "constant" && port == "value" ? Words.ConstantRetyped(Root, label, type, Strings(spec["types"]).First(KnownType)) : Words.Incompatible(Root, subject, type, Strings(spec["types"])), port);
             return type;
         }
         readonly Dictionary<(string Node, string Terminal, string Owner), bool> terminalMemo = [];
@@ -534,12 +543,12 @@ public static class VisualGraphValidator
             if (services.Items[service] is not JsonObject schema) { errors.Add(new(id, $"{service} is not available in this Home Assistant, so its fields cannot be checked", 2, InputId: "service")); return; }
             var known = schema["fields"] as JsonObject ?? [];
             var fields = cfg["fields"] as JsonObject ?? [];
-            foreach (var (key, _) in fields) if (!known.ContainsKey(key)) Error(id, $"{service} has no field {Words.Name(key)}", "field:" + key);
+            foreach (var (key, _) in fields) if (!known.ContainsKey(key)) Error(id, $"{ServiceTitle(service)} has no field {Words.Name(key)}", "field:" + key);
             foreach (var (key, field) in known) if (Bool(field, "required") && !fields.ContainsKey(key)) Error(id, $"{ServiceTitle(service)} needs {Words.PortLabel(field, key)}", "fields");
             var wired = incoming.ContainsKey((id, "target"));
             var response = Text(schema, "response", "none"); var returnResponse = Bool(cfg, "returnResponse");
-            if (returnResponse && response == "none") Error(id, $"{service} returns no response; turn off Return response", "returnResponse");
-            if (!returnResponse && response == "only") Error(id, $"{service} only returns a response; turn on Return response", "returnResponse");
+            if (returnResponse && response == "none") Error(id, $"{ServiceTitle(service)} returns no response; turn off Return response", "returnResponse");
+            if (!returnResponse && response == "only") Error(id, $"{ServiceTitle(service)} only returns a response; turn on Return response", "returnResponse");
             // A target value object is checked by its entity_id domains; device, area, floor and label ids are not.
             var domains = ServiceTargetDomains(schema);
             if (domains.Length == 0 || wired || cfg["target"] is not JsonObject operand || Text(operand, "kind") != "literal" || operand["value"] is not JsonObject value) return;
@@ -561,11 +570,11 @@ public static class VisualGraphValidator
             var targetSet = wired || cfg["target"] is JsonObject set && Text(set, "kind") != "unset";
             if (snapshot.Services is { } services && ServiceName(node) is { } named && Match(named, Text(spec["config"]?["service"], "pattern")) &&
                 services.Items[named] is JsonObject schema && schema["target"] is not JsonObject && targetSet)
-                Error(id, $"{named} does not take a target", "target");
+                Error(id, $"{ServiceTitle(named)} does not take a target", "target");
             if (!targetSet) return;
             if (!wired && cfg["target"] is JsonObject operand && Text(operand, "kind") == "literal" && operand["value"] is JsonObject value)
                 foreach (var (key, _) in value) if (!TargetKeys.Contains(key)) Error(id, TargetKeyMessage(key), "target");
-            var service = ServiceName(node) ?? "This service";
+            var service = ServiceName(node) is { } serviceId ? ServiceTitle(serviceId) : "This service";
             if (cfg["fields"] is JsonObject fields)
                 foreach (var (key, _) in fields) if (TargetKeys.Contains(key)) Error(id, $"{service} has a target, so it cannot also have a field named {key}", "target");
         }

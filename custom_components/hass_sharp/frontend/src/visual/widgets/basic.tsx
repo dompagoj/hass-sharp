@@ -11,13 +11,27 @@ const items = (value: JsonValue | undefined): JsonValue[] => Array.isArray(value
 /** The decimal keypad has no minus sign on some phones; offer it only when values cannot be negative. */
 const decimalMode = (min: number | undefined) => min !== undefined && min >= 0 ? 'decimal' as const : undefined
 
+/** A yes/no stored as text ("true", "False", any case), as a Constant's value from before its Type set the value's type. */
+const yesNo = (text: string) => /^(true|false)$/i.test(text.trim()) ? text.trim().toLowerCase() === 'true' : undefined
 export function ToggleWidget(props: WidgetProps) {
-  return <span class="hs-widget-row">
+  // A stored value that is not yes/no (see `stale`) is shown as typed, to be typed again as true or false: the switch
+  // could only show it as No, and flipping it twice to store it would be two changes.
+  return <Show when={props.stale} fallback={<span class="hs-widget-row">
     <input id={props.id} type="checkbox" role="switch" class="hs-switch" aria-label={props.label} checked={props.value === true}
       aria-describedby={props.describedBy} aria-invalid={props.invalid || undefined} disabled={props.disabled}
       onChange={event => props.commit(event.currentTarget.checked)} />
     <span class="hs-muted">{props.value === undefined ? 'Not set' : props.value === true ? 'Yes' : 'No'}</span>
-  </span>
+  </span>}>
+    <span class="hs-widget-row">
+      <DraftField id={props.id} label={props.label} text={displayValue(props.value)} placeholder="true or false" describedBy={props.describedBy} invalid={props.invalid}
+        disabled={props.disabled} force initialError={yesNo(displayValue(props.value)) === undefined ? 'Enter true or false.' : undefined}
+        commit={text => {
+          const value = yesNo(text)
+          if (value === undefined) return 'Enter true or false.'
+          props.commit(value)
+        }} />
+    </span>
+  </Show>
 }
 
 /** A constant selector: the only allowed value is either included or the input is left not set. */

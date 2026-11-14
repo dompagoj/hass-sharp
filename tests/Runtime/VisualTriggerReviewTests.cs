@@ -68,7 +68,7 @@ public static class VisualTriggerReviewTests
                 foreach (var time in new[] { "07:30:00", "7:30", "24:00", "07:30\n", "noon", "" })
                 {
                     var preview = Daily(time, "UTC");
-                    var expected = time == "" ? "Time is required" : "Time must be a time of day as HH:MM, from 00:00 to 23:59";
+                    var expected = time == "" ? "Time of day is required" : "Time of day must be HH:MM in 24-hour time, from 00:00 to 23:59";
                     if (preview.Valid || !preview.Diagnostics.Any(d => d.Severity == 3 && d.NodeId == "t" && d.InputId == "time" && d.Message.Contains(expected)))
                         throw new Exception($"Daily time {JsonValue.Create(time).ToJsonString()} must be refused on its input: " + string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
                 }

@@ -175,7 +175,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     const output = dataOutputs(source, catalog)[sourcePort]
     const input = connectable(dataInputs(target, analysis.ownerOf(target), catalog)[targetPort])
     if (!output) messages.add('Unknown data output port')
-    if (!input) messages.add(words.unknownInput(targetPort))
+    if (!input) messages.add(words.unknownInput(targetPort, target.kind))
     if (output && input) {
       if (!input.types.some(t => index.assignable(output.type, t))) messages.add(incompatibleInput(target, input, targetPort, output.type, catalog))
       if (analysis.scopes.has(sourceId) && analysis.scopes.has(targetId) && !analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))

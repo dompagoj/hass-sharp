@@ -1,0 +1,4 @@
+{
+  "_comment": "The new-library template the Node library page starts a file with (library-session.ts libraryTemplate); the frontend test keeps it equal to this text, and the runtime test compiles it.",
+  "source": "/// <summary>Reusable nodes.</summary>\npublic static class Nodes\n{\n    /// <summary>Create a reusable node.</summary>\n    /// <param name=\"text\">The input text.</param>\n    /// <returns>The resulting text.</returns>\n    [Node(\"My node\", Category = \"Custom\")]\n    public static string MyNode([Port(\"Text\")] string text) => text;\n}"
+}

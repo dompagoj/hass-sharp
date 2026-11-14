@@ -105,3 +105,24 @@ it('removes a wire into a missing pin from its problem, in the Problems list and
   expect(after.edges.find(e => e.id === 'into-constant')).toEqual(wired().edges.find(e => e.id === 'into-constant'))
   await vi.waitFor(() => expect(byLabel(drawer, LABEL)).toBeDefined())
 })
+
+it('shows a Constant with a wire into it as a problem on its card and in its panel, never as connected', async () => {
+  const host = mount(wired())
+  const card = () => host.querySelector('[data-id="c"]')!
+  await vi.waitFor(() => expect(card()).not.toBeNull())
+  // No source chip: the wire does not work. The value's editor stays, holding the value, with the validator's message.
+  expect(card().querySelector('.hs-source-chip')).toBeNull()
+  // Its summary is its value, not the wire's source ("entity").
+  await vi.waitFor(() => expect(card().querySelector('.hs-card__summary')?.textContent).toBe('\u201chello\u201d'))
+  const field = () => card().querySelector<HTMLInputElement>('.hs-card-editor input[aria-label="Value"]')
+  await vi.waitFor(() => expect(field()?.value).toBe('hello'))
+  const badge = card().querySelector('.hs-card__badge')!
+  expect(badge.classList.contains('hs-card__badge--warning')).toBe(false)
+  expect(badge.getAttribute('title')).toContain('Nothing can be connected to a Constant')
+  // The row itself is marked: its editor carries the message, as for any value with an error.
+  expect(card().querySelector('[data-input-id="value"]')!.textContent).toContain('Nothing can be connected to a Constant')
+  // The panel does not offer to select the wire's source either.
+  card().querySelector<HTMLElement>('.hs-card__title')!.click()
+  await vi.waitFor(() => expect(host.querySelector('.hs-inspector [data-input-id="value"] input[aria-label="Value"]')).not.toBeNull())
+  expect(host.querySelector('.hs-inspector [data-input-id="value"] .hs-insp-pill')).toBeNull()
+})

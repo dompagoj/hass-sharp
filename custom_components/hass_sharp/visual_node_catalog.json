@@ -197,7 +197,7 @@
         "time": {
           "type": "string",
           "description": "The time of day to run, as HH:mm in 24-hour time, such as 07:30.",
-          "label": "Time"
+          "label": "Time of day"
         },
         "timeZone": {
           "type": "string",

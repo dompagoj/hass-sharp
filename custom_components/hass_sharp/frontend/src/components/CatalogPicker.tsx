@@ -82,7 +82,9 @@ export function CatalogPicker(props: CatalogPickerProps) {
   const manual = () => search().trim()
   const manualId = () => manual() && /^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/.test(manual()) ? manual() : undefined
   const rejected = () => manualId() ? props.manualError?.(manualId()!) : undefined
-  const removable = () => !!props.multiple && !!manualId() && values().includes(manual())
+  // An ID the list offers is chosen (or removed) through its own option, so the footer offers nothing for it.
+  const listed = () => !!manualId() && offered().some(item => item.id === manual())
+  const removable = () => !!props.multiple && !!manualId() && !listed() && values().includes(manual())
   const keyboard = (event: KeyboardEvent) => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
@@ -109,7 +111,7 @@ export function CatalogPicker(props: CatalogPickerProps) {
       <Button onClick={() => setOpen(false)}>{props.multiple ? 'Done' : 'Cancel'}</Button>
       <Show when={props.clearLabel}><Button onClick={() => props.multiple ? props.onChangeValues?.([]) : choose('')}>{props.clearLabel}</Button></Show>
       {/* A selected ID that is not in the list (a typo, a removed entity) is never a result: typing it is the way to remove it. */}
-      <Show when={manualId() && (removable() || !rejected())}>
+      <Show when={manualId() && !listed() && (removable() || !rejected())}>
         <Button onClick={() => choose(manual())}>{removable() ? 'Remove ID' : props.multiple ? 'Add ID' : 'Use ID'}: {manual()}</Button>
       </Show>
     </>}>

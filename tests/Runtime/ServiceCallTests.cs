@@ -560,6 +560,14 @@ static class ServiceCallTests
         await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(10));
     }
 
+    /// <summary>Removes a test's directory, trying again for a while when a file is still being written into it.</summary>
+    static async Task DeleteWhenQuiet(string root)
+    {
+        for (var attempt = 0; ; attempt++)
+            try { Directory.Delete(root, true); return; }
+            catch (IOException) when (attempt < 50) { await Task.Delay(20); }
+    }
+
     // A schema change while an automation compiled against the previous assembly is loaded: it keeps running and its
     // next call works; an automation saved afterwards uses the new assembly.
     static async Task SwappedWhileRunning()
@@ -596,7 +604,9 @@ static class ServiceCallTests
             Check(fresh["result"]?["active"]?.GetValue<bool>() == true && Referenced(VisualTests.Loaded(api, "new")!) == after, "a newly saved automation does not use the new assembly: " + fresh.ToJsonString());
             await RunAndWait("new", "extra.thing");
         }
-        finally { await api.UnloadAsync(); Directory.Delete(root, true); }
+        // The last run records its end in the run history (runs.db) as it finishes, which can be just after the unload
+        // returns: the directory is removed once that write is done.
+        finally { await api.UnloadAsync(); await DeleteWhenQuiet(root); }
         Console.WriteLine("PASS service calls: a schema change leaves a loaded automation on the assembly it was compiled against, still calling; a new save uses the new one");
     }
 
@@ -646,6 +656,21 @@ static class ServiceCallTests
             var nativePreview = await Visual(new { operation = "preview", graph = native });
             Check(nativePreview["result"]!["valid"]!.GetValue<bool>() && Unknown(nativePreview["result"]!["diagnostics"]).SequenceEqual(
                 ["n/trigger/2: Home Assistant has no entity binary_sensor.motoin. Check the spelling: a trigger on it never fires."]), "native trigger preview: " + nativePreview.ToJsonString());
+            // Read as Home Assistant reads them: a text is a comma-separated list, ids are trimmed and lower-cased, a
+            // template is left alone, and a purpose-specific trigger's target.entity_id counts too.
+            foreach (var (entityId, target, expect) in new (string, string?, string[])[] {
+                ("\"binary_sensor.door, Binary_Sensor.DOOR\"", null, []),
+                ("\"binary_sensor.door,binary_sensor.motoin\"", null, ["n/trigger/2: Home Assistant has no entity binary_sensor.motoin. Check the spelling: a trigger on it never fires."]),
+                ("\"{{ 'binary_sensor.' ~ states('input_text.which') }}\"", null, []),
+                ("\"binary_sensor.door\"", "\"BINARY_SENSOR.Door, binary_sensor.gone\"", ["n/trigger/2: Home Assistant has no entity binary_sensor.gone. Check the spelling: a trigger on it never fires."]),
+                ("[\"binary_sensor.door\"]", "[\"binary_sensor.door\", \"sensor.known\"]", []),
+            })
+            {
+                var config = JsonNode.Parse("{\"trigger\":\"state\",\"entity_id\":" + entityId + (target == null ? "" : ",\"target\":{\"entity_id\":" + target + "}") + "}")!;
+                native["nodes"]![0]!["config"]!["trigger"] = config;
+                var read = await Visual(new { operation = "preview", graph = native });
+                Check(read["result"]!["valid"]!.GetValue<bool>() && Unknown(read["result"]!["diagnostics"]).SequenceEqual(expect), $"native trigger {config.ToJsonString()}: " + read.ToJsonString());
+            }
             // Spelled right, no warning.
             graph["nodes"]![0]!["config"]!["entity"] = "binary_sensor.door";
             var fixedPreview = await Visual(new { operation = "preview", graph });
@@ -662,7 +687,7 @@ static class ServiceCallTests
             Check(VisualTests.Loaded(api, "typos") != null && (await Visual(new { operation = "read", id = "typos" }))["result"]!["activationError"] == null && asked == 0, $"Init: asked {asked}");
         }
         finally { await api.UnloadAsync(); PyInterop.SubscribeToEntityTracking = subscribe; Directory.Delete(root, true); }
-        Console.WriteLine("PASS service calls: an entity Home Assistant does not have (in an entity input, an entity trigger or a Home Assistant trigger) is a warning on preview and save (and MCP preview), never an error, not at Init or without a lookup");
+        Console.WriteLine("PASS service calls: an entity Home Assistant does not have (in an entity input, an entity trigger or a Home Assistant trigger, its ids read as Home Assistant reads them) is a warning on preview and save (and MCP preview), never an error, not at Init or without a lookup");
     }
 
     // An automation that did not load because its service was dropped loads when a push brings the service back.

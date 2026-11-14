@@ -3,6 +3,7 @@ import { createRoot } from 'solid-js'
 import { createLibrarySession } from '../src/visual/library-session'
 import { libraryApi } from '../src/visual/library-api'
 import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
+import template from '../../../../tests/fixtures/node-library-template.json'
 const doc = (id = 'shared', source = rich.source, revision = 1) => ({ version: 1 as const, id, name: `${id}.cs`, source, revision })
 const preview = (r: any) => ({ ...r, saved: false, sourceGeneration: `draft-${r.workspaceVersion}`, data: { valid: true, catalog: rich.catalog, diagnostics: [] } })
 let dispose: () => void
@@ -197,4 +198,6 @@ it('starts a new file from a template the compiler has no warning about (its cla
   const { libraryTemplate } = await import('../src/visual/library-session')
   // An undocumented public class is warning CS1591 in the workspace diagnostics of every new file.
   expect(libraryTemplate).toMatch(/^\/\/\/ <summary>[^<]+<\/summary>\npublic static class Nodes/)
+  // The runtime suite compiles this same text (tests/fixtures/node-library-template.json) and expects no diagnostic.
+  expect(libraryTemplate).toBe(template.source)
 })

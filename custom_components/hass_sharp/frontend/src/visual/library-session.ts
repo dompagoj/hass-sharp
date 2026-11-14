@@ -120,7 +120,8 @@ export function createLibrarySession(api: LibraryApi) {
   const remove = async () => {
     const f = selected(); if (!f || saving()) return
     if (!f.revision) { setFiles(list => list.filter(d => d.id !== f.id)); setSelectedId(files()[0]?.id); invalidate(); return }
-    ++loadRequest; setSaving(true); setError(undefined)
+    // The previous save's results are dropped, as a save drops them: they would read as this delete's.
+    ++loadRequest; setSaving(true); setError(undefined); setActivations([]); setNotRebuilt([])
     try {
       const result = await api.delete(f.id, f.revision)
       if (disposed) return

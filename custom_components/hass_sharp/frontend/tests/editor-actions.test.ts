@@ -275,6 +275,13 @@ describe('Library workspace language services', () => {
     const signature = await signatures[0].provideSignatureHelp(editor.model, position, noCancellation, {})
     expect(signature.value.signatures[0].documentation.value).toBe('Turn on light.\n\ntarget: An entity id, or a ServiceTarget for areas; null for none. See target.')
   })
+  it("names a generic method's reference and an unresolved one by their plain names", async () => {
+    const { signatures } = await import('./fake-monaco')
+    const documentation = '<summary>Like <see cref="M:global::HassSharp.Values.Convert``1(System.Object)"/>, or <see cref="!:MissingHelper"/>, or <see cref="T:System.Collections.Generic.List`1"/>.</summary>'
+    const { editor } = librarySetup(r => r.operation === 'signature' ? { signatures: [{ label: 'Run()', documentation, parameters: [] }], activeSignature: 0, activeParameter: 0 } : { diagnostics: [], valid: true })
+    const signature = await signatures[0].provideSignatureHelp(editor.model, position, noCancellation, {})
+    expect(signature.value.signatures[0].documentation.value).toBe('Like Convert, or MissingHelper, or List.')
+  })
   it('maps source-based hover ranges to Monaco without exposing XML signature markup', async () => {
     const { editor } = librarySetup(r => r.operation === 'hover' ? { text: 'string State', range: { start: 0, length: 3, startLine: 1, startColumn: 1, endLine: 1, endColumn: 4 } } : { diagnostics: [], valid: true })
     const hover = await hovers[0].provideHover(editor.model, position, noCancellation)

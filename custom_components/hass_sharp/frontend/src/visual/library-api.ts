@@ -21,20 +21,21 @@ export interface LibraryActivation { id: string; saved: true; document: VisualDo
 /** An automation a library save did not rebuild, because it already had errors; `message` says whether it still runs. */
 export interface LibraryNotRebuilt { id: string; name?: string | null; running: boolean; message: string }
 export interface LibraryMutation { saved: true; document: LibraryDocument | null; deleted: boolean; generation: string; catalog: VisualCatalogSnapshot; automations: LibraryActivation[]; invalid?: LibraryNotRebuilt[] }
-/** A refused save names the automations it would break, by the names people know them by. */
-const refusal = (detail: unknown) => {
+/** A refused save or delete names the automations it would break, by the names people know them by, and says which it was. */
+const refusal = (detail: unknown, operation?: string) => {
   const names = ((detail as LibraryValidationDetail | null)?.automations ?? []).map(a => a.name || a.id)
-  return names.length ? `Saving would break ${names.join(', ')}. Fix the library or ${names.length === 1 ? 'that automation' : 'those automations'} first; Workspace diagnostics says what is wrong.`
-    : 'Fix library or dependent automation errors before saving.'
+  const deleting = operation === 'delete'
+  return names.length ? `${deleting ? 'Deleting this library' : 'Saving'} would break ${names.join(', ')}. ${deleting ? 'Change' : 'Fix the library or'} ${names.length === 1 ? 'that automation' : 'those automations'} first; Workspace diagnostics says what is wrong.`
+    : deleting ? 'Fix dependent automation errors before deleting this library.' : 'Fix library or dependent automation errors before saving.'
 }
 export class LibraryApiError extends Error {
-  constructor(public code: string, public detail: unknown) { super(typeof detail === 'string' ? detail : code === 'validation' ? refusal(detail) : `Node library request failed (${code}).`) }
+  constructor(public code: string, public detail: unknown, operation?: string) { super(typeof detail === 'string' ? detail : code === 'validation' ? refusal(detail, operation) : `Node library request failed (${code}).`) }
 }
 type Envelope<T> = { version: 1; ok: true; result: T } | { version: 1; ok: false; error: { code: string; detail: unknown } }
 export function libraryApi(hass: Pick<HomeAssistant, 'callWS'>) {
   const request = async <T>(operation: string, fields = {}): Promise<T> => {
     const response = await hass.callWS<Envelope<T>>({ type: 'hass_sharp/node_library', request: { operation, ...fields } })
-    if (!response.ok) throw new LibraryApiError(response.error.code, response.error.detail)
+    if (!response.ok) throw new LibraryApiError(response.error.code, response.error.detail, operation)
     return response.result
   }
   const language = <T>(operation: string, context: LibraryContext, position = 0) => request<LibraryReply<T>>(operation, { ...context, position })

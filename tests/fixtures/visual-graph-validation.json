@@ -7673,9 +7673,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:glow",
-    "contains": "light.turn_on has no field glow",
+    "contains": "Turn on (light.turn_on) has no field glow",
     "messages": [
-      "light.turn_on has no field glow"
+      "Turn on (light.turn_on) has no field glow"
     ]
   },
   {
@@ -7713,9 +7713,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "fields",
-    "contains": "Notify needs Message",
+    "contains": "Notify (notify.notify) needs Message",
     "messages": [
-      "Notify needs Message"
+      "Notify (notify.notify) needs Message"
     ]
   },
   {
@@ -7757,9 +7757,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:message",
-    "contains": "Notify needs Message",
+    "contains": "Notify (notify.notify) needs Message",
     "messages": [
-      "Notify needs Message"
+      "Notify (notify.notify) needs Message"
     ]
   },
   {
@@ -7810,9 +7810,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:brightness_pct",
-    "contains": "light.turn_on: Brightness accepts Number, not Text",
+    "contains": "Turn on (light.turn_on): Brightness accepts Number, not Text",
     "messages": [
-      "light.turn_on: Brightness accepts Number, not Text"
+      "Turn on (light.turn_on): Brightness accepts Number, not Text"
     ]
   },
   {
@@ -7865,7 +7865,7 @@
     "inputId": "field:brightness_pct",
     "contains": "between 0 and 100",
     "messages": [
-      "light.turn_on: Brightness must be between 0 and 100"
+      "Turn on (light.turn_on): Brightness must be between 0 and 100"
     ]
   },
   {
@@ -7916,9 +7916,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:type",
-    "contains": "weather.get_forecasts: Type must be one of Daily, Hourly or Twice daily",
+    "contains": "Get forecasts (weather.get_forecasts): Type must be one of Daily, Hourly or Twice daily",
     "messages": [
-      "weather.get_forecasts: Type must be one of Daily, Hourly or Twice daily"
+      "Get forecasts (weather.get_forecasts): Type must be one of Daily, Hourly or Twice daily"
     ]
   },
   {
@@ -7979,9 +7979,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "Turn on only accepts light entities; the connected value is a switch entity",
+    "contains": "Turn on (light.turn_on) only accepts light entities; the connected value is a switch entity",
     "messages": [
-      "Turn on only accepts light entities; the connected value is a switch entity"
+      "Turn on (light.turn_on) only accepts light entities; the connected value is a switch entity"
     ]
   },
   {
@@ -8081,9 +8081,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "light.turn_on: Target accepts Target or Light entity, not Switch entity",
+    "contains": "Turn on (light.turn_on): Target accepts Target or Light entity, not Switch entity",
     "messages": [
-      "light.turn_on: Target accepts Target or Light entity, not Switch entity"
+      "Turn on (light.turn_on): Target accepts Target or Light entity, not Switch entity"
     ]
   },
   {
@@ -8167,9 +8167,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "Set hvac mode only accepts climate entities; light.hall is not one",
+    "contains": "Set hvac mode (climate.set_hvac_mode) only accepts climate entities; light.hall is not one",
     "messages": [
-      "Set hvac mode only accepts climate entities; light.hall is not one"
+      "Set hvac mode (climate.set_hvac_mode) only accepts climate entities; light.hall is not one"
     ]
   },
   {
@@ -8217,9 +8217,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "Set hvac mode only accepts climate entities; light.hall is not one",
+    "contains": "Set hvac mode (climate.set_hvac_mode) only accepts climate entities; light.hall is not one",
     "messages": [
-      "Set hvac mode only accepts climate entities; light.hall is not one"
+      "Set hvac mode (climate.set_hvac_mode) only accepts climate entities; light.hall is not one"
     ]
   },
   {
@@ -8359,9 +8359,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "notify.notify does not take a target",
+    "contains": "Notify (notify.notify) does not take a target",
     "messages": [
-      "notify.notify does not take a target"
+      "Notify (notify.notify) does not take a target"
     ]
   },
   {
@@ -8464,7 +8464,7 @@
     "inputId": "target",
     "contains": "does not take a target",
     "messages": [
-      "notify.notify does not take a target"
+      "Notify (notify.notify) does not take a target"
     ]
   },
   {
@@ -8509,9 +8509,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "returnResponse",
-    "contains": "light.turn_on returns no response; turn off Return response",
+    "contains": "Turn on (light.turn_on) returns no response; turn off Return response",
     "messages": [
-      "light.turn_on returns no response; turn off Return response"
+      "Turn on (light.turn_on) returns no response; turn off Return response"
     ]
   },
   {
@@ -8562,9 +8562,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "returnResponse",
-    "contains": "weather.get_forecasts only returns a response; turn on Return response",
+    "contains": "Get forecasts (weather.get_forecasts) only returns a response; turn on Return response",
     "messages": [
-      "weather.get_forecasts only returns a response; turn on Return response"
+      "Get forecasts (weather.get_forecasts) only returns a response; turn on Return response"
     ]
   },
   {
@@ -8974,9 +8974,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:status",
-    "contains": "todo.get_items: Status may only contain Needs action or Completed",
+    "contains": "Get to-do list items (todo.get_items): Status may only contain Needs action or Completed",
     "messages": [
-      "todo.get_items: Status may only contain Needs action or Completed"
+      "Get to-do list items (todo.get_items): Status may only contain Needs action or Completed"
     ]
   },
   {
@@ -9228,9 +9228,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "notify.notify does not take a target",
+    "contains": "Notify (notify.notify) does not take a target",
     "messages": [
-      "notify.notify does not take a target"
+      "Notify (notify.notify) does not take a target"
     ]
   },
   {
@@ -9460,9 +9460,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:time_of_day",
-    "contains": "hass_sharp_test.selectors: Time of day is not in the expected format",
+    "contains": "Selectors (hass_sharp_test.selectors): Time of day is not in the expected format",
     "messages": [
-      "hass_sharp_test.selectors: Time of day is not in the expected format"
+      "Selectors (hass_sharp_test.selectors): Time of day is not in the expected format"
     ]
   },
   {
@@ -9553,9 +9553,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:time_of_day",
-    "contains": "hass_sharp_test.selectors: Time of day is not in the expected format",
+    "contains": "Selectors (hass_sharp_test.selectors): Time of day is not in the expected format",
     "messages": [
-      "hass_sharp_test.selectors: Time of day is not in the expected format"
+      "Selectors (hass_sharp_test.selectors): Time of day is not in the expected format"
     ]
   },
   {
@@ -9939,9 +9939,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "Set hvac mode only accepts climate entities; switch.kitchen is not one",
+    "contains": "Set hvac mode (climate.set_hvac_mode) only accepts climate entities; switch.kitchen is not one",
     "messages": [
-      "Set hvac mode only accepts climate entities; switch.kitchen is not one"
+      "Set hvac mode (climate.set_hvac_mode) only accepts climate entities; switch.kitchen is not one"
     ]
   },
   {
@@ -9992,9 +9992,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "Set hvac mode only accepts climate entities; kitchen is not an entity",
+    "contains": "Set hvac mode (climate.set_hvac_mode) only accepts climate entities; kitchen is not an entity",
     "messages": [
-      "Set hvac mode only accepts climate entities; kitchen is not an entity"
+      "Set hvac mode (climate.set_hvac_mode) only accepts climate entities; kitchen is not an entity"
     ]
   },
   {
@@ -10041,9 +10041,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:light",
-    "contains": "hass_sharp_test.selectors: Light accepts Light entity, not Switch entity",
+    "contains": "Selectors (hass_sharp_test.selectors): Light accepts Light entity, not Switch entity",
     "messages": [
-      "hass_sharp_test.selectors: Light accepts Light entity, not Switch entity"
+      "Selectors (hass_sharp_test.selectors): Light accepts Light entity, not Switch entity"
     ]
   },
   {
@@ -10165,9 +10165,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:brightness_pct",
-    "contains": "light.turn_on: Brightness must be between 0 and 100",
+    "contains": "Turn on (light.turn_on): Brightness must be between 0 and 100",
     "messages": [
-      "light.turn_on: Brightness must be between 0 and 100"
+      "Turn on (light.turn_on): Brightness must be between 0 and 100"
     ]
   },
   {
@@ -10694,9 +10694,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:pair",
-    "contains": "hass_sharp_test.selectors: Pair must be Both",
+    "contains": "Selectors (hass_sharp_test.selectors): Pair must be Both",
     "messages": [
-      "hass_sharp_test.selectors: Pair must be Both"
+      "Selectors (hass_sharp_test.selectors): Pair must be Both"
     ]
   },
   {
@@ -10951,9 +10951,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "Set hvac mode only accepts climate entities; text.foo is not one",
+    "contains": "Set hvac mode (climate.set_hvac_mode) only accepts climate entities; text.foo is not one",
     "messages": [
-      "Set hvac mode only accepts climate entities; text.foo is not one"
+      "Set hvac mode (climate.set_hvac_mode) only accepts climate entities; text.foo is not one"
     ]
   },
   {
@@ -11003,9 +11003,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:lights",
-    "contains": "hass_sharp_test.selectors: Lights may only contain Light entity values",
+    "contains": "Selectors (hass_sharp_test.selectors): Lights may only contain Light entity values",
     "messages": [
-      "hass_sharp_test.selectors: Lights may only contain Light entity values"
+      "Selectors (hass_sharp_test.selectors): Lights may only contain Light entity values"
     ]
   },
   {
@@ -11448,9 +11448,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:pair",
-    "contains": "hass_sharp_test.selectors: Pair must be Both",
+    "contains": "Selectors (hass_sharp_test.selectors): Pair must be Both",
     "messages": [
-      "hass_sharp_test.selectors: Pair must be Both"
+      "Selectors (hass_sharp_test.selectors): Pair must be Both"
     ]
   },
   {
@@ -11502,9 +11502,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:pair",
-    "contains": "hass_sharp_test.selectors: Pair must be Both",
+    "contains": "Selectors (hass_sharp_test.selectors): Pair must be Both",
     "messages": [
-      "hass_sharp_test.selectors: Pair must be Both"
+      "Selectors (hass_sharp_test.selectors): Pair must be Both"
     ]
   },
   {
@@ -11555,10 +11555,10 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "light.turn_on has a target, so it cannot also have a field named entity_id",
+    "contains": "Turn on (light.turn_on) has a target, so it cannot also have a field named entity_id",
     "messages": [
-      "light.turn_on has a target, so it cannot also have a field named entity_id",
-      "light.turn_on has no field entity_id"
+      "Turn on (light.turn_on) has a target, so it cannot also have a field named entity_id",
+      "Turn on (light.turn_on) has no field entity_id"
     ]
   },
   {
@@ -11605,9 +11605,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:",
-    "contains": "light.turn_on has no field Unnamed",
+    "contains": "Turn on (light.turn_on) has no field Unnamed",
     "messages": [
-      "light.turn_on has no field Unnamed"
+      "Turn on (light.turn_on) has no field Unnamed"
     ]
   },
   {
@@ -14732,7 +14732,7 @@
     "valid": false,
     "messages": [
       "Entities expression is gone; choose the entity in Entity",
-      "Schedules expression is gone; set the time in Time"
+      "Schedules expression is gone; set the time in Time of day"
     ]
   },
   {
@@ -19354,7 +19354,7 @@
     ]
   },
   {
-    "name": "constant: a wire into its value is refused as into an input it does not have",
+    "name": "constant: a wire into its value is refused, saying a Constant takes no connection and Convert changes a type",
     "graph": {
       "version": 5,
       "name": "Contract",
@@ -19428,9 +19428,9 @@
     "valid": false,
     "nodeId": "c",
     "inputId": "value",
-    "contains": "This value wire goes into Value, which this step does not have",
+    "contains": "Nothing can be connected to a Constant; remove this connection, or use Convert",
     "messages": [
-      "This value wire goes into Value, which this step does not have"
+      "Nothing can be connected to a Constant; remove this connection, or use Convert to change a value's type"
     ],
     "codes": [
       "port.unknownInput"
@@ -19492,7 +19492,7 @@
     "noDiagnostics": true
   },
   {
-    "name": "constant: a value of another type than its Type is refused",
+    "name": "constant: a value of another type than its Type is refused, saying how to repair it",
     "graph": {
       "version": 5,
       "name": "Contract",
@@ -19546,9 +19546,9 @@
     "valid": false,
     "nodeId": "c",
     "inputId": "value",
-    "contains": "Value accepts Number, not Text",
+    "contains": "Value is Text, but this Constant's Type is Number; type the value again, or change Type",
     "messages": [
-      "Value accepts Number, not Text"
+      "Value is Text, but this Constant's Type is Number; type the value again, or change Type"
     ]
   },
   {
@@ -19645,9 +19645,9 @@
     "services": true,
     "nodeId": "s",
     "inputId": "fields",
-    "contains": "Sectioned needs ",
+    "contains": "Sectioned (hass_sharp_test.sectioned) needs ",
     "messages": [
-      "Sectioned needs Level"
+      "Sectioned (hass_sharp_test.sectioned) needs Level"
     ]
   },
   {
@@ -19709,9 +19709,9 @@
     "services": true,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "Turn on only accepts light entities; the connected value is an input boolean entity",
+    "contains": "Turn on (light.turn_on) only accepts light entities; the connected value is an input boolean entity",
     "messages": [
-      "Turn on only accepts light entities; the connected value is an input boolean entity"
+      "Turn on (light.turn_on) only accepts light entities; the connected value is an input boolean entity"
     ]
   },
   {
@@ -19773,68 +19773,10 @@
     "services": true,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "Turn on only accepts light entities; the connected value can be any entity",
+    "contains": "Turn on (light.turn_on) only accepts light entities; the connected value can be any entity",
     "messages": [
-      "Turn on only accepts light entities; the connected value can be any entity"
+      "Turn on (light.turn_on) only accepts light entities; the connected value can be any entity"
     ]
-  },
-  {
-    "name": "service light entity wired into a light target",
-    "graph": {
-      "version": 5,
-      "name": "Contract",
-      "nodes": [
-        {
-          "id": "t",
-          "kind": "trigger",
-          "config": {
-            "type": "manual"
-          }
-        },
-        {
-          "id": "c",
-          "kind": "constant",
-          "config": {
-            "type": "entity_id:light",
-            "value": {
-              "kind": "literal",
-              "type": "entity_id:light",
-              "value": "light.hall"
-            }
-          }
-        },
-        {
-          "id": "s",
-          "kind": "service",
-          "config": {
-            "service": "light.turn_on",
-            "fields": {},
-            "target": {
-              "kind": "unset"
-            },
-            "returnResponse": false
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "t:next:s",
-          "source": "t",
-          "target": "s",
-          "port": "next"
-        },
-        {
-          "id": "c.value:s.target",
-          "kind": "data",
-          "source": "c",
-          "target": "s",
-          "sourcePort": "value",
-          "targetPort": "target"
-        }
-      ]
-    },
-    "valid": true,
-    "services": true
   },
   {
     "name": "daily trigger time with seconds is refused",
@@ -19875,9 +19817,9 @@
     "valid": false,
     "nodeId": "t",
     "inputId": "time",
-    "contains": "Time must be a time of day as HH:MM, from 00:00 to 23:59",
+    "contains": "Time of day must be HH:MM in 24-hour time, from 00:00 to 23:59",
     "messages": [
-      "Time must be a time of day as HH:MM, from 00:00 to 23:59"
+      "Time of day must be HH:MM in 24-hour time, from 00:00 to 23:59"
     ]
   },
   {
@@ -19919,9 +19861,9 @@
     "valid": false,
     "nodeId": "t",
     "inputId": "time",
-    "contains": "Time must be a time of day as HH:MM",
+    "contains": "Time of day must be HH:MM in 24-hour time",
     "messages": [
-      "Time must be a time of day as HH:MM, from 00:00 to 23:59"
+      "Time of day must be HH:MM in 24-hour time, from 00:00 to 23:59"
     ]
   },
   {
@@ -19963,9 +19905,9 @@
     "valid": false,
     "nodeId": "t",
     "inputId": "time",
-    "contains": "Time must be a time of day as HH:MM",
+    "contains": "Time of day must be HH:MM in 24-hour time",
     "messages": [
-      "Time must be a time of day as HH:MM, from 00:00 to 23:59"
+      "Time of day must be HH:MM in 24-hour time, from 00:00 to 23:59"
     ]
   },
   {
@@ -20007,9 +19949,9 @@
     "valid": false,
     "nodeId": "t",
     "inputId": "time",
-    "contains": "Time must be a time of day as HH:MM",
+    "contains": "Time of day must be HH:MM in 24-hour time",
     "messages": [
-      "Time must be a time of day as HH:MM, from 00:00 to 23:59"
+      "Time of day must be HH:MM in 24-hour time, from 00:00 to 23:59"
     ]
   },
   {
@@ -20051,9 +19993,9 @@
     "valid": false,
     "nodeId": "t",
     "inputId": "time",
-    "contains": "Time must be a time of day as HH:MM",
+    "contains": "Time of day must be HH:MM in 24-hour time",
     "messages": [
-      "Time must be a time of day as HH:MM, from 00:00 to 23:59"
+      "Time of day must be HH:MM in 24-hour time, from 00:00 to 23:59"
     ]
   },
   {
@@ -20148,5 +20090,214 @@
     },
     "valid": true,
     "noDiagnostics": true
+  },
+  {
+    "name": "a value of another type in a step that is not a Constant keeps the ordinary message",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "literal",
+              "type": "string",
+              "value": "5"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:d",
+          "source": "t",
+          "target": "d",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "inputId": "seconds",
+    "contains": "Seconds accepts Number, not Text",
+    "messages": [
+      "Seconds accepts Number, not Text"
+    ]
+  },
+  {
+    "name": "message wording: a number too large to hold, into a whole-number input",
+    "catalogPatch": {
+      "nodes": {
+        "log": {
+          "inputs": {
+            "value": {
+              "min": 5,
+              "integer": true
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1e400
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "contains": "is not a valid Number value",
+    "messages": [
+      "Message is not a valid Number value"
+    ]
+  },
+  {
+    "name": "custom node: a number too large to hold, typed as the CLR int type",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Take\")]\n    public static void Run(int value) => Logger.Info(value!.ToString()!);\n}",
+            "arguments": {
+              "value": {
+                "kind": "literal",
+                "type": "global::System.Int32",
+                "value": 1e400
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "value": {
+                  "types": [
+                    "global::System.Int32"
+                  ],
+                  "required": true,
+                  "label": "Value",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::System.Int32": {
+                  "label": "int",
+                  "description": "int",
+                  "category": "Number",
+                  "nullable": false,
+                  "literalKind": "integer",
+                  "min": -2147483648,
+                  "max": 2147483647,
+                  "assignableTo": [
+                    "global::System.Double",
+                    "number",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.ValueType",
+                    "global::System.Object",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.Int32",
+                    "global::System.Numerics.ISignedNumber<global::System.Int32>",
+                    "global::System.Numerics.IBinaryInteger<global::System.Int32>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Int32>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumber<global::System.Int32>",
+                    "global::System.IComparable<global::System.Int32>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumberBase<global::System.Int32>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.IEquatable<global::System.Int32>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.ISpanParsable<global::System.Int32>",
+                    "global::System.IParsable<global::System.Int32>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.IUtf8SpanParsable<global::System.Int32>",
+                    "global::System.Numerics.IShiftOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Int32>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:take",
+          "source": "t",
+          "target": "take",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "take",
+    "inputId": "value",
+    "contains": "Value is not a valid Number value",
+    "messages": [
+      "Value is not a valid Number value"
+    ]
   }
 ]

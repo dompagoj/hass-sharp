@@ -7,7 +7,7 @@ import { NodeConfig } from '../src/visual/NodeConfig'
 import { nodeCatalog, validateGraph, type Graph } from '../src/visual/contract'
 import { addNode, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { visualFixture } from './visual-fixture'
-import { constantTypes, ConstantType } from '../src/visual/constant'
+import { constantTypeLabels, constantTypes, ConstantType } from '../src/visual/constant'
 import { typeLabel } from '../src/visual/typeLabels'
 import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
 
@@ -25,10 +25,10 @@ const root = () => { const el = document.createElement('div'); el.className = 'h
 const byLabel = (scope: ParentNode, label: string) =>
   [...scope.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === label || b.getAttribute('aria-label') === label)
 
-/** A Constant whose Type is Number, holding a value stored before its Type set the value's type. */
-function stale(value: unknown, storedAs = 'string'): VisualGraph {
+/** A Constant whose Type is Number (or `type`), holding a value stored before its Type set the value's type. */
+function stale(value: unknown, storedAs = 'string', type = 'number'): VisualGraph {
   let g = addNode(createGraph('Repair'), 'constant', 'c', nodeCatalog)
-  g = updateNode(g, 'c', { config: { type: 'number', value: lit(storedAs, value) }, position: { x: 400, y: 300 } })
+  g = updateNode(g, 'c', { config: { type, value: lit(storedAs, value) }, position: { x: 400, y: 300 } })
   return g
 }
 
@@ -118,6 +118,36 @@ it("shows a stored value that does not read as the Type with the field's own err
   expect(configOf(host)).toEqual({ type: 'number', value: lit('string', 'abc') })
 })
 
+it('shows a Yes/No Constant stored as the text True as that text, stores it as yes/no in one undo step, and keeps anything else with its error', async () => {
+  const host = mount(stale('True', 'string', 'boolean'))
+  await vi.waitFor(() => expect(cardField(host)).not.toBeNull())
+  // A text field holding the stored text, not a switch that could only show it as No.
+  expect(cardField(host).value).toBe('True')
+  expect(host.querySelector('[data-id="c"] .hs-card-editor input[role="switch"]')).toBeNull()
+  cardField(host).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  expect(configOf(host)).toEqual({ type: 'boolean', value: lit('boolean', true) })
+  // Stored as yes/no, the switch is back.
+  await vi.waitFor(() => expect(host.querySelector<HTMLInputElement>('[data-id="c"] .hs-card-editor input[role="switch"]')?.checked).toBe(true))
+  byLabel(host, 'Undo')!.click()
+  expect(configOf(host)).toEqual({ type: 'boolean', value: lit('string', 'True') })
+  expect(byLabel(host, 'Undo')!.disabled).toBe(true)
+  dispose!(); document.body.innerHTML = ''
+
+  const other = mount(stale('maybe', 'string', 'boolean'))
+  await vi.waitFor(() => expect(cardField(other)).not.toBeNull())
+  expect(cardField(other).value).toBe('maybe')
+  expect(cardField(other).getAttribute('aria-invalid')).toBe('true')
+  const error = () => other.querySelector('[data-id="c"] .hs-card-editor .hs-error')
+  expect(error()?.textContent).toBe('Enter true or false.')
+  blur(cardField(other))
+  expect(configOf(other)).toEqual({ type: 'boolean', value: lit('string', 'maybe') })
+  expect(error()?.textContent).toBe('Enter true or false.')
+  cardField(other).value = 'FALSE'
+  cardField(other).dispatchEvent(new Event('input', { bubbles: true }))
+  blur(cardField(other))
+  expect(configOf(other)).toEqual({ type: 'boolean', value: lit('boolean', false) })
+})
+
 it("changes a Constant's Type in the panel: the value stays when it reads as the new Type, is cleared otherwise, one undo step each", () => {
   const el = root()
   let start = addNode(createGraph('Panel'), 'constant', 'c', nodeCatalog)
@@ -175,7 +205,7 @@ it('offers a Constant only the types a value can be typed in for, and keeps show
   const offered = constantTypes(catalog)
   // The built-in value types, entity ids and targets, JSON objects and lists, the CLR text, number and boolean types
   // and enums; never an interface, an abstract or record type (no literal form) and never a nullable one.
-  expect(offered).toEqual(expect.arrayContaining(['boolean', 'number', 'string', 'object', 'array', 'entity_id', 'global::System.Int32', 'global::System.String', 'global::NodeLib.Mode']))
+  expect(offered).toEqual(expect.arrayContaining(['boolean', 'number', 'string', 'object', 'array', 'entity_id', 'global::System.Int32', 'global::NodeLib.Mode']))
   expect(offered.every(id => !!catalog.types[id].literalKind && catalog.types[id].nullable !== true)).toBe(true)
   for (const left of ['global::System.IComparable', 'global::System.ISpanParsable<global::System.Boolean>']) expect(offered).not.toContain(left)
   expect(Object.keys(catalog.types).filter(id => catalog.types[id].nullable === true).some(id => offered.includes(id))).toBe(false)
@@ -197,4 +227,30 @@ it('offers a Constant only the types a value can be typed in for, and keeps show
     expect([...select.options].map(o => o.value).filter(v => v !== '' && v !== stored)).toEqual(offered)
   }
   expect(changes).toEqual([])
+})
+
+it('names no two entries of the Type list alike, and offers a type that is the same as one of the editor\'s own once', () => {
+  const catalog = (rich as any).catalog
+  const offered = constantTypes(catalog), labels = constantTypeLabels(catalog)
+  // C#'s bool, double, string, JsonObject and JsonArray are Yes/No, Number, Text, Object and List: offered once, as those.
+  for (const same of ['global::System.Boolean', 'global::System.Double', 'global::System.String', 'global::System.Text.Json.Nodes.JsonObject', 'global::System.Text.Json.Nodes.JsonArray'])
+    expect(offered, same).not.toContain(same)
+  // int and float are other types that read as Number: their C# name follows. The editor's own Number keeps its label.
+  expect(offered.map(id => labels.get(id))).toEqual(['Yes/No', 'Number', 'Text', 'Object', 'List', 'Entity', 'Target', 'Number (int)', 'Mode', 'Number (float)'])
+  expect(new Set(labels.values()).size).toBe(offered.length)
+  // A stored Type that is the same as an offered one is named apart from it too, and stays selected.
+  const stored = 'global::System.Double'
+  expect(constantTypeLabels(catalog, stored).get(stored)).toBe('Number (double)')
+  let g = addNode(createGraph('Stored'), 'constant', 'c', catalog)
+  g = updateNode(g, 'c', { config: { type: stored, value: { kind: 'literal', type: stored, value: 2 } } })
+  const el = root()
+  dispose = render(() => providers(() => <>
+    <ConstantType type={stored} catalog={catalog} onChange={() => {}} />
+    <NodeConfig graph={g} node={g.nodes.find(n => n.id === 'c')!} catalog={catalog} onChange={() => {}} onGraphChange={() => {}} />
+  </>), el)
+  for (const select of [el.querySelector<HTMLSelectElement>('select[aria-label="Type"]')!, el.querySelector<HTMLSelectElement>('[data-input-id="type"] select')!]) {
+    expect(select.selectedOptions[0].textContent).toBe('Number (double)')
+    const names = [...select.options].map(o => o.textContent)
+    expect(new Set(names).size).toBe(names.length)
+  }
 })

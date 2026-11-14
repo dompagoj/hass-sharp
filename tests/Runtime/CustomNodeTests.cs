@@ -485,7 +485,7 @@ static class CustomNodeTests
         var entities = G(); entities["nodes"]![0]!["config"] = new JsonObject { ["type"] = "entity", ["entity"] = "sensor.test", ["entitiesExpression"] = "[new EntityReference(\"sensor.test\")]" };
         Refused(entities, "Entities expression is gone; choose the entity in Entity", "t", "entitiesExpression");
         var schedules = G(); schedules["nodes"]![0]!["config"] = new JsonObject { ["type"] = "daily", ["time"] = "07:30", ["timeZone"] = "UTC", ["schedulesExpression"] = "[]" };
-        Refused(schedules, "Schedules expression is gone; set the time in Time", "t", "schedulesExpression");
+        Refused(schedules, "Schedules expression is gone; set the time in Time of day", "t", "schedulesExpression");
         Refused(G(N("l", "library:gone:" + Uri.EscapeDataString("global::NodeLib.Gone.Run"), new { arguments = new { } })), "This step is no longer in its node library; delete it and add it again from the node library", "l", null);
         Check(VisualGraphValidator.Validate(G(N("l", "library:gone:x", new { arguments = new { } })), Empty).Single().Code == "node.unknownKind", "a step whose library node is gone keeps the code node.unknownKind");
         Console.WriteLine("PASS removed parts: usings, helper members, statement code, exposed values, variables and raw trigger expressions are refused with what to do instead");
@@ -501,6 +501,12 @@ static class CustomNodeTests
             await manager.Init();
             async Task<JsonNode> Library(object request) => JsonNode.Parse(await manager.NodeLibraryRequest(JsonSerializer.Serialize(request)))!;
             async Task<JsonNode> Visual(object request) => JsonNode.Parse(await manager.VisualRequest(JsonSerializer.Serialize(request)))!;
+            // The Node library page's new-file template (tests/fixtures/node-library-template.json, which the frontend
+            // keeps equal to its own) compiles with no diagnostic at all: no error and no warning, such as a missing doc comment.
+            var template = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "node-library-template.json")))!["source"]!.GetValue<string>();
+            var templated = await Library(new { operation = "preview", id = "template", source = template, workspaceVersion = "1" });
+            Check(templated["ok"]!.GetValue<bool>() && templated["result"]!["data"]!["valid"]!.GetValue<bool>() && templated["result"]!["data"]!["diagnostics"]!.AsArray().Count == 0,
+                "the new-library template compiles without diagnostics: " + templated.ToJsonString()[..Math.Min(1200, templated.ToJsonString().Length)]);
             Check((await Library(new { operation = "save", id = "helpers", name = "Helpers", expectedRevision = 0, source = "public static class Helper { public static int Twice(int value) => value * 2; }" }))["ok"]!.GetValue<bool>(), "helper library saves");
             const string source = "public static class CustomNode\n{\n    [Node(\"Twice\")]\n    public static int Run(int value) => Helper.Twice(value);\n}";
             var preview = await Library(new { operation = "custom_preview", nodeId = "c", source });
@@ -581,9 +587,11 @@ static class CustomNodeTests
                 && breaking["error"]!["detail"]!["automations"]!.AsArray().Select(a => a!["id"]!.GetValue<string>()).SequenceEqual(["uses"])
                 // Named as a person knows them, not only by id.
                 && breaking["error"]!["detail"]!["automations"]!.AsArray().Select(a => a!["name"]?.GetValue<string>()).SequenceEqual(["Execution"])
-                && breaking["error"]!["detail"]!["invalid"]!.AsArray().Select(a => a!["id"]!.GetValue<string>()).SequenceEqual(["derived"]), "a save that breaks a valid graph is refused: " + breaking.ToJsonString()[..Math.Min(1200, breaking.ToJsonString().Length)]);
+                && breaking["error"]!["detail"]!["invalid"]!.AsArray().Select(a => a!["id"]!.GetValue<string>()).SequenceEqual(["derived"])
+                && breaking["error"]!["detail"]!["invalid"]!.AsArray().Select(a => a!["name"]?.GetValue<string>()).SequenceEqual(["Execution"]), "a save that breaks a valid graph is refused: " + breaking.ToJsonString()[..Math.Min(1200, breaking.ToJsonString().Length)]);
             var allowed = await Library(new { operation = "save", id = "helpers", name = "Helpers", expectedRevision = 1, source = "public static class Helper { public static int Twice(int value) => value * 2; public static int Thrice(int value) => value * 3; }" });
             Check(allowed["ok"]!.GetValue<bool>() && allowed["result"]!["invalid"]!.AsArray().Select(a => a!["id"]!.GetValue<string>()).SequenceEqual(["derived"])
+                && allowed["result"]!["invalid"]!.AsArray().Select(a => a!["name"]?.GetValue<string>()).SequenceEqual(["Execution"])
                 && allowed["result"]!["automations"]!.AsArray().Any(a => a!["id"]!.GetValue<string>() == "uses"), "an already invalid graph does not block a library save: " + allowed.ToJsonString()[..Math.Min(1200, allowed.ToJsonString().Length)]);
             var notRunning = allowed["result"]!["invalid"]![0]!;
             Check(!notRunning["running"]!.GetValue<bool>() && notRunning["message"]!.GetValue<string>() == "Not rebuilt, because it has errors; it is not running", "an invalid graph that is not running says so: " + notRunning.ToJsonString()[..Math.Min(400, notRunning.ToJsonString().Length)]);

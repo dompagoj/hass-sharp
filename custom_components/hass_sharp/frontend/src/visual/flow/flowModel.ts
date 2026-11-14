@@ -260,8 +260,9 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     const source = wire?.kind === 'data' ? `${nodeTitle(sourceNode, catalog, wire.source)} · ${sourceOutput?.label ?? wire.sourcePort}` : undefined
     const operand = inputValue(node, port, catalog) as Operand | undefined
     const unset = !record(operand) || operand.kind === 'unset'
-    // An input that takes a value only always shows its editor (a Constant whose Type is not set yet still has one).
-    const mode: InputMode = wire ? 'connected' : widgetFor(input, catalog).kind === 'none' && input.connectable !== false ? 'wire' : unset && !input.required ? 'muted' : 'value'
+    // An input that takes a value only always shows its editor (a Constant whose Type is not set yet still has one),
+    // even with a wire into it from an older graph: that wire does not work, and the row shows the editor with its error.
+    const mode: InputMode = wire && input.connectable !== false ? 'connected' : widgetFor(input, catalog).kind === 'none' && input.connectable !== false ? 'wire' : unset && !input.required ? 'muted' : 'value'
     const errors = messagesFor(port)
     return {
       port, spec: input, mode, source, sourceNode: wire?.source, errors,

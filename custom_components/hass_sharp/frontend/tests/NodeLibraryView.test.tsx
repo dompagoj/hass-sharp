@@ -36,6 +36,9 @@ it('shows source-derived cards, XML docs, actual CLR ports and explicit executio
   expect(host.querySelector('[aria-label="Node previews"]')?.textContent).toContain('Entity state'); expect(host.querySelector('[aria-label="Node previews"]')?.textContent).toContain('Reading'); expect(host.querySelector('[aria-label="Node previews"]')?.textContent).not.toContain('EntityStateSnapshot')
   expect(host.querySelector('[aria-label="Node previews"]')?.textContent).toContain('Execution')
   expect(host.textContent).toContain('factory node'); expect(host.textContent).not.toContain('Pure')
+  // What the intro says holds for both kinds of card: steps run through execution connections, value nodes when read.
+  expect(host.textContent).toContain('A step node runs when an execution connection reaches it; a value node runs when a step reads its output.')
+  expect(host.textContent).not.toContain('Methods run only through execution connections')
   expect(requests.every(r => !['run', 'execute'].includes(r.operation))).toBe(true)
   // The entity refresh command was removed with typed entities: no button, no request.
   expect(host.textContent).not.toContain('Refresh entity IDs')
@@ -140,6 +143,23 @@ it('names the automation a refused library save would break, and drops the previ
   host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
   expect(host.querySelector('[role="alert"]')?.textContent).toContain('Night mode')
   expect(host.querySelector('[aria-label="Library workspace diagnostics"]')!.textContent).toContain('Night mode · up · lamp: Lamp is required')
+  expect(host.textContent).not.toContain('Porch lights: Saved and active')
+})
+it('drops the previous save’s results when a delete starts, and names what a refused delete would break as a delete', async () => {
+  const activations = [{ id: 'visual-1f2e', saved: true, document: { id: 'visual-1f2e', revision: 3, graph: { version: 5, name: 'Porch lights', nodes: [], edges: [] } }, active: true, activationError: null }]
+  const refusal = { version: 1, ok: false, error: { code: 'validation', detail: { diagnostics: [], automations: [{ id: 'visual-9a8b', name: 'Night mode', diagnostics: [] }], invalid: [] } } }
+  mount(false, (r, result) => r.operation === 'delete' ? { envelope: refusal } : r.operation === 'save' ? { ...result, automations: activations } : result)
+  await vi.advanceTimersByTimeAsync(900)
+  editors[0].change('public class Updated {}'); await vi.advanceTimersByTimeAsync(900)
+  host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
+  expect(host.textContent).toContain('Porch lights: Saved and active')
+  button('Delete file').click()
+  ;[...document.querySelectorAll<HTMLButtonElement>('dialog[open] button')].find(b => b.textContent === 'Delete file')!.click()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(requests.some(r => r.operation === 'delete')).toBe(true)
+  const alert = host.querySelector('[role="alert"]')?.textContent ?? ''
+  expect(alert).toContain('Deleting this library would break Night mode')
+  expect(alert).not.toContain('Saving')
   expect(host.textContent).not.toContain('Porch lights: Saved and active')
 })
 it('says which automations a library save left as they were, because they already had errors', async () => {

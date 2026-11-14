@@ -8,7 +8,7 @@ export const LibraryPreview = (props: { catalog?: VisualCatalogSnapshot; sourceI
   return <aside class="hs-library-previews" aria-label="Node previews" aria-busy={props.pending}>
     <h2>Nodes in this file</h2>
     <p class="hs-muted">{props.pending ? 'Checking workspace…' : `${nodes().length} nodes · port types from C#`}</p>
-    <p class="hs-muted">Previews compile signatures and documentation. Methods run only through execution connections.</p>
+    <p class="hs-muted">Previews compile signatures and documentation; nothing runs here. A step node runs when an execution connection reaches it; a value node runs when a step reads its output.</p>
     <Show when={!props.pending && !nodes().length}><p class="hs-notice">Add a public static method with <code>[Node("Title")]</code> inside a public class.</p></Show>
     <For each={nodes()}>{([kind, spec]) => {
       const node = { id: kind, kind, config: {} }

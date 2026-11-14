@@ -184,15 +184,21 @@ public partial class HassSharpManager
             JsonArray list => list.OfType<JsonValue>().Select(v => v.TryGetValue<string>(out var id) ? id : null).OfType<string>(),
             _ => [],
         };
+        // A native trigger's entity ids as Home Assistant reads them: a text is a comma-separated list, each id is
+        // trimmed and lower-cased (entity_ids_or_uuids); a template is left alone (it names no entity until it runs).
+        static IEnumerable<string> NativeIds(JsonNode? value) => Ids(value)
+            .SelectMany(text => text.Contains("{{", StringComparison.Ordinal) || text.Contains("{%", StringComparison.Ordinal) ? [] : text.Split(','))
+            .Select(entity => entity.Trim().ToLowerInvariant()).Where(entity => entity.Length > 0);
         foreach (var node in (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>())
         {
             var id = VisualNodeCatalog.Text(node, "id");
             if (VisualNodeCatalog.Text(node, "kind") == "trigger" && VisualNodeCatalog.TriggerType(node, snapshot) is var triggerType)
             {
                 if (triggerType == "entity") Check(id, "entity", VisualNodeCatalog.Text(node["config"], "entity"), true);
-                // A Home Assistant trigger's entity_id; an entity registry id (it has no dot) names no entity id to look up.
+                // A Home Assistant trigger's entity_id, and its target's (a purpose-specific trigger), read as Home Assistant
+                // reads them; an entity registry id (it has no dot) names no entity id to look up.
                 else if (triggerType == "ha" && node["config"]?["trigger"] is JsonObject native)
-                    foreach (var entity in Ids(native["entity_id"]).Where(e => e.Contains('.'))) Check(id, "trigger", entity, true);
+                    foreach (var entity in NativeIds(native["entity_id"]).Concat(NativeIds(native["target"]?["entity_id"])).Where(e => e.Contains('.')).Distinct()) Check(id, "trigger", entity, true);
             }
             JsonObject inputs;
             try { inputs = VisualNodeCatalog.DataInputs(node, null, snapshot); } catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException) { continue; }
