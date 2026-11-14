@@ -8,7 +8,7 @@ import { QuickAdd } from '../src/visual/QuickAdd'
 import { addNode, catalogCategories, catalogPalette, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { connectData, nodeCatalog, validateGraph, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import type { VisualDiagnostic } from '../src/visual/api'
-import { fieldOffered, targetEntities } from '../src/visual/ServiceFields'
+import { fieldOffered, filterFacts, targetEntities } from '../src/visual/ServiceFields'
 import { HassCtx } from '../src/context'
 import services from '../../../../tests/fixtures/visual-services.json'
 
@@ -234,6 +234,20 @@ it('decides a field filter from supported features and attributes, and offers a 
   expect(targetEntities(lit('target', { entity_id: ['fan.a'], device_id: 'd1' }), false)).toBeUndefined()
   expect(targetEntities(lit('target', { entity_id: ['fan.a'] }), true)).toBeUndefined()
   expect(targetEntities({ kind: 'unset' }, false)).toBeUndefined()
+})
+
+it('reads a missing supported_features as 0 for an entity whose state is known, as Home Assistant does', () => {
+  const states = { 'fan.a': { attributes: { friendly_name: 'Fan' } }, 'fan.b': { attributes: { supported_features: 16 } } }
+  const entities = [{ entity_id: 'fan.c', supported_features: 8 }]
+  expect(filterFacts('fan.a', states, entities)).toEqual({ features: 0, attributes: { friendly_name: 'Fan' } })
+  expect(filterFacts('fan.b', states, entities)?.features).toBe(16)
+  // No state: the registry's features; neither: nothing known.
+  expect(filterFacts('fan.c', states, entities)).toEqual({ features: 8 })
+  expect(filterFacts('fan.d', states, entities)).toBeUndefined()
+  // So a known entity without the feature does not get the field; an unknown one does.
+  const facts = (id: string) => filterFacts(id, states, entities)
+  expect(fieldOffered({ supportedFeatures: [16] }, ['fan.a'], facts)).toBe(false)
+  expect(fieldOffered({ supportedFeatures: [16] }, ['fan.d'], facts)).toBe(true)
 })
 
 it('keeps an unknown service\'s stored fields editable as plain values and says the service is not available', () => {

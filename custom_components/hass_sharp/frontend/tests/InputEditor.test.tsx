@@ -6,6 +6,7 @@ import servicesFixture from '../../../../tests/fixtures/visual-services.json'
 import { HassCtx } from '../src/context'
 import { dataInputs, nodeCatalog, type GraphNode, type InputSpec, type Operand, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { InputEditor, type InputEditorProps } from '../src/visual/InputEditor'
+import { valueSummary } from '../src/visual/widgets'
 
 const catalog: VisualCatalogSnapshot = { ...nodeCatalog, services: servicesFixture as unknown as ServicesSection }
 const serviceInputs = (service: string, fields: string[] = []) => dataInputs({ id: 's', kind: 'service',
@@ -489,4 +490,15 @@ it('edits and summarises a value stored as null as not set, never as the text nu
   const text = remount({ input: { types: ['string'], required: false, description: '' }, label: 'Note' }, { kind: 'literal', type: 'string', value: null } as any)
   expect(text.host.querySelector('textarea.hs-code-input')).toBeNull()
   expect(q<HTMLInputElement>(text.host, 'input[aria-label="Note"]').value).toBe('')
+})
+
+it('keeps a literal null in a JSON value visible as null: it is a value there, not an empty input', () => {
+  const panel = mount({ input: { types: ['object'], required: false, description: '' }, label: 'Data' }, { kind: 'literal', type: 'object', value: null } as any)
+  expect(q<HTMLTextAreaElement>(panel.host, 'textarea').value).toBe('null')
+  const inline = remount({ input: { types: ['object'], required: false, description: '' }, variant: 'inline', label: 'Data' }, { kind: 'literal', type: 'object', value: null } as any)
+  const summary = inline.host.querySelector('.hs-input-editor__summary')
+  expect(summary?.textContent ?? q<HTMLTextAreaElement>(inline.host, 'textarea').value).toBe('null')
+  expect(summary?.classList.contains('hs-input-editor__summary--empty') ?? false).toBe(false)
+  expect(valueSummary({ kind: 'json', multiple: false }, null)).toBe('null')
+  expect(valueSummary({ kind: 'text', multiple: false }, null)).toBe('Not set')
 })

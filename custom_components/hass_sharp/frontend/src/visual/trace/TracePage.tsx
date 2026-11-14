@@ -56,8 +56,12 @@ export function TracePage(props: {
   const graph = () => snapshot()?.graph
   const stored = () => snapshot()?.catalog ?? nodeCatalog
   /**
-   * What the page shows the run with: the stored catalog, plus the live services when the snapshot has none, only for
-   * words (field labels, option labels, field types). The run itself is read with the stored catalog.
+   * What the page shows the run with: the stored catalog, plus the live services when the snapshot has none. Everything
+   * drawn reads it, so a service step's field rows (their labels, option labels, types and type colours) follow the
+   * services as they are now, on the canvas, in the panel, the timeline and the code view. That is safe: the page is
+   * read only (nothing is checked, compiled or saved with it); the run itself (which steps ran, in which frames, the
+   * wires it travelled) is read with the stored catalog; and each recorded value carries its own type. Only a field
+   * whose key stayed while its meaning changed could be named wrongly.
    */
   const catalog = createMemo(() => {
     const base = stored()

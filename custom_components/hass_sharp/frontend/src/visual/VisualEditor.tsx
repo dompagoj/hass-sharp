@@ -471,6 +471,7 @@ export function VisualEditor(props: {
           onOpen={() => openPanel()}
           onDuplicate={ids => inPanel(() => flow?.duplicate(ids) ?? [])}
           onEditCode={editCode}
+          onNotice={text => flow?.notify(text, { keep: true })}
         />
       </div>
       <BottomDrawer

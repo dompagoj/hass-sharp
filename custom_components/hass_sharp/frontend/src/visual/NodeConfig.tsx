@@ -1,7 +1,7 @@
 import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js'
 import { Menu, type MenuItem } from '../components/Menu'
 import { ServiceFields } from './ServiceFields'
-import { TriggerAdvanced, TriggerConfig } from './TriggerConfig'
+import { retypeTriggerNode, TriggerAdvanced, TriggerConfig } from './TriggerConfig'
 import { Glyph } from './Glyph'
 import { Errors, focusRow, InputRow, type RowContext } from './InputRow'
 import { ArrayItems, Branches, Declarations, ObjectFields, type StructureContext } from './StructureEditors'
@@ -37,6 +37,8 @@ export interface NodeConfigProps {
   onDelete?(): void
   /** Opens the code editor of a Custom C# node. */
   onEditCode?(): void
+  /** Says what a change also did (the wires a new trigger type removed), on the canvas. */
+  onNotice?(text: string): void
 }
 
 /**
@@ -219,7 +221,11 @@ export function NodeConfig(props: NodeConfigProps) {
         </Show>
         <Show when={kind() === 'trigger'}>
           <TriggerConfig node={props.node} onChange={props.onChange} diagnostics={props.diagnostics}
-            onRetype={(config, label) => props.onGraphChange(updateNode(props.graph, props.node.id, label === props.node.label ? { config } : { config, label }))} />
+            onRetype={(config, label) => {
+              const result = retypeTriggerNode(props.graph, props.node.id, config, label, types())
+              props.onGraphChange(result.graph)
+              if (result.notice) props.onNotice?.(result.notice)
+            }} />
         </Show>
         <Show when={kind() === 'custom'}>
           <div class="hs-insp-field hs-insp-code" data-input-id="source" aria-invalid={errorsFor('source').length > 0 || undefined}>

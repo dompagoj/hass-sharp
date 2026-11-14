@@ -53,6 +53,8 @@ export interface InspectorProps {
   onDuplicate?(ids: string[]): string[]
   /** Opens the code editor of a Custom C# node. */
   onEditCode?(id: string): void
+  /** Says on the canvas what a change made here also did (the wires a new trigger type removed). */
+  onNotice?(text: string): void
 }
 
 /**
@@ -151,7 +153,7 @@ export function Inspector(props: InspectorProps) {
                 onChange={(config, options) => props.commit(updateNode(props.graph, id, { config }), options)}
                 onGraphChange={props.commit} onSelect={selectAndFocus}
                 onDuplicate={() => duplicate([id])} onDelete={() => remove([id])}
-                onEditCode={props.onEditCode ? () => props.onEditCode?.(id) : undefined} />
+                onEditCode={props.onEditCode ? () => props.onEditCode?.(id) : undefined} onNotice={props.onNotice} />
             )
           }}
         </Show>

@@ -508,6 +508,19 @@ it('names service fields and their options from the live services when the run\'
   expect(port(root, 'field:flash').querySelector('.hs-trace-value')!.textContent).toBe('Long')
 })
 
+it('keeps the run\'s own services schema when its snapshot has one: the live services are not used', async () => {
+  const live = structuredClone(services) as any
+  live.items['light.turn_on'].fields.brightness_pct.label = 'Brightness now'
+  const { root, callWS } = mount(async () => response(), { services: live })
+  await vi.waitFor(() => expect(callWS).toHaveBeenCalledWith({ type: 'hass_sharp/node_library', request: { operation: 'services' } }))
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(card(root, 'service-1').querySelector('[data-input-id="field:brightness_pct"] .hs-pin-label')?.textContent).toBe('Brightness')
+  card(root, 'service-1').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe('Turn on'))
+  expect(port(root, 'field:brightness_pct').querySelector('.hs-trace-port__name')!.textContent).toBe('Brightness')
+  expect(root.textContent).not.toContain('Brightness now')
+})
+
 it('names service fields by their key in words when the service is not known', async () => {
   const reply = response({ snapshot: { revision: 'rev', visualId: 'heating', visualRevision: 4, graph: graph(), catalog: nodeCatalog } })
   const { root } = mount(async () => reply)
@@ -516,6 +529,19 @@ it('names service fields by their key in words when the service is not known', a
   await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe('Turn on'))
   expect(port(root, 'field:brightness_pct').querySelector('.hs-trace-port__name')!.textContent).toBe('Brightness pct')
   expect(card(root, 'service-1').querySelector('[data-input-id="field:brightness_pct"] .hs-pin-label')?.textContent).toBe('Brightness pct')
+})
+
+it('reads an output recorded as null as "No value", on its card and in the panel', async () => {
+  const list = events().map(e => e.node === 'trigger-1' ? { ...e, outputs: { entity_id: { type: 'entity_id', v: null } } } : e)
+  const { root } = mount(async () => response({}, { events: list }))
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(7))
+  const chip = await vi.waitFor(() => { const found = card(root, 'trigger-1').querySelector('[data-output-id="entity_id"] .hs-value-chip'); expect(found).not.toBeNull(); return found! })
+  expect(chip.textContent).toBe('No value')
+  expect(chip.classList).toContain('hs-value-chip--muted')
+  card(root, 'trigger-1').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  const value = await vi.waitFor(() => { const found = port(root, 'entity_id')?.querySelector('.hs-trace-value'); expect(found).toBeTruthy(); return found! })
+  expect(value.textContent).toBe('No value')
+  expect(value.classList).toContain('hs-trace-value--muted')
 })
 
 it('reads an empty value (null) as "Not set" in the muted style in the trigger data, a step\'s values and its card', async () => {

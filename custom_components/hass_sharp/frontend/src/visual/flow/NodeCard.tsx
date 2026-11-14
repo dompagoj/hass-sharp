@@ -4,7 +4,7 @@ import { useUpdateNodeInternals, type NodeProps } from '@dschz/solid-flow'
 import { inputValue, type Operand } from '../contract'
 import { InputEditor } from '../InputEditor'
 import { icons } from '../icons'
-import { displayValue, valueSummary, widgetFor } from '../widgets'
+import { displayValue, keepsNull, valueSummary, widgetFor } from '../widgets'
 import { Pin } from './Pin'
 import { durationLabel, traceStatusLabel, traceText, useFlow, type InputView, type PinView, type RowView, type TraceStatus } from './flowModel'
 
@@ -42,16 +42,36 @@ function EditorBoundary(props: { children: JSX.Element }) {
   )
 }
 
-type Box = { left: number; right: number }
+type Box = { left: number; right: number; top: number; bottom: number }
+export type TipSide = 'right' | 'left' | 'below' | 'above'
+/**
+ * The part of the canvas a card's problem tag may use: the canvas, less any panel floating over it (the inspector over
+ * a full-screen canvas at 900px and wider is its right edge; a sheet across its bottom, its bottom edge). A panel
+ * docked beside the canvas, or not shown, changes nothing.
+ */
+export function tipBounds(canvas: Box, panels: Box[]): Box {
+  // Copied by name: a DOMRect's sides are getters, which spreading would drop.
+  const bounds = { left: canvas.left, right: canvas.right, top: canvas.top, bottom: canvas.bottom }
+  for (const panel of panels) {
+    if (panel.right <= panel.left || panel.bottom <= panel.top) continue
+    if (panel.left >= bounds.right || panel.right <= bounds.left || panel.top >= bounds.bottom || panel.bottom <= bounds.top) continue
+    if (panel.left > bounds.left) bounds.right = Math.min(bounds.right, panel.left)
+    else if (panel.top > bounds.top && panel.right >= bounds.right) bounds.bottom = Math.min(bounds.bottom, panel.top)
+  }
+  return bounds
+}
 /**
  * Where a card's problem tag goes so it stays readable inside the canvas: beside the card on the right, else on the
- * left, else (a narrow canvas, or a card wider than the room left) below the card. `gap` and `width` are in screen
- * pixels, so a zoomed canvas is measured as drawn.
+ * left, else (a narrow canvas, or a card wider than the room left) below the card, or above it when there is no room
+ * below; below or above, it is moved left (`shift`) as far as needed to end inside the right edge, never past the left
+ * one. All sizes are in screen pixels, so a zoomed canvas is measured as drawn.
  */
-export function tipSide(card: Box, width: number, gap: number, bounds: Box): 'right' | 'left' | 'below' {
-  if (card.right + gap + width <= bounds.right) return 'right'
-  if (card.left - gap - width >= bounds.left) return 'left'
-  return 'below'
+export function tipPlace(card: Box, tip: { width: number; height: number }, gap: number, bounds: Box): { side: TipSide; shift: number } {
+  if (card.right + gap + tip.width <= bounds.right) return { side: 'right', shift: 0 }
+  if (card.left - gap - tip.width >= bounds.left) return { side: 'left', shift: 0 }
+  const below = card.bottom + gap + tip.height <= bounds.bottom || card.top - gap - tip.height < bounds.top
+  const left = Math.max(bounds.left, Math.min(card.left, bounds.right - tip.width))
+  return { side: below ? 'below' : 'above', shift: left - card.left }
 }
 
 /** A traced or configured value, read-only. */
@@ -92,13 +112,14 @@ export function NodeCard(props: NodeProps) {
   const InputCell = (cell: { input: InputView }) => {
     let root!: HTMLDivElement
     const input = () => cell.input
-    // An empty value stored as null is shown as not set, never as the text "null".
+    // An empty value stored as null is shown as not set, never as the text "null"; in a JSON value null is a value.
+    const widget = () => widgetFor(input().spec, flow.catalog())
     const literal = () => {
       const value = operand(input().port)
-      return value?.kind === 'literal' && value.value !== null ? value.value : undefined
+      return value?.kind === 'literal' && (value.value !== null || keepsNull(widget())) ? value.value : undefined
     }
     const configured = () => {
-      return literal() === undefined ? '' : valueSummary(widgetFor(input().spec, flow.catalog()), literal(), flow.names())
+      return literal() === undefined ? '' : valueSummary(widget(), literal(), flow.names())
     }
     const traced = () => trace()?.value?.(id, input().port, 'in')
     const canEdit = () => !flow.readOnly() && flow.editable()
@@ -285,9 +306,11 @@ export function NodeCard(props: NodeProps) {
       </div>
     )
   }
-  // The problem tag shows on hover and focus; it is placed then, against the canvas edges (the side panel's included).
+  // The problem tag shows on hover and focus; it is placed then, against the canvas edges (the side panel's and a
+  // floating panel's included).
   let tip: HTMLDivElement | undefined
-  const [side, setSide] = createSignal<'right' | 'left' | 'below'>('right')
+  const [side, setSide] = createSignal<TipSide>('right')
+  const [shift, setShift] = createSignal(0)
   const placeTip = (event: Event) => {
     const card = event.currentTarget as HTMLElement
     requestAnimationFrame(() => {
@@ -295,11 +318,20 @@ export function NodeCard(props: NodeProps) {
       if (!tip || !canvas || !tip.isConnected) return
       // Measured as drawn on the right (the widest it gets), at the canvas zoom; nothing is painted in between.
       setSide('right')
-      const box = card.getBoundingClientRect(), bounds = canvas.getBoundingClientRect()
+      setShift(0)
+      const box = card.getBoundingClientRect()
+      const panels = [...(card.closest('.hs-visual')?.querySelectorAll('.hs-visual-workspace > .hs-inspector') ?? [])].map(panel => panel.getBoundingClientRect())
+      const bounds = tipBounds(canvas.getBoundingClientRect(), panels)
       const zoom = card.offsetWidth ? box.width / card.offsetWidth : 1
-      const width = Math.min(tip.scrollWidth || 0, 320) * zoom
-      if (!width) return
-      setSide(tipSide(box, width, 12 * zoom, bounds))
+      const natural = Math.min(tip.scrollWidth || 0, 320)
+      if (!natural) return
+      const place = tipPlace(box, { width: natural * zoom, height: (tip.scrollHeight || 0) * zoom }, 12 * zoom, bounds)
+      // Below or above, the tag is at most as wide as the card or 200px (flow.css), so it is measured that wide.
+      const placed = place.side === 'below' || place.side === 'above'
+        ? tipPlace(box, { width: Math.min(natural, Math.max(card.offsetWidth, 200)) * zoom, height: (tip.scrollHeight || 0) * zoom }, 12 * zoom, bounds)
+        : place
+      setSide(placed.side)
+      setShift(zoom ? placed.shift / zoom : 0)
     })
   }
   const rowIds = createMemo(() => view()?.rows.map(row => row.id) ?? [], undefined, {
@@ -418,7 +450,7 @@ export function NodeCard(props: NodeProps) {
             </div>
           </Show>
           <Show when={current().problems.length || trace()}>
-            <div role="tooltip" id={errorsId} ref={tip} class={`hs-node-errors hs-node-errors--${side()}`}>
+            <div role="tooltip" id={errorsId} ref={tip} class={`hs-node-errors hs-node-errors--${side()}`} style={{ '--hs-tip-shift': `${shift()}px` }}>
               <Show when={trace()}>
                 <p>{statusText()}</p>
               </Show>

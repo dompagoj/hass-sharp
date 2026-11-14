@@ -13,7 +13,7 @@ import { dataInputs, nodeCatalog, validateGraph, validLiteral, type GraphNode, t
 import { InputEditor } from '../src/visual/InputEditor'
 import { typeLabel } from '../src/visual/typeLabels'
 import {
-  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, optionLabel, optionWords, registryNames, targetValue, valueSummary, widgetFor,
+  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, optionLabel, optionWords, registryNames, targetValue, valueSummary, WidgetControl, widgetFor,
   type ValueKind, type Widget,
 } from '../src/visual/widgets'
 
@@ -87,14 +87,34 @@ describe('widgetFor', () => {
       .toEqual([{ value: 'brightness_pct', label: 'Brightness pct' }, { value: 'x_y', label: 'XY colour' }])
     // The card's summary, the panel's options and the trace's text all go through optionLabel.
     expect(optionLabel(modes, 'heat_cool')).toBe('Heat and cool')
-    expect(optionLabel(modes, 'auto')).toBe('Auto')
-    expect(optionLabel({ kind: 'state', multiple: false }, 'heat_cool')).toBe('Heat cool')
     expect(valueSummary(modes, 'fan_only')).toBe('Fan only')
-    expect(valueSummary({ kind: 'state', multiple: false }, 'heat_cool')).toBe('Heat cool')
+    // A stored value that is not one of the options reads as stored, as the validator names it; so does free text in
+    // a state field (its options are the target entities' states, unknown to a summary).
+    expect(optionLabel(modes, 'auto')).toBe('auto')
+    expect(valueSummary(modes, 'heat_cool_2')).toBe('heat_cool_2')
+    expect(optionLabel({ kind: 'state', multiple: false }, 'heat_cool')).toBe('heat_cool')
+    expect(valueSummary({ kind: 'state', multiple: false }, 'sensor.kitchen')).toBe('sensor.kitchen')
     expect(optionWords(3)).toBe('3')
     expect(optionWords('')).toBe('')
     // What is sent stays the raw value.
     expect(commitLiteral(spec(['string'], { enum: ['heat_cool'] }), 'heat_cool')).toEqual({ kind: 'literal', type: 'string', value: 'heat_cool' })
+  })
+  it('puts a value in words only when it is an identifier with an underscore or plain lower-case letters', () => {
+    const words: [string, string][] = [['heat_cool', 'Heat cool'], ['auto', 'Auto'], ['fan_only', 'Fan only'], ['mode_2', 'Mode 2'], ['brightness_pct', 'Brightness pct'],
+      ['iPhone', 'iPhone'], ['mp3', 'mp3'], ['Living Room', 'Living Room'], ['sensor.kitchen', 'sensor.kitchen'], ['_private', '_private'], ['HEAT', 'HEAT'], ['a b', 'a b']]
+    for (const [value, text] of words) expect(optionWords(value), value).toBe(text)
+    expect(widgetFor(spec(['string'], { enum: ['iPhone', 'mp3', 'heat_cool'] })).options!.map(o => o.label)).toEqual(['iPhone', 'mp3', 'Heat cool'])
+  })
+  it('shows a stored choice that is not one of the options as it is stored', () => {
+    const widget = widgetFor(spec(['string'], { enum: ['heat_cool', 'off'] }))
+    const { host } = mount(() => <WidgetControl widget={widget} value="heat_cool_old" commit={() => {}} id="mode" label="Mode" disabled={false} compact={false} />)
+    const select = host.querySelector<HTMLSelectElement>('select')!
+    expect([...select.options].map(o => o.textContent)).toEqual(['heat_cool_old', 'Heat cool', 'Off'])
+    const list = widgetFor(spec(['array'], { selector: { select: { options: ['heat_cool', 'off'], multiple: true } } }))
+    const many = mount(() => <WidgetControl widget={list} value={['off', 'gone_mode']} commit={() => {}} id="modes" label="Modes" disabled={false} compact={false} />)
+    expect(many.host.textContent).toContain('Off')
+    expect(many.host.textContent).toContain('gone_mode')
+    expect(many.host.textContent).not.toContain('Gone mode')
   })
   it('maps the C3 rows the fixture has no field for', () => {
     expect(widgetFor(selector(['entity_id:light'], { entity: { domain: 'light' } }))).toMatchObject({ kind: 'entity', multiple: false, domains: ['light'] })
@@ -206,8 +226,9 @@ describe('values', () => {
     expect(valueSummary(widgetFor(selector(['string'], { text: { multiline: true } })), 'first\nsecond')).toBe('first …')
     expect(valueSummary({ kind: 'color', multiple: false }, [255, 0, 0])).toBe('RGB 255, 0, 0')
     expect(valueSummary({ kind: 'json', multiple: false }, undefined)).toBe('Not set')
-    // An empty value stored as null is not set too, whatever the widget: never the text "null".
-    for (const kind of ['json', 'text', 'select', 'target', 'entity'] as const) expect(valueSummary({ kind, multiple: false }, null)).toBe('Not set')
+    // An empty value stored as null is not set too: never the text "null". In a JSON value null was written on purpose.
+    for (const kind of ['text', 'select', 'target', 'entity', 'mixed'] as const) expect(valueSummary({ kind, multiple: false }, null)).toBe('Not set')
+    expect(valueSummary({ kind: 'json', multiple: false }, null)).toBe('null')
     expect(valueSummary({ kind: 'json', multiple: false }, [30, 60])).toBe('30, 60')
     expect(valueSummary({ kind: 'json', multiple: false }, { a: 1, b: 2 })).toBe('Object, 2 fields')
     expect(valueSummary({ kind: 'json', multiple: false }, { a: 1 })).toBe('Object, 1 field')

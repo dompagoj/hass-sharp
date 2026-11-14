@@ -14,7 +14,9 @@ export const jsonEqual = (a: unknown, b: unknown): boolean =>
  * else as `displayValue` shows it. The raw value is what is stored and sent.
  */
 export const optionWords = (value: JsonValue): string => {
-  if (typeof value !== 'string' || !value.trim()) return displayValue(value)
+  // Only an identifier ("heat_cool", "fan_only") or plain lower-case letters ("auto"): text whose case or spelling means
+  // something ("iPhone", "mp3", "Living Room", an entity id) stays as it is.
+  if (typeof value !== 'string' || !(/^[a-z]+$/.test(value) || /^[a-z0-9]+(?:_[a-z0-9]+)+$/.test(value))) return displayValue(value)
   const words = value.replaceAll('_', ' ')
   return words.charAt(0).toUpperCase() + words.slice(1)
 }

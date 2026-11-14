@@ -185,6 +185,9 @@ it('says what a value is in plain words, and never shows a placeholder as data',
   expect(valueText({ type: 'object', v: null })).toBe('Not set')
   expect(chipValue({ type: 'string', v: null })).toEqual({ type: 'string', v: 'Not set', muted: true })
   expect(chipValue({ type: 'string', v: 'on' })).toEqual({ type: 'string', v: 'on' })
+  // An output that is null had no value to give: "No value" (an input is "Not set").
+  expect(valueText({ type: 'object', v: null }, undefined, 'out')).toBe('No value')
+  expect(chipValue({ type: 'string', v: null }, undefined, 'out')).toEqual({ type: 'string', v: 'No value', muted: true })
   // A choice reads as its option's label when the input offers one.
   expect(valueText({ type: 'string', v: 'heat_cool' }, v => (v === 'heat_cool' ? 'Heat cool' : undefined))).toBe('Heat cool')
   expect(valueText({ type: 'object', trunc: true })).toBe('Too large to record')

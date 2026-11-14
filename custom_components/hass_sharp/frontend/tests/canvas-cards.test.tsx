@@ -3,7 +3,7 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { FlowAdapter, type FlowTrace } from '../src/visual/FlowAdapter'
-import { tipSide } from '../src/visual/flow/NodeCard'
+import { tipBounds, tipPlace } from '../src/visual/flow/NodeCard'
 import { VisualEditor } from '../src/visual/VisualEditor'
 import { HassCtx } from '../src/context'
 import * as contract from '../src/visual/contract'
@@ -1036,12 +1036,29 @@ it('shows an empty value stored as null as "Not set" in the muted style, never a
   expect(el.querySelector('[data-id="service-1"]')!.textContent).not.toContain('null')
 })
 
-it('keeps a card\'s problem tag inside the canvas: beside it on the right, else on the left, else below it', async () => {
-  expect(tipSide({ left: 100, right: 300 }, 200, 12, { left: 0, right: 1000 })).toBe('right')
+it('keeps a card\'s problem tag inside the canvas and clear of a floating panel: right, else left, else below or above, moved in', async () => {
+  const box = (left: number, right: number, top = 100, bottom = 200) => ({ left, right, top, bottom })
+  const size = { width: 200, height: 60 }
+  expect(tipPlace(box(100, 300), size, 12, box(0, 1000, 0, 800))).toEqual({ side: 'right', shift: 0 })
   // Near the side panel's edge: on the left.
-  expect(tipSide({ left: 700, right: 900 }, 200, 12, { left: 0, right: 1000 })).toBe('left')
-  // A 360px canvas has room on neither side: below.
-  expect(tipSide({ left: 40, right: 300 }, 200, 12, { left: 0, right: 360 })).toBe('below')
+  expect(tipPlace(box(700, 900), size, 12, box(0, 1000, 0, 800))).toEqual({ side: 'left', shift: 0 })
+  // A 360px canvas has room on neither side: below, moved left to stay inside the right edge.
+  expect(tipPlace(box(40, 300), size, 12, box(0, 360, 0, 800))).toEqual({ side: 'below', shift: 0 })
+  expect(tipPlace(box(200, 340), size, 12, box(0, 360, 0, 800))).toEqual({ side: 'below', shift: -40 })
+  // Never past the left edge either: a tag wider than the canvas starts at its left edge.
+  expect(tipPlace(box(100, 300), { width: 400, height: 60 }, 12, box(0, 360, 0, 800))).toEqual({ side: 'below', shift: -100 })
+  // No room below the card: above it.
+  expect(tipPlace(box(40, 300, 700, 760), size, 12, box(0, 360, 0, 800))).toEqual({ side: 'above', shift: 0 })
+  // A panel floating over the canvas (full screen, 900px and wider) is an edge; one docked beside it changes nothing;
+  // a sheet over the bottom of the canvas is the bottom edge.
+  const canvas = box(0, 1280, 0, 800)
+  expect(tipBounds(canvas, [box(908, 1268, 72, 788)])).toEqual(box(0, 908, 0, 800))
+  expect(tipBounds(box(0, 920, 0, 800), [box(920, 1280, 0, 800)])).toEqual(box(0, 920, 0, 800))
+  expect(tipBounds(box(0, 360, 0, 700), [box(0, 360, 640, 700)])).toEqual(box(0, 360, 0, 640))
+  expect(tipBounds(canvas, [box(0, 0, 0, 0)])).toEqual(canvas)
+  // As measured in the page: DOMRects, whose sides are getters.
+  expect(tipBounds(new DOMRect(0, 0, 1280, 800), [new DOMRect(908, 72, 360, 716)])).toEqual(box(0, 908, 0, 800))
+  expect(tipPlace(box(700, 880), size, 12, tipBounds(canvas, [box(908, 1268, 72, 788)]))).toEqual({ side: 'left', shift: 0 })
   layout()
   const el = host()
   dispose = render(() => <FlowAdapter graph={typed()} onSelect={() => {}} onChange={() => {}}
@@ -1049,16 +1066,18 @@ it('keeps a card\'s problem tag inside the canvas: beside it on the right, else 
   const card = await vi.waitFor(() => { const found = el.querySelector<HTMLElement>('[data-id="service-1"] .hs-card'); expect(found).not.toBeNull(); return found! })
   const tip = card.querySelector<HTMLElement>('.hs-node-errors')!
   expect(tip.classList).toContain('hs-node-errors--right')
-  const rect = (left: number, right: number) => ({ left, right, width: right - left, top: 0, bottom: 100, height: 100, x: left, y: 0, toJSON() {} }) as DOMRect
-  vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(rect(700, 900))
+  const rect = (left: number, right: number, top = 0, bottom = 1000) => ({ left, right, width: right - left, top, bottom, height: bottom - top, x: left, y: top, toJSON() {} }) as DOMRect
+  vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(rect(700, 900, 100, 200))
   vi.spyOn(el.querySelector<HTMLElement>('.solid-flow')!, 'getBoundingClientRect').mockReturnValue(rect(0, 1000))
   vi.spyOn(tip, 'scrollWidth', 'get').mockReturnValue(220)
   // Drawn at zoom 1.
   vi.spyOn(card, 'offsetWidth', 'get').mockReturnValue(200)
   card.dispatchEvent(new PointerEvent('pointerenter'))
   await vi.waitFor(() => expect(tip.classList).toContain('hs-node-errors--left'))
-  // Focus from the keyboard places it too.
+  // Focus from the keyboard places it too; below, it is moved left to stay inside the canvas (20px here, at zoom 1).
   vi.spyOn(el.querySelector<HTMLElement>('.solid-flow')!, 'getBoundingClientRect').mockReturnValue(rect(600, 960))
+  vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(rect(780, 980, 100, 200))
   card.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
   await vi.waitFor(() => expect(tip.classList).toContain('hs-node-errors--below'))
+  expect(tip.style.getPropertyValue('--hs-tip-shift')).toBe('-20px')
 })

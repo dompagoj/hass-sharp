@@ -251,6 +251,7 @@ function StepValues(props: {
                 ports={Object.keys(outputs())}
                 value={port => outputs()[port]}
                 label={port => outputLabel(props.node, port, props.catalog)}
+                side="out"
                 catalog={props.catalog}
               />
             </>
@@ -270,6 +271,8 @@ function PortList(props: {
   /** A choice's option labels, for an input that offers options. */
   option?(port: string): OptionText | undefined
   source?(port: string, value: TraceValue): JSX.Element
+  /** Outputs: a null reads "No value" (an input's, "Not set"). */
+  side?: 'in' | 'out'
   catalog: VisualCatalogSnapshot
 }) {
   return (
@@ -287,7 +290,7 @@ function PortList(props: {
                     <TypeChip text={typeLabel(value().type, props.catalog)} color={typeColor(value().type, props.catalog)} list={typeIsList(value().type, props.catalog)} />
                   </div>
                   {props.source?.(port, value())}
-                  <ValueView value={value()} label={props.label(port)} option={props.option?.(port)} />
+                  <ValueView value={value()} label={props.label(port)} option={props.option?.(port)} side={props.side} />
                 </li>
               )
             }}
@@ -313,12 +316,12 @@ const traceLeaf = (cut: boolean | undefined): JsonLeaf => (name, v) => {
 }
 
 /** A recorded value: a tree for objects and lists, words for anything else; never a placeholder as if it were data. */
-function ValueView(props: { value: TraceValue; label: string; option?: OptionText }) {
+function ValueView(props: { value: TraceValue; label: string; option?: OptionText; side?: 'in' | 'out' }) {
   return (
     <div class="hs-trace-port__value">
       <Show when={isTree(props.value)} fallback={
         <span class="hs-trace-value" classList={{ 'hs-trace-value--muted': isPlaceholder(props.value) }}>
-          {valueText(props.value, props.option)}
+          {valueText(props.value, props.option, props.side)}
         </span>
       }>
         <span class="hs-trace-value hs-trace-value--muted">{valueText(props.value)}</span>

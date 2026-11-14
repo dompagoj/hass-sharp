@@ -126,6 +126,22 @@ it('entity picker keyboard selection works inside the editor shortcut boundary',
   expect(json(host).nodes[0].config.entity).toBe('sensor.fresh')
 })
 
+it('removes the wires a new trigger type has no output for in the same undo step, and says which on the canvas', async () => {
+  const host = root()
+  dispose = render(() => <VisualEditor name="Heating" />, host)
+  const wires = () => json(host).edges.filter((e: any) => e.kind === 'data' && e.source === 'trigger-1')
+  press(pin(host, 'trigger-1', 'data:entity_id')); press(pin(host, 'condition-1', 'data:entity'))
+  await vi.waitFor(() => expect(wires()).toHaveLength(1))
+  focusNode(host, 'trigger-1')
+  button(host.querySelector('.hs-inspector')!, 'Change trigger type').click()
+  host.querySelector<HTMLInputElement>('.hs-inspector [aria-label="Trigger type"] input[value="daily"]')!.click()
+  expect(wires()).toEqual([])
+  await vi.waitFor(() => expect(host.querySelector('.hs-canvas-notice')?.textContent).toContain('Removed 1 connection the new trigger does not have: Entity.'))
+  button(host, 'Undo').click()
+  expect(wires()).toHaveLength(1)
+  expect(json(host).nodes.find((n: any) => n.id === 'trigger-1')).toMatchObject({ label: 'Entity changes', config: { type: 'entity' } })
+})
+
 it('changes a trigger type and its written label in one undo step; a typed label stays', () => {
   const host = root()
   dispose = render(() => <VisualEditor name="Heating" />, host)

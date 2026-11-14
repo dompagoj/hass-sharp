@@ -76,13 +76,13 @@ export type OptionText = (value: string | number) => string | undefined
  * A recorded value in words: what a card's chip says and what the panel shows for anything that is not a tree. A
  * choice reads as its option's label when `option` knows one.
  */
-export function valueText(value: TraceValue, option?: OptionText): string {
+export function valueText(value: TraceValue, option?: OptionText, side: 'in' | 'out' = 'in'): string {
   if (value.redacted) return 'Hidden'
   if (!('v' in value) || value.v === undefined) return 'Too large to record'
   const v = value.v
   // The recorder caps depth only below the top level: a whole value cut to nothing could not be read.
-  // An empty optional value is recorded as null: never shown as the text "null".
-  if (v === null) return value.trunc ? 'Could not be recorded' : 'Not set'
+  // An empty value is recorded as null, never shown as the text "null": an input was not set, an output had no value.
+  if (v === null) return value.trunc ? 'Could not be recorded' : side === 'out' ? 'No value' : 'Not set'
   if (value.trunc && opaque(v)) return 'Could not be recorded'
   if (Array.isArray(v)) return `List · ${plural(v.length, 'item')}`
   if (typeof v === 'object') return `Object · ${plural(Object.keys(v).length, 'field')}`
@@ -102,8 +102,8 @@ export const isPlaceholder = (value: TraceValue) => !!value.redacted || value.v 
  * What a card's chip receives: the words of {@link valueText}, with `trunc` only where part of a value is shown, and
  * `muted` where the words stand for a missing value (as the panel shows them).
  */
-export const chipValue = (value: TraceValue, option?: OptionText): TracedValue =>
-  ({ type: value.type, v: valueText(value, option), trunc: isCut(value) || undefined, src: value.src, ...(isPlaceholder(value) ? { muted: true } : {}) })
+export const chipValue = (value: TraceValue, option?: OptionText, side: 'in' | 'out' = 'in'): TracedValue =>
+  ({ type: value.type, v: valueText(value, option, side), trunc: isCut(value) || undefined, src: value.src, ...(isPlaceholder(value) ? { muted: true } : {}) })
 
 /** The run as the canvas shows it for one frame. */
 interface Picture {
@@ -269,7 +269,7 @@ export function flowTrace(model: TraceModel, graph: Graph, frame: string, focusN
     focusNodeId,
     value: (nodeId, port, side) => {
       const value = model.value(nodeId, port, side, frame)
-      return value ? chipValue(value, side === 'in' ? option?.(nodeId, port) : undefined) : undefined
+      return value ? chipValue(value, side === 'in' ? option?.(nodeId, port) : undefined, side) : undefined
     },
   }
 }

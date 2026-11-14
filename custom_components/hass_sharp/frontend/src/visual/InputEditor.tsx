@@ -2,7 +2,7 @@ import { createMemo, createUniqueId, For, Show } from 'solid-js'
 import { Menu, type MenuItem } from '../components/Menu'
 import { nodeCatalog, type InputSpec, type JsonValue, type Operand, type VisualCatalogSnapshot } from './contract'
 import { typeLabel } from './typeLabels'
-import { commitLiteral, fitsWidget, initialValue, inlineWidget, jsonEqual, literalFor, valueKind, namesRegistryItems, registryNames, valueSummary, WidgetControl, widgetFor, type CommitOptions, type Widget } from './widgets'
+import { commitLiteral, fitsWidget, initialValue, inlineWidget, jsonEqual, keepsNull, literalFor, valueKind, namesRegistryItems, registryNames, valueSummary, WidgetControl, widgetFor, type CommitOptions, type Widget } from './widgets'
 import { useRegistry } from '../registry'
 
 export interface InputEditorProps {
@@ -48,8 +48,9 @@ export function InputEditor(props: InputEditorProps) {
   let root!: HTMLDivElement
   const catalog = () => props.catalog ?? nodeCatalog
   const operand = (): Operand => props.value ?? { kind: 'unset' }
-  // A literal null (how an empty optional value is often stored) is edited and summarised as not set, never as "null".
-  const literal = () => { const o = operand(); return o.kind === 'literal' && o.value !== null ? o.value : undefined }
+  // A literal null (how an empty optional value is often stored) is edited and summarised as not set, never as "null";
+  // in the JSON editor it is a value someone wrote, and stays one.
+  const literal = () => { const o = operand(); return o.kind === 'literal' && (o.value !== null || keepsNull(widget())) ? o.value : undefined }
   const widget = createMemo(() => widgetFor(props.input, catalog()))
   // A stored value of another shape stays editable as JSON instead of being misread by the widget.
   const shown = () => fitsWidget(widget(), literal()) ? widget() : jsonWidget

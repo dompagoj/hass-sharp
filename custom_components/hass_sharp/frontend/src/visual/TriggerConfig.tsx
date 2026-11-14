@@ -1,6 +1,7 @@
 import { createSignal, createUniqueId, For, onCleanup, onMount, Show } from 'solid-js'
 import { useHass } from '../context'
-import type { GraphNode, InputSpec, JsonValue } from './contract'
+import { dataOutputs, isAssignable, nodeCatalog, type GraphNode, type InputSpec, type JsonValue, type VisualCatalogSnapshot } from './contract'
+import { nodeInputs, removeEdge, updateNode, type VisualGraph } from './graph'
 import type { VisualDiagnostic } from './api'
 import { domainWords } from './typeLabels'
 import { fitsWidget, widgetFor, WidgetControl, type Widget } from './widgets'
@@ -56,19 +57,45 @@ const typeFields: Record<string, Record<string, string>> = {
 const typeKeys = ['type', 'entity', 'time', 'timeZone', 'at', 'trigger']
 /** Options every Home Assistant trigger has, whatever its platform. */
 const commonOptions = ['id', 'enabled', 'variables']
-/** A setting that may only move to a type that can hold its value. */
-const fitsField = (meaning: string, location: string, value: unknown) => {
-  if (meaning === 'entity' && location === 'config:entity') return typeof value === 'string' || (Array.isArray(value) && value.length === 1 && typeof value[0] === 'string')
-  if (meaning === 'timeOfDay') return typeof value === 'string' && /^\d{1,2}:\d\d/.test(value)
-  return true
+const entityId = (value: unknown): value is string => typeof value === 'string' && /^[a-z0-9_]+\.[a-z0-9_]+$/.test(value)
+/** A time of day as `HH:MM` or `HH:MM:SS`, in range. */
+const timeOfDayText = (value: unknown, seconds: 'any' | 'zero') => {
+  const m = typeof value === 'string' ? /^(\d\d):(\d\d)(?::(\d\d))?$/.exec(value) : null
+  return !!m && Number(m[1]) < 24 && Number(m[2]) < 60 && (m[3] === undefined || (seconds === 'any' ? Number(m[3]) < 60 : m[3] === '00'))
 }
+/**
+ * A setting moved to another type, as that type's own form could have written it; undefined when it could not.
+ * "Every day" holds a time as `HH:MM` (the backend reads nothing else); "Entity changes" one entity id; Home
+ * Assistant's entity fields one id as text or several as a list; an attribute is text.
+ */
+function carried(meaning: string, location: string, value: unknown): unknown {
+  switch (meaning) {
+    case 'entity': {
+      const ids = Array.isArray(value) ? value : [value]
+      if (!ids.length || !ids.every(entityId)) return undefined
+      if (location === 'config:entity') return ids.length === 1 ? ids[0] : undefined
+      return ids.length === 1 ? ids[0] : ids
+    }
+    case 'timeOfDay':
+      if (location === 'config:time') return timeOfDayText(value, 'zero') ? timeOfDay(value as string) : undefined
+      return timeOfDayText(value, 'any') ? value : undefined
+    case 'attribute': return typeof value === 'string' ? value : undefined
+    // The rest moves between forms that edit it with the same widget (a duration between the two state triggers).
+    default: return value
+  }
+}
+
+/** The platform a Home Assistant trigger declaration names; `state` when it names none. */
+const declaredPlatform = (declaration: Record<string, unknown>) => String(declaration.trigger ?? declaration.platform ?? 'state')
+/** The key a declaration names its platform with: the older `platform`, or `trigger`. */
+const platformKeyOf = (declaration: Record<string, unknown>) =>
+  Object.hasOwn(declaration, 'platform') && !Object.hasOwn(declaration, 'trigger') ? 'platform' : 'trigger'
 
 /** The choice a trigger config stands for: a HassSharp type, a known Home Assistant platform, or "other". */
 export function triggerChoice(config: Config): string {
   const type = typeof config.type === 'string' ? config.type : 'entity'
   if (type !== 'ha') return type
-  const declaration = record(config.trigger) ? config.trigger : {}
-  const platform = String(declaration.trigger ?? declaration.platform ?? 'state')
+  const platform = declaredPlatform(record(config.trigger) ? config.trigger : {})
   return platforms.includes(platform) ? platform : 'other'
 }
 
@@ -89,27 +116,57 @@ export function retypeTrigger(config: Config, id: string): Config {
   if (native.includes(id)) next.type = id
   else {
     next.type = 'ha'
-    const platformKey = Object.hasOwn(declaration, 'platform') && !Object.hasOwn(declaration, 'trigger') ? 'platform' : 'trigger'
-    trigger[platformKey] = id === 'other' ? '' : id
+    trigger[platformKeyOf(declaration)] = id === 'other' ? '' : id
     for (const key of commonOptions) if (Object.hasOwn(declaration, key)) trigger[key] = declaration[key]
     if (id === 'sun') trigger.event = 'sunrise'
     if (id === 'zone') trigger.event = 'enter'
   }
   const target = typeFields[id] ?? {}
   for (const [meaning, location] of Object.entries(typeFields[from] ?? {})) {
-    const value = read(location)
     const to = target[meaning]
-    if (value === undefined || value === null || value === '' || !to || !fitsField(meaning, to, value)) continue
+    const value = to ? carried(meaning, to, read(location)) : undefined
+    if (value === undefined || value === null || value === '') continue
     const [where, key] = to.split(':')
-    if (where === 'config') next[key] = Array.isArray(value) && value.length === 1 ? value[0] : value
+    if (where === 'config') next[key] = value
     else trigger[key] = value
   }
   if (next.type === 'ha') next.trigger = trigger
   return next
 }
 /**
+ * A trigger node changed to another type (`retypeTrigger`, `retypedLabel`), as one graph change: the wires from outputs
+ * the new type does not have, or whose new type no longer fits where they go, are removed (the inputs they fed are left
+ * unset, as a disconnect leaves them) and named in the notice, as Apply does for a Custom C# node.
+ */
+export function retypeTriggerNode(graph: VisualGraph, nodeId: string, config: Config, label: string | undefined, catalog: VisualCatalogSnapshot = nodeCatalog): { graph: VisualGraph; notice?: string } {
+  const node = graph.nodes.find(n => n.id === nodeId)
+  if (!node) return { graph }
+  let next = updateNode(graph, nodeId, label === node.label ? { config } : { config, label })
+  const before = dataOutputs(node, catalog), after = dataOutputs(next.nodes.find(n => n.id === nodeId)!, catalog)
+  const missing: string[] = [], misfit: string[] = []
+  for (const edge of graph.edges) {
+    if (edge.kind !== 'data' || edge.source !== nodeId) continue
+    const output = Object.hasOwn(after, edge.sourcePort) ? after[edge.sourcePort] : undefined
+    const target = next.nodes.find(n => n.id === edge.target)
+    const input = target ? nodeInputs(next, target, catalog)[edge.targetPort] : undefined
+    const name = (Object.hasOwn(before, edge.sourcePort) ? before[edge.sourcePort].label : undefined) ?? edge.sourcePort
+    if (!output) missing.push(name)
+    else if (input && !input.types.some(type => isAssignable(output.type, type, catalog))) misfit.push(name)
+    else continue
+    next = removeEdge(next, edge.id, catalog)
+  }
+  const list = (names: string[]) => [...new Set(names)].join(', ')
+  const count = (n: number) => `${n} ${n === 1 ? 'connection' : 'connections'}`
+  const notes = [
+    ...(missing.length ? [`Removed ${count(missing.length)} the new trigger does not have: ${list(missing)}`] : []),
+    ...(misfit.length ? [`Removed ${count(misfit.length)} that no longer ${misfit.length === 1 ? 'fits' : 'fit'}: ${list(misfit)}`] : []),
+  ]
+  return { graph: next, notice: notes.length ? `${notes.join('. ')}.` : undefined }
+}
+/**
  * The label after a type change: a label the editor wrote (the old type's name) becomes the new type's name; a label
- * the person typed, or no label, stays.
+ * the person typed, or no label, stays. A typed label that is exactly the old type's name cannot be told apart from a
+ * written one, and follows the type too.
  */
 export function retypedLabel(label: string | undefined, from: string, to: string): string | undefined {
   const old = triggerChoices.find(c => c.id === from)?.name
@@ -205,9 +262,9 @@ export function TriggerConfig(props: {
   const errors = (key: string) => props.diagnostics?.filter(d => d.nodeId === props.node.id && d.severity === 3 && (d.inputId === key || d.portId === key)).map(d => d.message) ?? []
   const type = () => (typeof config().type === 'string' ? (config().type as string) : 'entity')
   const declaration = () => (record(config().trigger) ? (config().trigger as Record<string, unknown>) : {})
-  const platformKey = () => (Object.hasOwn(declaration(), 'platform') && !Object.hasOwn(declaration(), 'trigger') ? 'platform' : 'trigger')
-  const platform = () => String(declaration().trigger ?? declaration().platform ?? 'state')
-  const choice = () => (type() !== 'ha' ? type() : platforms.includes(platform()) ? platform() : 'other')
+  const platformKey = () => platformKeyOf(declaration())
+  const platform = () => declaredPlatform(declaration())
+  const choice = () => triggerChoice(config())
   const current = () => triggerChoices.find(c => c.id === choice()) ?? triggerChoices[0]
   const set = (key: string, value: unknown, coalesce?: string) => {
     const next = { ...config() }

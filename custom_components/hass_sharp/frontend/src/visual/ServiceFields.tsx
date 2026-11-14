@@ -37,6 +37,18 @@ export function targetEntities(target: unknown, connected: boolean): string[] | 
   return ids.length ? ids : undefined
 }
 /**
+ * What is known of an entity for a field filter: Home Assistant's own state when the page has it (in Home Assistant),
+ * else the registry's supported features. A state without `supported_features` supports none, as Home Assistant and the
+ * entity picker (`registry.ts`) read it.
+ */
+export function filterFacts(id: string, states: Record<string, { attributes?: Record<string, unknown> } | undefined> | undefined,
+  entities: { entity_id: string; supported_features?: number | null }[] | undefined): FilterFacts | undefined {
+  const state = states?.[id]
+  if (state?.attributes) return { features: typeof state.attributes.supported_features === 'number' ? state.attributes.supported_features : 0, attributes: state.attributes }
+  const entity = entities?.find(e => e.entity_id === id)
+  return entity ? { features: entity.supported_features } : undefined
+}
+/**
  * Whether "Add field" offers a field, as Home Assistant's own editor decides (C4 `filter`): with no filter, or when
  * the target entities are not known, always; otherwise when any target entity has one of the listed supported
  * features, or an attribute holding one of the listed values. An entity it knows nothing about counts as a match, so
@@ -87,13 +99,7 @@ export function ServiceFields(props: {
   const text = useServiceText()
   const hass = useHass() as unknown as { states?: Record<string, { attributes?: Record<string, unknown> } | undefined> } | undefined
   const registry = useRegistry()
-  /** Home Assistant's own states when the page has them (in Home Assistant), else the registry's supported features. */
-  const facts = (id: string): FilterFacts | undefined => {
-    const state = hass?.states?.[id]
-    if (state?.attributes) return { features: typeof state.attributes.supported_features === 'number' ? state.attributes.supported_features : null, attributes: state.attributes }
-    const entity = registry.data?.entities.find(e => e.entity_id === id)
-    return entity ? { features: entity.supported_features } : undefined
-  }
+  const facts = (id: string) => filterFacts(id, hass?.states, registry.data?.entities)
   const pickerId = createUniqueId()
   const messages = (key: 'service' | 'returnResponse' | 'fields') => props.messages?.(key) ?? []
   const serviceId = () => (typeof props.node.config.service === 'string' ? props.node.config.service : '')

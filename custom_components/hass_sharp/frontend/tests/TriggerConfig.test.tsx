@@ -3,7 +3,9 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
-import { retypedLabel, retypeTrigger, TriggerAdvanced, TriggerConfig, triggerChoices } from '../src/visual/TriggerConfig'
+import { retypedLabel, retypeTrigger, retypeTriggerNode, TriggerAdvanced, TriggerConfig, triggerChoice, triggerChoices } from '../src/visual/TriggerConfig'
+import { addNode, createGraph } from '../src/visual/graph'
+import { connectData } from '../src/visual/contract'
 
 let dispose: (() => void) | undefined
 let client: QueryClient | undefined
@@ -166,6 +168,74 @@ it('carries the entity and a time of day between types that both have one, and c
   expect(retypedLabel('Entity changes', 'entity', 'state')).toBe('State')
   expect(retypedLabel('Motion in the hall', 'entity', 'state')).toBe('Motion in the hall')
   expect(retypedLabel(undefined, 'entity', 'state')).toBeUndefined()
+})
+
+it('carries a time of day only as the new type\'s own form writes it', () => {
+  const time = (at: unknown) => retypeTrigger({ type: 'ha', trigger: { trigger: 'time', at } }, 'daily')
+  // The time widget writes seconds; "Every day" stores HH:MM, as its own form does (the backend reads only that).
+  expect(time('07:30:00')).toEqual({ type: 'daily', time: '07:30' })
+  expect(time('07:30')).toEqual({ type: 'daily', time: '07:30' })
+  // Seconds that matter, a one-digit hour, a time out of range or an entity holding the time: not carried.
+  for (const at of ['07:30:15', '7:30', '24:00', '07:60', '07:30:00.5', 'input_datetime.wake', ['07:30'], 730])
+    expect(time(at), JSON.stringify(at)).toEqual({ type: 'daily' })
+  // Into Home Assistant's "at": a time of day with or without seconds, as the time widget writes it.
+  expect(retypeTrigger({ type: 'daily', time: '07:30' }, 'time')).toEqual({ type: 'ha', trigger: { trigger: 'time', at: '07:30' } })
+  expect(retypeTrigger({ type: 'daily', time: '7:30' }, 'time')).toEqual({ type: 'ha', trigger: { trigger: 'time' } })
+})
+
+it('carries an entity, an attribute and a duration only as the new type\'s own form writes them', () => {
+  // "Entity changes" holds one entity id; the state forms one id as text, several as a list.
+  expect(retypeTrigger({ type: 'entity', entity: 'Hall motion' }, 'state')).toEqual({ type: 'ha', trigger: { trigger: 'state' } })
+  expect(retypeTrigger({ type: 'entity', entity: '{{ states.x }}' }, 'numeric_state')).toEqual({ type: 'ha', trigger: { trigger: 'numeric_state' } })
+  expect(retypeTrigger({ type: 'ha', trigger: { trigger: 'state', entity_id: ['light.a', 'light.b'] } }, 'numeric_state'))
+    .toEqual({ type: 'ha', trigger: { trigger: 'numeric_state', entity_id: ['light.a', 'light.b'] } })
+  expect(retypeTrigger({ type: 'ha', trigger: { trigger: 'state', entity_id: ['light.a', 42] } }, 'numeric_state'))
+    .toEqual({ type: 'ha', trigger: { trigger: 'numeric_state' } })
+  expect(retypeTrigger({ type: 'ha', trigger: { trigger: 'state', entity_id: ['light.a'] } }, 'numeric_state'))
+    .toEqual({ type: 'ha', trigger: { trigger: 'numeric_state', entity_id: 'light.a' } })
+  expect(retypeTrigger({ type: 'ha', trigger: { trigger: 'numeric_state', entity_id: 'sensor.t', attribute: 'temperature', for: { minutes: 5 } } }, 'state'))
+    .toEqual({ type: 'ha', trigger: { trigger: 'state', entity_id: 'sensor.t', attribute: 'temperature', for: { minutes: 5 } } })
+  expect(retypeTrigger({ type: 'ha', trigger: { trigger: 'numeric_state', entity_id: 'sensor.t', attribute: ['a'], for: 'soon' } }, 'state'))
+    .toEqual({ type: 'ha', trigger: { trigger: 'state', entity_id: 'sensor.t', for: 'soon' } })
+  // A sun trigger's event is never a zone trigger's: each starts from its own default.
+  expect(retypeTrigger({ type: 'ha', trigger: { trigger: 'sun', event: 'sunset' } }, 'zone')).toEqual({ type: 'ha', trigger: { trigger: 'zone', event: 'enter' } })
+  expect(retypeTrigger({ type: 'once', at: '2026-12-01T07:30:00+01:00' }, 'daily')).toEqual({ type: 'daily' })
+})
+
+it('removes the wires from outputs a new trigger type does not have, in the same change, and names them', () => {
+  let graph = addNode(createGraph('Wired'), 'entity_field', 'pick')
+  graph = connectData(graph, 'trigger-1', 'entity_id', 'condition-1', 'entity')
+  graph = connectData(graph, 'trigger-1', 'to_state', 'pick', 'entity')
+  expect(graph.edges.filter(e => e.kind === 'data' && e.source === 'trigger-1')).toHaveLength(2)
+  const retype = (id: string) => {
+    const node = graph.nodes.find(n => n.id === 'trigger-1')!
+    return retypeTriggerNode(graph, 'trigger-1', retypeTrigger(node.config, id), retypedLabel(node.label, 'entity', id))
+  }
+  // A state trigger has the same outputs: nothing goes.
+  const state = retype('state')
+  expect(state.notice).toBeUndefined()
+  expect(state.graph.edges).toEqual(graph.edges)
+  expect(state.graph.nodes.find(n => n.id === 'trigger-1')!.label).toBe('State')
+  // "Every day" has neither: both wires go, and the inputs they fed are left unset (as a disconnect leaves them).
+  const daily = retype('daily')
+  expect(daily.graph.edges.filter(e => e.kind === 'data')).toEqual([])
+  expect(daily.graph.edges.filter(e => e.kind !== 'data')).toEqual(graph.edges.filter(e => e.kind !== 'data'))
+  expect(daily.notice).toBe('Removed 2 connections the new trigger does not have: Entity, New state.')
+  expect(daily.graph.nodes.find(n => n.id === 'trigger-1')).toMatchObject({ label: 'Every day', config: { type: 'daily' } })
+  // A zone trigger keeps its entity output.
+  const zone = retype('zone')
+  expect(zone.graph.edges.filter(e => e.kind === 'data').map(e => (e as { sourcePort: string }).sourcePort)).toEqual(['entity_id'])
+  expect(zone.notice).toBe('Removed 1 connection the new trigger does not have: New state.')
+})
+
+it('names the type of a trigger with the same rule the form uses', () => {
+  expect(triggerChoice({})).toBe('entity')
+  expect(triggerChoice({ type: 'daily' })).toBe('daily')
+  expect(triggerChoice({ type: 'ha', trigger: { platform: 'sun' } })).toBe('sun')
+  expect(triggerChoice({ type: 'ha', trigger: { trigger: 'mqtt' } })).toBe('other')
+  expect(triggerChoice({ type: 'ha', trigger: {} })).toBe('state')
+  const { host } = mount({ type: 'ha', trigger: { platform: 'sun', event: 'sunset' } })
+  expect(host.querySelector('.hs-when__current strong')!.textContent).toBe('Sunrise or sunset')
 })
 
 it('keeps trigger subscriptions required', () => {

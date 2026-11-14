@@ -387,6 +387,16 @@ it('opens on the Runs tab when it is reached from a run (?drawer=runs), and stay
   expect(root.querySelector('.hs-drawer')!.classList).not.toContain('hs-drawer--open')
 })
 
+it('removes only the drawer parameter, keeping the others and the hash, and replaces the history entry', async () => {
+  const { root, history } = setup(true, false, '/visual/motion?from=list&drawer=runs&x=1#top')
+  await saved(root, 4)
+  await vi.waitFor(() => expect(history.get()).toBe('/visual/motion?from=list&x=1#top'))
+  expect(root.querySelector('.hs-drawer')!.classList).toContain('hs-drawer--open')
+  // Replaced, not pushed: Back leaves the page instead of returning to the address with the parameter.
+  history.back()
+  expect(history.get()).toBe('/')
+})
+
 it('opens with the drawer closed otherwise', async () => {
   const { root } = setup(true)
   await saved(root, 4)

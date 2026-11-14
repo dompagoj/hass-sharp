@@ -202,7 +202,8 @@
 .hs-app .hs-card--traced .hs-node-errors { border-color: var(--hs-trace); }
 /* Beside the card on its left, or under it, when the right side would leave the canvas (the side panel's edge). */
 .hs-app .hs-node-errors--left { left: auto; right: calc(100% + 12px); }
-.hs-app .hs-node-errors--below { left: 0; top: calc(100% + 8px); min-width: 0; width: max-content; max-width: max(100%, 200px); }
+.hs-app .hs-node-errors--below, .hs-app .hs-node-errors--above { left: 0; top: calc(100% + 8px); min-width: 0; width: max-content; max-width: max(100%, 200px); transform: translateX(var(--hs-tip-shift, 0px)); }
+.hs-app .hs-node-errors--above { top: auto; bottom: calc(100% + 8px); }
 .hs-app .hs-node-errors p { margin: 0 0 4px; }
 .hs-app .hs-node-errors p:last-child { margin: 0; }
 .hs-app .solid-flow__node:hover .hs-node-errors, .hs-app .solid-flow__node:focus-within .hs-node-errors { display: block; }

@@ -114,6 +114,27 @@ it('says yesterday only for the calendar day before today, in the run list too',
   } finally { vi.useRealTimers() }
 })
 
+it('counts calendar days across a daylight saving change (a 23- or 25-hour day)', () => {
+  const zone = process.env.TZ
+  process.env.TZ = 'Europe/Zagreb'
+  try {
+    // The zone took effect: winter and summer offsets differ.
+    expect(new Date(2026, 0, 1).getTimezoneOffset()).not.toBe(new Date(2026, 6, 1).getTimezoneOffset())
+    // Spring forward (29 March 2026): the day before is 23 hours long.
+    const spring = new Date(2026, 2, 30, 10, 0).getTime()
+    expect(relativeTime(new Date(2026, 2, 29, 10, 0).toISOString(), spring)).toBe('yesterday')
+    expect(relativeTime(new Date(2026, 2, 28, 23, 30).toISOString(), spring)).toBe('2 days ago')
+    expect(relativeTime(new Date(2026, 2, 29, 0, 10).toISOString(), new Date(2026, 2, 29, 23, 50).getTime())).toBe('23 hours ago')
+    // Fall back (25 October 2026): the day before is 25 hours long.
+    const autumn = new Date(2026, 9, 26, 0, 5).getTime()
+    expect(relativeTime(new Date(2026, 9, 25, 0, 10).toISOString(), autumn)).toBe('yesterday')
+    expect(relativeTime(new Date(2026, 9, 24, 23, 50).toISOString(), autumn)).toBe('2 days ago')
+  } finally {
+    if (zone === undefined) delete process.env.TZ
+    else process.env.TZ = zone
+  }
+})
+
 it('expands a row with a real button to show the reason, trigger summary, metadata and raw values', async () => {
   const writeText = vi.fn(async () => {})
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })

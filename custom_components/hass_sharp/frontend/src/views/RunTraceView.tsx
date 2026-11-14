@@ -57,7 +57,8 @@ export function RunTraceView() {
     enabled: admin() && !!data() && !!visualId(),
     staleTime: 30_000,
   }))
-  // The services as they are now, only for words: a run's stored snapshot has no service schema (C4).
+  // The services as they are now, to show service fields with: a run's stored snapshot may have no service schema (C4).
+  // TracePage uses them only when it has none.
   const services = useQuery(() => ({
     queryKey: ['visual-services'],
     queryFn: () => api.services(),
