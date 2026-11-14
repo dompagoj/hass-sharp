@@ -294,6 +294,12 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             var trees=new List<SyntaxTree>{tree,CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings),diagnostics.ServicesSyntaxTree()};
             var compilation=CSharpCompilation.Create("VisualPreview",trees,NodeLibraryCompiler.FrameworkReferences(),new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,allowUnsafe:true,nullableContextOptions:NullableContextOptions.Enable));
             foreach(var d in compilation.GetDiagnostics().Where(d=>d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning)) {
+                // Only a diagnostic in the generated automation has a line a node owns: one in the typed service calls
+                // (or the global usings) is the graph's, never the node whose section has the same line number.
+                if(d.Location.SourceTree is {} other&&other!=tree) {
+                    if(d.Severity==DiagnosticSeverity.Error)errors.Add(new(null,(other.FilePath==DiagnosticsProvider.ServicesPath?"In the typed service calls: ":"")+d.GetMessage()));
+                    continue;
+                }
                 var location=d.Location.GetLineSpan();var line=location.StartLinePosition.Line+1;
                 // A Custom C# node's own code reported its warnings already, when it was compiled with the libraries.
                 if(customSections.FirstOrDefault(c=>line>=c.Start&&line<=c.End) is {Id:not null} section) {

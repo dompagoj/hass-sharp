@@ -88,6 +88,12 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
             NodeLibraryDiagnostic At(string id) => new(id, Math.Max(1, span.StartLinePosition.Line + 1 - SourceLineOffset), span.StartLinePosition.Character + 1,
                 Math.Max(1, span.EndLinePosition.Line + 1 - SourceLineOffset), span.EndLinePosition.Character + 1, message, severity);
             if (location.SourceTree != null && customTrees.TryGetValue(location.SourceTree, out var custom)) { customErrors[custom.NodeId].Add(At(custom.NodeId)); return; }
+            // Not in any library's or node's code (the typed service calls, the global usings): no source's line.
+            if (location.SourceTree != null && !trees.ContainsKey(location.SourceTree))
+            {
+                errors.Add(new("", 1, 1, 1, 1, (location.SourceTree.FilePath == DiagnosticsProvider.ServicesPath ? "In the typed service calls: " : "") + message, severity));
+                return;
+            }
             errors.Add(At(location.SourceTree != null && trees.TryGetValue(location.SourceTree, out var source) ? source.Id : ""));
         }
         foreach (var (tree, source) in trees)

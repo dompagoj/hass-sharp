@@ -85,6 +85,17 @@ def translated(descriptions, translations):
     return result
 
 
+async def async_start(hass, manager):
+    """Listen for service changes, then push the descriptions once; returns the unsubscribe callback.
+
+    Listening first means a "Home Assistant started" event that fires while the first push is still
+    gathering descriptions schedules a push of its own, which then says started.
+    """
+    unsubscribe = async_track(hass, manager)
+    await async_push(hass, manager)
+    return unsubscribe
+
+
 def async_track(hass, manager):
     """Re-push descriptions once service changes settle; returns the unsubscribe callback."""
     pending = None

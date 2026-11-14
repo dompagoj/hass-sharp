@@ -40,7 +40,9 @@ public partial class HassSharpManager
         {
             if (_languageLifetime.IsCancellationRequested) _languageLifetime = new();
             // Services appear gradually while Home Assistant starts: the persisted schema keeps node code compiling.
-            RefreshServiceCalls();
+            // Whatever goes wrong there leaves the previous (or empty) typed calls: setup goes on without them.
+            try { RefreshServiceCalls(); }
+            catch (Exception ex) { try { Logger.Error($"Cannot generate the typed service calls; node code compiles without the new ones: {ex}"); } catch { } }
             var libraries = SavedLibraries();
             _loadErrors.Clear();
             ReportLegacyUserScripts();
@@ -175,7 +177,7 @@ public partial class HassSharpManager
             current = seen;
         }
         try { Logger.Debug($"Received {next.Catalog.Count} Home Assistant service descriptions"); } catch { }
-        try { RefreshServiceCalls(); }
+        try { if (RefreshServiceCalls()) RetryFailedLoads(); }
         catch (Exception ex) { try { Logger.Error($"Cannot regenerate the typed service calls: {ex}"); } catch { } }
     }
 
@@ -186,16 +188,78 @@ public partial class HassSharpManager
     /// Regenerates <c>context.Services</c> from the live schema united with the one it was last generated from (persisted,
     /// so Init compiles node code before Home Assistant has registered every service); a service present in both uses the
     /// live definition. A service that is not live is forgotten only by a push made once Home Assistant has started.
-    /// Compilations made earlier, and the automations running from them, are not touched: their calls go by service id.
+    /// A schema whose calls do not compile is not used and not persisted (<see cref="DiagnosticsProvider.UseServiceSchema(IReadOnlyCollection{KeyValuePair{string, System.Text.Json.Nodes.JsonObject}})"/>);
+    /// that is logged once per schema. Compilations made earlier, and the automations running from them, are not
+    /// touched: their calls go by service id.
     /// </summary>
-    void RefreshServiceCalls()
+    /// <returns>Whether the typed calls every compilation gets were replaced.</returns>
+    bool RefreshServiceCalls()
     {
         // Read inside the lock: a refresh never applies a push older than one an earlier refresh applied.
         lock (_serviceCallsGate)
         {
             var live = Volatile.Read(ref _serviceDescriptions);
-            if (_serviceCallSchema.Update(live.Catalog, live.Started) is { } services) _diagnosticsProvider.UseServiceSchema(services);
+            if (_serviceCallSchema.Update(live.Catalog, live.Started) is not { } services) return false;
+            var result = _diagnosticsProvider.UseServiceSchema(services);
+            if (result.Accepted) _serviceCallSchema.Accept(result.Services);
+            if (!result.Accepted || result.Excluded.Count > 0)
+                try
+                {
+                    Logger.Warn((result.Accepted
+                        ? $"The typed service calls of {string.Join(", ", result.Excluded)} do not compile and were left out; node code cannot call them by name"
+                        : "The typed service calls of Home Assistant's services do not compile; node code keeps the previous ones") +
+                        ". This is a HassSharp bug; please report it with these errors:\n" + string.Join("\n", result.Errors));
+                }
+                catch { }
+            return result.Changed;
         }
+    }
+
+    readonly object _retryGate = new();
+    Task _retry = Task.CompletedTask;
+
+    /// <summary>
+    /// After the typed service calls changed: tries again to activate each saved automation whose last load failed and
+    /// that is not loaded (one that did not compile against a service that was missing, say). Loaded automations are
+    /// left alone. Runs after anything queued before it, under the same gate as every other activation.
+    /// </summary>
+    internal Task RetryFailedLoads()
+    {
+        lock (_retryGate) return _retry = _retry.ContinueWith(_ => RetryFailedLoadsAsync(), TaskScheduler.Default).Unwrap();
+    }
+
+    async Task RetryFailedLoadsAsync()
+    {
+        try
+        {
+            await _visualGate.WaitAsync();
+            try
+            {
+                // Unloaded (or never initialised): nothing may be activated.
+                if (_languageLifetime.IsCancellationRequested || _loadErrors.IsEmpty) return;
+                var libraries = SavedLibraries();
+                var store = VisualDocuments;
+                foreach (var document in store.List())
+                {
+                    var path = VisualRuntimePath(document.Id);
+                    if (_languageLifetime.IsCancellationRequested) return;
+                    if (!_loadErrors.ContainsKey(path) || _userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == path)) continue;
+                    try
+                    {
+                        var preview = new VisualGenerator(_diagnosticsProvider).Preview(document.Graph, libraries.Preview.Snapshot);
+                        if (!preview.Valid) throw new VisualValidationException(preview);
+                        var current = document with { Graph = preview.Graph ?? document.Graph, Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = libraries.Generation, EmbeddedCatalog = preview.EmbeddedCatalog };
+                        try { store.RefreshDerived(document.Id, document.Revision, preview.Source, preview.SourceMap, libraries.Generation); }
+                        catch (Exception ex) { Logger.Error($"Cannot refresh stored source of visual document {document.Id}: {ex}"); }
+                        await ActivateVisualDocument(current);
+                        if (!_loadErrors.ContainsKey(path)) Logger.Info($"Visual document {document.Id} loaded now that the typed service calls changed");
+                    }
+                    catch (Exception ex) { RecordLoadError(path, ex); }
+                }
+            }
+            finally { _visualGate.Release(); }
+        }
+        catch (Exception ex) { try { Logger.Error($"Cannot retry loading automations after the typed service calls changed: {ex}"); } catch { } }
     }
 
     // An entry unload is a reload or removal unless Home Assistant is stopping; runs it cancels record which.

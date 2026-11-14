@@ -10,7 +10,8 @@ namespace HassSharp;
 /// </summary>
 static class HassServices
 {
-    static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    // Also what a typed service call sends a field value with (ServiceData.Value).
+    internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,

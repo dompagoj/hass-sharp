@@ -94,7 +94,7 @@ public partial class HassSharpManager
             if (operation == "preview")
             {
                 var graph = Graph(); var preview = new VisualGenerator(_diagnosticsProvider).Preview(graph, authoring);
-                result = preview with { Graph = derive ? preview.Graph ?? graph : preview.Graph, Diagnostics = [.. removed, .. preview.Diagnostics] };
+                result = preview with { Graph = derive ? preview.Graph ?? graph : preview.Graph, Diagnostics = [.. removed, .. preview.Diagnostics, .. UnknownEntities(preview.Graph ?? graph, authoring, PyInterop.Entity)] };
             }
             // The automations page: no graphs, an outline of each instead, and how each has been running (one history query).
             else if (operation == "list" && request["view"]?.GetValue<string>() == "home") result = HomeList(store.List().Select(WithRuntimeIdentity).ToArray(), request["todayUtc"]);
@@ -127,7 +127,7 @@ public partial class HassSharpManager
                         // A new automation may be saved turned off (a duplicate is): stored before activation, so it never runs on.
                         bool? enabled = request["enabled"] is JsonNode flag ? flag.GetValue<bool>() : null;
                         var document = store.Save(id, Graph(), revision, authoring, libraries.Generation, enabled);
-                        result = await ActivateVisualDocument(document, removed);
+                        result = await ActivateVisualDocument(document, [.. removed, .. UnknownEntities(document.Graph, authoring, PyInterop.Entity)]);
                     }
                     else if (operation == "delete")
                     {
@@ -150,6 +150,60 @@ public partial class HassSharpManager
         { return Error("invalid_request", ex.Message); }
         finally { _visualGate.Release(); }
     }
+    /// <summary>
+    /// A warning (code <c>entity.unknown</c>) on the node and input of each entity id written into the graph that Home
+    /// Assistant has no state for: an entity trigger's entity, and literal values of entity inputs (an entity, a list of
+    /// them, a service target's entities). Such a graph still saves and activates: an entity can be added later. None
+    /// at all when the lookup is unavailable (not set, or failing); preview and save only, never Init, when Home
+    /// Assistant may not have loaded its entities yet.
+    /// </summary>
+    internal static List<VisualDiagnostic> UnknownEntities(JsonObject graph, VisualCatalogSnapshot snapshot, Func<string, HasEntityState?>? lookup)
+    {
+        var warnings = new List<VisualDiagnostic>();
+        if (lookup == null) return warnings;
+        var root = VisualNodeCatalog.WithGraphTypes(snapshot.Root, graph);
+        var known = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var unavailable = false;
+        void Check(string node, string input, string entity, bool trigger)
+        {
+            // A template, or HA's own "all" and "none", names no single entity.
+            if (unavailable || entity.Length == 0 || entity is "all" or "none" || entity.Contains("{{", StringComparison.Ordinal)) return;
+            if (!known.TryGetValue(entity, out var exists))
+            {
+                try { known[entity] = exists = lookup(entity) != null; }
+                catch { unavailable = true; return; }
+            }
+            if (!exists)
+                warnings.Add(new(node, $"Home Assistant has no entity {entity}. Check the spelling: " + (trigger ? "a trigger on it never fires." : "this step finds no such entity when it runs."), 2, InputId: input, Code: "entity.unknown"));
+        }
+        static IEnumerable<string> Ids(JsonNode? value) => value switch
+        {
+            JsonValue single when single.TryGetValue<string>(out var id) => [id],
+            JsonArray list => list.OfType<JsonValue>().Select(v => v.TryGetValue<string>(out var id) ? id : null).OfType<string>(),
+            _ => [],
+        };
+        foreach (var node in (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>())
+        {
+            var id = VisualNodeCatalog.Text(node, "id");
+            if (VisualNodeCatalog.Text(node, "kind") == "trigger" && VisualNodeCatalog.TriggerType(node, snapshot) == "entity")
+                Check(id, "entity", VisualNodeCatalog.Text(node["config"], "entity"), true);
+            JsonObject inputs;
+            try { inputs = VisualNodeCatalog.DataInputs(node, null, snapshot); } catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException) { continue; }
+            foreach (var (port, _) in inputs)
+            {
+                if (VisualNodeCatalog.InputValue(node, port, snapshot) is not JsonObject operand || VisualNodeCatalog.Text(operand, "kind") != "literal") continue;
+                var type = VisualNodeCatalog.Text(operand, "type");
+                var value = operand["value"];
+                var entities = VisualTypes.Refines(root, type, "entity_id") ? Ids(value)
+                    : value is JsonObject target && VisualTypes.Refines(root, type, "target") ? Ids(target["entity_id"])
+                    : VisualTypes.Resolve(root, type)?["elementType"] is JsonValue element && element.TryGetValue<string>(out var item) && VisualTypes.Refines(root, item, "entity_id") ? Ids(value)
+                    : [];
+                foreach (var entity in entities) Check(id, port, entity, false);
+            }
+        }
+        return unavailable ? [] : warnings;
+    }
+
     /// <summary>The automations page's list: each document without its graph, with <see cref="Outline"/>, its load problems and recent runs.</summary>
     object[] HomeList(VisualDocument[] documents, JsonNode? todayUtc)
     {

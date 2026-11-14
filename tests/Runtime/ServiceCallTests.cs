@@ -20,7 +20,8 @@ static class ServiceCallTests
         {"script":{"good_night":{"name":"Good night","description":"Turns everything off.","fields":{
           "delay_minutes":{"name":"Delay","description":"How long to wait first.","required":true,"selector":{"number":{"min":0,"max":60,"unit_of_measurement":"min"}}},
           "rooms":{"name":"Rooms","selector":{"area":{"multiple":true}}},
-          "announce":{"name":"Announce","selector":{"boolean":{}}}}}}}
+          "announce":{"name":"Announce","selector":{"boolean":{}}},
+          "wait":{"name":"Wait","selector":{"duration":{}}}}}}}
         """;
     static readonly string Calls = """
         {"light":{"turn_on":{"name":"Turn on","target":{"entity":{"domain":"light"}},"fields":{
@@ -47,6 +48,12 @@ static class ServiceCallTests
             Removed();
             await Startup();
             await EntityTrigger();
+            await HostileText();
+            await Rejected();
+            Attribution();
+            await UnknownEntities();
+            await Recovers();
+            await LibraryGeneration();
         }
         finally { (PyInterop.CallService, PyInterop.CallServiceWithResponse, PyInterop.Log, PyInterop.Entity) = (call, respond, log, entity); HassPath.HassConfiguration = previousPath; }
     }
@@ -55,6 +62,12 @@ static class ServiceCallTests
         CSharpCompilation.Create("Check", [CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings + source, new CSharpParseOptions(LanguageVersion.Latest)), provider.ServicesSyntaxTree()],
                 NodeLibraryCompiler.FrameworkReferences(), new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable))
             .GetDiagnostics().Where(d => d.Severity >= DiagnosticSeverity.Warning).ToArray();
+
+    // The services tree alone, its doc comments checked: a warning is malformed XML (or a doc on the wrong thing).
+    static Diagnostic[] Documented(string source) =>
+        CSharpCompilation.Create("Documented", [CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Latest, documentationMode: DocumentationMode.Diagnose))],
+                NodeLibraryCompiler.FrameworkReferences(), new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable))
+            .GetDiagnostics().Where(d => d.Severity >= DiagnosticSeverity.Warning && d.Id != "CS1591").ToArray();
 
     // The services fixture (every selector, sections, odd texts, the three response kinds) compiles without a diagnostic, byte for byte the same each time.
     static void FixtureCompiles()
@@ -69,6 +82,8 @@ static class ServiceCallTests
         Check(Source(Schema(fixture)) == source && Source(Schema(reversed.ToJsonString())) == source, "the generated source is not byte-stable");
         var tree = provider.ServicesSyntaxTree(); provider.UseServiceSchema(Schema(fixture));
         Check(ReferenceEquals(tree, provider.ServicesSyntaxTree()), "an unchanged schema replaced the services tree");
+        var documented = Documented(source);
+        Check(documented.Length == 0, "the fixture's doc comments are not well-formed XML: " + string.Join("\n", documented.Select(d => d.ToString())));
         foreach (var expected in new[] {
             "public global::HassSharp.ServiceCalls.LightServices Light => new global::HassSharp.ServiceCalls.LightServices(__context);",
             "public global::System.Threading.Tasks.Task TurnOn(global::HassSharp.ServiceTarget? target, double? transition = null, int[]? rgbColor = null, double? colorTempKelvin = null, double? brightnessPct = null,",
@@ -126,6 +141,8 @@ static class ServiceCallTests
             && Json(ServiceTarget.Floors("ground")) == """{"floor_id":["ground"]}""" && Json(ServiceTarget.Labels("night", "away")) == """{"label_id":["night","away"]}"""
             && Json(ServiceTarget.Entities("light.a")) == """{"entity_id":["light.a"]}""", "named targets");
         Check(Json(new ServiceTarget { AreaIds = ["kitchen"], LabelIds = ["night"] }) == """{"area_id":["kitchen"],"label_id":["night"]}""" && Json(new ServiceTarget()) == "{}", "combined targets");
+        ServiceTarget expression = ["light.d", "light.e"];
+        Check(Json(expression) == """{"entity_id":["light.d","light.e"]}""", "a collection expression of entity ids");
         ServiceTarget? none = (string?)null;
         Check(none == null, "a null entity id is no target");
         Console.WriteLine("PASS service calls: targets from an entity id, arrays and lists, and areas, devices, floors and labels");
@@ -186,8 +203,10 @@ static class ServiceCallTests
             await context.Services.Script.GoodNight(delayMinutes: 5);
             await context.Services.Script.GoodNight(5, rooms: new[] { "kitchen", "hall" }, announce: false);
             await context.CallService("light.turn_off", "light.kitchen");
+            await context.Services.Light.TurnOn(["light.a", "light.b"]);
+            await context.Services.Script.GoodNight(1, rooms: DayOfWeek.Monday, wait: new { Minutes = 5, HalfSeconds = 1 });
             """);
-        Check(Made.Count == 11, "calls made: " + Made.Count);
+        Check(Made.Count == 13, "calls made: " + Made.Count);
         // Only the arguments given are sent; the target is flattened into the call as the Call service step does it.
         Expect(0, "light.turn_on", """{"entity_id":"light.kitchen","brightness_pct":30,"transition":2}""", false, "a target and two optional fields");
         Expect(1, "light.turn_on", """{"entity_id":"light.kitchen"}""", false, "no optional field given");
@@ -201,8 +220,11 @@ static class ServiceCallTests
         Expect(8, "script.good_night", """{"delay_minutes":5}""", false, "a script with a required field");
         Expect(9, "script.good_night", """{"delay_minutes":5,"rooms":["kitchen","hall"],"announce":false}""", false, "a script with every field");
         Expect(10, "light.turn_off", """{"entity_id":"light.kitchen"}""", false, "CallService by id");
+        Expect(11, "light.turn_on", """{"entity_id":["light.a","light.b"]}""", false, "a collection expression as the target");
+        // Values go out as every service call sends them: snake_case member names, enums by name.
+        Expect(12, "script.good_night", """{"delay_minutes":1,"rooms":"monday","wait":{"minutes":5,"half_seconds":1}}""", false, "an enum and an anonymous object");
         var source = diagnostics.ServicesSyntaxTree().ToString();
-        Check(source.Contains("public global::System.Threading.Tasks.Task GoodNight(double delayMinutes, object? rooms = null, bool? announce = null)"), "a script's fields: required first, then optional");
+        Check(source.Contains("public global::System.Threading.Tasks.Task GoodNight(double delayMinutes, object? rooms = null, bool? announce = null, object? wait = null)"), "a script's fields: required first, then optional");
         Check(source.Contains("/// Delay (<c>delay_minutes</c>). How long to wait first. From 0 to 60 min.") && source.Contains("/// Type (<c>type</c>). One of <c>daily</c>, <c>hourly</c>, <c>twice_daily</c>."), "parameter docs with ranges, units and allowed values");
         Console.WriteLine("PASS service calls: a node calls typed services (targets, optional and required fields, three response kinds, a script) through the context");
     }
@@ -353,6 +375,275 @@ static class ServiceCallTests
         }
         finally { await api.UnloadAsync(); PyInterop.SubscribeToEntityTracking = subscribe; Directory.Delete(root, true); }
         Console.WriteLine("PASS service calls: an entity trigger through the plain reference subscribes, runs with its payload and label, and runs manually");
+    }
+
+    static DiagnosticsProvider ProviderOf(HassSharpManager api) =>
+        (DiagnosticsProvider)typeof(HassSharpManager).GetField("_diagnosticsProvider", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(api)!;
+
+    // Schema text is untrusted: line breaks (\n, \r, U+0085, U+2028, U+2029), control characters and markup in a key, a
+    // name, a unit, an option and a target domain stay inside comments and literals; the ids are sent as they are.
+    static async Task HostileText()
+    {
+        const string Key = "key\nclass InjectedKey {}\n//";
+        var schema = Schema("""
+            {"evil":{"run":{"name":"Run\nclass InjectedName {}","description":"a\u2028class InjectedDescription {} b\u0000</summary>",
+               "target":{"entity":{"domain":"light\npublic class InjectedDomain {}"}},"fields":{
+               "key\nclass InjectedKey {}\n//":{"name":"Key\u2029class InjectedLabel {}","selector":{"text":{}}},
+               "level":{"name":"Level\u0085class InjectedLevel {}","selector":{"number":{"min":0,"max":5,"unit_of_measurement":"%\r\nclass InjectedUnit {}"}}},
+               "mode":{"selector":{"select":{"options":["a\u2029class InjectedOption {}","b\u0007<c>"]}}}}}}}
+            """);
+        var provider = Provider(schema);
+        var source = provider.ServicesSyntaxTree().ToString();
+        var diagnostics = Compile(provider);
+        Check(diagnostics.Length == 0 && Documented(source).Length == 0, "hostile schema text broke the generated calls: " + string.Join("\n", diagnostics.Concat(Documented(source)).Select(d => d.ToString())));
+        var compilation = CSharpCompilation.Create("Hostile", [provider.ServicesSyntaxTree()], NodeLibraryCompiler.FrameworkReferences());
+        foreach (var injected in new[] { "InjectedKey", "InjectedName", "InjectedDescription", "InjectedDomain", "InjectedLabel", "InjectedLevel", "InjectedUnit", "InjectedOption" })
+            Check(!compilation.GetSymbolsWithName(injected).Any(), "schema text became code: " + injected);
+        Check(source.Contains("public global::System.Threading.Tasks.Task Run(global::HassSharp.ServiceTarget? target, string? keyClassInjectedKey = null, double? level = null, string? mode = null)"), "the hostile service's method:\n" + source);
+        foreach (var line in source.Split('\n').Where(l => l.TrimStart().StartsWith("///", StringComparison.Ordinal)))
+            Check(!line.Any(c => char.IsControl(c) || c is '\u0085' or '\u2028' or '\u2029'), "a doc line keeps a control or line break character: " + line);
+        Check(source.Contains("/// Run class InjectedName {} (<c>evil.run</c>). a class InjectedDescription {} b &lt;/summary&gt;") && source.Contains("From 0 to 5 % class InjectedUnit {}."), "the hostile texts as one line each:\n" + source);
+        // What XML cannot hold at all: a lone surrogate and U+FFFE become U+FFFD; a pair is kept.
+        Check(ServiceGenerator.Xml("a\ud800b\uFFFEc\ud83d\ude00 \r\n\u2028 d") == "a\uFFFDb\uFFFDc\ud83d\ude00 d", "XML-invalid characters: " + ServiceGenerator.Xml("a\ud800b\uFFFEc\ud83d\ude00 \r\n\u2028 d"));
+        Double();
+        await Run(provider, "await context.Services.Evil.Run(\"light.a\", keyClassInjectedKey: \"v\", mode: \"b\");");
+        Check(Made.Single().Payload[Key]?.GetValue<string>() == "v", "the field is not sent under its own key: " + Made.Single().Payload.ToJsonString());
+        Console.WriteLine("PASS service calls: line breaks, control characters and markup in schema text stay in doc comments and literals; the doc XML is well-formed");
+    }
+
+    // A tree that does not compile is never installed: a service whose own code is broken is left out (the rest kept);
+    // a tree broken outside every service keeps the previous one. Neither is persisted; each is logged once.
+    static async Task Rejected()
+    {
+        Double();
+        var logs = new List<string>();
+        PyInterop.Log = (_, message) => { lock (logs) logs.Add(message); };
+        var root = Path.Combine(Path.GetTempPath(), "service-calls-rejected-" + Guid.NewGuid());
+        var file = Path.Combine(root, ".storage", "hass_sharp", "service_schema.json");
+        const string Body = "await context.Services.Light.TurnOn(light, brightnessPct: 30);";
+        var api = new HassSharpManager(root);
+        try
+        {
+            await api.Init();
+            var provider = ProviderOf(api);
+            // One service's code broken, as unescaped text would break it.
+            provider.Generator = items =>
+            {
+                var generated = ServiceGenerator.GenerateWithSpans(items);
+                return generated with { Source = generated.Source.Replace("__context.CallService(\"todo.get_items\"", "__context.NoSuchCall(\"todo.get_items\"") };
+            };
+            api.SetServiceDescriptions(Calls, started: true);
+            var source = provider.ServicesSyntaxTree().ToString();
+            Check(source.Contains("Task TurnOn(") && source.Contains("GetForecasts(") && !source.Contains("todo.get_items"), "a service whose code does not compile was not left out alone:\n" + source);
+            var persisted = JsonNode.Parse(File.ReadAllText(file))!["items"]!.AsObject();
+            Check(persisted.ContainsKey("light.turn_on") && !persisted.ContainsKey("todo.get_items"), "the left-out service was persisted: " + string.Join(",", persisted.Select(p => p.Key)));
+            api.SetServiceDescriptions(Calls, started: true);
+            Check(logs.Count(l => l.Contains("todo.get_items do not compile and were left out")) == 1, "the left-out service is not logged once: " + string.Join(" | ", logs));
+            var saved = JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(new { operation = "save", id = "dim", graph = CustomGraph(Body), expectedRevision = 0, deriveSignatures = true })))!;
+            Check(saved["result"]?["active"]?.GetValue<bool>() == true, "a node calling a kept service is not active: " + saved.ToJsonString());
+
+            // Broken outside every service: the previous tree stays, the schema is not persisted, node code compiles.
+            var before = provider.ServicesSyntaxTree();
+            var file1 = File.ReadAllText(file);
+            provider.Generator = items => { var generated = ServiceGenerator.GenerateWithSpans(items); return generated with { Source = generated.Source.Replace("#nullable enable", "#nullable enable\nclass Broken { int x = \"no\"; }") }; };
+            var more = Calls[..^1] + ""","extra":{"thing":{"fields":{}}}}""";
+            api.SetServiceDescriptions(more, started: true);
+            api.SetServiceDescriptions(more, started: true);
+            Check(ReferenceEquals(before, provider.ServicesSyntaxTree()), "a tree that does not compile replaced the previous one");
+            Check(File.ReadAllText(file) == file1, "a rejected schema was persisted");
+            Check(logs.Count(l => l.Contains("do not compile; node code keeps the previous ones")) == 1, "a rejected schema is not logged once: " + string.Join(" | ", logs));
+            var preview = JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(new { operation = "preview", graph = CustomGraph(Body), deriveSignatures = true })))!;
+            Check(preview["result"]!["valid"]!.GetValue<bool>(), "node code stopped compiling after a rejected schema: " + preview.ToJsonString());
+            await api.UnloadAsync();
+            await api.Init();
+            Check(VisualTests.Loaded(api, "dim") != null, "after a rejected schema and a restart, the automation does not load");
+
+            // Fixed: the next schema is accepted (one schema is checked once: the same schema again is not retried).
+            provider.Generator = ServiceGenerator.GenerateWithSpans;
+            api.SetServiceDescriptions(more, started: true);
+            Check(ReferenceEquals(before, provider.ServicesSyntaxTree()), "a rejected schema was checked again");
+            api.SetServiceDescriptions(more[..^1] + ""","more":{"thing":{"fields":{}}}}""", started: true);
+            Check(provider.ServicesSyntaxTree().ToString().Contains("Task Thing(") && JsonNode.Parse(File.ReadAllText(file))!["items"]!["extra.thing"] != null, "a good schema after a rejected one was not used");
+        }
+        finally { await api.UnloadAsync(); Directory.Delete(root, true); }
+        Console.WriteLine("PASS service calls: a tree that does not compile is never installed or persisted: a broken service is left out, a broken tree keeps the previous one, each logged once");
+    }
+
+    // A diagnostic in the services tree is the graph's, never the node whose section has the same line number.
+    static void Attribution()
+    {
+        var provider = new DiagnosticsProvider();
+        // Compiles alone; together with an automation the second VisualAutomation is an error, in the services tree.
+        provider.Generator = items =>
+        {
+            var generated = ServiceGenerator.GenerateWithSpans(items);
+            return generated with { Source = generated.Source.Replace("#nullable enable\n", "#nullable enable\npublic class VisualAutomation { }\n") };
+        };
+        provider.UseServiceSchema(Schema(Calls));
+        Check(provider.ServicesSyntaxTree().ToString().Contains("public class VisualAutomation { }"), "the test tree was not installed");
+        var preview = new VisualGenerator(provider).Preview(G(N("l", "log", new JsonObject { ["value"] = Lit("string", "x") })));
+        var duplicate = preview.Diagnostics.Where(d => d.Message.Contains("VisualAutomation")).ToArray();
+        Check(!preview.Valid && duplicate.Any(d => d.NodeId == null && d.Message.StartsWith("In the typed service calls: ", StringComparison.Ordinal) && d.StartLine == null), "an error in the services tree is not the graph's: " + JsonSerializer.Serialize(preview.Diagnostics));
+        Check(!preview.Diagnostics.Any(d => d.NodeId != null && d.Message.StartsWith("In the typed service calls", StringComparison.Ordinal)), "an error in the services tree landed on a node: " + JsonSerializer.Serialize(preview.Diagnostics));
+        var library = new NodeLibraryCompiler(provider).Preview([new NodeLibrarySource("lib", "public static class Lib { [Node(\"X\")] public static int X() => 1; }", 1)]);
+        Check(library.Diagnostics.All(d => d.SourceId != "lib" || !d.Message.Contains("typed service calls")), "a services tree diagnostic was put on a library: " + JsonSerializer.Serialize(library.Diagnostics));
+        Console.WriteLine("PASS service calls: diagnostics are attributed by syntax tree: one in the typed service calls is never a node's");
+    }
+
+    // An entity id Home Assistant has no state for is a warning on preview and save (websocket and MCP), never an error,
+    // and not raised at Init or when the lookup is unavailable.
+    static async Task UnknownEntities()
+    {
+        Double();
+        var root = Path.Combine(Path.GetTempPath(), "service-calls-entities-" + Guid.NewGuid());
+        var subscribe = PyInterop.SubscribeToEntityTracking; PyInterop.SubscribeToEntityTracking = _ => { };
+        PyInterop.Entity = id => id is "binary_sensor.door" or "sensor.known" ? new() { EntityId = id, State = "on" } : null;
+        var graph = JsonNode.Parse("""
+            {"version":5,"name":"Typos","nodes":[
+              {"id":"t","kind":"trigger","config":{"type":"entity","entity":"binary_sensor.dor"}},
+              {"id":"known","kind":"read_entity","config":{"entity":{"kind":"literal","type":"entity_id","value":"sensor.known"}}},
+              {"id":"missing","kind":"read_entity","config":{"entity":{"kind":"literal","type":"entity_id","value":"sensor.missing"}}},
+              {"id":"svc","kind":"service","config":{"service":"light.turn_on","fields":{},"target":{"kind":"literal","type":"target","value":{"entity_id":["light.gone","all"]}}}}
+            ],"edges":[{"id":"a","source":"t","target":"known"},{"id":"b","source":"known","target":"missing"},{"id":"c","source":"missing","target":"svc"}]}
+            """)!;
+        static string[] Unknown(JsonNode? diagnostics) => (diagnostics as JsonArray ?? []).Where(d => d?["code"]?.GetValue<string>() == "entity.unknown")
+            .Select(d => $"{d!["nodeId"]}/{d["inputId"]}/{d["severity"]}: {d["message"]}").Order(StringComparer.Ordinal).ToArray();
+        string[] expected = [
+            "missing/entity/2: Home Assistant has no entity sensor.missing. Check the spelling: this step finds no such entity when it runs.",
+            "svc/target/2: Home Assistant has no entity light.gone. Check the spelling: this step finds no such entity when it runs.",
+            "t/entity/2: Home Assistant has no entity binary_sensor.dor. Check the spelling: a trigger on it never fires.",
+        ];
+        var api = new HassSharpManager(root);
+        try
+        {
+            await api.Init();
+            async Task<JsonNode> Visual(object request) => JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(request)))!;
+            // The editor's preview and MCP's (which derives Custom C# signatures first) alike.
+            foreach (var derive in new[] { false, true })
+            {
+                var preview = await Visual(new { operation = "preview", graph, deriveSignatures = derive });
+                Check(preview["result"]!["valid"]!.GetValue<bool>() && Unknown(preview["result"]!["diagnostics"]).SequenceEqual(expected), $"preview (derive {derive}): " + preview.ToJsonString());
+            }
+            var saved = await Visual(new { operation = "save", id = "typos", graph, expectedRevision = 0, deriveSignatures = true });
+            Check(saved["ok"]!.GetValue<bool>() && saved["result"]!["active"]!.GetValue<bool>() && Unknown(saved["result"]!["diagnostics"]).SequenceEqual(expected), "save: " + saved.ToJsonString());
+            // Spelled right, no warning.
+            graph["nodes"]![0]!["config"]!["entity"] = "binary_sensor.door";
+            var fixedPreview = await Visual(new { operation = "preview", graph });
+            Check(!Unknown(fixedPreview["result"]!["diagnostics"]).Any(w => w.StartsWith("t/", StringComparison.Ordinal)), "a known trigger entity is warned about: " + fixedPreview.ToJsonString());
+            // The lookup failing (Home Assistant not ready): no warning at all.
+            PyInterop.Entity = _ => throw new InvalidOperationException("not ready");
+            var unavailable = await Visual(new { operation = "preview", graph });
+            Check(unavailable["result"]!["valid"]!.GetValue<bool>() && Unknown(unavailable["result"]!["diagnostics"]).Length == 0, "warnings while the lookup is unavailable: " + unavailable.ToJsonString());
+            // Init never asks: the automation loads, with no activation error.
+            var asked = 0;
+            PyInterop.Entity = _ => { Interlocked.Increment(ref asked); return null; };
+            await api.UnloadAsync();
+            await api.Init();
+            Check(VisualTests.Loaded(api, "typos") != null && (await Visual(new { operation = "read", id = "typos" }))["result"]!["activationError"] == null && asked == 0, $"Init: asked {asked}");
+        }
+        finally { await api.UnloadAsync(); PyInterop.SubscribeToEntityTracking = subscribe; Directory.Delete(root, true); }
+        Console.WriteLine("PASS service calls: an entity Home Assistant does not have is a warning on preview and save (and MCP preview), never an error, not at Init or without a lookup");
+    }
+
+    // An automation that did not load because its service was dropped loads when a push brings the service back.
+    static async Task Recovers()
+    {
+        Double();
+        var root = Path.Combine(Path.GetTempPath(), "service-calls-recovers-" + Guid.NewGuid());
+        var subscribe = PyInterop.SubscribeToEntityTracking; PyInterop.SubscribeToEntityTracking = _ => { };
+        PyInterop.Entity = id => new() { EntityId = id, State = "on" };
+        var graph = CustomGraph("await context.Services.Light.TurnOn(light, brightnessPct: 30);");
+        graph["nodes"]![0]!["config"] = new JsonObject { ["type"] = "entity", ["entity"] = "binary_sensor.door" };
+        var first = new HassSharpManager(root);
+        try
+        {
+            await first.Init();
+            first.SetServiceDescriptions(Calls, started: true);
+            var saved = JsonNode.Parse(await first.VisualRequest(JsonSerializer.Serialize(new { operation = "save", id = "dim", graph, expectedRevision = 0, deriveSignatures = true })))!;
+            Check(saved["result"]?["active"]?.GetValue<bool>() == true, "not active: " + saved.ToJsonString());
+            first.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}}}""", started: true);
+        }
+        finally { await first.UnloadAsync(); }
+        var api = new HassSharpManager(root);
+        try
+        {
+            await api.Init();
+            Check(VisualTests.Loaded(api, "dim") == null, "an automation calling a dropped service loaded");
+            api.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}}}""", started: true);
+            await api.RetryFailedLoads();
+            Check(VisualTests.Loaded(api, "dim") == null, "an unchanged schema loaded it");
+            api.SetServiceDescriptions(Calls, started: true);
+            await api.RetryFailedLoads();
+            Check(VisualTests.Loaded(api, "dim") != null && (JsonNode.Parse(await api.VisualRequest("""{"operation":"read","id":"dim"}"""))!["result"]!["activationError"]) == null,
+                "the automation did not load once its service came back");
+            await api.OnTrackedEntityChange("binary_sensor.door", new() { EntityId = "binary_sensor.door", State = "on" }, new() { EntityId = "binary_sensor.door", State = "off" });
+            for (var i = 0; i < 300 && !Made.Any(); i++) await Task.Delay(10);
+            Expect(0, "light.turn_on", """{"entity_id":"light.kitchen","brightness_pct":30}""", false, "the trigger of the recovered automation");
+        }
+        finally { await api.UnloadAsync(); PyInterop.SubscribeToEntityTracking = subscribe; Directory.Delete(root, true); }
+        Console.WriteLine("PASS service calls: an automation that failed to load for a missing service loads when a push brings it back, and its trigger fires");
+    }
+
+    // The saved-library generation: unchanged by pushes while the catalog cannot change with them; changed when the
+    // catalog has a type the typed calls declare.
+    static async Task LibraryGeneration()
+    {
+        Double();
+        var root = Path.Combine(Path.GetTempPath(), "service-calls-generation-" + Guid.NewGuid());
+        var api = new HassSharpManager(root);
+        async Task<JsonNode> Library(object request) => JsonNode.Parse(await api.NodeLibraryRequest(JsonSerializer.Serialize(request)))!;
+        try
+        {
+            await api.Init();
+            api.SetServiceDescriptions(Calls, started: true);
+            // An automation that calls a dropped service does not block a library save: it is reported as invalid.
+            var automation = JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(new { operation = "save", id = "dim", graph = CustomGraph("await context.Services.Light.TurnOn(light);"), expectedRevision = 0, deriveSignatures = true })))!;
+            Check(automation["result"]?["active"]?.GetValue<bool>() == true, "automation: " + automation.ToJsonString());
+            api.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}}}""", started: true);
+            const string Other = "public static class Other { [Node(\"Other\")] public static int One() => 1; }";
+            var other = await Library(new { operation = "save", id = "other", name = "Other", expectedRevision = 0, source = Other });
+            Check(other["ok"]!.GetValue<bool>() && other["result"]!["invalid"]!.AsArray().Any(i => i!["id"]!.GetValue<string>() == "dim"), "an automation calling a dropped service blocked a library save: " + other.ToJsonString());
+            api.SetServiceDescriptions(Calls, started: true);
+            var save = await Library(new { operation = "save", id = "calls", name = "Calls", expectedRevision = 0, source = """
+                public static class Dim
+                {
+                    /// <summary>Dims a light.</summary>
+                    [Node("Dim")]
+                    public static async Task Run(NodeContext context, string light) => await context.Services.Light.TurnOn(light, brightnessPct: 30);
+                }
+                """ });
+            Check(save["ok"]!.GetValue<bool>(), "library save: " + save.ToJsonString());
+            var before = (await Library(new { operation = "catalog" }))["result"]!;
+            api.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}}}""", started: true);
+            var dropped = (await Library(new { operation = "catalog" }))["result"]!;
+            Check(!dropped["valid"]!.GetValue<bool>(), "a library calling a dropped service is still valid");
+            // A library that calls it does block every library save until it no longer does, or the service is back.
+            var blocked = await Library(new { operation = "save", id = "other", name = "Other", expectedRevision = 1, source = Other + " " });
+            Check(!blocked["ok"]!.GetValue<bool>() && blocked["error"]!["code"]!.GetValue<string>() == "validation", "a library calling a dropped service did not block a library save: " + blocked.ToJsonString());
+            api.SetServiceDescriptions(Calls, started: true);
+            var back = (await Library(new { operation = "catalog" }))["result"]!;
+            Check(back["valid"]!.GetValue<bool>() && back["generation"]!.GetValue<string>() == before["generation"]!.GetValue<string>() && dropped["generation"]!.GetValue<string>() == before["generation"]!.GetValue<string>()
+                && JsonNode.DeepEquals(back["catalog"], before["catalog"]), "the catalog changed under an unchanged generation");
+
+            // A pin of a generated type: the catalog follows the typed calls, and so does the generation.
+            var typed = await Library(new { operation = "save", id = "typed", name = "Typed", expectedRevision = 0, source = """
+                public static class Pick
+                {
+                    [Node("Lights")]
+                    public static HassSharp.ServiceCalls.LightServices Lights(NodeContext context) => context.Services.Light;
+                }
+                """ });
+            Check(typed["ok"]!.GetValue<bool>(), "library with a generated pin type: " + typed.ToJsonString());
+            var withType = (await Library(new { operation = "catalog" }))["result"]!["generation"]!.GetValue<string>();
+            var listed = (await Library(new { operation = "list" }))["result"]!["generation"]!.GetValue<string>();
+            Check(withType == listed, "catalog and list generations differ");
+            var toggled = JsonNode.Parse(Calls)!.AsObject(); toggled["light"]!["toggle"] = new JsonObject { ["fields"] = new JsonObject() };
+            api.SetServiceDescriptions(toggled.ToJsonString(), started: true);
+            var changed = (await Library(new { operation = "catalog" }))["result"]!["generation"]!.GetValue<string>();
+            Check(changed != withType, "a catalog with a generated type kept its generation when the typed calls changed");
+        }
+        finally { await api.UnloadAsync(); Directory.Delete(root, true); }
+        Console.WriteLine("PASS service calls: the saved-library generation stays across pushes while the catalog cannot change, and follows the typed calls when the catalog has a generated type; a library that calls a dropped service blocks library saves, an automation does not");
     }
 
     // The generated source of three services, for reading (not run by default).

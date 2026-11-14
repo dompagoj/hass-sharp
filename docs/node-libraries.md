@@ -118,11 +118,16 @@ their names, descriptions, units, ranges and allowed values. The rules are:
   valid C# is made valid, and names that clash get a number (`TurnOn2`). The call
   always sends the original ids.
 - A service with a target takes it first. The target is an entity ID, an array or
-  list of them, or a `ServiceTarget`: `ServiceTarget.Areas("kitchen")`, `Devices`,
-  `Floors`, `Labels`, or `new ServiceTarget { AreaIds = [...], LabelIds = [...] }`.
-  `null` means no target.
+  list of them, a collection expression (`["light.a", "light.b"]`), or a
+  `ServiceTarget`: `ServiceTarget.Areas("kitchen")`, `Devices`, `Floors`, `Labels`,
+  or `new ServiceTarget { AreaIds = [...], LabelIds = [...] }`. `null` means no
+  target.
 - Required fields come next, then the optional ones, best given by name. Only the
   fields you give are sent.
+- A value is sent as JSON, the way every service call sends it. A field whose type
+  is `object` takes any value: an anonymous object's member names are written in
+  snake_case (`new { Minutes = 5 }` is sent as `{"minutes": 5}`), and an enum as its
+  name in snake_case (`DayOfWeek.Monday` is `"monday"`).
 - A service that returns a response gives it as a `JsonElement`. When the response
   is optional, a second method gives it, such as `GetItemsWithResponse`.
 - A call waits until Home Assistant has run the service, and is cancelled when the
@@ -130,12 +135,28 @@ their names, descriptions, units, ranges and allowed values. The rules are:
 
 Services appear one by one while Home Assistant starts. The methods are therefore
 generated from the live services together with those they were last generated from,
-which are kept in `.storage/hass_sharp/service_schema.json`. Startup never fails
-because a service is not registered yet. When a service goes away, its method goes
-too, but only once Home Assistant has finished starting. Code that calls the method
-then fails its next compile, with the ordinary compiler error on that node or
-library. An automation that is already running keeps running: it calls the service
-by its id.
+which are kept in `.storage/hass_sharp/service_schema.json`. Once that file exists,
+a restart does not lose a method because its service is not registered yet. The
+first start (or one after the file is lost, for example with a recreated container)
+has only the services registered so far: an automation whose code calls a later one
+does not load then, and loads by itself once the service is registered.
+
+When a service goes away, its method goes too, but only once Home Assistant has
+finished starting. Code that calls the method then fails its next compile, with the
+ordinary compiler error on that node or library:
+
+- An automation that is already running keeps running: it calls the service by its
+  id. If it is not running (after a restart, say), it does not load until the
+  service comes back; it then loads by itself.
+- A node library whose code calls the method does not compile. Because libraries are
+  compiled together, no library can be saved until that code changes or the service
+  comes back. An automation that calls it does not block a library save: the save
+  lists it as invalid.
+
+Service descriptions are text from Home Assistant and its integrations. They only
+ever reach the generated code as names, string literals and documentation. If the
+generated methods still fail to compile, the methods of the services concerned are
+left out, or the previous methods are kept, and the log says which.
 
 ## Custom C# nodes
 

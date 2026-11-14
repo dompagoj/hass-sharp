@@ -11,7 +11,10 @@ and MCP. Custom library nodes appear after a successful library save.
 
 **Save graph** validates, compiles, persists and activates. Native trigger
 configuration is checked by Home Assistant before saving. Warnings remain visible;
-errors prevent persistence. Saving startup/scheduled/native triggers can cause
+errors prevent persistence. An entity ID that Home Assistant has no entity for (in an
+entity trigger, or typed into an entity input or a service target) is a warning,
+code `entity.unknown`: check the spelling, since a trigger on it never fires. It
+does not block the save, because the entity may be added later. Saving startup/scheduled/native triggers can cause
 external effects. Unsaved changes are drafts. Run now requires the exact saved
 revision to be active and the selected trigger to permit manual execution. If
 activation fails, an older runtime may remain active; the editor reports the

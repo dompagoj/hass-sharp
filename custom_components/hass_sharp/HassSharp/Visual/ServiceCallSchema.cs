@@ -12,28 +12,36 @@ namespace HassSharp;
 sealed class ServiceCallSchema(string path)
 {
     static readonly JsonWriterOptions Writing = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    // What the typed calls were last generated from (and the file holds), and the last schema proposed for them.
     SortedDictionary<string, JsonObject>? current;
-    string? currentJson, saved;
-    bool generated;
+    string? proposed, saved;
 
     /// <summary>
     /// The live services united with the current ones (the live definition wins), or only the live ones once Home
-    /// Assistant has started. Returns the result when the typed calls must be generated from it (it changed, or nothing
-    /// was generated yet), else null; saves it when it differs from the file.
+    /// Assistant has started: what the typed calls should be generated from. Null when that is the schema proposed
+    /// last (whether it was accepted or not), so a schema is generated and checked once. Nothing is saved until
+    /// <see cref="Accept"/>.
     /// </summary>
     public IReadOnlyCollection<KeyValuePair<string, JsonObject>>? Update(ServiceSchemaCatalog live, bool started)
     {
         current ??= Load();
-        currentJson ??= Serialize(current);
         var next = new SortedDictionary<string, JsonObject>(started ? new Dictionary<string, JsonObject>() : current, StringComparer.Ordinal);
         foreach (var (id, service) in live.Items) if (service is JsonObject schema) next[id] = schema;
         var json = Serialize(next);
-        var changed = json != currentJson;
-        (current, currentJson) = (next, json);
-        if (json != saved) Save(json);
-        if (generated && !changed) return null;
-        generated = true;
+        if (json == proposed) return null;
+        proposed = json;
         return next;
+    }
+
+    /// <summary>
+    /// The services the typed calls were generated from: they become the current ones and are saved. A schema whose
+    /// calls did not compile is never accepted, so it is never saved.
+    /// </summary>
+    public void Accept(IEnumerable<KeyValuePair<string, JsonObject>> services)
+    {
+        current = new SortedDictionary<string, JsonObject>(services.ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal), StringComparer.Ordinal);
+        var json = Serialize(current);
+        if (json != saved) Save(json);
     }
 
     SortedDictionary<string, JsonObject> Load()

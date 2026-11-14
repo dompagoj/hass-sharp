@@ -1,14 +1,19 @@
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace HassSharp;
 
 /// <summary>
 /// What a service acts on, the first argument of every <c>context.Services</c> method of a service that takes a target.
-/// An entity id converts to it (<c>"light.kitchen"</c>), and so do an array or list of them; <see cref="Areas"/>,
+/// An entity id converts to it (<c>"light.kitchen"</c>), and so do an array, a list and a collection expression of them
+/// (<c>["light.a", "light.b"]</c>); <see cref="Areas"/>,
 /// <see cref="Devices"/>, <see cref="Floors"/> and <see cref="Labels"/> give the others, and the properties combine
 /// them: <c>new ServiceTarget { AreaIds = ["kitchen"], LabelIds = ["night"] }</c>.
 /// </summary>
+[CollectionBuilder(typeof(ServiceTarget), nameof(Create))]
 public sealed class ServiceTarget
 {
     readonly string? entity;
@@ -39,6 +44,16 @@ public sealed class ServiceTarget
 
     /// <summary>These entities.</summary>
     public static ServiceTarget Entities(params string[] entityIds) => new() { EntityIds = [.. entityIds] };
+    /// <summary>These entities: what a collection expression such as <c>["light.a", "light.b"]</c> gives.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public static ServiceTarget Create(ReadOnlySpan<string> entityIds) => new() { EntityIds = [.. entityIds] };
+    /// <summary>The entities given as a list (a collection expression needs a target to have them).</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public IEnumerator<string> GetEnumerator()
+    {
+        IEnumerable<string> ids = entity != null ? [entity] : EntityIds ?? [];
+        return ids.GetEnumerator();
+    }
     /// <summary>Everything in these areas, by area id.</summary>
     public static ServiceTarget Areas(params string[] areaIds) => new() { AreaIds = [.. areaIds] };
     /// <summary>These devices, by device id.</summary>
@@ -61,4 +76,13 @@ public sealed class ServiceTarget
         Add("device_id", DeviceIds); Add("area_id", AreaIds); Add("floor_id", FloorIds); Add("label_id", LabelIds);
         return json;
     }
+}
+
+/// <summary>How the typed service calls send a field's value: as every service call does, with snake_case member names
+/// (<c>new { Minutes = 5 }</c> is sent as <c>{"minutes": 5}</c>) and enums by name.</summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
+public static class ServiceData
+{
+    /// <summary>The value as Home Assistant receives it.</summary>
+    public static JsonNode? Value<T>(T value) => JsonSerializer.SerializeToNode(value, HassServices.JsonOptions);
 }

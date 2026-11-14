@@ -10,11 +10,24 @@ public partial class HassSharpManager
     AuthoringTransaction AuthoringFiles => new(AuthoringRoot);
     CancellationTokenSource _languageLifetime = new();
 
-    string LibraryWorkspaceGeneration(IEnumerable<NodeLibraryDocument> documents)
+    /// <summary>
+    /// The generation of saved (or candidate) libraries, by which the editors cache the catalog compiled from them.
+    /// <para>
+    /// The typed service calls are part of it only when that catalog has a type they declare (a pin of type
+    /// <c>HassSharp.ServiceCalls.LightServices</c>, say): they follow Home Assistant's services, and an open editor must
+    /// not see its libraries as changed elsewhere whenever a service is registered. Otherwise nothing cached by it can go
+    /// stale when they change: the catalog is made from the libraries' declarations, which name no generated member
+    /// (a doc comment's <c>see</c> adds no text), and a library that calls a service that is gone does not compile, so
+    /// the reply says <c>valid: false</c>, which no editor caches.
+    /// </para>
+    /// </summary>
+    /// <param name="preview">The libraries compiled; without it, the generation of the sources alone.</param>
+    string LibraryWorkspaceGeneration(IEnumerable<NodeLibraryDocument> documents, NodeLibraryPreview? preview = null)
     {
-        // The typed service calls are not part of it: they follow Home Assistant's services, and an open editor must not
-        // see its libraries as changed elsewhere whenever a service is registered.
         var content = NodeLibraryStore.Generation(documents);
+        if (preview?.Snapshot.Compilation?.SyntaxTrees.FirstOrDefault(t => t.FilePath == DiagnosticsProvider.ServicesPath) is { } services &&
+            preview.Snapshot.Types.Values.Any(t => t.Symbol.OriginalDefinition.DeclaringSyntaxReferences.Any(r => r.SyntaxTree == services)))
+            content += "\0services\0" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(services.ToString())));
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
     }
 
@@ -22,7 +35,8 @@ public partial class HassSharpManager
     {
         AuthoringFiles.Recover();
         var documents = LibraryDocuments.List();
-        return (documents, LibraryWorkspaceGeneration(documents), new NodeLibraryCompiler(_diagnosticsProvider).Preview(documents.Select(d => d.AsSource())));
+        var preview = new NodeLibraryCompiler(_diagnosticsProvider).Preview(documents.Select(d => d.AsSource()));
+        return (documents, LibraryWorkspaceGeneration(documents, preview), preview);
     }
     // Only authoring validation of one graph sees the service schemas. Init and the library-save
     // rebuild use SavedLibraries' snapshot without them, so loading never depends on which
@@ -155,7 +169,7 @@ public partial class HassSharpManager
             var candidates = saved.Documents.Where(d => d.Id != id).Concat(document == null ? [] : new[] { document })
                 .OrderBy(d => d.Id, StringComparer.Ordinal).ToArray();
             var candidate = new NodeLibraryCompiler(_diagnosticsProvider).Preview(candidates.Select(d => d.AsSource()));
-            var generation = LibraryWorkspaceGeneration(candidates);
+            var generation = LibraryWorkspaceGeneration(candidates, candidate);
             // Every artifact embeds every source, including advanced C# and indirect helper dependencies.
             var graphs = VisualDocuments.List(strict: true);
             var all = graphs.Select(g => (Document: g, Preview: new VisualGenerator(_diagnosticsProvider).Preview(g.Graph, candidate.Snapshot))).ToArray();

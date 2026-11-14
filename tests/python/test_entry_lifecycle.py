@@ -83,7 +83,10 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         stops=[]
         def track(hass,target):
             self.assertIs(target,manager);stop=Mock();stops.append(stop);return stop
-        services=types.SimpleNamespace(async_push=AsyncMock(side_effect=lambda h,m:order.append('push')),async_track=track)
+        async def start(h,m):
+            # Listens first, then pushes once (services.async_start).
+            stop=track(h,m);order.append('push');return stop
+        services=types.SimpleNamespace(async_start=AsyncMock(side_effect=start))
         panel=Mock();remove=Mock()
         env=dict(json=json,EVENT_HOMEASSISTANT_STOP='homeassistant_stop',Action=Delegate,Func=Delegate,Int32=int,String=str,Task=object,
                  HasEntityState=object,PyInterop=types.SimpleNamespace(),Event=Delegate,EventStateChangedData=object,
@@ -98,7 +101,7 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         entry=types.SimpleNamespace(entry_id='test')
         self.assertTrue(await env['async_setup_entry'](hass,entry))
         self.assertTrue(state_instances[-1].ready)
-        services.async_push.assert_awaited_once_with(hass,manager)
+        services.async_start.assert_awaited_once_with(hass,manager)
         self.assertEqual(order[:2],['push','init'])
         self.assertIs(hass.data['hass_sharp_services']['test'],stops[-1])
         # A stop cancels the runs with the stopping reason without unloading the entry.

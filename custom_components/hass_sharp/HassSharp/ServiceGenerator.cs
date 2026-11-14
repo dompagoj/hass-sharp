@@ -17,6 +17,11 @@ namespace HassSharp;
 /// told apart by a numeric suffix (2, 3, …) given in ordinal order of the original ids; the first id of each name keeps it.
 /// </para>
 /// The output depends only on the schema: the same schema gives the same source, byte for byte.
+/// <para>
+/// The schema is text from Home Assistant and from every integration's <c>services.yaml</c>, so it is untrusted: it
+/// reaches the source only as identifiers made by <see cref="Words"/>, as string literals made by
+/// <see cref="SymbolDisplay.FormatLiteral(string, bool)"/>, and as doc comment text made by <see cref="Xml"/>.
+/// </para>
 /// </summary>
 static class ServiceGenerator
 {
@@ -34,8 +39,26 @@ static class ServiceGenerator
     sealed record Service(string Id, string ServiceName, string Name, string? ResponseName, string Response, bool HasTarget, string TargetDoc, string Summary, Field[] Fields);
     sealed record Domain(string Id, string Name, string Class, Service[] Services);
 
+    /// <summary>
+    /// Where a service's or a domain's code is in the source, by 1-based line: a compile error inside it is that
+    /// service's (or, for a domain, all of its services').
+    /// </summary>
+    public sealed record Span(string Id, bool IsDomain, int StartLine, int EndLine);
+    public sealed record Generated(string Source, IReadOnlyList<Span> Spans)
+    {
+        /// <summary>The services a compile error at <paramref name="line"/> belongs to; empty when it is in no service's code.</summary>
+        public IEnumerable<string> ServicesAt(int line, IEnumerable<string> services)
+        {
+            var span = Spans.Where(s => line >= s.StartLine && line <= s.EndLine).OrderBy(s => s.IsDomain).FirstOrDefault();
+            return span == null ? [] : span.IsDomain ? services.Where(id => id.StartsWith(span.Id + ".", StringComparison.Ordinal)) : [span.Id];
+        }
+    }
+
     /// <summary>The source of the services tree; <paramref name="services"/> are keyed by <c>domain.service</c>.</summary>
-    public static string Generate(IEnumerable<KeyValuePair<string, JsonObject>> services)
+    public static string Generate(IEnumerable<KeyValuePair<string, JsonObject>> services) => GenerateWithSpans(services).Source;
+
+    /// <summary>The source of the services tree, with where each service's and domain's code is.</summary>
+    public static Generated GenerateWithSpans(IEnumerable<KeyValuePair<string, JsonObject>> services)
     {
         var byDomain = new SortedDictionary<string, SortedDictionary<string, JsonObject>>(StringComparer.Ordinal);
         foreach (var (id, schema) in services)
@@ -48,9 +71,13 @@ static class ServiceGenerator
         var domains = byDomain.Select(pair => DomainOf(pair.Key, domainNames[pair.Key], pair.Value)).Where(d => d.Services.Length > 0).ToArray();
 
         var sb = new StringBuilder();
-        void Line(int indent, string text) => sb.Append(' ', indent * 4).Append(text).Append('\n');
+        var lines = 0;
+        var spans = new List<Span>();
+        void Line(int indent, string text) { sb.Append(' ', indent * 4).Append(text).Append('\n'); lines++; }
         void Doc(int indent, string tag, string text, string? name = null)
         {
+            // Schema text is made one line by Xml; this guards the generator's own text, so a doc line never ends early.
+            if (text.AsSpan().IndexOfAny("\r\n\u0085\u2028\u2029") >= 0) throw new InvalidOperationException("A doc comment line of the typed service calls has a line break");
             Line(indent, name == null ? $"/// <{tag}>" : $"/// <{tag} name=\"{Xml(name)}\">");
             Line(indent, "/// " + text);
             Line(indent, $"/// </{tag}>");
@@ -85,13 +112,16 @@ static class ServiceGenerator
         foreach (var domain in domains)
         {
             Line(0, "");
+            var start = lines + 1;
             Doc(2, "summary", DomainSummary(domain));
             Line(2, $"public global::{Namespace}.{domain.Class} {domain.Name} => new global::{Namespace}.{domain.Class}(__context);");
+            spans.Add(new(domain.Id, true, start, lines));
         }
         Line(1, "}");
         foreach (var domain in domains)
         {
             Line(0, "");
+            var start = lines + 1;
             Doc(1, "summary", DomainSummary(domain));
             Line(1, $"public sealed class {domain.Class}");
             Line(1, "{");
@@ -103,13 +133,15 @@ static class ServiceGenerator
                 if (service.ResponseName != null) Method(service, service.ResponseName, response: true);
             }
             Line(1, "}");
+            spans.Add(new(domain.Id, true, start, lines));
         }
         Line(0, "}");
-        return sb.ToString();
+        return new(sb.ToString(), spans);
 
         void Method(Service service, string name, bool response)
         {
             Line(0, "");
+            var start = lines + 1;
             var summary = service.Summary;
             if (service.ResponseName != null && !response) summary += $" <c>{service.ResponseName}</c> also gives its response.";
             Doc(2, "summary", summary);
@@ -130,13 +162,15 @@ static class ServiceGenerator
             Line(3, "var __data = new global::System.Text.Json.Nodes.JsonObject();");
             foreach (var field in service.Fields)
             {
-                var value = field.IsTarget ? $"{field.Name}.ToJson()" : $"global::System.Text.Json.JsonSerializer.SerializeToNode({field.Name})";
+                // Values are sent as HassServices sends them: snake_case member names, enums by name.
+            var value = field.IsTarget ? $"{field.Name}.ToJson()" : $"global::HassSharp.ServiceData.Value({field.Name})";
                 var set = $"__data[{Literal(field.Key)}] = {value};";
                 Line(3, field.Required ? set : $"if ({field.Name} is not null) {set}");
             }
             var call = $"__context.CallService({Literal(service.Id)}, {(service.HasTarget ? "target?.ToJson()" : "null")}, __data{(response ? ", true" : "")})";
             Line(3, response ? $"return await {call} ?? default;" : $"return {call};");
             Line(2, "}");
+            spans.Add(new(service.Id, false, start, lines));
         }
     }
 
@@ -201,10 +235,10 @@ static class ServiceGenerator
 
     static string ServiceSummary(string id, JsonObject schema)
     {
-        var name = Text(schema, "name");
+        var name = Xml(Text(schema, "name"));
         var service = id[(id.IndexOf('.') + 1)..];
-        var head = string.IsNullOrWhiteSpace(name) || name == service ? $"<c>{Xml(id)}</c>." : $"{Xml(Sentence(name))} (<c>{Xml(id)}</c>).";
-        return Join(head, Xml(Sentence(Text(schema, "description"))));
+        var head = name.Length == 0 || name == Xml(service) ? $"<c>{Xml(id)}</c>." : $"{name} (<c>{Xml(id)}</c>).";
+        return Join(head, Xml(Text(schema, "description")));
     }
 
     static string TargetDoc(JsonObject? target)
@@ -217,9 +251,9 @@ static class ServiceGenerator
 
     static string FieldDoc(string key, JsonObject field)
     {
-        var label = Text(field, "label");
-        var parts = new List<string> { string.IsNullOrWhiteSpace(label) || label == key ? $"<c>{Xml(key)}</c>." : $"{Xml(Sentence(label))} (<c>{Xml(key)}</c>).", Xml(Sentence(Text(field, "description"))) };
-        var unit = Text(field, "unit") is { Length: > 0 } u ? " " + Xml(u) : "";
+        var label = Xml(Text(field, "label"));
+        var parts = new List<string> { label.Length == 0 || label == Xml(key) ? $"<c>{Xml(key)}</c>." : $"{label} (<c>{Xml(key)}</c>).", Xml(Text(field, "description")) };
+        var unit = Xml(Text(field, "unit")) is { Length: > 0 } u ? " " + u : "";
         var (min, max) = (Number(field["min"]), Number(field["max"]));
         if (min != null && max != null) parts.Add($"From {min} to {max}{unit}.");
         else if (min != null) parts.Add($"At least {min}{unit}.");
@@ -231,7 +265,7 @@ static class ServiceGenerator
             parts.Add((values.Count == 1 ? "Only " : "One of ") + string.Join(", ", values.Select((v, i) =>
             {
                 var raw = v is JsonValue s && s.TryGetValue<string>(out var text) ? text : v?.ToJsonString() ?? "null";
-                return labels?.ElementAtOrDefault(i) is JsonValue l && l.TryGetValue<string>(out var name) && name != raw ? $"<c>{Xml(raw)}</c> ({Xml(Sentence(name))})" : $"<c>{Xml(raw)}</c>";
+                return labels?.ElementAtOrDefault(i) is JsonValue l && l.TryGetValue<string>(out var name) && Xml(name) is { Length: > 0 } shown && shown != Xml(raw) ? $"<c>{Xml(raw)}</c> ({shown})" : $"<c>{Xml(raw)}</c>";
             })) + ".");
         }
         var (fewest, most) = (Number(field["minItems"]), Number(field["maxItems"]));
@@ -287,7 +321,30 @@ static class ServiceGenerator
     static string Literal(string text) => SymbolDisplay.FormatLiteral(text, true);
     static string? Text(JsonObject owner, string key) => owner[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
     static string? Number(JsonNode? node) => node is JsonValue v && v.GetValueKind() == JsonValueKind.Number ? v.ToJsonString() : null;
-    static string Sentence(string? text) => string.Join(' ', (text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     static string Join(params string[] parts) => string.Join(' ', parts.Where(p => p.Length > 0));
-    static string Xml(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+    /// <summary>
+    /// The one way schema text reaches a doc comment: on one line (every line break, other white space and control
+    /// character becomes a space, runs of them one), without what XML cannot hold (a lone surrogate, U+FFFE, U+FFFF
+    /// become U+FFFD), and XML-escaped.
+    /// </summary>
+    internal static string Xml(string? text)
+    {
+        var raw = text ?? "";
+        var sb = new StringBuilder(raw.Length);
+        var space = true;
+        for (var i = 0; i < raw.Length; i++)
+        {
+            var c = raw[i];
+            if (char.IsHighSurrogate(c) && i + 1 < raw.Length && char.IsLowSurrogate(raw[i + 1])) { sb.Append(c).Append(raw[++i]); space = false; continue; }
+            if (char.IsWhiteSpace(c) || char.IsControl(c)) { if (!space) sb.Append(' '); space = true; continue; }
+            space = false;
+            if (char.IsSurrogate(c) || c is '\uFFFE' or '\uFFFF') sb.Append('\uFFFD');
+            else if (c == '&') sb.Append("&amp;");
+            else if (c == '<') sb.Append("&lt;");
+            else if (c == '>') sb.Append("&gt;");
+            else sb.Append(c);
+        }
+        return sb.ToString().TrimEnd(' ');
+    }
 }

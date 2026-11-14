@@ -251,8 +251,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         PyInterop.SubscribeToEntityTracking = Action[String](subscribe_to_entity_change)
 
         await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
-        await services.async_push(hass, hass_sharp)
-        hass.data.setdefault("hass_sharp_services", {})[entry.entry_id] = services.async_track(hass, hass_sharp)
+        hass.data.setdefault("hass_sharp_services", {})[entry.entry_id] = await services.async_start(hass, hass_sharp)
 
         async def on_stop(event):
             # Home Assistant does not unload config entries when it stops: cancel the runs here, so they

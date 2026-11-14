@@ -74,6 +74,9 @@ tool descriptions summarise the workflow below and the entity typing rule.
    same authoring service, working out Custom C# pins as preview does. New IDs use
    revision 0; existing edits use the exact
    read revision. Warnings are allowed; severity 3 errors prevent persistence.
+   Preview and save warn (`entity.unknown`) about each entity ID written into the
+   graph that Home Assistant has no entity for; fix the ID unless the entity is
+   still to be added.
    Saving can enable startup, scheduled or native effects, so authorize those
    effects before saving. The result separates `saved:true` from `active` and
    `activationError`.

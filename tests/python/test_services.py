@@ -144,3 +144,27 @@ class ServiceDescriptions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(listeners, {})
         timers[3].cancel.assert_called_once()
         timers[2].cancel.assert_not_called()
+
+    async def test_started_during_the_first_push_is_not_missed(self):
+        # The listeners are in place before the first push gathers descriptions: a "started" event that fires
+        # meanwhile schedules a push of its own, which says started (so stale services can be dropped).
+        env, hass, listeners, timers, _ = load_services({'light': {}})
+        async def descriptions(_hass):
+            hass.state = 'running'
+            listeners[EVENTS[2]](NS(data={}))
+            return {'light': {}}
+        env['async_get_all_descriptions'].side_effect = descriptions
+        manager = NS(SetServiceDescriptions=Mock())
+        unsubscribe = await env['async_start'](hass, manager)
+        self.assertEqual(set(listeners), set(EVENTS))
+        self.assertEqual(len(timers), 1)
+        await timers[0].action(None)
+        self.assertEqual([c.args for c in manager.SetServiceDescriptions.call_args_list],
+                         [('{"light": {}}', False), ('{"light": {}}', True)])
+        unsubscribe()
+        self.assertEqual(listeners, {})
+
+    def test_setup_listens_before_the_first_push(self):
+        source = Path('custom_components/hass_sharp/__init__.py').read_text()
+        self.assertIn('await services.async_start(hass, hass_sharp)', source)
+        self.assertNotIn('services.async_push(hass, hass_sharp)', source)
