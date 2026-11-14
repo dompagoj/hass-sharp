@@ -44,6 +44,8 @@ class UserScriptManager
     readonly HashSet<UserScript> _preparing = new();
     long _epoch;
     readonly HashSet<string> _deletingPaths = new(StringComparer.Ordinal);
+    /// <summary>Test seam: runs just after a save swaps the replaced revision out, before it drains.</summary>
+    internal Action? Swapped;
     /// <summary>The drains of revisions a save replaced, still going: unloading waits for them as for its own scripts.</summary>
     readonly HashSet<Task> _retiring = [];
     internal long ActivationEpoch { get { lock (ActivationGate) return _epoch; } }
@@ -268,6 +270,8 @@ class UserScriptManager
                 throw new InvalidOperationException("Script not found");
             }
             UserScript? replacement = null;
+            // Registered as retiring in the lock that swaps it out, so an unload from then on waits for its drain.
+            var retired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             try
             {
                 // Stage subscriptions while the original remains the only trigger recipient.
@@ -283,6 +287,7 @@ class UserScriptManager
                     replacement.Active = true;
                     _preparing.Remove(replacement);
                     _userScripts[index] = replacement;
+                    _retiring.Add(retired.Task);
                 }
             }
             catch (Exception error)
@@ -294,11 +299,13 @@ class UserScriptManager
                 throw;
             }
 
-            found.SetCancelReason(CancelReasons.Reloaded);
-            // The replaced revision's runs drain here; unloading meanwhile waits for them too (see _retiring).
-            var retiring = found.ClearFromTrackingAsync();
-            lock (ActivationGate) _retiring.Add(retiring);
-            try { await retiring; }
+            try
+            {
+                Swapped?.Invoke();
+                found.SetCancelReason(CancelReasons.Reloaded);
+                // The replaced revision's runs drain here; unloading meanwhile waits for them too (see _retiring).
+                await found.ClearFromTrackingAsync();
+            }
             catch (Exception error)
             {
                 // The replacement is live and receiving triggers: a cleanup failure of the old revision is no failure of the save.
@@ -306,8 +313,9 @@ class UserScriptManager
             }
             finally
             {
-                lock (ActivationGate) _retiring.Remove(retiring);
                 try { found.Unload(); } catch (Exception error) { Logger.Warn($"{found.CompiledScript.FileName}: unloading the replaced revision failed: {error.GetBaseException().Message}"); }
+                lock (ActivationGate) _retiring.Remove(retired.Task);
+                retired.TrySetResult();
             }
             replacement.Start();
         }

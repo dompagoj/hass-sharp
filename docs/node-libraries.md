@@ -342,16 +342,21 @@ diagnostics.
 
 ## Scope snapshots
 
-Branch, loop and structured error scopes isolate values through detached deep
-snapshots. A value is copied when the inner scope first reads it; a value it never
-reads is not copied. An entity snapshot is immutable. JSON nodes, arrays, lists,
-dictionaries and ordinary user classes and records are copied. Aliases within one
-scope remain aliases within that scope. Nullable values keep their null state. A
-value being assignable at compile time does not guarantee that it can be copied: a
-value that cannot be copied fails the step that reads it.
+Loops and parallel branches isolate values with detached deep copies, taken the
+first time a step inside the loop or branch reads a value from outside it; a value
+it never reads is not copied. An entity snapshot is immutable. JSON nodes, arrays,
+lists, dictionaries and ordinary user classes and records are copied. Aliases within
+one scope remain aliases within that scope. Nullable values keep their null state.
+A value being assignable at compile time does not guarantee that it can be copied:
+a value that cannot be copied fails the step inside the loop or branch that reads
+it, not the loop or branch itself. Its message names that step, its pin and where
+the value came from, for example "Log · Message reads Build list · Result, which
+cannot be copied into a loop or parallel branch; return a list or an array
+instead". The type that could not be copied is the failure's inner exception.
 
-Live resources fail with a precise snapshot error. These include streams, tasks,
-delegates, safe handles and unsupported framework object graphs. For your own
+Live resources cannot be copied. These include streams, tasks, delegates, safe
+handles, LINQ sequences and other framework objects that are not plain data (sets
+and read-only wrappers among them). For your own
 resource containers, implement `IVisualSnapshot.CreateVisualSnapshot()`. It must
 return a detached instance of the same concrete type, deeply copying every reachable
 mutable object; returning the original object or a shallow copy violates the

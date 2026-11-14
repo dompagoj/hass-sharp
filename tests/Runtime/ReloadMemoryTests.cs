@@ -80,11 +80,17 @@ static class ReloadMemoryTests
             await manager.UnloadAsync();
             // System.Text.Json's process-wide member accessor cache (its compiled getters and constructors of the types it
             // writes) keeps an entry about a second after its last use and drops it at its next use after that: the last
-            // automations' types go once anything is written to JSON again, as Home Assistant does all the time.
-            await Task.Delay(1500);
-            JsonSerializer.Serialize(new { Evict = 1 }, new JsonSerializerOptions());
-            Collected();
-            var alive = contexts.Count(c => c.Context.IsAlive);
+            // automations' types go once anything is written to JSON again, as Home Assistant does all the time. That
+            // policy is the library's own, so this polls: wait, write something, collect, look, for up to about 10 s.
+            // Each write uses options equal to no others, so its metadata (and the cache use that evicts) is made anew.
+            var alive = contexts.Count;
+            for (var started = DateTime.UtcNow; alive > 0 && DateTime.UtcNow - started < TimeSpan.FromSeconds(10);)
+            {
+                await Task.Delay(500);
+                JsonSerializer.Serialize(new { Evict = 1 }, new JsonSerializerOptions { TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() });
+                Collected();
+                alive = contexts.Count(c => c.Context.IsAlive);
+            }
             Check(alive == 0, $"{alive} of {contexts.Count} automation load contexts of earlier generations are still alive after the reloads: "
                 + string.Join(", ", contexts.Where(c => c.Context.IsAlive).Select(c => c.Name)));
             var collectible = AssemblyLoadContext.All.OfType<ScriptLoadContext>().Count();

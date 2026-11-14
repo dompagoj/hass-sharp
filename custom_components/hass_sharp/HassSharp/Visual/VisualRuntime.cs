@@ -81,8 +81,11 @@ public sealed class VisualSnapshot
                 field.SetValue(clone,Copy(field.GetValue(value)));
         return clone;
     }
-    static Exception Cannot(Type type)=>new InvalidOperationException($"Cannot snapshot CLR type {type.FullName} at isolated scope boundary; implement IVisualSnapshot with a detached deep copy.");
+    static Exception Cannot(Type type)=>new InvalidOperationException($"{type.FullName} cannot be copied");
 }
+
+/// <summary>A value of an outer scope that could not be copied into an inner one; the reading step words it (see <c>VisualRuntime.Read</c>).</summary>
+sealed class VisualCopyException(Exception inner):Exception(inner.Message,inner);
 
 /// <summary>
 /// The values one path of a run has made. An inner scope (a loop iteration or condition, a parallel branch) starts
@@ -124,7 +127,8 @@ public sealed class VisualScope
         lock(gate) {
             if(Outputs.TryGetValue(key,out value))return true;
             if(outer==null || !outer.TryGetOutput(key,out var around)){value=null;return false;}
-            value=Outputs[key]=(copies??=new VisualSnapshot()).Copy(around);
+            try {value=Outputs[key]=(copies??=new VisualSnapshot()).Copy(around);}
+            catch(Exception error)when(error is not VisualCopyException and not OperationCanceledException){throw new VisualCopyException(error);}
             return true;
         }
     }
@@ -216,9 +220,14 @@ public sealed class VisualRuntime
     void Traced(VisualScope scope,string node,string port,object? value)=>trace!.Input(scope.Trace!,node,port,value,data.TryGetValue((node,port),out var source)?source:null);
     object? Read(VisualScope scope,string node,string port) {
         if(data.TryGetValue((node,port),out var source)) {
-            if(!scope.TryGetOutput(source,out var value))throw new InvalidOperationException(absentTriggerOutputs.TryGetValue(source,out var reason)
+            object? value;
+            // A value that cannot be copied into a loop or branch fails the step that reads it there, named as people see it.
+            try {if(!scope.TryGetOutput(source,out value))throw new InvalidOperationException(absentTriggerOutputs.TryGetValue(source,out var reason)
                 ? $"Input {node}.{port}: trigger output {source.Item1}.{source.Item2} " + (reason==null?"is absent from this invocation's trigger payload.":$"cannot be read from this invocation's trigger payload: {reason}")
-                : $"Input {node}.{port}: producer output {source.Item1}.{source.Item2} has not executed in this invocation/scope.");
+                : $"Input {node}.{port}: producer output {source.Item1}.{source.Item2} has not executed in this invocation/scope.");}
+            catch(VisualCopyException error) {
+                throw new InvalidOperationException($"{Pin(node,port)} reads {Title(source.Item1)} · {VisualGraphValidator.Words.PortLabel(OutputSpecs(source.Item1)?[source.Item2],source.Item2)}, which cannot be copied into a loop or parallel branch; return a list or an array instead",error.InnerException);
+            }
             return value;
         }
         return Operand(scope,OperandOf(node,port),$"{node}.{port}");
@@ -287,10 +296,13 @@ public sealed class VisualRuntime
             if(parsed!=null && target.IsInstanceOfType(parsed))return parsed;
         }
         if(value is JsonElement j) {
-            if(j.ValueKind==JsonValueKind.Null)return Coerce(null,type,label,convert,json:json);
+            if(j.ValueKind==JsonValueKind.Null)return Coerce(null,type,label,convert,pin,json);
             if(j.ValueKind==JsonValueKind.Number && IsNumber(target)) {
-                // A JSON number (a foreach item, a field read from JSON) gets the same fit check as any other number.
-                if(pin!=null && target!=typeof(char) && Unfit(j.TryGetDecimal(out var exact)?exact:j.GetDouble(),target) is {} unfit)
+                // A JSON number (a foreach item, a field read from JSON) gets the same fit check as any other number. One no
+                // number holds (1e400, a 400-digit integer from an attribute or a service response) is named as such.
+                object given=j.TryGetDecimal(out var exact)?exact:j.TryGetDouble(out var real)&&double.IsFinite(real)?real
+                    :throw new InvalidOperationException($"{pin?.Invoke()??label} got {j.GetRawText()}, a number too large to use");
+                if(pin!=null && target!=typeof(char) && Unfit(given,target) is {} unfit)
                     throw new InvalidOperationException($"{pin()} needs {unfit}, not {j.GetRawText()}");
                 // Read the original token into its declared numeric type. A double
                 // intermediate corrupts Int64/decimal precision before type checking.

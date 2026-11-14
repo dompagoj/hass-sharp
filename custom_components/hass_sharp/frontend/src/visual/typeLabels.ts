@@ -8,6 +8,8 @@ const builtIn: Record<string, string> = {
 const primitiveNames: Record<string, string> = { boolean: 'True/False', number: 'Number', integer: 'Number', string: 'Text', object: 'Object', array: 'List' }
 /** C# type keywords, which catalogs use as labels of CLR types. */
 const csharpKeywords = new Set(['bool', 'byte', 'sbyte', 'char', 'decimal', 'double', 'float', 'int', 'uint', 'long', 'ulong', 'short', 'ushort', 'nint', 'nuint', 'object', 'string', 'dynamic'])
+/** A type entry's text: a key of another JSON kind (a crafted `"label": 5`) reads as none, as `Text` does in C#. */
+const text = (value: unknown) => typeof value === 'string' ? value : ''
 /** `binary_sensor` → `Binary sensor`. */
 export const domainWords = (domain: string) => { const words = domain.replaceAll('_', ' '); return words.charAt(0).toUpperCase() + words.slice(1) }
 /** How many types deep a type is worded ("List of List of …"); deeper, it reads as Object. `Words.LabelDepth` in C#. */
@@ -38,19 +40,21 @@ export function typeLabel(typeId: string, catalog: VisualCatalogSnapshot = nodeC
   const spec = resolveTypeSpec(typeId, catalog)
   // Nullable: the inner type's name.
   if (typeId.endsWith('?')) return inner(typeId.slice(0, -1))
-  if (spec?.elementType) return `List of ${inner(spec.elementType)}`
+  const element = text(spec?.elementType)
+  if (element) return `List of ${inner(element)}`
   if (typeId.endsWith('[]')) return `List of ${inner(typeId.slice(0, -2))}`
   // Multi-dimensional arrays and tuples have no friendly element name: "List" and "Object".
   if (/\[,+\]\??$/.test(typeId)) return 'List'
   if (typeId.replace(/^global::/, '').startsWith('(')) return 'Object'
   const generic = collection.exec(typeId)
   if (generic) return `List of ${inner(generic[1])}`
-  const kind = (spec?.literalKind ?? '').toLowerCase(), category = (spec?.category ?? '').toLowerCase()
+  const kind = text(spec?.literalKind).toLowerCase(), category = text(spec?.category).toLowerCase()
   if (Object.hasOwn(primitiveNames, kind)) return primitiveNames[kind]
   if (category !== 'object' && Object.hasOwn(primitiveNames, category) && kind !== 'enum') return primitiveNames[category]
   // A label written for people keeps its text; a CLR spelling (a namespace, generics, `?`, `[]` or a C# keyword
   // such as `bool`) never does.
-  if (spec?.label && !/[.:<>?[\](),]/.test(spec.label) && !csharpKeywords.has(spec.label)) return spec.label
+  const label = text(spec?.label)
+  if (label && !/[.:<>?[\](),]/.test(label) && !csharpKeywords.has(label)) return label
   const words = clrWords(typeId)
   return /[()[\],]/.test(words) ? 'Object' : words
 }

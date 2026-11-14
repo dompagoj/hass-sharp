@@ -837,6 +837,7 @@
       }
     },
     "respond_optionally": {
+      "name": "Respond (optionally)",
       "fields": {},
       "response": {"optional": true}
     },

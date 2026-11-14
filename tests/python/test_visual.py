@@ -4,6 +4,7 @@ import contextlib
 import dataclasses
 import json
 import pathlib
+import re
 import types
 import unittest
 from unittest.mock import Mock
@@ -135,6 +136,26 @@ class WebsocketReadinessTests(unittest.IsolatedAsyncioTestCase):
                 results, errors = await self.send(handlers[command], hass, msg)
                 self.assertEqual(errors, [])
         self.assertEqual(calls, ['visual', 'library', 'run', 'history', 'trace'])
+
+    def test_every_refusal_run_now_answers_in_csharp_is_known(self):
+        # The messages Manager.RunNow, VisualApi.DispatchVisual and UserScriptManager.DispatchManual refuse with, read
+        # from the C# source, are exactly the refusals the websocket shows as they are (and does not log as defects).
+        library = pathlib.Path('custom_components/hass_sharp/HassSharp')
+        def body(path, start):
+            text = (library / path).read_text()
+            begin = text.index(start)
+            return text[begin:text.index('\n    }\n', begin)]
+        thrown = re.compile(r'throw new (?:InvalidOperationException|ArgumentException)\("([^"]+)"\)')
+        messages = set(thrown.findall(body('Manager.cs', 'public string RunNow(')))
+        messages |= set(thrown.findall(body('Visual/VisualApi.cs', 'object DispatchVisual(')))
+        dispatch = body('UserScriptManager/UserScriptManager.cs', 'public string DispatchManual(')
+        self.assertIn('throw new InvalidOperationException(NotRunning)', dispatch)
+        messages.add(re.search(r'const string NotRunning = "([^"]+)";', (library / 'UserScriptManager/UserScriptManager.cs').read_text()).group(1))
+        source = pathlib.Path('custom_components/hass_sharp/websocket.py').read_text()
+        assignment = next(n for n in ast.parse(source).body if isinstance(n, ast.Assign) and any(getattr(t, 'id', None) == 'REFUSALS' for t in n.targets))
+        refusals = eval(compile(ast.Expression(assignment.value), '<refusals>', 'eval'), {'frozenset': frozenset})
+        self.assertGreaterEqual(len(messages), 7)
+        self.assertEqual(refusals, messages)
 
     async def test_run_now_on_an_automation_that_is_not_active_is_a_plain_refusal(self):
         # Shaped like Python.NET's exceptions: the .NET type name, Message without the stack trace, str() with it.

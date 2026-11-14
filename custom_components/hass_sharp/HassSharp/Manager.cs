@@ -11,7 +11,7 @@ public partial class HassSharpManager
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _loadErrors = new();
     // How many problems a load error names, when it names them (compile errors, graph errors); read only beside _loadErrors.
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _loadProblems = new();
-    // The load errors a change of the typed service calls can cure: the only ones a service push retries.
+    // The load errors a later service push may cure, the only ones it retries: all but a graph error with no line of code.
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _curableLoadErrors = new();
     void RecordLoadError(string path, Exception error)
     {
@@ -22,9 +22,10 @@ public partial class HassSharpManager
             _ => 0,
         };
         if (problems > 0) _loadProblems[path] = problems; else _loadProblems.TryRemove(path, out _);
-        // Only code that did not compile (a Custom C# or library node calling a service that is not there yet) can load
-        // once the typed service calls change; a graph error, or a storage or activation failure, cannot.
-        if (error is CompilationErrorException || error is VisualValidationException { Preview.Diagnostics: var diagnostics } && diagnostics.Any(d => d.Severity >= 3 && d.StartLine != null))
+        // A push that brings services comes as Home Assistant starts: code that did not compile against a service not
+        // there yet, a Home Assistant trigger whose integration was not set up yet, or a storage failure may load now. A
+        // graph error that names no line of code is the graph's own and stays until it is fixed and saved.
+        if (error is not VisualValidationException { Preview.Diagnostics: var diagnostics } || diagnostics.Any(d => d.Severity >= 3 && d.StartLine != null))
             _curableLoadErrors[path] = 0;
         else _curableLoadErrors.TryRemove(path, out _);
         _loadErrors[path] = error is CompilationErrorException compiled
@@ -312,8 +313,9 @@ public partial class HassSharpManager
 
     /// <summary>
     /// After the typed service calls changed to add or change a service: tries again to activate each saved automation whose last load failed and
-    /// that is not loaded (one that did not compile against a service that was missing, say). Loaded automations are
-    /// left alone. Runs after anything queued before it, under the same gate as every other activation.
+    /// that is not loaded (one that did not compile against a service that was missing, or whose Home Assistant trigger
+    /// could not attach before its integration was set up, say), except a graph error naming no line of code. Loaded
+    /// automations are left alone. Runs after anything queued before it, under the same gate as every other activation.
     /// </summary>
     internal Task RetryFailedLoads()
     {

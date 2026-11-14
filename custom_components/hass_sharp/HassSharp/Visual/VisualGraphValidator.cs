@@ -257,7 +257,7 @@ public static class VisualGraphValidator
         internal static string ConstantRetyped(JsonObject catalog, string label, string type, string expected)
         {
             var names = DistinctLabels(catalog, [type, expected]);
-            if (VisualTypes.Nullable(catalog, type) && TypeLabel(catalog, type) == TypeLabel(catalog, expected))
+            if (VisualTypes.Nullable(catalog, type) && !VisualTypes.Nullable(catalog, expected) && TypeLabel(catalog, type) == TypeLabel(catalog, expected))
                 return $"{label} may be empty, but this Constant's Type, {names[expected]}, is always set; type the value again, or change Type";
             return $"{label} is {names[type]}, but this Constant's Type is {names[expected]}; type the value again, or change Type";
         }

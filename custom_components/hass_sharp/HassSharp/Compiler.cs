@@ -13,10 +13,11 @@ public class CodeCompiler(
     );
 
     /// <param name="path">The script's identity; nothing is read from or written to it.</param>
-    public Task<CompiledUserScript> CompileSingleFile(string path, string source)
+    /// <param name="services">The typed service calls a request already read for its preview; the current ones when null.</param>
+    public Task<CompiledUserScript> CompileSingleFile(string path, string source, GeneratedServiceCalls? services = null)
     {
         // Taken once: the assembly this script references is the one its load context can load.
-        var services = _diagnosticsProvider.ServiceCalls();
+        services ??= _diagnosticsProvider.ServiceCalls();
         var assemblyBytes = CompileSingleFileToBytes(source, path, services);
         var (assembly, loadContext) = LoadAssembly(assemblyBytes, services);
 

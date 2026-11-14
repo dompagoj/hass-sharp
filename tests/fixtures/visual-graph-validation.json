@@ -26361,5 +26361,234 @@
     "codes": [
       "scope.data"
     ]
+  },
+  {
+    "name": "constant: a value and a Type that may both be empty are named apart, not called always set",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "global::NodeLib.B.Mode",
+            "value": {
+              "kind": "literal",
+              "type": "global::NodeLib.A.Mode",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {
+              "value": {
+                "kind": "unset"
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "value": {
+                  "types": [
+                    "global::NodeLib.B.Mode"
+                  ],
+                  "required": true,
+                  "label": "Value",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::NodeLib.A.Mode": {
+                  "label": "Mode",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": true,
+                  "literalKind": null
+                },
+                "global::NodeLib.B.Mode": {
+                  "label": "Mode",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": true,
+                  "literalKind": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:take",
+          "source": "t",
+          "target": "take",
+          "port": "next"
+        },
+        {
+          "id": "c.value:take.value",
+          "kind": "data",
+          "source": "c",
+          "target": "take",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "c",
+    "contains": "is Mode (A.Mode), but this Constant's Type is Mode (B.Mode)",
+    "messages": [
+      "Value is Mode (A.Mode), but this Constant's Type is Mode (B.Mode); type the value again, or change Type",
+      "Value is not a valid Mode value"
+    ]
+  },
+  {
+    "name": "type entries: an element type, kind, category and label that are not text are ignored",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Weird",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Weird": {
+                  "label": 5,
+                  "description": "",
+                  "category": 5,
+                  "literalKind": 5,
+                  "elementType": 5,
+                  "nullable": false
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:d",
+          "source": "make",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "make.result:d.seconds",
+          "kind": "data",
+          "source": "make",
+          "target": "d",
+          "sourcePort": "result",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "inputId": "seconds",
+    "contains": "Seconds accepts Number, not Weird",
+    "messages": [
+      "Seconds accepts Number, not Weird"
+    ]
+  },
+  {
+    "name": "service names: a name with brackets is kept, with its id after it",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "service": "hass_sharp_test.respond_optionally",
+            "fields": {
+              "glow": {
+                "kind": "literal",
+                "type": "number",
+                "value": 3
+              }
+            },
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:s",
+          "source": "t",
+          "target": "s",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "field:glow",
+    "contains": "Respond (optionally) (hass_sharp_test.respond_optionally) has no field glow",
+    "messages": [
+      "Respond (optionally) (hass_sharp_test.respond_optionally) has no field glow"
+    ]
   }
 ]

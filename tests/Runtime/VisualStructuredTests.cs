@@ -42,8 +42,9 @@ static class VisualStructuredTests
         sequence["edges"]=new JsonArray(E("t","seq"),E("seq","loop"),E("loop","body","body"),E("loop","after"));await Execute(sequence,count);
         var set=G(C("set","return new HashSet<string>{\"a\"};","","HashSet<string>"),N("p","parallel",new{branches=new[]{"a","b"}}),C("a","Interlocked.Increment(ref Shared.count);"),C("b","Interlocked.Increment(ref Shared.count);"),C("join","if(Shared.count!=2)throw new Exception(\"parallel after a set: \"+Shared.count);"));
         set["edges"]=new JsonArray(E("t","set"),E("set","p"),E("p","a","branch:a"),E("p","b","branch:b"),E("p","join"));await Execute(set,Shared("public static int count;"));
-        // A step inside the loop that reads such a value fails, with the copy's message, on that step's error path.
-        var reads=G(C("seq","return Enumerable.Range(1,3).Select(i=>i.ToString());","","IEnumerable<string>"),N("loop","repeat",new{count=Lit("number",1)}),C("body","Logger.Info(string.Join(\",\",values));","IEnumerable<string> values"),C("caught","if(!lastError.Message.Contains(\"Cannot snapshot\"))throw new Exception(\"read: \"+lastError.Message);"));
+        // A step inside the loop that reads such a value fails on its error path, with a message naming it, its pin and
+        // the value's source (the CLR type that could not be copied is the inner error, for library authors).
+        var reads=G(C("seq","return Enumerable.Range(1,3).Select(i=>i.ToString());","","IEnumerable<string>"),N("loop","repeat",new{count=Lit("number",1)}),C("body","Logger.Info(string.Join(\",\",values));","IEnumerable<string> values"),C("caught","if(lastError.Message!=\"Check · Values reads Check · Result, which cannot be copied into a loop or parallel branch; return a list or an array instead\" || lastError.InnerException?.Message.Contains(\"System.Linq\")!=true)throw new Exception(\"read: \"+lastError.Message);"));
         reads["edges"]=new JsonArray(E("t","seq"),E("seq","loop"),E("loop","body","body"),E("body","caught","error"),D("seq","body","values","result"));await Execute(reads);
         // Values that alias each other in the outer scope still alias each other inside: changing one changes the other.
         var alias=G(C("seed","return new List<int>{1};","","List<int>"),C("pair","return new List<List<int>>{bag};","List<int> bag","List<List<int>>"),N("loop","repeat",new{count=Lit("number",1)}),C("body","bag.Add(2);if(pair[0].Count!=2)throw new Exception(\"alias lost\");","List<int> bag, List<List<int>> pair"));
@@ -63,14 +64,31 @@ static class VisualStructuredTests
     // A run-time failure of a step's input names the step and the pin as the canvas shows them, never node ids.
     static async Task Messages()
     {
-        foreach(var (graph,expected) in new (JsonObject,string)[]{
-            (G(C("n","return 2000;","","double"),N("loop","repeat",new{count=Unset()})),"Repeat · Count must be a whole number from 0 to 1000 (Maximum iterations), not 2000"),
-            (G(C("n","return -1;","","double"),N("d","delay",new{seconds=Unset()})),"Delay · Seconds must be a number from 0 to "),
+        // A JSON value as a literal, for numbers no double holds (1e400, a 400-digit integer).
+        static JsonObject Raw(string type,string json)=>new(){["kind"]="literal",["type"]=type,["value"]=JsonNode.Parse(json)};
+        var huge="1"+new string('0',400);
+        // A graph (G chains its steps after the trigger), the step whose error path checks the message, its wires, and
+        // the whole message.
+        // A step that reads an entity whose attribute big has this JSON value.
+        static JsonObject Attribute(string json)=>C("n",$"return new EntityStateSnapshot(\"sensor.big\",\"on\",System.Text.Json.JsonDocument.Parse({System.Text.Json.JsonSerializer.Serialize("{\"big\":"+json+"}")}).RootElement,DateTimeOffset.UnixEpoch,DateTimeOffset.UnixEpoch);","","EntityStateSnapshot");
+        // Nodes outside the run order (a loop's condition steps).
+        static JsonObject Off(JsonObject graph,params JsonObject[] nodes){foreach(var node in nodes)graph["nodes"]!.AsArray().Add(node);return graph;}
+        static JsonObject W(JsonObject graph,params JsonObject[] wires){foreach(var wire in wires)graph["edges"]!.AsArray().Add(wire);return graph;}
+        foreach(var (graph,target,expected) in new (JsonObject,string,string)[]{
+            (W(G(C("n","return 2000;","","double"),N("loop","repeat",new{count=Unset()})),D("n","loop","count","result")),"loop","Repeat · Count must be a whole number from 0 to 1000 (Maximum iterations), not 2000"),
+            (W(G(C("n","return -1;","","double"),N("d","delay",new{seconds=Unset()})),D("n","d","seconds","result")),"d","Delay · Seconds must be a number from 0 to 4294967.294, not -1"),
+            (W(G(C("n","return new double[1,1];","","double[,]"),N("loop","foreach",new{items=Unset(),itemType="number"})),D("n","loop","items","result")),"loop","For each · Items needs a list"),
+            (W(G(C("n","return new[]{1.0,2.0,3.0};","","double[]"),N("loop","foreach",new{items=Unset(),itemType="number",maxIterations=2})),D("n","loop","items","result")),"loop","For each · Items has 3 items, more than Maximum iterations (2)"),
+            (W(Off(G(N("loop","while",new{maxIterations=2})),N("condition","condition_result",new{value=Lit("boolean",true)})),E("loop","condition","condition")),"loop","While stopped at Maximum iterations (2)"),
+            (W(G(Attribute("null"),N("f","entity_field",new{entity=Unset(),field="attribute",attribute="big",type="number"}),N("use","log",new{value=Unset()})),D("n","f","entity","result"),D("f","use","value")),"use","Entity field (used by Log): Entity field · Value needs a value, and got none"),
+            // A JSON number too large for any number: in a list, a JSON field and an entity attribute.
+            (W(G(N("n","array",new JsonObject{["value"]=Raw("array","[1e400]")}),N("loop","foreach",new{items=Unset(),itemType="number"})),D("n","loop","items")),"loop","For each · Items, item 1 got 1e400, a number too large to use"),
+            (W(G(N("n","array",new JsonObject{["value"]=Raw("array",$"[{huge}]")}),N("loop","foreach",new{items=Unset(),itemType="number"})),D("n","loop","items")),"loop",$"For each · Items, item 1 got {huge}, a number too large to use"),
+            (W(G(N("o","object",new JsonObject{["value"]=Raw("object","{\"big\":1e400}")}),N("g","get_field",new{value=Unset(),pointer="/big",type="number"}),N("use","log",new{value=Unset()})),D("o","g","value"),D("g","use","value")),"use","Get field (used by Log): Get field · Value got 1e400, a number too large to use"),
+            (W(G(Attribute("1e400"),N("f","entity_field",new{entity=Unset(),field="attribute",attribute="big",type="number"}),N("use","log",new{value=Unset()})),D("n","f","entity","result"),D("f","use","value")),"use","Entity field (used by Log): Entity field · Value got 1e400, a number too large to use"),
         }) {
-            var target=graph["nodes"]![2]!["id"]!.GetValue<string>();var port=target=="loop"?"count":"seconds";
-            graph["edges"]!.AsArray().Add(D("n",target,port,"result"));
-            if(target=="loop"){graph["nodes"]!.AsArray().Add(C("body","Logger.Info(\"body\");"));graph["edges"]!.AsArray().Add(E("loop","body","body"));}
-            graph["nodes"]!.AsArray().Add(C("caught",$"if(!lastError.Message.StartsWith(\"{expected}\"))throw new Exception(\"message: \"+lastError.Message);"));
+            if(graph["nodes"]!.AsArray().Any(n=>n!["kind"]!.GetValue<string>() is "repeat" or "foreach" or "while")){graph["nodes"]!.AsArray().Add(C("body","Logger.Info(\"body\");"));graph["edges"]!.AsArray().Add(E("loop","body","body"));}
+            graph["nodes"]!.AsArray().Add(C("caught",$"if(lastError.Message!={System.Text.Json.JsonSerializer.Serialize(expected)})throw new Exception(\"message: \"+lastError.Message);"));
             graph["edges"]!.AsArray().Add(E(target,"caught","error"));
             await Execute(graph);
         }
@@ -92,7 +110,7 @@ static class VisualStructuredTests
         // and the error path gets the copy's failure once both branches have ended.
         SetCode(g,"seed","return new System.IO.MemoryStream();","","System.IO.MemoryStream");g["nodes"]![3]!["kind"]="custom";g["nodes"]![3]!["config"]=Code("a","Shared.cleaned=true;")["config"]!.DeepClone();
         SetCode(g,"b","Logger.Info(bag.Length.ToString());","System.IO.MemoryStream bag");
-        SetCode(g,"join","if(!Shared.cleaned || !lastError.Message.Contains(\"IVisualSnapshot\"))throw new Exception(\"unsafe copy: \"+lastError.Message);");await Execute(g,state);
+        SetCode(g,"join","if(!Shared.cleaned || lastError.Message!=\"Check · Bag reads Check · Result, which cannot be copied into a loop or parallel branch; return a list or an array instead\")throw new Exception(\"unsafe copy: \"+lastError.Message);");await Execute(g,state);
         // Stop after a sibling starts must drain it; cleanup callback faults are reported.
         var stop=G(N("p","parallel",new{branches=new[]{"work","stop"}}),C("work","using var registration=CancellationToken.Register(()=>throw new Exception(\"stop callback fault\"));try{await Task.Delay(60000,CancellationToken);}finally{await Task.Delay(20);Logger.Info(\"stop cleanup observed\");}"),N("delay","delay",new{seconds=Lit("number",.02)}),N("stop","stop"),C("join","throw new Exception(\"stop joined\");"));
         stop["edges"]=new JsonArray(E("t","p"),E("p","work","branch:work"),E("p","delay","branch:stop"),E("delay","stop"),E("p","join"));

@@ -35,12 +35,13 @@ public partial class HassSharpManager
     /// The saved libraries and their compile. Every visual and library request reads them, so the compile is kept for the
     /// last library generation and typed service calls it was made with, and made again only when either changes.
     /// </summary>
-    (NodeLibraryDocument[] Documents, string Generation, NodeLibraryPreview Preview) SavedLibraries()
+    /// <param name="services">The typed service calls the request read once; the current ones when null.</param>
+    (NodeLibraryDocument[] Documents, string Generation, NodeLibraryPreview Preview) SavedLibraries(GeneratedServiceCalls? services = null)
     {
         AuthoringFiles.Recover();
         var documents = LibraryDocuments.List();
         var content = NodeLibraryStore.Generation(documents);
-        var services = _diagnosticsProvider.ServiceCalls();
+        services ??= _diagnosticsProvider.ServiceCalls();
         NodeLibraryPreview? preview = null;
         lock (_savedLibrariesGate)
             if (_savedLibraries is { } last && last.Content == content && ReferenceEquals(last.Services, services)) preview = last.Preview;

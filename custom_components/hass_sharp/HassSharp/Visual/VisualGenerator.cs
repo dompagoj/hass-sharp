@@ -26,8 +26,10 @@ public sealed record VisualPreview(bool Valid, string Source, List<VisualSourceM
 }
 
 /// <summary>V4-only compiler. Preview inspects syntax and symbols without emitting or executing user code.</summary>
-public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
+/// <param name="serviceCalls">The typed service calls one request read once, for everything it previews; the current ones when null.</param>
+public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedServiceCalls? serviceCalls=null)
 {
+    GeneratedServiceCalls ServiceCalls()=>serviceCalls??diagnostics.ServiceCalls();
     static string Text(JsonNode? n,string key,string fallback="")=>VisualNodeCatalog.Text(n,key,fallback);
     static string Q(string value)=>JsonSerializer.Serialize(value);
     /// <summary>
@@ -225,7 +227,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         var warnings=new List<VisualDiagnostic>();removed=warnings;
         var next=(JsonObject)graph.DeepClone();
         if(snapshot.Compilation==null)snapshot=new NodeLibraryCompiler(diagnostics).Preview(snapshot.Sources).Snapshot.WithServices(snapshot.Services);
-        var compiled=WithCustom(next,snapshot,diagnostics.ServiceCalls());
+        var compiled=WithCustom(next,snapshot,ServiceCalls());
         var edges=next["edges"] as JsonArray;
         foreach(var node in (next["nodes"] as JsonArray??[]).OfType<JsonObject>()) {
             if(!compiled.Custom.TryGetValue(Text(node,"id"),out var custom)||custom.Signature==null||node["config"] is not JsonObject cfg)continue;
@@ -259,7 +261,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         // a newer HassSharp may write differently) is refreshed from the compile and previewed (and returned) as such.
         // One read of the accepted service calls for the whole preview: a schema push swapping them midway cannot give
         // the Custom C# nodes one set and the automation another.
-        var services=diagnostics.ServiceCalls();
+        var services=ServiceCalls();
         snapshot=WithCustom(graph,snapshot,services);
         var errors=new List<VisualDiagnostic>();
         JsonObject? refreshed=null;

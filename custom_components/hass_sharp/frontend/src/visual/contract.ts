@@ -530,7 +530,7 @@ export const words = {
    */
   constantRetyped: (label: string, type: string, expected: string, catalog: VisualCatalogSnapshot = nodeCatalog) => {
     const names = distinctTypeLabels([type, expected], catalog)
-    if (resolveTypeSpec(type, catalog)?.nullable === true && typeLabel(type, catalog) === typeLabel(expected, catalog))
+    if (resolveTypeSpec(type, catalog)?.nullable === true && resolveTypeSpec(expected, catalog)?.nullable !== true && typeLabel(type, catalog) === typeLabel(expected, catalog))
       return `${label} may be empty, but this Constant's Type, ${names.get(expected)}, is always set; type the value again, or change Type`
     return `${label} is ${names.get(type)}, but this Constant's Type is ${names.get(expected)}; type the value again, or change Type`
   },

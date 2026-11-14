@@ -173,7 +173,9 @@ has `redacted: true`. Inside any string, `token=<value>` becomes `token=***`,
 which covers, for example, an `entity_picture` URL. A redaction alone does not
 mark a value `trunc` or the trace `truncated`. These rules apply to the trigger
 payload, entity state attributes and nested objects alike, and the real value is
-never serialised. Redaction is by name only. It is a safeguard against the common
+never serialised. The same rule redacts the service data HassSharp writes to its
+debug log (`custom_components.HassSharp` at debug) for each service call; at any
+other level that line is not built. Redaction is by name only. It is a safeguard against the common
 cases, not a security boundary: a secret stored under another name, or inside an
 opaque string, is recorded as it is.
 
@@ -207,6 +209,11 @@ closed: automations, the sidebar, and its WebSocket routes do not start. This
 avoids executing actions without an initial history record. Later failures
 surface through the bridge/logs, and unfinished records become Interrupted on
 process restart. A final write failure cannot undo an action already performed.
+A run whose first record cannot be written fails before it executes; the Failed
+record written after it (when storage takes that one) carries the revision's graph
+snapshot. In Restart mode such a run cancels nothing: the run going keeps
+going, and the next run whose first record is written cancels it and starts once
+it has ended.
 
 ## Verification
 

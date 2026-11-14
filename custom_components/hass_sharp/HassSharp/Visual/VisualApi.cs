@@ -5,7 +5,9 @@ namespace HassSharp;
 public partial class HassSharpManager
 {
     readonly SemaphoreSlim _visualGate = new(1, 1);
-    VisualStore VisualDocuments => new(Path.Combine(HassPath.HassConfiguration, ".storage", "hass_sharp", "visual"), new(_diagnosticsProvider));
+    VisualStore VisualDocuments => VisualDocumentsWith(null);
+    /// <summary>The visual store, validating with the typed service calls a request read once (the current ones when null).</summary>
+    VisualStore VisualDocumentsWith(GeneratedServiceCalls? services) => new(Path.Combine(HassPath.HassConfiguration, ".storage", "hass_sharp", "visual"), new(_diagnosticsProvider, services));
     string VisualRuntimePath(string id) => Path.Combine(HassPath.HassConfiguration, ".storage", "hass_sharp", "visual", "visual_" + id + ".cs");
 
     VisualDocument WithRuntimeIdentity(VisualDocument document)
@@ -20,12 +22,13 @@ public partial class HassSharpManager
     }
 
     /// <param name="warnings">What the save removed while deriving Custom C# pins; returned as <c>diagnostics</c> when there is any.</param>
-    async Task<object> ActivateVisualDocument(VisualDocument document, IReadOnlyList<VisualDiagnostic>? warnings = null)
+    /// <param name="services">The typed service calls the save's preview used, so the compile references the same ones.</param>
+    async Task<object> ActivateVisualDocument(VisualDocument document, IReadOnlyList<VisualDiagnostic>? warnings = null, GeneratedServiceCalls? services = null)
     {
         string? activationError = null;
         try
         {
-            var compiled = await CompileVisualDocument(document);
+            var compiled = await CompileVisualDocument(document, services);
             if (!_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(document.Id)))
             {
                 UserScript loaded;
@@ -43,9 +46,9 @@ public partial class HassSharpManager
             : new { id = document.Id, saved = true, document, active = document.CurrentRevisionActive, activationError };
     }
 
-    async Task<CompiledUserScript> CompileVisualDocument(VisualDocument document)
+    async Task<CompiledUserScript> CompileVisualDocument(VisualDocument document, GeneratedServiceCalls? services = null)
     {
-        var compiled = await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), document.Source);
+        var compiled = await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), document.Source, services);
         compiled.DesignatedRootType = "VisualAutomation";
         compiled.VisualRevision = document.Revision;
         compiled.CatalogGeneration = document.CatalogGeneration;
@@ -83,17 +86,20 @@ public partial class HassSharpManager
             var request = ApiRequest.Parse(requestJson);
             var operation = ApiRequest.String(request, "operation");
             object result;
-            var store = VisualDocuments;
-            var libraries = SavedLibraries();
+            // One read of the accepted typed service calls for the whole request: a schema push swapping them midway
+            // cannot give the saved libraries, the Custom C# pins, the preview and the compile different sets.
+            var services = _diagnosticsProvider.ServiceCalls();
+            var store = VisualDocumentsWith(services);
+            var libraries = SavedLibraries(services);
             var authoring = AuthoringSnapshot(libraries.Preview.Snapshot);
             // deriveSignatures: each Custom C# node's pins are first written from its code, so a caller can send only the code.
             var derive = ApiRequest.OptionalBool(request, "deriveSignatures") ?? false;
             // What deriving removed (values and wires of pins the code no longer has) is reported as warnings.
             List<VisualDiagnostic> removed = [];
-            JsonObject Graph() => derive ? new VisualGenerator(_diagnosticsProvider).DeriveSignatures(ApiRequest.Object(request, "graph"), authoring, out removed) : ApiRequest.Object(request, "graph");
+            JsonObject Graph() => derive ? new VisualGenerator(_diagnosticsProvider, services).DeriveSignatures(ApiRequest.Object(request, "graph"), authoring, out removed) : ApiRequest.Object(request, "graph");
             if (operation == "preview")
             {
-                var graph = Graph(); var preview = new VisualGenerator(_diagnosticsProvider).Preview(graph, authoring);
+                var graph = Graph(); var preview = new VisualGenerator(_diagnosticsProvider, services).Preview(graph, authoring);
                 result = preview with { Graph = derive ? preview.Graph ?? graph : preview.Graph, Diagnostics = [.. removed, .. preview.Diagnostics, .. EntityWarnings(preview.Graph ?? graph, authoring)] };
             }
             // The automations page: no graphs, an outline of each instead, and how each has been running (one history query).
@@ -128,7 +134,7 @@ public partial class HassSharpManager
                         var enabled = ApiRequest.OptionalBool(request, "enabled");
                         var document = store.Save(id, Graph(), revision, authoring, libraries.Generation, enabled);
                         // Advice only: EntityWarnings never throws, so a stored revision always goes on to activate.
-                        result = await ActivateVisualDocument(document, [.. removed, .. EntityWarnings(document.Graph, authoring)]);
+                        result = await ActivateVisualDocument(document, [.. removed, .. EntityWarnings(document.Graph, authoring)], services);
                     }
                     else if (operation == "delete")
                     {

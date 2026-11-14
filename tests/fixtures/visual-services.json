@@ -1,5 +1,5 @@
 {
-  "servicesGeneration": "54006c50550326938244d9f3a2fc9df7cf3c2c60ea413f9ce7d15989393921e8",
+  "servicesGeneration": "e1bca2e8ddec07733eaac026642a889cd0c79266bda4b4cce46beb2adad71060",
   "items": {
     "climate.set_hvac_mode": {
       "domain": "climate",
@@ -205,7 +205,7 @@
     "hass_sharp_test.respond_optionally": {
       "domain": "hass_sharp_test",
       "service": "respond_optionally",
-      "name": "respond_optionally",
+      "name": "Respond (optionally)",
       "description": "",
       "target": null,
       "response": "optional",

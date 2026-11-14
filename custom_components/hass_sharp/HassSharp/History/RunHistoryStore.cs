@@ -138,6 +138,8 @@ public sealed class RunHistoryStore
     readonly Lock gate = new();
     /// <summary>Test seam: runs at the start of every <see cref="Save"/>, holding the store as a slow write would.</summary>
     internal Action? SaveHook;
+    /// <summary>Test seam: runs as a schedule occurrence is claimed, before the claim is written.</summary>
+    internal Action? ClaimHook;
     readonly string path;
     readonly int retention;
     readonly int traceRetention;
@@ -159,6 +161,7 @@ public sealed class RunHistoryStore
     }
     public bool ClaimOccurrence(string id)
     {
+        ClaimHook?.Invoke();
         lock (gate)
         {
             using var db = new HistoryContext(path);

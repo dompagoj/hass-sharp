@@ -239,7 +239,7 @@ public static class ServiceSchemaTests
             manager.SetServiceDescriptions(descriptions);
             await manager.Init();
             const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
-            var saved = typeof(HassSharpManager).GetMethod("SavedLibraries", Private)!.Invoke(manager, null)!;
+            var saved = typeof(HassSharpManager).GetMethod("SavedLibraries", Private)!.Invoke(manager, [null])!;
             var savedPreview = (NodeLibraryPreview)saved.GetType().GetField("Item3")!.GetValue(saved)!;
             Check(savedPreview.Snapshot.Services == null, "SavedLibraries carries no services after a push");
             var authoring = (VisualCatalogSnapshot)typeof(HassSharpManager).GetMethod("AuthoringSnapshot", Private)!.Invoke(manager, [savedPreview.Snapshot])!;

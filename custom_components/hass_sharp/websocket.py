@@ -14,8 +14,13 @@ NOT_READY = "HassSharp is not running: wait for it to finish starting, or turn t
 # The requests Manager.RunNow refuses, by their exact .NET messages (an InvalidOperationException or ArgumentException).
 # Those exception types are also what a defect below the dispatch throws (JSON access, LINQ, EF Core), so the type alone
 # says nothing: only these messages are refusals. If the C# side gives refusals their own exception type, this becomes a
-# type check on it.
-REFUSALS = frozenset({"Automation is not active", "Saved visual document not found", "Invalid visual class", "Trigger not found"})
+# type check on it. tests/python/test_visual.py reads them from the C# source (RunNow, DispatchVisual and
+# UserScriptManager.NotRunning), so a refusal added there is added here.
+REFUSALS = frozenset({
+    "Automation is not active", "Saved visual document not found", "Invalid visual class", "Trigger not found",
+    "The saved visual revision is not active", "Trigger does not permit manual execution",
+    "The automation is not active right now; try again in a moment",
+})
 
 
 def ready_state(hass):

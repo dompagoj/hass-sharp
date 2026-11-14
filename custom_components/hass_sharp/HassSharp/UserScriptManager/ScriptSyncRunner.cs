@@ -30,12 +30,14 @@ class ScriptSyncRunner
     {
         public ActiveRun? CurrentRun { get; set; }
         public Task Tail { get; set; } = Task.CompletedTask;
+        /// <summary>The runs registered and not yet ended, oldest first: what a Restart run cancels once it is recorded.</summary>
+        public List<ActiveRun> Active { get; } = [];
     }
 
     sealed record RunRegistration(
         MethodState State,
         ActiveRun Run,
-        Task? RestartCancellation,
+        bool Restart,
         Task? Predecessor);
 
     readonly Lock _gate = new();
@@ -74,6 +76,14 @@ class ScriptSyncRunner
 
     async Task RunCore(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc, TaskCompletionSource? recorded)
     {
+        // Run now waits for recorded: whatever fails on the way (registering logs through Python), it must complete.
+        try { await RunRecorded(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc, recorded); }
+        catch (Exception error) { recorded?.TrySetException(error); throw; }
+        finally { recorded?.TrySetResult(); }
+    }
+
+    async Task RunRecorded(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc, TaskCompletionSource? recorded)
+    {
         var compiled = scriptClass.Script.CompiledScript;
         var trigger = compiled.VisualTriggers?.GetValueOrDefault(methodInfo.Name);
         var record = new InvocationRecord
@@ -90,7 +100,9 @@ class ScriptSyncRunner
             ? new GraphSnapshot(record.Revision, visualId, visualRevision, graph, catalog) : null;
         // Recording stays off without a store or for code automations (C10).
         var sink = snapshot != null && history != null ? new RunTraceSink(history, record.RunId) : null;
-        void Save() => history?.Save(record);
+        // The revision's snapshot goes with the run's first record that is written (C8), even when that is its last.
+        var firstWritten = false;
+        void Save() { history?.Save(record, firstWritten ? null : snapshot); firstWritten = true; }
         // The trigger (under the activation gate) only registers the run; every history write comes after the hop below,
         // so slow storage holds back neither other triggers nor the editor. The snapshot lands with the revision's first run.
         var registration = TryRegister(scriptClass, methodInfo, mode);
@@ -107,14 +119,16 @@ class ScriptSyncRunner
             return;
         }
 
+        var waited = false;
         try
         {
-            // Fail closed: a run whose first record cannot be written fails before it executes.
-            history?.Save(record, snapshot);
+            // Fail closed: a run whose first record cannot be written fails before it executes, and restarts nothing.
+            Save();
             recorded?.TrySetResult();
-            if (registration.RestartCancellation is not null)
-                await registration.RestartCancellation;
+            if (registration.Restart && Restart(registration) is { } restartCancellation)
+                await restartCancellation;
 
+            waited = true;
             if (registration.Predecessor is not null) await registration.Predecessor;
             await Task.Run(async () =>
             {
@@ -157,7 +171,11 @@ class ScriptSyncRunner
             finally
             {
                 registration.Run.Cancellation.Dispose();
-                registration.Run.Completed.TrySetResult();
+                // A run that ended before it waited for the runs before it (its first record failed) ends, for the runs
+                // after it, when they have: Queued and Restart runs still never overlap.
+                if (!waited && registration.Predecessor is { IsCompleted: false } predecessor)
+                    _ = predecessor.ContinueWith(_ => registration.Run.Completed.TrySetResult(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                else registration.Run.Completed.TrySetResult();
                 Save();
             }
         }
@@ -203,26 +221,37 @@ class ScriptSyncRunner
             return null;
         }
 
-        Task? restartCancellation = null;
-        if (mode == AutomationMode.Restart && state.CurrentRun is { } runToRestart)
-        {
-            runToRestart.CancelReason ??= CancelReasons.Restarted;
-            restartCancellation = runToRestart.CancellationTask ??=
-                runToRestart.Cancellation.CancelAsync();
-        }
-
         // Cancellation callbacks finishing does not mean user code has exited.
         // Keep the completion chain even when an intermediate restart is cancelled.
         var predecessor = mode is AutomationMode.Queued or AutomationMode.Restart ? state.Tail : null;
         var run = new ActiveRun(cancellation, runs);
         state.CurrentRun = run;
         state.Tail = run.Completed.Task;
-        return new(state, run, restartCancellation, predecessor);
+        state.Active.Add(run);
+        return new(state, run, mode == AutomationMode.Restart, predecessor);
+    }
+
+    /// <summary>
+    /// A Restart run, once its first record is written, cancels every run of the method registered before it that has
+    /// not ended (its own first record may have failed, and then it cancelled nothing); null when there is none.
+    /// </summary>
+    Task? Restart(RunRegistration registration)
+    {
+        using var scope = _gate.EnterScope();
+        var cancellations = new List<Task>();
+        foreach (var earlier in registration.State.Active.TakeWhile(r => !ReferenceEquals(r, registration.Run)))
+        {
+            earlier.CancelReason ??= CancelReasons.Restarted;
+            cancellations.Add(earlier.CancellationTask ??= earlier.Cancellation.CancelAsync());
+        }
+        return cancellations.Count == 0 ? null : Task.WhenAll(cancellations);
     }
 
     Task? Unregister(UserScriptClass scriptClass, MethodInfo methodInfo, RunRegistration registration)
     {
         using var scope = _gate.EnterScope();
+        // Off the list a Restart run cancels, before this run's cancellation source is disposed.
+        registration.State.Active.Remove(registration.Run);
         if (_methods.TryGetValue((scriptClass, methodInfo), out var currentState) &&
             ReferenceEquals(currentState, registration.State) &&
             ReferenceEquals(currentState.CurrentRun, registration.Run))
