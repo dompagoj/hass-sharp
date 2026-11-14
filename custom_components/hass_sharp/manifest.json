@@ -3,7 +3,7 @@
   "name": "HassSharp",
   "codeowners": ["@dompagoj"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["http"],
   "documentation": "https://github.com/dompagoj/hass-sharp",
   "homekit": {},
   "integration_type": "device",
