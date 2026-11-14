@@ -26,8 +26,10 @@ the configured MCP entry's read-only setting. Use configured `/api/mcp` with
 client's tool discovery after changing selected APIs, options, or reloading
 HassSharp. The API registers only after the integration is ready; unloading it
 unregisters the API and invalidates tools a client has cached. While it reloads,
-an agent that asks for the API gets it without tools, and a cached tool answers
-`not_ready`.
+the API is briefly unregistered: an agent that asks for it gets Home Assistant's
+"Error preparing LLM API" until setup finishes, and a cached tool answers
+`not_ready`. A tool call already running when the reload or turn-off starts gets
+up to 30 seconds to finish before HassSharp unloads its automations.
 
 Use the MCP client's supported Home Assistant authentication, or an administrator
 long-lived access token in the `Authorization: Bearer ...` header. Keep tokens out
@@ -103,7 +105,9 @@ tool descriptions summarise the workflow below and the entity typing rule.
    service (`id`, `name`, `description`, `hasTarget`, `response`); with `service`,
    that service's complete schema, fields in Home Assistant's order. A service that
    is not registered (yet) gives `known: false` here and in `get_node_schema`.
-   Discovery never attaches triggers or calls services.
+   A page also ends before about 32 KiB of items, and `nextOffset` gives the offset
+   of the next page, `null` after the last. A `token=` value in an entity's state is
+   replaced with `[removed]`. Discovery never attaches triggers or calls services.
 4. `list` summarises every saved automation without its graph:
    `{id, name, revision, enabled, active, currentRevisionActive, activationError,
    triggers:[{triggerId, label?, type, config, manual, runnable}]}`. The triggers
@@ -136,9 +140,12 @@ tool descriptions summarise the workflow below and the entity typing rule.
 8. With authorization, `run({id,triggerId})` dispatches a manually eligible trigger
    on the exact current saved active revision and returns `{version:1,runId}`.
 9. `history({id,status?,offset?,limit?})` returns run history version 2 for that
-   document, `{id,version:2,offset,limit,runs}`, newest first, optionally only runs
-   with the given statuses. See [run history](backend/run-history.md) for the run
-   fields.
+   document, `{id,version:2,offset,limit,runs,nextOffset}`, newest first, optionally
+   only runs with the given statuses. A page also ends before about 32 KiB of runs;
+   `nextOffset` gives the offset of the next page and is `null` after the last run
+   (after a full page the next one can be empty). A `token=` value in a run's error is
+   replaced with `[removed]`, as it is in a trace event's error. See
+   [run history](backend/run-history.md) for the run fields.
 10. `trace({runId,node?,graph?,offset?,limit?})` reads one run's trace. By default it returns the
    run, `live`, the snapshot identity (`revision`, `visualId`, `visualRevision`),
    and the trace's `rootNodeId`, `startedUtc`, `complete`, `truncated`, `dropped`,

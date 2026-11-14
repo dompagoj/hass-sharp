@@ -7,13 +7,15 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 
 # The frontend's mock preview build (frontend/tests/preview-build.config.ts). Everything under www/ is served without
-# authentication, so neither it nor any other HTML page in www/ ships.
+# authentication, so the package skips it and every other page a browser would open as HTML there.
 PREVIEW_DIRECTORY = "visual-v2-check-baby"
+PAGE_SUFFIXES = (".html", ".htm", ".xhtml")
 
 
 def test_page(relative: Path) -> bool:
+    """True for a file under www/ that the package skips: the preview build and any HTML page."""
     parts = relative.parts
-    return parts[0] == "www" and (PREVIEW_DIRECTORY in parts[1:] or relative.suffix.lower() == ".html")
+    return parts[0] == "www" and (PREVIEW_DIRECTORY in parts[1:] or relative.suffix.lower() in PAGE_SUFFIXES)
 
 
 def package_release(integration_dir: Path, output: Path, version: str) -> None:

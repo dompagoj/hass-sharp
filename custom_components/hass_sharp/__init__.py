@@ -32,6 +32,8 @@ if HASS_SHARP_DLL_PATH not in sys.path:
     sys.path.append(HASS_SHARP_DLL_PATH)
 
 _runtime_initialized = False
+# How long unload waits, in seconds, for websocket and MCP commands already running (a library save rebuilds every graph).
+UNLOAD_COMMAND_WAIT = 30
 
 
 def initialize_dotnet_runtime():
@@ -238,8 +240,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     def subscribe_to_entity_change(entity_id: str):
         if entity_id in unsubs:
             return
-
-        unsubs[entity_id] = async_track_state_change_event(hass, entity_id, on_entity_change)
+        try:
+            unsubs[entity_id] = async_track_state_change_event(hass, entity_id, on_entity_change)
+        except Exception:
+            # .NET passes only the entity id. The automation still reports active, but its trigger never fires.
+            logger.exception("Cannot watch %s: the entity trigger of the automation that uses it will not fire; "
+                             "reload HassSharp to try again", entity_id)
 
     def register_schedule(rule_json, dispatch):
         def fire(planned):
@@ -322,7 +328,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass_sharp = utils.get_hass_sharp_manager(hass)
     state = hass.data.get("hass_sharp_llm", {}).get(entry.entry_id)
     if state is not None:
+        # New commands answer not_ready from here. One already running (a save, a library save) could otherwise
+        # activate automations after .NET has unloaded them, so it gets time to finish first.
         state.ready = False
+        if not await state.async_wait_idle(UNLOAD_COMMAND_WAIT):
+            logger.warning("Unloading HassSharp while %d command(s) still run after %s s: an automation they save may "
+                           "start after the integration stopped; restart Home Assistant if one keeps running",
+                           state.in_flight, UNLOAD_COMMAND_WAIT)
     if not await hass.config_entries.async_unload_platforms(entry, ["sensor"]):
         if state is not None:
             state.ready = True
@@ -346,7 +358,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # A reload or removal unless Home Assistant is stopping; cancelled runs record which.
         await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync, hass.is_stopping)
     except Exception:
-        logger.exception("Unloading the automations failed")
+        logger.exception("Unloading the automations failed: some may still be running; restart Home Assistant to stop them")
     try:
         if native_bridge is not None:
             await native_bridge.async_shutdown()

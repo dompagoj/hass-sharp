@@ -91,6 +91,24 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await self.call('list',{})).error)
         self.assertEqual(self.service.visual.await_count,1)
 
+    async def test_a_tool_call_is_in_flight_until_it_answers(self):
+        # Unload waits for it (async_unload_entry); a refused call is never counted.
+        entered,release=asyncio.Event(),asyncio.Event()
+        async def held(request,is_admin):
+            entered.set();await release.wait();return {'version':1,'ok':True,'result':{'id':'x','enabled':False}}
+        self.service.visual=held
+        call=asyncio.create_task(self.call('set_enabled',{'id':'x','enabled':False}))
+        await entered.wait()
+        self.assertEqual(1,self.state.in_flight)
+        self.assertFalse(await self.state.async_wait_idle(0.01))
+        self.state.ready=False
+        self.assertEqual('not_ready',(await self.call('list',{})).data['error']['code'])
+        self.assertEqual(1,self.state.in_flight)
+        release.set()
+        self.assertFalse((await call).error)
+        self.assertTrue(await self.state.async_wait_idle(0.01))
+        self.assertEqual(0,self.state.in_flight)
+
     async def test_an_instance_never_raises_for_a_non_admin_no_user_or_not_ready(self):
         # Merged with another API (an agent with Assist and HassSharp), a raise here would fail the whole conversation.
         from dataclasses import replace
@@ -274,7 +292,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.service.trace.return_value={'version':1,'run':{'runId':'r1'},'live':False,'snapshot':None,
             'trace':{'rootNodeId':'t','complete':True,'truncated':False,'dropped':0,'summary':{},'events':events}}
         view=(await self.call('trace',{'runId':'r1','node':'svc'})).data['result']['trace']
-        self.assertLessEqual(len(json.dumps(view['events'])),self.adapter.TRACE_PAGE_BYTES)
+        self.assertLessEqual(len(json.dumps(view['events'])),self.adapter.PAGE_BYTES)
         self.assertGreaterEqual(len(view['events']),1)
         self.assertEqual(view['nextOffset'],len(view['events']))
         self.assertEqual(view['totalEvents'],10)
@@ -284,9 +302,36 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         last=(await self.call('trace',{'runId':'r1','node':'svc','offset':9})).data['result']['trace']
         self.assertEqual(([e['seq'] for e in last['events']],last['nextOffset']),([9],None))
         # One event larger than the cap still comes back on its own page.
-        events[0]['inputs']['field:x']={'type':'string','v':'v'*(self.adapter.TRACE_PAGE_BYTES+1)}
+        events[0]['inputs']['field:x']={'type':'string','v':'v'*(self.adapter.PAGE_BYTES+1)}
         first=(await self.call('trace',{'runId':'r1','node':'svc'})).data['result']['trace']
         self.assertEqual(([e['seq'] for e in first['events']],first['nextOffset']),([0],1))
+
+    async def test_discover_and_history_pages_are_capped_by_size_and_drop_tokens(self):
+        for i in range(30):
+            self.hass.states.async_set(f'media_player.p{i:02}','on',{'source_list':['s'*200]*10})
+        self.hass.states.async_set('sensor.url','https://example.invalid/x?token=secret-abc&size=2')
+        page=(await self.call('discover',{'kind':'entities','domain':'media_player','limit':100})).data['result']
+        self.assertLessEqual(len(json.dumps(page['items'])),self.adapter.PAGE_BYTES)
+        self.assertEqual(page['nextOffset'],len(page['items']))
+        self.assertLess(len(page['items']),30)
+        rest=(await self.call('discover',{'kind':'entities','domain':'media_player','offset':page['nextOffset'],'limit':100})).data['result']
+        self.assertEqual(rest['items'][0]['id'],f"media_player.p{page['nextOffset']:02}")
+        self.assertIsNone((await self.call('discover',{'kind':'entities','domain':'media_player','offset':29})).data['result']['nextOffset'])
+        state=(await self.call('discover',{'kind':'entities','domain':'sensor'})).data['result']['items'][0]['state']
+        self.assertEqual(state,'https://example.invalid/x?token=[removed]&size=2')
+        self.service.visual.return_value={'version':1,'ok':True,'result':{'id':'x','automationId':'auto'}}
+        runs=[{'runId':f'r{i}','status':'Failed','error':'x'*2000+' /api/camera_proxy/c?access_token=secret-abc'} for i in range(50)]
+        self.service.history.return_value={'version':2,'offset':0,'limit':50,'runs':runs}
+        history=(await self.call('history',{'id':'x'})).data['result']
+        self.assertLessEqual(len(json.dumps(history['runs'])),self.adapter.PAGE_BYTES)
+        self.assertEqual(history['nextOffset'],len(history['runs']))
+        self.assertNotIn('secret-abc',json.dumps(history))
+        self.assertTrue(history['runs'][0]['error'].endswith('access_token=[removed]'))
+        # A short last page ends the history; a full one may be followed by an empty page.
+        self.service.history.return_value={'version':2,'offset':0,'limit':50,'runs':[{'runId':'r','status':'Succeeded'}]}
+        self.assertIsNone((await self.call('history',{'id':'x'})).data['result']['nextOffset'])
+        self.service.history.return_value={'version':2,'offset':4,'limit':1,'runs':[{'runId':'r','status':'Succeeded'}]}
+        self.assertEqual((await self.call('history',{'id':'x','offset':4,'limit':1})).data['result']['nextOffset'],5)
 
     async def test_missing_user_context_and_backend_failure(self):
         from dataclasses import replace

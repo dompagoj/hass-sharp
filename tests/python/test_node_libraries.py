@@ -5,12 +5,14 @@ import types
 import unittest
 from unittest.mock import Mock
 
+from test_visual import EntryState
+
 
 class NodeLibraryApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_admin_authoring_boundary_and_websocket_envelope(self):
         source_text = pathlib.Path('custom_components/hass_sharp/websocket.py').read_text()
         tree = ast.parse(source_text)
-        helpers = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ('loaded', 'refusal')
+        helpers = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ('ready_state', 'loaded', 'refusal', 'admin_command')
                    or isinstance(n, ast.Assign) and any(getattr(t, 'id', None) in ('NOT_READY', 'REFUSALS') for t in n.targets)]
         register = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'register_websocket_routes')
         handler = next((n for n in register.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'websocket_node_library'), None)
@@ -27,10 +29,11 @@ class NodeLibraryApiTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(PermissionError):
             await service.node_library({'operation':'delete','id':'shared','expectedRevision':1}, is_admin=False)
         self.assertEqual(calls, [])
-        handler.decorator_list=[]
+        # Home Assistant's async_response goes; admin_command (the admin and readiness check) stays.
+        handler.decorator_list=[d for d in handler.decorator_list if isinstance(d, ast.Name) and d.id == 'admin_command']
         env.update(authoring=service, logger=Mock())
         exec(compile(ast.Module(body=helpers+[handler],type_ignores=[]), '<node-library>', 'exec'), env)
-        hass=types.SimpleNamespace(data={'hass_sharp_llm':{'entry':types.SimpleNamespace(ready=True)}})
+        hass=types.SimpleNamespace(data={'hass_sharp_llm':{'entry':EntryState(None, ready=True)}})
         for admin in (False,True):
             connection=types.SimpleNamespace(user=types.SimpleNamespace(is_admin=admin),send_result=Mock(),send_error=Mock())
             await env['websocket_node_library'](hass,connection,{'id':7,'request':{'operation':'save','id':'shared','source':'class C {}','name':'Shared.cs','expectedRevision':1}})

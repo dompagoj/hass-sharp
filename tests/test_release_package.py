@@ -85,7 +85,8 @@ class ReleasePackageTests(unittest.TestCase):
     def test_skips_test_pages_and_the_preview_build_under_www(self):
         # The mock preview pages are served without authentication; a release built from a working copy must not hold them.
         for name in ("www/visual-v2-check-baby/tests/preview-app.html", "www/visual-v2-check-baby/assets/preview.js",
-                     "www/visual-v2-check-baby/codicon.ttf", "www/index.html", "www/assets/page.HTML"):
+                     "www/visual-v2-check-baby/codicon.ttf", "www/index.html", "www/assets/page.HTML",
+                     "www/old.htm", "www/assets/page.xhtml"):
             self.write_file(name, "test page")
         result = self.package()
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -86,6 +86,23 @@ Pins support CLR classes, records, interfaces, enums, nullable types, arrays and
 closed generics. The catalog's `assignableTo`, `nullable` and `literalKind` metadata
 say what fits where. An arbitrary object type does not get a value editor.
 
+The built-in types and the C# type a `[Node]` parameter uses to take each (the editor
+shows both on every pin row, such as "True/False · `bool`"):
+
+| Built-in type | Catalog id | C# parameter type |
+| --- | --- | --- |
+| True/False | `boolean` | `bool` |
+| Number | `number` | `double` (or any other number type, see Numbers above) |
+| Text | `string` | `string` |
+| Object | `object` | `System.Text.Json.Nodes.JsonObject` |
+| List | `array` | `System.Text.Json.Nodes.JsonArray` |
+| Entity | `entity_id`, `entity_id:<domain>` | `string` |
+| Target | `target` | `System.Text.Json.Nodes.JsonObject` |
+| Entity state | `global::HassSharp.EntityStateSnapshot` | `HassSharp.EntityStateSnapshot` |
+
+The mapping goes one way: a `string` parameter takes an Entity value, but a `string`
+result is Text and needs a Convert node to go into an Entity input (see above).
+
 ## States and services
 
 An entity reaches node code through a pin: a `string` entity ID, or an

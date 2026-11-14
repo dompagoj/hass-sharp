@@ -1,9 +1,25 @@
 import ast
+import asyncio
+import contextlib
+import dataclasses
 import json
 import pathlib
 import types
 import unittest
 from unittest.mock import Mock
+
+
+def load_entry_state():
+    """llm.EntryState as written, without importing llm.py (it needs probatio, which only newer Home Assistant has)."""
+    tree = ast.parse(pathlib.Path('custom_components/hass_sharp/llm.py').read_text())
+    tree.body = [n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'EntryState']
+    env = {'asyncio': asyncio, 'contextmanager': contextlib.contextmanager, 'dataclass': dataclasses.dataclass,
+           'field': dataclasses.field, 'AuthoringService': object}
+    exec(compile(tree, '<llm>', 'exec'), env)
+    return env['EntryState']
+
+
+EntryState = load_entry_state()
 
 
 class VisualApiTests(unittest.IsolatedAsyncioTestCase):
@@ -12,7 +28,7 @@ class VisualApiTests(unittest.IsolatedAsyncioTestCase):
         def request(raw):
             calls.append(json.loads(raw))
             return '{"version":1,"ok":true,"result":[]}'
-        hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': types.SimpleNamespace(ready=True)}})
+        hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': EntryState(None, ready=True)}})
         handlers, env = load_routes(types.SimpleNamespace(VisualRequest=request), hass)
         env['websocket_visual'] = handlers['hass_sharp/visual']
         for admin in (False, True):
@@ -34,7 +50,7 @@ class VisualApiTests(unittest.IsolatedAsyncioTestCase):
                 return json.dumps({'version': 1, 'ok': True, 'result': {'id': request['id'], 'enabled': request['enabled']}})
             documents = [{'id': 'a', 'outline': {'nodes': []}}] if request.get('view') == 'home' else [{'id': 'a', 'graph': graph, 'enabled': False, 'currentRevisionActive': True}]
             return json.dumps({'version': 1, 'ok': True, 'result': documents})
-        hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': types.SimpleNamespace(ready=True)}})
+        hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': EntryState(None, ready=True)}})
         handlers, env = load_routes(types.SimpleNamespace(VisualRequest=run), hass)
         env['websocket_visual'] = handlers['hass_sharp/visual']
         async def send(admin, request):
@@ -96,7 +112,7 @@ class WebsocketReadinessTests(unittest.IsolatedAsyncioTestCase):
             RunNow=lambda *a: calls.append('run') or '{"runId":"r"}',
             GetRunHistory=lambda *a: calls.append('history') or '{"runs":[]}',
             GetRunTrace=lambda *a: calls.append('trace') or '{"version":1}')
-        state = types.SimpleNamespace(ready=False)
+        state = EntryState(None)
         hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': state}})
         handlers, _ = load_routes(manager, hass)
         messages = {'hass_sharp/visual': {'request': {'operation': 'list'}}, 'hass_sharp/node_library': {'request': {'operation': 'list'}},
@@ -126,11 +142,14 @@ class WebsocketReadinessTests(unittest.IsolatedAsyncioTestCase):
             Message = 'Automation is not active'
         class ArgumentException(Exception):
             Message = 'Trigger not found'
+        class Defect(InvalidOperationException):
+            Message = 'Sequence contains no elements'
         refusals = iter([InvalidOperationException('Automation is not active\n   at HassSharp.HassSharpManager.RunNow'),
-                         ArgumentException('Trigger not found\n   at ...'), KeyError('defect')])
+                         ArgumentException('Trigger not found\n   at ...'), KeyError('defect'),
+                         Defect('Sequence contains no elements\n   at System.Linq.ThrowHelper')])
         def run_now(*args):
             raise next(refusals)
-        hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': types.SimpleNamespace(ready=True)}})
+        hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': EntryState(None, ready=True)}})
         handlers, env = load_routes(types.SimpleNamespace(RunNow=run_now), hass)
         msg = {'automationId': 'a', 'className': 'VisualAutomation', 'method': 'Run_74'}
         _, errors = await self.send(handlers['hass_sharp/run_now'], hass, msg)
@@ -141,3 +160,8 @@ class WebsocketReadinessTests(unittest.IsolatedAsyncioTestCase):
         _, errors = await self.send(handlers['hass_sharp/run_now'], hass, msg)
         self.assertEqual(errors[0][1], 'run_failed')
         env['logger'].exception.assert_called_once()
+        # The same .NET type with a message RunNow does not refuse with is a defect below the dispatch: it is logged
+        # with its traceback and answered as an internal error, never shown as a refusal.
+        _, errors = await self.send(handlers['hass_sharp/run_now'], hass, msg)
+        self.assertEqual(errors[0][1:], ('run_failed', 'Could not dispatch automation; check integration logs'))
+        self.assertEqual(env['logger'].exception.call_count, 2)

@@ -6,15 +6,18 @@ from unittest.mock import Mock
 import types
 import unittest
 
+from test_visual import EntryState
+
 class HistoryApi(unittest.IsolatedAsyncioTestCase):
     def handlers(self, backend, admin=True):
         source = pathlib.Path("custom_components/hass_sharp/websocket.py").read_text()
         register = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == "register_websocket_routes")
         nodes = [n for n in register.body if isinstance(n, ast.AsyncFunctionDef) and n.name in ("websocket_run_now", "websocket_run_history", "websocket_run_trace")]
+        # Home Assistant's async_response goes; admin_command (the admin and readiness check) stays.
         for n in nodes:
-            n.decorator_list = []
+            n.decorator_list = [d for d in n.decorator_list if isinstance(d, ast.Name) and d.id == "admin_command"]
         # The module-level readiness and refusal helpers the handlers use.
-        helpers = [n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name in ("loaded", "refusal")
+        helpers = [n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name in ("ready_state", "loaded", "refusal", "admin_command")
                    or isinstance(n, ast.Assign) and any(getattr(t, "id", None) in ("NOT_READY", "REFUSALS") for t in n.targets)]
         env = {"hass_sharp": backend, "json": json, "logger": Mock()}
         exec(compile(ast.Module(body=helpers + nodes, type_ignores=[]), "<history>", "exec"), env)
@@ -23,7 +26,7 @@ class HistoryApi(unittest.IsolatedAsyncioTestCase):
             send_result=lambda *args: results.append(args), send_error=lambda *args: errors.append(args))
         async def executor(fn, *args):
             return fn(*args)
-        hass=types.SimpleNamespace(async_add_executor_job=executor,data={"hass_sharp_llm":{"entry":types.SimpleNamespace(ready=True)}})
+        hass=types.SimpleNamespace(async_add_executor_job=executor,data={"hass_sharp_llm":{"entry":EntryState(None, ready=True)}})
         service_tree=ast.parse(pathlib.Path("custom_components/hass_sharp/authoring.py").read_text())
         service_tree.body=[n for n in service_tree.body if not isinstance(n,ast.ImportFrom)]
         exec(compile(service_tree,"<authoring>","exec"),env)
@@ -82,7 +85,8 @@ class HistoryApi(unittest.IsolatedAsyncioTestCase):
         api = types.SimpleNamespace(decorators=types.SimpleNamespace(async_response=lambda f: f),
             connection=types.SimpleNamespace(ActiveConnection=object),
             async_register_command=lambda hass, command, handler, schema: commands.__setitem__(command, schema))
-        env = {"vol": vol, "websocket_api": api, "HomeAssistant": object, "AuthoringService": lambda *args: None, "Any": object}
+        env = {"vol": vol, "websocket_api": api, "HomeAssistant": object, "AuthoringService": lambda *args: None, "Any": object,
+               "admin_command": lambda f: f}
         exec(compile(ast.Module(body=body, type_ignores=[]), "<websocket>", "exec"), env)
         env["register_websocket_routes"](None, None)
         statuses = ("Pending", "Running", "Succeeded", "Failed", "Cancelled", "Skipped", "Interrupted", "Stopped")

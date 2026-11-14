@@ -344,8 +344,8 @@ Task 28. Run against the local Compose Home Assistant only (`hass`, http://local
 ### Open observations (Phase 2)
 
 As found at `c2497af`. Marked **Fixed since** where a later commit fixed it, **By
-design** where it was judged a design choice, and **Open** otherwise (as of
-`1282d56` and the final fix round).
+design** where it was judged a design choice, **Not rechecked** where no later check
+records it, and **Open** otherwise (as of `1282d56` and the final fix round).
 
 - **Memory grows with each reload:** about 10 MiB per HassSharp entry reload on average (719.6 to 869.9 MiB over 15), with no plateau. **Fixed since** (Task 29): growth is bounded; see [Reload memory](#reload-memory-2026-11-14).
 - **Constant Type list:** it offers 73 types, including CLR interfaces such as "Comparable", "Span parsable" and "Additive identity". **Fixed since:** it offers only types a value can be typed in for.
@@ -358,12 +358,12 @@ design** where it was judged a design choice, and **Open** otherwise (as of
 - **Pure toggle toast:** "Log now follows Log." is ambiguous when two steps share a name. **Open.**
 - **Palette:** a step added from the palette is not wired to the selected step. **By design:** quick-add from a pin wires, the palette adds a free step.
 - **Editor top bar:**
-  - Save stays enabled while the document is Saved. **Fixed since.**
+  - Save stays enabled while the document is Saved. **Not rechecked:** no later check or test records it.
   - At 360 px, the full-screen bar has no Run now and no switch. **By design:** it is the compact bar.
 - **Entry reload:** reloading the HassSharp entry sends an open panel to Overview. **Fixed since** (final fix round): a reload keeps the panel; only turning the entry off or removing it removes the panel.
 - **Trace:**
-  - In the "T28 Heat when motion" trace, the Compare card overlaps the taller State card. **Fixed since.**
-  - The timeline shows three identical "Call service" rows. **Fixed since.**
+  - In the "T28 Heat when motion" trace, the Compare card overlaps the taller State card. **Fixed since** (`df3b71a`; the frontend test "keeps cards apart in the read-only trace view" in `trace-overlap.test.tsx`). Not rechecked in the panel.
+  - The timeline shows three identical "Call service" rows. **Not rechecked:** no later check or test records it.
 
 ## Reload memory (2026-11-14)
 

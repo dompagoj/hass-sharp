@@ -1,6 +1,9 @@
 """Administrator authoring API for Home Assistant's MCP server and every conversation agent an administrator gives it to."""
-from dataclasses import dataclass
+import asyncio
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 import json
+import re
 from pathlib import Path
 
 import probatio as p
@@ -30,6 +33,32 @@ class EntryState:
     service: AuthoringService
     ready: bool = False
     unregister: object = None
+    # Websocket and MCP commands that passed the ready check and have not answered yet; unload waits for them.
+    in_flight: int = 0
+    idle: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def __post_init__(self):
+        self.idle.set()
+
+    @contextmanager
+    def command(self):
+        """One command in flight. Take it right after checking ready, with no await in between."""
+        self.in_flight += 1
+        self.idle.clear()
+        try:
+            yield
+        finally:
+            self.in_flight -= 1
+            if self.in_flight == 0:
+                self.idle.set()
+
+    async def async_wait_idle(self, timeout):
+        """Wait until no command is in flight; False when some still are after timeout seconds."""
+        try:
+            await asyncio.wait_for(self.idle.wait(), timeout)
+        except TimeoutError:
+            return False
+        return True
 
     def close(self):
         self.ready = False
@@ -67,8 +96,11 @@ ID_FIELD = {p.Required("id"): ID}
 REV_FIELDS = {**ID_FIELD, p.Required("expectedRevision"): REVISION}
 SERVICE_ID = p.All(str, p.Match(r"^[a-z0-9_]+\.[a-z0-9_]+$"))
 # Default event pages: values-free events are small, events with values can be up to 16 KiB each. Whatever the limit, a
-# page also ends before its events pass TRACE_PAGE_BYTES of JSON (a single larger event still makes a page of its own).
-TRACE_PAGE, TRACE_NODE_PAGE, TRACE_PAGE_BYTES = 100, 10, 32 * 1024
+# page of trace events, discover items or history runs also ends before its items pass PAGE_BYTES of JSON (a single
+# larger item still makes a page of its own).
+TRACE_PAGE, TRACE_NODE_PAGE, PAGE_BYTES = 100, 10, 32 * 1024
+# A token in a URL (an entity_picture's token=, a camera's access_token=) that a state value or an error carries.
+TOKEN = re.compile(r"(token=)[^&\s\"'<>]+", re.IGNORECASE)
 # The only state attributes discover returns: what an author needs to pick values. Anything else (a camera's access_token,
 # an entity_picture URL with token=, whatever an integration puts there) stays in Home Assistant.
 ENTITY_ATTRIBUTES = (
@@ -85,7 +117,7 @@ SPECS = {
     "get_node_schema": ({p.Optional("kind"): str, p.Optional("service"): SERVICE_ID}, "Ports and config of one node kind, with the type table and parametric types; omit kind for the whole catalog. Call it for every kind you add. For kind service, pass service ('domain.service') to get the inputs and outputs the validator gives that service, every field:<name> with its types and constraints, its target types, hasTarget and its response mode; your node gets only the field ports whose keys you put in config.fields. For kind trigger the result includes triggerOutputs, which says which outputs each trigger type produces. In port types, $any means any type in the type table, and $<name> (usually $type) means the type id set in the node's config.<name>. An input with connectable: false takes only a value you write: no data edge may end at it."),
     "discover": ({p.Required("kind"): p.In(["entities", "services", "devices", "areas", "triggers"]), p.Optional("query", default=""): str,
                   p.Optional("domain"): str, p.Optional("service"): SERVICE_ID, **PAGE},
-                 "Find real ids in this Home Assistant before writing them into a graph; filtering happens before stable sorting and paging. entities, devices, areas, triggers: matched by query (entities also by domain). Entities are listed whether or not they are exposed to assistants, each with id, name, domain, state and only the attributes an author needs (device class, unit, supported features, option lists such as hvac_modes or options, min, max and step). services: without service, one line per service (id, name, description, hasTarget, response), narrowed by domain and query; with service ('domain.service'), that one service's full schema with fields in Home Assistant's order, or known false when it is not registered (yet). Ask for one service at a time: the full set is very large. Never calls a service or attaches a trigger."),
+                 f"Find real ids in this Home Assistant before writing them into a graph; filtering happens before stable sorting and paging. entities, devices, areas, triggers: matched by query (entities also by domain). Entities are listed whether or not they are exposed to assistants, each with id, name, domain, state and only the attributes an author needs (device class, unit, supported features, option lists such as hvac_modes or options, min, max and step); a token= value in a state is removed. services: without service, one line per service (id, name, description, hasTarget, response), narrowed by domain and query; with service ('domain.service'), that one service's full schema with fields in Home Assistant's order, or known false when it is not registered (yet). Ask for one service at a time: the full set is very large. A page also ends before about {PAGE_BYTES // 1024} KiB, and nextOffset says where the next one starts (null after the last). Never calls a service or attaches a trigger."),
     "list": ({}, "Summarise every saved visual automation, without its graph: id, name, revision, enabled (its on/off switch), active and currentRevisionActive, activationError (why it is not running, or null) and triggers [{triggerId, label, type, config, manual, runnable}], which say what starts it. read one automation for its graph before editing it."),
     "read": (ID_FIELD, "Read one saved visual automation: its complete graph, revision (pass it as expectedRevision when saving), generated source and activation state (currentRevisionActive is true when the saved revision is the one running). Read before every edit; do not rebuild a graph from memory."),
     "preview": ({p.Required("graph"): GRAPH}, "Validate and compile a complete graph without saving, attaching triggers or running anything. Each Custom C# node's pins (config.signature) are first worked out from its code. Returns valid, diagnostics (nodeId, inputId, message; severity 3 is an error, 2 a warning), the generated source and graph: the graph with those pins. It checks service fields against Home Assistant's schemas and native triggers against Home Assistant, and warns (code entity.unknown) about each entity id Home Assistant has no entity for: fix every error here before saving, and the id of each such warning."),
@@ -93,10 +125,10 @@ SPECS = {
     "set_enabled": ({**ID_FIELD, p.Required("enabled"): bool}, "Turn a saved automation on or off without changing its graph or revision: while off (enabled false) none of its triggers or its startup run start it, its runs in progress are cancelled, and run still starts it by hand; ask the user first."),
     "delete": (REV_FIELDS, "Delete a saved visual automation at its exact revision and stop it. Ask the user first."),
     "run": ({**ID_FIELD, p.Required("triggerId"): str}, "Run one trigger of the saved, active revision now. triggerId is the trigger node id; list and read show which triggers are runnable. It can control devices: ask the user first. Returns runId; then call history and trace."),
-    "history": ({**ID_FIELD, p.Optional("status"): [p.In(RUN_STATUSES)], **PAGE}, "Run history (version 2) of one saved visual automation, newest first, optionally only runs with the given statuses. Each run has runId, status, error (the failure message, or why it was cancelled), trigger (a summary of what fired it), triggerNodeId (the id of the trigger node that started it), actionLabel (that trigger node's label, or the method name when it has none), timing and hasTrace."),
+    "history": ({**ID_FIELD, p.Optional("status"): [p.In(RUN_STATUSES)], **PAGE}, f"Run history (version 2) of one saved visual automation, newest first, optionally only runs with the given statuses. Each run has runId, status, error (the failure message, or why it was cancelled), trigger (a summary of what fired it), triggerNodeId (the id of the trigger node that started it), actionLabel (that trigger node's label, or the method name when it has none), timing and hasTrace. A page also ends before about {PAGE_BYTES // 1024} KiB; nextOffset says where the next one starts (null after the last run; after a full page the next can be empty). A token= value in an error is removed."),
     "trace": ({p.Required("runId"): p.All(str, p.Length(min=1, max=64)), p.Optional("node"): str, p.Optional("graph", default=False): bool,
                p.Optional("offset", default=0): p.All(int, p.Range(min=0)), p.Optional("limit"): p.All(int, p.Range(min=1, max=500))},
-              f"Per-node trace of one run (runId from run or history). By default: the run, live (still running), whether the trace is complete or truncated, a summary per node and a page of the events in order (node, frame, status, port taken, t and ms timing, error) without values, with totalEvents. Pass node for that node's events with their input and output values (not_found when that node never ran); pass graph true for the graph revision that ran. offset and limit page the events (limit defaults to {TRACE_PAGE} without node and {TRACE_NODE_PAGE} with node); a page also ends before about {TRACE_PAGE_BYTES // 1024} KiB, and nextOffset says where the next one starts (null after the last). Use it to find which node failed and with what value."),
+              f"Per-node trace of one run (runId from run or history). By default: the run, live (still running), whether the trace is complete or truncated, a summary per node and a page of the events in order (node, frame, status, port taken, t and ms timing, error) without values, with totalEvents. Pass node for that node's events with their input and output values (not_found when that node never ran); pass graph true for the graph revision that ran. offset and limit page the events (limit defaults to {TRACE_PAGE} without node and {TRACE_NODE_PAGE} with node); a page also ends before about {PAGE_BYTES // 1024} KiB, and nextOffset says where the next one starts (null after the last). Use it to find which node failed and with what value."),
     "library_list": ({}, "List saved node library (C# NodeLib) sources and the saved catalog generation."),
     "library_read": (ID_FIELD, "Read one saved library source and its revision."),
     "library_preview": ({**ID_FIELD, p.Required("source"): str, p.Required("workspaceVersion"): str,
@@ -131,7 +163,8 @@ class HassSharpTool(llm.Tool):
                 if key in tool_input.tool_args and type(tool_input.tool_args[key]) is not int:
                     raise p.Invalid(f"{key} must be an integer")
             args = self.parameters(tool_input.tool_args)
-            result = await self._call(hass, args)
+            with self.state.command():
+                result = await self._call(hass, args)
             return llm.ToolResult(result, error=result.get("ok") is False)
         except PermissionError:
             return llm.ToolResult(error("unauthorized", "Administrator required"), error=True)
@@ -168,7 +201,15 @@ class HassSharpTool(llm.Tool):
             if not document.get("ok"):
                 return document
             history = await service_api.history(document["result"]["automationId"], args["offset"], args["limit"], args.get("status"), is_admin=True)
-            return {"version": 1, "ok": True, "result": {"id": args["id"], **history}}
+            runs = history.get("runs") or []
+            for run in runs:
+                if isinstance(run, dict) and isinstance(run.get("error"), str):
+                    run["error"] = scrub(run["error"])
+            page, following = byte_page(runs, 0, len(runs))
+            # The store has no total: a full page may be followed by an empty one.
+            more = len(page) < len(runs) or len(runs) == args["limit"]
+            return {"version": 1, "ok": True, "result": {"id": args["id"], **history, "runs": page,
+                                                         "nextOffset": args["offset"] + following if more else None}}
         if operation == "trace":
             data = await service_api.trace(args["runId"], is_admin=True)
             if data is None:
@@ -230,6 +271,22 @@ async def node_schema(service_api, catalog, generation, args):
     return {"version": 1, "ok": True, "result": result}
 
 
+def scrub(text):
+    """Text for the model without the value of any token= in it."""
+    return TOKEN.sub(r"\1[removed]", text)
+
+
+def byte_page(items, offset, limit):
+    """items[offset:offset + limit], ended early before the page passes PAGE_BYTES of JSON; and the offset after it."""
+    page, size = [], 0
+    for item in items[offset:offset + limit]:
+        size += len(json.dumps(item, cls=JSONEncoder)) + 2
+        if page and size > PAGE_BYTES:
+            break
+        page.append(item)
+    return page, offset + len(page)
+
+
 def trace_view(data, node, include_graph, offset, limit):
     """run_trace without the catalog and, unless asked, without values or the graph: full traces are large."""
     snapshot = data.get("snapshot")
@@ -248,13 +305,10 @@ def trace_view(data, node, include_graph, offset, limit):
                 return error("not_found", "That node has no events in this trace")
             view["node"] = node
         limit = limit or (TRACE_PAGE if node is None else TRACE_NODE_PAGE)
-        page, size = [], 0
-        for event in events[offset:offset + limit]:
-            size += len(json.dumps(event)) + 2
-            if page and size > TRACE_PAGE_BYTES:
-                break
-            page.append(event)
-        following = offset + len(page)
+        for event in events:
+            if isinstance(event.get("error"), str):
+                event["error"] = scrub(event["error"])
+        page, following = byte_page(events, offset, limit)
         view.update(totalEvents=len(events), offset=offset, limit=limit, events=page,
                     nextOffset=following if following < len(events) else None)
         result["trace"] = view
@@ -268,7 +322,7 @@ async def discover(hass, service_api, kind, query, offset, limit, domain=None, s
         return error("invalid_request", "domain applies only to kinds entities and services")
     if kind == "entities":
         # Not filtered by assistant exposure: the administrator building automations needs every entity.
-        items = [{"id": s.entity_id, "name": s.attributes.get("friendly_name"), "domain": s.domain, "state": s.state,
+        items = [{"id": s.entity_id, "name": s.attributes.get("friendly_name"), "domain": s.domain, "state": scrub(s.state),
                   "attributes": {key: s.attributes[key] for key in ENTITY_ATTRIBUTES if key in s.attributes}}
                  for s in hass.states.async_all() if domain is None or s.domain == domain]
     elif kind == "services":
@@ -301,7 +355,9 @@ async def discover(hass, service_api, kind, query, offset, limit, domain=None, s
     # Normalize registry values to JSON before matching/pagination.
     items = json.loads(json.dumps(items, cls=JSONEncoder))
     items = sorted((i for i in items if query.casefold() in json.dumps(i, ensure_ascii=False).casefold()), key=lambda i: i["id"])
-    result = {"kind": kind, "query": query, "offset": offset, "limit": limit, "total": len(items), "items": items[offset:offset + limit]}
+    page, following = byte_page(items, offset, limit)
+    result = {"kind": kind, "query": query, "offset": offset, "limit": limit, "total": len(items), "items": page,
+              "nextOffset": following if following < len(items) else None}
     if domain is not None:
         result["domain"] = domain
     return {"version": 1, "ok": True, "result": result}

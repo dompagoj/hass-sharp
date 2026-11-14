@@ -90,8 +90,11 @@ Scope snapshots and unsupported live resources are described in
 
 ## Types and refinement
 
-Types include booleans, numbers, strings, objects, arrays, entity IDs, Home
-Assistant targets and the CLR types exposed by custom nodes. Some types
+Types include True/False (`boolean`, whose values read True and False), Number
+(`number`), Text (`string`), Object (`object`), List (`array`), entity IDs, Home
+Assistant targets and the CLR types exposed by custom nodes. In the editor's right
+panel each input and output row shows both the friendly type name and the C# type,
+for example "True/False · `bool`". Some types
 **refine** another: `entity_id` refines `string`, and `target` (an object of
 `entity_id`, `device_id`, `area_id`, `floor_id` and `label_id`) refines `object`.
 Entity IDs can be narrowed further to one domain with the parametric type

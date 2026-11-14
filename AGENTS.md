@@ -13,14 +13,16 @@ The suites, from the repository root (`.github/workflows/tests.yaml` runs all of
 them on every push and pull request, and a release only after they pass):
 
 ```sh
-python3 -m unittest discover -s tests/python   # integration; needs Home Assistant installed to skip nothing
+python3 -m unittest discover -s tests/python   # integration; needs Home Assistant 2026.11 to skip nothing
 python3 -m unittest discover -s tests          # release packaging
 dotnet run --project tests/Runtime --disable-build-servers
 dotnet test custom_components/hass_sharp/HassSharp.Editor.Tests
 (cd custom_components/hass_sharp/frontend && bun run test)
 ```
 
-Without Home Assistant on the host, the MCP adapter and native trigger tests skip.
+Without Home Assistant 2026.11 or later on the host, the MCP adapter tests skip (they need its
+`probatio` package) and so do the native class-trigger tests; an older Home Assistant, such as
+2025.12, still skips them.
 To run them against the local container's Home Assistant, copy `tests/python` and
 `tests/fixtures` into a temporary directory in the container, link
 `custom_components/hass_sharp` there to `/config/custom_components/hass_sharp`, and
@@ -88,6 +90,7 @@ grew), also set `custom_components.HassSharp.memory: debug`. It is off unless th
 logger itself is set to debug: ordinary debug logging does not turn it on, because
 it walks every Python object and forces a full .NET collection, which stalls Home
 Assistant for a moment on each setup and reload.
+
 To edit the configuration on the host, copy it out and back:
 
 ```sh

@@ -26,6 +26,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install homeassistant==2026.11.1 mcp==2.3.0 aiohttp_sse==2.2.0 anyio==4.15.1 \
             hassil==3.12.1 home-assistant-intents==2026.10.27 gazetteer-matcher==1.1.0
+      - name: Check that the Home Assistant tests will run
+        # Without these imports the MCP adapter and native class-trigger tests skip, and the job would still pass.
+        run: python -c "import probatio, homeassistant.components.mcp_server.server; from homeassistant.helpers.trigger import StatelessEntityTriggerBase"
       - name: Integration tests
         # From the repository root: the tests read the integration by relative path. With Home Assistant installed none
         # of them is skipped.
