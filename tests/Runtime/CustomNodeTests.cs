@@ -447,6 +447,18 @@ static class CustomNodeTests
             E("t", "p"), E("p", "x", "branch:a"), E("p", "b", "branch:b"), E("p", "step", "error"), D("e", "step", "value", "step"));
         var branched = await Logged(parallel);
         Check(branched.Contains("Inner step"), "Error details names the failing step in a parallel branch: " + string.Join(" | ", branched));
+        // Two branches that both fail: the first one's step.
+        static JsonObject Late(string id, string title, int ms) => Custom(id, "public static class CustomNode\n{\n    [Node(\"" + title + "\")]\n    public static async Task Run() { await Task.Delay(" + ms + "); throw new InvalidOperationException(\"" + title + "\"); }\n}");
+        var both = Graph([N("e", "last_error"), N("p", "parallel", new { branches = new[] { "a", "b" } }), Late("x", "First step", 50), Late("y", "Second step", 250), Reader("step")],
+            E("t", "p"), E("p", "x", "branch:a"), E("p", "y", "branch:b"), E("p", "step", "error"), D("e", "step", "value", "step"));
+        var failedTwice = await Logged(both);
+        Check(failedTwice.SequenceEqual(["First step"]), "when two parallel branches fail, Error details names the first one's step: " + string.Join(" | ", failedTwice));
+        // A recovered failure thrown again by a later step is that step's.
+        var rethrow = Custom("re", "public static class CustomNode\n{\n    [Node(\"Throw again\")]\n    public static void Run(NodeContext context) => throw context.Error!;\n}");
+        var again = Graph([N("e", "last_error"), N("r", "repeat", new { count = Lit("number", 1) }), failing.DeepClone().AsObject(), rethrow, Reader("step")],
+            E("t", "r"), E("r", "x", "body"), E("r", "re", "error"), E("re", "step", "error"), D("e", "step", "value", "step"));
+        var thrownAgain = await Logged(again);
+        Check(thrownAgain.SequenceEqual(["Throw again"]), "a recovered failure thrown again is named after the step that threw it: " + string.Join(" | ", thrownAgain));
         Console.WriteLine("PASS error details: empty before a failure, the message and step after one, the inner step in a loop body and a parallel branch");
     }
 
@@ -566,6 +578,18 @@ static class CustomNodeTests
             var allowed = await Library(new { operation = "save", id = "helpers", name = "Helpers", expectedRevision = 1, source = "public static class Helper { public static int Twice(int value) => value * 2; public static int Thrice(int value) => value * 3; }" });
             Check(allowed["ok"]!.GetValue<bool>() && allowed["result"]!["invalid"]!.AsArray().Select(a => a!["id"]!.GetValue<string>()).SequenceEqual(["derived"])
                 && allowed["result"]!["automations"]!.AsArray().Any(a => a!["id"]!.GetValue<string>() == "uses"), "an already invalid graph does not block a library save: " + allowed.ToJsonString()[..Math.Min(1200, allowed.ToJsonString().Length)]);
+            var notRunning = allowed["result"]!["invalid"]![0]!;
+            Check(!notRunning["running"]!.GetValue<bool>() && notRunning["message"]!.GetValue<string>() == "Not rebuilt, because it has errors; it is not running", "an invalid graph that is not running says so: " + notRunning.ToJsonString()[..Math.Min(400, notRunning.ToJsonString().Length)]);
+            // A graph made invalid on disk while it runs (as a release or a hand edit can): the save leaves it running the previous version, and says so.
+            var usesFile = Path.Combine(path, ".storage", "hass_sharp", "visual", "uses.json");
+            var broken = JsonNode.Parse(File.ReadAllText(usesFile))!;
+            broken["graph"]!["nodes"]![1]!["config"]!["signature"]!["outputs"] = new JsonObject { ["result"] = new JsonObject { ["type"] = "number", ["label"] = "Result", ["description"] = "" } };
+            File.WriteAllText(usesFile, broken.ToJsonString());
+            var stillRunning = await Library(new { operation = "save", id = "helpers", name = "Helpers", expectedRevision = 2, source = "public static class Helper { public static int Twice(int value) => value * 2; }" });
+            var entry = stillRunning["result"]?["invalid"]?.AsArray().SingleOrDefault(a => a!["id"]!.GetValue<string>() == "uses");
+            Check(stillRunning["ok"]!.GetValue<bool>() && entry?["running"]?.GetValue<bool>() == true
+                && entry["message"]!.GetValue<string>() == "Not rebuilt, because it has errors: it is still running the previous version, with the previous library code",
+                "a running graph that the save leaves invalid is still running the previous version: " + stillRunning.ToJsonString()[..Math.Min(1200, stillRunning.ToJsonString().Length)]);
             Console.WriteLine("PASS custom node API: custom_preview, language services on custom code, deriveSignatures on preview and save");
         }
         finally { await manager.UnloadAsync(); HassPath.HassConfiguration = previous; try { Directory.Delete(path, true); } catch { } }

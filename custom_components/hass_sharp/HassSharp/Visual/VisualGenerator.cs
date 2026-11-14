@@ -105,28 +105,53 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
     static CustomNodeSource[] CustomSources(JsonObject graph,VisualCatalogSnapshot snapshot)=>(graph["nodes"] as JsonArray??[]).OfType<JsonObject>()
         .Where(n=>IsCustom(n,snapshot)&&Text(n,"id")!=""&&n["config"] is JsonObject cfg&&!cfg.ContainsKey("code")&&cfg["source"] is JsonValue v&&v.TryGetValue<string>(out _))
         .Select(n=>new CustomNodeSource(Text(n,"id"),Text(n["config"],"source"))).ToArray();
+    /// <summary>
+    /// The type two numbers are compared in, by C#'s binary numeric promotion: <c>decimal</c> if either side is, else
+    /// <c>double</c> if either is floating point (<c>float</c> only when both are), else the wider integer type; a signed
+    /// and an unsigned one meet in a signed type wide enough for both (<c>long</c> for <c>int</c> and <c>uint</c>,
+    /// <c>decimal</c> for <c>ulong</c> and any signed one). Nullable when either side is. Null when either side is not a number.
+    /// </summary>
+    internal static string? ComparisonType(JsonObject catalog,string left,string right) {
+        static (string Name,bool Nullable)? Number(JsonObject catalog,string id) {
+            if(!VisualTypes.Numeric(catalog,id))return null;
+            var root=VisualTypes.RootId(catalog,id);var nullable=root.EndsWith('?');if(nullable)root=root[..^1];
+            var name=root=="number"?"Double":root.StartsWith("global::System.",StringComparison.Ordinal)?root["global::System.".Length..]:"";
+            if(name=="Char")name="UInt16";
+            return name is "SByte" or "Byte" or "Int16" or "UInt16" or "Int32" or "UInt32" or "Int64" or "UInt64" or "Single" or "Double" or "Decimal"?(name,nullable):null;
+        }
+        if(Number(catalog,left) is not {} a||Number(catalog,right) is not {} b)return null;
+        static int Size(string n)=>n switch{"SByte" or "Byte"=>1,"Int16" or "UInt16"=>2,"Int32" or "UInt32"=>4,_=>8};
+        static bool Signed(string n)=>n is "SByte" or "Int16" or "Int32" or "Int64";
+        static string SignedOf(int size)=>size switch{1=>"SByte",2=>"Int16",4=>"Int32",8=>"Int64",_=>"Decimal"};
+        string name;
+        if(a.Name=="Decimal"||b.Name=="Decimal")name="Decimal";
+        else if(a.Name is "Single" or "Double"||b.Name is "Single" or "Double")name=a.Name=="Single"&&b.Name=="Single"?"Single":"Double";
+        else if(Signed(a.Name)==Signed(b.Name))name=Size(a.Name)>=Size(b.Name)?a.Name:b.Name;
+        else {
+            var (signed,unsigned)=Signed(a.Name)?(a.Name,b.Name):(b.Name,a.Name);
+            name=Size(signed)>Size(unsigned)?signed:SignedOf(Size(unsigned)*2);
+        }
+        return "global::System."+name+(a.Nullable||b.Nullable?"?":"");
+    }
     /// <summary>The generation with the graph's Custom C# nodes compiled beside its libraries; the catalog is unchanged.</summary>
     VisualCatalogSnapshot WithCustom(JsonObject graph,VisualCatalogSnapshot snapshot) {
         var sources=CustomSources(graph,snapshot);
         if(sources.Length==0)return snapshot;
         // The editor previews after each edit, and deriving pins compiles once more; most edits leave the code alone.
-        // The last few compiles are kept, keyed by all that goes into one: the service calls, the libraries and the code.
+        // The last compile is kept (one, so at most one compilation stays in memory), keyed by all that goes into it:
+        // the accepted service calls, the libraries and the code. Each text is length-prefixed, so no two inputs share a key.
         var services=diagnostics.ServiceCalls();
+        static string Part(string text)=>text.Length.ToString(CultureInfo.InvariantCulture)+":"+text;
         var key=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
-            string.Join("\0",snapshot.Sources.Select(s=>s.Id+"\0"+s.Revision+"\0"+s.Source))+"\u0001"+string.Join("\0",sources.Select(c=>c.NodeId+"\0"+c.Source)))));
-        VisualCatalogSnapshot? hit=null;
-        lock(CompiledCustom) {
-            for(var entry=CompiledCustom.First;entry!=null;entry=entry.Next)
-                if(ReferenceEquals(entry.Value.Services,services)&&entry.Value.Key==key) {hit=entry.Value.Compiled;CompiledCustom.Remove(entry);CompiledCustom.AddFirst(entry);break;}
-        }
-        if(hit==null) {
-            hit=new NodeLibraryCompiler(diagnostics,services).Preview(snapshot.Sources,sources).Snapshot;
-            lock(CompiledCustom) {CompiledCustom.AddFirst((services,key,hit));while(CompiledCustom.Count>4)CompiledCustom.RemoveLast();}
-        }
-        return hit.WithServices(snapshot.Services);
+            string.Concat(snapshot.Sources.Select(s=>Part(s.Id)+Part(s.Revision.ToString(CultureInfo.InvariantCulture))+Part(s.Source)))+"|"+string.Concat(sources.Select(c=>Part(c.NodeId)+Part(c.Source))))));
+        lock(CustomGate)if(LastCustom is {} last&&ReferenceEquals(last.Services,services)&&last.Key==key)return last.Compiled.WithServices(snapshot.Services);
+        var compiled=new NodeLibraryCompiler(diagnostics,services).Preview(snapshot.Sources,sources).Snapshot;
+        lock(CustomGate)LastCustom=(services,key,compiled);
+        return compiled.WithServices(snapshot.Services);
     }
     // Keyed by the accepted typed service calls (the object, swapped whole when they change) and a hash of the sources.
-    static readonly LinkedList<(GeneratedServiceCalls Services,string Key,VisualCatalogSnapshot Compiled)> CompiledCustom=new();
+    static (GeneratedServiceCalls Services,string Key,VisualCatalogSnapshot Compiled)? LastCustom;
+    static readonly object CustomGate=new();
     /// <summary>
     /// Whether a stored signature has the pins the code gives: the same pure, input ids with their types, required,
     /// nullable and default, and output ids with their types. Titles, words and type entries are not compared.
@@ -214,7 +239,9 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             var typed=snapshot.WithRoot(VisualNodeCatalog.WithGraphTypes(snapshot.Root,graph));
             var comparisonTypes=nodes.Where(n=>Text(n,"kind")=="compare").ToDictionary(n=>Text(n,"id"),n=> {
                 var left=InputType(n,"left");var right=InputType(n,"right");
-                return typed.IsAssignable(left,right)?right:left;
+                // Two numbers meet in the type both widen to, never the narrower one: "any number into any number"
+                // decides which wires are accepted, not which side gets rounded.
+                return ComparisonType(typed.Root,left,right) ?? (typed.IsAssignable(left,right)?right:left);
             });
             var compiledConversions=new Dictionary<string,(string Source,string Target)>();
             foreach(var node in nodes.Where(n=>Text(n,"kind") is "convert" or "constant")) {

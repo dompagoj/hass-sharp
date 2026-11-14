@@ -44,7 +44,9 @@ connection replaces the input's own value. A step's value reaches another step o
 over a data wire; there are no named variables. Use a Custom C# node, or a
 [node library](node-libraries.md), for calculations the built-in nodes do not cover.
 Null and absence are distinct. Error details gives the message and step of the most
-recent failure on the path, for an Error path to report or log.
+recent failure on the path, for an Error path to report or log. When several
+Parallel branches fail, the step is the one in the first branch that failed; when a
+recovered failure is thrown again, the step is the one that threw it last.
 
 Read entity returns a detached `HassSharp.EntityStateSnapshot`. Use Entity field
 to extract a scalar state/attribute, or pass the snapshot directly to a typed

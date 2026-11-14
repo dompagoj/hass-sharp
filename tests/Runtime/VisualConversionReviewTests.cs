@@ -132,7 +132,7 @@ static class VisualConversionReviewTests
             await Execute(Graph("global::System.Decimal","Decimal","[0.1234567890123456789012345678,79228162514264337593543950335,-79228162514264337593543950335]"),s);
             Assert(messages.Count(m=>m=="exact long")==3&&messages.Count(m=>m=="exact decimal")==3,"exact JSON items consumed");
             foreach(var (type,consumer,array) in new[]{("global::System.Int64","Long","[9223372036854775808]"),("global::System.Int64","Long","[-9223372036854775809]"),("global::System.Decimal","Decimal","[79228162514264337593543950336]")}) {
-                var g=Graph(type,consumer,array);g["nodes"]!.AsArray().Add(Custom("recover","if(!lastError.Message.Contains(\"loop.item[0]\"))throw new Exception(\"overflow lacks item location\");Logger.Info(\"overflow caught\");"));g["edges"]!.AsArray().Add(E("loop","recover","error"));await Execute(g,s);
+                var g=Graph(type,consumer,array);g["nodes"]!.AsArray().Add(Custom("recover","if(!lastError.Message.Contains(\"Items, item 1 needs\"))throw new Exception(\"overflow lacks item location\");Logger.Info(\"overflow caught\");"));g["edges"]!.AsArray().Add(E("loop","recover","error"));await Execute(g,s);
             }Assert(messages.Count(m=>m=="overflow caught")==3,"numeric overflow errors routed with item location");
         }finally{PyInterop.Log=logger;}
     }

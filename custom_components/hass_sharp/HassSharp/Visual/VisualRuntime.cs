@@ -245,6 +245,9 @@ public sealed class VisualRuntime
         if(value is JsonElement j) {
             if(j.ValueKind==JsonValueKind.Null)return Coerce(null,type,label,convert);
             if(j.ValueKind==JsonValueKind.Number && IsNumber(target)) {
+                // A JSON number (a foreach item, a field read from JSON) gets the same fit check as any other number.
+                if(pin!=null && target!=typeof(char) && Unfit(j.TryGetDecimal(out var exact)?exact:j.GetDouble(),target) is {} unfit)
+                    throw new InvalidOperationException($"{pin()} needs {unfit}, not {j.GetRawText()}");
                 // Read the original token into its declared numeric type. A double
                 // intermediate corrupts Int64/decimal precision before type checking.
                 try {
@@ -263,7 +266,7 @@ public sealed class VisualRuntime
         if(value is char character && IsNumber(target) && target!=typeof(char))value=(ushort)character;
         if(convert && target==typeof(bool))return VisualValues.ConvertValue(value,"boolean");
         if(convert && target==typeof(string))return VisualValues.ConvertValue(value,"string");
-        if(pin!=null && !convert && value is not null and not char && IsNumber(value.GetType()) && IsNumber(target) && target!=typeof(char) && Unfit(value,target) is {} range)
+        if(pin!=null && value is not null and not char && IsNumber(value.GetType()) && IsNumber(target) && target!=typeof(char) && Unfit(value,target) is {} range)
             throw new InvalidOperationException($"{pin()} needs {range}, not {Convert.ToString(value,CultureInfo.InvariantCulture)}");
         if(value is IConvertible && (convert || IsNumber(value.GetType())&&IsNumber(target))) {
             try {return target.IsEnum?Enum.Parse(target,Convert.ToString(value,CultureInfo.InvariantCulture)!):Convert.ChangeType(value,target,CultureInfo.InvariantCulture);}catch(Exception e)when(e is FormatException or InvalidCastException or OverflowException){throw new InvalidOperationException($"Cannot convert {label} to {type}.",e);}
@@ -285,10 +288,11 @@ public sealed class VisualRuntime
         if(code==TypeCode.Decimal)return value is decimal || Convert.ToDouble(value,CultureInfo.InvariantCulture) is var m && double.IsFinite(m) && Math.Abs(m)<7.9e28?null:$"a number from {N(-7.9e28)} to {N(7.9e28)}";
         return null;
     }
-    object? ConvertTo(object? value,string type,string label,bool convert=true) {
+    /// <param name="pin">The step and pin, as people see them, for a number that does not fit <paramref name="type"/>.</param>
+    object? ConvertTo(object? value,string type,string label,bool convert=true,Func<string>? pin=null) {
         var chain=VisualTypes.Chain(catalog,type);
         if(chain.Count==0||!types.TryGetValue(chain[^1],out var clr))throw new InvalidOperationException($"Unknown declared type {type} at {label}");
-        var root=chain[^1];var result=Coerce(value,clr,label,convert);
+        var root=chain[^1];var result=Coerce(value,clr,label,convert,pin);
         if(result==null && VisualTypes.Resolve(catalog,type)?["nullable"]?.GetValue<bool>()!=true)throw new InvalidOperationException($"{label} requires non-null {type}, got null.");
         // A refinement narrows only when the value satisfies every pattern in its chain.
         foreach(var id in chain)if(VisualTypes.Resolve(catalog,id)?["pattern"] is JsonValue pattern && result!=null && (result is not string s || !VisualTypes.Matches(s,pattern.GetValue<string>())))throw new InvalidOperationException($"Cannot convert {label} to {type}.");
@@ -336,6 +340,8 @@ public sealed class VisualRuntime
                 if(Next(id,"error") is not {} recovery){failedSteps.TryAdd(error,Title(id));if(ev!=null)trace!.End(ev,"failed",null,error);throw;}
                 // A failure inside a loop body or a parallel branch is the inner step's, not the loop's or the parallel's.
                 scope.LastError=error;scope.LastErrorStep=failedSteps.TryGetValue(error,out var inner)?inner:Title(id);next=recovery;
+                // Recovered: should a later step throw the same exception again (throw context.Error;), that step failed.
+                failedSteps.Remove(error);
                 if(ev!=null)trace!.End(ev,"error","error",error);
             }
             id=next;
@@ -370,16 +376,21 @@ public sealed class VisualRuntime
             case "not":Output(scope,id,!Input<bool>(scope,id,"value"));break;
             case "compare":
                 if(!comparisonTypes.TryGetValue(id,out var common))throw new InvalidOperationException($"Node {id}: compiled comparison type is missing.");
-                var clr=types[VisualTypes.RootId(catalog,common)];var a=Coerce(Read(scope,id,"left"),clr,id+".left",false);var b=Coerce(Read(scope,id,"right"),clr,id+".right",false);
-                if(scope.Trace!=null){Traced(scope,id,"left",a);Traced(scope,id,"right",b);}
+                // Both sides in the type the generator chose by widening only (C#'s numeric promotion), so neither is rounded.
+                var clr=ComparisonTypes.TryGetValue(common,out var widened)?widened:types[VisualTypes.RootId(catalog,common)];
+                var givenLeft=Read(scope,id,"left");var givenRight=Read(scope,id,"right");
+                var a=Coerce(givenLeft,clr,id+".left",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["left"],"left"));
+                var b=Coerce(givenRight,clr,id+".right",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["right"],"right"));
+                // The trace shows the values as they came, not as they were widened.
+                if(scope.Trace!=null){Traced(scope,id,"left",givenLeft);Traced(scope,id,"right",givenRight);}
                 Output(scope,id,Compare(a,b,Text(cfg,"operator","eq")));break;
-            case "constant":case "convert":if(compiledConversions.Contains(id))await custom(id,scope,this);else Output(scope,id,ConvertTo(Get("value"),Text(cfg,"type"),id+".value"));break;
+            case "constant":case "convert":if(compiledConversions.Contains(id))await custom(id,scope,this);else Output(scope,id,ConvertTo(Get("value"),Text(cfg,"type"),id+".value",pin:()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["value"],"value")));break;
             case "entity_field":Output(scope,id,EntityField(Input<EntityStateSnapshot>(scope,id,"entity"),cfg,id));break;
             case "object":case "array":Output(scope,id,ConvertTo(Get("value"),kind,id,false));break;
             case "object_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["fields"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get("field:"+p.Key))));break;
             case "array_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["items"] as JsonArray??[]).Select((_,i)=>Get("item:"+i)).ToArray()));break;
             case "last_error":Output(scope,id,scope.LastError?.Message??"","message");Output(scope,id,scope.LastErrorStep??"","step");break;
-            case "get_field":var json=Input<JsonElement>(scope,id,"value");var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}Output(scope,id,ConvertTo(json,Text(cfg,"type"),id,false));break;
+            case "get_field":var json=Input<JsonElement>(scope,id,"value");var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}Output(scope,id,ConvertTo(json,Text(cfg,"type"),id,false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(OutputSpecs(id)?["value"],"value")));break;
             // A value node from a library (or any other kind) is compiled.
             default:await custom(id,scope,this);break;
         }
@@ -416,12 +427,17 @@ public sealed class VisualRuntime
     }
     object? EntityField(EntityStateSnapshot entity,JsonNode cfg,string id) {
         object? value=Text(cfg,"field","state")=="state"?entity.State:entity.Attributes.GetProperty(Text(cfg,"attribute"));
-        return ConvertTo(value,Text(cfg,"type"),id+".entity");
+        return ConvertTo(value,Text(cfg,"type"),id+".entity",pin:()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(OutputSpecs(id)?["value"],"value"));
     }
+    /// <summary>The number types a comparison may be widened to, by the ids the generator writes (with and without <c>?</c>).</summary>
+    static readonly Dictionary<string,Type> ComparisonTypes=new[]{typeof(sbyte),typeof(byte),typeof(short),typeof(ushort),typeof(int),typeof(uint),typeof(long),typeof(ulong),typeof(float),typeof(double),typeof(decimal)}
+        .SelectMany(t=>new[]{KeyValuePair.Create("global::"+t.FullName,t),KeyValuePair.Create("global::"+t.FullName+"?",typeof(Nullable<>).MakeGenericType(t))}).ToDictionary(StringComparer.Ordinal);
     static bool Compare(object? a,object? b,string op) {
         if(op is "eq" or "ne") {var equal=a is JsonNode an&&b is JsonNode bn?JsonNode.DeepEquals(an,bn):a is JsonElement x&&b is JsonElement y?JsonElement.DeepEquals(x,y):Equals(a,b);return op=="eq"?equal:!equal;}
-        var left=Convert.ToDouble(a,CultureInfo.InvariantCulture);var right=Convert.ToDouble(b,CultureInfo.InvariantCulture);
-        return op switch{"lt"=>left<right,"le"=>left<=right,"gt"=>left>right,"ge"=>left>=right,_=>throw new InvalidOperationException("Unknown comparison")};
+        // Two values of one number type compare exactly (a long or decimal past 2^53 keeps its digits); others as doubles.
+        var order=a is IComparable same&&b!=null&&a.GetType()==b.GetType()?same.CompareTo(b)
+            :Convert.ToDouble(a,CultureInfo.InvariantCulture).CompareTo(Convert.ToDouble(b,CultureInfo.InvariantCulture));
+        return op switch{"lt"=>order<0,"le"=>order<=0,"gt"=>order>0,"ge"=>order>=0,_=>throw new InvalidOperationException("Unknown comparison")};
     }
     // An optional input contributes only when it is wired or its operand is not unset.
     bool Supplied(string id,string port,JsonNode? operand)=>data.ContainsKey((id,port)) || operand is JsonObject && Text(operand,"kind")!="unset";
@@ -476,14 +492,16 @@ public sealed class VisualRuntime
             catch(Exception error) {if(error is not OperationCanceledException || !cts.IsCancellationRequested)failures.Enqueue(error);try{await cts.CancelAsync();}catch(Exception cleanup){failures.Enqueue(cleanup);}throw;}
         }
         var tasks=branches.Select(b=>Branch(b.Start,b.Scope)).ToArray();
-        try {await Task.WhenAll(tasks);}catch {parent.CancellationToken.ThrowIfCancellationRequested();if(failures.Count==1)System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures.Single()).Throw();if(!failures.IsEmpty)throw new AggregateException("Parallel branches failed after cleanup.",failures);throw;}
+        try {await Task.WhenAll(tasks);}catch {parent.CancellationToken.ThrowIfCancellationRequested();if(failures.Count==1)System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures.Single()).Throw();if(!failures.IsEmpty){var all=new AggregateException("Parallel branches failed after cleanup.",failures);if(failures.TryPeek(out var firstFailure)&&failedSteps.TryGetValue(firstFailure,out var firstStep))failedSteps.AddOrUpdate(all,firstStep);throw all;}throw;}
         finally {registration.Dispose();try{await cancelCleanup;}catch(Exception cleanup) when(parent.CancellationToken.IsCancellationRequested){if(!external.IsCancellationRequested)stopFailures.Enqueue(cleanup);}}
     }
     async Task Loop(string id,VisualScope parent,int depth) {
         var node=nodes[id];var cfg=node["config"]!;var kind=Text(node,"kind");var max=cfg["maxIterations"]?.GetValue<int>()??1000;
         var state=new Dictionary<string,object?>();var declarations=new Dictionary<string,string>();
+        // A kept or exported value is named by the loop and the value's name ("Repeat · Total").
+        Func<string> Declared(string port)=>()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(null,port);
         foreach(var group in new[]{"carry","exports"})foreach(var d in (cfg[group] as JsonArray??[]).OfType<JsonObject>()) {
-            var port=(group=="carry"?"carry:":"export:")+Text(d,"name");var type=Text(d,"type");declarations[port]=type;state[port]=ConvertTo(Operand(parent,d["initial"],id+"."+port),type,id+"."+port,false);
+            var port=(group=="carry"?"carry:":"export:")+Text(d,"name");var type=Text(d,"type");declarations[port]=type;state[port]=ConvertTo(Operand(parent,d["initial"],id+"."+port),type,id+"."+port,false,Declared(port));
         }
         object?[]? items=null;var count=0;
         if(kind=="repeat") {var n=Input<double>(parent,id,"count");if(!double.IsFinite(n)||n<0||n!=Math.Truncate(n)||n>max)throw new InvalidOperationException($"Loop {id}: count {n} exceeds maximum {max} or is not a nonnegative integer.");count=(int)n;}
@@ -491,7 +509,7 @@ public sealed class VisualRuntime
             var source=Input(parent,id,"items");var copy=new VisualSnapshot();
             items=source switch{Array a when a.Rank==1=>a.Cast<object?>().Select(copy.Copy).ToArray(),JsonArray j=>j.Select(v=>v==null?null:(object?)JsonSerializer.SerializeToElement(v)).ToArray(),JsonElement j when j.ValueKind==JsonValueKind.Array=>j.EnumerateArray().Select(v=>(object?)v.Clone()).ToArray(),_=>throw new InvalidOperationException($"Loop {id}: items requires a CLR array or JSON array.")};
             if(items.Length>max)throw new InvalidOperationException($"Loop {id}: {items.Length} items exceed maximum {max}.");
-            for(var i=0;i<items.Length;i++)items[i]=ConvertTo(items[i],Text(cfg,"itemType"),id+".item["+i+"]",false);count=items.Length;
+            for(var i=0;i<items.Length;i++){var item=i+1;items[i]=ConvertTo(items[i],Text(cfg,"itemType"),id+".item["+i+"]",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["items"],"items")+", item "+item.ToString(CultureInfo.InvariantCulture));}count=items.Length;
         }
         VisualScope Scope(int iteration,string part) {
             var scope=parent.Clone(parent.CancellationToken);var copy=new VisualSnapshot();foreach(var pair in state.Where(p=>p.Key.StartsWith("carry:")))scope.Outputs[(id,pair.Key)]=copy.Copy(pair.Value);
@@ -507,7 +525,7 @@ public sealed class VisualRuntime
             var body=Scope(iteration,"body");if(items!=null){body.Outputs[(id,"item")]=new VisualSnapshot().Copy(items[iteration]);body.Outputs[(id,"index")]=(double)iteration;}
             await Walk(Next(id,"body"),body,depth+1);
             if(declarations.Count>0&&body.Updates==null)throw new InvalidOperationException($"Loop {id}: body did not return loop_result for declared carry/exports.");
-            if(body.Updates!=null){var updates=new Dictionary<string,object?>();var copy=new VisualSnapshot();foreach(var pair in body.Updates)updates[pair.Key]=copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false));foreach(var pair in updates)state[pair.Key]=pair.Value;}
+            if(body.Updates!=null){var updates=new Dictionary<string,object?>();var copy=new VisualSnapshot();foreach(var pair in body.Updates)updates[pair.Key]=copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false,Declared(pair.Key)));foreach(var pair in updates)state[pair.Key]=pair.Value;}
             if(kind=="until"&&await Condition(iteration))break;
         }
         foreach(var pair in state.Where(p=>p.Key.StartsWith("export:")))Output(parent,id,pair.Value,pair.Key);

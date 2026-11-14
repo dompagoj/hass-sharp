@@ -182,7 +182,10 @@ implicitly: a library `int` into a `long` parameter, a `List<string>` into an
 implements or into `object`. Any number goes into any numeric pin, except a nullable
 one into a pin that cannot hold null; a value the pin cannot hold (2.5 for an `int`)
 fails the step when it runs, naming the step and pin, and such a value typed into
-the pin is refused at once. A type that one Custom C# node declares belongs to that
+the pin is refused at once. The same check applies to a loop's carried and exported
+values, to each item a For each takes (naming the item), and to Convert. Compare
+works in a type that holds both sides exactly, never rounding one side to the
+other's type, and its trace shows the values as given. A type that one Custom C# node declares belongs to that
 node: another node's code cannot name it (declare the type in a node library to
 share it), though a wire can carry it into `object` or an interface it implements.
 
@@ -267,6 +270,10 @@ immutable multi-file workspaces. The frontend discards obsolete responses using
 model/workspace identities; the saved catalog generation differs from the draft
 source generation. A rejected save keeps the prior source and the active graphs. A
 successful save, rename or delete recompiles all graphs and advances their revisions.
+A graph that has errors with the new code is not rebuilt: the response lists it under
+`invalid`, with its diagnostics, `running`, and a `message`. If a copy of it is
+running, that copy is still running the previous version, with the previous library
+code, until the graph is fixed and saved; otherwise it is not running.
 Deleting a type or method that is still in use is rejected with dependency
 diagnostics.
 

@@ -79,9 +79,9 @@ public static class VisualGraphValidator
         /// <summary>A step reads a value node that uses an output the step could not read over a wire of its own.</summary>
         internal static string PureScope(string node, string source, string output, string step) =>
             $"{node} uses {source} · {output}, which {step} cannot use here: it is on the other side of a loop or parallel branch boundary";
-        /// <summary>A Custom C# node whose stored signature is not one the compiler writes.</summary>
         /// <summary>A library node whose method its node library no longer has (or has under another kind id).</summary>
         internal const string MissingLibraryNode = "This step is no longer in its node library; delete it and add it again from the node library";
+        /// <summary>A Custom C# node whose stored signature is not one the compiler writes.</summary>
         internal const string MalformedSignature = "The pins of this node cannot be read; open Edit code and apply it";
         /// <summary>A Custom C# node whose stored signature is not what its code gives (the backend compiles it to know).</summary>
         internal const string StaleSignature = "The pins are out of date with the code: open Edit code and apply it";

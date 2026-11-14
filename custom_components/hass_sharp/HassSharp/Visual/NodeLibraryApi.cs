@@ -178,7 +178,14 @@ public partial class HassSharpManager
             var invalidBefore = all.Where(p => !p.Preview.Valid).Select(p => p.Document.Id)
                 .Where(id => !new VisualGenerator(_diagnosticsProvider).Preview(all.First(p => p.Document.Id == id).Document.Graph, saved.Preview.Snapshot).Valid).ToHashSet(StringComparer.Ordinal);
             var previews = all.Where(p => !invalidBefore.Contains(p.Document.Id)).ToArray();
-            var invalid = all.Where(p => invalidBefore.Contains(p.Document.Id)).Select(p => new { id = p.Document.Id, diagnostics = p.Preview.Diagnostics }).ToArray();
+            // Such a graph is not rebuilt: a copy of it that is running keeps the previous version, with the previous library code.
+            var invalid = all.Where(p => invalidBefore.Contains(p.Document.Id)).Select(p =>
+            {
+                var running = _userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(p.Document.Id) && s.Active);
+                return new { id = p.Document.Id, diagnostics = p.Preview.Diagnostics, running,
+                    message = running ? "Not rebuilt, because it has errors: it is still running the previous version, with the previous library code"
+                        : "Not rebuilt, because it has errors; it is not running" };
+            }).ToArray();
             if (!candidate.Valid || previews.Any(p => !p.Preview.Valid))
                 return Error("validation", new { diagnostics = candidate.Diagnostics, automations = previews.Where(p => !p.Preview.Valid).Select(p => new { id = p.Document.Id, diagnostics = p.Preview.Diagnostics }), invalid });
             var rebuilt = previews.Select(p => new VisualDocument(1,p.Document.Id,checked(p.Document.Revision+1),p.Preview.Graph ?? p.Document.Graph,p.Preview.Source,p.Preview.SourceMap) { CatalogGeneration = generation, EmbeddedCatalog = p.Preview.EmbeddedCatalog, Enabled = p.Document.Enabled, SavedUtc = p.Document.SavedUtc }).ToArray();
