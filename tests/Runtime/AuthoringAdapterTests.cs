@@ -14,9 +14,9 @@ static class AuthoringAdapterTests
         var manager=new HassSharpManager(path); PyInterop.Log=(_,_)=>{};
         try
         {
-            await manager.Init([]);
+            await manager.Init();
             var examples=JsonNode.Parse(await File.ReadAllTextAsync("custom_components/hass_sharp/authoring_examples.json"))!;
-            var exampleDiagnostics=new DiagnosticsProvider(); exampleDiagnostics.GenerateHassEntities([]);
+            var exampleDiagnostics=new DiagnosticsProvider();
             // Every example must hold both at startup (no services) and in authoring preview/save, where the
             // service schemas are attached: the golden fixture is the normalised form of ha-service-descriptions.json.
             var services=ServiceSchemaCatalog.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,"ha-service-descriptions.json")),_=>{});

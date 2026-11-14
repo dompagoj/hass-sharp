@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-
 namespace HassSharp;
 
 public enum AutomationMode
@@ -19,79 +17,4 @@ public abstract class Automation
 
     internal readonly AsyncLocal<CancellationToken> _cancellationToken = new();
     public CancellationToken CancellationToken => _cancellationToken.Value;
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    HasEntityState? GetEntityValueTracked(string entityId, string method)
-    {
-
-
-        var trigger = UserScriptManager.CurrentTrigger.Value;
-        if (trigger != null && trigger.State.EntityId == entityId)
-        {
-            return trigger.State;
-        }
-
-        var state = PyInterop.Entity(entityId);
-        return state;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    HasEntityState? GetEntityValueUntracked(string entityId)
-    {
-        var trigger = UserScriptManager.CurrentTrigger.Value;
-        if (trigger != null && trigger.State.EntityId == entityId)
-        {
-            return trigger.State;
-        }
-
-        var state = PyInterop.Entity(entityId);
-        return state;
-    }
-
-    /// <summary>
-    ///  Use to get the entityId of the entity which triggered a rerun of this automation, will be null on first run or if the trigger is time based or otherwise non entity related
-    /// </summary>
-    /// <returns>Entity Id of the entity which triggered this automation to rerun</returns>
-    protected EntityRef<HaUnknown>? TriggeredBy()
-    {
-        if (UserScriptManager.CurrentTrigger.Value is null) return null;
-
-        return new(UserScriptManager.CurrentTrigger.Value.State);
-    }
-
-    protected EntityRef<T> Entity<T>(EntityRefWrapper<T> entityWrapper, [CallerMemberName] string? caller = null)
-        where T : EntityRefWrapper<T>
-    {
-        var raw = GetEntityValueTracked(entityWrapper.EntityId, caller!);
-
-        if (raw == null) throw new($"Entity with id {entityWrapper.EntityId} not found");
-
-        return new(raw);
-    }
-
-    protected EntityRef<HaUnknown> Entity(string entityId, [CallerMemberName] string? caller = null)
-    {
-        var raw = GetEntityValueTracked(entityId, caller!);
-        if (raw == null) throw new($"Entity with id {entityId} not found");
-        return new(raw);
-    }
-
-    protected EntityRef<T> EntityUntracked<T>(EntityRefWrapper<T> entityRefWrapper)
-        where T : EntityRefWrapper<T>
-    {
-        var raw = GetEntityValueUntracked(entityRefWrapper.EntityId);
-        if (raw == null) throw new($"Entity with id {entityRefWrapper.EntityId} not found");
-        return new(raw);
-    }
-
-    protected EntityRef<HaUnknown> EntityUntracked(string entityId)
-    {
-        var raw = GetEntityValueUntracked(entityId);
-        if (raw == null) throw new($"Entity with id {entityId} not found");
-
-        return new(raw);
-    }
-
-
-    public static HassServices Services => HassServices.Instance;
 }

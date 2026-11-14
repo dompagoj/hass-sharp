@@ -99,7 +99,6 @@ from System.Text.Json.Nodes import JsonNode
 from System import Action, Int32
 
 diagnostics = DiagnosticsProvider()
-diagnostics.GenerateHassEntities(Array[String](["sensor.test"]))
 source = '''
 public sealed class Box { public EntityStateSnapshot State {get;set;} = null!; }
 public sealed record Reading(long Value);

@@ -29,16 +29,18 @@ public partial class HassSharpManager
         HassPath.HassConfiguration = hassConfigPath;
         _compiler = new(_diagnosticsProvider);
         _history = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "runs.db"));
+        _serviceCallSchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "service_schema.json"));
         _userScriptManager = new() { History = _history };
     }
 
-    public async Task Init(string[] hassEntityIds)
+    public async Task Init()
     {
         await _visualGate.WaitAsync();
         try
         {
             if (_languageLifetime.IsCancellationRequested) _languageLifetime = new();
-            _diagnosticsProvider.GenerateHassEntities(hassEntityIds);
+            // Services appear gradually while Home Assistant starts: the persisted schema keeps node code compiling.
+            RefreshServiceCalls();
             var libraries = SavedLibraries();
             _loadErrors.Clear();
             ReportLegacyUserScripts();
@@ -139,8 +141,8 @@ public partial class HassSharpManager
         finally { _visualGate.Release(); }
     }
 
-    sealed record ServiceDescriptionsState(long Sequence, ServiceSchemaCatalog Catalog);
-    ServiceDescriptionsState _serviceDescriptions = new(0, ServiceSchemaCatalog.Empty);
+    sealed record ServiceDescriptionsState(long Sequence, ServiceSchemaCatalog Catalog, bool Started);
+    ServiceDescriptionsState _serviceDescriptions = new(0, ServiceSchemaCatalog.Empty, false);
     long _serviceDescriptionsSequence;
     internal ServiceSchemaCatalog ServiceSchemas => Volatile.Read(ref _serviceDescriptions).Catalog;
 
@@ -149,15 +151,18 @@ public partial class HassSharpManager
     /// time: before or during <see cref="Init"/>, repeatedly, or after unload. Normalises outside every
     /// lock, then swaps the immutable result in; a later push always wins over an earlier one that
     /// finishes after it. Malformed input is logged and the previous schemas stay; it never throws.
+    /// Then regenerates the typed service calls (<see cref="RefreshServiceCalls"/>).
     /// </summary>
-    public void SetServiceDescriptions(string json) => SetServiceDescriptions(json, Interlocked.Increment(ref _serviceDescriptionsSequence));
+    /// <param name="started">Whether Home Assistant has finished starting: only then may a service missing from this push
+    /// be dropped from the typed service calls.</param>
+    public void SetServiceDescriptions(string json, bool started = false) => SetServiceDescriptions(json, Interlocked.Increment(ref _serviceDescriptionsSequence), started);
 
     // The sequence is taken on entry; installing compares it, so ordering is testable deterministically.
-    internal void SetServiceDescriptions(string json, long sequence)
+    internal void SetServiceDescriptions(string json, long sequence, bool started = false)
     {
         ServiceDescriptionsState next;
         // Logging crosses into Python; the caller must not see a failure from it either.
-        try { next = new(sequence, ServiceSchemaCatalog.Parse(json)); }
+        try { next = new(sequence, ServiceSchemaCatalog.Parse(json), started); }
         catch (Exception ex)
         {
             try { Logger.Error($"Ignoring Home Assistant service descriptions, keeping the previous ones: {ex.Message}"); } catch { }
@@ -170,6 +175,27 @@ public partial class HassSharpManager
             current = seen;
         }
         try { Logger.Debug($"Received {next.Catalog.Count} Home Assistant service descriptions"); } catch { }
+        try { RefreshServiceCalls(); }
+        catch (Exception ex) { try { Logger.Error($"Cannot regenerate the typed service calls: {ex}"); } catch { } }
+    }
+
+    readonly ServiceCallSchema _serviceCallSchema;
+    readonly object _serviceCallsGate = new();
+
+    /// <summary>
+    /// Regenerates <c>context.Services</c> from the live schema united with the one it was last generated from (persisted,
+    /// so Init compiles node code before Home Assistant has registered every service); a service present in both uses the
+    /// live definition. A service that is not live is forgotten only by a push made once Home Assistant has started.
+    /// Compilations made earlier, and the automations running from them, are not touched: their calls go by service id.
+    /// </summary>
+    void RefreshServiceCalls()
+    {
+        // Read inside the lock: a refresh never applies a push older than one an earlier refresh applied.
+        lock (_serviceCallsGate)
+        {
+            var live = Volatile.Read(ref _serviceDescriptions);
+            if (_serviceCallSchema.Update(live.Catalog, live.Started) is { } services) _diagnosticsProvider.UseServiceSchema(services);
+        }
     }
 
     // An entry unload is a reload or removal unless Home Assistant is stopping; runs it cancels record which.
@@ -182,13 +208,6 @@ public partial class HassSharpManager
     /// run with that reason. Scripts stay loaded; a later unload still cleans them up.
     /// </summary>
     public void CancelRunsForShutdown() => _userScriptManager.CancelRuns(CancelReasons.Stopping);
-
-    public void GenerateHassEntities(string[] entityIds)
-    {
-        _visualGate.Wait();
-        try { _diagnosticsProvider.GenerateHassEntities(entityIds); }
-        finally { _visualGate.Release(); }
-    }
 
     public Task OnTrackedEntityChange(string entityId, HasEntityState newState, HasEntityState? oldState)
     {

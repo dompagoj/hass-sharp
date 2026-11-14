@@ -226,8 +226,9 @@ tool; see [MCP authoring](mcp-authoring.md).
 
 A Custom C# node is one public static method marked `[Node]`: its parameters are the
 node's inputs and its return value is its output. A `NodeContext` parameter gives it
-the run's cancellation, run id, trigger data, error details, entity states, service
-calls and the log. The same methods in a [node library](node-libraries.md) become
+the run's cancellation, run id, trigger data, error details, entity states, typed
+service calls (`context.Services.Light.TurnOn(...)`) and the log; see
+[states and services](node-libraries.md#states-and-services). The same methods in a [node library](node-libraries.md) become
 node kinds every automation can use. Compiler errors map back to the node and to the
 line in its code. Custom code is trusted administrator code, and preview compiles it
 without executing it. The panel shows a Custom C# node's pins and its code read-only;

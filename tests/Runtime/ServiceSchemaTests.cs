@@ -237,7 +237,7 @@ public static class ServiceSchemaTests
         try
         {
             manager.SetServiceDescriptions(descriptions);
-            await manager.Init([]);
+            await manager.Init();
             const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
             var saved = typeof(HassSharpManager).GetMethod("SavedLibraries", Private)!.Invoke(manager, null)!;
             var savedPreview = (NodeLibraryPreview)saved.GetType().GetField("Item3")!.GetValue(saved)!;
@@ -308,7 +308,7 @@ public static class ServiceSchemaTests
             var empty = await Library(manager, new { operation = "services" });
             Check(empty["servicesGeneration"]!.GetValue<string>() == ServiceSchemaCatalog.Empty.Generation && empty["items"]!.AsObject().Count == 0, "services before any push are empty");
             manager.SetServiceDescriptions(descriptions); // before Init
-            await manager.Init([]);
+            await manager.Init();
             var services = await Library(manager, new { operation = "services" });
             Check(JsonNode.DeepEquals(services, expected.Section), "services op returns the C4 section pushed before Init");
             var catalog = await Library(manager, new { operation = "catalog" });

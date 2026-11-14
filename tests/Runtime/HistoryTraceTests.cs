@@ -305,7 +305,7 @@ static class HistoryTraceTests
                 ],"edges":[{"id":"tc","source":"t","target":"c"}]}
                 """.Replace("HOLD", VisualExecutionTests.Code("c", "await Task.Delay(-1, CancellationToken);")["config"]!.ToJsonString()))!.AsObject();
                 hold = VisualExecutionTests.Derived(hold);
-                var diagnostics = new DiagnosticsProvider(); diagnostics.GenerateHassEntities([]);
+                var diagnostics = new DiagnosticsProvider();
                 new VisualStore(Path.Combine(root, ".storage", "hass_sharp", "visual"), new VisualGenerator(diagnostics)).Save("hold", hold, 0);
                 var api = new HassSharpManager(root);
                 try
@@ -314,7 +314,7 @@ static class HistoryTraceTests
                     async Task<string> Automation() => JsonNode.Parse(await api.VisualRequest("""{"operation":"read","id":"hold"}"""))!["result"]!["automationId"]!.GetValue<string>();
                     async Task<string> Cancelled(Func<Task> cancel, int count)
                     {
-                        await api.Init([]);
+                        await api.Init();
                         var automation = await Automation();
                         await Until(() => Runs(automation).Any(r => r["status"]!.GetValue<string>() == "Running"), "startup run is running");
                         await cancel();
@@ -337,7 +337,7 @@ static class HistoryTraceTests
 
             await Test("embedded catalog keeps only used built-in kinds, every library kind and their types", () =>
             {
-                var diagnostics = new DiagnosticsProvider(); diagnostics.GenerateHassEntities(["binary_sensor.motion", "light.hall"]);
+                var diagnostics = new DiagnosticsProvider();
                 var libraries = new NodeLibraryCompiler(diagnostics).Preview([new("helpers", "public static class Helpers { public sealed class Box { public int Size { get; set; } } [Node(\"Make box\")] public static Box Make(int size) => new() { Size = size }; }", 1)]);
                 Check(libraries.Valid, "library rejected: " + JsonSerializer.Serialize(libraries.Diagnostics));
                 var catalog = VisualGenerator.EmbeddedCatalog(StopGraph(), libraries.Snapshot);
@@ -364,7 +364,7 @@ static class HistoryTraceTests
                 try
                 {
                     api.SetServiceDescriptions(Fixture("ha-service-descriptions.json"));
-                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    await api.Init();
                     async Task<JsonNode> Visual(object request) => JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(request)))!;
                     var saved = await Visual(new { operation = "save", id = "front-door", graph = StopGraph(), expectedRevision = 0 });
                     Check(saved["ok"]!.GetValue<bool>() && saved["result"]!["active"]!.GetValue<bool>(), "save rejected: " + saved.ToJsonString());
@@ -431,7 +431,7 @@ static class HistoryTraceTests
                     Directory.CreateDirectory(Path.Combine(root, ".storage", "hass_sharp", "libraries"));
                     File.WriteAllText(Path.Combine(root, ".storage", "hass_sharp", "libraries", "helpers.json"),
                         JsonSerializer.Serialize(new NodeLibraryDocument(1, "helpers", "Helpers", 1, "public static class Helpers { [Node(\"Noop\")] public static void Noop() { } }"), VisualStore.Json));
-                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    await api.Init();
                     var refreshed = (await Visual(new { operation = "read", id = "front-door" }))["result"]!;
                     Check(refreshed["currentRevisionActive"]!.GetValue<bool>() && refreshed["revision"]!.GetValue<long>() == 2, "graph not active at its revision after Init: " + refreshed.ToJsonString());
                     var after = await RunAndTrace("front-door");
@@ -451,7 +451,7 @@ static class HistoryTraceTests
                 try
                 {
                     api.SetServiceDescriptions(Fixture("ha-service-descriptions.json"));
-                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    await api.Init();
                     async Task<JsonNode> Visual(object request) => JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(request)))!;
                     // The new state feeds a step: a missing value would fail the run.
                     var graph = JsonNode.Parse("""

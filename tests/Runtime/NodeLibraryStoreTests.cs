@@ -25,7 +25,7 @@ static class NodeLibraryStoreTests
         var manager = new HassSharpManager(path);
         try
         {
-            await manager.Init([]);
+            await manager.Init();
             var initial = Result(await Request(manager, new { operation = "catalog" }));
             Check(initial["catalog"]!["types"]!.AsObject().Count > 0, "empty saved catalog includes Roslyn types");
             const string source = "public static class Nodes { [Node(\"Use\")] public static int Use(int value=3) => value; }";
@@ -57,7 +57,7 @@ static class NodeLibraryStoreTests
             const string trap = "public class Unrelated : Automation { public Unrelated() { throw new Exception(\"library instantiated\"); } public override AutomationConfiguration Configure() => throw new Exception(\"library configured\"); }";
             var trapped=Result(await Request(manager,new{operation="save",id="trap",name="Trap.cs",source=trap,expectedRevision=0}));
             Check(trapped["automations"]!.AsArray().All(a=>a!["active"]!.GetValue<bool>()),"only designated visual root activates on dependent rebuild");
-            await manager.UnloadAsync(); await manager.Init([]);
+            await manager.UnloadAsync(); await manager.Init();
             Check(Result(await Visual(manager,new{operation="read",id="dependent"}))["active"]!.GetValue<bool>(),"reload ignores Automation-derived library helper");
             // A saved generation can fail activation while the prior runtime remains active.
             var failureSource = source.Replace("public static class Nodes {", "public static class Nodes { public static bool Fail => false;");
@@ -96,9 +96,10 @@ static class NodeLibraryStoreTests
             var advancedDelete=await Request(manager,new{operation="delete",id="helper",expectedRevision=1});
             Check(!advancedDelete["ok"]!.GetValue<bool>() && advancedDelete.ToJsonString().Contains("advanced") && advancedDelete.ToJsonString().Contains("code"),"advanced C# dependency mapped to graph and node");
             // Saved versus draft catalogs, stale generations and other-file unsaved snapshots.
-            var beforeEntityRefresh=Result(await Request(manager,new{operation="catalog"}))["generation"]!.GetValue<string>();
-            manager.GenerateHassEntities(["light.updated"]);
-            Check(Result(await Request(manager,new{operation="catalog"}))["generation"]!.GetValue<string>()!=beforeEntityRefresh,"entity-symbol refresh invalidates the saved workspace generation");
+            // A service push regenerates the typed service calls but is no library change: an open editor keeps its generation.
+            var beforeServicePush=Result(await Request(manager,new{operation="catalog"}))["generation"]!.GetValue<string>();
+            manager.SetServiceDescriptions("""{"light":{"turn_on":{"fields":{}}}}""");
+            Check(Result(await Request(manager,new{operation="catalog"}))["generation"]!.GetValue<string>()==beforeServicePush,"a service push changed the saved workspace generation");
             var savedCatalog=Result(await Request(manager,new{operation="catalog"}));
             var draft=Result(await Request(manager,new{operation="preview",id="shared",source,workspaceVersion="client-42",generation=savedCatalog["generation"]!.GetValue<string>(),sources=new[]{new{id="unsaved",source="public record Draft(int Value);"}}}));
             Check(!draft["saved"]!.GetValue<bool>() && draft["workspaceVersion"]!.GetValue<string>()=="client-42", "draft catalog carries client workspace identity");
@@ -112,7 +113,7 @@ static class NodeLibraryStoreTests
             await manager.UnloadAsync();
             var cancelled=await Request(manager,new{operation="completion",id="shared",source,position=0,workspaceVersion="unloaded"});
             Check(cancelled["error"]!["code"]!.GetValue<string>()=="cancelled","manager unload cancels language lifetime");
-            await manager.Init([]);
+            await manager.Init();
             await TransactionRecovery(manager,path);
             Console.WriteLine("PASS node-library persistence/revisions/dependencies/concurrency/activation identity/catalog generations/recovery");
         }
@@ -129,7 +130,7 @@ static class NodeLibraryStoreTests
             var manager = new HassSharpManager(path);
             try
             {
-                await manager.Init([]);
+                await manager.Init();
                 const string sourceA = "public static class A { public static int Value => 1; }";
                 if (change == "edit")
                     Result(await Request(manager, new { operation = "save", id = "a", name = "A.cs", source = sourceA, expectedRevision = 0 }));
@@ -142,7 +143,7 @@ static class NodeLibraryStoreTests
                 var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(source)));
                 Check(before["revision"]!.GetValue<long>() == 2 && before["currentRevisionActive"]!.GetValue<bool>(), change + ": committed revision activates before reload");
                 Check(before["activeSourceHash"]!.GetValue<string>() == hash, change + ": running artifact exactly matches saved source before reload");
-                await manager.UnloadAsync(); await manager.Init([]);
+                await manager.UnloadAsync(); await manager.Init();
                 var after = Result(await Visual(manager, new { operation = "read", id = "ordered" }));
                 Check(after["active"]!.GetValue<bool>() && after["activationError"] == null, change + ": reload successfully activates the graph");
                 Check(after["revision"]!.GetValue<long>() == 2 && after["activeRevision"]!.GetValue<long>() == 2, change + ": reload preserves saved and active revision");
@@ -180,7 +181,7 @@ static class NodeLibraryStoreTests
         Check(!File.Exists(Path.Combine(root,"authoring-undo.json")),"recovery removes journal after successful rollback");
         File.WriteAllText(Path.Combine(root,"authoring-undo.json"),JsonSerializer.Serialize(new Dictionary<string,string?>{["visual/dependent.json"]=original}));
         File.WriteAllText(graphPath,"interrupted transaction");
-        await manager.UnloadAsync(); await manager.Init([]);
+        await manager.UnloadAsync(); await manager.Init();
         Check(File.ReadAllText(graphPath)==original,"startup recovers interrupted transaction before reading graph");
     }
 

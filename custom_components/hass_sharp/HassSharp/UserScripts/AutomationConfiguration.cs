@@ -3,7 +3,10 @@ namespace HassSharp;
 public enum InvocationCause { Startup, Entity, Manual, Schedule, HomeAssistantTrigger }
 
 public sealed record AutomationAction(string Method, AutomationMode Mode = AutomationMode.Single,
-    bool Startup = false, bool Manual = true, IEntityReference[]? Entities = null, AutomationSchedule[]? Schedules = null, HomeAssistantTrigger[]? Triggers = null);
+    bool Startup = false, bool Manual = true, EntityReference[]? Entities = null, AutomationSchedule[]? Schedules = null, HomeAssistantTrigger[]? Triggers = null);
+
+/// <summary>An entity whose state changes start an action: its id and nothing else.</summary>
+public sealed record EntityReference(string EntityId);
 
 public sealed class AutomationConfiguration(params AutomationAction[] actions)
 {

@@ -183,7 +183,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             Add("public override global::HassSharp.AutomationConfiguration Configure() => new(");
             for(var i=0;i<roots.Length;i++) {
                 var root=roots[i];current=Text(root,"id");var cfg=root["config"]!;var kind=VisualNodeCatalog.TriggerType(root,snapshot);var entities="[]";var schedules="[]";var triggers="[]";
-                if(kind=="entity")entities="["+diagnostics.EntityReferenceExpression(Text(cfg,"entity"))+"]";
+                if(kind=="entity")entities=$"[new global::HassSharp.EntityReference({Q(Text(cfg,"entity"))})]";
                 if(kind=="daily") {var time=TimeOnly.ParseExact(Text(cfg,"time"),"HH:mm",CultureInfo.InvariantCulture);TimeZoneInfo.FindSystemTimeZoneById(Text(cfg,"timeZone"));schedules=$"[global::HassSharp.AutomationSchedule.Daily({Q(current)},new global::System.TimeOnly({time.Hour},{time.Minute}),{Q(Text(cfg,"timeZone"))})]";}
                 if(kind=="once") {var at=DateTimeOffset.Parse(Text(cfg,"at"),CultureInfo.InvariantCulture);schedules=$"[global::HassSharp.AutomationSchedule.Once({Q(current)},global::System.DateTimeOffset.Parse({Q(at.ToString("O"))}))]";}
                 if(kind=="ha")triggers=$"[new global::HassSharp.HomeAssistantTrigger({Q(current)},{Q(cfg["trigger"]!.ToJsonString())})]";
@@ -243,7 +243,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             }
             var source=string.Join('\n',lines)+"\n";
             var tree=CSharpSyntaxTree.ParseText(source,new CSharpParseOptions(LanguageVersion.Latest));
-            var trees=new List<SyntaxTree>{tree,CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings)};if(diagnostics.HassEntitiesSyntaxTreeNullable() is {} entityTree)trees.Add(entityTree);
+            var trees=new List<SyntaxTree>{tree,CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings),diagnostics.ServicesSyntaxTree()};
             var compilation=CSharpCompilation.Create("VisualPreview",trees,NodeLibraryCompiler.FrameworkReferences(),new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,allowUnsafe:true,nullableContextOptions:NullableContextOptions.Enable));
             foreach(var d in compilation.GetDiagnostics().Where(d=>d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning)) {
                 var location=d.Location.GetLineSpan();var line=location.StartLinePosition.Line+1;

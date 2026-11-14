@@ -79,7 +79,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
         }
         var syntaxTrees = trees.Keys.Concat(customTrees.Keys).ToList();
         syntaxTrees.Add(CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings, cancellationToken: cancellationToken));
-        if (diagnostics.HassEntitiesSyntaxTreeNullable() is { } entities) syntaxTrees.Add(entities);
+        syntaxTrees.Add(diagnostics.ServicesSyntaxTree());
         var compilation = CSharpCompilation.Create("HassSharpNodeLibrary", syntaxTrees, FrameworkReferences(),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true, nullableContextOptions: NullableContextOptions.Enable));
         void Report(Location location, string message, int severity = 3)

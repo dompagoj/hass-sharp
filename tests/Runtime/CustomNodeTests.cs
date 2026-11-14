@@ -298,7 +298,7 @@ static class CustomNodeTests
         Refused(G(N("c", "custom", new { code = "Logger.Info(\"old\");" })), "Custom C# code is now one static method marked [Node]; rewrite this node's code in that form", "c", "source");
         Refused(G(N("r", "read_entity", new { entity = Lit("entity_id", "sensor.test"), output = "reading" })), "Steps no longer expose values to C# by name; connect a wire from this step to each step that uses its value", "r", "output");
         Refused(G(N("l", "log", new { value = new { kind = "variable", name = "reading" } })), "Message reads a variable, and variables are gone; connect a wire to it instead", "l", "value");
-        var entities = G(); entities["nodes"]![0]!["config"] = new JsonObject { ["type"] = "entity", ["entity"] = "sensor.test", ["entitiesExpression"] = "[Entities.Sensor.Test]" };
+        var entities = G(); entities["nodes"]![0]!["config"] = new JsonObject { ["type"] = "entity", ["entity"] = "sensor.test", ["entitiesExpression"] = "[new EntityReference(\"sensor.test\")]" };
         Refused(entities, "Entities expression is gone; choose the entity in Entity", "t", "entitiesExpression");
         var schedules = G(); schedules["nodes"]![0]!["config"] = new JsonObject { ["type"] = "daily", ["time"] = "07:30", ["timeZone"] = "UTC", ["schedulesExpression"] = "[]" };
         Refused(schedules, "Schedules expression is gone; set the time in Time", "t", "schedulesExpression");
@@ -312,7 +312,7 @@ static class CustomNodeTests
         var manager = new HassSharpManager(path);
         try
         {
-            await manager.Init([]);
+            await manager.Init();
             async Task<JsonNode> Library(object request) => JsonNode.Parse(await manager.NodeLibraryRequest(JsonSerializer.Serialize(request)))!;
             async Task<JsonNode> Visual(object request) => JsonNode.Parse(await manager.VisualRequest(JsonSerializer.Serialize(request)))!;
             Check((await Library(new { operation = "save", id = "helpers", name = "Helpers", expectedRevision = 0, source = "public static class Helper { public static int Twice(int value) => value * 2; }" }))["ok"]!.GetValue<bool>(), "helper library saves");

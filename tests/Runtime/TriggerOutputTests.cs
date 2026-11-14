@@ -276,7 +276,7 @@ static class TriggerOutputTests
     // Every cause, through the real runner: payloads are built by the caller and reach the graph.
     static async Task Invocations()
     {
-        var diagnostics = new DiagnosticsProvider(); diagnostics.GenerateHassEntities(["sensor.test"]);
+        var diagnostics = new DiagnosticsProvider();
         var nodes = new JsonArray(); var edges = new JsonArray();
         void Root(string id, JsonObject trigger, string port, string? pointer = null)
         {

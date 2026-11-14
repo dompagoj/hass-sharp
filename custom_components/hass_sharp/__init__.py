@@ -263,7 +263,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                 logger.exception("Cannot cancel automation runs on stop")
 
         hass.data.setdefault("hass_sharp_stop", {})[entry.entry_id] = hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, on_stop)
-        await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.Init, utils.get_hass_entities(hass))
+        await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.Init)
         register_panel(hass)
         state.ready = True
         llm.register(hass, state)

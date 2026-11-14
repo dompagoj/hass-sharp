@@ -44,7 +44,9 @@ public sealed class NodeContext
     public EntityStateSnapshot State(string entityId) => VisualRuntime.ReadEntity(entityId);
 
     /// <summary>
-    /// Calls a Home Assistant service, as the Call service step does, and waits until Home Assistant has run it.
+    /// Calls a Home Assistant service by its id, as the Call service step does, and waits until Home Assistant has run
+    /// it. For a service id known only at run time; otherwise <c>Services</c> calls it with typed fields, such as
+    /// <c>context.Services.Light.TurnOn("light.kitchen", brightnessPct: 30)</c>.
     /// </summary>
     /// <param name="service">The service, as <c>domain.service</c>, such as <c>light.turn_on</c>.</param>
     /// <param name="target">An entity id (<c>"light.kitchen"</c>), or an object with <c>entity_id</c>, <c>device_id</c>,

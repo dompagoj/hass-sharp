@@ -37,7 +37,7 @@ static class VisualTests
     [RuntimeSuite("--visual", Order = 6)]
     public static async Task Run()
     {
-        var diagnostics=new DiagnosticsProvider();diagnostics.GenerateHassEntities(["binary_sensor.motion","light.hall"]);
+        var diagnostics=new DiagnosticsProvider();
         var generator=new VisualGenerator(diagnostics);var graph=Graph();var preview=generator.Preview(graph);
         Check(preview.Valid,"v4 visual compiles");Check(preview.Source==generator.Preview(graph).Source,"deterministic generated source");
         var root=Path.Combine(Path.GetTempPath(),"visual-store-"+Guid.NewGuid());var previous=HassPath.HassConfiguration;HassPath.HassConfiguration=root;
@@ -61,13 +61,13 @@ static class VisualTests
             try{store.Save("motion",loose,2);throw new Exception("graph with a step outside the flow saved");}catch(VisualValidationException e) when (e.Preview.Diagnostics.Any(d=>d.Code=="node.unreachable")){}
             Check(store.Read("motion")!.Revision==2,"refused loose write leaves old artifact");
             var contenders=await Task.WhenAll(Enumerable.Range(0,8).Select(_=>Task.Run(()=>{try{store.Save("motion",graph,2);return true;}catch(VisualConflictException){return false;}})));Check(contenders.Count(x=>x)==1,"one concurrent revision writer wins");store.Delete("motion",3);Check(store.Read("motion")==null,"delete persists");
-            var api=new HassSharpManager(root);api.GenerateHassEntities(["binary_sensor.motion","light.hall"]);var original=PyInterop.SubscribeToEntityTracking;
+            var api=new HassSharpManager(root);var original=PyInterop.SubscribeToEntityTracking;
             PyInterop.SubscribeToEntityTracking=_=>throw new InvalidOperationException("fixture registration failure");
             try{var reply=JsonNode.Parse(await api.VisualRequest(new JsonObject{["operation"]="save",["id"]="broken",["expectedRevision"]=0,["graph"]=Graph()}.ToJsonString()))!;Check(reply["ok"]!.GetValue<bool>()&&!reply["result"]!["active"]!.GetValue<bool>(),"persisted activation failure explicit");Check(Loaded(api,"broken")==null,"failed activation absent");}
             finally{PyInterop.SubscribeToEntityTracking=original;await api.UnloadAsync();}
-            await api.Init(["binary_sensor.motion","light.hall"]);Check(Loaded(api,"broken")!=null,"saved v4 artifact reloads");
+            await api.Init();Check(Loaded(api,"broken")!=null,"saved v4 artifact reloads");
             var edited=Graph();edited["name"]="Display rename";var update=JsonNode.Parse(await api.VisualRequest(new JsonObject{["operation"]="save",["id"]="broken",["expectedRevision"]=1,["graph"]=edited}.ToJsonString()))!;Check(update["result"]!["active"]!.GetValue<bool>(),"update activates");
-            var delete=JsonNode.Parse(await api.VisualRequest("""{"operation":"delete","id":"broken","expectedRevision":2}"""))!;Check(delete["ok"]!.GetValue<bool>()&&Loaded(api,"broken")==null,"delete unloads");await api.Init(["binary_sensor.motion","light.hall"]);Check(Loaded(api,"broken")==null,"delete survives reload");await api.UnloadAsync();
+            var delete=JsonNode.Parse(await api.VisualRequest("""{"operation":"delete","id":"broken","expectedRevision":2}"""))!;Check(delete["ok"]!.GetValue<bool>()&&Loaded(api,"broken")==null,"delete unloads");await api.Init();Check(Loaded(api,"broken")==null,"delete survives reload");await api.UnloadAsync();
         }finally{HassPath.HassConfiguration=previous;Directory.Delete(root,true);}
         Console.WriteLine("PASS v4 visual persistence, revision conflicts, activation failures, reload and delete");
     }

@@ -129,7 +129,7 @@ public static class ServiceNodeTests
             var author = new HassSharpManager(path);
             try
             {
-                await author.Init([]);
+                await author.Init();
                 var saved = await Visual(author, new { operation = "save", id = "stale", graph, expectedRevision = 0 });
                 Check(saved["ok"]!.GetValue<bool>() && saved["result"]!["active"]!.GetValue<bool>(), "graph saves before services are pushed: " + saved.ToJsonString());
             }
@@ -139,7 +139,7 @@ public static class ServiceNodeTests
             try
             {
                 manager.SetServiceDescriptions(Fixture("ha-service-descriptions.json"));
-                await manager.Init([]);
+                await manager.Init();
                 Check(Active(await Visual(manager, new { operation = "read", id = "stale" })), "Init loads and activates the stored graph although light.turn_on has no field glow");
 
                 var preview = await Visual(manager, new { operation = "preview", graph });

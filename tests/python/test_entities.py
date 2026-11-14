@@ -1,4 +1,4 @@
-"""Entity discovery and generated-symbol refresh without a running HA instance."""
+"""Entity discovery for the editor's entity picker without a running HA instance."""
 import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -126,16 +126,11 @@ class Entities(unittest.IsolatedAsyncioTestCase):
             else:
                 connection.send_result.assert_called_once_with(7, env['get_hass_entity_registry'](hass))
 
-    async def test_refresh_passes_current_union_to_generator_and_preserves_response(self):
-        env, hass = load_utils()
-        generated = []
-        async def execute(fn, *args):
-            return fn(*args)
-        hass.async_add_executor_job = execute
-        route = load_route('reload_entities', {'utils': NS(get_hass_entities=env['get_hass_entities']),
-                            'hass_sharp': NS(GenerateHassEntities=lambda ids: generated.append(set(ids))), 'logger': Mock()})
-        connection = NS(user=NS(is_admin=True), send_result=Mock(), send_error=Mock())
-        await route(hass, connection, {'id': 8})
-        self.assertEqual(generated, [{'climate.living', 'input_select.scene', 'light.hall', 'select.mode',
-                                      'sensor.live', 'sensor.offline', 'sensor.unnamed'}])
-        connection.send_result.assert_called_once_with(8, {'success': True})
+    def test_entity_refresh_route_is_gone(self):
+        # The typed entities it regenerated are removed; get_entities stays for the entity picker.
+        source = Path('custom_components/hass_sharp/websocket.py').read_text()
+        self.assertNotIn('reload_entities', source)
+        self.assertNotIn('GenerateHassEntities', source)
+        self.assertIn('"hass_sharp/get_entities"', source)
+        init = Path('custom_components/hass_sharp/__init__.py').read_text()
+        self.assertIn('async_run_dotnet_task(hass, hass_sharp.Init)', init)

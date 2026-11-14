@@ -120,11 +120,10 @@ static class AutomationHomeTests
             await Test("off withholds entity, schedule and startup runs, Run now still works, on again needs no recompile, off cancels runs; survives restart and save", async () =>
             {
                 var root = Path.Combine(folder, "switch"); HassPath.HassConfiguration = root;
-                string[] entities = ["binary_sensor.door"];
                 var api = new HassSharpManager(root);
                 try
                 {
-                    await api.Init(entities);
+                    await api.Init();
                     async Task<JsonNode> Visual(object request) => JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(request)))!;
                     var saved = await Visual(new { operation = "save", id = "door", graph = Switchable(), expectedRevision = 0 });
                     Check(saved["result"]?["active"]?.GetValue<bool>() == true && saved["result"]!["document"]!["enabled"]!.GetValue<bool>(), "a new automation is not on and active: " + saved.ToJsonString());
@@ -149,7 +148,7 @@ static class AutomationHomeTests
                     Check(manual["ok"]!.GetValue<bool>(), "Run now refused while off: " + manual.ToJsonString());
                     await Until(() => Count("Manual", "Succeeded") == 1, "Run now while off");
 
-                    await api.Init(entities);
+                    await api.Init();
                     await Task.Delay(100);
                     read = (await Visual(new { operation = "read", id = "door" }))["result"]!;
                     Check(!read["enabled"]!.GetValue<bool>() && Count("Startup") == 1, "off did not survive a restart, or the startup run ran while off");
@@ -194,11 +193,10 @@ static class AutomationHomeTests
             await Test("a new automation saved off (a duplicate) never runs its startup or triggers, Run now works; enabled is refused for a saved one", async () =>
             {
                 var root = Path.Combine(folder, "copy"); HassPath.HassConfiguration = root;
-                string[] entities = ["binary_sensor.door"];
                 var api = new HassSharpManager(root);
                 try
                 {
-                    await api.Init(entities);
+                    await api.Init();
                     async Task<JsonNode> Visual(object request) => JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(request)))!;
                     int before; lock (schedules) before = schedules.Count;
                     var saved = await Visual(new { operation = "save", id = "copy", graph = Switchable("Door (copy)"), expectedRevision = 0, enabled = false });
@@ -224,7 +222,7 @@ static class AutomationHomeTests
 
             await Test("a document without enabled is on; turning it off keeps its revision, source and save time", () =>
             {
-                var diagnostics = new DiagnosticsProvider(); diagnostics.GenerateHassEntities(["binary_sensor.motion", "light.hall"]);
+                var diagnostics = new DiagnosticsProvider();
                 var dir = Path.Combine(folder, "default");
                 var store = new VisualStore(dir, new VisualGenerator(diagnostics));
                 var saved = store.Save("hall", VisualTests.Graph(), 0);
@@ -248,17 +246,17 @@ static class AutomationHomeTests
             await Test("home list: outlines without graphs, recent runs for several automations from one store call, newest last, capped at 10; runs today; a not-active revision", async () =>
             {
                 var root = Path.Combine(folder, "home"); HassPath.HassConfiguration = root;
-                var diagnostics = new DiagnosticsProvider(); diagnostics.GenerateHassEntities(["binary_sensor.motion", "light.hall"]);
+                var diagnostics = new DiagnosticsProvider();
                 var dir = Path.Combine(root, ".storage", "hass_sharp", "visual");
                 var store = new VisualStore(dir, new VisualGenerator(diagnostics));
                 foreach (var id in new[] { "alpha", "beta", "gamma", "broken" }) store.Save(id, VisualTests.Graph(), 0);
                 var broken = store.Read("broken")!;
-                broken.Graph["nodes"]![0]!["config"]!["entity"] = "sensor.removed";
+                broken.Graph["nodes"]![0]!["config"]!["entity"] = "";
                 File.WriteAllText(Path.Combine(dir, "broken.json"), JsonSerializer.Serialize(broken, VisualStore.Json));
                 var api = new HassSharpManager(root);
                 try
                 {
-                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    await api.Init();
                     async Task<JsonObject[]> Home(object request) => JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(request)))!["result"]!.AsArray().Select(x => x!.AsObject()).ToArray();
                     var ids = (await Home(new { operation = "list" })).ToDictionary(d => d["id"]!.GetValue<string>(), d => d["automationId"]!.GetValue<string>());
                     var history = History(api);
@@ -292,7 +290,7 @@ static class AutomationHomeTests
                     var g = items["gamma"];
                     Check(g["recentRuns"]!.AsArray().Count == 0 && g["runsToday"]!.GetValue<int>() == 0 && g["lastRunUtc"] == null, "an automation that never ran: " + g.ToJsonString());
                     var b = items["broken"];
-                    Check(!b["currentRevisionActive"]!.GetValue<bool>() && b["problemCount"]!.GetValue<int>() == 1 && b["activationError"]!.GetValue<string>().Contains("Unknown entity"), "not active: " + b.ToJsonString());
+                    Check(!b["currentRevisionActive"]!.GetValue<bool>() && b["problemCount"]!.GetValue<int>() == 1 && b["activationError"]!.GetValue<string>().Contains("t: Entity is required"), "not active: " + b.ToJsonString());
                     var outline = a["outline"]!;
                     Check(outline["name"]!.GetValue<string>() == "Motion" && outline["nodes"]!.AsArray().Count == 3 && outline["edges"]!.ToJsonString() == "[[0,1],[1,2]]", "outline: " + outline.ToJsonString());
                     Check(outline["nodes"]![0]!["id"]!.GetValue<string>() == "t" && outline["nodes"]![0]!["config"]!["entity"]!.GetValue<string>() == "binary_sensor.motion"

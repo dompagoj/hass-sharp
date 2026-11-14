@@ -29,7 +29,7 @@ def load_services(descriptions=None, translations=None):
         timer = NS(delay=delay, action=action, cancel=Mock())
         timers.append(timer)
         return timer.cancel
-    env = {'EVENT_SERVICE_REGISTERED': EVENTS[0], 'EVENT_SERVICE_REMOVED': EVENTS[1],
+    env = {'CoreState': NS(running='running', starting='starting'), 'EVENT_SERVICE_REGISTERED': EVENTS[0], 'EVENT_SERVICE_REMOVED': EVENTS[1],
            'EVENT_HOMEASSISTANT_STARTED': EVENTS[2], 'callback': lambda f: f, 'JSONEncoder': Encoder,
            'async_call_later': call_later, 'logger': Mock(),
            'async_get_all_descriptions': AsyncMock(return_value=descriptions or {}),
@@ -43,7 +43,7 @@ def load_services(descriptions=None, translations=None):
     async def executor(fn, *args):
         executed.append(fn)
         return fn(*args)
-    hass = NS(bus=NS(async_listen=listen), async_add_executor_job=executor, config=NS(language='en'))
+    hass = NS(bus=NS(async_listen=listen), async_add_executor_job=executor, config=NS(language='en'), state='starting')
     return env, hass, listeners, timers, executed
 
 
@@ -62,6 +62,16 @@ class ServiceDescriptions(unittest.IsolatedAsyncioTestCase):
             'brightness_pct': {'selector': {'number': {'min': 0, 'max': 100}}}}}}})
         self.assertEqual(executed, [manager.SetServiceDescriptions])
         env['async_get_translations'].assert_awaited_once_with(hass, 'en', 'services', ['light'])
+
+    async def test_push_says_whether_home_assistant_has_started(self):
+        # Only a push once Home Assistant runs may drop a service from the typed calls of node code.
+        env, hass, _, _, _ = load_services({'light': {}})
+        manager = NS(SetServiceDescriptions=Mock())
+        await env['async_push'](hass, manager)
+        hass.state = 'running'
+        await env['async_push'](hass, manager)
+        self.assertEqual([c.args for c in manager.SetServiceDescriptions.call_args_list],
+                         [('{"light": {}}', False), ('{"light": {}}', True)])
 
     async def test_push_adds_translated_names_without_changing_cached_descriptions(self):
         # Built-in services keep their names in translations only; HA's own UI shows those.
@@ -128,7 +138,7 @@ class ServiceDescriptions(unittest.IsolatedAsyncioTestCase):
         timers[1].cancel.assert_called_once()
         timers[2].cancel.assert_not_called()
         await timers[2].action(None)
-        manager.SetServiceDescriptions.assert_called_once_with('{"light": {}}')
+        manager.SetServiceDescriptions.assert_called_once_with('{"light": {}}', False)
         listeners[EVENTS[2]](NS(data={}))
         unsubscribe()
         self.assertEqual(listeners, {})

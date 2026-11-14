@@ -13,7 +13,6 @@ public static class VisualTriggerReviewTests
         try
         {
             var diagnostics = new DiagnosticsProvider();
-            diagnostics.GenerateHassEntities(["binary_sensor.motion"]);
             async Task<AutomationAction> Configure(JsonObject config)
             {
                 var graph = new JsonObject { ["version"] = 5, ["name"] = "Trigger review", ["nodes"] = new JsonArray(new JsonObject { ["id"] = "t", ["kind"] = "trigger", ["config"] = config }), ["edges"] = new JsonArray() };

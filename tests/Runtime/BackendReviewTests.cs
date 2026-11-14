@@ -22,7 +22,7 @@ static class BackendReviewTests
         }
         try
         {
-            var diagnostics = new DiagnosticsProvider(); diagnostics.GenerateHassEntities(["binary_sensor.motion", "light.hall"]);
+            var diagnostics = new DiagnosticsProvider();
             var generator = new VisualGenerator(diagnostics);
             var compiler = new CodeCompiler(diagnostics);
             // Custom C# code sits in its own namespace: names the generated automation uses, or that another node's code
@@ -63,7 +63,7 @@ static class BackendReviewTests
                     PyInterop.Log = (level,message) => { oldLog(level,message); if (message == "binding-" + symbol + "-Startup") completed.TrySetResult(); };
                     var api = new HassSharpManager(root);
                     try {
-                        await api.Init(["binary_sensor.motion", "light.hall"]);
+                        await api.Init();
                         Check(VisualTests.Loaded(api, id) != null, "saved v5 graph failed activation");
                         await completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
                         var stored = JsonNode.Parse(File.ReadAllText(path))!;
@@ -83,7 +83,7 @@ static class BackendReviewTests
                 await Runs(VisualExecutionTests.Derived(graph), "v5-interpolation-binding", "interpolation:True 7");
             });
             await Test("delete inactive visual forgets identity", async () => {
-                var api = new HassSharpManager(root); api.GenerateHassEntities(["binary_sensor.motion", "light.hall"]);
+                var api = new HassSharpManager(root);
                 var store = new VisualStore(Path.Combine(root,".storage","hass_sharp","visual"), generator);
                 store.Save("orphan",VisualTests.Graph(),0);
                 async Task<string> Identity() => JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"orphan\"}"))!["result"]!["automationId"]!.GetValue<string>();
@@ -95,7 +95,7 @@ static class BackendReviewTests
                 store.Delete("orphan",1); api.Unload();
             });
             await Test("run now of an unknown or unloaded automation is refused as not active", async () => {
-                var api = new HassSharpManager(root); api.GenerateHassEntities(["binary_sensor.motion", "light.hall"]);
+                var api = new HassSharpManager(root);
                 var store = new VisualStore(Path.Combine(root,".storage","hass_sharp","visual"), generator);
                 store.Save("unloaded", VisualTests.Graph(), 0);
                 try {
@@ -141,11 +141,11 @@ static class BackendReviewTests
                 var dir = Path.Combine(root,".storage","hass_sharp","visual");
                 var store = new VisualStore(dir,generator);
                 var doc = store.Save("status", VisualTests.Graph(),0);
-                doc.Graph["nodes"]![0]!["config"]!["entity"] = "sensor.removed";
+                doc.Graph["nodes"]![0]!["config"]!["entity"] = ""; // refused when the saved graph is checked at startup
                 File.WriteAllText(Path.Combine(dir,"status.json"),JsonSerializer.Serialize(doc,VisualStore.Json));
                 var api = new HassSharpManager(root);
                 try {
-                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    await api.Init();
                     foreach(var operation in new[] { "read", "list" }) {
                         var result = JsonNode.Parse(await api.VisualRequest(new JsonObject { ["operation"] = operation, ["id"] = "status" }.ToJsonString()))!["result"]!;
                         var item = operation == "read" ? result : result.AsArray().Single(x => x!["id"]!.GetValue<string>() == "status")!;
@@ -173,7 +173,7 @@ static class BackendReviewTests
                 var manager = new UserScriptManager();
                 var bad = await compiler.CompileSingleFile(Path.Combine(root,"bad.cs"), """
                 public class Bad : Automation {
-                  public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Run), Entities: [new EntityRefWrapper<HaSensor>("sensor.partial")], Schedules: [AutomationSchedule.Once("bad", DateTimeOffset.UtcNow)]));
+                  public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Run), Entities: [new EntityReference("sensor.partial")], Schedules: [AutomationSchedule.Once("bad", DateTimeOffset.UtcNow)]));
                   public Task Run() => Task.CompletedTask;
                 }
                 """);
@@ -209,10 +209,10 @@ static class BackendReviewTests
                 File.WriteAllText(path, JsonSerializer.Serialize(v4, VisualStore.Json));
                 var api = new HassSharpManager(root);
                 try {
-                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    await api.Init();
                     Check(VisualTests.Loaded(api, "v4") != null, "v4 generated string source failed to activate");
                     var running = VisualTests.Loaded(api, "v4")!.CompiledScript.SourceCode;
-                    Check(running.Contains("Entities:[Entities.BinarySensor.Motion]"), "runtime did not compile regenerated source");
+                    Check(running.Contains("Entities:[new global::HassSharp.EntityReference(\"binary_sensor.motion\")]"), "runtime did not compile regenerated source");
                     var read = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"v4\"}"))!["result"]!;
                     Check(read["currentRevisionActive"]!.GetValue<bool>(), "regenerated revision is not current after startup");
                     Check(read["revision"]!.GetValue<long>() == saved.Revision, "startup changed the saved revision");
@@ -222,11 +222,19 @@ static class BackendReviewTests
                     var run = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"run\",\"id\":\"v4\",\"triggerId\":\"t\"}"))!;
                     Check(run["ok"]!.GetValue<bool>() && run["result"]?["runId"] != null, "manual dispatch of refreshed revision rejected: " + run.ToJsonString());
                     var refreshed = File.ReadAllText(path);
-                    await api.Init(["light.hall"]);
-                    Check(VisualTests.Loaded(api, "v4") == null, "missing trigger still active");
-                    var missing = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"v4\"}"))!["result"]!;
-                    Check(missing["activationError"]!.GetValue<string>().Contains("t: Unknown entity"), "missing entity omitted actionable graph node");
-                    Check(File.ReadAllText(path) == refreshed, "failed startup compile rewrote the saved document");
+                    // Every library is part of every automation: a library that no longer compiles stops it at startup.
+                    var libraries = Path.Combine(root, ".storage", "hass_sharp", "libraries"); Directory.CreateDirectory(libraries);
+                    var brokenLibrary = Path.Combine(libraries, "broken.json");
+                    File.WriteAllText(brokenLibrary, JsonSerializer.Serialize(new NodeLibraryDocument(1, "broken", "Broken.cs", 1, "this is not C#"), VisualStore.Json));
+                    try
+                    {
+                        await api.Init();
+                        Check(VisualTests.Loaded(api, "v4") == null, "an automation whose compile fails is still active");
+                        var missing = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"v4\"}"))!["result"]!;
+                        Check(missing["activationError"]!.GetValue<string>().Contains("$library:broken:"), "the startup failure does not say where it is: " + missing["activationError"]);
+                        Check(File.ReadAllText(path) == refreshed, "failed startup compile rewrote the saved document");
+                    }
+                    finally { File.Delete(brokenLibrary); }
                 } finally { api.Unload(); store.Delete("v4", saved.Revision); }
             });
             await Test("visual that fails to compile on startup is left untouched", async () => {
@@ -239,7 +247,7 @@ static class BackendReviewTests
                 var persisted = File.ReadAllText(path);
                 var api = new HassSharpManager(root);
                 try {
-                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    await api.Init();
                     Check(VisualTests.Loaded(api, "uncompiled") == null, "invalid saved graph activated");
                     Check(File.ReadAllText(path) == persisted, "startup rewrote a document that failed to compile");
                 } finally { api.Unload(); store.Delete("uncompiled", saved.Revision); }
@@ -263,12 +271,12 @@ static class BackendReviewTests
                 var dir = Path.Combine(root,".storage","hass_sharp","visual");
                 var store = new VisualStore(dir, generator);
                 var doc = store.Save("invalid", VisualTests.Graph(),0);
-                doc.Graph["nodes"]![0]!["config"]!["entity"] = "sensor.removed";
+                doc.Graph["nodes"]![0]!["config"]!["entity"] = ""; // refused when the saved graph is checked at startup
                 File.WriteAllText(Path.Combine(dir,"invalid.json"), JsonSerializer.Serialize(doc, VisualStore.Json));
                 store.Save("healthy", VisualTests.Graph(),0);
                 var api = new HassSharpManager(root);
                 try {
-                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    await api.Init();
                     Check(VisualTests.Loaded(api, "healthy") != null, "healthy runtime missing");
                     Check(VisualTests.Loaded(api, "invalid") == null, "invalid saved graph activated");
                     Check(!Directory.Exists(Path.Combine(HassPath.HassSharpIntegration, "user_scripts")), "startup created a user_scripts directory");
@@ -291,7 +299,7 @@ static class BackendReviewTests
                 var api = new HassSharpManager(root);
                 try {
                     lock (logs) logs.Clear();
-                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    await api.Init();
                     await Task.Delay(100); // A startup action, had one loaded, would have logged by now.
                     string[] seen; lock (logs) seen = logs.ToArray();
                     Check(seen.Count(m => m == notice) == 1, "notice not logged exactly once: " + string.Join(" | ", seen));
@@ -305,7 +313,7 @@ static class BackendReviewTests
                 var quiet = new HassSharpManager(root);
                 try {
                     lock (logs) logs.Clear();
-                    await quiet.Init(["binary_sensor.motion", "light.hall"]);
+                    await quiet.Init();
                     lock (logs) Check(!logs.Contains(notice), "notice logged without a .cs file");
                 } finally { quiet.Unload(); }
             });

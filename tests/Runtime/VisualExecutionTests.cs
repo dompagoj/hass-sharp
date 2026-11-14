@@ -40,7 +40,6 @@ static class VisualExecutionTests
     internal static readonly DiagnosticsProvider Diagnostics = new();
     internal static async Task Execute(JsonObject graph, VisualCatalogSnapshot? snapshot=null, bool cancel=false)
     {
-        Diagnostics.GenerateHassEntities(["sensor.test"]);
         graph=Derived(graph,snapshot);
         var preview = snapshot == null ? new VisualGenerator(Diagnostics).Preview(graph) : new VisualGenerator(Diagnostics).Preview(graph,snapshot);
         Check(preview.Valid, "v4 compiles: "+JsonSerializer.Serialize(preview.Diagnostics));

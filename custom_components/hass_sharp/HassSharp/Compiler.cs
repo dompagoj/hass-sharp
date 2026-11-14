@@ -15,7 +15,7 @@ public class CodeCompiler(
     /// <param name="path">The script's identity; nothing is read from or written to it.</param>
     public Task<CompiledUserScript> CompileSingleFile(string path, string source)
     {
-        var assemblyBytes = CompileSingleFileToBytes(source, path, _diagnosticsProvider.HassEntitiesSyntaxTree());
+        var assemblyBytes = CompileSingleFileToBytes(source, path, _diagnosticsProvider.ServicesSyntaxTree());
 
         return Task.FromResult(new CompiledUserScript
         {
@@ -35,7 +35,7 @@ public class CodeCompiler(
         catch { loadContext.Unload(); throw; }
     }
 
-    byte[] CompileSingleFileToBytes(string source, string path, SyntaxTree entities)
+    byte[] CompileSingleFileToBytes(string source, string path, SyntaxTree services)
     {
         var tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Latest), path: path);
 
@@ -43,7 +43,7 @@ public class CodeCompiler(
         [
             tree,
             CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings),
-            entities,
+            services,
         ];
 
         var references = NodeLibraryCompiler.FrameworkReferences();

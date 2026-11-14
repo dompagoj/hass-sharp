@@ -124,7 +124,7 @@ public class Probe : Automation
     public static System.Threading.Channels.Channel<InvocationCause> Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
     public static ConcurrentBag<InvocationCause> Completed = new();
     public static TaskCompletionSource Release = new();
-    public override AutomationConfiguration Configure() { Configuring?.Invoke(); return new(new AutomationAction(nameof(Run), Mode, true, true, [new EntityRefWrapper<HaSensor>("sensor.test"), new EntityRefWrapper<HaSensor>("sensor.test")], Schedules, Triggers)); }
+    public override AutomationConfiguration Configure() { Configuring?.Invoke(); return new(new AutomationAction(nameof(Run), Mode, true, true, [new EntityReference("sensor.test"), new EntityReference("sensor.test")], Schedules, Triggers)); }
     public async Task Run()
     {
         var cause = Cause;
@@ -133,8 +133,8 @@ public class Probe : Automation
         if (DelayedExit is { } exit) await exit.Task;
         await Release.Task.WaitAsync(CancellationToken);
         await Task.Delay(10, CancellationToken);
-        if (Entity("sensor.test").Refresh().RawState != "fresh") throw new Exception("refresh failed");
-        if (int.TryParse(TriggeredBy()?.RawState, out var number)) Order.Enqueue(number);
+        if (PyInterop.Entity("sensor.test")?.State != "fresh") throw new Exception("refresh failed");
+        if (int.TryParse(UserScriptManager.CurrentTrigger.Value?.State.State, out var number)) Order.Enqueue(number);
         Completed.Add(cause);
     }
 }

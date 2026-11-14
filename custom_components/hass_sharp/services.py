@@ -2,7 +2,7 @@
 import json
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_SERVICE_REGISTERED, EVENT_SERVICE_REMOVED
-from homeassistant.core import callback
+from homeassistant.core import CoreState, callback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.json import JSONEncoder
 from homeassistant.helpers.service import async_get_all_descriptions
@@ -14,12 +14,17 @@ DEBOUNCE_SECONDS = 2
 
 
 async def async_push(hass, manager):
-    """Send `{domain: {service: description}}` as JSON; failures are logged, never raised."""
+    """Send `{domain: {service: description}}` as JSON; failures are logged, never raised.
+
+    Also says whether Home Assistant has finished starting: only then may the typed service calls of
+    node code drop a service this push lacks (services appear gradually while it starts).
+    """
     try:
+        started = hass.state is CoreState.running
         descriptions = await async_get_all_descriptions(hass)
         translations = await async_translations(hass, list(descriptions))
         payload = json.dumps(translated(descriptions, translations), cls=JSONEncoder)
-        await hass.async_add_executor_job(manager.SetServiceDescriptions, payload)
+        await hass.async_add_executor_job(manager.SetServiceDescriptions, payload, started)
     except Exception:
         logger.exception("Service description push failed")
 

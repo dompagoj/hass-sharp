@@ -129,25 +129,3 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
         hass_outer, "hass_sharp/get_entities", websocket_get_entities,
         vol.Schema({vol.Required("id"): int, vol.Required("type"): "hass_sharp/get_entities"})
     )
-
-    @websocket_api.decorators.async_response
-    async def websocket_reload_entities(hass: HomeAssistant, connection: websocket_api.connection.ActiveConnection, msg):
-        if not connection.user.is_admin:
-            connection.send_error(msg["id"], "unauthorized", "Administrator required")
-            return
-        try:
-            await hass.async_add_executor_job(hass_sharp.GenerateHassEntities, utils.get_hass_entities(hass))
-            connection.send_result(msg["id"], {"success": True})
-        except Exception:
-            logger.exception("Editor request failed")
-            connection.send_error(msg["id"], "editor_failed", "Editor request failed; check integration logs")
-
-    websocket_api.async_register_command(
-          hass_outer,
-          "hass_sharp/reload_entities",
-          websocket_reload_entities,
-          vol.Schema({
-              vol.Required("id"): vol.Coerce(int),
-              vol.Required("type"): "hass_sharp/reload_entities",
-          }, extra=vol.ALLOW_EXTRA)
-    )

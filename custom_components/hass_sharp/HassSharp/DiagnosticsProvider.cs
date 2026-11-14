@@ -7,13 +7,12 @@ namespace HassSharp;
 
 public class DiagnosticsProvider
 {
-    readonly EntityGenerator _entityGenerator = new();
     readonly AdhocWorkspace _workspace;
     readonly ProjectId _baseProjectId;
 
     readonly object _gate = new();
-    DocumentId? _entitiesDocumentId;
-    SyntaxTree? _entitiesSyntaxTree;
+    DocumentId? _servicesDocumentId;
+    SyntaxTree _servicesSyntaxTree = null!;
 
     public const string GlobalUsings = """
                                        global using System;
@@ -47,52 +46,46 @@ public class DiagnosticsProvider
         var references = ProjectReferences.GetDefaultReferences();
         _workspace.TryApplyChanges(
             _workspace.CurrentSolution.WithProjectMetadataReferences(_baseProjectId, references));
+        UseServiceSchema([]);
     }
 
-    public SyntaxTree HassEntitiesSyntaxTree()
+    /// <summary>
+    /// The typed service calls (<c>context.Services</c>) that every compilation and the language services include;
+    /// until a schema is given, there are no domains.
+    /// </summary>
+    public SyntaxTree ServicesSyntaxTree()
     {
-        lock (_gate)
-            return _entitiesSyntaxTree ?? throw new InvalidOperationException("Entities Tree not initialized, call generate");
+        lock (_gate) return _servicesSyntaxTree;
     }
 
-    public SyntaxTree? HassEntitiesSyntaxTreeNullable()
-    {
-        lock (_gate) return _entitiesSyntaxTree;
-    }
+    /// <summary>
+    /// Replaces the typed service calls with those of <paramref name="services"/> (normalised, keyed by
+    /// <c>domain.service</c>). Compilations started later and the next language request see them; nothing compiled
+    /// earlier changes.
+    /// </summary>
+    public void UseServiceSchema(ServiceSchemaCatalog services) =>
+        UseServiceSchema(services.Items.Select(p => KeyValuePair.Create(p.Key, (System.Text.Json.Nodes.JsonObject)p.Value!)));
 
-    public string EntityReferenceExpression(string entityId)
+    internal void UseServiceSchema(IEnumerable<KeyValuePair<string, System.Text.Json.Nodes.JsonObject>> services)
     {
-        lock (_gate)
-        {
-            var names = EntityGenerator.ResolveNames(_entityIds);
-            if (!names.TryGetValue(entityId, out var name))
-                throw new ArgumentException($"Unknown entity: {entityId}");
-            return $"Entities.{name.Domain}.{name.Property}";
-        }
-    }
-
-    string[] _entityIds = [];
-
-    public void GenerateHassEntities(string[] entityIds)
-    {
+        var source = ServiceGenerator.Generate(services);
         lock (_gate)
         {
-            var ids = entityIds.ToArray();
-            var tree = _entityGenerator.GenerateEntities(ids);
+            if (_servicesSyntaxTree?.ToString() == source) return;
+            var tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Latest), path: "Services.g.cs");
             var solution = _workspace.CurrentSolution;
-            if (_entitiesDocumentId is null)
+            if (_servicesDocumentId is null)
             {
-                _entitiesDocumentId = DocumentId.CreateNewId(_baseProjectId);
-                solution = solution.AddDocument(_entitiesDocumentId, "Entities.g.cs", tree.GetText());
+                _servicesDocumentId = DocumentId.CreateNewId(_baseProjectId);
+                solution = solution.AddDocument(_servicesDocumentId, "Services.g.cs", tree.GetText());
             }
             else
             {
-                solution = solution.WithDocumentText(_entitiesDocumentId, tree.GetText());
+                solution = solution.WithDocumentText(_servicesDocumentId, tree.GetText());
             }
             if (!_workspace.TryApplyChanges(solution))
-                throw new InvalidOperationException("Could not replace generated entities document.");
-            _entityIds = ids;
-            _entitiesSyntaxTree = tree;
+                throw new InvalidOperationException("Could not replace the generated services document.");
+            _servicesSyntaxTree = tree;
         }
     }
 

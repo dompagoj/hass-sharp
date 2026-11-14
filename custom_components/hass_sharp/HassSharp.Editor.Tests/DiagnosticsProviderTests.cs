@@ -6,52 +6,42 @@ namespace HassSharp.Editor.Tests;
 
 public class DiagnosticsProviderTests
 {
-    [Fact]
-    public void Generated_names_are_valid_unique_and_deterministic()
+    static string Fixture(string name)
     {
-        var provider = new DiagnosticsProvider();
-        string[] ids = ["light.a_b", "light.a-b", "light.a b", "light.light", "entities.foo", "light.123", "light.!", "light.a_b"];
-        provider.GenerateHassEntities(ids);
-        var source = provider.HassEntitiesSyntaxTree().ToString();
-        var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create("Names", [provider.HassEntitiesSyntaxTree()], ((Microsoft.CodeAnalysis.Project)Workspace(provider).CurrentSolution.Projects.Single()).MetadataReferences, new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-        Assert.DoesNotContain(compilation.GetDiagnostics(TestContext.Current.CancellationToken), d => d.Severity == DiagnosticSeverity.Error);
-        provider.GenerateHassEntities(ids.Reverse().ToArray());
-        Assert.Equal(source, provider.HassEntitiesSyntaxTree().ToString());
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory != null; directory = directory.Parent)
+            if (File.Exists(Path.Combine(directory.FullName, "tests", "fixtures", name))) return File.ReadAllText(Path.Combine(directory.FullName, "tests", "fixtures", name));
+        throw new FileNotFoundException(name);
     }
 
     [Fact]
-    public void Entity_names_keep_ownership_across_replacement_removal_and_restart()
+    public void Generated_service_calls_compile_without_diagnostics_and_are_deterministic()
     {
         var provider = new DiagnosticsProvider();
-        foreach (var (canonical, alias) in new[] { ("light.a_b", "light.a-b"), ("custom_domain.one", "custom-domain.one"), ("sun.sun", "sun.sun_entity") })
-        {
-            provider.GenerateHassEntities([canonical]);
-            var expression = provider.EntityReferenceExpression(canonical);
-            provider.GenerateHassEntities([alias]);
-            Assert.NotEqual(expression, provider.EntityReferenceExpression(alias));
-            Assert.False(Compiles(provider, $"class Test {{ object x = {expression}; }}"));
-            var aliasExpression = provider.EntityReferenceExpression(alias);
-            Assert.True(Compiles(provider, $"class Test {{ object x = {aliasExpression}; }}"));
-            provider.GenerateHassEntities([canonical, alias]);
-            Assert.Equal(expression, provider.EntityReferenceExpression(canonical));
-            Assert.Equal(aliasExpression, provider.EntityReferenceExpression(alias));
-            provider.GenerateHassEntities([alias]);
-            Assert.Equal(aliasExpression, provider.EntityReferenceExpression(alias));
-            var restarted = new DiagnosticsProvider(); restarted.GenerateHassEntities([alias]);
-            Assert.Equal(aliasExpression, restarted.EntityReferenceExpression(alias));
-        }
-        provider.GenerateHassEntities(["binary_sensor.hall_motion", "sun.sun"]);
-        Assert.Equal("Entities.BinarySensor.HallMotion", provider.EntityReferenceExpression("binary_sensor.hall_motion"));
-        Assert.Equal("Entities.Sun.SunEntity", provider.EntityReferenceExpression("sun.sun"));
+        Assert.Empty(Diagnostics(provider, "class Empty { }"));
+        provider.UseServiceSchema(ServiceSchemaCatalog.Parse(Fixture("ha-service-descriptions.json"), _ => { }));
+        var source = provider.ServicesSyntaxTree().ToString();
+        Assert.Contains("public global::HassSharp.ServiceCalls.LightServices Light", source);
+        Assert.Empty(Diagnostics(provider, "class Empty { }"));
+        var again = new DiagnosticsProvider();
+        again.UseServiceSchema(ServiceSchemaCatalog.Parse(Fixture("ha-service-descriptions.json"), _ => { }));
+        Assert.Equal(source, again.ServicesSyntaxTree().ToString());
     }
 
-    // The same inputs a compiled automation gets: global usings, the generated entities and the workspace references.
-    static bool Compiles(DiagnosticsProvider provider, string source) =>
-        !Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create("Check",
-                [Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings + source), provider.HassEntitiesSyntaxTree()],
+    [Fact]
+    public void The_typed_entities_are_gone()
+    {
+        var provider = new DiagnosticsProvider();
+        Assert.Contains(Diagnostics(provider, "class Test { object x = Entities.Light.Kitchen; }"), d => d.Id == "CS0103" && d.GetMessage().Contains("Entities"));
+        Assert.Contains(Diagnostics(provider, "class Test { object x = new HaLight(\"light.kitchen\"); }"), d => d.Id == "CS0246");
+    }
+
+    // The same inputs a compiled automation gets: global usings, the generated service calls and the workspace references.
+    static Diagnostic[] Diagnostics(DiagnosticsProvider provider, string source) =>
+        Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create("Check",
+                [Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings + source), provider.ServicesSyntaxTree()],
                 Workspace(provider).CurrentSolution.Projects.Single().MetadataReferences,
-                new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary))
-            .GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error);
+                new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable))
+            .GetDiagnostics().Where(d => d.Severity >= DiagnosticSeverity.Warning).ToArray();
 
     static AdhocWorkspace Workspace(DiagnosticsProvider provider) =>
         (AdhocWorkspace)typeof(DiagnosticsProvider).GetField("_workspace", BindingFlags.NonPublic | BindingFlags.Instance)!

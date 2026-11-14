@@ -48,9 +48,13 @@ public static class CustomNode
   - `Trigger`: the trigger's Data output;
   - `Error`: the most recent failure on this path, or null;
   - `State(entityId)`: reads an entity as Read entity does;
-  - `CallService(service, target, data, returnResponse)`: calls a service as Call
-    service does, and waits for it;
+  - `Services`: this Home Assistant's services as typed methods, such as
+    `context.Services.Light.TurnOn(...)`;
+  - `CallService(service, target, data, returnResponse)`: calls a service by its id,
+    as Call service does, and waits for it;
   - `Log(message, level)`: writes to the Home Assistant log.
+
+  [States and services](#states-and-services) says how node code uses them.
 - **Value nodes.** `[Node("Title", Pure = true)]` makes the method a value node, like
   Constant or Compare. It has no place in the run order and is worked out each time
   a step uses its result, in that step's scope. It must return a value.
@@ -77,6 +81,57 @@ entity or from a trigger's New state and Previous state outputs.
 Pins support CLR classes, records, interfaces, enums, nullable types, arrays and
 closed generics. The catalog's `assignableTo`, `nullable` and `literalKind` metadata
 say what fits where. An arbitrary object type does not get a value editor.
+
+## States and services
+
+An entity reaches node code through a pin: a `string` entity ID, or an
+`EntityStateSnapshot` wired from Read entity or a trigger. The code reads and acts
+through `NodeContext`:
+
+- `context.State("sensor.outdoor")` reads an entity's current state, as Read entity
+  does.
+- `context.Services.<Domain>.<Service>(...)` calls a service with typed fields:
+
+  ```csharp
+  [Node("Dim the light")]
+  public static async Task Dim(NodeContext context, string light)
+  {
+      await context.Services.Light.TurnOn(light, brightnessPct: 30, transition: 2);
+      var forecast = await context.Services.Weather.GetForecasts("weather.home", type: "daily");
+      await context.Services.Script.GoodNight(delayMinutes: 5);
+  }
+  ```
+
+- `context.CallService("light.turn_on", target, data)` calls a service by its id.
+  Use it for an id that is known only at run time.
+
+The typed methods are generated from this Home Assistant's own service
+descriptions, so they follow its integrations and scripts. Completion and hover show
+their names, descriptions, units, ranges and allowed values. The rules are:
+
+- Domains and services are in PascalCase, and fields in camelCase: the
+  `brightness_pct` field of `light.turn_on` is `brightnessPct`. A name that is not
+  valid C# is made valid, and names that clash get a number (`TurnOn2`). The call
+  always sends the original ids.
+- A service with a target takes it first. The target is an entity ID, an array or
+  list of them, or a `ServiceTarget`: `ServiceTarget.Areas("kitchen")`, `Devices`,
+  `Floors`, `Labels`, or `new ServiceTarget { AreaIds = [...], LabelIds = [...] }`.
+  `null` means no target.
+- Required fields come next, then the optional ones, best given by name. Only the
+  fields you give are sent.
+- A service that returns a response gives it as a `JsonElement`. When the response
+  is optional, a second method gives it, such as `GetItemsWithResponse`.
+- A call waits until Home Assistant has run the service, and is cancelled when the
+  run stops.
+
+Services appear one by one while Home Assistant starts. The methods are therefore
+generated from the live services together with those they were last generated from,
+which are kept in `.storage/hass_sharp/service_schema.json`. Startup never fails
+because a service is not registered yet. When a service goes away, its method goes
+too, but only once Home Assistant has finished starting. Code that calls the method
+then fails its next compile, with the ordinary compiler error on that node or
+library. An automation that is already running keeps running: it calls the service
+by its id.
 
 ## Custom C# nodes
 
@@ -111,8 +166,8 @@ node (its Message and Step outputs) or `NodeContext.Error`.
 Create a file in the **Node libraries** view, or use the administrator MCP
 `library_preview` / `library_save` tools. The source is wrapped inside namespace
 `NodeLib`; provide namespace contents, not an outer file-scoped namespace. Libraries
-compile together with generated entity symbols and the framework references used by
-automations. Their source is stored in Home Assistant's
+compile together with the generated service calls and the framework references used
+by automations. Their source is stored in Home Assistant's
 `.storage/hass_sharp/libraries` directory through the revision-checked authoring
 store. Editing files directly bypasses the authoring conflict checks.
 

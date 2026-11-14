@@ -8,7 +8,7 @@ public class NodeLibraryLanguageServicesTests
 {
     static async Task<JsonNode> Request(string operation, NodeLibrarySource[] sources, string id, int position=0)
     {
-        var provider = new DiagnosticsProvider(); provider.GenerateHassEntities(["light.lamp"]);
+        var provider = new DiagnosticsProvider();
         var service = new NodeLibraryLanguageServices(provider);
         return JsonSerializer.SerializeToNode(await service.RequestAsync(operation,sources,id,position,TestContext.Current.CancellationToken), VisualStore.Json)!;
     }
@@ -39,7 +39,7 @@ public class NodeLibraryLanguageServicesTests
     }
     static async Task<JsonNode> Custom(string operation, NodeLibrarySource[] sources, string source, int position=0)
     {
-        var provider = new DiagnosticsProvider(); provider.GenerateHassEntities(["light.lamp"]);
+        var provider = new DiagnosticsProvider();
         var service = new NodeLibraryLanguageServices(provider);
         return JsonSerializer.SerializeToNode(await service.RequestAsync(operation,sources,new CustomNodeSource("check",source),position,TestContext.Current.CancellationToken), VisualStore.Json)!;
     }
@@ -72,8 +72,35 @@ public class NodeLibraryLanguageServicesTests
         var results=await Task.WhenAll(tasks);
         Assert.Contains("First",results[0].ToJsonString()); Assert.DoesNotContain("Second",results[0].ToJsonString());
         Assert.Contains("Second",results[1].ToJsonString()); Assert.DoesNotContain("First",results[1].ToJsonString());
-        const string entity="public class Main { void Run() { Entities.Light.La } }";
-        Assert.Contains("Lamp",(await Request("completion",[new("main",entity,1)],"main",entity.IndexOf("La }")+2)).ToJsonString());
+    }
+    [Fact]
+    public async Task Completion_no_longer_offers_the_typed_entities()
+    {
+        const string source="public class Main { void Run() { Entit } }";
+        var items=(await Request("completion",[new("main",source,1)],"main",source.IndexOf("Entit")+5)).AsArray();
+        Assert.DoesNotContain(items,i=>i!["displayText"]!.GetValue<string>() is "Entities" or "EntityRef" or "HassServices");
+        Assert.Contains(items,i=>i!["displayText"]!.GetValue<string>()=="EntityStateSnapshot");
+    }
+    static async Task<JsonNode> WithServices(string operation, string source, int position)
+    {
+        var provider = new DiagnosticsProvider();
+        provider.UseServiceSchema(ServiceSchemaCatalog.Parse("""
+            {"light":{"turn_on":{"name":"Turn on","description":"Turns on one or more lights.","target":{"entity":{"domain":"light"}},
+              "fields":{"brightness_pct":{"name":"Brightness","description":"Percentage of full brightness.","selector":{"number":{"min":0,"max":100,"unit_of_measurement":"%"}}}}}}}
+            """, _ => { }));
+        return JsonSerializer.SerializeToNode(await new NodeLibraryLanguageServices(provider).RequestAsync(operation,[],new CustomNodeSource("dim",source),position,TestContext.Current.CancellationToken), VisualStore.Json)!;
+    }
+    [Fact]
+    public async Task Custom_node_code_completes_and_documents_the_generated_service_calls()
+    {
+        const string source="public static class CustomNode\n{\n    [Node(\"Dim\")]\n    public static async Task Dim(NodeContext context, string light) { await context.Services.Light.TurnOn(light, brightnessPct: 30); }\n}";
+        Assert.Contains((await WithServices("completion",source,source.IndexOf("Services")+3)).AsArray(),i=>i!["displayText"]!.GetValue<string>()=="Services");
+        Assert.Contains((await WithServices("completion",source,source.IndexOf("Light.")+6)).AsArray(),i=>i!["displayText"]!.GetValue<string>()=="TurnOn");
+        Assert.Contains((await WithServices("completion",source,source.IndexOf("Services.")+9)).AsArray(),i=>i!["displayText"]!.GetValue<string>()=="Light");
+        var hover=(await WithServices("hover",source,source.IndexOf("TurnOn")+1)).ToJsonString();
+        Assert.Contains("TurnOn",hover); Assert.Contains("Turn on (light.turn_on). Turns on one or more lights.",hover);
+        var signature=(await WithServices("signature",source,source.IndexOf("brightnessPct")+1)).ToJsonString();
+        Assert.Contains("brightnessPct",signature); Assert.Contains("From 0 to 100 %",signature);
     }
     [Fact]
     public async Task Named_arguments_select_the_declared_parameter_in_reordered_calls()

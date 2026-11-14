@@ -15,8 +15,7 @@ Open **HassSharp** in the sidebar. It has two pages:
 
 - **Automations** lists your saved automations. **New automation** asks for a name
   and opens the node editor on a new draft. Each row's menu opens the automation
-  for editing or deletes it. Administrators also get **Refresh entity IDs**, which
-  reloads the entity names used for completion and validation.
+  for editing or deletes it.
 - **Node library** holds your own C# files of reusable nodes.
 
 ## The node editor

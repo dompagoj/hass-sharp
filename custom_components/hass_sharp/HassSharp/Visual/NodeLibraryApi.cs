@@ -12,7 +12,9 @@ public partial class HassSharpManager
 
     string LibraryWorkspaceGeneration(IEnumerable<NodeLibraryDocument> documents)
     {
-        var content = NodeLibraryStore.Generation(documents) + "\0" + _diagnosticsProvider.HassEntitiesSyntaxTreeNullable()?.ToString();
+        // The typed service calls are not part of it: they follow Home Assistant's services, and an open editor must not
+        // see its libraries as changed elsewhere whenever a service is registered.
+        var content = NodeLibraryStore.Generation(documents);
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
     }
 

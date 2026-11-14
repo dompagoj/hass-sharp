@@ -56,7 +56,6 @@ static class VisualTraceTests
 
     static async Task<Loaded> Load(JsonObject graph, VisualCatalogSnapshot? snapshot = null)
     {
-        Diagnostics.GenerateHassEntities(["sensor.test"]);
         graph = Derived(graph, snapshot);
         var preview = snapshot == null ? new VisualGenerator(Diagnostics).Preview(graph) : new VisualGenerator(Diagnostics).Preview(graph, snapshot);
         Check(preview.Valid, "graph compiles: " + JsonSerializer.Serialize(preview.Diagnostics));
@@ -719,7 +718,7 @@ static class VisualTraceTests
                 var api = new HassSharpManager(root);
                 try
                 {
-                    await api.Init(["sensor.test"]);
+                    await api.Init();
                     var graph = G(N("g", "get_field", new { value = Unset(), pointer = "/platform", type = "string" }), N("l", "log", new { value = Unset() }));
                     graph["edges"]!.AsArray().Add(D("t", "g", "value", "data")); graph["edges"]!.AsArray().Add(D("g", "l", "value"));
                     async Task<JsonNode> Visual(object request) => JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(request)))!;
