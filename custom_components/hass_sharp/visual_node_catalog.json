@@ -1174,13 +1174,13 @@
         "item": {
           "type": "$itemType",
           "description": "The item of the current iteration; only available inside Body.",
-          "visibility": "body",
+          "scope": "body",
           "label": "Item"
         },
         "index": {
           "type": "number",
           "description": "The position of the current item, counting from 0; only available inside Body.",
-          "visibility": "body",
+          "scope": "body",
           "label": "Index"
         }
       },

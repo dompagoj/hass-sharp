@@ -21,4 +21,11 @@ public sealed class PortAttribute(string label) : Attribute
 {
     /// <summary>The label people see next to the pin.</summary>
     public string Label { get; } = label;
+    /// <summary>
+    /// On an <c>Action</c>, <c>Action&lt;T&gt;</c>, <c>Func&lt;Task&gt;</c> or <c>Func&lt;T, Task&gt;</c> parameter: a flow output, not an
+    /// input pin. Calling it runs the steps wired to that flow, in a scope of their own, and returns when they end; the
+    /// value it is called with (one, or one per element of a named tuple) is a pin those steps read. When the method
+    /// returns, the run goes on at Done.
+    /// </summary>
+    public bool FlowControl { get; set; }
 }

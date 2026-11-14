@@ -1,4 +1,4 @@
-import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, isPure, selectsProperties, typeProperties, withGraphTypes, type GraphEdge, type GraphNode, type VisualCatalogSnapshot } from '../contract'
+import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, isPure, selectsProperties, typeProperties, withGraphTypes, type GraphEdge, type GraphNode, type OutputSpec, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, connectNodes, nodeInputs, outputPort, removeEdge, updateNode, type VisualGraph } from '../graph'
 import { createUuid } from '../id'
 import { dataPortOf, nodeTitle } from './flowModel'
@@ -31,8 +31,8 @@ const defaultExec = (node: GraphNode, catalog: VisualCatalogSnapshot) => {
   const ports = executionPorts(node, catalog)
   return ports.includes('next') ? 'next' : ports.find(port => port !== 'error')
 }
-/** A value only a loop's body (or condition) can see is used inside the body; anything else after the step. */
-const runPortFor = (visibility: string | undefined) => (visibility === 'body' || visibility === 'loop' ? 'body' : 'next')
+/** A value read in one scope of the step (a flow's value, For each's item) is used there; a loop's kept value in its body; anything else after the step. */
+const runPortFor = (output: OutputSpec | undefined) => output?.scope || (output?.visibility === 'loop' ? 'body' : 'next')
 const bestMatch = <T>(entries: [string, T][], exact: (value: T) => boolean, assignable: (value: T) => boolean) =>
   (entries.find(([, value]) => exact(value)) ?? entries.find(([, value]) => assignable(value)))?.[0]
 const kindLabel = (kind: string, catalog: VisualCatalogSnapshot) => (Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind].label : kind)
@@ -171,7 +171,7 @@ export function addConnected(graph: VisualGraph, kind: string, position: Point, 
   let ordered: VisualGraph | undefined
   let between: [string, string] | undefined
   if (runs && pin.type === 'source') {
-    const run = runPortFor(dataOutputs(pinNode, catalog)[data]?.visibility)
+    const run = runPortFor(dataOutputs(pinNode, catalog)[data])
     const taken = placed.edges.filter(e => e.kind !== 'data' && e.source === pin.nodeId && outputPort(pinNode.kind, e) === run)
     if (!executionPorts(pinNode, catalog).includes(run)) ordered = undefined
     else if (!taken.length) {

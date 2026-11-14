@@ -2,9 +2,11 @@ import { createContext, useContext } from 'solid-js'
 import {
   customSignature,
   dataOutputs,
+  executionLabel,
   executionPorts,
   inputValue,
   isPure,
+  scopePorts,
   type GraphEdge,
   type GraphNode,
   type InputSpec,
@@ -172,8 +174,7 @@ export const nodeTitle = (node: GraphNode | undefined, catalog: VisualCatalogSna
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
 
 /** Nodes whose `next` means "after the structure" are drawn with a named Done row instead of a header pin. */
-const structured = (node: GraphNode, catalog: VisualCatalogSnapshot) =>
-  node.kind === 'parallel' || (Object.hasOwn(catalog.nodes, node.kind) && (catalog.nodes[node.kind].scopePorts?.length ?? 0) > 0)
+const structured = (node: GraphNode, catalog: VisualCatalogSnapshot) => node.kind === 'parallel' || scopePorts(node, catalog).length > 0
 /** A branch id that reads as a name ("lights"), not a generated one (a GUID or long hex). */
 const readableBranch = (id: string) => /^[A-Za-z][A-Za-z0-9 _-]{0,23}$/.test(id) && !/^[0-9a-f]{8}-?[0-9a-f]{4}/i.test(id)
 export function execLabel(node: GraphNode, port: string, catalog: VisualCatalogSnapshot) {
@@ -186,7 +187,7 @@ export function execLabel(node: GraphNode, port: string, catalog: VisualCatalogS
     const index = branches.indexOf(id)
     return `Branch ${index >= 0 ? index + 1 : branches.length + 1}`
   }
-  return portLabel(port)
+  return executionLabel(node, port, catalog) ?? portLabel(port)
 }
 const connectedText = (connected: boolean) => (connected ? 'connected' : 'not connected')
 
@@ -275,7 +276,8 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     }
   })
   // Data outputs.
-  const outputs: PinView[] = Object.entries(dataOutputs(node, catalog)).map(([port, output]) => {
+  const outputSpecs = Object.entries(dataOutputs(node, catalog))
+  const outputs: PinView[] = outputSpecs.map(([port, output]) => {
     const connected = outgoing.some(e => e.kind === 'data' && e.sourcePort === port)
     const label = output.label ?? port
     // A Select property node's output has its property's type, and none until one is chosen and found.
@@ -287,7 +289,12 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
       list: !untyped && typeIsList(output.type, catalog), connected, error: false, description: output.description,
     }
   })
-  const right = [...namedExec.map(execPin), ...outputs]
+  // A value read in one of the step's scopes (a flow's value, For each's item) sits right under that scope's pin.
+  const scopeOf = (i: number) => outputSpecs[i][1].scope
+  const right = [
+    ...namedExec.flatMap(port => [execPin(port), ...outputs.filter((_, i) => scopeOf(i) === port)]),
+    ...outputs.filter((_, i) => { const scope = scopeOf(i); return !scope || !namedExec.includes(scope) }),
+  ]
   const rows: RowView[] = Array.from({ length: Math.max(inputs.length, right.length) }, (_, i) => ({
     id: `${inputs[i]?.port ?? ''}|${right[i]?.id ?? ''}`,
     ...(inputs[i] ? { input: inputs[i] } : {}),

@@ -36,6 +36,10 @@ public static class NodeLibraryFixture
             [Node("Nullable enumerable")] public static void NullableEnumerable(IEnumerable<string?> items) {}
             /// <summary>The person this Home Assistant belongs to (a value with properties, for Select property).</summary>
             [Node("Profile", Pure = true)] public static Profile Me() => new("dompa", null, 40, new("home"), ["hall", "kitchen"]);
+            /// <summary>Sorts a temperature: each flow runs its steps, then the run goes on at Done.</summary>
+            /// <param name="cold">How far below 19 it is.</param>
+            [Node("Classify", Category = "Fixture")]
+            public static void Classify([Port("Cold", FlowControl = true)] Action<double> cold, [Port("Comfortable", FlowControl = true)] Action ok, double temperature) { if (temperature < 19) cold(19 - temperature); else ok(); }
             [Node("Nonfinite defaults")] public static void NonfiniteDefaults(double? nan = double.NaN, float? positive = float.PositiveInfinity, double? negative = double.NegativeInfinity) {}
         }
         """;
@@ -76,6 +80,12 @@ public static class NodeLibraryFixture
         var nullable = Graph(Node("Nullable", "nullable"), Node("Required", "required"));
         Wire(nullable, "nullable", "result", "required", "reading");
         Case("nullable result cannot feed required reference", nullable, false, "reading");
+        // A method with flows: a flow's value is read by a step on that flow.
+        var flows = Graph(Node("Classify", "classify"), VisualGraphContract.CreateNode("log", "cold", snapshot));
+        flows["edges"]![1]!["port"] = "cold";
+        flows["nodes"]![1]!["config"]!["arguments"]!["temperature"] = JsonNode.Parse("""{"kind":"literal","type":"global::System.Double","value":12}""");
+        Wire(flows, "classify", "cold", "cold", "value");
+        Case("flow: a flow's value is read on that flow", flows, true);
         var widening = Graph(Node("Factory", "factory"), Node("Widen", "widen"));
         Wire(widening, "factory", "result", "widen", "number"); Case("standard numeric widening", widening, true);
         var missing = Graph(Node("Required", "required"));

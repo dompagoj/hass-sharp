@@ -125,7 +125,10 @@ which receives the failure instead of ending the run. Parallel branches and boun
 loops have structured scopes. Branch/body outputs do not automatically escape. Loop carry values retain state across sequential iterations; explicit
 exports publish selected values when the loop completes. Each declaration has a
 type and required initial operand. For each validates a declared item type, snapshots
-its input and exposes item/index only inside its body. A loop may lower its own
+its input and exposes item/index only inside its body. A C# node can have flows of its
+own: each is a scope like a loop body, run when the node's method calls it, with the
+values it carries read only on that flow, and the run goes on at Done when the method
+returns (see [flow outputs](node-libraries.md#flow-outputs)). A loop may lower its own
 iteration cap; the shared catalog defines global node/edge/nesting/step limits.
 Scope snapshots and unsupported live resources are described in
 [custom node libraries](node-libraries.md).

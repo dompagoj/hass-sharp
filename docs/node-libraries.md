@@ -60,6 +60,8 @@ public static class CustomNode
 - **Value nodes.** `[Node("Title", Pure = true)]` makes the method a value node, like
   Constant or Compare. It has no place in the run order and is worked out each time
   a step uses its result, in that step's scope. It must return a value.
+- **Flows.** A parameter marked `[Port("Label", FlowControl = true)]` is a flow
+  output, not an input pin; see [Flow outputs](#flow-outputs).
 - **Numbers.** A pin of any CLR number type (`int`, `long`, `double`, `decimal`, …)
   and the built-in Number go into each other, wider or narrower. A value that does
   not fit fails the step when it runs, with a message such as "Count · How many
@@ -81,6 +83,76 @@ public static class CustomNode
   "This type is nested too deeply to be a pin; use a simpler type". This holds for
   node libraries and Custom C# nodes alike: working out what such a type converts to
   takes twice as long per level and cannot be stopped.
+
+### Flow outputs
+
+A node can choose which steps run next, and run them more than once, by declaring
+its flows as parameters. Mark each one `[Port("Label", FlowControl = true)]` and give
+it one of these types:
+
+| Type | Calling it |
+| --- | --- |
+| `Action` | runs the flow's steps and waits until they end |
+| `Action<T>` | the same, and the steps on that flow read the value as a pin |
+| `Func<Task>` | runs the flow's steps; the Task ends when they do |
+| `Func<T, Task>` | the same, with a value |
+
+```csharp
+[Node("Classify temperature", Category = "Climate")]
+public static void Classify(
+    [Port("Cold", FlowControl = true)] Action<double> cold,
+    [Port("Comfortable", FlowControl = true)] Action ok,
+    [Port("Hot", FlowControl = true)] Action<double> hot,
+    double temperature, double low = 19, double high = 24)
+{
+    if (temperature < low) cold(low - temperature);
+    else if (temperature > high) hot(temperature - high);
+    else ok();
+}
+
+[Node("For each light", Category = "Lights")]
+public static async Task EachLight(
+    [Port("Body", FlowControl = true)] Func<(string Light, double Index), Task> body,
+    string[] lights)
+{
+    for (var i = 0; i < lights.Length; i++) await body((lights[i], i));
+}
+```
+
+The card has a row for each flow, labelled by `[Port]` (or the parameter's name in
+words), then **Done** and **On error**. Calling a flow runs the steps wired to it at
+once, in a scope of their own, as a loop runs its Body, and returns when they end.
+When the method returns, the run goes on at Done. A node can call a flow any number
+of times, and call several at once (`await Task.WhenAll(...)`): each call gets its
+own scope, and the trace shows it as "Hot · Call 1".
+
+- **Values.** The value a call carries is an output pin beside its flow: one pin with
+  the flow's id and label for a single value, or one per element of a named tuple,
+  such as `light` and `index` above. Each call's steps get their own copy, so a
+  step that changes it changes neither another call's value nor the method's. Only
+  steps on that flow can read it: not
+  another flow's steps, and not the steps after Done. Values made by steps on a flow
+  stay there too, as in a loop body. A value the method returns is set as usual and
+  can be read after Done.
+- **Sync or async.** Prefer `Func<…, Task>` in an `async` method. An `Action` blocks
+  its thread until the flow's steps end, delays and service calls included.
+- **Failures.** A step on a flow that fails throws out of the call, so the method
+  can catch it. Uncaught, it fails the node, whose On error flow runs if it has one;
+  the error is the inner step's. A Stop step on a flow stops the whole run.
+- **Limits.** A step's flows can be called at most 1000 times in all. Flows nest
+  like loops, 8 deep. A call still running when the method returns (one it did not
+  wait for, such as the loser of `await Task.WhenAny(body(), Task.Delay(timeout))`)
+  is cancelled, and the step waits for it to stop before the run goes on at Done. A
+  flow called after its method has returned (kept in a field, say) fails the step
+  that calls it: "Keep: Later was called after the step finished".
+- **Refused.** A flow on a value node (`Pure = true`); a flow of any other type, a
+  nullable one or one with a default value; a tuple with unnamed elements; a flow
+  named `next`, `error` or `condition`; two flows or values with the same name. An
+  `Action` or `Func<…, Task>` parameter without `FlowControl` stays an ordinary input
+  pin, with a warning that suggests marking it.
+
+A Custom C# node can have flows too. Its signature then carries `execution`,
+`scopePorts` and `executionLabels`, as a library node's catalog entry does.
 
 Pins carry the CLR type, never a refined catalog type. A `string` parameter accepts an
 `entity_id` or `entity_id:light` value, because those refine `string`. A `string`

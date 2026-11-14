@@ -1,4 +1,4 @@
-import { executionPorts, nodeCatalog, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { executionPorts, nodeCatalog, scopePorts, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { outputPort, type VisualGraph } from './graph'
 
 type Point = { x: number; y: number }
@@ -19,9 +19,9 @@ export interface LayoutOptions {
 const valid = (node: unknown): node is GraphNode =>
   !!node && typeof node === 'object' && typeof (node as GraphNode).id === 'string' && typeof (node as GraphNode).kind === 'string'
 
-/** A port whose steps run inside the step (a loop's body or condition, a parallel branch). */
+/** A port whose steps run inside the step (a loop's body or condition, a node method's flow, a parallel branch). */
 const scopePort = (node: GraphNode, port: string, catalog: VisualCatalogSnapshot) =>
-  (Object.hasOwn(catalog.nodes, node.kind) && !!catalog.nodes[node.kind].scopePorts?.includes(port)) || (node.kind === 'parallel' && port.startsWith('branch:'))
+  scopePorts(node, catalog).includes(port) || (node.kind === 'parallel' && port.startsWith('branch:'))
 
 /**
  * A layered left-to-right layout ("Tidy"). Each connected flow (steps joined by execution or value wires) is a

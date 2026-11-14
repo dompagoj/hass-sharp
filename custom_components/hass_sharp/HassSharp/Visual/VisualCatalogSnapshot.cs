@@ -9,10 +9,18 @@ public sealed record NodeLibrarySource(string Id, string Source, long Revision);
 public sealed record NodeLibraryDiagnostic(string SourceId, int StartLine, int StartColumn, int EndLine, int EndColumn, string Message, int Severity);
 public sealed record NodeLibraryPreview(bool Valid, ImmutableArray<NodeLibraryDiagnostic> Diagnostics, VisualCatalogSnapshot Snapshot);
 /// <param name="IsContext">A <see cref="NodeContext"/> parameter; like a <see cref="CancellationToken"/> one it is injected, never a pin.</param>
-public sealed record NodeParameterDescriptor(string Name, string TypeId, string TypeExpression, bool IsCancellationToken, bool HasDefaultValue, object? DefaultValue, IParameterSymbol Symbol, bool IsContext = false)
+/// <param name="Flow">A flow parameter (<c>[Port(..., FlowControl = true)]</c>); like a context one it is passed by the runtime, never a pin.</param>
+public sealed record NodeParameterDescriptor(string Name, string TypeId, string TypeExpression, bool IsCancellationToken, bool HasDefaultValue, object? DefaultValue, IParameterSymbol Symbol, bool IsContext = false, NodeFlowDescriptor? Flow = null)
 {
-    public bool Injected => IsCancellationToken || IsContext;
+    public bool Injected => IsCancellationToken || IsContext || Flow != null;
 }
+/// <summary>
+/// A flow of a node method: its execution port, whether calling it gives a Task (<c>Func&lt;…, Task&gt;</c>) rather than
+/// waiting (<c>Action</c>), and the values a call carries.
+/// </summary>
+public sealed record NodeFlowDescriptor(string Port, bool Async, ImmutableArray<NodeFlowValue> Values);
+/// <summary>One value a flow carries: the output pin it sets in the flow's scope, and its tuple position (null for the whole value).</summary>
+public sealed record NodeFlowValue(string Port, int? Position);
 /// <summary>One output pin of a node method: the whole result (<paramref name="Element"/> null) or one named tuple element.</summary>
 public sealed record NodeOutputDescriptor(string Port, string? Element);
 public sealed record NodeMethodDescriptor(string Kind, string SourceId, string InvocationType, string MethodName, string? ResultType,

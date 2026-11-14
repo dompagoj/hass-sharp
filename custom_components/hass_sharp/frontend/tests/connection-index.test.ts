@@ -38,12 +38,12 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below. No pair needs the full check: the index decides every one itself.
-const GRAPHS = 361, PAIRS = 1578, ACCEPTED = 576, BY_VALIDATION = 1002, SERVICES_ACCEPTED = 513, SERVICES_BY_VALIDATION = 1065
+const GRAPHS = 368, PAIRS = 1596, ACCEPTED = 590, BY_VALIDATION = 1006, SERVICES_ACCEPTED = 527, SERVICES_BY_VALIDATION = 1069
 const FALLBACKS: string[] = []
 // The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit), and the one past the limit.
 const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config',
   'select property: a chain past the graph limit answers the limit alone: past the graph limit']
-const RICH: Totals = { graphs: 32, pairs: 244, accepted: 54, rejected: 190, byValidation: 190, fallbacks: [], skipped: [] }
+const RICH: Totals = { graphs: 33, pairs: 248, accepted: 56, rejected: 192, byValidation: 192, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 
 interface Totals { graphs: number; pairs: number; accepted: number; rejected: number; byValidation: number; fallbacks: string[]; skipped: string[] }

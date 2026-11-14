@@ -422,7 +422,7 @@ public static class VisualGraphValidator
         static string Id(JsonObject node) => Text(node, "id");
         static JsonObject Config(JsonObject node) => node["config"] as JsonObject ?? [];
         static string FlowPort(JsonObject node, JsonObject edge) => Kind(node) == "condition" && Text(edge, "port", "next") == "next" ? "true" : Text(edge, "port", "next");
-        bool ScopePort(JsonObject node, string port) => Strings(Spec(node)?["scopePorts"]).Contains(port) || Kind(node) == "parallel" && port.StartsWith("branch:", StringComparison.Ordinal);
+        bool ScopePort(JsonObject node, string port) => VisualNodeCatalog.ScopePorts(node, Spec(node)).Contains(port) || Kind(node) == "parallel" && port.StartsWith("branch:", StringComparison.Ordinal);
         static bool Ancestor((string Owner, string Port)[] a, (string Owner, string Port)[] b) => a.Length <= b.Length && a.SequenceEqual(b.Take(a.Length));
         JsonObject? Owner(JsonObject node) => scopes.TryGetValue(Id(node), out var scope) && scope.LastOrDefault() is var last && last.Port == "body" ? nodes[last.Owner] : null;
         bool Pure(JsonObject node) => IsPure(node, Spec(node));
@@ -432,10 +432,11 @@ public static class VisualGraphValidator
         {
             if (!scopes.TryGetValue(Id(source), out var a) || !Ancestor(a, b)) return false;
             var owned = b.Length > a.Length && b[a.Length].Owner == Id(source);
+            // A value set in one scope of its step (For each's item in Body, a flow's value on that flow) is read there only.
+            if (Text(port, "scope") is { Length: > 0 } scope) return owned && b[a.Length].Port == scope;
             return Text(port, "visibility") switch
             {
                 "outside" => !owned,
-                "body" => owned && b[a.Length].Port == "body",
                 "loop" => owned && b[a.Length].Port is "body" or "condition",
                 _ => true
             };

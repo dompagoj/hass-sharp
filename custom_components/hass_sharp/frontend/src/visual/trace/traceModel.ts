@@ -13,18 +13,19 @@ import type { RunTrace, TraceEvent, TraceValue } from '../../types'
  */
 
 export type FrameSegment =
-  | { kind: 'loop'; raw: string; node: string; iteration: number; part: 'body' | 'condition' }
+  /** A loop's iteration (its body or condition), or one call of a node method's flow (`part` is the flow). */
+  | { kind: 'loop'; raw: string; node: string; iteration: number; part: string }
   | { kind: 'branch'; raw: string; node: string; branch: string }
   | { kind: 'other'; raw: string }
 
-const loopSegment = /^(.+)#(\d+):(body|condition)$/
+const loopSegment = /^(.+)#(\d+):([A-Za-z_][A-Za-z0-9_]*)$/
 const branchSegment = /^(.+?):branch:(.+)$/
 
 export function parseFrame(frame: string): FrameSegment[] {
   if (!frame) return []
   return frame.split('/').map(raw => {
     const loop = loopSegment.exec(raw)
-    if (loop) return { kind: 'loop', raw, node: loop[1], iteration: Number(loop[2]), part: loop[3] as 'body' | 'condition' }
+    if (loop) return { kind: 'loop', raw, node: loop[1], iteration: Number(loop[2]), part: loop[3] }
     const branch = branchSegment.exec(raw)
     if (branch) return { kind: 'branch', raw, node: branch[1], branch: branch[2] }
     return { kind: 'other', raw }
@@ -174,7 +175,17 @@ export function traceModel(trace: RunTrace, graph: Graph, catalog: VisualCatalog
     if (count && !count.trunc && typeof count.v === 'number') return count.v
     if (items && !items.trunc && Array.isArray(items.v)) return items.v.length
   }
+  /** A loop node (or one no longer in the graph, read as one); else a step whose frames are its flows' calls. */
+  const isLoop = (id: string) => {
+    const node = nodes.get(id)
+    return !node || (Object.hasOwn(catalog.nodes, node.kind) && catalog.nodes[node.kind].dynamicOutputs === 'loop')
+  }
   const segmentLabel = (segment: FrameSegment, parent: string) => {
+    if (segment.kind === 'loop' && !isLoop(segment.node)) {
+      // A call of a node method's flow: the flow, and which call of the step's it was.
+      const owner = nodes.get(segment.node)
+      return `${owner ? execLabel(owner, segment.part, catalog) : segment.part} · Call ${segment.iteration + 1}`
+    }
     if (segment.kind === 'loop') {
       const bodies = iterations.get(`${parent}|${segment.node}`)
       const body = segment.part === 'body' || !!bodies?.has(segment.iteration)
@@ -211,7 +222,7 @@ export function traceModel(trace: RunTrace, graph: Graph, catalog: VisualCatalog
         runsOf(edge.target).some(e => { const last = parseFrame(e.frame).at(-1); return !!last && match(last) })
       const travelled =
         runsOf(source.id).some(e => e.port === port) ||
-        ((port === 'body' || port === 'condition') && entered(s => s.kind === 'loop' && s.node === source.id && s.part === port)) ||
+        entered(s => s.kind === 'loop' && s.node === source.id && s.part === port) ||
         (port.startsWith('branch:') && entered(s => s.kind === 'branch' && s.node === source.id && s.branch === port.slice(7)))
       if (travelled) edges.add(edge.id)
     }

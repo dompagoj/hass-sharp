@@ -108,6 +108,8 @@ public sealed class VisualScope
     internal string? LastErrorStep;
     public CancellationToken CancellationToken {get;internal set;}
     internal bool? Condition;
+    /// <summary>How deeply the step running in this scope is nested, as <c>Walk</c> counts it; a flow it runs is one deeper.</summary>
+    internal int Depth;
     internal Dictionary<string,object?>? Updates;
     /// <summary>Trace frame (C10): "" at top level, else parallel branch and loop iteration segments. Set only while traced.</summary>
     internal string Frame="";
@@ -216,6 +218,22 @@ public sealed class VisualRuntime
     public T Input<T>(VisualScope scope,string node,string port) {var value=(T)Coerce(Read(scope,node,port),typeof(T),$"{node}.{port}",false,()=>Title(node)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port),serializer)!;if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
     /// <summary>What a node method's <see cref="NodeContext"/> parameter gets: this run, as <paramref name="scope"/> sees it.</summary>
     public NodeContext Context(VisualScope scope,string node)=>new(this,scope,node,InvocationContext.Current?.RunId??"",trigger);
+    /// <summary>What a node method's flow parameters call, for one run of the step <paramref name="node"/> in <paramref name="scope"/>.</summary>
+    public VisualFlows Flows(VisualScope scope,string node)=>new(this,scope,node);
+    internal string FlowLabel(string node,string port)=>Text((VisualNodeCatalog.CustomSignature(nodes[node],Spec(node))??Spec(node))?["executionLabels"],port,port);
+    internal string StepTitle(string node)=>Title(node);
+    /// <summary>
+    /// Runs the steps on <paramref name="owner"/>'s <paramref name="port"/> in a scope of their own inside
+    /// <paramref name="parent"/>, one level deeper than <paramref name="depth"/>: a loop's body or condition, or a flow of
+    /// a node method. <paramref name="seed"/> gives the scope the values it starts with; <paramref name="part"/> names its
+    /// trace frame. The scope is returned for what its steps left (a condition result, a loop's updates).
+    /// </summary>
+    internal async Task<VisualScope> RunScope(string owner,string port,VisualScope parent,int depth,string part,Action<VisualScope>? seed=null,CancellationToken? token=null) {
+        var scope=parent.Clone(token??parent.CancellationToken);seed?.Invoke(scope);
+        if(trace!=null)scope.Frame=VisualTrace.Frame(parent.Frame,part);
+        await Walk(Next(owner,port),scope,depth+1);
+        return scope;
+    }
     public object? Input(VisualScope scope,string node,string port) {var value=Read(scope,node,port);if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
     void Traced(VisualScope scope,string node,string port,object? value)=>trace!.Input(scope.Trace!,node,port,value,data.TryGetValue((node,port),out var source)?source:null);
     object? Read(VisualScope scope,string node,string port) {
@@ -357,6 +375,7 @@ public sealed class VisualRuntime
     }
     async Task Walk(string? id,VisualScope scope,int depth) {
         if(depth>8)throw new InvalidOperationException("Structured nesting limit is 8");
+        scope.Depth=depth;
         while(id!=null) {
             external.ThrowIfCancellationRequested();
             if(Volatile.Read(ref stopped)!=0)throw new OperationCanceledException(lifetime.Token);
@@ -590,23 +609,75 @@ public sealed class VisualRuntime
             if(items.Length>max)throw new InvalidOperationException($"{Pin(id,"items")} has {items.Length} items, more than Maximum iterations ({max})");
             for(var i=0;i<items.Length;i++){var item=i+1;items[i]=ConvertTo(items[i],Text(cfg,"itemType"),id+".item["+i+"]",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["items"],"items")+", item "+item.ToString(CultureInfo.InvariantCulture));}count=items.Length;
         }
-        VisualScope Scope(int iteration,string part) {
-            var scope=parent.Clone(parent.CancellationToken);var copy=new VisualSnapshot();foreach(var pair in state.Where(p=>p.Key.StartsWith("carry:")))scope.Outputs[(id,pair.Key)]=copy.Copy(pair.Value);
-            if(trace!=null)scope.Frame=VisualTrace.Frame(parent.Frame,id+"#"+iteration.ToString(CultureInfo.InvariantCulture)+":"+part);
-            return scope;
-        }
-        async Task<bool> Condition(int iteration) {var condition=Scope(iteration,"condition");await Walk(Next(id,"condition"),condition,depth+1);return condition.Condition??throw new InvalidOperationException($"Loop {id}: condition path did not return condition_result.");}
+        void Carried(VisualScope scope) {var copy=new VisualSnapshot();foreach(var pair in state.Where(p=>p.Key.StartsWith("carry:")))scope.Outputs[(id,pair.Key)]=copy.Copy(pair.Value);}
+        string Part(int iteration,string part)=>id+"#"+iteration.ToString(CultureInfo.InvariantCulture)+":"+part;
+        async Task<bool> Condition(int iteration) {var condition=await RunScope(id,"condition",parent,depth,Part(iteration,"condition"),Carried);return condition.Condition??throw new InvalidOperationException($"Loop {id}: condition path did not return condition_result.");}
         for(var iteration=0;;iteration++) {
             parent.CancellationToken.ThrowIfCancellationRequested();
             if(kind is "repeat" or "foreach" && iteration>=count)break;
             if(kind=="while"&&!await Condition(iteration))break;
             if(iteration>=max)throw new InvalidOperationException($"{Title(id)} stopped at Maximum iterations ({max})");
-            var body=Scope(iteration,"body");if(items!=null){body.Outputs[(id,"item")]=new VisualSnapshot().Copy(items[iteration]);body.Outputs[(id,"index")]=(double)iteration;}
-            await Walk(Next(id,"body"),body,depth+1);
+            var current=iteration;
+            var body=await RunScope(id,"body",parent,depth,Part(iteration,"body"),scope=>{Carried(scope);if(items!=null){scope.Outputs[(id,"item")]=new VisualSnapshot().Copy(items[current]);scope.Outputs[(id,"index")]=(double)current;}});
             if(declarations.Count>0&&body.Updates==null)throw new InvalidOperationException($"Loop {id}: body did not return loop_result for declared carry/exports.");
             if(body.Updates!=null){var updates=new Dictionary<string,object?>();var copy=new VisualSnapshot();foreach(var pair in body.Updates)updates[pair.Key]=copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false,Declared(pair.Key)));foreach(var pair in updates)state[pair.Key]=pair.Value;}
             if(kind=="until"&&await Condition(iteration))break;
         }
         foreach(var pair in state.Where(p=>p.Key.StartsWith("export:")))Output(parent,id,pair.Value,pair.Key);
+    }
+}
+
+/// <summary>
+/// The flows of one run of a node method's step: each flow parameter calls <see cref="Run"/>, which runs the steps wired
+/// to that flow in a scope of their own and ends when they do. A call after the step has finished, or more calls than a
+/// loop may make, fails; a call still running when the method returns is cancelled, so no flow outlives its step.
+/// </summary>
+public sealed class VisualFlows
+{
+    readonly VisualRuntime runtime;
+    readonly VisualScope scope;
+    readonly string node;
+    // Cancelled when the method returns with calls still running, and with the run.
+    readonly CancellationTokenSource lifetime;
+    readonly List<Task> running=[];
+    int calls;
+    bool closed;
+    internal VisualFlows(VisualRuntime runtime,VisualScope scope,string node){this.runtime=runtime;this.scope=scope;this.node=node;lifetime=CancellationTokenSource.CreateLinkedTokenSource(scope.CancellationToken);}
+    /// <summary>At most this many calls across a step's flows, as a loop's Maximum iterations allows.</summary>
+    public const int MaxCalls=1000;
+    /// <summary>
+    /// Runs the steps on <paramref name="port"/>, which read a copy of <paramref name="values"/> as the step's outputs
+    /// there: each call its own, as each iteration of For each has its own item.
+    /// </summary>
+    public Task Run(string port,params (string Port,object? Value)[] values) {
+        var go=new TaskCompletionSource();Task call;
+        // Registered before it starts, so Finish sees every call; its steps run outside the lock, on this thread.
+        lock(running) {
+            if(closed)throw new InvalidOperationException($"{runtime.StepTitle(node)}: {runtime.FlowLabel(node,port)} was called after the step finished");
+            var index=calls++;
+            if(index>=MaxCalls)throw new InvalidOperationException($"{runtime.StepTitle(node)} called its flows more than {MaxCalls.ToString(CultureInfo.InvariantCulture)} times");
+            call=Started(go.Task,port,index,values);running.Add(call);
+        }
+        go.SetResult();
+        return call;
+    }
+    async Task Started(Task go,string port,int index,(string Port,object? Value)[] values) {
+        await go;
+        await runtime.RunScope(node,port,scope,scope.Depth,node+"#"+index.ToString(CultureInfo.InvariantCulture)+":"+port,
+            inner=>{var copy=new VisualSnapshot();foreach(var (output,value) in values)runtime.Output(inner,node,copy.Copy(value),output);},lifetime.Token);
+    }
+    /// <summary>
+    /// Called when the step's method has returned (or thrown): later calls fail, and calls still running are cancelled
+    /// and waited for. Such a call failing other than by that cancellation fails the step.
+    /// </summary>
+    public async Task Finish() {
+        Task[] left;
+        lock(running){closed=true;left=running.Where(t=>!t.IsCompleted).ToArray();}
+        try {
+            if(left.Length==0)return;
+            await lifetime.CancelAsync();
+            foreach(var call in left) {try{await call;}catch(OperationCanceledException) when(lifetime.IsCancellationRequested){}}
+        }
+        finally {lifetime.Dispose();}
     }
 }

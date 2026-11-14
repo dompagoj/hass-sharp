@@ -31449,5 +31449,711 @@
     "messages": [
       "Turn on (light.turn_on): Hs color accepts Object, List, Text, Number and 1 more, not User"
     ]
+  },
+  {
+    "name": "flow: a flow's value is read on that flow",
+    "catalogPatch": {
+      "nodes": {
+        "fanout": {
+          "label": "Fan out",
+          "category": "Custom",
+          "description": "Runs its flows.",
+          "minGraphVersion": 5,
+          "config": {},
+          "inputs": {},
+          "outputs": {
+            "hot": {
+              "type": "number",
+              "label": "Hot",
+              "description": "",
+              "scope": "hot"
+            }
+          },
+          "execution": [
+            "hot",
+            "cold",
+            "next",
+            "error"
+          ],
+          "scopePorts": [
+            "hot",
+            "cold"
+          ],
+          "executionLabels": {
+            "hot": "Hot",
+            "cold": "Cold",
+            "next": "Done"
+          },
+          "runtimeVersions": [
+            5
+          ]
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "fanout",
+          "config": {}
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:hot:l",
+          "source": "f",
+          "target": "l",
+          "port": "hot"
+        },
+        {
+          "id": "f.hot:l.value",
+          "kind": "data",
+          "source": "f",
+          "target": "l",
+          "sourcePort": "hot",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "flow: a flow's value cannot be read on another flow",
+    "catalogPatch": {
+      "nodes": {
+        "fanout": {
+          "label": "Fan out",
+          "category": "Custom",
+          "description": "Runs its flows.",
+          "minGraphVersion": 5,
+          "config": {},
+          "inputs": {},
+          "outputs": {
+            "hot": {
+              "type": "number",
+              "label": "Hot",
+              "description": "",
+              "scope": "hot"
+            }
+          },
+          "execution": [
+            "hot",
+            "cold",
+            "next",
+            "error"
+          ],
+          "scopePorts": [
+            "hot",
+            "cold"
+          ],
+          "executionLabels": {
+            "hot": "Hot",
+            "cold": "Cold",
+            "next": "Done"
+          },
+          "runtimeVersions": [
+            5
+          ]
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "fanout",
+          "config": {}
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:cold:l",
+          "source": "f",
+          "target": "l",
+          "port": "cold"
+        },
+        {
+          "id": "f.hot:l.value",
+          "kind": "data",
+          "source": "f",
+          "target": "l",
+          "sourcePort": "hot",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "messages": [
+      "Message cannot use this value here: it is on the other side of a loop or parallel branch boundary"
+    ],
+    "codes": [
+      "scope.data"
+    ]
+  },
+  {
+    "name": "flow: a flow's value cannot be read after Done",
+    "catalogPatch": {
+      "nodes": {
+        "fanout": {
+          "label": "Fan out",
+          "category": "Custom",
+          "description": "Runs its flows.",
+          "minGraphVersion": 5,
+          "config": {},
+          "inputs": {},
+          "outputs": {
+            "hot": {
+              "type": "number",
+              "label": "Hot",
+              "description": "",
+              "scope": "hot"
+            }
+          },
+          "execution": [
+            "hot",
+            "cold",
+            "next",
+            "error"
+          ],
+          "scopePorts": [
+            "hot",
+            "cold"
+          ],
+          "executionLabels": {
+            "hot": "Hot",
+            "cold": "Cold",
+            "next": "Done"
+          },
+          "runtimeVersions": [
+            5
+          ]
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "fanout",
+          "config": {}
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:next:l",
+          "source": "f",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "f.hot:l.value",
+          "kind": "data",
+          "source": "f",
+          "target": "l",
+          "sourcePort": "hot",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "messages": [
+      "Message cannot use this value here: it is on the other side of a loop or parallel branch boundary"
+    ],
+    "codes": [
+      "scope.data"
+    ]
+  },
+  {
+    "name": "flow: steps on a flow do not reach Done",
+    "catalogPatch": {
+      "nodes": {
+        "fanout": {
+          "label": "Fan out",
+          "category": "Custom",
+          "description": "Runs its flows.",
+          "minGraphVersion": 5,
+          "config": {},
+          "inputs": {},
+          "outputs": {
+            "hot": {
+              "type": "number",
+              "label": "Hot",
+              "description": "",
+              "scope": "hot"
+            }
+          },
+          "execution": [
+            "hot",
+            "cold",
+            "next",
+            "error"
+          ],
+          "scopePorts": [
+            "hot",
+            "cold"
+          ],
+          "executionLabels": {
+            "hot": "Hot",
+            "cold": "Cold",
+            "next": "Done"
+          },
+          "runtimeVersions": [
+            5
+          ]
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "fanout",
+          "config": {}
+        },
+        {
+          "id": "a",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "a"
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "b"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:hot:a",
+          "source": "f",
+          "target": "a",
+          "port": "hot"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        },
+        {
+          "id": "f:next:b",
+          "source": "f",
+          "target": "b",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "codes": [
+      "scope.execution"
+    ],
+    "messages": [
+      "A wire cannot go into or out of a loop or parallel branch from outside it"
+    ]
+  },
+  {
+    "name": "custom node: its signature's flows are its execution ports, each a scope",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "x",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Twice\")] public static async Task Run([Port(\"Body\", FlowControl = true)] Func<double, Task> body) { await body(1); await body(2); } }",
+            "signature": {
+              "title": "Twice",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "body": {
+                  "type": "number",
+                  "label": "Body",
+                  "description": "",
+                  "scope": "body"
+                }
+              },
+              "types": {},
+              "execution": [
+                "body",
+                "next",
+                "error"
+              ],
+              "scopePorts": [
+                "body"
+              ],
+              "executionLabels": {
+                "body": "Body",
+                "next": "Done"
+              }
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "done"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:x",
+          "source": "t",
+          "target": "x",
+          "port": "next"
+        },
+        {
+          "id": "x:body:l",
+          "source": "x",
+          "target": "l",
+          "port": "body"
+        },
+        {
+          "id": "x:next:after",
+          "source": "x",
+          "target": "after",
+          "port": "next"
+        },
+        {
+          "id": "x.body:l.value",
+          "kind": "data",
+          "source": "x",
+          "target": "l",
+          "sourcePort": "body",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "custom node: a flow's value cannot be read after Done",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "x",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Twice\")] public static async Task Run([Port(\"Body\", FlowControl = true)] Func<double, Task> body) { await body(1); await body(2); } }",
+            "signature": {
+              "title": "Twice",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "body": {
+                  "type": "number",
+                  "label": "Body",
+                  "description": "",
+                  "scope": "body"
+                }
+              },
+              "types": {},
+              "execution": [
+                "body",
+                "next",
+                "error"
+              ],
+              "scopePorts": [
+                "body"
+              ],
+              "executionLabels": {
+                "body": "Body",
+                "next": "Done"
+              }
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:x",
+          "source": "t",
+          "target": "x",
+          "port": "next"
+        },
+        {
+          "id": "x:next:l",
+          "source": "x",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "x.body:l.value",
+          "kind": "data",
+          "source": "x",
+          "target": "l",
+          "sourcePort": "body",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "messages": [
+      "Message cannot use this value here: it is on the other side of a loop or parallel branch boundary"
+    ],
+    "codes": [
+      "scope.data"
+    ]
+  },
+  {
+    "name": "custom node: a signature whose flows are not text is not a signature",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "x",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Twice\")] public static async Task Run([Port(\"Body\", FlowControl = true)] Func<double, Task> body) { await body(1); await body(2); } }",
+            "signature": {
+              "title": "Twice",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "body": {
+                  "type": "number",
+                  "label": "Body",
+                  "description": "",
+                  "scope": "body"
+                }
+              },
+              "types": {},
+              "execution": [
+                1,
+                "next",
+                "error"
+              ],
+              "scopePorts": [
+                "body"
+              ],
+              "executionLabels": {
+                "body": "Body",
+                "next": "Done"
+              }
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "done"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:x",
+          "source": "t",
+          "target": "x",
+          "port": "next"
+        },
+        {
+          "id": "x:body:l",
+          "source": "x",
+          "target": "l",
+          "port": "body"
+        },
+        {
+          "id": "x:next:after",
+          "source": "x",
+          "target": "after",
+          "port": "next"
+        },
+        {
+          "id": "x.body:l.value",
+          "kind": "data",
+          "source": "x",
+          "target": "l",
+          "sourcePort": "body",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "messages": [
+      "The pins of this node cannot be read; open Edit code and apply it",
+      "Unknown data output port",
+      "Unknown execution port"
+    ],
+    "codes": [
+      "custom.signature",
+      "port.unknownExecution",
+      "port.unknownOutput"
+    ],
+    "nodeId": "x"
   }
 ]

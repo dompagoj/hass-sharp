@@ -48,11 +48,35 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         var text = string.Join(' ', words);
         return text.Length == 0 ? name : char.ToUpperInvariant(text[0]) + text[1..];
     }
+    static bool InSystem(INamedTypeSymbol type) => type.ContainingNamespace is { Name: "System", ContainingNamespace.IsGlobalNamespace: true };
+    static bool IsTask(ITypeSymbol type) => type is INamedTypeSymbol { Name: "Task", Arity: 0 } task && task.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks";
+    /// <summary>
+    /// A flow's shape: <c>Action</c> and <c>Action&lt;T&gt;</c> wait for the flow's steps, <c>Func&lt;Task&gt;</c> and
+    /// <c>Func&lt;T, Task&gt;</c> give a Task; <c>T</c> is what a call carries. Null for any other type.
+    /// </summary>
+    static (bool Async, ITypeSymbol? Value)? FlowShape(ITypeSymbol type) => type is INamedTypeSymbol named && InSystem(named) ? named switch
+    {
+        { Name: "Action", Arity: 0 } => (false, null),
+        { Name: "Action", Arity: 1 } => (false, named.TypeArguments[0]),
+        { Name: "Func", Arity: 1 } when IsTask(named.TypeArguments[0]) => (true, null),
+        { Name: "Func", Arity: 2 } when IsTask(named.TypeArguments[1]) => (true, named.TypeArguments[0]),
+        _ => null
+    } : null;
+    /// <summary>An Action of any arity, or a Func giving a Task: what a flow parameter looks like, even unmarked.</summary>
+    static bool DelegateLike(ITypeSymbol type) => type is INamedTypeSymbol named && InSystem(named) && (named.Name == "Action" || named.Name == "Func" && named.Arity > 0 && IsTask(named.TypeArguments[^1]));
     static string LowerFirst(string name) => name.Length == 0 ? name : char.ToLowerInvariant(name[0]) + name[1..];
     /// <summary>Whether a parameter or returned value's name can be a pin's id, as both validators read pin ids.</summary>
     static bool PinId(string id) => VisualTypes.Matches(id, "^[A-Za-z_][A-Za-z0-9_]*$");
     /// <summary>What a pin's name may contain, said at the parameter or returned value whose name is not one.</summary>
     internal static string PinNameMessage(string what, string name) => $"Name this {what} with English letters, digits and _ only; {name} cannot name a pin";
+    /// <summary>A warning at an Action or Func&lt;…, Task&gt; parameter without FlowControl: it stays an input pin, which is rarely meant.</summary>
+    internal const string FlowUnmarkedMessage = "This Action or Func<…, Task> is an input pin; mark it [Port(\"Label\", FlowControl = true)] to make it a flow";
+    internal const string FlowTypeMessage = "A flow (FlowControl = true) is an Action, Action<T>, Func<Task> or Func<T, Task>, not nullable and without a default value";
+    internal const string FlowTupleMessage = "Name each value the flow carries, such as (string Light, double Index)";
+    internal const string FlowDuplicateMessage = "Give each flow and each value it carries its own name, apart from the values the method returns";
+    internal const string FlowPureMessage = "A value node (Pure = true) has no flows; remove Pure or the FlowControl parameters";
+    /// <summary>A flow named as a port every step or loop already has.</summary>
+    internal static string FlowNameMessage(string id) => $"Name this flow something other than {id}: next, error and condition are taken";
 
     public NodeLibraryPreview Preview(IEnumerable<NodeLibrarySource> librarySources, CancellationToken cancellationToken = default) => Preview(librarySources, null, cancellationToken);
     /// <summary>
@@ -117,7 +141,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         var nodeAttribute = frameworkAssembly.GetTypeByMetadataName("HassSharp.NodeAttribute");
         var portAttribute = frameworkAssembly.GetTypeByMetadataName("HassSharp.PortAttribute");
         var nodeContext = frameworkAssembly.GetTypeByMetadataName("HassSharp.NodeContext");
-        string? PortLabel(ImmutableArray<AttributeData> attributes) => attributes.FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, portAttribute))?.ConstructorArguments.FirstOrDefault().Value as string;
+        AttributeData? Port(ImmutableArray<AttributeData> attributes) => attributes.FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, portAttribute));
+        string? PortLabel(ImmutableArray<AttributeData> attributes) => Port(attributes)?.ConstructorArguments.FirstOrDefault().Value as string;
         // A missing doc comment matters only on a library's [Node] method, whose summary is the node's description in the
         // editor: not on a type, a record's parameters and properties, or another member, which would only drown what
         // matters; and a parameter without its <param> only on such a method (a pin). A Custom C# node's code need not
@@ -181,7 +206,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         var refined = (string id) => root["types"]![id]?["refines"] != null;
 
         // The pins of one [Node] method, as the catalog describes a library node; null (reported) when it cannot be one.
-        (string Title, string Description, string Category, bool Pure, JsonObject Inputs, JsonObject Outputs, NodeMethodDescriptor Method)? Describe(
+        (string Title, string Description, string Category, bool Pure, JsonObject Inputs, JsonObject Outputs, NodeMethodDescriptor Method, JsonObject? Flows)? Describe(
             IMethodSymbol method, MethodDeclarationSyntax declaration, AttributeData attribute, string kind, string sourceId, Action<ITypeSymbol> register)
         {
             if (!ValidMethod(method)) { Report(declaration.Identifier.GetLocation(), "Node methods must be public static, closed, non-ref, non-pointer signatures; async void, abstract/virtual methods and ref-like types are not supported"); return null; }
@@ -217,9 +242,60 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 outputs["result"] = new JsonObject { ["type"] = TypeIdentity(result), ["label"] = PortLabel(method.GetReturnTypeAttributes()) ?? "Result", ["description"] = DocText(doc?.Element("returns")) };
                 outputPorts = [new("result", null)];
             }
+            // Flows: each [Port(..., FlowControl = true)] parameter is an execution port and a scope, its values outputs read there.
+            var flowOutputs = new JsonObject(); var flowPorts = new List<string>(); var flowLabels = new JsonObject();
+            var flows = new Dictionary<IParameterSymbol, NodeFlowDescriptor>(SymbolEqualityComparer.Default);
+            foreach (var p in method.Parameters)
+            {
+                var location = p.Locations.FirstOrDefault() ?? declaration.Identifier.GetLocation();
+                var marked = Port(p.GetAttributes())?.NamedArguments.Any(a => a.Key == "FlowControl" && a.Value.Value is true) == true;
+                if (!marked) { if (DelegateLike(p.Type)) Report(location, FlowUnmarkedMessage, 2); continue; }
+                if (pure) { Report(location, FlowPureMessage); return null; }
+                if (FlowShape(p.Type) is not { } shape || p.Type.NullableAnnotation == NullableAnnotation.Annotated || p.HasExplicitDefaultValue) { Report(location, FlowTypeMessage); return null; }
+                if (!PinId(p.Name)) { Report(location, PinNameMessage("flow", p.Name)); return null; }
+                if (p.Name is "next" or "error" or "condition") { Report(location, FlowNameMessage(p.Name)); return null; }
+                var label = PortLabel(p.GetAttributes()) ?? InWords(p.Name);
+                var description = DocText(doc?.Elements("param").FirstOrDefault(e => (string?)e.Attribute("name") == p.Name));
+                var values = ImmutableArray<NodeFlowValue>.Empty;
+                if (shape.Value is INamedTypeSymbol { IsTupleType: true } carried)
+                {
+                    var elements = carried.TupleElements;
+                    if (elements.Any(e => !e.IsExplicitlyNamedTupleElement)) { Report(location, FlowTupleMessage); return null; }
+                    if (elements.FirstOrDefault(e => !PinId(LowerFirst(e.Name))) is { } unnamed) { Report(location, PinNameMessage("value", unnamed.Name)); return null; }
+                    if (elements.Any(e => TooDeep(e.Type))) { Report(location, TooDeepMessage); return null; }
+                    values = elements.Select((e, i) => new NodeFlowValue(LowerFirst(e.Name), i)).ToImmutableArray();
+                    for (var i = 0; i < elements.Length; i++)
+                    {
+                        if (flowOutputs.ContainsKey(values[i].Port)) { Report(location, FlowDuplicateMessage); return null; }
+                        register(elements[i].Type);
+                        flowOutputs[values[i].Port] = new JsonObject { ["type"] = TypeIdentity(elements[i].Type), ["label"] = InWords(elements[i].Name), ["description"] = i == 0 ? description : "", ["scope"] = p.Name };
+                    }
+                }
+                else if (shape.Value != null)
+                {
+                    if (TooDeep(shape.Value)) { Report(location, TooDeepMessage); return null; }
+                    if (flowOutputs.ContainsKey(p.Name)) { Report(location, FlowDuplicateMessage); return null; }
+                    register(shape.Value);
+                    values = [new(p.Name, null)];
+                    flowOutputs[p.Name] = new JsonObject { ["type"] = TypeIdentity(shape.Value), ["label"] = label, ["description"] = description, ["scope"] = p.Name };
+                }
+                if (flowPorts.Contains(p.Name) || outputs.Any(o => flowOutputs.ContainsKey(o.Key))) { Report(location, FlowDuplicateMessage); return null; }
+                flowPorts.Add(p.Name); flowLabels[p.Name] = label;
+                flows[p] = new(p.Name, shape.Async, values);
+            }
+            JsonObject? flowSpec = null;
+            if (flowPorts.Count > 0)
+            {
+                flowLabels["next"] = "Done";
+                flowSpec = new JsonObject { ["execution"] = new JsonArray([.. flowPorts.Append("next").Append("error").Select(f => (JsonNode)f)]),
+                    ["scopePorts"] = new JsonArray([.. flowPorts.Select(f => (JsonNode)f)]), ["executionLabels"] = flowLabels };
+                // A flow's values come first, beside its pin; the values the method returns after them.
+                foreach (var (key, value) in outputs.ToArray()) { outputs.Remove(key); flowOutputs[key] = value; }
+                outputs = flowOutputs;
+            }
             var parameters = method.Parameters.Select(p => new NodeParameterDescriptor(p.Name, TypeIdentity(p.Type), TypeIdentity(p.Type),
                 p.Type.ToDisplayString() == "System.Threading.CancellationToken", p.HasExplicitDefaultValue, p.HasExplicitDefaultValue ? p.ExplicitDefaultValue : null, p,
-                SymbolEqualityComparer.Default.Equals(p.Type, nodeContext))).ToImmutableArray();
+                SymbolEqualityComparer.Default.Equals(p.Type, nodeContext), flows.GetValueOrDefault(p))).ToImmutableArray();
             // A pin is named by its parameter: C# takes letters of any language, a pin id only English ones.
             if (parameters.FirstOrDefault(p => !p.Injected && !PinId(p.Name)) is { } foreign) { Report(foreign.Symbol.Locations.FirstOrDefault() ?? declaration.Identifier.GetLocation(), PinNameMessage("input", foreign.Name)); return null; }
             if (parameters.FirstOrDefault(p => !p.Injected && TooDeep(p.Symbol.Type)) is { } nested) { Report(nested.Symbol.Locations.FirstOrDefault() ?? declaration.Identifier.GetLocation(), TooDeepMessage); return null; }
@@ -238,7 +314,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             }
             var descriptor = new NodeMethodDescriptor(kind, sourceId, TypeIdentity(method.ContainingType), Escape(method.Name), result == null ? null : TypeIdentity(result), awaitResult, parameters, method)
                 { Outputs = outputPorts, Pure = pure };
-            return (title, DocText(doc?.Element("summary")), attribute.NamedArguments.FirstOrDefault(a => a.Key == "Category").Value.Value as string ?? "Custom", pure, input, outputs, descriptor);
+            return (title, DocText(doc?.Element("summary")), attribute.NamedArguments.FirstOrDefault(a => a.Key == "Category").Value.Value as string ?? "Custom", pure, input, outputs, descriptor, flowSpec);
         }
         IEnumerable<(MethodDeclarationSyntax Declaration, IMethodSymbol Method, AttributeData Attribute)> NodeMethods(SyntaxTree tree)
         {
@@ -262,7 +338,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                     ["minGraphVersion"] = graphVersion, ["runtimeVersions"] = new JsonArray(graphVersion),
                     ["sourceId"] = source.Id, ["argumentStorage"] = "arguments", ["config"] = new JsonObject { ["arguments"] = new JsonObject { ["type"] = "object", ["default"] = new JsonObject(), ["description"] = "The values this step takes" } },
                     ["inputs"] = described.Inputs, ["outputs"] = described.Outputs };
-                if (described.Pure) spec["pure"] = true; else spec["execution"] = new JsonArray("next", "error");
+                if (described.Pure) spec["pure"] = true;
+                else if (described.Flows is { } flowSpec) foreach (var (key, value) in flowSpec) spec[key] = value!.DeepClone();
+                else spec["execution"] = new JsonArray("next", "error");
                 root["nodes"]![kind] = spec;
                 methods.Add(described.Method);
             }
@@ -363,6 +441,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                             rule.Remove("default");
                     signature = new JsonObject { ["title"] = described.Title, ["description"] = described.Description, ["pure"] = described.Pure,
                         ["inputs"] = described.Inputs, ["outputs"] = described.Outputs, ["types"] = entries };
+                    if (described.Flows is { } flowSpec) foreach (var (key, value) in flowSpec) signature[key] = value!.DeepClone();
                     descriptor = described.Method;
                 }
             }

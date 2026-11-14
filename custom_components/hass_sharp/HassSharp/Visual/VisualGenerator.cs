@@ -359,15 +359,24 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                 else {
                     var args=new List<string>();
                     Add($"{delegates[MethodKey(node)]} {prefix}selected = {method!.InvocationType}.{method.MethodName};");
+                    var flowing=method.Parameters.Any(p=>p.Flow!=null);
+                    if(flowing)Add($"var {prefix}flows = {engine}.Flows({scope},{Q(id)});");
+                    // A flow is a lambda that runs the flow's steps: an Action waits for them, a Func<…, Task> gives their Task.
+                    string Flow(NodeFlowDescriptor flow) {
+                        var values=flow.Values.Select(v=>$",({Q(v.Port)},(object?){prefix}value{(v.Position is {} at?".Item"+(at+1).ToString(CultureInfo.InvariantCulture):"")})");
+                        var run=$"{prefix}flows.Run({Q(flow.Port)}{string.Concat(values)})";
+                        return (flow.Values.IsEmpty?"()":prefix+"value")+" => "+(flow.Async?run:run+".GetAwaiter().GetResult()");
+                    }
                     foreach(var parameter in method.Parameters) {
                         var connected=graph["edges"]!.AsArray().Any(e=>Text(e,"kind")=="data"&&Text(e,"target")==id&&Text(e,"targetPort")==parameter.Name);
                         var value=VisualNodeCatalog.InputValue(node,parameter.Name,snapshot);
                         var absent=!connected&&(value==null||Text(value,"kind")=="unset");
-                        var expression=parameter.IsCancellationToken?$"{scope}.CancellationToken":parameter.IsContext?$"{engine}.Context({scope},{Q(id)})"
+                        var expression=parameter.Flow is {} flow?Flow(flow):parameter.IsCancellationToken?$"{scope}.CancellationToken":parameter.IsContext?$"{engine}.Context({scope},{Q(id)})"
                             :absent&&parameter.HasDefaultValue?DefaultExpression(parameter):absent?$"default({ClrExpression(parameter.Symbol.Type)})":$"{engine}.Input<{ClrExpression(parameter.Symbol.Type)}>({scope},{Q(id)},{Q(parameter.Name)})";
                         args.Add("@"+parameter.Name+": "+expression);
                     }
                     var call=(method.AwaitResult?"await ":"")+prefix+"selected("+string.Join(",",args)+")";
+                    if(flowing)Add("try {");
                     if(method.Outputs.IsEmpty)Add(call+";");
                     else if(method.Outputs is [{Element:null} only])Add($"{engine}.Output({scope},{Q(id)},{call},{Q(only.Port)});");
                     else {
@@ -375,6 +384,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                         Add($"var {prefix}result = {call};");
                         foreach(var (output,index) in method.Outputs.Select((o,i)=>(o,i)))Add($"{engine}.Output({scope},{Q(id)},{prefix}result.Item{index+1},{Q(output.Port)});");
                     }
+                    if(flowing)Add($"}} finally {{ await {prefix}flows.Finish(); }}");
                 }
                 Add("break; }");maps.Add(new(id,start,lines.Count));
             }

@@ -41,7 +41,8 @@ public static class VisualNodeCatalog
     /// <summary>
     /// A signature has a text <c>title</c> and <c>description</c>, a true/false <c>pure</c>, and <c>inputs</c>, <c>outputs</c>
     /// and <c>types</c> objects; each input has a non-empty list of type ids and a true/false <c>required</c>, each output a
-    /// type id, each pin an identifier for its id, each type an object.
+    /// type id, each pin an identifier for its id, each type an object. A method with flows adds <c>execution</c> and
+    /// <c>scopePorts</c>, lists of text, and <c>executionLabels</c>, an object of text; a signature without them has none.
     /// </summary>
     internal static bool WellFormedSignature(JsonObject signature)
     {
@@ -53,6 +54,9 @@ public static class VisualNodeCatalog
             if (!VisualTypes.Matches(id, pin) || input is not JsonObject rule || rule["types"] is not JsonArray list || list.Count == 0 || !list.All(Is<string>) || !Is<bool>(rule["required"])) return false;
         foreach (var (id, output) in outputs)
             if (!VisualTypes.Matches(id, pin) || output is not JsonObject port || !Is<string>(port["type"])) return false;
+        static bool Texts(JsonNode? value) => value == null || value is JsonArray list && list.All(Is<string>);
+        if (!Texts(signature["execution"]) || !Texts(signature["scopePorts"])) return false;
+        if (signature["executionLabels"] is { } labels && (labels is not JsonObject named || !named.All(p => Is<string>(p.Value)))) return false;
         return types.All(t => t.Value is JsonObject);
     }
     /// <summary>
@@ -179,9 +183,13 @@ public static class VisualNodeCatalog
         if (Text(spec, "dynamicExecution") == "branches" && node["config"]?["branches"] is JsonArray branches)
             // Only a text id names a branch, as in TypeScript; another value is reported by the validators and has no port.
             ports.AddRange(branches.OfType<JsonValue>().Select(id => id.TryGetValue<string>(out var branch) ? branch : null).OfType<string>().Select(id => "branch:" + id));
-        ports.AddRange((spec?["execution"] as JsonArray ?? []).Select(p => p!.GetValue<string>()));
+        // A Custom C# node with flows has its ports in its signature, as its pins are.
+        ports.AddRange(((CustomSignature(node, spec)?["execution"] ?? spec?["execution"]) as JsonArray ?? []).Select(p => p!.GetValue<string>()));
         return ports.ToArray();
     }
+    /// <summary>The execution ports that open a scope of their own: a loop's body or condition, a node method's flows.</summary>
+    internal static string[] ScopePorts(JsonObject node, JsonNode? spec) =>
+        ((CustomSignature(node, spec)?["scopePorts"] ?? spec?["scopePorts"]) as JsonArray ?? []).Select(p => p is JsonValue v && v.TryGetValue<string>(out var port) ? port : null).OfType<string>().ToArray();
     public static JsonObject DataOutputs(JsonObject node, VisualCatalogSnapshot? snapshot = null) => DataOutputs(node, snapshot?.Root ?? Root);
     /// <summary>
     /// The node's value outputs under <paramref name="catalog"/>. A <c>propertyOf</c> output has the type the graph's

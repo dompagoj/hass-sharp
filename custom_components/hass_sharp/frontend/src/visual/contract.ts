@@ -29,8 +29,9 @@ export interface InputSpec {
  * An output pin. `propertyOf` names an input: the output has the type of the property `config.property` names, of the
  * value wired into that input (as `withGraphTypes` resolves it under `resolvedOutputs`), and `type` is empty.
  */
-export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; pointer?: string; refineFrom?: string; when?: string; propertyOf?: string }
-export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
+/** `scope` names the owner's scope port the value is read in (For each's item in Body, a flow's value on that flow). */
+export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; scope?: string; pointer?: string; refineFrom?: string; when?: string; propertyOf?: string }
+export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; executionLabels?: Record<string, string>; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 /** A public instance property or field a value of a C# type has, inherited ones included, as the compiler lists it. */
 export interface PropertySpec { name: string; type: string; nullable: boolean; description?: string }
 export interface TypeSpec { properties?: PropertySpec[]; clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; assignableFrom?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[]; enumLabels?: string[] }
@@ -114,7 +115,21 @@ const numeric = (id: string, catalog: VisualCatalogSnapshot) => { const kind = r
 export function executionPorts(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
   const spec = nodeSpec(node.kind, catalog)
   if (isPure(node, catalog)) return []
-  return spec ? [...(spec.dynamicExecution === 'branches' && Array.isArray(node.config.branches) ? node.config.branches.filter((id): id is string => typeof id === 'string').map(id => `branch:${id}`) : []), ...(spec.execution ?? [])] : []
+  return spec ? [...(spec.dynamicExecution === 'branches' && Array.isArray(node.config.branches) ? node.config.branches.filter((id): id is string => typeof id === 'string').map(id => `branch:${id}`) : []), ...(flowSource(node, catalog)?.execution ?? [])] : []
+}
+/** Where a node's execution ports, scopes and their labels are: a Custom C# node's signature when it has flows, else its kind's entry. */
+function flowSource(node: GraphNode, catalog: VisualCatalogSnapshot): Pick<NodeSpec, 'execution' | 'scopePorts' | 'executionLabels'> | undefined {
+  const signature = customSignature(node, catalog)
+  return signature && Array.isArray(signature.execution) ? signature : nodeSpec(node.kind, catalog)
+}
+/** The execution ports whose steps run inside the step, in a scope of their own: a loop's body or condition, a node method's flows. */
+export const scopePorts = (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string[] =>
+  (flowSource(node, catalog)?.scopePorts ?? []).filter((port): port is string => typeof port === 'string')
+/** The label a node's own entry (or signature) gives an execution port, such as Done or a flow's label; undefined when it gives none. */
+export function executionLabel(node: GraphNode, port: string, catalog: VisualCatalogSnapshot = nodeCatalog): string | undefined {
+  const labels = flowSource(node, catalog)?.executionLabels
+  const label = labels && Object.hasOwn(labels, port) ? labels[port] : undefined
+  return typeof label === 'string' && label.trim() ? label : undefined
 }
 /**
  * Whether the node is a value node: worked out each time a step reads it, with no place in the run order. A kind is
@@ -125,12 +140,17 @@ export const isPure = (node: GraphNode | string, catalog: VisualCatalogSnapshot 
   return typeof node !== 'string' && spec?.dynamicInputs === 'custom' ? customSignature(node, catalog)?.pure === true : spec?.pure === true
 }
 /** The pins a Custom C# node's code gives, as the compiler wrote them into `config.signature`. */
-export interface CustomSignature { title: string; description: string; pure: boolean; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; types: Record<string, TypeSpec> }
+export interface CustomSignature {
+  title: string; description: string; pure: boolean; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; types: Record<string, TypeSpec>
+  /** A node method with flows: its execution ports (the flows, then `next` and `error`), the flows again as scopes, and their labels. */
+  execution?: string[]; scopePorts?: string[]; executionLabels?: Record<string, string>
+}
 const pinId = '^[A-Za-z_][A-Za-z0-9_]*$'
 /**
  * Whether a stored signature is one the compiler writes: a text `title` and `description`, a true/false `pure`, and
  * `inputs`, `outputs` and `types` objects; each input has a non-empty list of type ids and a true/false `required`, each
- * output a type id, each pin an identifier for its id, each type an object. Mirrors `VisualNodeCatalog.WellFormedSignature`.
+ * output a type id, each pin an identifier for its id, each type an object. A method with flows adds `execution` and
+ * `scopePorts`, lists of text, and `executionLabels`, an object of text. Mirrors `VisualNodeCatalog.WellFormedSignature`.
  */
 export function wellFormedSignature(signature: unknown): signature is CustomSignature {
   if (!record(signature) || typeof signature.title !== 'string' || typeof signature.description !== 'string' || typeof signature.pure !== 'boolean') return false
@@ -139,6 +159,9 @@ export function wellFormedSignature(signature: unknown): signature is CustomSign
   for (const [id, input] of Object.entries(inputs))
     if (!matches(id, pinId) || !record(input) || !Array.isArray(input.types) || !input.types.length || !input.types.every(t => typeof t === 'string') || typeof input.required !== 'boolean') return false
   for (const [id, output] of Object.entries(outputs)) if (!matches(id, pinId) || !record(output) || typeof output.type !== 'string') return false
+  const texts = (value: unknown) => value === undefined || value === null || (Array.isArray(value) && value.every(v => typeof v === 'string'))
+  if (!texts(signature.execution) || !texts(signature.scopePorts)) return false
+  if (signature.executionLabels !== undefined && signature.executionLabels !== null && (!record(signature.executionLabels) || !Object.values(signature.executionLabels).every(v => typeof v === 'string'))) return false
   return Object.values(types).every(record)
 }
 /** The signature of a Custom C# node when its kind takes its pins from one and it is well formed; else undefined. */
@@ -382,7 +405,7 @@ export function setInput(node: GraphNode, port: string, value: Operand, catalog:
 /** A node's structured execution scope: each enclosing owner and the scope port it was entered through, outermost first. */
 export type Scope = { owner: string; port: string }[]
 const isAncestor = (a: Scope, b: Scope) => a.length <= b.length && a.every((s, i) => s.owner === b[i].owner && s.port === b[i].port)
-const scopePort = (node: GraphNode, port: string, catalog: VisualCatalogSnapshot) => nodeSpec(node.kind, catalog)?.scopePorts?.includes(port) || (node.kind === 'parallel' && port.startsWith('branch:'))
+const scopePort = (node: GraphNode, port: string, catalog: VisualCatalogSnapshot) => scopePorts(node, catalog).includes(port) || (node.kind === 'parallel' && port.startsWith('branch:'))
 /** Only a missing port means the default one (`next`, a condition's `true`); an empty port is a port of that name, as in C#. */
 const flowPort = (node: GraphNode, edge: ExecutionEdge) => node.kind === 'condition' && (edge.port === undefined || edge.port === 'next') ? 'true' : edge.port ?? 'next'
 
@@ -762,8 +785,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     const a = scopes.get(source.id)
     if (!a || !isAncestor(a, b)) return false
     const owned = b[a.length]?.owner === source.id
+    // A value set in one scope of its step (For each's item in Body, a flow's value on that flow) is read there only.
+    if (typeof port.scope === 'string' && port.scope) return owned && b[a.length]?.port === port.scope
     if (port.visibility === 'outside') return !owned
-    if (port.visibility === 'body') return owned && b[a.length]?.port === 'body'
     if (port.visibility === 'loop') return owned && ['body', 'condition'].includes(b[a.length]?.port)
     return true
   }

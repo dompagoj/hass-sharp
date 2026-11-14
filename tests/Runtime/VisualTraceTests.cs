@@ -550,6 +550,19 @@ static class VisualTraceTests
                 }
             });
 
+            await Test("a node method's flow runs in a frame of its own per call, its value read there, then Done", async () =>
+            {
+                const string code = "public static class CustomNode\n{\n    [Node(\"Twice\")]\n    public static async Task Run([Port(\"Body\", FlowControl = true)] Func<double, Task> body)\n    {\n        await body(1);\n        await body(2);\n    }\n}";
+                var graph = G(N("c", "custom", new JsonObject { ["source"] = code, ["arguments"] = new JsonObject() }), N("l", "log", new { value = Unset() }), Log("done", "done"));
+                graph["edges"] = new JsonArray(E("t", "c"), E("c", "l", "body"), E("c", "done"), D("c", "l", "value", "body"));
+                var (_, doc, _) = await Trace(graph);
+                Shape(doc);
+                var order = Events(doc).Select(e => S(e!["node"]) + "@" + S(e!["frame"])).ToArray();
+                Check(order.SequenceEqual(["t@", "c@", "l@c#0:body", "l@c#1:body", "done@"]), "event order: " + string.Join(", ", order));
+                Check(Of(doc, "l").All(e => Same(e["inputs"]!["value"]!["src"], """{"node":"c","port":"body"}""")), "the flow's value comes from the step: " + doc.ToJsonString());
+                Check(S(One(doc, "c")["port"]) == "next" && S(One(doc, "c")["status"]) == "ok", "the step goes on at Done: " + One(doc, "c").ToJsonString());
+            });
+
             await Test("a failing parallel branch cancels its siblings and fails or recovers at the parallel node", async () =>
             {
                 foreach (var recover in new[] { false, true })
