@@ -278,11 +278,13 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   const outputs: PinView[] = Object.entries(dataOutputs(node, catalog)).map(([port, output]) => {
     const connected = outgoing.some(e => e.kind === 'data' && e.sourcePort === port)
     const label = output.label ?? port
-    const typeText = typeLabel(output.type, catalog)
+    // A Select property node's output has its property's type, and none until one is chosen and found.
+    const untyped = !!output.propertyOf && !output.type
+    const typeText = untyped ? (text(node.config.property) ? 'Unknown type' : 'No property chosen') : typeLabel(output.type, catalog)
     return {
-      id: dataHandle(port), side: 'out', kind: 'data', label, typeId: output.type, typeName: typeText,
-      name: `Output ${label}, ${typeText}, ${connectedText(connected)}`, color: typeColor(output.type, catalog),
-      list: typeIsList(output.type, catalog), connected, error: false, description: output.description,
+      id: dataHandle(port), side: 'out', kind: 'data', label, typeId: untyped ? undefined : output.type, typeName: typeText,
+      name: `Output ${label}, ${typeText}, ${connectedText(connected)}`, color: untyped ? 'var(--hs-muted)' : typeColor(output.type, catalog),
+      list: !untyped && typeIsList(output.type, catalog), connected, error: false, description: output.description,
     }
   })
   const right = [...namedExec.map(execPin), ...outputs]
@@ -312,7 +314,8 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
  * equal view, so the adapter reuses it instead of deriving ports, summaries and diagnostics again.
  */
 export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionIndex(ctx.graph, ctx.catalog)): string {
-  const { graph, catalog } = ctx
+  // With the graph's types: a Select property node's output type is resolved from the wire into it.
+  const graph = ctx.graph, catalog = index.catalog
   // The node's actual ports: inputs come from the node and, for loop results, from the owner loop's declarations.
   const inputs = Object.entries(nodeInputs(graph, node, catalog)).map(([port, input]) => [
     port, input.types, input.label ?? null, !!input.required, input.description ?? null, inputValue(node, port, catalog) ?? null,
@@ -422,6 +425,10 @@ export interface FlowContextValue {
   setInput(nodeId: string, port: string, operand: Operand, options?: { coalesce?: string }): void
   /** Replaces the node's config as one change (a Constant's Type and value together). */
   setConfig(nodeId: string, config: Record<string, unknown>): void
+  /** The graph the cards show, for a choice that reads other nodes (a Select property node's properties). */
+  graph(): VisualGraph
+  /** Chooses a Select property node's property as one change, removing the wires it no longer fits, with a notice. */
+  chooseProperty(nodeId: string, name: string): void
   locateProblem(nodeId: string): void
   /** Whether the node's code can be opened (a Custom C# node on a page with the code editor). */
   hasCode(nodeId: string): boolean

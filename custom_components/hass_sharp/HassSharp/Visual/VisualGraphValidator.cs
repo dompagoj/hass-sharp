@@ -35,7 +35,7 @@ public static class VisualGraphValidator
         "edge.invalid", "edge.duplicate", "edge.endpoint", "edge.unknownKind", "edge.valueWirePins", "edge.orderWirePins", "edge.orderPinName",
         "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
         "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult",
-        "flow.pure", "pure.unused", "custom.signature",
+        "flow.pure", "pure.unused", "custom.signature", "property.unset", "property.unknown",
     ];
 
     /// <summary>
@@ -331,6 +331,26 @@ public static class VisualGraphValidator
             }
             return labels;
         }
+        /// <summary>A wire from a Select property node whose property is not chosen yet: its value has no type.</summary>
+        internal static string ChooseProperty(string step) => $"Choose a property in {step} to use its value";
+        /// <summary>A Select property node with a value connected and no property chosen.</summary>
+        internal static string PropertyUnset(string type) => $"Choose a property of {type}";
+        /// <summary>A Select property node whose chosen property the connected value's type does not have (the wire or the library changed).</summary>
+        internal static string PropertyUnknown(string type, string name) => $"{type} has no property {Name(name)}; choose another";
+        /// <summary>
+        /// A value whose type has no properties, wired into a Select property node, and what reads such a value instead:
+        /// Read entity for an entity, Get field for an object or a JSON list, For each for any other list.
+        /// </summary>
+        internal static string NoProperties(JsonObject catalog, string type)
+        {
+            var label = TypeLabel(catalog, type); var root = VisualTypes.RootId(catalog, type);
+            var instead = VisualTypes.Refines(catalog, type, "entity_id") ? "use Read entity to get its state"
+                : root == "object" ? "use Get field to take a value out of an object"
+                : root == "array" ? "use Get field to take a value out of a list"
+                : label == "List" || label.StartsWith("List of ", StringComparison.Ordinal) ? "use For each to go through its items"
+                : "connect a value that has some, such as a record from a node library";
+            return $"{label} has no properties to select; {instead}";
+        }
         /// <summary>A Repeat count typed in above the loop's Maximum iterations.</summary>
         internal static string RepeatCount(string label, double max, string maxLabel) => $"{label} must be at most {Number(max)}, as {maxLabel} is {Number(max)}";
     }
@@ -500,7 +520,12 @@ public static class VisualGraphValidator
                 if (output != null && input != null)
                 {
                     var type = Text(output, "type"); var expected = Strings(input["types"]);
-                    if (!expected.Any(t => CompatibleTypes(type, t))) Error(Id(target), WrongDomain(target, tp, type) ?? Words.Incompatible(Root, Prefix(target) + Words.PortLabel(input, tp), type, expected), tp, tp);
+                    // An output whose property is not chosen yet has no type: a wire from it says to choose one. When one is chosen
+                    // but cannot be read (a property the value's type lacks), the node itself says so and the wire gets nothing.
+                    if (PropertyOf(output) != "" && type == "") { if (Text(Config(source), "property") == "") Error(Id(target), Words.ChooseProperty(Words.StepName(source, Spec(source))), tp, tp, "property.unset"); }
+                    // A Select property node reads a value whose own type has properties.
+                    else if (SelectsProperties(Spec(target), tp) ? TypeProperties(Root, type).Length == 0 : !expected.Any(t => CompatibleTypes(type, t)))
+                        Error(Id(target), WrongDomain(target, tp, type) ?? (SelectsProperties(Spec(target), tp) && KnownType(type) ? Words.NoProperties(Root, type) : Words.Incompatible(Root, Prefix(target) + Words.PortLabel(input, tp), type, expected)), tp, tp);
                     // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable.
                     if (scopes.ContainsKey(Id(source)) && scopes.ContainsKey(Id(target)) && !Visible(source, target, output))
                         Error(Id(target), ScopeData(Prefix(target) + Words.PortLabel(input, tp)), tp, tp, "scope.data");
@@ -708,6 +733,15 @@ public static class VisualGraphValidator
                 resolved[port] = Operand(node, port, value, rule!, present);
                 if(resolved[port] is {} type)InputTypes[(id,port)]=type;
             }
+            // A Select property node: with a value connected whose type has properties, the chosen one must be one of them.
+            foreach (var input in (spec["outputs"] as JsonObject ?? []).Select(o => PropertyOf(o.Value)).Where(p => p != "").Distinct())
+                if (incoming.TryGetValue((id, input), out var wire) && Text(DataOutputs(nodes[Text(wire, "source")])[Text(wire, "sourcePort")], "type") is { Length: > 0 } valueType &&
+                    TypeProperties(Root, valueType) is { Length: > 0 } members)
+                {
+                    var chosen = Text(cfg, "property");
+                    if (chosen == "") Error(id, Words.PropertyUnset(Words.TypeLabel(Root, valueType)), "property", code: "property.unset");
+                    else if (!members.Any(m => Text(m, "name") == chosen)) Error(id, Words.PropertyUnknown(Words.TypeLabel(Root, valueType), chosen), "property", code: "property.unknown");
+                }
             // A Repeat count typed in above the loop's own Maximum iterations would fail when the loop starts.
             if (kind == "repeat" && !incoming.ContainsKey((id, "count")) && TryGetInputValue(node, "count", out var count) && count is JsonObject countOperand && Text(countOperand, "kind") == "literal" &&
                 Number(countOperand["value"]) is { } times && Number(cfg["maxIterations"]) is { } most && times > most && DataInputs(node, Owner(node))["count"] is var countSpec && !(Number(countSpec?["max"]) is { } inputMax && times > inputMax))

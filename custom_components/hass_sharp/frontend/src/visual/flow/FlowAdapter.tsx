@@ -18,6 +18,7 @@ import { applyLayout, separateCards, tidyLayout, type LayoutBox } from '../layou
 import type { SummaryNames } from '../nodeSummary'
 import { registryNames, type NameResolver } from '../widgets'
 import { addConnected, canAddFor, type PinRef } from './autoConnect'
+import { chooseProperty } from '../selectProperty'
 import { CanvasToolbar } from './CanvasToolbar'
 import { edgeTypes } from './Edges'
 import { NodeCard } from './NodeCard'
@@ -1080,6 +1081,14 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     setConfig: (nodeId, config) => {
       const node = graph().nodes.find(n => n.id === nodeId)
       if (node && !readOnly() && config !== node.config) change(updateNode(graph(), nodeId, { config }))
+    },
+    graph,
+    chooseProperty: (nodeId, name) => {
+      if (readOnly()) return
+      const result = chooseProperty(graph(), nodeId, name, catalog())
+      if (result.graph === graph()) return
+      change(result.graph)
+      if (result.notice) notify(result.notice)
     },
     locateProblem,
     hasCode,

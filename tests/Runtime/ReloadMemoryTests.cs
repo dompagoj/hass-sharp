@@ -95,7 +95,7 @@ static class ReloadMemoryTests
             Check(left == 0, $"{left} collectible assemblies are still loaded after the last unload");
             var growth = (memory[Reloads] - memory[From]) / 1048576.0;
             Check(growth <= BoundMiB, $"managed memory grew {growth:F2} MiB from reload {From} to reload {Reloads} ({memory[From] / 1048576.0:F1} to {memory[Reloads] / 1048576.0:F1} MiB); at most {BoundMiB} MiB is allowed");
-            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field), every load context collected; managed memory {memory[From] / 1048576.0:F1} MiB after reload {From}, {memory[Reloads] / 1048576.0:F1} MiB after reload {Reloads}");
+            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), every load context collected; managed memory {memory[From] / 1048576.0:F1} MiB after reload {From}, {memory[Reloads] / 1048576.0:F1} MiB after reload {Reloads}");
         }
         finally
         {
@@ -153,7 +153,7 @@ static class ReloadMemoryTests
 
     // The automations Populate saves; RunAll runs each that calls a service, with the call it makes.
     static readonly (string Id, string? Service)[] Automations =
-        [("library", "light.turn_on"), ("custom", "light.turn_on"), ("service", null), ("plain", null), ("typed", "notify.notify"), ("record", "notify.notify")];
+        [("library", "light.turn_on"), ("custom", "light.turn_on"), ("service", null), ("plain", null), ("typed", "notify.notify"), ("record", "notify.notify"), ("select", "notify.notify")];
 
     // Run now each automation that calls a service, and wait for its call: the values of the automations' own types go
     // through System.Text.Json on every reload.
@@ -172,6 +172,7 @@ static class ReloadMemoryTests
                 // Values go out as every service call sends them: the enum by name, the anonymous object and the record with snake_case names.
                 Check(made.Any(m => m.Json.Contains("\"target\":\"night\"") && m.Json.Contains("\"data\":{\"minutes\":5,\"mode\":\"night\"}")), $"reload {reload}: the typed call's values: " + string.Join(" | ", made.Select(m => m.Json)));
                 Check(made.Any(m => m.Json.Contains("21.5") && m.Json.Contains("\"C\"")), $"reload {reload}: the library record in the field: " + string.Join(" | ", made.Select(m => m.Json)));
+                Check(made.Any(m => m.Json.Contains("\"message\":\"kelvin\"")), $"reload {reload}: the property of the Custom C# class in the field: " + string.Join(" | ", made.Select(m => m.Json)));
                 break;
             }
             Check(DateTime.UtcNow < until, $"reload {reload}: the automations did not make their calls: " + string.Join(", ", made.Select(m => m.Service)));
@@ -181,9 +182,11 @@ static class ReloadMemoryTests
         await Task.Delay(20);
     }
 
-    // A node library whose nodes call a service and make a record, and six automations: the first node, a Custom C# node
+    // A node library whose nodes call a service and make a record, and seven automations: the first node, a Custom C# node
     // that calls a service, a built-in Call service node behind an entity trigger, a log, a Custom C# node passing an enum
-    // and an anonymous object of its own to a typed call, and the record made an object and wired into a Call service field.
+    // and an anonymous object of its own to a typed call, the record made an object and wired into a Call service field,
+    // and a Select property node reading a field of a Custom C# value node's own class into a Call service field (its
+    // property is looked up on each read, so no type of the automation's load context is held across a reload).
     static async Task Populate(HassSharpManager manager)
     {
         const string library = "public record Reading(double Value, string Unit);\n\npublic static class Lights\n{\n    [Node(\"Light up\")]\n    public static async Task<string> LightUp(NodeContext context, string light, double level)\n    {\n        await context.Services.Light.TurnOn(light, brightnessPct: level);\n        return light;\n    }\n\n    [Node(\"Reading\")]\n    public static Reading Read() => new(21.5, \"C\");\n}";
@@ -215,7 +218,19 @@ static class ReloadMemoryTests
         record["edges"]!.AsArray().Add(D("r", "o", "value", "result"));
         record["edges"]!.AsArray().Add(D("o", "s", "field:data"));
         record["name"] = "Record in a field";
-        var graphs = new Dictionary<string, JsonObject> { ["library"] = usesLibrary, ["custom"] = custom, ["service"] = service, ["plain"] = plain, ["typed"] = typed, ["record"] = record };
+        var select = G(N("mk", "custom", new JsonObject
+        {
+            ["source"] = "public class Reading { public double Value { get; init; } public string Unit = \"kelvin\"; }\n\npublic static class CustomNode\n{\n    [Node(\"Make\", Pure = true)]\n    public static Reading Make() => new() { Value = 300 };\n}",
+            ["arguments"] = new JsonObject(),
+        }), N("p", "select_property", new { property = "Unit" }), N("s", "service", new JsonObject
+        {
+            ["service"] = "notify.notify", ["fields"] = new JsonObject { ["message"] = new JsonObject { ["kind"] = "unset" } },
+            ["target"] = new JsonObject { ["kind"] = "unset" }, ["returnResponse"] = false,
+        }));
+        // The Custom C# node is a value node: out of the run order.
+        select["edges"] = new JsonArray(E("t", "s"), D("mk", "p", "value", "result"), D("p", "s", "field:message"));
+        select["name"] = "Select property";
+        var graphs = new Dictionary<string, JsonObject> { ["library"] = usesLibrary, ["custom"] = custom, ["service"] = service, ["plain"] = plain, ["typed"] = typed, ["record"] = record, ["select"] = select };
         foreach (var (id, _) in Automations)
         {
             var saved = await Request(manager.VisualRequest, new { operation = "save", id, graph = graphs[id], expectedRevision = 0, deriveSignatures = true });

@@ -24,9 +24,15 @@ export interface InputSpec {
   selector?: Record<string, unknown>; advanced?: boolean; section?: string | null; example?: JsonValue
 }
 /** `when` names a boolean config key; the output exists only while it is true. */
-export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; pointer?: string; refineFrom?: string; when?: string }
+/**
+ * An output pin. `propertyOf` names an input: the output has the type of the property `config.property` names, of the
+ * value wired into that input (as `withGraphTypes` resolves it under `resolvedOutputs`), and `type` is empty.
+ */
+export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; pointer?: string; refineFrom?: string; when?: string; propertyOf?: string }
 export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
-export interface TypeSpec { clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; assignableFrom?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[]; enumLabels?: string[] }
+/** A public instance property or field a value of a C# type has, inherited ones included, as the compiler lists it. */
+export interface PropertySpec { name: string; type: string; nullable: boolean; description?: string }
+export interface TypeSpec { properties?: PropertySpec[]; clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; assignableFrom?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[]; enumLabels?: string[] }
 export interface ParametricTypeSpec { param: string; valuePattern: string; label: string }
 /** Contract C4: one normalised Home Assistant service field. */
 export interface ServiceFieldSchema {
@@ -42,7 +48,7 @@ export interface ServiceSchema {
 }
 /** Contract C4: the services section, keyed by `domain.service`. Never part of the catalog root. */
 export interface ServicesSection { servicesGeneration: string; items: Record<string, ServiceSchema> }
-export interface VisualCatalogSnapshot { services?: ServicesSection; version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; parametricTypes?: Record<string, ParametricTypeSpec>; nodes: Record<string, NodeSpec>; triggerOutputs?: Record<string, Record<string, OutputSpec>>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
+export interface VisualCatalogSnapshot { services?: ServicesSection; version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; parametricTypes?: Record<string, ParametricTypeSpec>; nodes: Record<string, NodeSpec>; triggerOutputs?: Record<string, Record<string, OutputSpec>>; /** Per graph (`withGraphTypes`): the type of each `propertyOf` output, by node id and port. */ resolvedOutputs?: Record<string, Record<string, string>>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
 /** Pass the server-produced catalog explicitly for each document; graph metadata is never type authority. */
 export const nodeCatalog = rawCatalog as unknown as VisualCatalogSnapshot
 const nodeSpec = (kind: unknown, catalog: VisualCatalogSnapshot = nodeCatalog) => typeof kind === 'string' && Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined
@@ -163,11 +169,74 @@ export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): 
         if (Array.isArray(entry[key])) next[key] = union(first[key], entry[key])
       added[id] = next
     }
-  return Object.keys(added).length ? { ...catalog, types: Object.assign(Object.create(null), catalog.types, added) } : catalog
+  const selecting = selectingNodes(catalog, graph)
+  if (!Object.keys(added).length && !selecting.length) return catalog
+  const merged: VisualCatalogSnapshot = { ...catalog, types: Object.keys(added).length ? Object.assign(Object.create(null), catalog.types, added) : catalog.types }
+  if (selecting.length) resolveOutputs(merged, graph)
+  return merged
+}
+/** The well-formed nodes of a graph by id (the first of an id), as both validators read them. */
+function graphNodes(graph: unknown): Map<string, GraphNode> {
+  const nodes = new Map<string, GraphNode>()
+  for (const node of record(graph) && Array.isArray(graph.nodes) ? graph.nodes : [])
+    if (record(node) && typeof node.id === 'string' && node.id && record(node.config) && !nodes.has(node.id)) nodes.set(node.id, node as unknown as GraphNode)
+  return nodes
+}
+const propertyOf = (output: unknown) => record(output) ? text(output.propertyOf) : ''
+const selectingNodes = (catalog: VisualCatalogSnapshot, graph: unknown) =>
+  [...graphNodes(graph).values()].filter(node => Object.values(nodeSpec(node.kind, catalog)?.outputs ?? {}).some(output => propertyOf(output) !== ''))
+/** Whether the kind's input takes a value whose type has properties (`$properties`): a value of exactly such a type, by its own entry. */
+export const selectsProperties = (spec: NodeSpec | undefined, port: string) =>
+  !!spec && Object.hasOwn(spec.inputs, port) && Array.isArray(spec.inputs[port].types) && spec.inputs[port].types.includes('$properties')
+/** The properties a value of the type has, as its catalog entry lists them; empty for a type without any. */
+export function typeProperties(catalog: VisualCatalogSnapshot, type: string): PropertySpec[] {
+  const entry = Object.hasOwn(catalog.types, type) ? catalog.types[type] : undefined
+  return record(entry) && Array.isArray(entry.properties) ? entry.properties.filter(record) as unknown as PropertySpec[] : []
+}
+/**
+ * The type of each `propertyOf` output of the graph, under `resolvedOutputs` (node id, then port): the type of the
+ * chosen property of the type the first value wire into its input brings. Chains are resolved source first; an output
+ * on a cycle of such nodes, or whose input, property or source type is missing, has none. Mirrors
+ * `VisualNodeCatalog.ResolveOutputs`.
+ */
+function resolveOutputs(catalog: VisualCatalogSnapshot, graph: unknown) {
+  const resolved: Record<string, Record<string, string>> = Object.create(null)
+  catalog.resolvedOutputs = resolved
+  const nodes = graphNodes(graph)
+  const incoming = new Map<string, Record<string, unknown>>()
+  for (const edge of record(graph) && Array.isArray(graph.edges) ? graph.edges : [])
+    if (record(edge) && typeof edge.id === 'string' && edge.id && edge.kind === 'data' && !Object.hasOwn(edge, 'port') && typeof edge.sourcePort === 'string' && edge.sourcePort &&
+      typeof edge.targetPort === 'string' && edge.targetPort && typeof edge.source === 'string' && nodes.has(edge.source) && typeof edge.target === 'string' && nodes.has(edge.target)) {
+      const key = JSON.stringify([edge.target, edge.targetPort])
+      if (!incoming.has(key)) incoming.set(key, edge)
+    }
+  // false while being resolved, true once done
+  const state = new Map<string, boolean>()
+  const resolve = (node: GraphNode) => {
+    if (state.has(node.id)) return
+    state.set(node.id, false)
+    for (const [port, output] of Object.entries(nodeSpec(node.kind, catalog)?.outputs ?? {})) {
+      const input = propertyOf(output), edge = input ? incoming.get(JSON.stringify([node.id, input])) : undefined
+      if (!edge) continue
+      const source = nodes.get(edge.source as string)!
+      resolve(source)
+      const outputs = dataOutputs(source, catalog), sourcePort = edge.sourcePort as string
+      const type = Object.hasOwn(outputs, sourcePort) ? text(outputs[sourcePort].type) : ''
+      const found = text(typeProperties(catalog, type).find(p => text(p.name) === text(node.config.property))?.type)
+      if (found) (resolved[node.id] ??= Object.create(null) as Record<string, string>)[port] = found
+    }
+    state.set(node.id, true)
+  }
+  for (const node of selectingNodes(catalog, graph)) resolve(node)
 }
 export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, OutputSpec> {
   const spec = nodeSpec(node.kind, catalog)
-  const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.outputs ?? {}).map(([key, value]) => [key, { ...value, type: configuredType(value.type, node) }]))) as Record<string, OutputSpec>
+  // A propertyOf output has the type the graph's catalog resolved for it (withGraphTypes), and none until it is resolved.
+  const resolved = (port: string) => {
+    const outputs = catalog.resolvedOutputs && Object.hasOwn(catalog.resolvedOutputs, node.id) ? catalog.resolvedOutputs[node.id] : undefined
+    return record(outputs) && Object.hasOwn(outputs, port) ? text(outputs[port]) : ''
+  }
+  const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.outputs ?? {}).map(([key, value]) => [key, { ...value, type: propertyOf(value) ? resolved(key) : configuredType(value.type, node) }]))) as Record<string, OutputSpec>
   if (spec?.dynamicOutputs === 'loop') for (const key of ['carry', 'exports'] as const) for (const item of declarations(node, key)) {
     if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
     ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { type: item.type, label: item.name, description: `${key === 'carry' ? 'Kept between iterations' : 'Available after the loop'}: ${item.name}`, visibility: key === 'carry' ? 'loop' : 'outside' }
@@ -232,9 +301,11 @@ function refinedType(type: string, value: unknown, catalog: VisualCatalogSnapsho
   }
   return refined
 }
+/** The ids of every type whose entry lists properties: what `$properties` (a Select property node's input) accepts. */
+const withProperties = (catalog: VisualCatalogSnapshot) => Object.entries(catalog.types).filter(([, type]) => record(type) && Array.isArray(type.properties) && type.properties.length > 0).map(([id]) => id)
 export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, InputSpec> {
   const spec = nodeSpec(node.kind, catalog)
-  const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.inputs ?? {}).map(([key, value]) => [key, { ...value, types: value.types.flatMap(t => t === '$any' ? Object.keys(catalog.types) : [configuredType(t, node)]) }]))) as Record<string, InputSpec>
+  const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.inputs ?? {}).map(([key, value]) => [key, { ...value, types: value.types.flatMap(t => t === '$any' ? Object.keys(catalog.types) : t === '$properties' ? withProperties(catalog) : [configuredType(t, node)]) }]))) as Record<string, InputSpec>
   if (node.kind === 'foreach' && ports.items) ports.items.types = ['array', ...Object.entries(catalog.types).filter(([, type]) => !type.nullable && type.elementType && isAssignable(type.elementType, text(node.config.itemType), catalog)).map(([id]) => id)]
   const types = Object.keys(catalog.types)
   const dynamic = spec?.dynamicInputs
@@ -426,6 +497,25 @@ export const words = {
     const names = [...new Set(expected.map(t => apart.get(t) ?? typeLabel(t, catalog)))], given = apart.get(type)!
     return names.length > 0 && names.length <= 4 ? `${subject} accepts ${words.or(names)}, not ${given}` : `${subject} does not accept ${given}`
   },
+  /** A wire from a Select property node whose property is not chosen yet: its value has no type. */
+  chooseProperty: (step: string) => `Choose a property in ${step} to use its value`,
+  /** A Select property node with a value connected and no property chosen. */
+  propertyUnset: (type: string) => `Choose a property of ${type}`,
+  /** A Select property node whose chosen property the connected value's type does not have (the wire or the library changed). */
+  propertyUnknown: (type: string, name: string) => `${type} has no property ${words.name(name)}; choose another`,
+  /**
+   * A value whose type has no properties, wired into a Select property node, and what reads such a value instead:
+   * Read entity for an entity, Get field for an object or a JSON list, For each for any other list.
+   */
+  noProperties: (type: string, catalog: VisualCatalogSnapshot = nodeCatalog) => {
+    const label = typeLabel(type, catalog), root = rootType(type, catalog)
+    const instead = refinesType(type, 'entity_id', catalog) ? 'use Read entity to get its state'
+      : root === 'object' ? 'use Get field to take a value out of an object'
+        : root === 'array' ? 'use Get field to take a value out of a list'
+          : label === 'List' || label.startsWith('List of ') ? 'use For each to go through its items'
+            : 'connect a value that has some, such as a record from a node library'
+    return `${label} has no properties to select; ${instead}`
+  },
   /** A Repeat count typed in above the loop's Maximum iterations. */
   repeatCount: (label: string, max: number, maxLabel: string) => `${label} must be at most ${max}, as ${maxLabel} is ${max}`,
   /** A wire whose value is not visible where it arrives. */
@@ -494,6 +584,20 @@ export const connectable = (input: InputSpec | undefined) => input?.connectable 
 export const incompatibleInput = (node: GraphNode, spec: InputSpec, port: string, type: string, catalog: VisualCatalogSnapshot = nodeCatalog) =>
   wrongDomain(node, port, type, catalog) ?? words.incompatible(inputSubject(node, spec, port, catalog), type, spec.types, catalog)
 /**
+ * Why a data wire from `output` of `source` into `input` (`port` of `target`) does not fit, by its types; shared with the
+ * connection index and mirrored by the data wire check in `VisualGraphValidator`. An output whose property is not
+ * chosen yet has no type: a wire from it says to choose one; when one is chosen but cannot be read (a property the
+ * value's type lacks), the node itself says so and the wire gets nothing. A Select property node's input takes a value
+ * whose own type has properties.
+ */
+export function wireTypeError(source: GraphNode, output: OutputSpec, target: GraphNode, input: InputSpec, port: string, catalog: VisualCatalogSnapshot = nodeCatalog,
+  assignable: (source: string, target: string) => boolean = (a, b) => isAssignable(a, b, catalog)): { message: string; code?: DiagnosticCode } | undefined {
+  if (propertyOf(output) && !output.type) return text(source.config.property) ? undefined : { message: words.chooseProperty(words.stepName(source, catalog)), code: 'property.unset' }
+  const selects = selectsProperties(nodeSpec(target.kind, catalog), port)
+  if (selects ? typeProperties(catalog, output.type).length > 0 : input.types.some(t => assignable(output.type, t))) return
+  return { message: wrongDomain(target, port, output.type, catalog) ?? (selects && typeChain(output.type, catalog).length > 0 ? words.noProperties(output.type, catalog) : words.incompatible(inputSubject(target, input, port, catalog), output.type, input.types, catalog)) }
+}
+/**
  * The target rules of a service node, mirrored by `VisualGraphValidator.TargetRules`; `connected` says which inputs
  * are wired. A target the service does not take is an error (with services only). A target value holds only
  * `targetKeys`, as the runtime enforces. A node whose target is set in any form (a value, a connection or a variable)
@@ -525,7 +629,7 @@ export const diagnosticCodes = [
   'edge.invalid', 'edge.duplicate', 'edge.endpoint', 'edge.unknownKind', 'edge.valueWirePins', 'edge.orderWirePins', 'edge.orderPinName',
   'port.unknownExecution', 'port.executionTaken', 'port.unknownOutput', 'port.unknownInput', 'port.inputTaken', 'trigger.incoming',
   'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult',
-  'flow.pure', 'pure.unused', 'custom.signature',
+  'flow.pure', 'pure.unused', 'custom.signature', 'property.unset', 'property.unknown',
 ] as const
 export type DiagnosticCode = typeof diagnosticCodes[number]
 /**
@@ -734,7 +838,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (incoming.has(key(target.id, edge.targetPort))) error(target.id, 'Only one data source per input', edge.targetPort, edge.targetPort, 'port.inputTaken')
     else incoming.set(key(target.id, edge.targetPort), edge)
     if (output && input) {
-      if (!input.types.some(t => isAssignable(output.type, t))) error(target.id, incompatibleInput(target, input, edge.targetPort, output.type, catalog), edge.targetPort, edge.targetPort)
+      const wrong = wireTypeError(source, output, target, input, edge.targetPort, catalog, isAssignable)
+      if (wrong) error(target.id, wrong.message, edge.targetPort, edge.targetPort, wrong.code)
       // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable.
       if (scopes.has(source.id) && scopes.has(target.id) && !visible(source, target, output))
         error(target.id, words.scopeData(inputSubject(target, input, edge.targetPort, catalog)), edge.targetPort, edge.targetPort, 'scope.data')
@@ -872,6 +977,18 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     const resolved: Record<string, string | undefined> = Object.create(null)
     for (const [port, rule] of Object.entries(dataInputs(node, ownerOf(node)))) resolved[port] = operand(node, port, inputValue(node, port, catalog), rule)
     resolvedTypes.set(node.id, resolved)
+    // A Select property node: with a value connected whose type has properties, the chosen one must be one of them.
+    for (const input of new Set(Object.values(spec.outputs).map(propertyOf).filter(p => p !== ''))) {
+      const edge = incoming.get(key(node.id, input))
+      const valueType = edge ? text(dataOutputs(nodes.get(edge.source)!)[edge.sourcePort]?.type) : ''
+      const members = valueType ? typeProperties(catalog, valueType) : []
+      if (!members.length) continue
+      const chosen = text(node.config.property)
+      origin = { kind: 'operand', node: node.id, port: input }
+      if (!chosen) error(node.id, words.propertyUnset(typeLabel(valueType, catalog)), 'property', undefined, 'property.unset')
+      else if (!members.some(m => text(m.name) === chosen)) error(node.id, words.propertyUnknown(typeLabel(valueType, catalog), chosen), 'property', undefined, 'property.unknown')
+      origin = graphOrigin
+    }
     // A Repeat count typed in above the loop's own Maximum iterations would fail when the loop starts.
     const count = node.kind === 'repeat' && !incoming.has(key(node.id, 'count')) ? inputValue(node, 'count', catalog) : undefined
     const max = node.config.maxIterations, countSpec = dataInputs(node, ownerOf(node)).count
@@ -975,7 +1092,9 @@ export function connectData(graph: Graph, source: string, sourcePort: string, ta
   // the new wire itself lies on one (a data wire never changes execution cycles). A value node left unused by the
   // wire it replaces is only a warning about that value node, not a problem the new wire causes.
   const after = analyzeGraph(next, catalog)
-  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && (!old.includes(JSON.stringify(e)) ||
+  // A Select property node that now has a value says which property to choose (or that its chosen one is missing): that
+  // is about the node, not a problem the wire causes; one on the input the wire fills still refuses it.
+  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && (!old.includes(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||
     (e.nodeId === target && (e.inputId === targetPort || e.portId === targetPort)) ||
     (e.nodeId === source && e.portId === sourcePort && e.inputId === undefined)))
   const messages = addedErrors.map(e => e.message)

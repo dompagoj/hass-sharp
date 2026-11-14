@@ -141,9 +141,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         // one separate pass, without recursively exploring related types' generic arguments.
         // Grow<T> : I<Grow<Grow<T>>> otherwise introduces endlessly deeper constructed types.
         // Every explicitly declared closed type was registered above, irrespective of depth.
-        void Related(Dictionary<string, ITypeSymbol> into)
+        void Related(Dictionary<string, ITypeSymbol> into, IEnumerable<ITypeSymbol>? only = null)
         {
-            foreach (var declared in into.Values.ToArray())
+            foreach (var declared in (only ?? into.Values).ToArray())
             {
                 foreach (var contract in declared.AllInterfaces)
                     if (!Unsupported(contract) && compilation.IsSymbolAccessibleWithin(contract, compilation.Assembly)) into.TryAdd(TypeIdentity(contract), contract);
@@ -245,7 +245,32 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 methods.Add(described.Method);
             }
         }
+        // What a Select property node can read: the members of each class, record and struct declared in a node library,
+        // a Custom C# node or HassSharp itself. A property's type joins the catalog as a pin's type does (with what it
+        // relates to), and its own members are read in turn. The walk stops at generic types it meets through a property
+        // (Box<T> with a Box<Box<T>> property would never end): such a type is listed, with no properties of its own. A
+        // generic type a pin names, or one a pin's type relates to, has its properties.
+        void Properties(Dictionary<string, ITypeSymbol> into, HashSet<string> named, Dictionary<string, ImmutableArray<(string Name, ITypeSymbol Type, ISymbol Member)>> found, IReadOnlyDictionary<string, ITypeSymbol>? known, bool related)
+        {
+            var pending = new Queue<string>(into.Keys);
+            while (pending.TryDequeue(out var id))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (found.ContainsKey(id) || PropertyOwner(into[id], frameworkAssembly) is not { } owner || Generic(owner) && !named.Contains(id)) continue;
+                var members = Members(owner, compilation);
+                found[id] = members;
+                var before = into.Keys.ToHashSet(StringComparer.Ordinal);
+                foreach (var member in members) Register(into, member.Type, known);
+                var added = into.Where(pair => !before.Contains(pair.Key)).ToArray();
+                if (related) Related(into, added.Select(pair => pair.Value));
+                foreach (var key in into.Keys) if (!before.Contains(key)) pending.Enqueue(key);
+            }
+        }
+        var pinned = new HashSet<string>(typeSymbols.Keys, StringComparer.Ordinal);
         Related(typeSymbols);
+        pinned.UnionWith(typeSymbols.Keys);
+        var properties = new Dictionary<string, ImmutableArray<(string Name, ITypeSymbol Type, ISymbol Member)>>(StringComparer.Ordinal);
+        Properties(typeSymbols, pinned, properties, null, true);
         var types = root["types"]!.AsObject();
         foreach (var (id, symbol) in typeSymbols)
         {
@@ -254,6 +279,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             if (!types.ContainsKey(id)) types[id] = type;
             // Only roots are CLR conversion targets; refinements are decided by the chain before Roslyn.
             DescribeType(type, symbol, typeSymbols.Where(pair => !refined(pair.Key)), compilation);
+            if (properties.TryGetValue(id, out var members) && !members.IsEmpty) type["properties"] = PropertyList(members, cancellationToken);
         }
         VisualNodeCatalog.RefreshStructuralTypes(root);
         // Keep optional CLR defaults that cannot be represented faithfully in the JSON literal editor
@@ -277,6 +303,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         {
             cancellationToken.ThrowIfCancellationRequested();
             var own = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            var ownProperties = new Dictionary<string, ImmutableArray<(string Name, ITypeSymbol Type, ISymbol Member)>>(StringComparer.Ordinal);
+            // The types of the pins' properties are the node's as well (built-in ones aside), so another node's are refused too.
+            bool WithProperties() { Properties(own, [.. own.Keys], ownProperties, builtIn, false); return true; }
             JsonObject? signature = null; NodeMethodDescriptor? descriptor = null;
             // Code that does not compile has no signature; its errors are the node's.
             if (!customErrors[custom.NodeId].Any(d => d.Severity == 3))
@@ -286,7 +315,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                     Report(found.Length == 0 ? tree.GetRoot(cancellationToken).DescendantNodes().OfType<BaseTypeDeclarationSyntax>().FirstOrDefault()?.Identifier.GetLocation() ?? tree.GetRoot(cancellationToken).GetLocation() : found[1].Declaration.Identifier.GetLocation(),
                         found.Length == 0 ? "Mark one method with [Node]: it becomes this node" : $"Mark only one method with [Node]; this code has {found.Length}");
                 else if (Describe(found[0].Method, found[0].Declaration, found[0].Attribute, "custom", custom.NodeId, type => Register(own, type, builtIn)) is { } described
-                    && OwnTypesArePrivate(found[0].Declaration, tree, own.Values))
+                    && WithProperties() && OwnTypesArePrivate(found[0].Declaration, tree, own.Values))
                 {
                     // Each type the pins use beyond the built-in ones, with what it converts to and from: every type of this
                     // generation, its own other types, and every base type and interface it has (by id, so a pin of such a
@@ -303,6 +332,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                         DescribeType(entry, symbol, generation.Concat(supertypes), compilation);
                         entry["assignableFrom"] = new JsonArray(generation.Where(pair => pair.Key != id && VisualCatalogSnapshot.StandardConversion(compilation, pair.Value, symbol))
                             .Select(pair => (JsonNode?)JsonValue.Create(pair.Key)).ToArray());
+                        if (ownProperties.TryGetValue(id, out var members) && !members.IsEmpty) entry["properties"] = PropertyList(members, cancellationToken);
                         entries[id] = entry;
                     }
                     foreach (var (_, input) in described.Inputs)
@@ -321,6 +351,65 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     }
 
     static IEnumerable<ITypeSymbol> BaseTypes(ITypeSymbol type) { for (var b = type.BaseType; b != null; b = b.BaseType) yield return b; }
+
+    /// <summary>
+    /// The type whose members a Select property node reads from a value of <paramref name="type"/>: a class, record or
+    /// struct declared in source (a node library or a Custom C# node) or in HassSharp itself, also when it may be empty
+    /// (<c>Point?</c> reads Point's members); null for every other type (built-in scalars, enums, interfaces, JSON values
+    /// and the base library's types).
+    /// </summary>
+    static INamedTypeSymbol? PropertyOwner(ITypeSymbol type, IAssemblySymbol hassSharp)
+    {
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable) type = nullable.TypeArguments[0];
+        if (type is not INamedTypeSymbol { TypeKind: TypeKind.Class or TypeKind.Struct, IsStatic: false } named) return null;
+        var origin = named.OriginalDefinition;
+        return origin.Locations.Any(l => l.IsInSource) || SymbolEqualityComparer.Default.Equals(origin.ContainingAssembly, hassSharp) ? named : null;
+    }
+    static bool Generic(INamedTypeSymbol type) => type.IsGenericType || type.ContainingType is { } outer && Generic(outer);
+
+    /// <summary>
+    /// The public, readable instance properties and public instance fields of the type, inherited ones included: the base
+    /// type's first, each type's in declaration order, a member declared again (<c>new</c>, <c>override</c>) where the
+    /// base had it. No indexers, static or compiler-made members, and none whose type a pin could not have.
+    /// </summary>
+    static ImmutableArray<(string Name, ITypeSymbol Type, ISymbol Member)> Members(INamedTypeSymbol type, CSharpCompilation compilation)
+    {
+        var chain = new List<INamedTypeSymbol>();
+        for (var current = type; current != null && current.SpecialType is not (SpecialType.System_Object or SpecialType.System_ValueType); current = current.BaseType) chain.Add(current);
+        chain.Reverse();
+        var members = new List<(string Name, ITypeSymbol Type, ISymbol Member)>();
+        foreach (var owner in chain)
+            foreach (var member in owner.GetMembers())
+            {
+                ITypeSymbol? memberType = member switch
+                {
+                    IPropertySymbol { IsStatic: false, IsIndexer: false, DeclaredAccessibility: Accessibility.Public, GetMethod.DeclaredAccessibility: Accessibility.Public, RefKind: RefKind.None } property => property.Type,
+                    IFieldSymbol { IsStatic: false, IsConst: false, DeclaredAccessibility: Accessibility.Public, IsFixedSizeBuffer: false } field => field.Type,
+                    _ => null,
+                };
+                if (memberType == null || member.Name == "EqualityContract" && member.IsImplicitlyDeclared || Unsupported(memberType) || !compilation.IsSymbolAccessibleWithin(memberType, compilation.Assembly)) continue;
+                var index = members.FindIndex(m => m.Name == member.Name);
+                if (index >= 0) members[index] = (member.Name, memberType, member); else members.Add((member.Name, memberType, member));
+            }
+        return [.. members];
+    }
+
+    /// <summary>
+    /// The <c>properties</c> of a type entry: each member's C# name, type id and whether it may be empty, with what its
+    /// documentation says (a record's positional property is described by the record's <c>param</c>).
+    /// </summary>
+    static JsonArray PropertyList(ImmutableArray<(string Name, ITypeSymbol Type, ISymbol Member)> members, CancellationToken cancellationToken) => new(members.Select(m =>
+    {
+        var entry = new JsonObject { ["name"] = m.Name, ["type"] = TypeIdentity(m.Type), ["nullable"] = Nullable(m.Type) };
+        if (PropertyDescription(m.Member, cancellationToken) is { Length: > 0 } description) entry["description"] = description;
+        return (JsonNode?)entry;
+    }).ToArray());
+    static string PropertyDescription(ISymbol member, CancellationToken cancellationToken)
+    {
+        static XElement? Parse(string? xml) { try { return string.IsNullOrWhiteSpace(xml) ? null : XElement.Parse(xml); } catch (System.Xml.XmlException) { return null; } }
+        if (DocText(Parse(member.GetDocumentationCommentXml(cancellationToken: cancellationToken))?.Element("summary")) is { Length: > 0 } own) return own;
+        return DocText(Parse(member.ContainingType.GetDocumentationCommentXml(cancellationToken: cancellationToken))?.Elements("param").FirstOrDefault(e => (string?)e.Attribute("name") == member.Name));
+    }
 
     /// <summary>A type's catalog entry: its words, literal rules and the targets (of <paramref name="targets"/>) it converts to implicitly.</summary>
     static void DescribeType(JsonObject type, ITypeSymbol symbol, IEnumerable<KeyValuePair<string, ITypeSymbol>> targets, CSharpCompilation compilation)

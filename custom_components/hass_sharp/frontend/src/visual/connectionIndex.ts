@@ -7,13 +7,14 @@ import {
   connectable,
   dataInputs,
   dataOutputs,
-  incompatibleInput,
   isAssignable,
   isPure,
   nodeCatalog,
   serviceTargetDiagnostics,
   withGraphTypes,
+  wireTypeError,
   words,
+  type DataEdge,
   type DiagnosticOrigin,
   type Graph,
   type GraphAnalysis,
@@ -182,7 +183,8 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       const crossing = (reader: GraphNode, via: GraphNode) => produced.filter(p => analysis.scopes.has(p.node.id) && !analysis.visible(p.node, reader, p.output))
         .map(p => words.pureScope(words.stepName(via, catalog), words.stepName(p.node, catalog), words.portLabel(p.output, p.port), words.stepName(reader, catalog)))
       if (input) {
-        if (!input.types.some(t => index.assignable(output.type, t))) messages.add(incompatibleInput(target, input, targetPort, output.type, catalog))
+        const wrong = wireTypeError(source, output, target, input, targetPort, catalog, index.assignable)
+        if (wrong) messages.add(wrong.message)
         if (analysis.scopes.has(sourceId) && analysis.scopes.has(targetId) && !analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
         if (sourcePure && !targetPure && analysis.scopes.has(targetId)) for (const m of crossing(target, source)) messages.add(m)
       }
@@ -192,6 +194,9 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       if (targetPure) for (const { via, reader, port } of stepReaders(target))
         if (analysis.scopes.has(reader.id)) for (const m of crossing(reader, via)) if (!oldScope.has(JSON.stringify([reader.id, port, m]))) messages.add(m)
     }
+    // Into the input a Select property node reads: the wire changes the type of its output, and so of every wire from it
+    // and from a Select property node reading it in turn. What the nodes say about their property never refuses it.
+    if (Object.values(spec.outputs).some(o => o.propertyOf === targetPort)) for (const m of retyped(sourceId, sourcePort, targetId, targetPort, removed)) messages.add(m)
     // The new wire lies on a cycle. Without one in the graph, a path from the target back to the source cannot use
     // the wire it replaces, so the memoised reach of the current graph answers.
     const rewired = () => [...analysis.data.filter(e => !(e.target === targetId && e.targetPort === targetPort)), { source: sourceId, target: targetId }]
@@ -209,6 +214,38 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
         if (d.inputId === targetPort || !old.has(JSON.stringify(d))) messages.add(d.message)
     }
     return messages.size ? { message: [...messages].join('; '), fallback: false } : { fallback: false }
+  }
+  /**
+   * The new problems of the wires whose source output a Select property node's new value retypes (the catalog resolves
+   * its output again, as for the graph connectData makes): a wire that no longer fits, and a comparison whose sides no
+   * longer match. A problem the graph already has is no new one, and a `property.` one is about a node, not the wire.
+   */
+  function retyped(sourceId: string, sourcePort: string, targetId: string, targetPort: string, removed: Set<number>): string[] {
+    const edges = [...graph.edges.filter((_, i) => !removed.has(i)), { id: 'candidate', kind: 'data' as const, source: sourceId, target: targetId, sourcePort, targetPort }]
+    const after = withGraphTypes(catalog, { ...graph, edges })
+    const type = (types: VisualCatalogSnapshot, node: string, port: string) => types.resolvedOutputs && Object.hasOwn(types.resolvedOutputs, node) && Object.hasOwn(types.resolvedOutputs[node], port) ? types.resolvedOutputs[node][port] : ''
+    const changed = (node: string, port: string) => type(catalog, node, port) !== type(after, node, port)
+    const found: string[] = [], first = new Map<string, DataEdge>()
+    for (const e of analysis.data) if (!(e.target === targetId && e.targetPort === targetPort) && !first.has(pairKey(e.target, e.targetPort))) first.set(pairKey(e.target, e.targetPort), e)
+    const compared = new Set<string>()
+    for (const e of analysis.data) {
+      if (!changed(e.source, e.sourcePort) || (e.target === targetId && e.targetPort === targetPort)) continue
+      const from = analysis.nodes.get(e.source)!, to = analysis.nodes.get(e.target)!
+      const output = dataOutputs(from, after)[e.sourcePort], input = connectable(dataInputs(to, analysis.ownerOf(to), after)[e.targetPort])
+      const wrong = output && input ? wireTypeError(from, output, to, input, e.targetPort, after) : undefined
+      if (wrong && !wrong.code?.startsWith('property.')) {
+        const d = { nodeId: to.id, message: wrong.message, severity: 3, inputId: e.targetPort, portId: e.targetPort, ...(wrong.code ? { code: wrong.code } : {}) }
+        if (!old.has(JSON.stringify(d))) found.push(wrong.message)
+      }
+      const toSpec = Object.hasOwn(after.nodes, to.kind) ? after.nodes[to.kind] : undefined
+      if (toSpec?.comparison && !compared.has(to.id)) {
+        compared.add(to.id)
+        const resolved = { ...analysis.resolved.get(to.id) }
+        for (const port of Object.keys(resolved)) { const wire = first.get(pairKey(to.id, port)); if (wire && changed(wire.source, wire.sourcePort)) resolved[port] = dataOutputs(analysis.nodes.get(wire.source)!, after)[wire.sourcePort]?.type }
+        for (const d of comparisonDiagnostics(to, toSpec, resolved, after)) if (!old.has(JSON.stringify(d))) found.push(d.message)
+      }
+    }
+    return found
   }
   /** The value wires from the value node, or a value node reading it, into a step: the value node on the wire, the step and its input. */
   function stepReaders(start: GraphNode) {
@@ -248,7 +285,7 @@ function sharedConfigKeys(kind: string, spec: NodeSpec): Set<string> {
     if (output.when) keys.add(output.when)
     if (output.refineFrom) keys.add(output.refineFrom.split('.')[0])
   }
-  for (const input of Object.values(spec.inputs)) for (const type of input.types) if (type.startsWith('$') && type !== '$any') keys.add(type.slice(1))
+  for (const input of Object.values(spec.inputs)) for (const type of input.types) if (type.startsWith('$') && type !== '$any' && type !== '$properties') keys.add(type.slice(1))
   return keys
 }
 /** True when setInput writes the operand where nothing but this input reads it. */

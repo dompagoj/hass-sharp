@@ -4,6 +4,7 @@ import { useUpdateNodeInternals, type NodeProps } from '@dschz/solid-flow'
 import { inputValue, type Operand } from '../contract'
 import { InputEditor } from '../InputEditor'
 import { ConstantType, retypeConstant } from '../constant'
+import { PropertyPicker } from '../selectProperty'
 import { icons } from '../icons'
 import { displayValue, keepsNull, valueSummary, widgetFor, withStates } from '../widgets'
 import { Pin } from './Pin'
@@ -462,6 +463,18 @@ export function NodeCard(props: NodeProps) {
                   </div>
                 )}
               </For>
+              <Show when={current().kind === 'select_property' && flow.graphNode(id)}>
+                {node => (
+                  <div class="hs-card__row hs-card__row--property" data-input-id="property">
+                    <EditorBoundary>
+                      <PropertyPicker compact node={node()} graph={flow.graph()} catalog={flow.catalog()} disabled={flow.readOnly() || !flow.editable()}
+                        errors={(current().problems ?? []).filter(p => p.severity === 3 && p.inputId === 'property').map(p => p.message)}
+                        describedBy={current().problems.length ? errorsId : undefined}
+                        onChoose={name => flow.chooseProperty(id, name)} />
+                    </EditorBoundary>
+                  </div>
+                )}
+              </Show>
               <Show when={current().footer}>
                 {pin => (
                   <div class="hs-card__row hs-card__row--footer">

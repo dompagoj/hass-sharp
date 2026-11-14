@@ -237,6 +237,8 @@ function kindText(ctx: Context): string | undefined {
       return line ? (line.length > 60 ? `${line.slice(0, 59)}…` : line) : undefined
     }
     case 'get_field': return text(config.pointer) ? `Field ${text(config.pointer)}` : undefined
+    // The property it reads, by its C# name.
+    case 'select_property': return text(config.property) || undefined
     case 'object_create': { const keys = record(config.fields) ? Object.keys(config.fields) : []; return keys.length ? `Fields ${keys.join(', ')}` : undefined }
     case 'array_create': { const n = Array.isArray(config.items) ? config.items.length : 0; return n ? `${n} item${n === 1 ? '' : 's'}` : undefined }
     case 'condition_result': { const value = operandText(ctx, 'value'); return value ? `Return ${value}` : undefined }

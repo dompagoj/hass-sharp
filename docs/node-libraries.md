@@ -86,6 +86,25 @@ Pins support CLR classes, records, interfaces, enums, nullable types, arrays and
 closed generics. The catalog's `assignableTo`, `nullable` and `literalKind` metadata
 say what fits where. An arbitrary object type does not get a value editor.
 
+**Properties.** The catalog entry of each class, record and struct your pins use
+(and of HassSharp's own, such as `EntityStateSnapshot`) lists its `properties`:
+`{name, type, nullable, description?}` for each public instance property that can be
+read and each public instance field, inherited ones first, in declaration order.
+Static members, constants, indexers, write-only, `protected` and `internal` members
+and the record's `EqualityContract` are left out. A property's description is its
+`<summary>`, or the record's `<param>` for a positional property. A property's type
+joins the catalog as a pin's type does, with its own properties. A generic type is
+read only when a pin names it; one first met as a property's type (such as
+`Box<Box<T>>` inside `Box<T>`) is listed without properties, which ends the walk.
+Enums, built-in types and JSON values have none.
+
+So a property of your record can be read without writing a node for it: wire the
+record into a **Select property** node and choose the property (see
+[writing visual automations](writing-visual-automations.md#select-property)). A
+Custom C# node's own types carry their properties in its `config.signature.types`;
+a change of a property's type there makes the stored pins out of date only when a
+Select property node reads that property.
+
 The built-in types and the C# type a `[Node]` parameter uses to take each (the editor
 shows both on every pin row, such as "True/False · `bool`"):
 
@@ -147,8 +166,8 @@ their names, descriptions, units, ranges and allowed values. The rules are:
   name in snake_case (`DayOfWeek.Monday` is `"monday"`).
 - A service that returns a response gives it as a `JsonElement`. When the response
   is optional, a second method gives it, such as `GetItemsWithResponse`.
-- A call waits until Home Assistant has run the service, and is cancelled when the
-  run stops.
+- A call waits until Home Assistant has run the service. When the run stops, the run
+  stops waiting for it; a call already sent to Home Assistant is not cancelled.
 
 Services appear one by one while Home Assistant starts. The methods are therefore
 generated from the live services together with those they were last generated from,
@@ -324,11 +343,12 @@ diagnostics.
 ## Scope snapshots
 
 Branch, loop and structured error scopes isolate values through detached deep
-snapshots. An entity snapshot is immutable. JSON nodes, arrays, lists, dictionaries
-and ordinary user classes and records are copied. Aliases within one scope remain
-aliases within that scope. Nullable values keep their null state. A value being
-assignable at compile time does not guarantee that it can be copied at a scope
-boundary.
+snapshots. A value is copied when the inner scope first reads it; a value it never
+reads is not copied. An entity snapshot is immutable. JSON nodes, arrays, lists,
+dictionaries and ordinary user classes and records are copied. Aliases within one
+scope remain aliases within that scope. Nullable values keep their null state. A
+value being assignable at compile time does not guarantee that it can be copied: a
+value that cannot be copied fails the step that reads it.
 
 Live resources fail with a precise snapshot error. These include streams, tasks,
 delegates, safe handles and unsupported framework object graphs. For your own

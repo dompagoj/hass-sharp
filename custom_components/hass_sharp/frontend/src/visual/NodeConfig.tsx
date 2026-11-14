@@ -9,6 +9,7 @@ import { ArrayItems, Branches, Declarations, ObjectFields, type StructureContext
 import { buildNodeView } from './flow/flowModel'
 import { constantTypeLabels, constantTypes, retypeConstant } from './constant'
 import { RemoveWire } from './RemoveWire'
+import { chooseProperty, PropertyPicker } from './selectProperty'
 import { graphTypes } from './connectionIndex'
 import { customSignature, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { updateNode, type VisualGraph } from './graph'
@@ -25,7 +26,7 @@ const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.
 const operators: Record<string, string> = { eq: 'is equal to', ne: 'is not equal to', lt: 'is less than', le: 'is at most', gt: 'is greater than', ge: 'is at least' }
 /** Config keys edited by a kind's own section, or not at all (`values` of a loop result are its inputs). */
 const ownConfig = new Set(['carry', 'exports', 'branches'])
-const kindConfig: Record<string, string[]> = { service: ['service', 'fields', 'returnResponse'], custom: ['source', 'signature', 'arguments'], object_create: ['fields'], array_create: ['items'], loop_result: ['values'] }
+const kindConfig: Record<string, string[]> = { service: ['service', 'fields', 'returnResponse'], custom: ['source', 'signature', 'arguments'], select_property: ['property'], object_create: ['fields'], array_create: ['items'], loop_result: ['values'] }
 
 export interface NodeConfigProps {
   node: GraphNode
@@ -264,6 +265,24 @@ export function NodeConfig(props: NodeConfigProps) {
             <h3 class="hs-insp-heading">Inputs</h3>
             <For each={ports()}>{port => <InputRow port={port} ctx={rows} />}</For>
           </section>
+        </Show>
+        <Show when={kind() === 'select_property'}>
+          {(() => {
+            const id = createUniqueId(), hintId = `${id}-hint`
+            return (
+              <div class="hs-insp-field" data-input-id="property" aria-invalid={errorsFor('property').length > 0 || undefined}>
+                <label class="hs-insp-field__label" for={id}>{spec()?.config.property?.label ?? 'Property'}</label>
+                <PropertyPicker id={id} node={props.node} graph={props.graph} catalog={props.catalog} errors={errorsFor('property')} describedBy={hintId}
+                  onChoose={name => {
+                    const result = chooseProperty(props.graph, props.node.id, name, props.catalog)
+                    props.onGraphChange(result.graph)
+                    if (result.notice) props.onNotice?.(result.notice)
+                  }} />
+                <small id={hintId} class="hs-field-hint">{spec()?.config.property?.description}</small>
+                <Errors list={errorsFor('property')} />
+              </div>
+            )
+          })()}
         </Show>
         <Show when={loop()}>
           <Declarations ctx={structure} key="carry" title="Kept between iterations" hint="Each iteration starts from the value the previous one finished with." />

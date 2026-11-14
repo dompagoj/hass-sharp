@@ -9,6 +9,10 @@ public static class NodeLibraryFixture
         public interface IReading { }
         public record Reading(string State) : IReading;
         public enum Mode { Off, On }
+        /// <summary>A person who uses Home Assistant.</summary>
+        /// <param name="UserName">What the person is called.</param>
+        /// <param name="Email">Where notifications go; may be empty.</param>
+        public record Profile(string UserName, string? Email, int Age, Reading Home, string[] Rooms);
         public static class Samples
         {
             /// <summary>Read a typed state.</summary>
@@ -30,6 +34,8 @@ public static class NodeLibraryFixture
             [Node("Required readonly list")] public static void RequiredReadOnlyList(IReadOnlyList<string> items) {}
             [Node("Required list")] public static void RequiredList(IList<string> items) {}
             [Node("Nullable enumerable")] public static void NullableEnumerable(IEnumerable<string?> items) {}
+            /// <summary>The person this Home Assistant belongs to (a value with properties, for Select property).</summary>
+            [Node("Profile", Pure = true)] public static Profile Me() => new("dompa", null, 40, new("home"), ["hall", "kitchen"]);
             [Node("Nonfinite defaults")] public static void NonfiniteDefaults(double? nan = double.NaN, float? positive = float.PositiveInfinity, double? negative = double.NegativeInfinity) {}
         }
         """;

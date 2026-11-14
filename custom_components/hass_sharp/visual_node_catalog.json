@@ -1573,6 +1573,49 @@
         "path"
       ]
     },
+    "select_property": {
+      "label": "Select property",
+      "category": "Data",
+      "description": "Read one property of a C# value, such as the user name of a user a node library step gives.",
+      "pure": true,
+      "minGraphVersion": 5,
+      "config": {
+        "property": {
+          "type": "string",
+          "default": "",
+          "description": "The property to read, by its C# name; the choices are the properties of the connected value's type.",
+          "label": "Property"
+        }
+      },
+      "inputs": {
+        "value": {
+          "types": [
+            "$properties"
+          ],
+          "required": true,
+          "description": "The value to read from: a record, class or struct from a node library, a Custom C# node or an entity state.",
+          "label": "Value"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "",
+          "propertyOf": "value",
+          "description": "The chosen property's value, as the property's own type.",
+          "label": "Value"
+        }
+      },
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "property",
+        "member",
+        "field",
+        "get",
+        "break"
+      ]
+    },
     "entity_field": {
       "label": "Entity field",
       "category": "Hass",

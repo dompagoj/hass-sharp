@@ -82,6 +82,17 @@ const typedDemo = (): Graph => {
   g = addNode(g, 'log', 'after', catalog)
   g = updateNode(g, 'after', { label: 'Log done', position: { x: 2440, y: 20 } })
   g = connectNodes(g, 'greeting', 'after', undefined, catalog)
+  // Select property: the user name of the library's Profile value into a Log step after it, and one not connected yet.
+  const profile = Object.entries(catalog.nodes).find(([, spec]) => spec.label === 'Profile')![0]
+  g = addNode(g, profile, 'me', catalog)
+  g = updateNode(g, 'me', { position: { x: 2040, y: 420 } })
+  for (const [kind, id] of [['select_property', 'who'], ['select_property', 'pick'], ['log', 'greet']] as const) g = addNode(g, kind, id, catalog)
+  g = updateNode(g, 'who', { position: { x: 2440, y: 420 }, config: { property: 'UserName' } })
+  g = updateNode(g, 'pick', { position: { x: 2440, y: 640 } })
+  g = updateNode(g, 'greet', { label: 'Greet', position: { x: 2840, y: 20 } })
+  g = connectNodes(g, 'after', 'greet', undefined, catalog)
+  g = connectData(g, 'me', 'result', 'who', 'value', catalog)
+  g = connectData(g, 'who', 'value', 'greet', 'value', catalog)
   const sample = fillGraphLayout(rich.cases[0].graph as Graph)
   return { ...g, nodes: [...g.nodes, ...sample.nodes.map((node, i) => ({ ...node, position: { x: 40 + i * 400, y: 820 } }))], edges: [...g.edges, ...sample.edges] }
 }

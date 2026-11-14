@@ -90,6 +90,9 @@
 .hs-app .hs-flow .hs-card :is(input, select, textarea, button):focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
 .hs-app .hs-card__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: start; }
 .hs-app .hs-card__row--footer { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--hs-line); }
+/* A Select property node's property choice spans the card under its pins. */
+.hs-app .hs-card__row--property { grid-template-columns: minmax(0, 1fr); }
+.hs-app .hs-card__row--property .hs-card-editor { max-width: none; }
 .hs-app .hs-pin-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .hs-app .hs-pin-cell--out { align-items: flex-end; max-width: 168px; text-align: right; }
 .hs-app .hs-pin-line { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; min-height: 24px; }

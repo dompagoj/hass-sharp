@@ -48,6 +48,11 @@
 .hs-app .hs-mixed .hs-kind-switch { flex: 0 0 auto; width: auto; max-width: 9.5em; }
 /* A Constant's Type is as wide as its longest name ("Number (double)"), up to the card's editor; the value wraps below. */
 .hs-app .hs-mixed .hs-constant-type { max-width: 100%; }
+.hs-app .hs-select-property { display: grid; gap: 4px; min-width: 0; }
+.hs-app .hs-select-property__select { width: 100%; min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+.hs-app .hs-select-property--compact .hs-select-property__select { min-height: 28px; padding-block: 2px; font-size: 12px; }
+.hs-app .hs-select-property__type { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin: 0; color: var(--hs-muted); font-size: 12px; }
+.hs-app .hs-select-property__type .hs-field-hint { flex-basis: 100%; }
 .hs-app .hs-mixed-value { display: grid; gap: 4px; flex: 1 1 140px; min-width: 0; }
 .hs-app .hs-search-select { min-width: 0; }
 .hs-app .hs-search-select .hs-suggestions [role="option"] { flex-direction: row; justify-content: space-between; align-items: baseline; gap: 8px; }

@@ -32,8 +32,10 @@ timers; stale callbacks cannot dispatch into the old lifetime.
 Schedule invocations use the ordinary mode/cancellation/history runner. History
 contains cause `Schedule`, planned UTC, received/start/end UTC, schedule ID and a
 stable occurrence ID (hash of automation/class/action/schedule ID/planned UTC).
-SQLite claims each occurrence before dispatch, including mode-skipped attempts.
-Claims survive reload, process restart, revision edits and history retention.
+SQLite claims each occurrence before dispatch, including mode-skipped attempts; the
+claim is made off the trigger path. A claim made while the automation is stopping or
+turned off is given back, so that occurrence stays unclaimed. Claims survive reload,
+process restart, revision edits and history retention.
 The claims table is intentionally retained indefinitely, independently of bounded
 run history; it currently has no pruning UI. Without configured history, dedup
 is limited to the loaded automation. At-most-once dispatch attempts do not

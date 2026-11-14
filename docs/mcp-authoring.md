@@ -88,9 +88,14 @@ tool descriptions summarise the workflow below and the entity typing rule.
    operation): every `field:<name>` input with types and constraints, the target
    types (for example `["target","entity_id:light"]`), `hasTarget`, the response
    mode and the outputs. A graph's node has only the field ports whose keys are in
-   its `config.fields`. In port types, `$any` stands for every type and `$type`
-   (generally `$<name>`) for the type set in the node's `config.<name>`. Without
-   `kind` it returns the whole catalog.
+   its `config.fields`. In port types, `$any` stands for every type, `$properties`
+   for every type whose entry lists `properties`, and `$type` (generally `$<name>`)
+   for the type set in the node's `config.<name>`. An output with
+   `propertyOf: <input>` (Select property's) has an empty `type`: it takes the type
+   of the property `config.property` names, of the value wired into that input. A
+   type entry's `properties` (`{name, type, nullable, description?}`) are in the
+   type table that `get_node_schema` and `get_capabilities` return, and in a Custom
+   C# node's `config.signature.types`. Without `kind` it returns the whole catalog.
 3. Use `discover` to find entities, services, devices, areas or installed trigger
    descriptions. Supply `kind`, optional `query`, `offset` (default 0) and `limit`
    (default 50, maximum 100); entities and services also take `domain`.

@@ -78,6 +78,43 @@ Read entity returns a detached `HassSharp.EntityStateSnapshot`. Use Entity field
 to extract a scalar state/attribute, or pass the snapshot directly to a typed
 custom method.
 
+### Select property
+
+Select property (a value node, in the Data category) reads one property of a typed
+C# value. Connect a value to its Value input: a record, class or struct that a node
+library step or a Custom C# node gives, or an entity state. Its Property select then
+lists that type's properties in the order the type declares them, each with its type
+in words and in C#, such as "UserName · Text (string)"; with more than 12 it is a
+list you can search. Choosing one gives the node's Value output that property's type,
+so a step reading it gets a value of exactly that type, and the card's summary names
+the property. For example, a library step gives a `User` record:
+
+```csharp
+public record User(string UserName, string? Email, int Age);
+```
+
+User → Select property (UserName) → Log: the output is Text, and the Log writes the
+actual user name. Choosing Age instead makes the output a Number (`int`).
+
+The properties of a type are its public instance properties you can read and its
+public instance fields, inherited ones included; static members, indexers and members
+the compiler writes for itself are not listed. Object, List, Text, numbers, entity IDs
+and enums have none: connecting one is refused with what to use instead (Get field
+for an object or a JSON list, For each for a C# list, Read entity for an entity).
+
+- Until a value is connected the select is off and says "Connect a value to choose a
+  property". Until a property is chosen the output has no type, and a wire from it is
+  refused: "Choose a property in Select property to use its value".
+- Choosing a property is one undo step. A wire from the output that no longer fits
+  the new type is removed in the same step, and a notice says which.
+- Connecting a value of another type keeps the chosen property when that type has
+  one of the same name; otherwise the select shows it as missing and the node has an
+  error, "User has no property Level; choose another".
+- Dropping a wire from an output whose type has properties on empty canvas offers
+  Select property in the quick-add list.
+- When the value is empty (null) at run time, the step that reads the node fails:
+  "Select property · UserName: the value is empty".
+
 If and State condition choose True/False paths; most actions also offer an Error path,
 which receives the failure instead of ending the run. Parallel branches and bounded
 loops have structured scopes. Branch/body outputs do not automatically escape. Loop carry values retain state across sequential iterations; explicit

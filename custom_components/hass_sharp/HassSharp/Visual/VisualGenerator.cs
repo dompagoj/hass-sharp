@@ -86,7 +86,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
     }
     /// <summary>
     /// The catalog a graph's generated class embeds (D10): only the node kinds the graph uses, every library node
-    /// kind, and the types any of them, the graph or (with a trigger) the <c>triggerOutputs</c> table name, closed
+    /// kind, and the types any of them, the graph, <c>resolvedOutputs</c> or (with a trigger) the <c>triggerOutputs</c> table name, closed
     /// over refinement chains, <c>assignableTo</c> and element types. Every other section is kept whole. Built from
     /// the catalog root only, so service schemas never reach it (D2).
     /// </summary>
@@ -99,7 +99,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         var types=root["types"] as JsonObject??[];var builtIn=VisualNodeCatalog.Root["types"] as JsonObject??[];
         var pending=new Stack<string>(types.Where(t=>!builtIn.ContainsKey(t.Key)).Select(t=>t.Key));
         void Strings(JsonNode? node){switch(node){case JsonObject o:foreach(var (_,v) in o)Strings(v);break;case JsonArray a:foreach(var v in a)Strings(v);break;case JsonValue v when v.TryGetValue<string>(out var text):pending.Push(text);break;}}
-        Strings(nodes);Strings(graph);if(kinds.Contains("trigger"))Strings(root["triggerOutputs"]);
+        // A Select property node's output type is its property's, under resolvedOutputs: the run reads the value as that.
+        Strings(nodes);Strings(graph);Strings(root["resolvedOutputs"]);if(kinds.Contains("trigger"))Strings(root["triggerOutputs"]);
         var used=new HashSet<string>(StringComparer.Ordinal);
         while(pending.TryPop(out var id)) {
             foreach(var link in VisualTypes.Chain(root,id)) {
@@ -182,6 +183,28 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             x.All(p=>y.TryGetPropertyValue(p.Key,out var other)&&p.Value is JsonObject mine&&other is JsonObject theirs&&keys.All(k=>SameJson(mine[k],theirs[k])));
         return SameJson(stored["pure"],compiled["pure"])&&Pins(stored["inputs"],compiled["inputs"],["types","required","nullable","hasDefaultValue","default"])&&Pins(stored["outputs"],compiled["outputs"],["type"]);
     }
+    /// <summary>
+    /// Whether each property a Select property node of the graph reads, of a type the stored signature lists, has the
+    /// type and nullability the code gives it: the node's value has that type, so a change is a change of pins. The
+    /// properties of a type no node reads, and every description, are not compared.
+    /// </summary>
+    internal static bool SameSelected(JsonObject graph,JsonObject root,JsonObject stored,JsonObject compiled) {
+        var nodes=VisualNodeCatalog.GraphNodes(graph);
+        if(!nodes.Values.Any(n=>Text(n,"kind")=="select_property")||stored["types"] is not JsonObject types)return true;
+        var catalog=VisualNodeCatalog.WithGraphTypes(root,graph);
+        var wires=(graph["edges"] as JsonArray??[]).OfType<JsonObject>().Where(e=>Text(e,"kind")=="data"&&Text(e,"targetPort")=="value").ToArray();
+        foreach(var node in nodes.Values.Where(n=>Text(n,"kind")=="select_property")) {
+            var name=Text(node["config"],"property");
+            if(name==""||wires.FirstOrDefault(e=>Text(e,"target")==Text(node,"id")) is not {} wire||!nodes.TryGetValue(Text(wire,"source"),out var source))continue;
+            var type=Text(VisualNodeCatalog.DataOutputs(source,catalog)[Text(wire,"sourcePort")],"type");
+            if(types[type] is not JsonObject mine)continue;
+            JsonObject? Member(JsonNode? entry)=>(entry?["properties"] as JsonArray??[]).OfType<JsonObject>().FirstOrDefault(p=>Text(p,"name")==name);
+            var before=Member(mine);var now=Member(compiled["types"]?[type]);
+            if(before==null&&now==null)continue;
+            if(before==null||now==null||!SameJson(before["type"],now["type"])||!SameJson(before["nullable"],now["nullable"]))return false;
+        }
+        return true;
+    }
     /// <summary>Numbers by value, objects by their properties in any order: a signature read back from the editor equals the compiler's.</summary>
     internal static bool SameJson(JsonNode? a,JsonNode? b)=>(a,b) switch {
         (null,null)=>true,
@@ -244,7 +267,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             errors.AddRange(custom.Diagnostics.Select(d=>new VisualDiagnostic(id,d.Message,d.Severity,d.StartLine,d.StartColumn,"source")));
             var node=(graph["nodes"] as JsonArray??[]).OfType<JsonObject>().First(n=>Text(n,"id")==id);
             if(custom.Signature==null||node["config"]?["signature"] is not JsonObject stored||!VisualNodeCatalog.WellFormedSignature(stored))continue;
-            if(!SamePins(stored,custom.Signature))errors.Add(new(id,VisualGraphValidator.Words.StaleSignature,InputId:"source",Code:"custom.signature"));
+            if(!SamePins(stored,custom.Signature)||!SameSelected(graph,snapshot.Root,stored,custom.Signature))errors.Add(new(id,VisualGraphValidator.Words.StaleSignature,InputId:"source",Code:"custom.signature"));
             else if(!SameJson(stored,custom.Signature)) {
                 refreshed??=(JsonObject)graph.DeepClone();
                 refreshed["nodes"]!.AsArray().OfType<JsonObject>().First(n=>Text(n,"id")==id)["config"]!["signature"]=custom.Signature.DeepClone();

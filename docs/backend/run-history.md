@@ -195,7 +195,8 @@ be built, a minimal document is stored instead. It is marked `complete` and
 `truncated`, its `dropped` counts every node start, and its trigger, events and
 summary are empty.
 
-Retention: traces are kept for the newest 1,000 runs that have one; older runs
+Retention: traces are kept for the newest 1,000 runs that have ended and have one
+(runs still going are not counted); older runs
 keep their record with `hasTrace` false. A pruned run's trace is deleted with it,
 and a snapshot is deleted when no remaining run refers to it.
 

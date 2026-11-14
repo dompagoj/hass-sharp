@@ -22323,5 +22323,4043 @@
     "messages": [
       "Unknown loop value nope"
     ]
+  },
+  {
+    "name": "select property: a chosen property has its own type",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "Age"
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:d",
+          "source": "make",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:d.seconds",
+          "kind": "data",
+          "source": "s",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "select property: a property of another type does not fit",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName"
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:d",
+          "source": "make",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:d.seconds",
+          "kind": "data",
+          "source": "s",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "inputId": "seconds",
+    "contains": "Seconds accepts Number, not Text",
+    "messages": [
+      "Seconds accepts Number, not Text"
+    ]
+  },
+  {
+    "name": "select property: a property that may be empty into one that may not",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "Score"
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:d",
+          "source": "make",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:d.seconds",
+          "kind": "data",
+          "source": "s",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "inputId": "seconds",
+    "contains": "may be empty",
+    "messages": [
+      "Seconds needs a value that is always set, and this one may be empty"
+    ]
+  },
+  {
+    "name": "select property: a property of text into a message",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "select property: nothing chosen, with a wire from the output",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": ""
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "contains": "Choose a property in Select property to use its value",
+    "messages": [
+      "Choose a property in Select property to use its value",
+      "Choose a property of User"
+    ],
+    "codes": [
+      "property.unset",
+      "property.unset"
+    ]
+  },
+  {
+    "name": "select property: nothing chosen asks for a property of the connected type",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": ""
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "property",
+    "contains": "Choose a property of User",
+    "messages": [
+      "Choose a property in Select property to use its value",
+      "Choose a property of User"
+    ],
+    "codes": [
+      "property.unset",
+      "property.unset"
+    ]
+  },
+  {
+    "name": "select property: nothing chosen, named by its label",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": ""
+          },
+          "label": "Pick"
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "contains": "Choose a property in Pick to use its value",
+    "messages": [
+      "Choose a property in Pick to use its value",
+      "Choose a property of User"
+    ],
+    "codes": [
+      "property.unset",
+      "property.unset"
+    ]
+  },
+  {
+    "name": "select property: nothing chosen and no reader",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "property",
+    "messages": [
+      "Choose a property of User",
+      "Select property is not used"
+    ],
+    "codes": [
+      "property.unset",
+      "pure.unused"
+    ]
+  },
+  {
+    "name": "select property: a property the connected type does not have",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "Level"
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:d",
+          "source": "make",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:d.seconds",
+          "kind": "data",
+          "source": "s",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "property",
+    "contains": "User has no property Level; choose another",
+    "messages": [
+      "User has no property Level; choose another"
+    ],
+    "codes": [
+      "property.unknown"
+    ]
+  },
+  {
+    "name": "select property: a missing property gives its reader no second error",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "Level"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "property",
+    "contains": "has no property",
+    "messages": [
+      "User has no property Level; choose another"
+    ],
+    "codes": [
+      "property.unknown"
+    ]
+  },
+  {
+    "name": "select property: a property name that is not text",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": 5
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "property",
+    "messages": [
+      "Choose a property in Select property to use its value",
+      "Choose a property of User",
+      "Property must be text"
+    ],
+    "codes": [
+      "property.unset",
+      "property.unset"
+    ]
+  },
+  {
+    "name": "select property: nothing connected",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "value",
+    "messages": [
+      "Value is required"
+    ]
+  },
+  {
+    "name": "select property: a value typed in is not a value with properties",
+    "catalogPatch": {
+      "types": {
+        "global::HassSharp.EntityStateSnapshot": {
+          "properties": [
+            {
+              "name": "EntityId",
+              "type": "string",
+              "nullable": false
+            },
+            {
+              "name": "State",
+              "type": "string",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "value",
+    "messages": [
+      "Value accepts Entity state, not Text"
+    ]
+  },
+  {
+    "name": "select property: a JSON object says to use Get field",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "object",
+            "value": {
+              "kind": "literal",
+              "type": "object",
+              "value": {
+                "a": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "a"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "c.value:s.value",
+          "kind": "data",
+          "source": "c",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "value",
+    "contains": "Object has no properties to select; use Get field to take a value out of an object",
+    "messages": [
+      "Object has no properties to select; use Get field to take a value out of an object"
+    ]
+  },
+  {
+    "name": "select property: a JSON list says to use Get field",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "array",
+            "value": {
+              "kind": "literal",
+              "type": "array",
+              "value": [
+                1
+              ]
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "a"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "c.value:s.value",
+          "kind": "data",
+          "source": "c",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "value",
+    "contains": "use Get field to take a value out of a list",
+    "messages": [
+      "List has no properties to select; use Get field to take a value out of a list"
+    ]
+  },
+  {
+    "name": "select property: an entity says to use Read entity",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "entity_id",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "a"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "c.value:s.value",
+          "kind": "data",
+          "source": "c",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "value",
+    "contains": "use Read entity to get its state",
+    "messages": [
+      "Entity has no properties to select; use Read entity to get its state"
+    ]
+  },
+  {
+    "name": "select property: text says to connect a value that has properties",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "string",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "a"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "c.value:s.value",
+          "kind": "data",
+          "source": "c",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "value",
+    "contains": "Text has no properties to select; connect a value that has some",
+    "messages": [
+      "Text has no properties to select; connect a value that has some, such as a record from a node library"
+    ]
+  },
+  {
+    "name": "select property: a C# list says to use For each",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Readings",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Readings": {
+                  "label": "Readings",
+                  "description": "",
+                  "category": "Array",
+                  "nullable": false,
+                  "literalKind": null,
+                  "elementType": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "a"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "value",
+    "contains": "List of Number has no properties to select; use For each to go through its items",
+    "messages": [
+      "List of Number has no properties to select; use For each to go through its items"
+    ]
+  },
+  {
+    "name": "select property: a type that converts to one with properties has none of its own",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Guest",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                },
+                "global::NodeLib.Guest": {
+                  "label": "Guest",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::NodeLib.User"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "value",
+    "contains": "Guest has no properties to select",
+    "messages": [
+      "Guest has no properties to select; connect a value that has some, such as a record from a node library"
+    ]
+  },
+  {
+    "name": "select property: a property of a property",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Holder",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Holder": {
+                  "label": "Holder",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "Address",
+                      "type": "global::NodeLib.Address",
+                      "nullable": false
+                    }
+                  ]
+                },
+                "global::NodeLib.Address": {
+                  "label": "Address",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "City",
+                      "type": "string",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "a",
+          "kind": "select_property",
+          "config": {
+            "property": "Address"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "select_property",
+          "config": {
+            "property": "City"
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:d",
+          "source": "make",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "make.result:a.value",
+          "kind": "data",
+          "source": "make",
+          "target": "a",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "a.value:b.value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "b.value:d.seconds",
+          "kind": "data",
+          "source": "b",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "inputId": "seconds",
+    "contains": "Seconds accepts Number, not Text",
+    "messages": [
+      "Seconds accepts Number, not Text"
+    ]
+  },
+  {
+    "name": "select property: a property of a property into a message",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Holder",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Holder": {
+                  "label": "Holder",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "Address",
+                      "type": "global::NodeLib.Address",
+                      "nullable": false
+                    }
+                  ]
+                },
+                "global::NodeLib.Address": {
+                  "label": "Address",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "City",
+                      "type": "string",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "a",
+          "kind": "select_property",
+          "config": {
+            "property": "Address"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "select_property",
+          "config": {
+            "property": "City"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:a.value",
+          "kind": "data",
+          "source": "make",
+          "target": "a",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "a.value:b.value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "b.value:l.value",
+          "kind": "data",
+          "source": "b",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "select property: a chain whose first property is not chosen",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Holder",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Holder": {
+                  "label": "Holder",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "Address",
+                      "type": "global::NodeLib.Address",
+                      "nullable": false
+                    }
+                  ]
+                },
+                "global::NodeLib.Address": {
+                  "label": "Address",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "City",
+                      "type": "string",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "a",
+          "kind": "select_property",
+          "config": {
+            "property": ""
+          }
+        },
+        {
+          "id": "b",
+          "kind": "select_property",
+          "config": {
+            "property": "City"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:a.value",
+          "kind": "data",
+          "source": "make",
+          "target": "a",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "a.value:b.value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "b.value:l.value",
+          "kind": "data",
+          "source": "b",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "value",
+    "contains": "Choose a property in Select property to use its value",
+    "messages": [
+      "Choose a property in Select property to use its value",
+      "Choose a property of Holder"
+    ],
+    "codes": [
+      "property.unset",
+      "property.unset"
+    ]
+  },
+  {
+    "name": "select property: a chain whose first property is missing",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Holder",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Holder": {
+                  "label": "Holder",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "Address",
+                      "type": "global::NodeLib.Address",
+                      "nullable": false
+                    }
+                  ]
+                },
+                "global::NodeLib.Address": {
+                  "label": "Address",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "City",
+                      "type": "string",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "a",
+          "kind": "select_property",
+          "config": {
+            "property": "Street"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "select_property",
+          "config": {
+            "property": "City"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:a.value",
+          "kind": "data",
+          "source": "make",
+          "target": "a",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "a.value:b.value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "b.value:l.value",
+          "kind": "data",
+          "source": "b",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "a",
+    "inputId": "property",
+    "contains": "Holder has no property Street; choose another",
+    "messages": [
+      "Holder has no property Street; choose another"
+    ],
+    "codes": [
+      "property.unknown"
+    ]
+  },
+  {
+    "name": "select property: two nodes reading each other",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "select_property",
+          "config": {
+            "property": "City"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "select_property",
+          "config": {
+            "property": "City"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "a.value:b.value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "b.value:a.value",
+          "kind": "data",
+          "source": "b",
+          "target": "a",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "b.value:l.value",
+          "kind": "data",
+          "source": "b",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "messages": [
+      "Select property would depend on its own result"
+    ],
+    "codes": [
+      "cycle.data"
+    ]
+  },
+  {
+    "name": "select property: two properties of one value",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "a",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "select_property",
+          "config": {
+            "property": "Age"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "l:next:d",
+          "source": "l",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "make.result:a.value",
+          "kind": "data",
+          "source": "make",
+          "target": "a",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "make.result:b.value",
+          "kind": "data",
+          "source": "make",
+          "target": "b",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "a.value:l.value",
+          "kind": "data",
+          "source": "a",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "b.value:d.seconds",
+          "kind": "data",
+          "source": "b",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "select property: the state of an entity",
+    "catalogPatch": {
+      "types": {
+        "global::HassSharp.EntityStateSnapshot": {
+          "properties": [
+            {
+              "name": "EntityId",
+              "type": "string",
+              "nullable": false
+            },
+            {
+              "name": "State",
+              "type": "string",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "State"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:next:l",
+          "source": "r",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "r.value:s.value",
+          "kind": "data",
+          "source": "r",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "select property: the state of an entity is text, not a number",
+    "catalogPatch": {
+      "types": {
+        "global::HassSharp.EntityStateSnapshot": {
+          "properties": [
+            {
+              "name": "EntityId",
+              "type": "string",
+              "nullable": false
+            },
+            {
+              "name": "State",
+              "type": "string",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "State"
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:next:d",
+          "source": "r",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "r.value:s.value",
+          "kind": "data",
+          "source": "r",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:d.seconds",
+          "kind": "data",
+          "source": "s",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "inputId": "seconds",
+    "contains": "Seconds accepts Number, not Text",
+    "messages": [
+      "Seconds accepts Number, not Text"
+    ]
+  },
+  {
+    "name": "select property: an entity state without listed properties",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "State"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:next:l",
+          "source": "r",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "r.value:s.value",
+          "kind": "data",
+          "source": "r",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "value",
+    "contains": "has no properties to select",
+    "messages": [
+      "Entity state has no properties to select; connect a value that has some, such as a record from a node library"
+    ]
+  },
+  {
+    "name": "select property: a field of a class the Custom C# code declares",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public class Reading { public double Value { get; init; } public string Unit = \"C\"; }\npublic static class CustomNode\n{\n    [Node(\"Make\")]\n    public static Reading Run() => new Reading { Value = 21.5 };\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Custom_make.Reading",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Custom_make.Reading": {
+                  "label": "NodeLib.Custom_make.Reading",
+                  "description": "NodeLib.Custom_make.Reading",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::NodeLib.Custom_make.Reading"
+                  ],
+                  "assignableFrom": [],
+                  "properties": [
+                    {
+                      "name": "Value",
+                      "type": "global::System.Double",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Unit",
+                      "type": "global::System.String",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "Unit"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "select property: a property of a class the Custom C# code declares has its type",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public class Reading { public double Value { get; init; } public string Unit = \"C\"; }\npublic static class CustomNode\n{\n    [Node(\"Make\")]\n    public static Reading Run() => new Reading { Value = 21.5 };\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Custom_make.Reading",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Custom_make.Reading": {
+                  "label": "NodeLib.Custom_make.Reading",
+                  "description": "NodeLib.Custom_make.Reading",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::NodeLib.Custom_make.Reading"
+                  ],
+                  "assignableFrom": [],
+                  "properties": [
+                    {
+                      "name": "Value",
+                      "type": "global::System.Double",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Unit",
+                      "type": "global::System.String",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "Unit"
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:d",
+          "source": "make",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:d.seconds",
+          "kind": "data",
+          "source": "s",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "inputId": "seconds",
+    "contains": "Seconds accepts Number, not Text",
+    "messages": [
+      "Seconds accepts Number, not Text"
+    ]
+  },
+  {
+    "name": "select property: a property the Custom C# class does not have",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public class Reading { public double Value { get; init; } public string Unit = \"C\"; }\npublic static class CustomNode\n{\n    [Node(\"Make\")]\n    public static Reading Run() => new Reading { Value = 21.5 };\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Custom_make.Reading",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Custom_make.Reading": {
+                  "label": "NodeLib.Custom_make.Reading",
+                  "description": "NodeLib.Custom_make.Reading",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::NodeLib.Custom_make.Reading"
+                  ],
+                  "assignableFrom": [],
+                  "properties": [
+                    {
+                      "name": "Value",
+                      "type": "global::System.Double",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Unit",
+                      "type": "global::System.String",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "Kelvin"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "property",
+    "contains": "Reading has no property Kelvin; choose another",
+    "messages": [
+      "Reading has no property Kelvin; choose another"
+    ],
+    "codes": [
+      "property.unknown"
+    ]
+  },
+  {
+    "name": "select property: a property of each item of a loop, read in its body",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Users",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                },
+                "global::NodeLib.Users": {
+                  "label": "Users",
+                  "description": "",
+                  "category": "Array",
+                  "nullable": false,
+                  "literalKind": null,
+                  "elementType": "global::NodeLib.User"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "f",
+          "kind": "foreach",
+          "config": {
+            "items": {
+              "kind": "unset"
+            },
+            "itemType": "global::NodeLib.User"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:f",
+          "source": "make",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:body:l",
+          "source": "f",
+          "target": "l",
+          "port": "body"
+        },
+        {
+          "id": "make.result:f.items",
+          "kind": "data",
+          "source": "make",
+          "target": "f",
+          "sourcePort": "result",
+          "targetPort": "items"
+        },
+        {
+          "id": "f.item:s.value",
+          "kind": "data",
+          "source": "f",
+          "target": "s",
+          "sourcePort": "item",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "select property: a property of a loop item, read after the loop",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Users",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                },
+                "global::NodeLib.Users": {
+                  "label": "Users",
+                  "description": "",
+                  "category": "Array",
+                  "nullable": false,
+                  "literalKind": null,
+                  "elementType": "global::NodeLib.User"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "f",
+          "kind": "foreach",
+          "config": {
+            "items": {
+              "kind": "unset"
+            },
+            "itemType": "global::NodeLib.User"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "x",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:f",
+          "source": "make",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:body:x",
+          "source": "f",
+          "target": "x",
+          "port": "body"
+        },
+        {
+          "id": "f:next:l",
+          "source": "f",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "make.result:f.items",
+          "kind": "data",
+          "source": "make",
+          "target": "f",
+          "sourcePort": "result",
+          "targetPort": "items"
+        },
+        {
+          "id": "f.item:s.value",
+          "kind": "data",
+          "source": "f",
+          "target": "s",
+          "sourcePort": "item",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "messages": [
+      "Select property uses For each · Item, which Log cannot use here: it is on the other side of a loop or parallel branch boundary"
+    ],
+    "codes": [
+      "scope.data"
+    ]
+  },
+  {
+    "name": "select property: a property of a value made in a parallel branch, read in it",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "x",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:p",
+          "source": "t",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:a:make",
+          "source": "p",
+          "target": "make",
+          "port": "branch:a"
+        },
+        {
+          "id": "make:next:l",
+          "source": "make",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:b:x",
+          "source": "p",
+          "target": "x",
+          "port": "branch:b"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "select property: a property of a value made in a parallel branch, read in another",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Age",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Score",
+                      "type": "global::System.Double?",
+                      "nullable": true
+                    }
+                  ]
+                },
+                "global::System.Double?": {
+                  "label": "Double?",
+                  "description": "",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "x",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:p",
+          "source": "t",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:a:make",
+          "source": "p",
+          "target": "make",
+          "port": "branch:a"
+        },
+        {
+          "id": "make:next:x",
+          "source": "make",
+          "target": "x",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:b:l",
+          "source": "p",
+          "target": "l",
+          "port": "branch:b"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:l.value",
+          "kind": "data",
+          "source": "s",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "messages": [
+      "Select property uses Make · Result, which Log cannot use here: it is on the other side of a loop or parallel branch boundary"
+    ],
+    "codes": [
+      "scope.data"
+    ]
   }
 ]

@@ -1,7 +1,7 @@
 {
   "sourceId": "shared",
   "revision": 2,
-  "source": "public interface IReading { }\npublic record Reading(string State) : IReading;\npublic enum Mode { Off, On }\npublic static class Samples\n{\n    /// \u003Csummary\u003ERead a typed state.\u003C/summary\u003E\n    /// \u003Cparam name=\u0022entity\u0022\u003EA detached snapshot.\u003C/param\u003E\n    /// \u003Creturns\u003EThe reading.\u003C/returns\u003E\n    [Node(\u0022Describe\u0022, Category = \u0022Fixture\u0022)]\n    public static Reading Describe([Port(\u0022Entity state\u0022)] EntityStateSnapshot entity) =\u003E new(entity.State);\n    [Node(\u0022Consume\u0022)]\n    public static void Consume(IReading reading, int type = 3, string? output = null, string service = \u0022light.turn_on\u0022, Mode mode = Mode.On) {}\n    [Node(\u0022Nullable\u0022)] public static Reading? Nullable() =\u003E null;\n    [Node(\u0022Required\u0022)] public static void Required(Reading reading) {}\n    [Node(\u0022Factory\u0022)] public static int Factory() =\u003E 4;\n    [Node(\u0022Widen\u0022)] public static void Widen(double number) {}\n    [Node(\u0022Is on\u0022)] public static bool IsOn(IReading reading) =\u003E true;\n    [Node(\u0022Nullable elements\u0022)] public static string?[] NullableElements() =\u003E new string?[] { null };\n    [Node(\u0022Required elements\u0022)] public static string[] RequiredElements() =\u003E new[] { \u0022text\u0022 };\n    [Node(\u0022Nullable array\u0022)] public static string[]? NullableArray() =\u003E null;\n    [Node(\u0022Required enumerable\u0022)] public static void RequiredEnumerable(IEnumerable\u003Cstring\u003E items) {}\n    [Node(\u0022Required readonly list\u0022)] public static void RequiredReadOnlyList(IReadOnlyList\u003Cstring\u003E items) {}\n    [Node(\u0022Required list\u0022)] public static void RequiredList(IList\u003Cstring\u003E items) {}\n    [Node(\u0022Nullable enumerable\u0022)] public static void NullableEnumerable(IEnumerable\u003Cstring?\u003E items) {}\n    [Node(\u0022Nonfinite defaults\u0022)] public static void NonfiniteDefaults(double? nan = double.NaN, float? positive = float.PositiveInfinity, double? negative = double.NegativeInfinity) {}\n}",
+  "source": "public interface IReading { }\npublic record Reading(string State) : IReading;\npublic enum Mode { Off, On }\n/// \u003Csummary\u003EA person who uses Home Assistant.\u003C/summary\u003E\n/// \u003Cparam name=\u0022UserName\u0022\u003EWhat the person is called.\u003C/param\u003E\n/// \u003Cparam name=\u0022Email\u0022\u003EWhere notifications go; may be empty.\u003C/param\u003E\npublic record Profile(string UserName, string? Email, int Age, Reading Home, string[] Rooms);\npublic static class Samples\n{\n    /// \u003Csummary\u003ERead a typed state.\u003C/summary\u003E\n    /// \u003Cparam name=\u0022entity\u0022\u003EA detached snapshot.\u003C/param\u003E\n    /// \u003Creturns\u003EThe reading.\u003C/returns\u003E\n    [Node(\u0022Describe\u0022, Category = \u0022Fixture\u0022)]\n    public static Reading Describe([Port(\u0022Entity state\u0022)] EntityStateSnapshot entity) =\u003E new(entity.State);\n    [Node(\u0022Consume\u0022)]\n    public static void Consume(IReading reading, int type = 3, string? output = null, string service = \u0022light.turn_on\u0022, Mode mode = Mode.On) {}\n    [Node(\u0022Nullable\u0022)] public static Reading? Nullable() =\u003E null;\n    [Node(\u0022Required\u0022)] public static void Required(Reading reading) {}\n    [Node(\u0022Factory\u0022)] public static int Factory() =\u003E 4;\n    [Node(\u0022Widen\u0022)] public static void Widen(double number) {}\n    [Node(\u0022Is on\u0022)] public static bool IsOn(IReading reading) =\u003E true;\n    [Node(\u0022Nullable elements\u0022)] public static string?[] NullableElements() =\u003E new string?[] { null };\n    [Node(\u0022Required elements\u0022)] public static string[] RequiredElements() =\u003E new[] { \u0022text\u0022 };\n    [Node(\u0022Nullable array\u0022)] public static string[]? NullableArray() =\u003E null;\n    [Node(\u0022Required enumerable\u0022)] public static void RequiredEnumerable(IEnumerable\u003Cstring\u003E items) {}\n    [Node(\u0022Required readonly list\u0022)] public static void RequiredReadOnlyList(IReadOnlyList\u003Cstring\u003E items) {}\n    [Node(\u0022Required list\u0022)] public static void RequiredList(IList\u003Cstring\u003E items) {}\n    [Node(\u0022Nullable enumerable\u0022)] public static void NullableEnumerable(IEnumerable\u003Cstring?\u003E items) {}\n    /// \u003Csummary\u003EThe person this Home Assistant belongs to (a value with properties, for Select property).\u003C/summary\u003E\n    [Node(\u0022Profile\u0022, Pure = true)] public static Profile Me() =\u003E new(\u0022dompa\u0022, null, 40, new(\u0022home\u0022), [\u0022hall\u0022, \u0022kitchen\u0022]);\n    [Node(\u0022Nonfinite defaults\u0022)] public static void NonfiniteDefaults(double? nan = double.NaN, float? positive = float.PositiveInfinity, double? negative = double.NegativeInfinity) {}\n}",
   "catalog": {
     "version": 1,
     "graphVersion": 5,
@@ -203,7 +203,39 @@
           "global::System.Object"
         ],
         "label": "HassSharp.EntityStateSnapshot",
-        "literalKind": null
+        "literalKind": null,
+        "properties": [
+          {
+            "name": "EntityId",
+            "type": "global::System.String",
+            "nullable": false
+          },
+          {
+            "name": "State",
+            "type": "global::System.String",
+            "nullable": false
+          },
+          {
+            "name": "Attributes",
+            "type": "global::System.Text.Json.JsonElement",
+            "nullable": false
+          },
+          {
+            "name": "LastChanged",
+            "type": "global::System.DateTimeOffset",
+            "nullable": false
+          },
+          {
+            "name": "LastUpdated",
+            "type": "global::System.DateTimeOffset?",
+            "nullable": true
+          },
+          {
+            "name": "LastReported",
+            "type": "global::System.DateTimeOffset",
+            "nullable": false
+          }
+        ]
       },
       "global::System.Boolean": {
         "label": "bool",
@@ -346,6 +378,13 @@
           "global::NodeLib.Reading?",
           "global::System.Object",
           "global::System.IEquatable\u003Cglobal::NodeLib.Reading\u003E"
+        ],
+        "properties": [
+          {
+            "name": "State",
+            "type": "global::System.String",
+            "nullable": false
+          }
         ]
       },
       "global::NodeLib.IReading": {
@@ -452,6 +491,13 @@
         "literalKind": null,
         "assignableTo": [
           "global::NodeLib.Reading?"
+        ],
+        "properties": [
+          {
+            "name": "State",
+            "type": "global::System.String",
+            "nullable": false
+          }
         ]
       },
       "global::System.String?[]": {
@@ -573,6 +619,47 @@
           "global::System.Collections.Generic.IEnumerable\u003Cglobal::System.String?\u003E",
           "global::System.Object",
           "global::System.Collections.IEnumerable"
+        ]
+      },
+      "global::NodeLib.Profile": {
+        "label": "NodeLib.Profile",
+        "description": "NodeLib.Profile",
+        "category": "Object",
+        "nullable": false,
+        "literalKind": null,
+        "assignableTo": [
+          "global::NodeLib.Profile",
+          "global::System.Object",
+          "global::System.IEquatable\u003Cglobal::NodeLib.Profile\u003E"
+        ],
+        "properties": [
+          {
+            "name": "UserName",
+            "type": "global::System.String",
+            "nullable": false,
+            "description": "What the person is called."
+          },
+          {
+            "name": "Email",
+            "type": "global::System.String?",
+            "nullable": true,
+            "description": "Where notifications go; may be empty."
+          },
+          {
+            "name": "Age",
+            "type": "global::System.Int32",
+            "nullable": false
+          },
+          {
+            "name": "Home",
+            "type": "global::NodeLib.Reading",
+            "nullable": false
+          },
+          {
+            "name": "Rooms",
+            "type": "global::System.String[]",
+            "nullable": false
+          }
         ]
       },
       "global::System.Double?": {
@@ -2227,6 +2314,17 @@
           "global::System.Collections.Generic.IReadOnlyCollection\u003Cglobal::System.String\u003E"
         ]
       },
+      "global::System.IEquatable\u003Cglobal::NodeLib.Profile\u003E": {
+        "label": "System.IEquatable\u003CNodeLib.Profile\u003E",
+        "description": "System.IEquatable\u003CNodeLib.Profile\u003E",
+        "category": "Object",
+        "nullable": false,
+        "literalKind": null,
+        "assignableTo": [
+          "global::System.Object",
+          "global::System.IEquatable\u003Cglobal::NodeLib.Profile\u003E"
+        ]
+      },
       "global::System.Numerics.IBinaryFloatingPointIeee754\u003Cglobal::System.Single\u003E": {
         "label": "System.Numerics.IBinaryFloatingPointIeee754\u003Cfloat\u003E",
         "description": "System.Numerics.IBinaryFloatingPointIeee754\u003Cfloat\u003E",
@@ -2919,6 +3017,118 @@
         "assignableTo": [
           "global::System.Object",
           "global::System.Numerics.IMinMaxValue\u003Cglobal::System.Single\u003E"
+        ]
+      },
+      "global::System.Text.Json.JsonElement": {
+        "label": "System.Text.Json.JsonElement",
+        "description": "System.Text.Json.JsonElement",
+        "category": "Object",
+        "nullable": false,
+        "literalKind": null,
+        "assignableTo": [
+          "global::System.ValueType",
+          "global::System.Object",
+          "global::System.Text.Json.JsonElement"
+        ]
+      },
+      "global::System.DateTimeOffset": {
+        "label": "System.DateTimeOffset",
+        "description": "System.DateTimeOffset",
+        "category": "Object",
+        "nullable": false,
+        "literalKind": null,
+        "assignableTo": [
+          "global::System.IComparable",
+          "global::System.ValueType",
+          "global::System.Object",
+          "global::System.ISpanFormattable",
+          "global::System.IFormattable",
+          "global::System.IUtf8SpanFormattable",
+          "global::System.DateTimeOffset",
+          "global::System.DateTimeOffset?",
+          "global::System.IComparable\u003Cglobal::System.DateTimeOffset\u003E",
+          "global::System.IEquatable\u003Cglobal::System.DateTimeOffset\u003E",
+          "global::System.Runtime.Serialization.ISerializable",
+          "global::System.Runtime.Serialization.IDeserializationCallback",
+          "global::System.ISpanParsable\u003Cglobal::System.DateTimeOffset\u003E",
+          "global::System.IParsable\u003Cglobal::System.DateTimeOffset\u003E"
+        ]
+      },
+      "global::System.DateTimeOffset?": {
+        "label": "System.DateTimeOffset?",
+        "description": "System.DateTimeOffset?",
+        "category": "Object",
+        "nullable": true,
+        "literalKind": null,
+        "assignableTo": [
+          "global::System.DateTimeOffset?"
+        ]
+      },
+      "global::System.IComparable\u003Cglobal::System.DateTimeOffset\u003E": {
+        "label": "System.IComparable\u003CSystem.DateTimeOffset\u003E",
+        "description": "System.IComparable\u003CSystem.DateTimeOffset\u003E",
+        "category": "Object",
+        "nullable": false,
+        "literalKind": null,
+        "assignableTo": [
+          "global::System.Object",
+          "global::System.IComparable\u003Cglobal::System.DateTimeOffset\u003E"
+        ]
+      },
+      "global::System.IEquatable\u003Cglobal::System.DateTimeOffset\u003E": {
+        "label": "System.IEquatable\u003CSystem.DateTimeOffset\u003E",
+        "description": "System.IEquatable\u003CSystem.DateTimeOffset\u003E",
+        "category": "Object",
+        "nullable": false,
+        "literalKind": null,
+        "assignableTo": [
+          "global::System.Object",
+          "global::System.IEquatable\u003Cglobal::System.DateTimeOffset\u003E"
+        ]
+      },
+      "global::System.Runtime.Serialization.ISerializable": {
+        "label": "System.Runtime.Serialization.ISerializable",
+        "description": "System.Runtime.Serialization.ISerializable",
+        "category": "Object",
+        "nullable": false,
+        "literalKind": null,
+        "assignableTo": [
+          "global::System.Object",
+          "global::System.Runtime.Serialization.ISerializable"
+        ]
+      },
+      "global::System.Runtime.Serialization.IDeserializationCallback": {
+        "label": "System.Runtime.Serialization.IDeserializationCallback",
+        "description": "System.Runtime.Serialization.IDeserializationCallback",
+        "category": "Object",
+        "nullable": false,
+        "literalKind": null,
+        "assignableTo": [
+          "global::System.Object",
+          "global::System.Runtime.Serialization.IDeserializationCallback"
+        ]
+      },
+      "global::System.ISpanParsable\u003Cglobal::System.DateTimeOffset\u003E": {
+        "label": "System.ISpanParsable\u003CSystem.DateTimeOffset\u003E",
+        "description": "System.ISpanParsable\u003CSystem.DateTimeOffset\u003E",
+        "category": "Object",
+        "nullable": false,
+        "literalKind": null,
+        "assignableTo": [
+          "global::System.Object",
+          "global::System.ISpanParsable\u003Cglobal::System.DateTimeOffset\u003E",
+          "global::System.IParsable\u003Cglobal::System.DateTimeOffset\u003E"
+        ]
+      },
+      "global::System.IParsable\u003Cglobal::System.DateTimeOffset\u003E": {
+        "label": "System.IParsable\u003CSystem.DateTimeOffset\u003E",
+        "description": "System.IParsable\u003CSystem.DateTimeOffset\u003E",
+        "category": "Object",
+        "nullable": false,
+        "literalKind": null,
+        "assignableTo": [
+          "global::System.Object",
+          "global::System.IParsable\u003Cglobal::System.DateTimeOffset\u003E"
         ]
       }
     },
@@ -4338,6 +4548,49 @@
           "path"
         ]
       },
+      "select_property": {
+        "label": "Select property",
+        "category": "Data",
+        "description": "Read one property of a C# value, such as the user name of a user a node library step gives.",
+        "pure": true,
+        "minGraphVersion": 5,
+        "config": {
+          "property": {
+            "type": "string",
+            "default": "",
+            "description": "The property to read, by its C# name; the choices are the properties of the connected value\u0027s type.",
+            "label": "Property"
+          }
+        },
+        "inputs": {
+          "value": {
+            "types": [
+              "$properties"
+            ],
+            "required": true,
+            "description": "The value to read from: a record, class or struct from a node library, a Custom C# node or an entity state.",
+            "label": "Value"
+          }
+        },
+        "outputs": {
+          "value": {
+            "type": "",
+            "propertyOf": "value",
+            "description": "The chosen property\u0027s value, as the property\u0027s own type.",
+            "label": "Value"
+          }
+        },
+        "runtimeVersions": [
+          5
+        ],
+        "keywords": [
+          "property",
+          "member",
+          "field",
+          "get",
+          "break"
+        ]
+      },
       "entity_field": {
         "label": "Entity field",
         "category": "Hass",
@@ -4934,6 +5187,33 @@
           "error"
         ]
       },
+      "library:shared:global%3A%3ANodeLib.Samples.Me": {
+        "label": "Profile",
+        "category": "Custom",
+        "description": "The person this Home Assistant belongs to (a value with properties, for Select property).",
+        "minGraphVersion": 5,
+        "runtimeVersions": [
+          5
+        ],
+        "sourceId": "shared",
+        "argumentStorage": "arguments",
+        "config": {
+          "arguments": {
+            "type": "object",
+            "default": {},
+            "description": "The values this step takes"
+          }
+        },
+        "inputs": {},
+        "outputs": {
+          "result": {
+            "type": "global::NodeLib.Profile",
+            "label": "Result",
+            "description": ""
+          }
+        },
+        "pure": true
+      },
       "library:shared:global%3A%3ANodeLib.Samples.NonfiniteDefaults": {
         "label": "Nonfinite defaults",
         "category": "Custom",
@@ -5211,7 +5491,8 @@
             "global::System.String[]?",
             "global::System.Double?",
             "global::System.Single?",
-            "global::System.Single"
+            "global::System.Single",
+            "global::System.DateTimeOffset?"
           ],
           "constraintsSource": "types",
           "description": "A value written into the step."
@@ -7311,9 +7592,9 @@
                       "global::System.ISpanFormattable",
                       "global::System.IFormattable",
                       "global::System.IUtf8SpanFormattable",
-                      "global::System.Decimal",
                       "global::System.Runtime.Serialization.ISerializable",
                       "global::System.Runtime.Serialization.IDeserializationCallback",
+                      "global::System.Decimal",
                       "global::System.Numerics.IFloatingPoint\u003Cglobal::System.Decimal\u003E",
                       "global::System.Numerics.IFloatingPointConstants\u003Cglobal::System.Decimal\u003E",
                       "global::System.Numerics.INumber\u003Cglobal::System.Decimal\u003E",
@@ -7427,7 +7708,14 @@
                       "global::NodeLib.Custom_make.Own",
                       "global::System.IEquatable\u003Cglobal::NodeLib.Custom_make.Own\u003E"
                     ],
-                    "assignableFrom": []
+                    "assignableFrom": [],
+                    "properties": [
+                      {
+                        "name": "State",
+                        "type": "global::System.String",
+                        "nullable": false
+                      }
+                    ]
                   }
                 }
               }
@@ -7694,6 +7982,7 @@
                       "global::System.Collections.Generic.IReadOnlyList\u003Cglobal::System.String\u003E",
                       "global::System.Collections.Generic.IList\u003Cglobal::System.String\u003E",
                       "global::System.Collections.Generic.IEnumerable\u003Cglobal::System.String?\u003E",
+                      "global::NodeLib.Profile",
                       "global::System.Single",
                       "global::System.IComparable",
                       "global::System.IConvertible",
@@ -7793,6 +8082,7 @@
                       "global::System.Array",
                       "global::System.Collections.Generic.ICollection\u003Cglobal::System.String\u003E",
                       "global::System.Collections.Generic.IReadOnlyCollection\u003Cglobal::System.String\u003E",
+                      "global::System.IEquatable\u003Cglobal::NodeLib.Profile\u003E",
                       "global::System.Numerics.IBinaryFloatingPointIeee754\u003Cglobal::System.Single\u003E",
                       "global::System.Numerics.IBinaryNumber\u003Cglobal::System.Single\u003E",
                       "global::System.Numerics.IBitwiseOperators\u003Cglobal::System.Single, global::System.Single, global::System.Single\u003E",
@@ -7826,7 +8116,15 @@
                       "global::System.Numerics.IUnaryPlusOperators\u003Cglobal::System.Single, global::System.Single\u003E",
                       "global::System.Numerics.IUnaryNegationOperators\u003Cglobal::System.Single, global::System.Single\u003E",
                       "global::System.IUtf8SpanParsable\u003Cglobal::System.Single\u003E",
-                      "global::System.Numerics.IMinMaxValue\u003Cglobal::System.Single\u003E"
+                      "global::System.Numerics.IMinMaxValue\u003Cglobal::System.Single\u003E",
+                      "global::System.Text.Json.JsonElement",
+                      "global::System.DateTimeOffset",
+                      "global::System.IComparable\u003Cglobal::System.DateTimeOffset\u003E",
+                      "global::System.IEquatable\u003Cglobal::System.DateTimeOffset\u003E",
+                      "global::System.Runtime.Serialization.ISerializable",
+                      "global::System.Runtime.Serialization.IDeserializationCallback",
+                      "global::System.ISpanParsable\u003Cglobal::System.DateTimeOffset\u003E",
+                      "global::System.IParsable\u003Cglobal::System.DateTimeOffset\u003E"
                     ]
                   }
                 }
@@ -8061,6 +8359,7 @@
                       "global::System.Collections.Generic.IReadOnlyList\u003Cglobal::System.String\u003E",
                       "global::System.Collections.Generic.IList\u003Cglobal::System.String\u003E",
                       "global::System.Collections.Generic.IEnumerable\u003Cglobal::System.String?\u003E",
+                      "global::NodeLib.Profile",
                       "global::System.Single",
                       "global::System.IComparable",
                       "global::System.IConvertible",
@@ -8160,6 +8459,7 @@
                       "global::System.Array",
                       "global::System.Collections.Generic.ICollection\u003Cglobal::System.String\u003E",
                       "global::System.Collections.Generic.IReadOnlyCollection\u003Cglobal::System.String\u003E",
+                      "global::System.IEquatable\u003Cglobal::NodeLib.Profile\u003E",
                       "global::System.Numerics.IBinaryFloatingPointIeee754\u003Cglobal::System.Single\u003E",
                       "global::System.Numerics.IBinaryNumber\u003Cglobal::System.Single\u003E",
                       "global::System.Numerics.IBitwiseOperators\u003Cglobal::System.Single, global::System.Single, global::System.Single\u003E",
@@ -8194,6 +8494,14 @@
                       "global::System.Numerics.IUnaryNegationOperators\u003Cglobal::System.Single, global::System.Single\u003E",
                       "global::System.IUtf8SpanParsable\u003Cglobal::System.Single\u003E",
                       "global::System.Numerics.IMinMaxValue\u003Cglobal::System.Single\u003E",
+                      "global::System.Text.Json.JsonElement",
+                      "global::System.DateTimeOffset",
+                      "global::System.IComparable\u003Cglobal::System.DateTimeOffset\u003E",
+                      "global::System.IEquatable\u003Cglobal::System.DateTimeOffset\u003E",
+                      "global::System.Runtime.Serialization.ISerializable",
+                      "global::System.Runtime.Serialization.IDeserializationCallback",
+                      "global::System.ISpanParsable\u003Cglobal::System.DateTimeOffset\u003E",
+                      "global::System.IParsable\u003Cglobal::System.DateTimeOffset\u003E",
                       "global::System.Collections.Generic.IEnumerable\u003Cglobal::System.Object\u003E"
                     ]
                   }

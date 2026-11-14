@@ -81,10 +81,66 @@ public static class VisualNodeCatalog
                                     list.Add(target);
                         }
                 }
-        if (added.Count == 0) return catalog;
+        var selecting = SelectingNodes(catalog, graph);
+        if (added.Count == 0 && selecting.Count == 0) return catalog;
         var merged = (JsonObject)catalog.DeepClone();
         foreach (var (id, entry) in added.ToArray()) { added.Remove(id); merged["types"]![id] = entry; }
+        if (selecting.Count > 0) ResolveOutputs(merged, graph);
         return merged;
+    }
+
+    /// <summary>
+    /// An output whose type is that of a property of the value at one of the node's inputs (<c>"propertyOf": "&lt;input&gt;"</c>):
+    /// the property named by the node's <c>config.property</c>, of the type the wire into that input brings.
+    /// </summary>
+    internal static string PropertyOf(JsonNode? output) => Text(output, "propertyOf");
+    /// <summary>The well-formed nodes of a graph by id (the first of an id), as both validators read them.</summary>
+    internal static Dictionary<string, JsonObject> GraphNodes(JsonObject graph)
+    {
+        var nodes = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var raw in graph["nodes"] as JsonArray ?? [])
+            if (raw is JsonObject node && Text(node, "id") != "" && node["config"] is JsonObject) nodes.TryAdd(Text(node, "id"), node);
+        return nodes;
+    }
+    static List<JsonObject> SelectingNodes(JsonObject catalog, JsonObject graph) =>
+        GraphNodes(graph).Values.Where(n => (catalog["nodes"]?[Text(n, "kind")]?["outputs"] as JsonObject ?? []).Any(o => PropertyOf(o.Value) != "")).ToList();
+    /// <summary>Whether the kind's input takes a value whose type has properties (<c>$properties</c>): a value of exactly such a type, by its own entry.</summary>
+    internal static bool SelectsProperties(JsonNode? spec, string port) => (spec?["inputs"]?[port]?["types"] as JsonArray ?? []).Any(t => t is JsonValue v && v.TryGetValue<string>(out var s) && s == "$properties");
+    /// <summary>The members a value of the type has, as its catalog entry lists them; empty for a type without any.</summary>
+    internal static JsonObject[] TypeProperties(JsonObject catalog, string type) => (((catalog["types"] as JsonObject)?[type] as JsonObject)?["properties"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
+    /// <summary>
+    /// The type of each <c>propertyOf</c> output of the graph, under <c>resolvedOutputs</c> (node id, then port): the
+    /// type of the chosen property of the type the first value wire into its input brings. Chains are resolved source
+    /// first; an output on a cycle of such nodes, or whose input, property or source type is missing, has none. Mirrored
+    /// by <c>resolveOutputs</c> in <c>contract.ts</c>.
+    /// </summary>
+    static void ResolveOutputs(JsonObject catalog, JsonObject graph)
+    {
+        var resolved = new JsonObject(); catalog["resolvedOutputs"] = resolved;
+        var nodes = GraphNodes(graph);
+        var incoming = new Dictionary<(string, string), JsonObject>();
+        foreach (var raw in graph["edges"] as JsonArray ?? [])
+            if (raw is JsonObject edge && Text(edge, "id") != "" && Text(edge, "kind") == "data" && !edge.ContainsKey("port") && Text(edge, "sourcePort") != "" && Text(edge, "targetPort") != "" &&
+                nodes.ContainsKey(Text(edge, "source")) && nodes.ContainsKey(Text(edge, "target")))
+                incoming.TryAdd((Text(edge, "target"), Text(edge, "targetPort")), edge);
+        var state = new Dictionary<string, bool>(StringComparer.Ordinal); // false while being resolved, true once done
+        void Resolve(JsonObject node)
+        {
+            var id = Text(node, "id");
+            if (state.ContainsKey(id)) return;
+            state[id] = false;
+            foreach (var (port, output) in catalog["nodes"]?[Text(node, "kind")]?["outputs"] as JsonObject ?? [])
+            {
+                if (PropertyOf(output) is not { Length: > 0 } input || !incoming.TryGetValue((id, input), out var edge)) continue;
+                var source = nodes[Text(edge, "source")];
+                Resolve(source);
+                var type = Text(DataOutputs(source, catalog)[Text(edge, "sourcePort")], "type");
+                if (TypeProperties(catalog, type).FirstOrDefault(p => Text(p, "name") == Text(node["config"], "property")) is { } property && Text(property, "type") is { Length: > 0 } found)
+                    ((resolved[id] ??= new JsonObject()) as JsonObject)![port] = found;
+            }
+            state[id] = true;
+        }
+        foreach (var node in SelectingNodes(catalog, graph)) Resolve(node);
     }
     internal static IEnumerable<JsonObject> Declarations(JsonObject node, string key) => (node["config"]?[key] as JsonArray ?? []).OfType<JsonObject>();
     internal static string ResolveType(string type, JsonObject node) => type.StartsWith('$') ? Text(node["config"], type[1..]) : type;
@@ -102,15 +158,21 @@ public static class VisualNodeCatalog
         ports.AddRange((spec?["execution"] as JsonArray ?? []).Select(p => p!.GetValue<string>()));
         return ports.ToArray();
     }
-    public static JsonObject DataOutputs(JsonObject node, VisualCatalogSnapshot? snapshot = null)
+    public static JsonObject DataOutputs(JsonObject node, VisualCatalogSnapshot? snapshot = null) => DataOutputs(node, snapshot?.Root ?? Root);
+    /// <summary>
+    /// The node's value outputs under <paramref name="catalog"/>. A <c>propertyOf</c> output has the type the graph's
+    /// catalog resolved for it (<see cref="WithGraphTypes"/>), and none (an empty type) until it is resolved.
+    /// </summary>
+    internal static JsonObject DataOutputs(JsonObject node, JsonObject catalog)
     {
-        var spec = Spec(node, snapshot);
+        var spec = catalog["nodes"]?[Text(node, "kind")] as JsonObject;
         var ports = (spec?["outputs"]?.DeepClone() as JsonObject) ?? [];
-        foreach (var (_, value) in ports) if (value is JsonObject port) port["type"] = ResolveType(Text(port, "type"), node);
+        foreach (var (key, value) in ports) if (value is JsonObject port)
+            port["type"] = PropertyOf(port) != "" ? Text(catalog["resolvedOutputs"]?[Text(node, "id")], key) : ResolveType(Text(port, "type"), node);
         if (Text(spec, "dynamicOutputs") == "custom" && CustomSignature(node, spec)?["outputs"] is JsonObject custom) foreach (var (key, value) in custom) ports[key] = value?.DeepClone();
         if (Text(spec, "dynamicOutputs") == "loop") foreach (var key in new[] { "carry", "exports" }) foreach (var item in Declarations(node, key))
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = new JsonObject { ["type"] = Text(item, "type"), ["description"] = (key == "carry" ? "Kept between iterations: " : "Available after the loop: ") + Text(item, "name"), ["visibility"] = key == "carry" ? "loop" : "outside" };
-        if (Text(spec, "dynamicOutputs") == "trigger") foreach (var (key, value) in TriggerOutputs(node, snapshot?.Root ?? Root)) ports[key] = value?.DeepClone();
+        if (Text(spec, "dynamicOutputs") == "trigger") foreach (var (key, value) in TriggerOutputs(node, catalog)) ports[key] = value?.DeepClone();
         // An output with "when" exists only while that boolean config is true (D3, D9).
         foreach (var key in ports.Where(p => Text(p.Value, "when") is { Length: > 0 } when && !((node["config"] as JsonObject)?[when] is JsonValue on && on.TryGetValue<bool>(out var enabled) && enabled)).Select(p => p.Key).ToArray())
             ports.Remove(key);
@@ -186,8 +248,14 @@ public static class VisualNodeCatalog
     {
         var spec = Spec(node, snapshot);
         var ports = (spec?["inputs"]?.DeepClone() as JsonObject) ?? [];
+        // $any is every type; $properties every type whose values have properties (a Select property node's input).
         foreach (var (_, value) in ports) if (value is JsonObject port && port["types"] is JsonArray types)
-            port["types"] = new JsonArray(types.SelectMany(t => t!.GetValue<string>() == "$any" ? (snapshot?.Root ?? Root)["types"]!.AsObject().Select(p => p.Key) : new[] { ResolveType(t!.GetValue<string>(), node) }).Select(t => JsonValue.Create(t)).ToArray<JsonNode?>());
+            port["types"] = new JsonArray(types.SelectMany(t => t!.GetValue<string>() switch
+            {
+                "$any" => (snapshot?.Root ?? Root)["types"]!.AsObject().Select(p => p.Key),
+                "$properties" => (snapshot?.Root ?? Root)["types"]!.AsObject().Where(p => (p.Value as JsonObject)?["properties"] is JsonArray { Count: > 0 }).Select(p => p.Key),
+                var type => [ResolveType(type, node)],
+            }).Select(t => JsonValue.Create(t)).ToArray<JsonNode?>());
         if (Text(node,"kind") == "foreach" && ports["items"] is JsonObject itemsPort)
             itemsPort["types"] = new JsonArray(new[] { "array" }.Concat((snapshot?.Root ?? Root)["types"]!.AsObject()
                 .Where(p => !VisualTypes.Nullable(snapshot?.Root ?? Root, p.Key) && Text(p.Value, "elementType") is { Length: > 0 } element && CompatibleTypes(element, Text(node["config"],"itemType"), snapshot)).Select(p=>p.Key))
