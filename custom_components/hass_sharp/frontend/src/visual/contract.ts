@@ -737,7 +737,10 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       const v = raw.value
       const valid = validLiteral(type, v, catalog)
       if (!valid) {
-        error(node.id, typeof raw.type !== 'string' || raw.type === '' ? `${subject} has a value without a type` : !knownType(type) ? `${subject} has a value of unknown type ${words.name(type)}` : `${subject} is not a valid ${typeLabel(type, catalog)} value`, port)
+        // A number that does not fit a narrower number type (2.5 for a C# int) says what does fit.
+        const own = typeof v === 'number' && knownType(type) && numeric(type, catalog) ? resolveTypeSpec(type, catalog) : undefined
+        error(node.id, typeof raw.type !== 'string' || raw.type === '' ? `${subject} has a value without a type` : !knownType(type) ? `${subject} has a value of unknown type ${words.name(type)}`
+          : own ? `${subject} must be ${words.range(own.min, own.max, own.literalKind === 'integer')}` : `${subject} is not a valid ${typeLabel(type, catalog)} value`, port)
       }
       if (typeof v === 'number' && ((spec.min !== undefined && v < spec.min) || (spec.max !== undefined && v > spec.max) || (spec.integer && !Number.isInteger(v)))) error(node.id, `${subject} must be ${words.range(spec.min, spec.max, spec.integer === true)}`, port)
       // A number typed into a pin of a narrower number type (a C# int, say) must fit that type, as it must when it runs.

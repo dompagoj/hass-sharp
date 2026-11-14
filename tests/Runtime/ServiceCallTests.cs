@@ -636,6 +636,16 @@ static class ServiceCallTests
             }
             var saved = await Visual(new { operation = "save", id = "typos", graph, expectedRevision = 0, deriveSignatures = true });
             Check(saved["ok"]!.GetValue<bool>() && saved["result"]!["active"]!.GetValue<bool>() && Unknown(saved["result"]!["diagnostics"]).SequenceEqual(expected), "save: " + saved.ToJsonString());
+            // A Home Assistant trigger's own entity ids too; an entity registry id (no dot) is not an entity id to look up.
+            var native = JsonNode.Parse("""
+                {"version":5,"name":"Native typo","nodes":[
+                  {"id":"n","kind":"trigger","config":{"type":"ha","trigger":{"trigger":"state","entity_id":["binary_sensor.motoin","binary_sensor.door","5f0c2a9e8b7d4c3f9a1e2b3c4d5e6f70"]}}},
+                  {"id":"log","kind":"log","config":{"value":{"kind":"literal","type":"string","value":"moved"}}}
+                ],"edges":[{"id":"a","source":"n","target":"log"}]}
+                """)!;
+            var nativePreview = await Visual(new { operation = "preview", graph = native });
+            Check(nativePreview["result"]!["valid"]!.GetValue<bool>() && Unknown(nativePreview["result"]!["diagnostics"]).SequenceEqual(
+                ["n/trigger/2: Home Assistant has no entity binary_sensor.motoin. Check the spelling: a trigger on it never fires."]), "native trigger preview: " + nativePreview.ToJsonString());
             // Spelled right, no warning.
             graph["nodes"]![0]!["config"]!["entity"] = "binary_sensor.door";
             var fixedPreview = await Visual(new { operation = "preview", graph });
@@ -652,7 +662,7 @@ static class ServiceCallTests
             Check(VisualTests.Loaded(api, "typos") != null && (await Visual(new { operation = "read", id = "typos" }))["result"]!["activationError"] == null && asked == 0, $"Init: asked {asked}");
         }
         finally { await api.UnloadAsync(); PyInterop.SubscribeToEntityTracking = subscribe; Directory.Delete(root, true); }
-        Console.WriteLine("PASS service calls: an entity Home Assistant does not have is a warning on preview and save (and MCP preview), never an error, not at Init or without a lookup");
+        Console.WriteLine("PASS service calls: an entity Home Assistant does not have (in an entity input, an entity trigger or a Home Assistant trigger) is a warning on preview and save (and MCP preview), never an error, not at Init or without a lookup");
     }
 
     // An automation that did not load because its service was dropped loads when a push brings the service back.

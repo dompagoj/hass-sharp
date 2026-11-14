@@ -39,12 +39,21 @@ function tagsToKind(tags: string[]) {
   return monaco.languages.CompletionItemKind.Snippet
 }
 
+/** The text of a documentation element, with an empty reference (`<see cref/>`, `<paramref/>`, `<see langword/>`) read as the name it points at. */
+function documentationText(node: Node): string {
+  if (node.nodeType !== Node.ELEMENT_NODE) return node.textContent ?? ''
+  const element = node as Element
+  const reference = element.getAttribute('cref') ?? element.getAttribute('langword') ?? (/^(type)?paramref$/.test(element.tagName) ? element.getAttribute('name') : null)
+  if (reference && !element.textContent) return reference.replace(/^\w:/, '').replace(/^global::/, '').replace(/\(.*$/, '').replace(/`\d+$/, '').split('.').pop() ?? reference
+  return Array.from(element.childNodes).map(documentationText).join('')
+}
+
 function signatureDocumentation(xml: string) {
   if (!xml.trim().startsWith('<')) return xml
   const document = new DOMParser().parseFromString(`<documentation>${xml}</documentation>`, 'text/xml')
   if (document.querySelector('parsererror')) return xml
   const sections = Array.from(document.querySelectorAll('summary,param,returns,remarks'))
-  return (sections.length ? sections.map(section => `${section.tagName === 'param' ? `${section.getAttribute('name')}: ` : section.tagName === 'returns' ? 'Returns: ' : ''}${section.textContent ?? ''}`).join('\n\n') : document.documentElement.textContent ?? '').trim()
+  return (sections.length ? sections.map(section => `${section.tagName === 'param' ? `${section.getAttribute('name')}: ` : section.tagName === 'returns' ? 'Returns: ' : ''}${documentationText(section)}`).join('\n\n') : documentationText(document.documentElement)).trim()
 }
 
 /** Why a check failed, in the words of the server or the connection. */

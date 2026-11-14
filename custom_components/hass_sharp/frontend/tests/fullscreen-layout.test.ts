@@ -19,3 +19,8 @@ it('keeps canvas messages below the compact full-screen bar, and below the "Add 
   expect(phone(flow)).toMatch(/\.hs-connection-prompt, \.hs-app \.hs-canvas-notice \{ top: 60px; \}/)
   expect(phone(flow)).toMatch(/\.hs-connection-prompt ~ \.hs-canvas-notice \{ top: 100px; \}/)
 })
+
+it('raises the hovered or focused card over its neighbours, so its problems tip is not hidden behind the next card', () => {
+  // Solid Flow gives each node an inline z-index (0, or 1000 when selected); the tip lives inside the node.
+  expect(flow).toMatch(/\.hs-app \.hs-flow \.solid-flow__node:hover, \.hs-app \.hs-flow \.solid-flow__node:focus-within \{ z-index: 1001 !important; \}/)
+})

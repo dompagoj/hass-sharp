@@ -82,6 +82,7 @@ export function CatalogPicker(props: CatalogPickerProps) {
   const manual = () => search().trim()
   const manualId = () => manual() && /^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/.test(manual()) ? manual() : undefined
   const rejected = () => manualId() ? props.manualError?.(manualId()!) : undefined
+  const removable = () => !!props.multiple && !!manualId() && values().includes(manual())
   const keyboard = (event: KeyboardEvent) => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
@@ -107,8 +108,9 @@ export function CatalogPicker(props: CatalogPickerProps) {
     <Dialog open={open()} title={`Choose ${noun()}`} width="large" onClose={() => setOpen(false)} footer={<>
       <Button onClick={() => setOpen(false)}>{props.multiple ? 'Done' : 'Cancel'}</Button>
       <Show when={props.clearLabel}><Button onClick={() => props.multiple ? props.onChangeValues?.([]) : choose('')}>{props.clearLabel}</Button></Show>
-      <Show when={manualId() && !rejected() && !(props.multiple && values().includes(manual()))}>
-        <Button onClick={() => choose(manual())}>{props.multiple ? 'Add ID' : 'Use ID'}: {manual()}</Button>
+      {/* A selected ID that is not in the list (a typo, a removed entity) is never a result: typing it is the way to remove it. */}
+      <Show when={manualId() && (removable() || !rejected())}>
+        <Button onClick={() => choose(manual())}>{removable() ? 'Remove ID' : props.multiple ? 'Add ID' : 'Use ID'}: {manual()}</Button>
       </Show>
     </>}>
       <p class="hs-muted">Current selection: {current() || 'None'}. Search without changing it; select a result to {props.multiple ? 'add or remove it' : 'apply'}.</p>

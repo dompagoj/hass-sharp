@@ -122,10 +122,10 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
             }
             case "format":
             {
-                var formatted = await Formatter.FormatAsync(document,new TextSpan(offset,source.Length),cancellationToken:cancellationToken);
-                var changes = await formatted.GetTextChangesAsync(document,cancellationToken);
-                return SourceText.From(source).WithChanges(changes.Where(c=>InSource(c.Span,source))
-                    .Select(c=>new TextChange(new TextSpan(c.Span.Start-offset,c.Span.Length),c.NewText ?? ""))).ToString();
+                // Formatting is syntactic: format the source on its own, so the namespace it is wrapped in to compile
+                // does not indent every line of it by one level.
+                var formatted = await Formatter.FormatAsync(document.WithText(SourceText.From(source)),cancellationToken:cancellationToken);
+                return (await formatted.GetTextAsync(cancellationToken)).ToString();
             }
             default: throw new ArgumentException("Unknown language operation");
         }

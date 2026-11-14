@@ -268,6 +268,13 @@ describe('Library workspace language services', () => {
     expect(signature.value.signatures[0].documentation.value).toBe('Factory'); expect(signature.value.activeParameter).toBe(1); expect(signature.value.signatures[0].parameters[1].label).toBe('int count = 1')
     expect(definitions).toHaveLength(1); expect(formats).toHaveLength(1)
   })
+  it('keeps the names that references in signature documentation point at', async () => {
+    const { signatures } = await import('./fake-monaco')
+    const documentation = '<summary>Turn on light.</summary><param name="target">An entity id, or a <see cref="T:global::HassSharp.ServiceTarget"/> for areas; <see langword="null"/> for none. See <paramref name="target"/>.</param>'
+    const { editor } = librarySetup(r => r.operation === 'signature' ? { signatures: [{ label: 'TurnOn(ServiceTarget? target)', documentation, parameters: ['ServiceTarget? target'] }], activeSignature: 0, activeParameter: 0 } : { diagnostics: [], valid: true })
+    const signature = await signatures[0].provideSignatureHelp(editor.model, position, noCancellation, {})
+    expect(signature.value.signatures[0].documentation.value).toBe('Turn on light.\n\ntarget: An entity id, or a ServiceTarget for areas; null for none. See target.')
+  })
   it('maps source-based hover ranges to Monaco without exposing XML signature markup', async () => {
     const { editor } = librarySetup(r => r.operation === 'hover' ? { text: 'string State', range: { start: 0, length: 3, startLine: 1, startColumn: 1, endLine: 1, endColumn: 4 } } : { diagnostics: [], valid: true })
     const hover = await hovers[0].provideHover(editor.model, position, noCancellation)

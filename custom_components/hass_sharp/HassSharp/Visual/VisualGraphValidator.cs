@@ -467,7 +467,11 @@ public static class VisualGraphValidator
                 type = Text(operand, "type", "unknown"); var value = operand["value"];
                 var valid = ValidLiteral(type, value, operand.ContainsKey("value"), snapshot);
                 if (!valid) Error(Id(node), operand["type"] is not JsonValue tv || !tv.TryGetValue<string>(out var named) || named.Length == 0 ? $"{subject} has a value without a type"
-                    : !KnownType(type) ? $"{subject} has a value of unknown type {Words.Name(type)}" : $"{subject} is not a valid {Words.TypeLabel(Root, type)} value", port);
+                    : !KnownType(type) ? $"{subject} has a value of unknown type {Words.Name(type)}"
+                    // A number that does not fit a narrower number type (2.5 for a C# int) says what does fit.
+                    : Number(value) is not null && VisualTypes.Numeric(Root, type) && VisualTypes.Resolve(Root, type) is { } own
+                        ? $"{subject} must be {Words.Range(Number(own["min"]), Number(own["max"]), Text(own, "literalKind") == "integer")}"
+                    : $"{subject} is not a valid {Words.TypeLabel(Root, type)} value", port);
                 if (Number(value) is { } number && (Number(spec["min"]) is { } min && number < min || Number(spec["max"]) is { } max && number > max || Bool(spec, "integer") && Math.Truncate(number) != number))
                     Error(Id(node), $"{subject} must be {Words.Range(Number(spec["min"]), Number(spec["max"]), Bool(spec, "integer"))}", port);
                 // A number typed into a pin of a narrower number type (a C# int, say) must fit that type, as it must when it runs.

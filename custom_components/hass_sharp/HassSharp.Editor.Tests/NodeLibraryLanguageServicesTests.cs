@@ -129,6 +129,15 @@ public class NodeLibraryLanguageServicesTests
     }
 
     [Fact]
+    public async Task Format_keeps_top_level_code_at_the_left_margin()
+    {
+        // The source is wrapped in a namespace to compile; Format must not indent the person's code for it.
+        const string source="using System;\npublic static class Nodes\n{\n[Node(\"Echo\")]\npublic static string Echo(string text) => text;\n}";
+        const string expected="using System;\npublic static class Nodes\n{\n    [Node(\"Echo\")]\n    public static string Echo(string text) => text;\n}";
+        Assert.Equal(expected,(await Request("format",[new("main",source,1)],"main")).GetValue<string>());
+        Assert.Equal(expected,(await Custom("format",[],source)).GetValue<string>());
+    }
+    [Fact]
     public async Task Malformed_source_formats_without_wrapper_and_cancellation_reaches_roslyn()
     {
         const string source="public class C{public void F(){ int x=; }}";

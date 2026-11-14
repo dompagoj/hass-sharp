@@ -21,7 +21,9 @@ function mount(invalid = false, response?: (request: any, result: any) => any) {
       : { id: r.id, workspaceVersion: r.workspaceVersion, generation: r.generation, sourceGeneration: `source-${r.workspaceVersion}`, saved: false,
           data: r.operation === 'preview' ? { valid: !invalid, catalog: rich.catalog, diagnostics: invalid ? [{ sourceId: 'helper', startLine: 1, startColumn: 3, endLine: 1, endColumn: 8, severity: 3, message: 'Helper error' }] : [] }
           : r.operation === 'format' ? r.source : r.operation === 'definition' ? [{ id: 'helper', range: { start: 13, length: 6, startLine: 1, startColumn: 14, endLine: 1, endColumn: 20 } }] : [] }
-    return { version: 1, ok: true, result: await response?.(r, result) ?? result }
+    const answer = await response?.(r, result)
+    // A response may give the whole envelope, to answer with an error.
+    return answer?.envelope ?? { version: 1, ok: true, result: answer ?? result }
   }
   dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS, user: { is_admin: true } } as any}><NodeLibraryEditor /></HassCtx.Provider></QueryClientProvider>, host)
 }
@@ -105,4 +107,45 @@ it('does not save a different file after the final save preview returns across n
   expect(requests.filter(request => request.operation === 'save')).toEqual([])
   expect(editors[0].getModel().getValue()).toBe('draft B')
   button('Shared.cs').click(); expect(editors[0].getModel().getValue()).toBe('draft A')
+})
+it('previews a pure library node as a value node, without step-order pins', async () => {
+  const pure = structuredClone(rich.catalog) as any
+  pure.nodes['library:shared:global%3A%3ANodeLib.Samples.Describe'].pure = true
+  mount(false, (r, result) => r.operation === 'preview' || r.operation === 'catalog' ? (r.operation === 'catalog' ? { ...result, catalog: pure } : { ...result, data: { ...result.data, catalog: pure } }) : result)
+  await vi.advanceTimersByTimeAsync(900)
+  const card = (label: string) => [...host.querySelectorAll('[aria-label="Node previews"] article')].find(a => a.querySelector('strong')?.textContent === label)!
+  expect(card('Describe').textContent).not.toContain('Execution'); expect(card('Describe').textContent).toContain('Value node')
+  expect(card('Consume').textContent).toContain('Execution')
+})
+it('names each automation a library save re-activated by its name, not its id', async () => {
+  const automations = [{ id: 'visual-1f2e', saved: true, document: { id: 'visual-1f2e', revision: 3, graph: { version: 5, name: 'Porch lights', nodes: [], edges: [] } }, active: true, activationError: null },
+    { id: 'visual-9a8b', saved: true, document: { id: 'visual-9a8b', revision: 2, graph: { version: 5, name: 'Night mode', nodes: [], edges: [] } }, active: false, activationError: 'boom' }]
+  mount(false, (r, result) => r.operation === 'save' ? { ...result, automations } : result); await vi.advanceTimersByTimeAsync(900)
+  editors[0].change('public class Updated {}'); await vi.advanceTimersByTimeAsync(900)
+  host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
+  const text = host.querySelector('[aria-label="Dependent automations"]')!.textContent!
+  expect(text).toContain('Porch lights: Saved and active'); expect(text).toContain('Night mode: Saved; activation failed: boom'); expect(text).not.toContain('visual-1f2e')
+})
+it('names the automation a refused library save would break, and drops the previous save’s results', async () => {
+  const activations = [{ id: 'visual-1f2e', saved: true, document: { id: 'visual-1f2e', revision: 3, graph: { version: 5, name: 'Porch lights', nodes: [], edges: [] } }, active: true, activationError: null }]
+  let refuse = false
+  const refusal = { version: 1, ok: false, error: { code: 'validation', detail: { diagnostics: [], automations: [{ id: 'visual-9a8b', name: 'Night mode', diagnostics: [{ nodeId: 'up', inputId: 'lamp', message: 'Lamp is required', severity: 3 }] }], invalid: [] } } }
+  mount(false, (r, result) => r.operation !== 'save' ? result : refuse ? { envelope: refusal } : { ...result, automations: activations })
+  await vi.advanceTimersByTimeAsync(900)
+  editors[0].change('public class Updated {}'); await vi.advanceTimersByTimeAsync(900)
+  host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
+  expect(host.textContent).toContain('Porch lights: Saved and active')
+  refuse = true
+  editors[0].change('public class Renamed {}'); await vi.advanceTimersByTimeAsync(900)
+  host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Night mode')
+  expect(host.querySelector('[aria-label="Library workspace diagnostics"]')!.textContent).toContain('Night mode · up · lamp: Lamp is required')
+  expect(host.textContent).not.toContain('Porch lights: Saved and active')
+})
+it('says which automations a library save left as they were, because they already had errors', async () => {
+  const invalid = [{ id: 'visual-77aa', name: 'Old heating', running: false, message: 'Not rebuilt, because it has errors; it is not running', diagnostics: [] }]
+  mount(false, (r, result) => r.operation === 'save' ? { ...result, invalid } : result); await vi.advanceTimersByTimeAsync(900)
+  editors[0].change('public class Updated {}'); await vi.advanceTimersByTimeAsync(900)
+  host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
+  expect(host.querySelector('[aria-label="Dependent automations"]')!.textContent).toContain('Old heating: Not rebuilt, because it has errors; it is not running')
 })

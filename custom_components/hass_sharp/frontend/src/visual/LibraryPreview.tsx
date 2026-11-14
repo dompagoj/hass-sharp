@@ -1,5 +1,5 @@
 import { For, Show } from 'solid-js'
-import { dataInputs, dataOutputs, executionPorts, type VisualCatalogSnapshot } from './contract'
+import { dataInputs, dataOutputs, executionPorts, isPure, type VisualCatalogSnapshot } from './contract'
 import { portLabel, typeCategory } from './graph'
 import { typeColor, typeLabel } from './typeLabels'
 
@@ -17,7 +17,10 @@ export const LibraryPreview = (props: { catalog?: VisualCatalogSnapshot; sourceI
       const outputs = () => Object.entries(dataOutputs(node, catalog()))
       return <article class="hs-library-preview">
         <div class="hs-library-node hs-flow-card"><header><strong>{spec.label}</strong></header>
-          <div class="hs-library-execution"><span>▷ Execution</span><span>{executionPorts(node, catalog()).map(portLabel).join(' · ')} ▷</span></div>
+          {/* A pure node has no place in the step order: it is worked out when a step reads it. */}
+          <Show when={!isPure(node, catalog())} fallback={<div class="hs-library-execution"><span>Value node</span></div>}>
+            <div class="hs-library-execution"><span>▷ Execution</span><span>{executionPorts(node, catalog()).map(portLabel).join(' · ')} ▷</span></div>
+          </Show>
           <For each={inputs()}>{([id, input]) => <div class="hs-library-port" title={input.description} data-port-id={id}>
             <span class="hs-library-port-dot" style={{ 'border-color': typeColor(input.types[0], catalog()) }} />
             <span>{input.label ?? id}<small>{input.required ? 'Required' : 'Optional'}</small></span>

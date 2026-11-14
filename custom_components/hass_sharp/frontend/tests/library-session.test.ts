@@ -192,3 +192,9 @@ it.each([false, true])('recovers a missing file with a delayed authority list wi
   expect(session.error()).toBeUndefined(); expect(session.conflict()).toBe(false); expect(session.canSave()).toBe(true)
   expect(calls.filter(r => r.operation === 'preview').at(-1)).toMatchObject({ id: 'other', generation: 'g2', sources: [] })
 })
+
+it('starts a new file from a template the compiler has no warning about (its class is documented too)', async () => {
+  const { libraryTemplate } = await import('../src/visual/library-session')
+  // An undocumented public class is warning CS1591 in the workspace diagnostics of every new file.
+  expect(libraryTemplate).toMatch(/^\/\/\/ <summary>[^<]+<\/summary>\npublic static class Nodes/)
+})

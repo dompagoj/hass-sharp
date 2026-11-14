@@ -1,7 +1,8 @@
 import { batch, createMemo, createSignal, onCleanup } from 'solid-js'
-import { LibraryApiError, librariesChanged, type LibraryApi, type LibraryContext, type LibraryDocument, type LibraryPreview, type LibraryReply, type LibraryActivation, type LibraryValidationDetail } from './library-api'
+import { LibraryApiError, librariesChanged, type LibraryApi, type LibraryContext, type LibraryDocument, type LibraryPreview, type LibraryReply, type LibraryActivation, type LibraryNotRebuilt, type LibraryValidationDetail } from './library-api'
 
-export const libraryTemplate = `public static class Nodes
+export const libraryTemplate = `/// <summary>Reusable nodes.</summary>
+public static class Nodes
 {
     /// <summary>Create a reusable node.</summary>
     /// <param name="text">The input text.</param>
@@ -24,6 +25,7 @@ export function createLibrarySession(api: LibraryApi) {
   const [previewing, setPreviewing] = createSignal(false)
   const [saving, setSaving] = createSignal(false)
   const [activations, setActivations] = createSignal<LibraryActivation[]>([])
+  const [notRebuilt, setNotRebuilt] = createSignal<LibraryNotRebuilt[]>([])
   const dirtyFile = (f: Draft) => f.revision === 0 || f.source !== f.baseline.source || f.name !== f.baseline.name
   const dirty = createMemo(() => files().some(dirtyFile))
   const conflict = () => selected()?.conflict === true
@@ -91,7 +93,8 @@ export function createLibrarySession(api: LibraryApi) {
   }
   const save = async () => {
     if (!canSave()) return
-    const submitted = { ...selected()! }; ++loadRequest; setSaving(true); setError(undefined)
+    // The previous save's results are dropped: they would read as this save's.
+    const submitted = { ...selected()! }; ++loadRequest; setSaving(true); setError(undefined); setActivations([]); setNotRebuilt([])
     try {
       const result = await api.save(submitted)
       if (disposed) return
@@ -100,7 +103,7 @@ export function createLibrarySession(api: LibraryApi) {
           const saved = result.document
           setFiles(list => list.map(f => f.id === submitted.id ? { ...f, revision: saved.revision, baseline: saved, conflict: false } : f))
         }
-        setGeneration(result.generation); setActivations(result.automations); invalidate()
+        setGeneration(result.generation); setActivations(result.automations); setNotRebuilt(result.invalid ?? []); invalidate()
       })
       notifying = true
       try { librariesChanged() } finally { notifying = false }
@@ -124,7 +127,7 @@ export function createLibrarySession(api: LibraryApi) {
       batch(() => {
         setFiles(list => list.flatMap(d => d.id !== f.id ? [d] : d.source !== f.source || d.name !== f.name ? [{ ...d, revision: 0, baseline: { ...d, revision: 0 }, conflict: false }] : []))
         if (!selected()) setSelectedId(files()[0]?.id)
-        setGeneration(result.generation); setActivations(result.automations); invalidate()
+        setGeneration(result.generation); setActivations(result.automations); setNotRebuilt(result.invalid ?? []); invalidate()
       })
       notifying = true
       try { librariesChanged() } finally { notifying = false }
@@ -165,6 +168,6 @@ export function createLibrarySession(api: LibraryApi) {
   window.addEventListener('focus', onFocus)
   onCleanup(() => { disposed = true; ++loadRequest; clearTimeout(timer); window.removeEventListener('hass-sharp-libraries-changed', onChanged); window.removeEventListener('focus', onFocus) })
   void refresh()
-  return { files, selected, selectedId, select, edit, rename, create, remove, save, validateAndSave, reload, refresh, invalidate, dirty, dirtyFile, conflict, canSave, preview, previewing, validatePreview: runPreview, diagnostics: () => validation()?.diagnostics ?? preview()?.diagnostics ?? [], validation, error, loading, saving, activations, workspaceVersion, generation, sourceGeneration, context, accepts }
+  return { files, selected, selectedId, select, edit, rename, create, remove, save, validateAndSave, reload, refresh, invalidate, dirty, dirtyFile, conflict, canSave, preview, previewing, validatePreview: runPreview, diagnostics: () => validation()?.diagnostics ?? preview()?.diagnostics ?? [], validation, error, loading, saving, activations, notRebuilt, workspaceVersion, generation, sourceGeneration, context, accepts }
 }
 export type LibrarySession = ReturnType<typeof createLibrarySession>

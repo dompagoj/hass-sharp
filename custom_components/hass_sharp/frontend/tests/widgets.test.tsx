@@ -398,6 +398,20 @@ describe('pickers', () => {
     expect(values()).toEqual(['light.hall'])
     expect(options().map(o => o.getAttribute('aria-selected'))).toEqual(['true', 'false'])
   })
+  it('removes a selected ID that is not in the list when it is typed, as it adds one', () => {
+    // An entity Home Assistant does not have (a typo, or a removed one) is never a result, so typing it is the way back out.
+    const [values, setValues] = createSignal<string[]>(['binary_sensor.motoin', 'light.porch'])
+    const items = registry.entities.map(e => ({ id: e.entity_id, name: e.name ?? undefined }))
+    const { host } = mount(() => <CatalogPicker kind="entities" items={items} loading={false} error={false} refresh={() => {}} multiple values={values()} onChangeValues={setValues} />)
+    host.querySelector<HTMLButtonElement>('.hs-picker-field')!.click()
+    const search = host.querySelector<HTMLInputElement>('input[aria-label="Search entities"]')!
+    const buttons = () => [...host.querySelectorAll<HTMLButtonElement>('dialog[open] button')].map(b => b.textContent)
+    search.value = 'binary_sensor.motoin'; search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(buttons()).not.toContain('Add ID: binary_sensor.motoin')
+    ;[...host.querySelectorAll<HTMLButtonElement>('dialog[open] button')].find(b => b.textContent === 'Remove ID: binary_sensor.motoin')!.click()
+    expect(values()).toEqual(['light.porch'])
+    expect(buttons()).toContain('Add ID: binary_sensor.motoin')
+  })
   it('reads a state as the picker labels it when its entity is known, from the registry\'s state options', () => {
     const states = [entity('climate.hall', { state_options: ['off', 'heat_cool', 'unavailable'] }), entity('climate.den', { state_options: ['off', 'fan_only'] }), entity('light.hall')]
     // The union of the entities' state options, in registry order, without the hidden ones: what the picker offers.

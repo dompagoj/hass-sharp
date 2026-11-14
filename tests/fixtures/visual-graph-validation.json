@@ -16530,6 +16530,119 @@
     ]
   },
   {
+    "name": "custom node: a fraction typed as the CLR int type itself (as the editor stores it)",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Take\")]\n    public static void Run(int value) => Logger.Info(value!.ToString()!);\n}",
+            "arguments": {
+              "value": {
+                "kind": "literal",
+                "type": "global::System.Int32",
+                "value": 2.5
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "value": {
+                  "types": [
+                    "global::System.Int32"
+                  ],
+                  "required": true,
+                  "label": "Value",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::System.Int32": {
+                  "label": "int",
+                  "description": "int",
+                  "category": "Number",
+                  "nullable": false,
+                  "literalKind": "integer",
+                  "min": -2147483648,
+                  "max": 2147483647,
+                  "assignableTo": [
+                    "global::System.Double",
+                    "number",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.ValueType",
+                    "global::System.Object",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.Int32",
+                    "global::System.Numerics.ISignedNumber<global::System.Int32>",
+                    "global::System.Numerics.IBinaryInteger<global::System.Int32>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Int32>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumber<global::System.Int32>",
+                    "global::System.IComparable<global::System.Int32>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumberBase<global::System.Int32>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.IEquatable<global::System.Int32>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.ISpanParsable<global::System.Int32>",
+                    "global::System.IParsable<global::System.Int32>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.IUtf8SpanParsable<global::System.Int32>",
+                    "global::System.Numerics.IShiftOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Int32>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:take",
+          "source": "t",
+          "target": "take",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "take",
+    "inputId": "value",
+    "contains": "whole number",
+    "messages": [
+      "Value must be a whole number between -2147483648 and 2147483647"
+    ]
+  },
+  {
     "name": "custom node: a whole number typed into a CLR int pin",
     "graph": {
       "version": 5,

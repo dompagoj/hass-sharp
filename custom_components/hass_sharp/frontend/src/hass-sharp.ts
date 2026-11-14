@@ -3,26 +3,11 @@ import { customElement, property } from 'lit/decorators.js'
 import { render } from 'solid-js/web'
 import App from './App'
 import type { HomeAssistant } from './types'
-import { panelStylesheetUrl } from './panel-stylesheet'
+import { injectGlobalStyle, panelStylesheetUrl } from './panel-stylesheet'
 
 import './style.css'
 
 const stylesheetUrl = panelStylesheetUrl(import.meta.url)
-
-// Function to "leak" the font to the global scope
-const injectGlobalFont = () => {
-  if (document.head.querySelector('#monaco-fonts')) return
-  const style = document.createElement('style')
-  style.id = 'monaco-fonts'
-  // Use the name defined in your bundled CSS
-  style.innerHTML = `
-    @font-face {
-      font-family: 'codicon';
-      src: url('/hass-sharp-static/codicon.ttf') format('truetype');
-    }
-  `
-  document.head.appendChild(style)
-}
 
 @customElement('ha-panel-hass-sharp-view')
 export class HassSharpView extends LitElement {
@@ -41,7 +26,7 @@ export class HassSharpView extends LitElement {
 
     if (container) {
       // container.addEventListener('keydown', e => e.stopPropagation())
-      injectGlobalFont()
+      injectGlobalStyle()
     }
 
     if (container) {

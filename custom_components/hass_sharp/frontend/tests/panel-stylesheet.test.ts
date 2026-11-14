@@ -14,3 +14,14 @@ it('supports an unversioned module without appending an invalid query', () => {
   expect(panelStylesheetUrl('https://ha.example/hass-sharp-static/hass-sharp.js'))
     .toBe('/hass-sharp-static/hass-sharp.css')
 })
+
+it('keeps the screen reader region Monaco adds to the page body off screen, where the panel stylesheet cannot reach it', async () => {
+  // Monaco appends its aria container to document.body, outside the panel; unstyled, it made the
+  // whole Home Assistant page scroll once a code editor had been opened.
+  const { injectGlobalStyle } = await import('../src/panel-stylesheet')
+  injectGlobalStyle(document); injectGlobalStyle(document)
+  const styles = document.head.querySelectorAll('#hass-sharp-global')
+  expect(styles).toHaveLength(1)
+  expect(styles[0].textContent).toMatch(/\.monaco-aria-container\s*\{\s*position: absolute; left: -999em; top: 0; width: 1px; height: 1px; overflow: hidden;/)
+  expect(styles[0].textContent).toContain("font-family: 'codicon'")
+})

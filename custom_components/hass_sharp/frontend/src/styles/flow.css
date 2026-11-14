@@ -207,6 +207,8 @@
 .hs-app .hs-node-errors p { margin: 0 0 4px; }
 .hs-app .hs-node-errors p:last-child { margin: 0; }
 .hs-app .solid-flow__node:hover .hs-node-errors, .hs-app .solid-flow__node:focus-within .hs-node-errors { display: block; }
+/* The tip lives inside its node, and Solid Flow stacks nodes with an inline z-index: raise the card it belongs to. */
+.hs-app .hs-flow .solid-flow__node:hover, .hs-app .hs-flow .solid-flow__node:focus-within { z-index: 1001 !important; }
 
 /* Canvas messages: the keyboard-connection prompt and short notices (copied, nothing to paste), at the top. */
 .hs-app .hs-connection-prompt, .hs-app .hs-canvas-notice { position: absolute; z-index: 10; top: 8px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 16px); margin: 0; border: 1px solid var(--hs-line); background: var(--hs-surface); color: var(--hs-text); border-radius: 6px; padding: 8px 12px; font-size: 12px; box-shadow: var(--hs-card-shadow); pointer-events: none; }

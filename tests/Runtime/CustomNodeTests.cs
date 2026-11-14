@@ -369,6 +369,11 @@ static class CustomNodeTests
         literal["nodes"]![1]!["config"]!["arguments"] = new JsonObject { ["value"] = Lit("number", 2.5) };
         var fit = VisualGraphValidator.Validate(literal, snapshot);
         Check(fit.Any(d => d.NodeId == "take" && d.InputId == "value" && d.Message == "Amount must be a whole number between -2147483648 and 2147483647"), "a fractional literal for an int pin is refused: " + Messages(fit));
+        // The editor types a literal as the pin's own type: the refusal still says what fits, not "not a valid Number value".
+        literal["nodes"]![1]!["config"]!["arguments"] = new JsonObject { ["value"] = Lit("global::System.Int32", 2.5) };
+        fit = VisualGraphValidator.Validate(literal, snapshot);
+        Check(fit.Any(d => d.NodeId == "take" && d.InputId == "value" && d.Message == "Amount must be a whole number between -2147483648 and 2147483647")
+            && !fit.Any(d => d.Message.Contains("not a valid")), "a fractional literal of the int type itself is refused with the range: " + Messages(fit));
         Console.WriteLine("PASS custom conversions: numbers both ways, collections, object, library interfaces, narrowing at run time, literal fit");
     }
 
@@ -574,6 +579,8 @@ static class CustomNodeTests
             var breaking = await Library(new { operation = "save", id = "helpers", name = "Helpers", expectedRevision = 1, source = "public static class Helper { }" });
             Check(!breaking["ok"]!.GetValue<bool>() && breaking["error"]!["code"]!.GetValue<string>() == "validation"
                 && breaking["error"]!["detail"]!["automations"]!.AsArray().Select(a => a!["id"]!.GetValue<string>()).SequenceEqual(["uses"])
+                // Named as a person knows them, not only by id.
+                && breaking["error"]!["detail"]!["automations"]!.AsArray().Select(a => a!["name"]?.GetValue<string>()).SequenceEqual(["Execution"])
                 && breaking["error"]!["detail"]!["invalid"]!.AsArray().Select(a => a!["id"]!.GetValue<string>()).SequenceEqual(["derived"]), "a save that breaks a valid graph is refused: " + breaking.ToJsonString()[..Math.Min(1200, breaking.ToJsonString().Length)]);
             var allowed = await Library(new { operation = "save", id = "helpers", name = "Helpers", expectedRevision = 1, source = "public static class Helper { public static int Twice(int value) => value * 2; public static int Thrice(int value) => value * 3; }" });
             Check(allowed["ok"]!.GetValue<bool>() && allowed["result"]!["invalid"]!.AsArray().Select(a => a!["id"]!.GetValue<string>()).SequenceEqual(["derived"])

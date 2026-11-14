@@ -152,8 +152,9 @@ public partial class HassSharpManager
     }
     /// <summary>
     /// A warning (code <c>entity.unknown</c>) on the node and input of each entity id written into the graph that Home
-    /// Assistant has no state for: an entity trigger's entity, and literal values of entity inputs (an entity, a list of
-    /// them, a service target's entities). Such a graph still saves and activates: an entity can be added later. None
+    /// Assistant has no state for: an entity trigger's entity, a Home Assistant trigger's entity_id, and literal values
+    /// of entity inputs (an entity, a list of them, a service target's entities). Such a graph still saves and
+    /// activates: an entity can be added later. None
     /// at all when the lookup is unavailable (not set, or failing); preview and save only, never Init, when Home
     /// Assistant may not have loaded its entities yet.
     /// </summary>
@@ -185,8 +186,13 @@ public partial class HassSharpManager
         foreach (var node in (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>())
         {
             var id = VisualNodeCatalog.Text(node, "id");
-            if (VisualNodeCatalog.Text(node, "kind") == "trigger" && VisualNodeCatalog.TriggerType(node, snapshot) == "entity")
-                Check(id, "entity", VisualNodeCatalog.Text(node["config"], "entity"), true);
+            if (VisualNodeCatalog.Text(node, "kind") == "trigger" && VisualNodeCatalog.TriggerType(node, snapshot) is var triggerType)
+            {
+                if (triggerType == "entity") Check(id, "entity", VisualNodeCatalog.Text(node["config"], "entity"), true);
+                // A Home Assistant trigger's entity_id; an entity registry id (it has no dot) names no entity id to look up.
+                else if (triggerType == "ha" && node["config"]?["trigger"] is JsonObject native)
+                    foreach (var entity in Ids(native["entity_id"]).Where(e => e.Contains('.'))) Check(id, "trigger", entity, true);
+            }
             JsonObject inputs;
             try { inputs = VisualNodeCatalog.DataInputs(node, null, snapshot); } catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException) { continue; }
             foreach (var (port, _) in inputs)

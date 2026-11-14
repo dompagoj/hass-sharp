@@ -18,9 +18,17 @@ export interface CustomPreview { valid: boolean; diagnostics: LibraryDiagnostic[
 export interface CustomReply<T> { id: string; workspaceVersion: string; generation: string; saved: false; data: T }
 export const customDocumentId = '$custom'
 export interface LibraryActivation { id: string; saved: true; document: VisualDocument; active: boolean; activationError: string | null }
-export interface LibraryMutation { saved: true; document: LibraryDocument | null; deleted: boolean; generation: string; catalog: VisualCatalogSnapshot; automations: LibraryActivation[] }
+/** An automation a library save did not rebuild, because it already had errors; `message` says whether it still runs. */
+export interface LibraryNotRebuilt { id: string; name?: string | null; running: boolean; message: string }
+export interface LibraryMutation { saved: true; document: LibraryDocument | null; deleted: boolean; generation: string; catalog: VisualCatalogSnapshot; automations: LibraryActivation[]; invalid?: LibraryNotRebuilt[] }
+/** A refused save names the automations it would break, by the names people know them by. */
+const refusal = (detail: unknown) => {
+  const names = ((detail as LibraryValidationDetail | null)?.automations ?? []).map(a => a.name || a.id)
+  return names.length ? `Saving would break ${names.join(', ')}. Fix the library or ${names.length === 1 ? 'that automation' : 'those automations'} first; Workspace diagnostics says what is wrong.`
+    : 'Fix library or dependent automation errors before saving.'
+}
 export class LibraryApiError extends Error {
-  constructor(public code: string, public detail: unknown) { super(typeof detail === 'string' ? detail : code === 'validation' ? 'Fix library or dependent automation errors before saving.' : `Node library request failed (${code}).`) }
+  constructor(public code: string, public detail: unknown) { super(typeof detail === 'string' ? detail : code === 'validation' ? refusal(detail) : `Node library request failed (${code}).`) }
 }
 type Envelope<T> = { version: 1; ok: true; result: T } | { version: 1; ok: false; error: { code: string; detail: unknown } }
 export function libraryApi(hass: Pick<HomeAssistant, 'callWS'>) {
@@ -54,5 +62,5 @@ export function libraryApi(hass: Pick<HomeAssistant, 'callWS'>) {
   }
 }
 export type LibraryApi = ReturnType<typeof libraryApi>
-export interface LibraryValidationDetail { diagnostics?: LibraryDiagnostic[]; automations?: { id: string; diagnostics: VisualDiagnostic[] }[] }
+export interface LibraryValidationDetail { diagnostics?: LibraryDiagnostic[]; automations?: { id: string; name?: string | null; diagnostics: VisualDiagnostic[] }[] }
 export const librariesChanged = () => window.dispatchEvent(new Event('hass-sharp-libraries-changed'))
