@@ -112,6 +112,18 @@ static class EntityHandleTests
             """, 1)]);
         Check(library.Valid, "a library with its own Entity and LightEntity: " + string.Join("; ", library.Diagnostics.Select(d => d.Message)));
         Console.WriteLine("PASS entity handles: a library's own Entity and LightEntity compile");
+        // A handle converts to a non-null string without a nullability warning, in a declaration and as an argument.
+        var converted = new NodeLibraryCompiler(Diagnostics).Preview([new("converted", """
+            public static class Converted
+            {
+                /// <summary>Id.</summary>
+                [Node("Id")] public static string Id(Entity entity) { string id = entity; return id; }
+                /// <summary>State.</summary>
+                [Node("State")] public static EntityStateSnapshot State(NodeContext context, Entity entity) => context.State(entity);
+            }
+            """, 1)]);
+        Check(converted.Valid && converted.Diagnostics.Length == 0, "a handle converts to string without diagnostics: " + string.Join("; ", converted.Diagnostics.Select(d => d.Message)));
+        Console.WriteLine("PASS entity handles: a handle converts to a non-null string without warnings");
     }
 
     // A value wired into a For each body is copied as an immutable value: the handle is the same one there and reads.
