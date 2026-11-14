@@ -225,3 +225,13 @@ it('counts what a refused save would break as an error, and lists errors first, 
   expect(entries.slice(2).every(text => text!.startsWith('Warning · Shared.cs'))).toBe(true)
   expect(section.textContent).not.toContain('d26fa2a6')
 })
+
+it('counts one error and one warning in the workspace header in the singular', async () => {
+  const refusal = { version: 1, ok: false, error: { code: 'validation', detail: {
+    diagnostics: [{ sourceId: 'shared', startLine: 1, startColumn: 1, endLine: 1, endColumn: 2, severity: 2, message: 'Missing XML comment' }],
+    automations: [{ id: 'visual-15ee', name: 'Smoke Select property', diagnostics: [{ nodeId: null, message: 'The graph has no trigger', severity: 3 }] }], invalid: [] } } }
+  mount(false, (r, result) => r.operation === 'save' ? { envelope: refusal } : result); await vi.advanceTimersByTimeAsync(900)
+  editors[0].change('public class Renamed {}'); await vi.advanceTimersByTimeAsync(900)
+  host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
+  expect(host.querySelector('[aria-label="Library workspace diagnostics"] p')!.textContent).toBe('1 error · 1 warning')
+})

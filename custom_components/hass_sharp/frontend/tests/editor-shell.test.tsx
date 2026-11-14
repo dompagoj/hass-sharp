@@ -703,3 +703,59 @@ it('gives up a pending focus once focus has moved elsewhere (item B)', async () 
   await vi.waitFor(() => expect(document.activeElement).toBe(late))
   expect(tries).toBe(2)
 })
+
+// The overview's "Last run" is read again while the run it shows has not ended, without the Runs tab: every 2 s, and
+// not at all once it has ended or the page is gone.
+function lastRunMount() {
+  let accepted = false, ended = false, reads = 0
+  const run = (status: string) => ({ runId: 'run-1', automationId: 'visual:saved', revision: 'r', action: 'a', actionLabel: 'Entity changes', triggerNodeId: 'trigger-1', visualId: 'saved', visualRevision: 1, cause: 'Manual', trigger: { kind: 'manual' }, plannedUtc: null, receivedUtc: new Date().toISOString(), startUtc: new Date().toISOString(), endUtc: null, durationMs: null, status, error: null, hasTrace: false })
+  const page = mount('Run', {
+    saved: createGraph('Run'),
+    callWS: message => {
+      if (message.type === 'hass_sharp/run_now') { accepted = true; return Promise.resolve({ version: 1, runId: 'run-1' }) }
+      if (message.type !== 'hass_sharp/run_history') return undefined
+      if (accepted) reads++
+      return Promise.resolve({ version: 2, offset: 0, limit: 20, runs: accepted ? [run(ended ? 'Succeeded' : 'Running')] : [] })
+    },
+  })
+  return { ...page, end: () => { ended = true }, reads: () => reads }
+}
+const overviewOf = (host: Element) => host.querySelector('[aria-label="Automation overview"]')
+
+it('reads the last run again until it has ended, without the Runs tab, and then stops', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    const { host, end, reads } = lastRunMount()
+    const runNow = host.querySelector<HTMLButtonElement>('.hs-topbar__run')!
+    await vi.waitFor(() => expect(runNow.disabled).toBe(false))
+    key(host.querySelector('.solid-flow__node[data-id="trigger-1"]')!, 'Escape')
+    runNow.click()
+    await vi.waitFor(() => expect(overviewOf(host)?.textContent).toContain('Last run: Running'))
+    expect(host.querySelector('.hs-run-list'), 'the Runs tab is not open').toBeNull()
+    end()
+    await vi.advanceTimersByTimeAsync(2100)
+    await vi.waitFor(() => expect(overviewOf(host)?.textContent).toContain('Last run: Succeeded'))
+    // Ended: no more reads.
+    const after = reads()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(reads()).toBe(after)
+  } finally { vi.useRealTimers() }
+})
+
+it('stops reading the last run again when the page goes, even while it is running', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    const { host, reads } = lastRunMount()
+    const runNow = host.querySelector<HTMLButtonElement>('.hs-topbar__run')!
+    await vi.waitFor(() => expect(runNow.disabled).toBe(false))
+    key(host.querySelector('.solid-flow__node[data-id="trigger-1"]')!, 'Escape')
+    runNow.click()
+    await vi.waitFor(() => expect(overviewOf(host)?.textContent).toContain('Last run: Running'))
+    await vi.advanceTimersByTimeAsync(2100)
+    const polled = reads()
+    expect(polled, 'a running run is read again').toBeGreaterThan(1)
+    dispose?.(); dispose = undefined
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(reads()).toBe(polled)
+  } finally { vi.useRealTimers() }
+})

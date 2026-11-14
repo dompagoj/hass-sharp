@@ -5,7 +5,7 @@ import { createMemoryHistory, MemoryRouter, Route } from '@solidjs/router'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
 import { AutomationRuns } from '../src/components/AutomationRuns'
-import { dispatchRun } from '../src/components/runDispatch'
+import { dispatchRun, forgetAcceptedRun, runHistoryInterval } from '../src/components/runDispatch'
 import { summarizeTrigger } from '../src/components/TriggerSummary'
 import { page, run as record, triggers, v1Run } from './run-fixture'
 import { relativeTime } from '../src/automations/model'
@@ -167,6 +167,8 @@ it('expands a row with a real button to show the reason, trigger summary, metada
 
 it('keeps a row expanded while polling replaces its record', async () => {
   vi.useFakeTimers()
+  // Seconds after the record's start: a run this recent is read again every 2 s.
+  vi.setSystemTime('2026-11-12T01:00:05Z')
   let reads = 0
   try {
     const { root } = setup(async () => page([record({ status: ++reads === 1 ? 'Running' : 'Succeeded', endUtc: reads === 1 ? null : '2026-11-12T01:00:02Z' })]))
@@ -320,6 +322,8 @@ it('does not call administrator-only commands for non-admin users', async () => 
 
 it('polls an active run until its real terminal result arrives', async () => {
   vi.useFakeTimers()
+  // Seconds after the record's start: a run this recent is read again every 2 s.
+  vi.setSystemTime('2026-11-12T01:00:05Z')
   let reads = 0
   try {
     const { root } = setup(async () => page([record({ status: ++reads === 1 ? 'Running' : 'Failed', error: reads === 1 ? null : 'Action threw' })]))
@@ -361,4 +365,23 @@ it('returns from an older page to the accepted manual result', async () => {
   await vi.waitFor(() => expect(listText(root)).toContain('Cancelled'))
   expect(calls.at(-1)).toEqual({ type: 'hass_sharp/run_history', automationId: 'automation-1', offset: 0, limit: 20 })
   expect(button(root, 'Newest').disabled).toBe(true)
+})
+
+it('reads the newest runs again every 2 s for a minute, then every 15 s while one has not ended, and not once none is', async () => {
+  const started = Date.parse('2026-11-12T01:00:01Z')
+  const running = record({ status: 'Running', endUtc: null, durationMs: null })
+  expect(runHistoryInterval('automation-1', [running], started + 59_000)).toBe(2000)
+  expect(runHistoryInterval('automation-1', [running], started + 61_000)).toBe(15_000)
+  expect(runHistoryInterval('automation-1', [record({ status: 'Pending', startUtc: null, endUtc: null, durationMs: null })], started + 30 * 60_000)).toBe(15_000)
+  expect(runHistoryInterval('automation-1', [record(), record({ runId: 'run-0', status: 'Failed' })], started)).toBe(false)
+  expect(runHistoryInterval('automation-1', [], started)).toBe(false)
+  // An accepted run is awaited for a minute even before it is recorded, and no longer once it has ended.
+  const callWS = vi.fn(async () => ({ version: 1, runId: 'run-9' }))
+  await dispatchRun({ callWS } as any, 'automation-1', { className: 'VisualAutomation', method: 'Run_74' })
+  try {
+    expect(runHistoryInterval('automation-1', [])).toBe(2000)
+    expect(runHistoryInterval('automation-1', [record({ runId: 'run-9' })])).toBe(false)
+    expect(runHistoryInterval('automation-1', [], Date.now() + 61_000)).toBe(false)
+    expect(runHistoryInterval('automation-2', [])).toBe(false)
+  } finally { forgetAcceptedRun('automation-1') }
 })

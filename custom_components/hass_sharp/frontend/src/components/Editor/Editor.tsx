@@ -8,6 +8,7 @@ import { applyEditorSettings, codeEditorOptions, editorFontSize, followTheme, us
 import type { LibraryRange } from '../../visual/library-api'
 import { Button, Icon, Status } from '../Controls'
 import { Tabs } from '../Tabs'
+import { errorWarningCounts } from '../../utils'
 
 // The node library's C# editor.
 interface Props {
@@ -130,7 +131,7 @@ export const Editor = (props: Props) => {
         <div class="hs-monaco" ref={editorRef} id="editor" />
         <Show when={editorActions.validationError()}><div class="hs-notice hs-notice--danger" role="alert">Code validation failed: {editorActions.validationError()}. Edit the code to retry.</div></Show>
         <section class="hs-editor-diagnostics" aria-label="Compiler diagnostics">
-          <div role="status" aria-live="polite">{editorActions.validating() ? 'Checking code…' : `${editorActions.diagnostics().filter(d => d.severity === 3).length} errors · ${editorActions.diagnostics().filter(d => d.severity === 2).length} warnings`}</div>
+          <div role="status" aria-live="polite">{editorActions.validating() ? 'Checking code…' : errorWarningCounts(editorActions.diagnostics())}</div>
           <ul><For each={editorActions.diagnostics().filter(d => d.severity >= 2)}>{diagnostic => <li><button type="button" onClick={() => editorActions.goToDiagnostic(diagnostic)}><span>{diagnostic.severity === 3 ? 'Error' : 'Warning'} · {diagnostic.startLine}:{diagnostic.startColumn}</span> {diagnostic.message}</button></li>}</For></ul>
         </section>
         <footer class="hs-editor-status"><Status>C#</Status><span>Roslyn language services</span><div ref={statusBarRef} /></footer>

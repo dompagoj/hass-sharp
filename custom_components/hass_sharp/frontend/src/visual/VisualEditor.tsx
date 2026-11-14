@@ -21,6 +21,7 @@ import { createVisualSession } from './session'
 import { visualError, type VisualDiagnostic, type VisualDocument } from './api'
 import { createGraph, createNodeAt, serializeGraph, type NodeKind } from './graph'
 import { RunNowButton } from './RunNow'
+import { runHistoryInterval } from '../components/runDispatch'
 import { EnabledSwitch } from '../automations/EnabledSwitch'
 import { setAutomationEnabled } from '../automations/enabled'
 import { soon } from './soon'
@@ -352,6 +353,9 @@ export function VisualEditor(props: {
     queryFn: () => hass.callWS<RunHistoryResponse>({ type: 'hass_sharp/run_history', automationId: automationId(), offset: 0, limit: 20 }),
     enabled: !!automationId() && admin(),
     staleTime: 30_000,
+    // Read again until the run shown has ended, as the Runs list does: a run started by Run now is Pending or Running
+    // on the read that follows it.
+    refetchInterval: query => query.state.status === 'error' ? false : runHistoryInterval(automationId() ?? '', query.state.data?.runs ?? []),
   }))
   const lastRun = createMemo<InspectorLastRun | undefined>(() => {
     const run = lastRuns.data?.runs?.[0]

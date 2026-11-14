@@ -7,6 +7,7 @@ import { Editor } from '../components/Editor/Editor'
 import { libraryApi, type LibraryDefinition, type LibraryRange } from '../visual/library-api'
 import { createLibrarySession } from '../visual/library-session'
 import { LibraryPreview } from '../visual/LibraryPreview'
+import { errorWarningCounts } from '../utils'
 
 export const NodeLibraryView = () => {
   const [dirty, setDirty] = createSignal(false)
@@ -101,7 +102,7 @@ const LibraryWorkspace = (props: LibraryWorkspaceProps) => {
     <section class="hs-library-diagnostics" aria-label="Library workspace diagnostics" aria-live="polite"><h2>Workspace diagnostics</h2>
       {/* What a refused save would break in an automation counts and reads as the library's own: errors first, each
           marked; a step by its title, as the editor names it. */}
-      <p>{session.previewing() ? 'Checking workspace…' : `${session.workspace().filter(d => d.severity === 3).length} errors · ${session.workspace().filter(d => d.severity === 2).length} warnings`}</p>
+      <p>{session.previewing() ? 'Checking workspace…' : errorWarningCounts(session.workspace())}</p>
       <ul><For each={session.workspace()}>{entry => {
         const mark = entry.severity === 3 ? 'Error' : 'Warning'
         if (entry.kind === 'automation') return <li>{mark} · {entry.automation}{entry.diagnostic.step ? ` · ${entry.diagnostic.step}` : ''}: {entry.diagnostic.message}</li>

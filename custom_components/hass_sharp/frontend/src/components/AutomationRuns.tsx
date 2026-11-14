@@ -3,7 +3,7 @@ import { A, RouterContext } from '@solidjs/router'
 import { useQuery } from '@tanstack/solid-query'
 import { useHass } from '../context'
 import type { AutomationRun, RunHistoryResponse, RunStatus } from '../types'
-import { acceptedRun, forgetAcceptedRun, runErrorMessage as errorMessage } from './runDispatch'
+import { acceptedRun, forgetAcceptedRun, runErrorMessage as errorMessage, runHistoryInterval } from './runDispatch'
 import { Button, Icon } from './Controls'
 import { JsonTree } from './JsonTree'
 import { summarizeTrigger, TriggerSummary } from './TriggerSummary'
@@ -14,7 +14,6 @@ const STATUSES: RunStatus[] = ['Failed', 'Cancelled', 'Interrupted', 'Stopped', 
 const CAUSES: Record<string, string> = {
   HomeAssistantTrigger: 'Home Assistant trigger', Entity: 'Entity change', Schedule: 'Schedule', Manual: 'Manual run', Startup: 'Startup',
 }
-const active = (run: AutomationRun) => run.status === 'Pending' || run.status === 'Running'
 const duration = (ms: number | null) => ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} s`
 // Rows recorded before run history v2 carry only the method name and no trigger summary.
 const runLabel = (run: AutomationRun) => run.actionLabel ?? run.action
@@ -64,10 +63,7 @@ const RunPanel = (props: RunsProps) => {
     staleTime: 0,
     refetchInterval: query => {
       if (offset() || query.state.status === 'error') return false
-      const runs = query.state.data?.runs ?? []
-      const request = accepted()
-      const awaitingResult = request && Date.now() - request.at < 60_000 && !runs.some(run => run.runId === request.runId && !active(run))
-      return runs.some(active) || awaitingResult ? 2000 : false
+      return runHistoryInterval(props.automationId, query.state.data?.runs ?? [])
     },
   }))
   // Each newly accepted run, wherever it was started (the editor's top bar), returns the list to the newest,

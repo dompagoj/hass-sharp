@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js'
 import type { QueryClient } from '@tanstack/solid-query'
-import type { HomeAssistant, RunAcceptedResponse } from '../types'
+import type { AutomationRun, HomeAssistant, RunAcceptedResponse } from '../types'
 
 /** One manual-run action of a saved automation: a class and one of its methods. */
 export interface RunAction { className: string; method: string }
@@ -22,6 +22,24 @@ export const forgetAcceptedRun = (automationId: string) =>
     next.delete(automationId)
     return next
   })
+
+const active = (run: AutomationRun) => run.status === 'Pending' || run.status === 'Running'
+const QUICK_MS = 60_000
+
+/**
+ * How often a page showing the newest runs of an automation reads them again (a TanStack `refetchInterval`), shared by
+ * the Runs list and the editor's "Last run": every 2 s while a run accepted in the last minute has not ended (it may
+ * not be recorded yet) or the newest unfinished run started under a minute ago, then every 15 s while a run is still
+ * Pending or Running, and not at all once none is. Polling also stops when no page shows the history any more.
+ */
+export function runHistoryInterval(automationId: string, runs: readonly AutomationRun[], now = Date.now()): number | false {
+  const request = acceptedRun(automationId)
+  if (request && now - request.at < QUICK_MS && !runs.some(run => run.runId === request.runId && !active(run))) return 2000
+  const running = runs.filter(active)
+  if (!running.length) return false
+  const newest = Math.max(...running.map(run => Date.parse(run.startUtc ?? run.receivedUtc) || 0))
+  return now - newest < QUICK_MS ? 2000 : 15_000
+}
 
 /**
  * Asks Home Assistant to run one action of the saved automation now (`hass_sharp/run_now`). On acceptance the run is

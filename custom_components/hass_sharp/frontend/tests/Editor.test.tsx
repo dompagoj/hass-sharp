@@ -106,8 +106,19 @@ it('renders clickable compiler errors below the editor and clears them on typing
   const issue = div.querySelector<HTMLButtonElement>('[aria-label="Compiler diagnostics"] button')
   expect(issue?.textContent).toContain('Error · 1:2')
   expect(issue?.textContent).toContain('Unknown name')
+  expect(div.querySelector('[aria-label="Compiler diagnostics"] [role="status"]')!.textContent).toBe('1 error · 0 warnings')
   issue!.click()
   expect(editors[0].selection).toEqual({ startLineNumber: 1, startColumn: 2, endLineNumber: 1, endColumn: 5 })
   editors[0].change('fixed')
   expect(div.querySelector('[aria-label="Compiler diagnostics"] button')).toBeNull()
+})
+
+it('counts one warning and several errors in the compiler diagnostics header with the right word', async () => {
+  const div = document.createElement('div'); document.body.append(div)
+  const at = (line: number, severity: number) => ({ sourceId: 'main', startLine: line, startColumn: 1, endLine: line, endColumn: 2, message: `Issue ${line}`, severity })
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={libraryHass(() => ({ valid: false, diagnostics: [at(1, 3), at(2, 3), at(3, 2)] }))}>
+    <Editor fileName="broken.cs" library={library} initial="broken" onSave={async () => {}} />
+  </HassCtx.Provider></QueryClientProvider>, div)
+  await vi.advanceTimersByTimeAsync(600)
+  expect(div.querySelector('[aria-label="Compiler diagnostics"] [role="status"]')!.textContent).toBe('2 errors · 1 warning')
 })
