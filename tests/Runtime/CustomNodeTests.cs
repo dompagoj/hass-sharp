@@ -139,6 +139,15 @@ static class CustomNodeTests
         CustomRefused("public static class CustomNode { public static int Run() => 1; }", "Mark one method with [Node]: it becomes this node");
         CustomRefused("public static class CustomNode\n{\n    [Node(\"A\")] public static int A() => 1;\n    [Node(\"B\")] public static int B() => 2;\n}", "Mark only one method with [Node]; this code has 2", 4);
         CustomRefused("public static class CustomNode { [Node(\"A\")] public static int A() => 1; } } namespace Escaped { public static class X { }", "The code must stay inside the namespace it is placed in; check its braces");
+        // A pin is named by its parameter or returned value; C# takes letters of any language, a pin only English ones. The
+        // problem is said where the name is written, in a node library and in Custom C# code alike.
+        Refused("public static class Bad { [Node(\"Area\")] public static double Area(double širina, double visina) => širina * visina; }", NodeLibraryCompiler.PinNameMessage("input", "širina"));
+        Refused("public static class Bad { [Node(\"Size\")] public static (double Širina, double Visina) Size() => (1, 2); }", NodeLibraryCompiler.PinNameMessage("value", "Širina"));
+        CustomRefused("public static class CustomNode\n{\n    [Node(\"Area\")]\n    public static double Area(double širina, double visina) => širina * visina;\n}", NodeLibraryCompiler.PinNameMessage("input", "širina"), 4);
+        CustomRefused("public static class CustomNode\n{\n    [Node(\"Size\")]\n    public static (double Širina, double Visina) Size() => (1, 2);\n}", NodeLibraryCompiler.PinNameMessage("value", "Širina"), 4);
+        var located = Compiled("public static class CustomNode\n{\n    [Node(\"Area\")]\n    public static double Area(double širina, double visina) => širina * visina;\n}").Diagnostics.Single();
+        Check(located.StartColumn == "    public static double Area(double ".Length + 1 && located.EndColumn == located.StartColumn + "širina".Length && located.Severity == 3,
+            "the problem is at the parameter's name: " + Messages([located]));
         var usings = Compiled("using System.Text;\npublic static class CustomNode\n{\n    [Node(\"Join\")]\n    public static string Join(string first, string second) => new StringBuilder(first).Append(second).ToString();\n}");
         Check(usings.Valid && usings.Signature!["inputs"]!.AsObject().Select(p => p.Key).SequenceEqual(["first", "second"]), "using lines at the top of the code work: " + Messages(usings.Diagnostics));
         var signature = Compiled("public static class CustomNode\n{\n    /// <summary>Halves it.</summary>\n    [Node(\"Half\", Pure = true, Category = \"Ignored\")]\n    public static double Half(double value) => value / 2;\n}").Signature!;

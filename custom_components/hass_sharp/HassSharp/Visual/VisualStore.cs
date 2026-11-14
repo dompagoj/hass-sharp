@@ -35,7 +35,7 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
     object Gate => Gates.GetOrAdd(Path.GetFullPath(directory), _ => new());
     internal string FilePath(string id)
     {
-        if (!Regex.IsMatch(id, "^[a-z0-9][a-z0-9_-]{0,79}$")) throw new ArgumentException("Invalid visual ID");
+        if (!Regex.IsMatch(id, @"^[a-z0-9][a-z0-9_-]{0,79}\z")) throw new ArgumentException("Invalid visual ID");
         return Path.Combine(directory, id + ".json");
     }
     public VisualDocument? Read(string id)

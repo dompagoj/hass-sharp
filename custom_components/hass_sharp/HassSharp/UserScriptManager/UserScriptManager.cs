@@ -7,16 +7,28 @@ class UserScriptManager
     public RunHistoryStore? History { get; init; }
 
     /// <param name="payload">The normalised trigger payload; <c>{platform: "manual"}</c> when omitted.</param>
+    /// <summary>
+    /// Run now: looks the automation up and starts the run under the activation gate, as a trigger does, so it cannot
+    /// race an unload or a save; refused while the automation is not active or is stopping. Answers once the run's first
+    /// record is written (a storage failure is thrown), so the run id it returns is one the history has.
+    /// </summary>
     public string DispatchManual(string automationId, string className, string method, System.Text.Json.JsonElement? payload = null)
     {
-        var script = _userScripts.Single(s => s.AutomationId == automationId);
-        var klass = script.Classes.Single(c => c.ClassName == className);
         var runId = Guid.NewGuid().ToString("N");
-        var task = klass.RunMethod(method, InvocationCause.Manual, runId, payload);
-        if (task.IsCompleted) task.GetAwaiter().GetResult();
-        else _ = Observe(task);
+        var recorded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task task;
+        lock (ActivationGate)
+        {
+            var script = _userScripts.SingleOrDefault(s => s.AutomationId == automationId);
+            if (script is not { Active: true } || script.LifetimeToken.IsCancellationRequested) throw new InvalidOperationException(NotRunning);
+            task = script.Classes.Single(c => c.ClassName == className).RunMethod(method, InvocationCause.Manual, runId, payload, recorded);
+        }
+        _ = Observe(task);
+        recorded.Task.GetAwaiter().GetResult();
         return runId;
     }
+    /// <summary>Why Run now is refused while an automation is being replaced, unloaded or stopped.</summary>
+    internal const string NotRunning = "The automation is not active right now; try again in a moment";
 
     static async Task Observe(Task task)
     {
@@ -32,6 +44,8 @@ class UserScriptManager
     readonly HashSet<UserScript> _preparing = new();
     long _epoch;
     readonly HashSet<string> _deletingPaths = new(StringComparer.Ordinal);
+    /// <summary>The drains of revisions a save replaced, still going: unloading waits for them as for its own scripts.</summary>
+    readonly HashSet<Task> _retiring = [];
     internal long ActivationEpoch { get { lock (ActivationGate) return _epoch; } }
     bool _accepting = true;
     public DependencyTracking DependencyTracking { get; } = new();
@@ -58,7 +72,7 @@ class UserScriptManager
     /// <param name="reason">Recorded on the runs this cancels; see <see cref="CancelReasons"/>.</param>
     public Task UnloadUserScriptsAsync(string? reason)
     {
-        UserScript[] scripts;
+        UserScript[] scripts; Task[] retiring;
         lock (ActivationGate)
         {
             _epoch++;
@@ -67,11 +81,22 @@ class UserScriptManager
             foreach (var script in scripts) script.Invalidate();
             _userScripts.Clear();
             _preparing.Clear();
+            retiring = [.. _retiring];
         }
         List<Exception> errors = [];
         foreach (var script in scripts)
             try { script.CancelLifetime(reason); } catch (Exception error) { errors.Add(error); }
-        return CleanupScriptsAsync(scripts, errors);
+        return UnloadAsync(scripts, retiring, errors);
+    }
+
+    async Task UnloadAsync(UserScript[] scripts, Task[] retiring, List<Exception> errors)
+    {
+        try { await CleanupScriptsAsync(scripts, errors); }
+        finally
+        {
+            // A save's replaced revision drains on its own; its failures are the save's, already logged there.
+            try { await Task.WhenAll(retiring); } catch { }
+        }
     }
 
     async Task CleanupScriptsAsync(UserScript[] scripts, List<Exception>? errors = null)
@@ -202,7 +227,9 @@ class UserScriptManager
         lock (ActivationGate)
         {
             var entries = DependencyTracking.GetEntries(entityId);
-            return Task.WhenAll(entries.Where(e => e.ScriptClass.Script is { Active: true, Enabled: true }).Select(e => RunEntry(e, trigger, payload)));
+            // While Home Assistant stops, runs are cancelled and the scripts stay active: a change then starts no run.
+            return Task.WhenAll(entries.Where(e => e.ScriptClass.Script is { Active: true, Enabled: true } script && !script.LifetimeToken.IsCancellationRequested)
+                .Select(e => RunEntry(e, trigger, payload)));
         }
     }
 
@@ -233,7 +260,8 @@ class UserScriptManager
                     compiled.Unload();
                     throw new InvalidOperationException("Script manager is unloaded");
                 }
-            var found = _userScripts.SingleOrDefault(s => s.CompiledScript.Id() == compiled.Id());
+            UserScript? found;
+            lock (ActivationGate) found = _userScripts.SingleOrDefault(s => s.CompiledScript.Id() == compiled.Id());
             if (found is null)
             {
                 compiled.Unload();
@@ -267,7 +295,20 @@ class UserScriptManager
             }
 
             found.SetCancelReason(CancelReasons.Reloaded);
-            try { await found.ClearFromTrackingAsync(); } finally { found.Unload(); }
+            // The replaced revision's runs drain here; unloading meanwhile waits for them too (see _retiring).
+            var retiring = found.ClearFromTrackingAsync();
+            lock (ActivationGate) _retiring.Add(retiring);
+            try { await retiring; }
+            catch (Exception error)
+            {
+                // The replacement is live and receiving triggers: a cleanup failure of the old revision is no failure of the save.
+                Logger.Warn($"{found.CompiledScript.FileName}: cleaning up the replaced revision failed; the new revision runs: {error.GetBaseException().Message}");
+            }
+            finally
+            {
+                lock (ActivationGate) _retiring.Remove(retiring);
+                try { found.Unload(); } catch (Exception error) { Logger.Warn($"{found.CompiledScript.FileName}: unloading the replaced revision failed: {error.GetBaseException().Message}"); }
+            }
             replacement.Start();
         }
         finally { _updates.Release(); }
@@ -296,6 +337,7 @@ class UserScriptManager
             finally { _updates.Release(); }
         }
         finally { lock (ActivationGate) _deletingPaths.Remove(scriptPath); }
-        if (errors.Count > 0) throw new AggregateException(errors);
+        // The document is deleted and its scripts no longer run: a cleanup failure is logged, and the delete succeeds.
+        if (errors.Count > 0) Logger.Warn($"{Path.GetFileName(scriptPath)}: cleaning up the deleted automation failed: " + string.Join("; ", errors.Select(e => e.GetBaseException().Message)));
     }
 }

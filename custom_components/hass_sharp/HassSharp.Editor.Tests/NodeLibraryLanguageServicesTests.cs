@@ -121,6 +121,18 @@ public class NodeLibraryLanguageServicesTests
         Assert.Equal(1,fallback["activeParameter"]!.GetValue<int>());
     }
     [Fact]
+    public void Custom_code_with_a_pin_name_in_other_letters_shows_the_problem_where_it_is_written()
+    {
+        // The code editor shows what custom_preview answers: the code compiles, but a pin cannot be named širina, so
+        // the problem is at that name and there is no signature to apply, rather than "No problems" and nothing applied.
+        const string source="public static class CustomNode\n{\n    [Node(\"Area\")]\n    public static double Area(double širina, double visina) => širina * visina;\n}";
+        var custom=new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([],[new CustomNodeSource("area",source)],TestContext.Current.CancellationToken).Snapshot.Custom["area"];
+        Assert.False(custom.Valid); Assert.Null(custom.Signature);
+        var problem=Assert.Single(custom.Diagnostics);
+        Assert.Equal("Name this input with English letters, digits and _ only; širina cannot name a pin",problem.Message);
+        Assert.Equal((4,source.Split('\n')[3].IndexOf("širina")+1,3),(problem.StartLine,problem.StartColumn,problem.Severity));
+    }
+    [Fact]
     public void Preview_cancellation_prevents_compiling_an_unsaved_workspace()
     {
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();

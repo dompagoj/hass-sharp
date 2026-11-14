@@ -4,6 +4,7 @@ import servicesFixture from '../../../../tests/fixtures/visual-services.json'
 import * as contract from '../src/visual/contract'
 import type { Graph } from '../src/visual/contract'
 import { connectionIndex } from '../src/visual/connectionIndex'
+import { distinctTypeLabels, labelDepth, typeLabel } from '../src/visual/typeLabels'
 
 interface ValidationCase {
   name: string; graph: unknown; valid: boolean; nodeId?: string; inputId?: string; contains?: string
@@ -91,7 +92,7 @@ it('graph creation rejects other versions and consumes catalog defaults', () => 
 })
 it('replacing an invalid connection still rejects the same type error', () => {
   const graph = structuredClone(cases.find(c => c.name === 'incompatible data type')!.graph) as Graph
-  expect(() => contract.connectData(graph, 'a', 'value', 'b', 'value')).toThrow('Condition accepts Yes/No, not Number')
+  expect(() => contract.connectData(graph, 'a', 'value', 'b', 'value')).toThrow('Condition accepts True/False, not Number')
 })
 it('resolves parametric types and decides refinement before root assignability', () => {
   expect(contract.resolveTypeSpec('entity_id:light')).toMatchObject({ refines: 'entity_id', pattern: '^light\\.[a-z0-9_]+$', label: 'Light entity', clrType: 'System.String', literalKind: 'string', category: 'String' })
@@ -335,7 +336,7 @@ describe('refusing a connection only for a problem it causes (fix round 2)', () 
     edges: [{ id: 'ti', source: 't', target: 'i' },
       { id: 'a.value:n.value', kind: 'data', source: 'a', target: 'n', sourcePort: 'value', targetPort: 'value' }] }
     // The existing problem names the Not step's input pin `value`, the same name as its output.
-    expect(contract.validateGraph(graph)).toContainEqual(expect.objectContaining({ nodeId: 'n', inputId: 'value', portId: 'value', message: 'Value accepts Yes/No, not Number' }))
+    expect(contract.validateGraph(graph)).toContainEqual(expect.objectContaining({ nodeId: 'n', inputId: 'value', portId: 'value', message: 'Value accepts True/False, not Number' }))
     expect(() => contract.connectData(graph, 'n', 'value', 'i', 'value')).not.toThrow()
     expect(quick(graph, 'n', 'value', 'i', 'value')).toBeUndefined()
   })
@@ -393,4 +394,29 @@ describe('Custom C# node signatures', () => {
 
 it('chooses the article by the first sound, as the C# validator does (same list in VisualGraphContractTests)', () => {
   for (const [word, article] of [['input boolean', 'an'], ['update', 'an'], ['utility meter', 'a'], ['unit', 'a'], ['european', 'a'], ['one', 'a'], ['light', 'a'], ['alarm control panel', 'an'], ['humidifier', 'a'], ['image', 'an'], ['ozone', 'an']]) expect(contract.words.article(word), word).toBe(article)
+})
+
+describe('type and service names that cannot run away or repeat (final fix round)', () => {
+  const withTypes = (types: Record<string, Record<string, unknown>>) => patched({ types: Object.fromEntries(Object.entries(types).map(([id, entry]) => [id, { description: '', ...entry }])) })
+  it('words a self-referencing element type, a pair naming each other and a long chain only so deep (Words.TypeLabel)', () => {
+    const chain: Record<string, Record<string, unknown>> = {}
+    for (let i = 0; i < 2000; i++) chain[`T${i}`] = { elementType: `T${i + 1}` }
+    const catalog = withTypes({ X: { elementType: 'X' }, A: { elementType: 'B' }, B: { elementType: 'A' }, ...chain })
+    expect(typeLabel('X', catalog)).toBe('List of Object')
+    expect(typeLabel('A', catalog)).toBe('List of List of Object')
+    expect(typeLabel('T0', catalog)).toBe('List of '.repeat(labelDepth) + 'Object')
+    expect(typeLabel('int' + '?'.repeat(100000), catalog)).toBe('Object')
+    expect(typeLabel('(int A, double B)', catalog)).toBe('Object')
+    expect(typeLabel('global::System.Int32[,]?', catalog)).toBe('List')
+  })
+  it('names types that share a label by the shortest C# name that tells them apart (Words.DistinctLabels)', () => {
+    const catalog = withTypes({ 'global::NodeLib.A.Mode': { label: 'Mode', category: 'Object' }, 'global::NodeLib.B.Mode': { label: 'Mode', category: 'Object' } })
+    const labels = distinctTypeLabels(['global::NodeLib.A.Mode', 'global::NodeLib.B.Mode', 'number'], catalog)
+    expect([...labels.values()]).toEqual(['Mode (A.Mode)', 'Mode (B.Mode)', 'Number'])
+  })
+  it('does not write a service name twice when it is only the id, and keeps a name with brackets (Words.ServiceName)', () => {
+    expect(contract.words.serviceName({ name: 'light.turn_on' } as contract.ServiceSchema, 'light.turn_on')).toBe('Turn on')
+    expect(contract.words.serviceName({ name: 'turn_on' } as contract.ServiceSchema, 'light.turn_on')).toBe('Turn on')
+    expect(contract.words.serviceName({ name: 'Turn on (beta)' } as contract.ServiceSchema, 'light.turn_on')).toBe('Turn on (beta)')
+  })
 })

@@ -63,14 +63,16 @@ class ScriptSyncRunner
     }
 
     /// <summary>Runs the method and records the run; the script waits for it when it is unloaded (<see cref="UserScript.TrackRun"/>).</summary>
-    public Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null)
+    /// <param name="recorded">Completed once the run's first record is written (faulted when it cannot be), for Run now,
+    /// which answers with a run id the history already has. Triggers do not wait for it.</param>
+    public Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null, TaskCompletionSource? recorded = null)
     {
-        var run = RunCore(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc);
+        var run = RunCore(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc, recorded);
         scriptClass.Script.TrackRun(run);
         return run;
     }
 
-    async Task RunCore(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc)
+    async Task RunCore(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc, TaskCompletionSource? recorded)
     {
         var compiled = scriptClass.Script.CompiledScript;
         var trigger = compiled.VisualTriggers?.GetValueOrDefault(methodInfo.Name);
@@ -89,21 +91,27 @@ class ScriptSyncRunner
         // Recording stays off without a store or for code automations (C10).
         var sink = snapshot != null && history != null ? new RunTraceSink(history, record.RunId) : null;
         void Save() => history?.Save(record);
-        // Fail closed before registering work if history is unavailable. The snapshot lands with the revision's first run.
-        history?.Save(record, snapshot);
+        // The trigger (under the activation gate) only registers the run; every history write comes after the hop below,
+        // so slow storage holds back neither other triggers nor the editor. The snapshot lands with the revision's first run.
         var registration = TryRegister(scriptClass, methodInfo, mode);
+        var cancelled = registration == null && scriptClass.Script.LifetimeToken.IsCancellationRequested;
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (registration == null)
         {
-            var cancelled = scriptClass.Script.LifetimeToken.IsCancellationRequested;
             record.Status = cancelled ? "Cancelled" : "Skipped";
             if (cancelled) record.Error = scriptClass.Script.CancelReason ?? CancelReasons.Unknown;
             record.EndUtc = DateTime.UtcNow;
-            Save();
+            try { history?.Save(record, snapshot); }
+            catch (Exception error) { recorded?.TrySetException(error); throw; }
+            recorded?.TrySetResult();
             return;
         }
 
         try
         {
+            // Fail closed: a run whose first record cannot be written fails before it executes.
+            history?.Save(record, snapshot);
+            recorded?.TrySetResult();
             if (registration.RestartCancellation is not null)
                 await registration.RestartCancellation;
 
@@ -132,12 +140,14 @@ class ScriptSyncRunner
         }
         catch (Exception ex)
         {
+            recorded?.TrySetException(ex);
             record.Status = "Failed"; record.Error = ex.GetBaseException().Message;
             Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}");
             throw;
         }
         finally
         {
+            recorded?.TrySetResult();
             record.EndUtc = DateTime.UtcNow;
             var cancellationTask = Unregister(scriptClass, methodInfo, registration);
             try

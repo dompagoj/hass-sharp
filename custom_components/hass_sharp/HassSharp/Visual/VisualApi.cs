@@ -37,7 +37,7 @@ public partial class HassSharpManager
             else await _userScriptManager.UpdateUserScript(compiled);
         }
         catch (Exception ex) { RecordLoadError(VisualRuntimePath(document.Id), ex); activationError = _loadErrors[VisualRuntimePath(document.Id)]; }
-        if (activationError == null) _loadErrors.TryRemove(VisualRuntimePath(document.Id), out _);
+        if (activationError == null) { _loadErrors.TryRemove(VisualRuntimePath(document.Id), out _); _curableLoadErrors.TryRemove(VisualRuntimePath(document.Id), out _); }
         document = WithRuntimeIdentity(document);
         return warnings is { Count: > 0 } ? (object)new { id = document.Id, saved = true, document, active = document.CurrentRevisionActive, activationError, diagnostics = warnings }
             : new { id = document.Id, saved = true, document, active = document.CurrentRevisionActive, activationError };
@@ -134,7 +134,7 @@ public partial class HassSharpManager
                     {
                         store.Delete(id, revision);
                         await _userScriptManager.DeleteScriptAsync(VisualRuntimePath(id));
-                        _loadErrors.TryRemove(VisualRuntimePath(id), out _);
+                        _loadErrors.TryRemove(VisualRuntimePath(id), out _); _curableLoadErrors.TryRemove(VisualRuntimePath(id), out _);
                         result = new { deleted = true };
                     }
                     else throw new ArgumentException("Unknown visual operation");

@@ -83,6 +83,13 @@ public sealed class ServiceTarget
 [EditorBrowsable(EditorBrowsableState.Never)]
 public static class ServiceData
 {
-    /// <summary>The value as Home Assistant receives it.</summary>
-    public static JsonNode? Value<T>(T value) => JsonSerializer.SerializeToNode(value, HassServices.JsonOptions);
+    /// <summary>The value as Home Assistant receives it, written with the options of the calling load context.</summary>
+    public static JsonNode? Value<T>(T value, JsonSerializerOptions options) => JsonSerializer.SerializeToNode(value, options);
+    /// <summary>
+    /// Options as <see cref="HassServices.JsonOptions"/>, for one load context's typed service calls to hold. System.Text.Json
+    /// caches the metadata of every type it writes in the options (and shares that cache between options it finds equal),
+    /// so a process-wide instance would keep an automation's own types, and with them its load context, forever. A
+    /// resolver of its own makes these options equal to no other.
+    /// </summary>
+    public static JsonSerializerOptions Options() => new(HassServices.JsonOptions) { TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() };
 }

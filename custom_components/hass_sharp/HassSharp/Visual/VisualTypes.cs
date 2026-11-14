@@ -10,7 +10,7 @@ namespace HassSharp;
 public static class VisualTypes
 {
     // Library ids contain colons (global::HassSharp.EntityStateSnapshot); only this exact shape is parametric.
-    static readonly Regex ParametricId = new("^([a-z_]+):([a-z0-9_]+)$", RegexOptions.CultureInvariant);
+    static readonly Regex ParametricId = new(@"^([a-z_]+):([a-z0-9_]+)\z", RegexOptions.CultureInvariant);
     static string Text(JsonNode? node, string key) => VisualNodeCatalog.Text(node, key);
     static bool Match(string text, string pattern) => Matches(text, pattern);
     static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> JavaScriptPatterns = new(StringComparer.Ordinal);
@@ -70,10 +70,11 @@ public static class VisualTypes
     /// <summary>The type, then each type it refines, ending at its root; empty when any link is unknown or cyclic.</summary>
     public static IReadOnlyList<string> Chain(JsonObject catalog, string id)
     {
-        var chain = new List<string>();
+        // A stored signature's types may refine each other in a long chain: each link is looked up once.
+        var chain = new List<string>(); var seen = new HashSet<string>(StringComparer.Ordinal);
         for (string? current = id; current != null;)
         {
-            if (chain.Contains(current) || Resolve(catalog, current) is not { } spec) return [];
+            if (!seen.Add(current) || Resolve(catalog, current) is not { } spec) return [];
             chain.Add(current);
             current = spec["refines"] is JsonValue refines && refines.TryGetValue<string>(out var parent) ? parent : null;
         }
@@ -103,7 +104,11 @@ public static class VisualTypes
         return roots?.Invoke(root, target) ?? (Listed(catalog["types"]![root]?["assignableTo"], target) || Listed(catalog["types"]![target]?["assignableFrom"], root));
     }
     static bool Listed(JsonNode? list, string id) => (list as JsonArray ?? []).Any(t => t is JsonValue v && v.TryGetValue<string>(out var item) && item == id);
-    static bool Nullable(JsonObject catalog, string id) => Resolve(catalog, id)?["nullable"] is JsonValue v && v.TryGetValue<bool>(out var nullable) && nullable;
+    /// <summary>Whether the type may be empty: its entry's <c>nullable</c> is true (anything else, a crafted <c>1</c> too, is not).</summary>
+    internal static bool Nullable(JsonObject catalog, string id) => Flag(Resolve(catalog, id), "nullable");
+    static bool Flag(JsonNode? entry, string key) => entry is JsonObject o && o[key] is JsonValue v && v.TryGetValue<bool>(out var on) && on;
+    /// <summary>A rule's number; null when the entry has none, or one that is not a number (a crafted <c>"min": "abc"</c> is no rule, as in TypeScript).</summary>
+    static double? Bound(JsonNode? value) => value is JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.Number && double.TryParse(v.ToJsonString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : null;
 
     internal static bool Numeric(JsonObject catalog, string id) => Text(Resolve(catalog, id), "literalKind") is "integer" or "number";
 
@@ -113,7 +118,7 @@ public static class VisualTypes
         var chain = Chain(catalog, type);
         if (chain.Count == 0 || !present) return false;
         var spec = Resolve(catalog, type)!;
-        if (value == null) return spec["nullable"]?.GetValue<bool>() == true;
+        if (value == null) return Flag(spec, "nullable");
         var literal = Text(spec, "literalKind");
         var text = value is JsonValue sv && sv.TryGetValue<string>(out var s) ? s : null;
         double? number = literal is "number" or "integer" && value is JsonValue nv && nv.GetValueKind() == System.Text.Json.JsonValueKind.Number &&
@@ -121,7 +126,7 @@ public static class VisualTypes
         var kind = literal switch
         {
             "boolean" => value is JsonValue bv && bv.TryGetValue<bool>(out _),
-            "string" => text != null && (spec["character"]?.GetValue<bool>() != true || text.Length == 1),
+            "string" => text != null && (!Flag(spec, "character") || text.Length == 1),
             "object" => value is JsonObject,
             "array" => value is JsonArray,
             "enum" => (spec["enumValues"] as JsonArray ?? []).Any(v => JsonNode.DeepEquals(v, value)),
@@ -130,7 +135,7 @@ public static class VisualTypes
         };
         return kind && chain.Select(id => Resolve(catalog, id)!).All(t =>
             (Text(t, "pattern") is not { Length: > 0 } pattern || text != null && Match(text, pattern)) &&
-            (number is not { } x || (t["min"] == null || x >= t["min"]!.GetValue<double>()) && (t["max"] == null || x <= t["max"]!.GetValue<double>())) &&
+            (number is not { } x || (Bound(t["min"]) is not { } min || x >= min) && (Bound(t["max"]) is not { } max || x <= max)) &&
             (t["enumValues"] is not JsonArray values || values.Any(v => JsonNode.DeepEquals(v, value))));
     }
 }

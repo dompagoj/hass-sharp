@@ -136,6 +136,8 @@ public sealed class RunHistoryStore
     /// <summary>Runs whose trace is kept, newest first; older runs keep their row but lose their trace (C8).</summary>
     public const int TraceRetention = 1000;
     readonly Lock gate = new();
+    /// <summary>Test seam: runs at the start of every <see cref="Save"/>, holding the store as a slow write would.</summary>
+    internal Action? SaveHook;
     readonly string path;
     readonly int retention;
     readonly int traceRetention;
@@ -163,6 +165,15 @@ public sealed class RunHistoryStore
             return db.Database.ExecuteSqlInterpolated($"INSERT OR IGNORE INTO ScheduleOccurrences (Id) VALUES ({id})") == 1;
         }
     }
+    /// <summary>Gives back a claim whose automation stopped before it ran the occurrence.</summary>
+    public void ReleaseOccurrence(string id)
+    {
+        lock (gate)
+        {
+            using var db = new HistoryContext(path);
+            db.Database.ExecuteSqlInterpolated($"DELETE FROM ScheduleOccurrences WHERE Id = {id}");
+        }
+    }
     public string Identity(string scriptPath)
     {
         lock (gate)
@@ -188,6 +199,7 @@ public sealed class RunHistoryStore
     {
         lock (gate)
         {
+            SaveHook?.Invoke();
             run.Error = Bound(run.Error); run.TriggerLabel = Bound(run.TriggerLabel);
             // The summary is never cut: a cut summary is not JSON.
             if (run.Trigger?.Length > TriggerSummary.MaxLength) run.Trigger = null;
@@ -216,10 +228,11 @@ public sealed class RunHistoryStore
                 foreach (var id in obsolete) db.Database.ExecuteSqlInterpolated($"DELETE FROM RunTraces WHERE RunId = {id}");
                 db.Database.ExecuteSqlRaw("DELETE FROM GraphSnapshots WHERE Revision NOT IN (SELECT Revision FROM Runs)");
             }
-            // Traces are large: only the newest traced runs keep theirs.
+            // Traces are large: only the newest traced runs that have ended keep theirs. A run still going is not ranked, so
+            // a long one does not lose its trace on every save and write it again at its next flush.
             db.Database.ExecuteSqlInterpolated($"""
                 UPDATE Runs SET HasTrace = 0 WHERE RunId IN (SELECT t.RunId FROM RunTraces t JOIN Runs r ON r.RunId = t.RunId
-                  ORDER BY r.ReceivedUtc DESC, r.RunId DESC LIMIT -1 OFFSET {traceRetention})
+                  WHERE r.EndUtc IS NOT NULL ORDER BY r.ReceivedUtc DESC, r.RunId DESC LIMIT -1 OFFSET {traceRetention})
                 """);
             db.Database.ExecuteSqlInterpolated($"DELETE FROM RunTraces WHERE RunId IN (SELECT t.RunId FROM RunTraces t JOIN Runs r ON r.RunId = t.RunId WHERE r.HasTrace = 0)");
             transaction.Commit();

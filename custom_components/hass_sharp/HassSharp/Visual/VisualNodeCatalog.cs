@@ -20,7 +20,7 @@ public static class VisualNodeCatalog
         // Loop declarations accept every resolvable type id, parametric ones included, so Convert can narrow.
         catalog["structures"]!["loopDeclaration"]!["type"] = new JsonObject { ["type"] = "string", ["enumSource"] = "types", ["required"] = true };
         catalog["structures"]!["operand"]!["literal"]!["types"] = new JsonArray(types
-            .Where(t => Text(t.Value, "literalKind") != "" || t.Value?["nullable"]?.GetValue<bool>() == true)
+            .Where(t => Text(t.Value, "literalKind") != "" || t.Value?["nullable"] is JsonValue nullable && nullable.TryGetValue<bool>(out var on) && on)
             .Select(t => (JsonNode?)JsonValue.Create(t.Key)).ToArray());
     }
     public static JsonObject GetCatalog(VisualCatalogSnapshot? snapshot = null) => (JsonObject)(snapshot?.Root ?? Root).DeepClone();
@@ -39,8 +39,8 @@ public static class VisualNodeCatalog
     internal static JsonObject? CustomSignature(JsonObject node, JsonNode? spec) =>
         Text(spec, "dynamicInputs") == "custom" && node["config"] is JsonObject config && config["signature"] is JsonObject signature && WellFormedSignature(signature) ? signature : null;
     /// <summary>
-    /// A signature has a text <c>title</c> and <c>description</c>, a yes/no <c>pure</c>, and <c>inputs</c>, <c>outputs</c>
-    /// and <c>types</c> objects; each input has a non-empty list of type ids and a yes/no <c>required</c>, each output a
+    /// A signature has a text <c>title</c> and <c>description</c>, a true/false <c>pure</c>, and <c>inputs</c>, <c>outputs</c>
+    /// and <c>types</c> objects; each input has a non-empty list of type ids and a true/false <c>required</c>, each output a
     /// type id, each pin an identifier for its id, each type an object.
     /// </summary>
     internal static bool WellFormedSignature(JsonObject signature)
@@ -97,7 +97,8 @@ public static class VisualNodeCatalog
         var ports = new List<string>();
         if (IsPure(node, spec)) return [];
         if (Text(spec, "dynamicExecution") == "branches" && node["config"]?["branches"] is JsonArray branches)
-            ports.AddRange(branches.Select(id => "branch:" + id?.ToString()));
+            // Only a text id names a branch, as in TypeScript; another value is reported by the validators and has no port.
+            ports.AddRange(branches.OfType<JsonValue>().Select(id => id.TryGetValue<string>(out var branch) ? branch : null).OfType<string>().Select(id => "branch:" + id));
         ports.AddRange((spec?["execution"] as JsonArray ?? []).Select(p => p!.GetValue<string>()));
         return ports.ToArray();
     }
@@ -189,7 +190,7 @@ public static class VisualNodeCatalog
             port["types"] = new JsonArray(types.SelectMany(t => t!.GetValue<string>() == "$any" ? (snapshot?.Root ?? Root)["types"]!.AsObject().Select(p => p.Key) : new[] { ResolveType(t!.GetValue<string>(), node) }).Select(t => JsonValue.Create(t)).ToArray<JsonNode?>());
         if (Text(node,"kind") == "foreach" && ports["items"] is JsonObject itemsPort)
             itemsPort["types"] = new JsonArray(new[] { "array" }.Concat((snapshot?.Root ?? Root)["types"]!.AsObject()
-                .Where(p => p.Value?["nullable"]?.GetValue<bool>() != true && p.Value?["elementType"] is JsonValue element && CompatibleTypes(element.GetValue<string>(), Text(node["config"],"itemType"), snapshot)).Select(p=>p.Key))
+                .Where(p => !VisualTypes.Nullable(snapshot?.Root ?? Root, p.Key) && Text(p.Value, "elementType") is { Length: > 0 } element && CompatibleTypes(element, Text(node["config"],"itemType"), snapshot)).Select(p=>p.Key))
                 .Select(t=>(JsonNode?)JsonValue.Create(t)).ToArray());
         // A port without a description (an unknown service field) has none rather than one that repeats its label.
         JsonObject Input(IEnumerable<string> types, bool required, string? description)

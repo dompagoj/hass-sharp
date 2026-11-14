@@ -14,7 +14,7 @@ namespace HassSharp;
 /// </summary>
 public sealed class ServiceSchemaCatalog
 {
-    static readonly Regex Slug = new("^[a-z0-9_]+$", RegexOptions.CultureInvariant);
+    static readonly Regex Slug = new(@"^[a-z0-9_]+\z", RegexOptions.CultureInvariant);
     static readonly JsonSerializerOptions CanonicalText = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     static readonly string[] AnyType = ["object", "array", "string", "number", "boolean"];
     const string TimePattern = @"^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$";

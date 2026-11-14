@@ -1,5 +1,5 @@
 import rawCatalog from '../../../visual_node_catalog.json'
-import { domainWords, typeLabel } from './typeLabels'
+import { distinctTypeLabels, domainWords, typeLabel } from './typeLabels'
 
 /** The catalog's graphVersion is the visual graph format. The document/API envelope remains version 1. */
 export type DataType = string
@@ -80,7 +80,7 @@ export function typeChain(id: string, catalog: VisualCatalogSnapshot = nodeCatal
     const spec = resolveTypeSpec(current, catalog)
     if (chain.includes(current) || !spec) return []
     chain.push(current)
-    current = spec.refines
+    current = typeof spec.refines === 'string' ? spec.refines : undefined
   }
   return chain
 }
@@ -121,8 +121,8 @@ export const isPure = (node: GraphNode | string, catalog: VisualCatalogSnapshot 
 export interface CustomSignature { title: string; description: string; pure: boolean; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; types: Record<string, TypeSpec> }
 const pinId = '^[A-Za-z_][A-Za-z0-9_]*$'
 /**
- * Whether a stored signature is one the compiler writes: a text `title` and `description`, a yes/no `pure`, and
- * `inputs`, `outputs` and `types` objects; each input has a non-empty list of type ids and a yes/no `required`, each
+ * Whether a stored signature is one the compiler writes: a text `title` and `description`, a true/false `pure`, and
+ * `inputs`, `outputs` and `types` objects; each input has a non-empty list of type ids and a true/false `required`, each
  * output a type id, each pin an identifier for its id, each type an object. Mirrors `VisualNodeCatalog.WellFormedSignature`.
  */
 export function wellFormedSignature(signature: unknown): signature is CustomSignature {
@@ -286,7 +286,8 @@ export function setInput(node: GraphNode, port: string, value: Operand, catalog:
 export type Scope = { owner: string; port: string }[]
 const isAncestor = (a: Scope, b: Scope) => a.length <= b.length && a.every((s, i) => s.owner === b[i].owner && s.port === b[i].port)
 const scopePort = (node: GraphNode, port: string, catalog: VisualCatalogSnapshot) => nodeSpec(node.kind, catalog)?.scopePorts?.includes(port) || (node.kind === 'parallel' && port.startsWith('branch:'))
-const flowPort = (node: GraphNode, edge: ExecutionEdge) => node.kind === 'condition' && (!edge.port || edge.port === 'next') ? 'true' : edge.port ?? 'next'
+/** Only a missing port means the default one (`next`, a condition's `true`); an empty port is a port of that name, as in C#. */
+const flowPort = (node: GraphNode, edge: ExecutionEdge) => node.kind === 'condition' && (edge.port === undefined || edge.port === 'next') ? 'true' : edge.port ?? 'next'
 
 const catalogExecutionPorts = executionPorts, catalogDataOutputs = dataOutputs, catalogDataInputs = dataInputs, catalogIsAssignable = isAssignable, catalogScopePort = scopePort
 const jsonEqual = (a: unknown, b: unknown): boolean =>
@@ -304,15 +305,16 @@ export function validLiteral(type: string, value: unknown, catalog: VisualCatalo
       case 'string': return typeof value === 'string' && (spec.character !== true || value.length === 1)
       case 'object': return record(value)
       case 'array': return Array.isArray(value)
-      case 'enum': return (spec.enumValues ?? []).some(v => jsonEqual(v, value))
+      case 'enum': return Array.isArray(spec.enumValues) && spec.enumValues.some(v => jsonEqual(v, value))
       case 'integer': case 'number': return typeof value === 'number' && Number.isFinite(value) && (spec.literalKind !== 'integer' || Number.isInteger(value))
       default: return false
     }
   })()
+  // An entry's rule of the wrong kind (a crafted `"min": "abc"`) is no rule, as in C#.
   return kind && chain.map(id => resolveTypeSpec(id, catalog)!).every(t =>
-    (!t.pattern || typeof value === 'string' && matches(value, t.pattern)) &&
-    (typeof value !== 'number' || ((t.min === undefined || value >= t.min) && (t.max === undefined || value <= t.max))) &&
-    (t.enumValues === undefined || t.enumValues.some(v => jsonEqual(v, value))))
+    (typeof t.pattern !== 'string' || !t.pattern || typeof value === 'string' && matches(value, t.pattern)) &&
+    (typeof value !== 'number' || ((typeof t.min !== 'number' || value >= t.min) && (typeof t.max !== 'number' || value <= t.max))) &&
+    (!Array.isArray(t.enumValues) || t.enumValues.some(v => jsonEqual(v, value))))
 }
 
 // The catalog pattern checks ISO syntax, wall-clock fields and the explicit offset.
@@ -352,7 +354,7 @@ export const words = {
   serviceName: (schema: ServiceSchema, service: string) => {
     const key = service.slice(service.indexOf('.') + 1)
     const name = text(schema.name).replace(blankEnds, '')
-    return name && name !== key ? name : words.key(key)
+    return name && name !== key && name !== service ? name : words.key(key)
   },
   /** A time of day as the daily trigger runs it: 24-hour HH:MM. */
   timeOfDay: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$',
@@ -384,9 +386,9 @@ export const words = {
   /** A name or id quoted as written, without surrounding whitespace; `Unnamed` when nothing is left. */
   name: (name: string) => name.replace(blankEnds, '') || 'Unnamed',
   or: (items: string[]) => items.length <= 1 ? items.join('') : items.slice(0, -1).join(', ') + ' or ' + items.at(-1),
-  /** A value in words: text as words (`twice_daily` → `Twice daily`), numbers as `String(n)` writes them, Yes or No. */
+  /** A value in words: text as words (`twice_daily` → `Twice daily`), numbers as `String(n)` writes them, True or False. */
   show: (value: unknown): string => value === null ? 'Nothing' : typeof value === 'string' ? (value === '' ? 'Empty text' : words.key(value))
-    : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : typeof value === 'number' ? String(value) : JSON.stringify(value),
+    : typeof value === 'boolean' ? (value ? 'True' : 'False') : typeof value === 'number' ? String(value) : JSON.stringify(value),
   /** The allowed values by their labels where the input has them, else in words: one, a short list, or a reference to the listed options. */
   choices: (values: unknown[], labels: unknown, many: string) => {
     const named = Array.isArray(labels) && labels.length === values.length && labels.every(l => typeof l === 'string' && l !== '') ? labels as string[] : values.map(words.show)
@@ -402,30 +404,46 @@ export const words = {
       : min !== undefined ? `at least ${count(min)}` : max !== undefined ? `at most ${count(max)}` : 'any number of items'
   },
   /** How a config rule's JSON type reads in a message. */
-  configKind: (type: string) => ({ array: 'a list', object: 'an object', integer: 'a whole number', number: 'a number', string: 'text', boolean: 'yes or no' } as Record<string, string>)[type] ?? 'the right kind of value',
+  configKind: (type: string) => ({ array: 'a list', object: 'an object', integer: 'a whole number', number: 'a number', string: 'text', boolean: 'true or false' } as Record<string, string>)[type] ?? 'the right kind of value',
   /** The label people see for an input: its spec label, else (or when the label is only the key) the key in words. List items count from 1. */
   portLabel: (spec: { label?: unknown } | undefined, port: string) => {
     if (port.startsWith('item:')) return /^[0-9]+$/.test(port.slice(5)) ? `Item ${BigInt(port.slice(5)) + 1n}` : 'Item'
     const key = port.startsWith('field:') || port.startsWith('carry:') ? port.slice(6) : port.startsWith('export:') ? port.slice(7) : port
     return typeof spec?.label === 'string' && spec.label && spec.label !== key && spec.label.trim() ? spec.label : words.key(key)
   },
-  /** A type mismatch: the accepted types (named, at most four) and the one given, unless that is unknown. */
+  /**
+   * A type mismatch: the accepted types (named, at most four) and the one given, unless that is unknown. An accepted
+   * type that reads as the given one does is told apart by its C# name (`distinctTypeLabels`): "accepts Mode (A.Mode),
+   * not Mode (B.Mode)".
+   */
   incompatible: (subject: string, type: string, expected: string[], catalog: VisualCatalogSnapshot = nodeCatalog) => {
     if (!typeChain(type, catalog).length) return `${subject} is connected to a value of unknown type`
-    const names = [...new Set(expected.map(t => typeLabel(t, catalog)))]
+    const label = typeLabel(type, catalog)
+    const plain = [...new Set(expected.map(t => typeLabel(t, catalog)))]
     // The same kind of value, but one that may be empty where the pin needs it set (a nullable C# type).
-    if (resolveTypeSpec(type, catalog)?.nullable === true && names.includes(typeLabel(type, catalog))) return `${subject} needs a value that is always set, and this one may be empty`
-    return names.length > 0 && names.length <= 4 ? `${subject} accepts ${words.or(names)}, not ${typeLabel(type, catalog)}` : `${subject} does not accept ${typeLabel(type, catalog)}`
+    if (resolveTypeSpec(type, catalog)?.nullable === true && plain.includes(label)) return `${subject} needs a value that is always set, and this one may be empty`
+    const apart = distinctTypeLabels([type, ...expected.filter(t => typeLabel(t, catalog) === label)], catalog)
+    const names = [...new Set(expected.map(t => apart.get(t) ?? typeLabel(t, catalog)))], given = apart.get(type)!
+    return names.length > 0 && names.length <= 4 ? `${subject} accepts ${words.or(names)}, not ${given}` : `${subject} does not accept ${given}`
   },
+  /** A Repeat count typed in above the loop's Maximum iterations. */
+  repeatCount: (label: string, max: number, maxLabel: string) => `${label} must be at most ${max}, as ${maxLabel} is ${max}`,
   /** A wire whose value is not visible where it arrives. */
   scopeData: (subject: string) => `${subject} cannot use this value here: it is on the other side of a loop or parallel branch boundary`,
   /** A wire into an input the step (of this kind) does not have; a Constant's value says what to do instead. */
   unknownInput: (port: string, kind?: string) => kind === 'constant' && port === 'value' ? words.intoConstant : `This value wire goes into ${words.portLabel(undefined, port)}, which this step does not have`,
   /** A wire into a Constant: it takes a typed-in value only, and Convert is the step that changes a value's type. */
   intoConstant: "Nothing can be connected to a Constant; remove this connection, or use Convert to change a value's type",
-  /** A Constant whose stored value is of another type than its Type (a graph from before the Type set it): how to repair it. */
-  constantRetyped: (label: string, type: string, expected: string, catalog: VisualCatalogSnapshot = nodeCatalog) =>
-    `${label} is ${typeLabel(type, catalog)}, but this Constant's Type is ${typeLabel(expected, catalog)}; type the value again, or change Type`,
+  /**
+   * A Constant whose stored value is of another type than its Type (a graph from before the Type set it): how to repair
+   * it. A value that may be empty, of a Type that may not, says so; two types that read alike are told apart.
+   */
+  constantRetyped: (label: string, type: string, expected: string, catalog: VisualCatalogSnapshot = nodeCatalog) => {
+    const names = distinctTypeLabels([type, expected], catalog)
+    if (resolveTypeSpec(type, catalog)?.nullable === true && typeLabel(type, catalog) === typeLabel(expected, catalog))
+      return `${label} may be empty, but this Constant's Type, ${names.get(expected)}, is always set; type the value again, or change Type`
+    return `${label} is ${names.get(type)}, but this Constant's Type is ${names.get(expected)}; type the value again, or change Type`
+  },
   /** A Custom C# node whose stored signature is not one the compiler writes. */
   malformedSignature: 'The pins of this node cannot be read; open Edit code and apply it',
   /** A Custom C# node whose stored signature is not what its code gives (only the backend, which compiles it, knows). */
@@ -653,7 +671,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (edgeIds.has(edge.id)) error(edge.source, 'Duplicate edge id', undefined, undefined, 'edge.duplicate'); edgeIds.add(edge.id)
     if (!nodes.has(edge.source) || !nodes.has(edge.target)) { error(null, 'Edge endpoint missing', undefined, undefined, 'edge.endpoint'); continue }
     if (edge.kind === 'data') {
-      if ('port' in edge || typeof edge.sourcePort !== 'string' || typeof edge.targetPort !== 'string') error(edge.source, 'This value wire does not join two value pins; connect value pins to value pins', undefined, undefined, 'edge.valueWirePins')
+      if ('port' in edge || typeof edge.sourcePort !== 'string' || typeof edge.targetPort !== 'string' || edge.sourcePort === '' || edge.targetPort === '') error(edge.source, 'This value wire does not join two value pins; connect value pins to value pins', undefined, undefined, 'edge.valueWirePins')
       else { data.push(edge); dataIndex.set(edge, index) }
     } else if (edge.kind === undefined || edge.kind === 'execution') {
       if ('sourcePort' in edge || 'targetPort' in edge) error(edge.source, 'This step order wire names value pins; connect step order pins to step order pins', undefined, undefined, 'edge.orderWirePins')
@@ -712,8 +730,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     const output = dataOutputs(source)[edge.sourcePort], input = connectable(dataInputs(target, ownerOf(target))[edge.targetPort])
     if (!output) error(source.id, 'Unknown data output port', undefined, edge.sourcePort, 'port.unknownOutput')
     if (!input) error(target.id, words.unknownInput(edge.targetPort, target.kind), edge.targetPort, edge.targetPort, 'port.unknownInput')
+    // The first wire into an input is the one the step reads (C# keeps it too); a later one is only reported.
     if (incoming.has(key(target.id, edge.targetPort))) error(target.id, 'Only one data source per input', edge.targetPort, edge.targetPort, 'port.inputTaken')
-    incoming.set(key(target.id, edge.targetPort), edge)
+    else incoming.set(key(target.id, edge.targetPort), edge)
     if (output && input) {
       if (!input.types.some(t => isAssignable(output.type, t))) error(target.id, incompatibleInput(target, input, edge.targetPort, output.type, catalog), edge.targetPort, edge.targetPort)
       // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable.
@@ -853,6 +872,15 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     const resolved: Record<string, string | undefined> = Object.create(null)
     for (const [port, rule] of Object.entries(dataInputs(node, ownerOf(node)))) resolved[port] = operand(node, port, inputValue(node, port, catalog), rule)
     resolvedTypes.set(node.id, resolved)
+    // A Repeat count typed in above the loop's own Maximum iterations would fail when the loop starts.
+    const count = node.kind === 'repeat' && !incoming.has(key(node.id, 'count')) ? inputValue(node, 'count', catalog) : undefined
+    const max = node.config.maxIterations, countSpec = dataInputs(node, ownerOf(node)).count
+    if (record(count) && count.kind === 'literal' && typeof count.value === 'number' && Number.isFinite(count.value) && typeof max === 'number' && Number.isFinite(max) && count.value > max &&
+      !(typeof countSpec?.max === 'number' && count.value > countSpec.max)) {
+      origin = { kind: 'operand', node: node.id, port: 'count' }
+      error(node.id, words.repeatCount(words.portLabel(countSpec, 'count'), max, configLabel(spec.config.maxIterations, 'maxIterations')), 'count')
+      origin = graphOrigin
+    }
     if (spec.comparison) {
       origin = { kind: 'comparison', node: node.id }
       for (const d of comparisonDiagnostics(node, spec, resolved, catalog)) error(d.nodeId, d.message, d.inputId)

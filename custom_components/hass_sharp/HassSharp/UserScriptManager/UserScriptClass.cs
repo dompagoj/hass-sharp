@@ -141,10 +141,32 @@ class UserScriptClass
                 Script.AutomationId, ClassName, method, scheduleId, utc.ToString("O") });
             var occurrence = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity)));
             if (!_occurrences.TryAdd(occurrence, 0)) return Task.CompletedTask;
-            if (Script.ScriptManager.History is { } history && !history.ClaimOccurrence(occurrence)) return Task.CompletedTask;
-            return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method),
-                _actions[method].Mode, InvocationCause.Schedule, TriggerPayload.Schedule(scheduleId, utc), occurrence, utc);
+            // Unloading waits for the claim as for a run, so nothing writes history after it returns.
+            var claimed = ClaimAndRun(method, scheduleId, occurrence, utc);
+            Script.TrackRun(claimed);
+            return claimed;
         }
+    }
+
+    /// <summary>
+    /// Claims the occurrence in run history, then runs it. The claim is a history write, so it happens after a hop off
+    /// the trigger path and outside the activation gate, as a run's own records do: slow storage holds back no other
+    /// trigger. If the automation stopped or was replaced meanwhile, the claim is given back for its replacement.
+    /// </summary>
+    async Task ClaimAndRun(string method, string scheduleId, string occurrence, DateTime utc)
+    {
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        var history = Script.ScriptManager.History;
+        if (history != null && !history.ClaimOccurrence(occurrence)) return;
+        Task? run = null;
+        lock (Script.ScriptManager.ActivationGate)
+        {
+            if (Script.Active && Script.Enabled && !Script.LifetimeToken.IsCancellationRequested)
+                run = Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method),
+                    _actions[method].Mode, InvocationCause.Schedule, TriggerPayload.Schedule(scheduleId, utc), occurrence, utc);
+        }
+        if (run == null) { history?.ReleaseOccurrence(occurrence); return; }
+        await run;
     }
 
     internal Task StartupCompletion { get; private set; } = Task.CompletedTask;
@@ -154,7 +176,8 @@ class UserScriptClass
         _actions.Values.Where(a => a.Startup).Select(a => RunMethod(a.Method, InvocationCause.Startup)));
 
     /// <param name="payload">The normalised trigger payload; manual and startup runs build their own when omitted.</param>
-    internal Task RunMethod(string method, InvocationCause cause = InvocationCause.Manual, string? runId = null, System.Text.Json.JsonElement? payload = null)
+    /// <param name="recorded">See <see cref="ScriptSyncRunner.Run"/>.</param>
+    internal Task RunMethod(string method, InvocationCause cause = InvocationCause.Manual, string? runId = null, System.Text.Json.JsonElement? payload = null, TaskCompletionSource? recorded = null)
     {
         var action = _actions[method];
         if (cause == InvocationCause.Manual && !action.Manual)
@@ -165,7 +188,7 @@ class UserScriptClass
             InvocationCause.Startup => TriggerPayload.Startup(),
             _ => throw new ArgumentException($"A {cause} run requires its trigger payload", nameof(payload))
         };
-        return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method), action.Mode, cause, normalised, runId);
+        return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method), action.Mode, cause, normalised, runId, recorded: recorded);
     }
 
     internal string GetConcatedMethodNameWithClass(string methodName) => $"{ClassName}::{methodName}";

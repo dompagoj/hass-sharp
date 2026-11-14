@@ -15,7 +15,7 @@
     },
     "types": {
       "boolean": {
-        "description": "A yes/no value.",
+        "description": "A true/false value.",
         "clrType": "System.Boolean",
         "nullable": false,
         "category": "Boolean",
@@ -207,7 +207,7 @@
       },
       "global::System.Boolean": {
         "label": "bool",
-        "description": "A yes/no value.",
+        "description": "A true/false value.",
         "category": "Boolean",
         "nullable": false,
         "literalKind": "boolean",
@@ -3213,7 +3213,7 @@
       "if": {
         "label": "If",
         "category": "Logic",
-        "description": "Continue on If true or If false, depending on a yes/no value.",
+        "description": "Continue on If true or If false, depending on a true/false value.",
         "minGraphVersion": 5,
         "config": {},
         "inputs": {
@@ -3222,7 +3222,7 @@
               "boolean"
             ],
             "required": true,
-            "description": "Yes continues on If true, no continues on If false.",
+            "description": "True continues on If true, false continues on If false.",
             "default": {
               "kind": "literal",
               "type": "boolean",
@@ -3244,7 +3244,7 @@
       "and": {
         "label": "And",
         "category": "Logic",
-        "description": "Combine two yes/no values: the result is yes only when both are yes.",
+        "description": "Combine two true/false values: the result is true only when both are true.",
         "pure": true,
         "minGraphVersion": 5,
         "config": {},
@@ -3277,7 +3277,7 @@
         "outputs": {
           "value": {
             "type": "boolean",
-            "description": "Yes when both values are yes.",
+            "description": "True when both values are true.",
             "label": "Result"
           }
         },
@@ -3288,7 +3288,7 @@
       "or": {
         "label": "Or",
         "category": "Logic",
-        "description": "Combine two yes/no values: the result is yes when at least one is yes.",
+        "description": "Combine two true/false values: the result is true when at least one is true.",
         "pure": true,
         "minGraphVersion": 5,
         "config": {},
@@ -3321,7 +3321,7 @@
         "outputs": {
           "value": {
             "type": "boolean",
-            "description": "Yes when at least one value is yes.",
+            "description": "True when at least one value is true.",
             "label": "Result"
           }
         },
@@ -3332,7 +3332,7 @@
       "xor": {
         "label": "Exclusive or",
         "category": "Logic",
-        "description": "Combine two yes/no values: the result is yes when exactly one is yes.",
+        "description": "Combine two true/false values: the result is true when exactly one is true.",
         "pure": true,
         "minGraphVersion": 5,
         "config": {},
@@ -3365,7 +3365,7 @@
         "outputs": {
           "value": {
             "type": "boolean",
-            "description": "Yes when exactly one value is yes.",
+            "description": "True when exactly one value is true.",
             "label": "Result"
           }
         },
@@ -3376,7 +3376,7 @@
       "not": {
         "label": "Not",
         "category": "Logic",
-        "description": "Turn a yes/no value around: yes becomes no and no becomes yes.",
+        "description": "Turn a true/false value around: true becomes false and false becomes true.",
         "pure": true,
         "minGraphVersion": 5,
         "config": {},
@@ -3459,7 +3459,7 @@
         "outputs": {
           "value": {
             "type": "boolean",
-            "description": "Yes when the comparison holds, otherwise no.",
+            "description": "True when the comparison holds, otherwise false.",
             "label": "Result"
           }
         },
@@ -3778,7 +3778,7 @@
       "while": {
         "label": "While",
         "category": "Flow",
-        "description": "Check Condition before each iteration and run Body while it gives yes.",
+        "description": "Check Condition before each iteration and run Body while it gives true.",
         "minGraphVersion": 5,
         "config": {
           "maxIterations": {
@@ -3828,7 +3828,7 @@
       "until": {
         "label": "Until",
         "category": "Flow",
-        "description": "Run Body, then check Condition, and repeat until it gives yes.",
+        "description": "Run Body, then check Condition, and repeat until it gives true.",
         "minGraphVersion": 5,
         "config": {
           "maxIterations": {
@@ -3999,7 +3999,7 @@
       "condition_result": {
         "label": "Condition result",
         "category": "Flow",
-        "description": "End the Condition of a While or Until loop with a yes/no answer.",
+        "description": "End the Condition of a While or Until loop with a true/false answer.",
         "minGraphVersion": 5,
         "config": {},
         "inputs": {
@@ -4008,7 +4008,7 @@
               "boolean"
             ],
             "required": true,
-            "description": "Yes keeps While going and stops Until; no does the opposite.",
+            "description": "True keeps While going and stops Until; false does the opposite.",
             "default": {
               "kind": "literal",
               "type": "boolean",

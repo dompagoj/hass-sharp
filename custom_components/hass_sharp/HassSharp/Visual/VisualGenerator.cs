@@ -155,13 +155,13 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         return "global::System."+name+(a.Nullable||b.Nullable?"?":"");
     }
     /// <summary>The generation with the graph's Custom C# nodes compiled beside its libraries; the catalog is unchanged.</summary>
-    VisualCatalogSnapshot WithCustom(JsonObject graph,VisualCatalogSnapshot snapshot) {
+    /// <param name="services">The accepted typed service calls, read once by the caller for the whole preview.</param>
+    VisualCatalogSnapshot WithCustom(JsonObject graph,VisualCatalogSnapshot snapshot,GeneratedServiceCalls services) {
         var sources=CustomSources(graph,snapshot);
         if(sources.Length==0)return snapshot;
         // The editor previews after each edit, and deriving pins compiles once more; most edits leave the code alone.
         // The last compile is kept (one, so at most one compilation stays in memory), keyed by all that goes into it:
         // the accepted service calls, the libraries and the code. Each text is length-prefixed, so no two inputs share a key.
-        var services=diagnostics.ServiceCalls();
         static string Part(string text)=>text.Length.ToString(CultureInfo.InvariantCulture)+":"+text;
         var key=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
             string.Concat(snapshot.Sources.Select(s=>Part(s.Id)+Part(s.Revision.ToString(CultureInfo.InvariantCulture))+Part(s.Source)))+"|"+string.Concat(sources.Select(c=>Part(c.NodeId)+Part(c.Source))))));
@@ -202,7 +202,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         var warnings=new List<VisualDiagnostic>();removed=warnings;
         var next=(JsonObject)graph.DeepClone();
         if(snapshot.Compilation==null)snapshot=new NodeLibraryCompiler(diagnostics).Preview(snapshot.Sources).Snapshot.WithServices(snapshot.Services);
-        var compiled=WithCustom(next,snapshot);
+        var compiled=WithCustom(next,snapshot,diagnostics.ServiceCalls());
         var edges=next["edges"] as JsonArray;
         foreach(var node in (next["nodes"] as JsonArray??[]).OfType<JsonObject>()) {
             if(!compiled.Custom.TryGetValue(Text(node,"id"),out var custom)||custom.Signature==null||node["config"] is not JsonObject cfg)continue;
@@ -234,7 +234,10 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         // Custom C# nodes compile with the libraries. What their code gives is the truth: a stored signature whose pins
         // differ is an error. One that differs only in what the code does not decide for wires (words, type entries, which
         // a newer HassSharp may write differently) is refreshed from the compile and previewed (and returned) as such.
-        snapshot=WithCustom(graph,snapshot);
+        // One read of the accepted service calls for the whole preview: a schema push swapping them midway cannot give
+        // the Custom C# nodes one set and the automation another.
+        var services=diagnostics.ServiceCalls();
+        snapshot=WithCustom(graph,snapshot,services);
         var errors=new List<VisualDiagnostic>();
         JsonObject? refreshed=null;
         foreach(var (id,custom) in snapshot.Custom.OrderBy(c=>c.Key,StringComparer.Ordinal)) {
@@ -301,10 +304,12 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 Add($"private delegate {ClrExpression(method.Method.ReturnType)} {delegates[MethodKey(node)]}({string.Join(",",method.Parameters.Select(p=>ClrExpression(p.Symbol.Type)+" @"+p.Name))});");
             }
             foreach(var root in roots)Section(Text(root,"id"),$"public global::System.Threading.Tasks.Task {VisualNodeCatalog.EffectiveTriggerMethod(root)}() => {run}({Q(Text(root,"id"))});");
+            // In the automation's own load context, so System.Text.Json's caches of its types go when it unloads.
+            Add($"private static readonly global::System.Text.Json.JsonSerializerOptions {prefix}json = global::HassSharp.VisualRuntime.JsonOptions();");
             Add($"private global::System.Threading.Tasks.Task {run}(string {nodeId}) => new global::HassSharp.VisualRuntime({Pieces(graph.ToJsonString())},{Pieces(embedded.ToJsonString())},new global::System.Collections.Generic.Dictionary<string,global::System.Type> {{");
             var clrTypes=snapshot.Types.Values.Concat(snapshot.Custom.Values.SelectMany(c=>c.Types)).DistinctBy(t=>t.Id);
             foreach(var type in clrTypes.Where(t=>embeddedTypes.ContainsKey(t.Id)).OrderBy(t=>t.Id,StringComparer.Ordinal))Add($"[{Q(type.Id)}]=typeof({(type.Symbol.TypeKind==TypeKind.Dynamic ? "global::System.Object" : type.Symbol.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))}),");
-            Add($"}},TriggerData,CancellationToken,{handler},new global::System.Collections.Generic.HashSet<string>{{{string.Join(",",compiledConversions.Keys.Select(Q))}}},new global::System.Collections.Generic.Dictionary<string,string>{{{string.Join(",",comparisonTypes.Select(p=>"["+Q(p.Key)+"]="+Q(p.Value)))}}}).RunAsync({nodeId});");
+            Add($"}},TriggerData,CancellationToken,{handler},new global::System.Collections.Generic.HashSet<string>{{{string.Join(",",compiledConversions.Keys.Select(Q))}}},new global::System.Collections.Generic.Dictionary<string,string>{{{string.Join(",",comparisonTypes.Select(p=>"["+Q(p.Key)+"]="+Q(p.Value)))}}},{prefix}json).RunAsync({nodeId});");
             Add($"private async global::System.Threading.Tasks.Task {handler}(string {nodeId},global::HassSharp.VisualScope {scope},global::HassSharp.VisualRuntime {engine}) {{");
             Add("await global::System.Threading.Tasks.Task.CompletedTask;");
             Add($"switch({nodeId}) {{");
@@ -345,13 +350,13 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             var source=string.Join('\n',lines)+"\n";
             var tree=CSharpSyntaxTree.ParseText(source,new CSharpParseOptions(LanguageVersion.Latest));
             var trees=new List<SyntaxTree>{tree,CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings)};
-            var compilation=CSharpCompilation.Create("VisualPreview",trees,NodeLibraryCompiler.FrameworkReferences().Add(diagnostics.ServiceCalls().Reference),new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,allowUnsafe:true,nullableContextOptions:NullableContextOptions.Enable));
+            var compilation=CSharpCompilation.Create("VisualPreview",trees,NodeLibraryCompiler.FrameworkReferences().Add(services.Reference),new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,allowUnsafe:true,nullableContextOptions:NullableContextOptions.Enable));
             foreach(var d in compilation.GetDiagnostics().Where(d=>d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning)) {
                 // Only a diagnostic in the generated automation has a line a node owns: one elsewhere (the global usings)
                 // is the graph's, never the node whose section has the same line number. The typed service calls are a
                 // built assembly here, so nothing in them is bound or reported again.
                 if(d.Location.SourceTree is {} other&&other!=tree) {
-                    if(d.Severity==DiagnosticSeverity.Error)errors.Add(new(null,(other.FilePath==DiagnosticsProvider.ServicesPath?"In the typed service calls: ":"")+d.GetMessage()));
+                    if(d.Severity==DiagnosticSeverity.Error)errors.Add(new(null,d.GetMessage()));
                     continue;
                 }
                 var location=d.Location.GetLineSpan();var line=location.StartLinePosition.Line+1;

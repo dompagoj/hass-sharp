@@ -49,6 +49,10 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         return text.Length == 0 ? name : char.ToUpperInvariant(text[0]) + text[1..];
     }
     static string LowerFirst(string name) => name.Length == 0 ? name : char.ToLowerInvariant(name[0]) + name[1..];
+    /// <summary>Whether a parameter or returned value's name can be a pin's id, as both validators read pin ids.</summary>
+    static bool PinId(string id) => VisualTypes.Matches(id, "^[A-Za-z_][A-Za-z0-9_]*$");
+    /// <summary>What a pin's name may contain, said at the parameter or returned value whose name is not one.</summary>
+    internal static string PinNameMessage(string what, string name) => $"Name this {what} with English letters, digits and _ only; {name} cannot name a pin";
 
     public NodeLibraryPreview Preview(IEnumerable<NodeLibrarySource> librarySources, CancellationToken cancellationToken = default) => Preview(librarySources, null, cancellationToken);
     /// <summary>
@@ -178,6 +182,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 if (elements.Any(e => !e.IsExplicitlyNamedTupleElement)) { Report(declaration.ReturnType.GetLocation(), "Name each value the method returns, such as (double Average, double Max)"); return null; }
                 var ids = elements.Select(e => LowerFirst(e.Name)).ToArray();
                 if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Length) { Report(declaration.ReturnType.GetLocation(), "Give each value the method returns its own name"); return null; }
+                if (elements.FirstOrDefault(e => !PinId(LowerFirst(e.Name))) is { } unnamed) { Report(unnamed.Locations.FirstOrDefault() ?? declaration.ReturnType.GetLocation(), PinNameMessage("value", unnamed.Name)); return null; }
                 for (var i = 0; i < elements.Length; i++)
                 {
                     register(elements[i].Type);
@@ -194,6 +199,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             var parameters = method.Parameters.Select(p => new NodeParameterDescriptor(p.Name, TypeIdentity(p.Type), TypeIdentity(p.Type),
                 p.Type.ToDisplayString() == "System.Threading.CancellationToken", p.HasExplicitDefaultValue, p.HasExplicitDefaultValue ? p.ExplicitDefaultValue : null, p,
                 SymbolEqualityComparer.Default.Equals(p.Type, nodeContext))).ToImmutableArray();
+            // A pin is named by its parameter: C# takes letters of any language, a pin id only English ones.
+            if (parameters.FirstOrDefault(p => !p.Injected && !PinId(p.Name)) is { } foreign) { Report(foreign.Symbol.Locations.FirstOrDefault() ?? declaration.Identifier.GetLocation(), PinNameMessage("input", foreign.Name)); return null; }
             var input = new JsonObject();
             foreach (var parameter in parameters.Where(p => !p.Injected))
             {

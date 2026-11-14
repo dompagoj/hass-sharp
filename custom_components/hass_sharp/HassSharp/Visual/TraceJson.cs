@@ -57,6 +57,18 @@ static class TraceJson
         return false;
     }
 
+    /// <summary>
+    /// A copy of JSON with the trace's redaction applied: the value of every secret-looking key is <c>"***"</c>, and
+    /// <c>token=</c> inside a string loses its value. For logging service data at debug level.
+    /// </summary>
+    internal static JsonNode? Redact(JsonNode? node) => node switch
+    {
+        JsonObject o => new JsonObject(o.Select(p => KeyValuePair.Create(p.Key, Secret(p.Key) ? JsonValue.Create(Redacted) : Redact(p.Value)))),
+        JsonArray a => new JsonArray(a.Select(Redact).ToArray()),
+        JsonValue v when v.GetValueKind() == JsonValueKind.String && v.GetValue<string>() is var s && s.Contains("token=", StringComparison.OrdinalIgnoreCase) => JsonValue.Create(tokenQuery.Replace(s, "$1=" + Redacted)),
+        _ => node?.DeepClone(),
+    };
+
     /// <summary>An upper bound of the UTF-8 bytes one UTF-16 unit takes inside a JSON string.</summary>
     static int Bytes(char c) => c is >= ' ' and < (char)0x7f and not ('"' or '\\' or '<' or '>' or '&' or '\'' or '+' or '`') ? 1 : 6;
 

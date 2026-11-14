@@ -164,9 +164,9 @@
     "valid": false,
     "nodeId": "b",
     "inputId": "value",
-    "contains": "Condition accepts Yes/No, not Number",
+    "contains": "Condition accepts True/False, not Number",
     "messages": [
-      "Condition accepts Yes/No, not Number"
+      "Condition accepts True/False, not Number"
     ]
   },
   {
@@ -1474,9 +1474,9 @@
     "valid": false,
     "nodeId": "result",
     "inputId": "value",
-    "contains": "Condition accepts Yes/No, not Text",
+    "contains": "Condition accepts True/False, not Text",
     "messages": [
-      "Condition accepts Yes/No, not Text"
+      "Condition accepts True/False, not Text"
     ]
   },
   {
@@ -10503,7 +10503,7 @@
     ]
   },
   {
-    "name": "message wording: allowed numbers and yes/no values",
+    "name": "message wording: allowed numbers and true/false values",
     "catalogPatch": {
       "nodes": {
         "log": {
@@ -10554,9 +10554,9 @@
     "valid": false,
     "nodeId": "l",
     "inputId": "value",
-    "contains": "Message must be one of 1, 2.5 or Yes",
+    "contains": "Message must be one of 1, 2.5 or True",
     "messages": [
-      "Message must be one of 1, 2.5 or Yes"
+      "Message must be one of 1, 2.5 or True"
     ]
   },
   {
@@ -10596,9 +10596,9 @@
     "valid": false,
     "nodeId": "b",
     "inputId": "value",
-    "contains": "Condition accepts Yes/No, not Light entity",
+    "contains": "Condition accepts True/False, not Light entity",
     "messages": [
-      "Condition accepts Yes/No, not Light entity"
+      "Condition accepts True/False, not Light entity"
     ]
   },
   {
@@ -20298,6 +20298,2030 @@
     "contains": "Value is not a valid Number value",
     "messages": [
       "Value is not a valid Number value"
+    ]
+  },
+  {
+    "name": "type labels: a self-referencing element type is worded as a list of objects",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "X",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "X": {
+                  "label": "X",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "elementType": "X"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:d",
+          "source": "make",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "make.result:d.seconds",
+          "kind": "data",
+          "source": "make",
+          "target": "d",
+          "sourcePort": "result",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "inputId": "seconds",
+    "contains": "Seconds accepts Number, not List of Object",
+    "messages": [
+      "Seconds accepts Number, not List of Object"
+    ]
+  },
+  {
+    "name": "type labels: two element types naming each other end after one turn",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "A",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "A": {
+                  "label": "A",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "elementType": "B"
+                },
+                "B": {
+                  "label": "B",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "elementType": "A"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:d",
+          "source": "make",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "make.result:d.seconds",
+          "kind": "data",
+          "source": "make",
+          "target": "d",
+          "sourcePort": "result",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "inputId": "seconds",
+    "contains": "Seconds accepts Number, not List of List of Object",
+    "messages": [
+      "Seconds accepts Number, not List of List of Object"
+    ]
+  },
+  {
+    "name": "type labels: a list type of the graph with an element type goes into For each items",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Readings",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Readings": {
+                  "label": "Readings",
+                  "description": "",
+                  "category": "Array",
+                  "nullable": false,
+                  "literalKind": null,
+                  "elementType": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "f",
+          "kind": "foreach",
+          "config": {
+            "items": {
+              "kind": "unset"
+            },
+            "itemType": "number"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:f",
+          "source": "make",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:body:l",
+          "source": "f",
+          "target": "l",
+          "port": "body"
+        },
+        {
+          "id": "make.result:f.items",
+          "kind": "data",
+          "source": "make",
+          "target": "f",
+          "sourcePort": "result",
+          "targetPort": "items"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "type labels: a tuple pin is named without its brackets",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "string",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Take\")]\n    public static void Run((int A, double B) pair) => Logger.Info(pair.ToString());\n}",
+            "arguments": {
+              "pair": {
+                "kind": "unset"
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "pair": {
+                  "types": [
+                    "global::System.ValueTuple<global::System.Int32, global::System.Double>"
+                  ],
+                  "required": true,
+                  "label": "Pair",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::System.ValueTuple<global::System.Int32, global::System.Double>": {
+                  "label": "(int A, double B)",
+                  "description": "(int A, double B)",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.IComparable",
+                    "global::System.ValueType",
+                    "global::System.Object",
+                    "global::System.ValueTuple<global::System.Int32, global::System.Double>",
+                    "global::System.IEquatable<global::System.ValueTuple<global::System.Int32, global::System.Double>>",
+                    "global::System.Collections.IStructuralEquatable",
+                    "global::System.Collections.IStructuralComparable",
+                    "global::System.IComparable<global::System.ValueTuple<global::System.Int32, global::System.Double>>",
+                    "global::System.Runtime.CompilerServices.ITuple"
+                  ],
+                  "assignableFrom": []
+                },
+                "global::System.Int32": {
+                  "label": "int",
+                  "description": "int",
+                  "category": "Number",
+                  "nullable": false,
+                  "literalKind": "integer",
+                  "min": -2147483648,
+                  "max": 2147483647,
+                  "assignableTo": [
+                    "global::System.Double",
+                    "number",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.ValueType",
+                    "global::System.Object",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.Int32",
+                    "global::System.Numerics.ISignedNumber<global::System.Int32>",
+                    "global::System.Numerics.IBinaryInteger<global::System.Int32>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Int32>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumber<global::System.Int32>",
+                    "global::System.IComparable<global::System.Int32>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumberBase<global::System.Int32>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.IEquatable<global::System.Int32>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.ISpanParsable<global::System.Int32>",
+                    "global::System.IParsable<global::System.Int32>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.IUtf8SpanParsable<global::System.Int32>",
+                    "global::System.Numerics.IShiftOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Int32>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:take",
+          "source": "t",
+          "target": "take",
+          "port": "next"
+        },
+        {
+          "id": "c.value:take.pair",
+          "kind": "data",
+          "source": "c",
+          "target": "take",
+          "sourcePort": "value",
+          "targetPort": "pair"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "take",
+    "inputId": "pair",
+    "messages": [
+      "Pair accepts Value tuple, not Text"
+    ]
+  },
+  {
+    "name": "anchored patterns: an entity type with a final newline is not a known type",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:light\n",
+              "value": "light.hall"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "r",
+    "inputId": "entity",
+    "messages": [
+      "Entity has a value of unknown type entity_id:light"
+    ]
+  },
+  {
+    "name": "anchored patterns: a Constant typed as an entity type with a final newline",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "entity_id:light\n",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id:light\n",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "c.value:l.value",
+          "kind": "data",
+          "source": "c",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "c",
+    "messages": [
+      "Message is connected to a value of unknown type",
+      "Type must be a known type",
+      "Value has a value of unknown type entity_id:light"
+    ]
+  },
+  {
+    "name": "condition: an execution edge with an empty port is refused",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "condition",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.hall"
+            },
+            "state": "on"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:c",
+          "source": "t",
+          "target": "c",
+          "port": "next"
+        },
+        {
+          "id": "c::l",
+          "source": "c",
+          "target": "l",
+          "port": ""
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "c",
+    "contains": "Unknown execution port",
+    "messages": [
+      "Message is required",
+      "Unknown execution port"
+    ],
+    "codes": [
+      "port.unknownExecution"
+    ]
+  },
+  {
+    "name": "value wire: an empty output pin is refused as a wire without its pins",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "string",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "c.:l.value",
+          "kind": "data",
+          "source": "c",
+          "target": "l",
+          "sourcePort": "",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "messages": [
+      "Constant is not used",
+      "Message is required",
+      "This value wire does not join two value pins; connect value pins to value pins"
+    ],
+    "codes": [
+      "edge.valueWirePins",
+      "pure.unused"
+    ]
+  },
+  {
+    "name": "value wire: an empty input pin is refused as a wire without its pins",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "string",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "c.value:l.",
+          "kind": "data",
+          "source": "c",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": ""
+        }
+      ]
+    },
+    "valid": false,
+    "messages": [
+      "Constant is not used",
+      "Message is required",
+      "This value wire does not join two value pins; connect value pins to value pins"
+    ],
+    "codes": [
+      "edge.valueWirePins",
+      "pure.unused"
+    ]
+  },
+  {
+    "name": "value wire: of two wires into one input the first is kept",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "n",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "constant",
+          "config": {
+            "type": "string",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "k",
+          "kind": "compare",
+          "config": {
+            "operator": "eq",
+            "left": {
+              "kind": "literal",
+              "type": "number",
+              "value": 0
+            },
+            "right": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "n.value:k.right",
+          "kind": "data",
+          "source": "n",
+          "target": "k",
+          "sourcePort": "value",
+          "targetPort": "right"
+        },
+        {
+          "id": "s.value:k.right",
+          "kind": "data",
+          "source": "s",
+          "target": "k",
+          "sourcePort": "value",
+          "targetPort": "right"
+        },
+        {
+          "id": "k.value:l.value",
+          "kind": "data",
+          "source": "k",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "messages": [
+      "Only one data source per input"
+    ],
+    "codes": [
+      "port.inputTaken"
+    ]
+  },
+  {
+    "name": "loop declarations: a bad one does not take its name from a later good one",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "carry": [
+              {
+                "name": "x",
+                "type": "bogus",
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              },
+              {
+                "name": "x",
+                "type": "number",
+                "initial": {
+                  "kind": "literal",
+                  "type": "number",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "r",
+    "messages": [
+      "Every loop body path must end in a Loop result step when the loop carries or exports values",
+      "Execution connection is required",
+      "The carried values of this loop need unique names and known types"
+    ]
+  },
+  {
+    "name": "parallel: a branch id that is not text makes no port",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "p",
+          "kind": "parallel",
+          "config": {
+            "branches": [
+              "a",
+              1
+            ]
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:p",
+          "source": "t",
+          "target": "p",
+          "port": "next"
+        },
+        {
+          "id": "p:branch:1:l",
+          "source": "p",
+          "target": "l",
+          "port": "branch:1"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "p",
+    "messages": [
+      "Branch ids must be unique stable names",
+      "Message is required",
+      "Unknown execution port"
+    ],
+    "codes": [
+      "port.unknownExecution"
+    ]
+  },
+  {
+    "name": "constant: a value that may be empty says the Constant's Type is always set",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "global::System.Int32?",
+              "value": 5
+            }
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Take\")]\n    public static void Run(int? value) => Logger.Info(value.ToString()!);\n}",
+            "arguments": {
+              "value": {
+                "kind": "unset"
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "value": {
+                  "types": [
+                    "global::System.Int32?"
+                  ],
+                  "required": false,
+                  "label": "Value",
+                  "description": "",
+                  "nullable": true,
+                  "hasDefaultValue": false,
+                  "default": {
+                    "kind": "literal",
+                    "type": "global::System.Int32?",
+                    "value": null
+                  }
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::System.Int32?": {
+                  "label": "int?",
+                  "description": "int?",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "integer",
+                  "min": -2147483648,
+                  "max": 2147483647,
+                  "assignableTo": [
+                    "global::System.Int32?"
+                  ],
+                  "assignableFrom": [
+                    "global::System.Int32"
+                  ]
+                },
+                "global::System.Int32": {
+                  "label": "int",
+                  "description": "int",
+                  "category": "Number",
+                  "nullable": false,
+                  "literalKind": "integer",
+                  "min": -2147483648,
+                  "max": 2147483647,
+                  "assignableTo": [
+                    "global::System.Double",
+                    "number",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.ValueType",
+                    "global::System.Object",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.Int32?",
+                    "global::System.Int32",
+                    "global::System.Numerics.ISignedNumber<global::System.Int32>",
+                    "global::System.Numerics.IBinaryInteger<global::System.Int32>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Int32>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumber<global::System.Int32>",
+                    "global::System.IComparable<global::System.Int32>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumberBase<global::System.Int32>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.IEquatable<global::System.Int32>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.ISpanParsable<global::System.Int32>",
+                    "global::System.IParsable<global::System.Int32>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.IUtf8SpanParsable<global::System.Int32>",
+                    "global::System.Numerics.IShiftOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Int32>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:take",
+          "source": "t",
+          "target": "take",
+          "port": "next"
+        },
+        {
+          "id": "c.value:take.value",
+          "kind": "data",
+          "source": "c",
+          "target": "take",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "c",
+    "contains": "may be empty",
+    "messages": [
+      "Value may be empty, but this Constant's Type, Number, is always set; type the value again, or change Type"
+    ]
+  },
+  {
+    "name": "type labels: two library types of one label are named apart on a wire",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.A.Mode",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.A.Mode": {
+                  "label": "Mode",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null
+                },
+                "global::NodeLib.B.Mode": {
+                  "label": "Mode",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {
+              "value": {
+                "kind": "unset"
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "value": {
+                  "types": [
+                    "global::NodeLib.B.Mode"
+                  ],
+                  "required": true,
+                  "label": "Value",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::NodeLib.A.Mode": {
+                  "label": "Mode",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null
+                },
+                "global::NodeLib.B.Mode": {
+                  "label": "Mode",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:take",
+          "source": "make",
+          "target": "take",
+          "port": "next"
+        },
+        {
+          "id": "make.result:take.value",
+          "kind": "data",
+          "source": "make",
+          "target": "take",
+          "sourcePort": "result",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "take",
+    "inputId": "value",
+    "contains": "Mode (A.Mode)",
+    "messages": [
+      "Value accepts Mode (B.Mode), not Mode (A.Mode)"
+    ]
+  },
+  {
+    "name": "type labels: two library types of one label are named apart in a Constant",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "global::NodeLib.B.Mode",
+            "value": {
+              "kind": "literal",
+              "type": "global::NodeLib.A.Mode",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {
+              "value": {
+                "kind": "unset"
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "value": {
+                  "types": [
+                    "global::NodeLib.B.Mode"
+                  ],
+                  "required": true,
+                  "label": "Value",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::NodeLib.A.Mode": {
+                  "label": "Mode",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null
+                },
+                "global::NodeLib.B.Mode": {
+                  "label": "Mode",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:take",
+          "source": "t",
+          "target": "take",
+          "port": "next"
+        },
+        {
+          "id": "c.value:take.value",
+          "kind": "data",
+          "source": "c",
+          "target": "take",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "c",
+    "messages": [
+      "Value is Mode (A.Mode), but this Constant's Type is Mode (B.Mode); type the value again, or change Type",
+      "Value is not a valid Mode value"
+    ]
+  },
+  {
+    "name": "type entries: keys of the wrong kind are ignored, not thrown on",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {
+              "value": {
+                "kind": "literal",
+                "type": "global::NodeLib.Odd",
+                "value": 5
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "value": {
+                  "types": [
+                    "global::NodeLib.Odd"
+                  ],
+                  "required": true,
+                  "label": "Value",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::NodeLib.Odd": {
+                  "label": "Odd",
+                  "description": "",
+                  "category": "Number",
+                  "literalKind": "number",
+                  "nullable": 1,
+                  "character": "x",
+                  "min": "abc",
+                  "max": true,
+                  "enumValues": "x",
+                  "pattern": 5,
+                  "refines": 5,
+                  "assignableFrom": [
+                    "number"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:take",
+          "source": "t",
+          "target": "take",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "type labels: a library type that reads as Number is named apart from Number",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {
+              "value": {
+                "kind": "literal",
+                "type": "number",
+                "value": 5
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "value": {
+                  "types": [
+                    "global::NodeLib.Odd"
+                  ],
+                  "required": true,
+                  "label": "Value",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::NodeLib.Odd": {
+                  "label": "Odd",
+                  "description": "",
+                  "category": "Number",
+                  "literalKind": "number",
+                  "nullable": 1,
+                  "character": "x",
+                  "min": "abc",
+                  "max": true,
+                  "enumValues": "x",
+                  "pattern": 5,
+                  "refines": 5,
+                  "assignableFrom": [
+                    "number"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:take",
+          "source": "t",
+          "target": "take",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "take",
+    "inputId": "value",
+    "contains": "Value accepts Number (Odd), not Number",
+    "messages": [
+      "Value accepts Number (Odd), not Number"
+    ]
+  },
+  {
+    "name": "repeat: a count above Maximum iterations is refused",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "maxIterations": 5
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:body:l",
+          "source": "r",
+          "target": "l",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "r",
+    "inputId": "count",
+    "contains": "Count must be at most 5, as Maximum iterations is 5",
+    "messages": [
+      "Count must be at most 5, as Maximum iterations is 5"
+    ]
+  },
+  {
+    "name": "repeat: a count at Maximum iterations is accepted",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 5
+            },
+            "maxIterations": 5
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:body:l",
+          "source": "r",
+          "target": "l",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "message wording: three problems of different kinds in one graph",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "literal",
+              "type": "string",
+              "value": "5"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:d",
+          "source": "t",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "d:next:l",
+          "source": "d",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "l:bogus:d",
+          "source": "l",
+          "target": "d",
+          "port": "bogus"
+        }
+      ]
+    },
+    "valid": false,
+    "messages": [
+      "Execution cycle is forbidden",
+      "Message is required",
+      "Seconds accepts Number, not Text",
+      "Unknown execution port"
+    ],
+    "codes": [
+      "cycle.execution",
+      "port.unknownExecution"
+    ]
+  },
+  {
+    "name": "message wording: a number too small to hold",
+    "catalogPatch": {
+      "nodes": {
+        "log": {
+          "inputs": {
+            "value": {
+              "min": 5,
+              "integer": true
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": -1e400
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "contains": "is not a valid Number value",
+    "messages": [
+      "Message is not a valid Number value"
+    ]
+  },
+  {
+    "name": "message wording: a number into For each items",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "f",
+          "kind": "foreach",
+          "config": {
+            "items": {
+              "kind": "unset"
+            },
+            "itemType": "number"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:body:l",
+          "source": "f",
+          "target": "l",
+          "port": "body"
+        },
+        {
+          "id": "c.value:f.items",
+          "kind": "data",
+          "source": "c",
+          "target": "f",
+          "sourcePort": "value",
+          "targetPort": "items"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "f",
+    "inputId": "items",
+    "messages": [
+      "Items accepts List, not Number"
+    ]
+  },
+  {
+    "name": "message wording: a wire into an input the step does not have",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:d",
+          "source": "t",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "c.value:d.bogus",
+          "kind": "data",
+          "source": "c",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "bogus"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "d",
+    "messages": [
+      "This value wire goes into Bogus, which this step does not have"
+    ],
+    "codes": [
+      "port.unknownInput"
+    ]
+  },
+  {
+    "name": "message wording: a Home Assistant trigger without a platform",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "ha",
+            "trigger": {}
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "t",
+    "messages": [
+      "Home Assistant trigger needs a platform"
+    ]
+  },
+  {
+    "name": "message wording: taking an attribute without naming it",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "e",
+          "kind": "entity_field",
+          "config": {
+            "field": "attribute",
+            "type": "string",
+            "entity": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:next:l",
+          "source": "r",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "r.value:e.entity",
+          "kind": "data",
+          "source": "r",
+          "target": "e",
+          "sourcePort": "value",
+          "targetPort": "entity"
+        },
+        {
+          "id": "e.value:l.value",
+          "kind": "data",
+          "source": "e",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "e",
+    "messages": [
+      "Attribute is required"
+    ]
+  },
+  {
+    "name": "message wording: a loop result naming a value the loop does not keep",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "x",
+          "kind": "loop_result",
+          "config": {
+            "values": {
+              "nope": {
+                "kind": "literal",
+                "type": "number",
+                "value": 1
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r",
+          "port": "next"
+        },
+        {
+          "id": "r:body:x",
+          "source": "r",
+          "target": "x",
+          "port": "body"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "x",
+    "messages": [
+      "Unknown loop value nope"
     ]
   }
 ]

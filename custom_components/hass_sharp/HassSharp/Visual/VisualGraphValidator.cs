@@ -46,14 +46,14 @@ public static class VisualGraphValidator
     {
         static readonly Dictionary<string, string> BuiltIn = new(StringComparer.Ordinal)
         {
-            ["string"] = "Text", ["number"] = "Number", ["boolean"] = "Yes/No", ["object"] = "Object", ["array"] = "List",
+            ["string"] = "Text", ["number"] = "Number", ["boolean"] = "True/False", ["object"] = "Object", ["array"] = "List",
             ["entity_id"] = "Entity", ["target"] = "Target", ["global::HassSharp.EntityStateSnapshot"] = "Entity state",
         };
         static readonly Dictionary<string, string> Primitive = new(StringComparer.Ordinal)
-        { ["boolean"] = "Yes/No", ["number"] = "Number", ["integer"] = "Number", ["string"] = "Text", ["object"] = "Object", ["array"] = "List" };
+        { ["boolean"] = "True/False", ["number"] = "Number", ["integer"] = "Number", ["string"] = "Text", ["object"] = "Object", ["array"] = "List" };
         static readonly HashSet<string> Keywords = ["bool", "byte", "sbyte", "char", "decimal", "double", "float", "int", "uint", "long", "ulong", "short", "ushort", "nint", "nuint", "object", "string", "dynamic"];
-        static readonly Regex Entity = new("^entity_id:([a-z0-9_]+)$", RegexOptions.CultureInvariant);
-        static readonly Regex Collection = new(@"^(?:global::)?System\.Collections\.Generic\.(?:IEnumerable|IReadOnlyList|IReadOnlyCollection|IList|ICollection|List)<(.+)>$", RegexOptions.CultureInvariant | RegexOptions.Singleline);
+        static readonly Regex Entity = new(@"^entity_id:([a-z0-9_]+)\z", RegexOptions.CultureInvariant);
+        static readonly Regex Collection = new(@"^(?:global::)?System\.Collections\.Generic\.(?:IEnumerable|IReadOnlyList|IReadOnlyCollection|IList|ICollection|List)<([^\n\r\u2028\u2029]+)>\z", RegexOptions.CultureInvariant);
         static string Capital(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
         /// <summary><c>binary_sensor</c> → <c>Binary sensor</c>.</summary>
         internal static string DomainWords(string domain) => Capital(domain.Replace('_', ' '));
@@ -73,13 +73,13 @@ public static class VisualGraphValidator
         }
         /// <summary>
         /// A service as people know it: the name its description gives, else its key in words (<c>set_hvac_mode</c> →
-        /// <c>Set hvac mode</c>), as the editor names it.
+        /// <c>Set hvac mode</c>) when it has none or the name is only its key or id, as the editor names it.
         /// </summary>
         internal static string ServiceName(JsonObject schema, string service)
         {
             var key = service[(service.IndexOf('.') + 1)..];
             var name = Trimmed(Text(schema, "name"));
-            return name.Length > 0 && name != key ? name : KeyWords(key);
+            return name.Length > 0 && name != key && name != service ? name : KeyWords(key);
         }
         /// <summary>
         /// A step as people see it on the canvas: its own label, else (for a Custom C# node) its method's title, else its
@@ -135,27 +135,40 @@ public static class VisualGraphValidator
         internal const string PathTilde = "Path has a ~ that is not followed by 0 or 1; inside a name, write ~0 for a ~ and ~1 for a /, such as /data/on~1off for the name on/off";
         static string ClrWords(string id)
         {
-            var trimmed = Regex.Replace(Regex.Replace(Regex.Replace(id, "^global::", ""), "<.*$", "", RegexOptions.Singleline), @"[?[\]]+$", "");
+            var trimmed = Regex.Replace(Regex.Replace(Regex.Replace(id, "^global::", ""), @"<.*\z", "", RegexOptions.Singleline), @"[?[\]]+\z", "");
             var name = trimmed.Split('.').LastOrDefault(s => s != "") ?? id;
             var bare = Regex.IsMatch(name, "^I[A-Z][a-z]") ? name[1..] : name;
             return Capital(Regex.Replace(Regex.Replace(bare, "([a-z0-9])([A-Z])", "$1 $2"), "([A-Z]+)([A-Z][a-z])", "$1 $2").Replace('_', ' ').ToLowerInvariant());
         }
+        /// <summary>How many types deep a type is worded ("List of List of …"); deeper, and at a type that names itself, it reads as Object.</summary>
+        internal const int LabelDepth = 16;
         /// <summary>The friendly name of a type, as <c>typeLabel</c> in <c>typeLabels.ts</c> gives it.</summary>
-        internal static string TypeLabel(JsonObject catalog, string id)
+        internal static string TypeLabel(JsonObject catalog, string id) => TypeLabel(catalog, id, []);
+        // Type entries come from stored signatures: one may name itself as its element, directly or through others, and
+        // an id may be very long. A stack overflow cannot be caught (under Python.NET it ends Home Assistant), so the
+        // words stop at a repeated id and at LabelDepth, the same on both sides.
+        static string TypeLabel(JsonObject catalog, string id, HashSet<string> seen)
         {
             if (BuiltIn.TryGetValue(id, out var builtIn)) return builtIn;
             if (Entity.Match(id) is { Success: true } entity) return DomainWords(entity.Groups[1].Value) + " entity";
+            if (seen.Contains(id) || seen.Count >= LabelDepth) return "Object";
+            string Inner(string inner) => TypeLabel(catalog, inner, new HashSet<string>(seen, StringComparer.Ordinal) { id });
             var spec = VisualTypes.Resolve(catalog, id);
-            if (id.EndsWith('?')) return TypeLabel(catalog, id[..^1]);
-            if (Text(spec, "elementType") is { Length: > 0 } element) return "List of " + TypeLabel(catalog, element);
-            if (id.EndsWith("[]", StringComparison.Ordinal)) return "List of " + TypeLabel(catalog, id[..^2]);
-            if (Collection.Match(id) is { Success: true } generic) return "List of " + TypeLabel(catalog, generic.Groups[1].Value);
+            if (id.EndsWith('?')) return Inner(id[..^1]);
+            if (Text(spec, "elementType") is { Length: > 0 } element) return "List of " + Inner(element);
+            if (id.EndsWith("[]", StringComparison.Ordinal)) return "List of " + Inner(id[..^2]);
+            // Multi-dimensional arrays and tuples have no friendly element name: "List" and "Object".
+            if (MultiDimensional.IsMatch(id)) return "List";
+            if ((id.StartsWith("global::", StringComparison.Ordinal) ? id[8..] : id).StartsWith('(')) return "Object";
+            if (Collection.Match(id) is { Success: true } generic) return "List of " + Inner(generic.Groups[1].Value);
             var kind = Text(spec, "literalKind").ToLowerInvariant(); var category = Text(spec, "category").ToLowerInvariant();
             if (Primitive.TryGetValue(kind, out var primitive)) return primitive;
             if (category != "object" && kind != "enum" && Primitive.TryGetValue(category, out var named)) return named;
-            if (Text(spec, "label") is { Length: > 0 } label && !Regex.IsMatch(label, @"[.:<>?[\]]") && !Keywords.Contains(label)) return label;
-            return ClrWords(id);
+            if (Text(spec, "label") is { Length: > 0 } label && !Regex.IsMatch(label, @"[.:<>?[\](),]") && !Keywords.Contains(label)) return label;
+            var words = ClrWords(id);
+            return Regex.IsMatch(words, @"[()[\],]") ? "Object" : words;
         }
+        static readonly Regex MultiDimensional = new(@"\[,+\]\??\z", RegexOptions.CultureInvariant);
         internal static string Or(IEnumerable<string> items)
         {
             var list = items.ToList();
@@ -185,12 +198,12 @@ public static class VisualGraphValidator
             var power = (n - 1 >= 0 ? "+" : "-") + Math.Abs(n - 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
             return sign + (k == 1 ? digits : digits[..1] + "." + digits[1..]) + "e" + power;
         }
-        /// <summary>A value in words: text as words (<c>twice_daily</c> → <c>Twice daily</c>), numbers as JavaScript writes them, Yes or No.</summary>
+        /// <summary>A value in words: text as words (<c>twice_daily</c> → <c>Twice daily</c>), numbers as JavaScript writes them, True or False.</summary>
         internal static string Show(JsonNode? value) => value switch
         {
             null => "Nothing",
             JsonValue text when text.TryGetValue<string>(out var s) => s.Length == 0 ? "Empty text" : KeyWords(s),
-            JsonValue flag when flag.TryGetValue<bool>(out var b) => b ? "Yes" : "No",
+            JsonValue flag when flag.TryGetValue<bool>(out var b) => b ? "True" : "False",
             JsonValue number when number.GetValueKind() == System.Text.Json.JsonValueKind.Number => Number(double.Parse(number.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture)),
             _ => value.ToJsonString(),
         };
@@ -221,7 +234,7 @@ public static class VisualGraphValidator
         internal static string ConfigKind(string type) => type switch
         {
             "array" => "a list", "object" => "an object", "integer" => "a whole number", "number" => "a number",
-            "string" => "text", "boolean" => "yes or no", _ => "the right kind of value",
+            "string" => "text", "boolean" => "true or false", _ => "the right kind of value",
         };
         /// <summary>
         /// The label people see for an input: its spec label, else (or when the label is only the key) the key in
@@ -235,21 +248,91 @@ public static class VisualGraphValidator
                 : port.StartsWith("export:", StringComparison.Ordinal) ? port[7..] : port;
             return Text(spec, "label") is { Length: > 0 } label && label != key && label.Trim().Length > 0 ? label : KeyWords(key);
         }
-        /// <summary>A type mismatch: the accepted types (named, at most four) and the one given, unless that is unknown.</summary>
         /// <summary>A wire into a Constant: it takes a typed-in value only, and Convert is the step that changes a value's type.</summary>
         internal const string IntoConstant = "Nothing can be connected to a Constant; remove this connection, or use Convert to change a value's type";
-        /// <summary>A Constant whose stored value is of another type than its Type (a graph from before the Type set it): how to repair it.</summary>
-        internal static string ConstantRetyped(JsonObject catalog, string label, string type, string expected) =>
-            $"{label} is {TypeLabel(catalog, type)}, but this Constant's Type is {TypeLabel(catalog, expected)}; type the value again, or change Type";
+        /// <summary>
+        /// A Constant whose stored value is of another type than its Type (a graph from before the Type set it): how to
+        /// repair it. A value that may be empty, of a Type that may not, says so; two types that read alike are told apart.
+        /// </summary>
+        internal static string ConstantRetyped(JsonObject catalog, string label, string type, string expected)
+        {
+            var names = DistinctLabels(catalog, [type, expected]);
+            if (VisualTypes.Nullable(catalog, type) && TypeLabel(catalog, type) == TypeLabel(catalog, expected))
+                return $"{label} may be empty, but this Constant's Type, {names[expected]}, is always set; type the value again, or change Type";
+            return $"{label} is {names[type]}, but this Constant's Type is {names[expected]}; type the value again, or change Type";
+        }
+        /// <summary>
+        /// A type mismatch: the accepted types (named, at most four) and the one given, unless that is unknown. An
+        /// accepted type that reads as the given one does is told apart by its C# name (<see cref="DistinctLabels"/>):
+        /// "accepts Mode (A.Mode), not Mode (B.Mode)".
+        /// </summary>
         internal static string Incompatible(JsonObject catalog, string subject, string type, IEnumerable<string> expected)
         {
             if (VisualTypes.Chain(catalog, type).Count == 0) return $"{subject} is connected to a value of unknown type";
-            var names = expected.Select(t => TypeLabel(catalog, t)).Distinct().ToList();
+            var accepted = expected.ToList(); var label = TypeLabel(catalog, type);
+            var plain = accepted.Select(t => TypeLabel(catalog, t)).Distinct().ToList();
             // The same kind of value, but one that may be empty where the pin needs it set (a nullable C# type).
-            if (VisualTypes.Resolve(catalog, type)?["nullable"]?.GetValue<bool>() == true && names.Contains(TypeLabel(catalog, type)))
+            if (VisualTypes.Nullable(catalog, type) && plain.Contains(label))
                 return $"{subject} needs a value that is always set, and this one may be empty";
-            return names.Count is > 0 and <= 4 ? $"{subject} accepts {Or(names)}, not {TypeLabel(catalog, type)}" : $"{subject} does not accept {TypeLabel(catalog, type)}";
+            var apart = DistinctLabels(catalog, [type, .. accepted.Where(t => TypeLabel(catalog, t) == label)]);
+            var names = accepted.Select(t => apart.TryGetValue(t, out var named) ? named : TypeLabel(catalog, t)).Distinct().ToList();
+            return names.Count is > 0 and <= 4 ? $"{subject} accepts {Or(names)}, not {apart[type]}" : $"{subject} does not accept {apart[type]}";
         }
+        /// <summary>The parts of a dotted name, splitting only outside type arguments (<c>List&lt;System.String&gt;</c> stays one part).</summary>
+        static List<string> NameParts(string name)
+        {
+            var parts = new List<string>(); int depth = 0, start = 0;
+            for (var i = 0; i < name.Length; i++)
+            {
+                var c = name[i];
+                if (c is '<' or '[' or '(') depth++;
+                else if (c is '>' or ']' or ')') depth--;
+                else if (c == '.' && depth == 0) { parts.Add(name[start..i]); start = i + 1; }
+            }
+            parts.Add(name[start..]);
+            return parts;
+        }
+        /// <summary>
+        /// The C# names a type can go by after its label, shortest first: the last part of its catalog label (<c>int</c>),
+        /// then its full name less <c>global::</c> from the last part outwards (<c>Mode</c>, <c>A.Mode</c>), then its id.
+        /// </summary>
+        static List<string> CSharpNames(JsonObject catalog, string id)
+        {
+            var full = id.StartsWith("global::", StringComparison.Ordinal) ? id[8..] : id;
+            var parts = NameParts(full);
+            var names = new List<string> { NameParts(catalog["types"] is JsonObject types && types[id]?["label"] is JsonValue l && l.TryGetValue<string>(out var label) ? label : full)[^1] };
+            for (var k = 1; k <= parts.Count; k++) names.Add(string.Join('.', parts.Skip(parts.Count - k)));
+            names.Add(id);
+            return names.Distinct().ToList();
+        }
+        /// <summary>
+        /// The names of types read side by side, so that none two read the same (the Constant's Type list names its types
+        /// by the same rule): each type's label, and where several share one, each that a C# library brings (its id starts
+        /// with <c>global::</c>) shows after it the shortest C# name no other of them goes by ("Mode (A.Mode)", "Number
+        /// (int)"), never the label again. Mirrored by <c>distinctTypeLabels</c> in <c>typeLabels.ts</c>.
+        /// </summary>
+        internal static Dictionary<string, string> DistinctLabels(JsonObject catalog, IEnumerable<string> ids)
+        {
+            var unique = ids.Distinct().ToList();
+            var plain = unique.ToDictionary(id => id, id => TypeLabel(catalog, id), StringComparer.Ordinal);
+            var labels = new Dictionary<string, string>(plain, StringComparer.Ordinal);
+            foreach (var label in unique.Select(id => plain[id]).Distinct())
+            {
+                var group = unique.Where(id => plain[id] == label).ToList();
+                var named = group.Where(id => id.StartsWith("global::", StringComparison.Ordinal)).ToList();
+                if (group.Count < 2 || named.Count == 0) continue;
+                var choices = named.Select(id => CSharpNames(catalog, id).Where(name => name != label).ToList()).ToList();
+                for (var i = 0; i < named.Count; i++)
+                {
+                    var mine = i;
+                    var own = choices[i].FirstOrDefault(name => choices.Select((others, j) => j == mine || !others.Contains(name)).All(ok => ok)) ?? named[i];
+                    labels[named[i]] = $"{label} ({own})";
+                }
+            }
+            return labels;
+        }
+        /// <summary>A Repeat count typed in above the loop's Maximum iterations.</summary>
+        internal static string RepeatCount(string label, double max, string maxLabel) => $"{label} must be at most {Number(max)}, as {maxLabel} is {Number(max)}";
     }
 
     sealed class Validation(VisualCatalogSnapshot snapshot)
@@ -302,7 +385,7 @@ public static class VisualGraphValidator
             else return null;
             return $"{ServiceTitle(service)} only accepts {Words.Or(domains.Select(d => Words.DomainWords(d).ToLowerInvariant()))} entities; the connected value {carried}";
         }
-        static readonly Regex EntityDomain = new("^entity_id:([a-z0-9_]+)$", RegexOptions.CultureInvariant);
+        static readonly Regex EntityDomain = new(@"^entity_id:([a-z0-9_]+)\z", RegexOptions.CultureInvariant);
         /// <summary>An input that takes a value only (a Constant's value): a wire into it is refused as into an input the step does not have.</summary>
         static JsonNode? Connectable(JsonNode? input) => input is JsonObject spec && spec["connectable"] is JsonValue v && v.TryGetValue<bool>(out var connectable) && !connectable ? null : input;
         string ConfigLabel(JsonNode? rule, string field) => Text(rule, "label") is { Length: > 0 } label && label.Trim().Length > 0 ? label : Words.KeyWords(field);
@@ -625,6 +708,10 @@ public static class VisualGraphValidator
                 resolved[port] = Operand(node, port, value, rule!, present);
                 if(resolved[port] is {} type)InputTypes[(id,port)]=type;
             }
+            // A Repeat count typed in above the loop's own Maximum iterations would fail when the loop starts.
+            if (kind == "repeat" && !incoming.ContainsKey((id, "count")) && TryGetInputValue(node, "count", out var count) && count is JsonObject countOperand && Text(countOperand, "kind") == "literal" &&
+                Number(countOperand["value"]) is { } times && Number(cfg["maxIterations"]) is { } most && times > most && DataInputs(node, Owner(node))["count"] is var countSpec && !(Number(countSpec?["max"]) is { } inputMax && times > inputMax))
+                Error(id, Words.RepeatCount(Words.PortLabel(countSpec, "count"), most, ConfigLabel(spec["config"]?["maxIterations"], "maxIterations")), "count");
             if (spec["comparison"] is JsonObject comparison)
             {
                 var leftInput = Text(comparison, "leftInput"); var typeConfig = Text(comparison, "typeConfig");
@@ -670,7 +757,8 @@ public static class VisualGraphValidator
                     foreach (var decl in Declarations(node, group))
                     {
                         var name = Text(decl, "name"); var type = Text(decl, "type");
-                        if (!Match(name, Text(Root["structures"]?["loopDeclaration"]?["name"], "pattern")) || !names.Add(name) || !KnownType(type)) { Error(id, $"The {(group == "carry" ? "carried" : "exported")} values of this loop need unique names and known types", group); continue; }
+                        if (!Match(name, Text(Root["structures"]?["loopDeclaration"]?["name"], "pattern")) || names.Contains(name) || !KnownType(type)) { Error(id, $"The {(group == "carry" ? "carried" : "exported")} values of this loop need unique names and known types", group); continue; }
+                        names.Add(name);
                         Operand(node, $"{group}.{name}.initial", decl["initial"], new JsonObject { ["types"] = new JsonArray(type), ["required"] = true, ["description"] = "Starting value", ["label"] = "Starting value of " + name });
                     }
                 }

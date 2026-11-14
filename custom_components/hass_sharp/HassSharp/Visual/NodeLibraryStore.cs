@@ -21,7 +21,7 @@ public sealed class NodeLibraryStore(string directory)
     }
     public static void ValidateId(string id)
     {
-        if (!Regex.IsMatch(id, "^[a-z0-9][a-z0-9_-]{0,79}$")) throw new ArgumentException("Invalid library ID");
+        if (!Regex.IsMatch(id, @"^[a-z0-9][a-z0-9_-]{0,79}\z")) throw new ArgumentException("Invalid library ID");
     }
     public static void ValidateName(string name)
     {

@@ -31,13 +31,28 @@ public partial class HassSharpManager
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
     }
 
+    /// <summary>
+    /// The saved libraries and their compile. Every visual and library request reads them, so the compile is kept for the
+    /// last library generation and typed service calls it was made with, and made again only when either changes.
+    /// </summary>
     (NodeLibraryDocument[] Documents, string Generation, NodeLibraryPreview Preview) SavedLibraries()
     {
         AuthoringFiles.Recover();
         var documents = LibraryDocuments.List();
-        var preview = new NodeLibraryCompiler(_diagnosticsProvider).Preview(documents.Select(d => d.AsSource()));
+        var content = NodeLibraryStore.Generation(documents);
+        var services = _diagnosticsProvider.ServiceCalls();
+        NodeLibraryPreview? preview = null;
+        lock (_savedLibrariesGate)
+            if (_savedLibraries is { } last && last.Content == content && ReferenceEquals(last.Services, services)) preview = last.Preview;
+        if (preview == null)
+        {
+            preview = new NodeLibraryCompiler(_diagnosticsProvider, services).Preview(documents.Select(d => d.AsSource()));
+            lock (_savedLibrariesGate) _savedLibraries = (content, services, preview);
+        }
         return (documents, LibraryWorkspaceGeneration(documents, preview), preview);
     }
+    readonly object _savedLibrariesGate = new();
+    (string Content, GeneratedServiceCalls Services, NodeLibraryPreview Preview)? _savedLibraries;
     // Only authoring validation of one graph sees the service schemas. Init and the library-save
     // rebuild use SavedLibraries' snapshot without them, so loading never depends on which
     // integrations had registered services (C4, D3); the catalog root never contains them (D2).

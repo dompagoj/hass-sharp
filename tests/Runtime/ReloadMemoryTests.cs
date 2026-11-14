@@ -7,7 +7,10 @@ using static VisualExecutionTests;
 /// <summary>
 /// Reloading the HassSharp entry many times does not keep memory: the sequence Python runs on a reload (UnloadAsync, the
 /// service description push, Init) repeated with a few automations, a node library and Custom C# and library nodes that
-/// call a service. Every generation's automation load contexts must be collected, and managed memory must stop growing.
+/// call a service. Each generation runs the automations that call services: a Custom C# node passes an enum and an
+/// anonymous object of its own to a typed call, and a library record, made an object by Convert, goes into a Call service field, so System.Text.Json
+/// meets types of the automations' own assemblies. Every generation's automation load contexts must be collected, and
+/// managed memory must stop growing.
 /// <para>
 /// Python.NET's assembly manager is started as Home Assistant starts it (it records every assembly loaded into the
 /// process): before <see cref="PythonNetAssemblies"/> it held every automation assembly, so no load context unloaded.
@@ -35,7 +38,9 @@ static class ReloadMemoryTests
         var previous = HassPath.HassConfiguration;
         var root = Path.Combine(Path.GetTempPath(), "reload-memory-" + Guid.NewGuid());
         var log = PyInterop.Log; var schedule = PyInterop.RegisterSchedule;
-        var register = PyInterop.BeginRegisterHaTriggers; var remove = PyInterop.BeginRemoveHaTriggers;
+        var register = PyInterop.BeginRegisterHaTriggers; var remove = PyInterop.BeginRemoveHaTriggers; var call = PyInterop.CallService;
+        var calls = new List<(string Service, string Json)>();
+        PyInterop.CallService = (domain, name, json, done, _) => { lock (calls) calls.Add((domain + "." + name, json ?? "")); done?.Invoke(); };
         PyInterop.Log = (_, _) => { };
         PyInterop.RegisterSchedule = (_, _) => () => { };
         PyInterop.BeginRegisterHaTriggers = (generation, _, _, success, _) => success(generation);
@@ -54,7 +59,7 @@ static class ReloadMemoryTests
             await Populate(manager);
 
             Check(PythonNetAssemblies.IgnoreCollectible(), "Python.NET's assembly handler is wrapped");
-            var contexts = new List<WeakReference>();
+            var contexts = new List<(WeakReference Context, string Name)>();
             var assemblies = new List<WeakReference>();
             var memory = new Dictionary<int, long>();
             for (var reload = 1; reload <= Reloads; reload++)
@@ -65,16 +70,23 @@ static class ReloadMemoryTests
                 await manager.RetriesDone();
                 await manager.Init();
                 var loaded = Loaded(manager);
-                Check(loaded.Count == 4 && loaded.All(s => s.Active), $"reload {reload}: all four automations are active again: " + string.Join(", ", loaded.Select(s => s.CompiledScript.FileName)));
-                contexts.AddRange(loaded.Select(s => new WeakReference(s.CompiledScript.LoadContext ?? throw new Exception("a compiled automation without its load context"))));
+                Check(loaded.Count == Automations.Length && loaded.All(s => s.Active), $"reload {reload}: all {Automations.Length} automations are active again: " + string.Join(", ", loaded.Select(s => s.CompiledScript.FileName)));
+                await RunAll(manager, calls, reload);
+                contexts.AddRange(loaded.Select(s => (new WeakReference(s.CompiledScript.LoadContext ?? throw new Exception("a compiled automation without its load context")), $"reload {reload} {s.CompiledScript.FileName}")));
                 assemblies.AddRange(loaded.Select(s => new WeakReference(s.CompiledScript.Assembly)));
                 loaded.Clear();
                 if (reload is From or Reloads) memory[reload] = Collected();
             }
             await manager.UnloadAsync();
+            // System.Text.Json's process-wide member accessor cache (its compiled getters and constructors of the types it
+            // writes) keeps an entry about a second after its last use and drops it at its next use after that: the last
+            // automations' types go once anything is written to JSON again, as Home Assistant does all the time.
+            await Task.Delay(1500);
+            JsonSerializer.Serialize(new { Evict = 1 }, new JsonSerializerOptions());
             Collected();
-            var alive = contexts.Count(c => c.IsAlive);
-            Check(alive == 0, $"{alive} of {contexts.Count} automation load contexts of earlier generations are still alive after the reloads");
+            var alive = contexts.Count(c => c.Context.IsAlive);
+            Check(alive == 0, $"{alive} of {contexts.Count} automation load contexts of earlier generations are still alive after the reloads: "
+                + string.Join(", ", contexts.Where(c => c.Context.IsAlive).Select(c => c.Name)));
             var collectible = AssemblyLoadContext.All.OfType<ScriptLoadContext>().Count();
             Check(collectible == 0, $"{collectible} automation load contexts are left after the last unload");
             var aliveAssemblies = assemblies.Count(a => a.IsAlive);
@@ -83,13 +95,13 @@ static class ReloadMemoryTests
             Check(left == 0, $"{left} collectible assemblies are still loaded after the last unload");
             var growth = (memory[Reloads] - memory[From]) / 1048576.0;
             Check(growth <= BoundMiB, $"managed memory grew {growth:F2} MiB from reload {From} to reload {Reloads} ({memory[From] / 1048576.0:F1} to {memory[Reloads] / 1048576.0:F1} MiB); at most {BoundMiB} MiB is allowed");
-            Console.WriteLine($"PASS reload memory: {Reloads} reloads with four automations (Custom C# and library nodes calling a service), every load context collected; managed memory {memory[From] / 1048576.0:F1} MiB after reload {From}, {memory[Reloads] / 1048576.0:F1} MiB after reload {Reloads}");
+            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field), every load context collected; managed memory {memory[From] / 1048576.0:F1} MiB after reload {From}, {memory[Reloads] / 1048576.0:F1} MiB after reload {Reloads}");
         }
         finally
         {
             await manager.UnloadAsync();
             if (startedPythonNet) StopPythonNetAssemblies();
-            PyInterop.Log = log; PyInterop.RegisterSchedule = schedule; PyInterop.BeginRegisterHaTriggers = register; PyInterop.BeginRemoveHaTriggers = remove;
+            PyInterop.Log = log; PyInterop.RegisterSchedule = schedule; PyInterop.BeginRegisterHaTriggers = register; PyInterop.BeginRemoveHaTriggers = remove; PyInterop.CallService = call;
             HassPath.HassConfiguration = previous;
             try { Directory.Delete(root, true); } catch (IOException) { }
         }
@@ -139,15 +151,47 @@ static class ReloadMemoryTests
         return reply["result"]!;
     }
 
-    // A node library whose node calls a service, and four automations: that node, a Custom C# node that calls a service,
-    // a built-in Call service node behind an entity trigger, and a log.
+    // The automations Populate saves; RunAll runs each that calls a service, with the call it makes.
+    static readonly (string Id, string? Service)[] Automations =
+        [("library", "light.turn_on"), ("custom", "light.turn_on"), ("service", null), ("plain", null), ("typed", "notify.notify"), ("record", "notify.notify")];
+
+    // Run now each automation that calls a service, and wait for its call: the values of the automations' own types go
+    // through System.Text.Json on every reload.
+    static async Task RunAll(HassSharpManager manager, List<(string Service, string Json)> calls, int reload)
+    {
+        int before; lock (calls) before = calls.Count;
+        var running = Automations.Where(a => a.Service != null).ToArray();
+        foreach (var (id, _) in running) await Request(manager.VisualRequest, new { operation = "run", id, triggerId = "t" });
+        var until = DateTime.UtcNow.AddSeconds(20);
+        while (true)
+        {
+            List<(string Service, string Json)> made; lock (calls) made = calls.Skip(before).ToList();
+            if (made.Count >= running.Length)
+            {
+                Check(made.Count == running.Length && running.All(a => made.Count(m => m.Service == a.Service) == running.Count(r => r.Service == a.Service)), $"reload {reload}: the calls made: " + string.Join(", ", made.Select(m => m.Service)));
+                // Values go out as every service call sends them: the enum by name, the anonymous object and the record with snake_case names.
+                Check(made.Any(m => m.Json.Contains("\"target\":\"night\"") && m.Json.Contains("\"data\":{\"minutes\":5,\"mode\":\"night\"}")), $"reload {reload}: the typed call's values: " + string.Join(" | ", made.Select(m => m.Json)));
+                Check(made.Any(m => m.Json.Contains("21.5") && m.Json.Contains("\"C\"")), $"reload {reload}: the library record in the field: " + string.Join(" | ", made.Select(m => m.Json)));
+                break;
+            }
+            Check(DateTime.UtcNow < until, $"reload {reload}: the automations did not make their calls: " + string.Join(", ", made.Select(m => m.Service)));
+            await Task.Delay(5);
+        }
+        // Each run records its end before the next unload, which would otherwise cancel it.
+        await Task.Delay(20);
+    }
+
+    // A node library whose nodes call a service and make a record, and six automations: the first node, a Custom C# node
+    // that calls a service, a built-in Call service node behind an entity trigger, a log, a Custom C# node passing an enum
+    // and an anonymous object of its own to a typed call, and the record made an object and wired into a Call service field.
     static async Task Populate(HassSharpManager manager)
     {
-        const string library = "public static class Lights\n{\n    [Node(\"Light up\")]\n    public static async Task<string> LightUp(NodeContext context, string light, double level)\n    {\n        await context.Services.Light.TurnOn(light, brightnessPct: level);\n        return light;\n    }\n}";
+        const string library = "public record Reading(double Value, string Unit);\n\npublic static class Lights\n{\n    [Node(\"Light up\")]\n    public static async Task<string> LightUp(NodeContext context, string light, double level)\n    {\n        await context.Services.Light.TurnOn(light, brightnessPct: level);\n        return light;\n    }\n\n    [Node(\"Reading\")]\n    public static Reading Read() => new(21.5, \"C\");\n}";
         await Request(manager.NodeLibraryRequest, new { operation = "save", id = "lights", name = "Lights.cs", expectedRevision = 0, source = library });
         var catalog = await Request(manager.NodeLibraryRequest, new { operation = "catalog" });
-        var kind = catalog["catalog"]!["nodes"]!.AsObject().Single(p => p.Key.StartsWith("library:lights:", StringComparison.Ordinal)).Key;
-        var usesLibrary = G(N("l", kind, new { arguments = new { light = Lit("string", "light.kitchen"), level = Lit("global::System.Double", 30) } }));
+        var nodes = catalog["catalog"]!["nodes"]!.AsObject().Where(p => p.Key.StartsWith("library:lights:", StringComparison.Ordinal)).ToArray();
+        string Kind(string label) => nodes.Single(p => p.Value?["label"]?.GetValue<string>() == label).Key;
+        var usesLibrary = G(N("l", Kind("Light up"), new { arguments = new { light = Lit("string", "light.kitchen"), level = Lit("global::System.Double", 30) } }));
         usesLibrary["name"] = "Library node";
         var custom = G(N("c", "custom", new JsonObject
         {
@@ -157,9 +201,24 @@ static class ReloadMemoryTests
         custom["name"] = "Custom node";
         var service = VisualTests.Graph(); service["name"] = "Service node";
         var plain = G(N("log", "log", new { value = Lit("string", "hello") })); plain["name"] = "Log";
-        foreach (var (id, graph) in new[] { ("library", usesLibrary), ("custom", custom), ("service", service), ("plain", plain) })
+        var typed = G(N("n", "custom", new JsonObject
         {
-            var saved = await Request(manager.VisualRequest, new { operation = "save", id, graph, expectedRevision = 0, deriveSignatures = true });
+            ["source"] = "public enum Mode { Day, Night }\n\npublic static class CustomNode\n{\n    [Node(\"Notify\")]\n    public static async Task Send(NodeContext context)\n    {\n        await context.Services.Notify.Notify(\"hi\", target: Mode.Night, data: new { Minutes = 5, Mode = Mode.Night });\n    }\n}",
+            ["arguments"] = new JsonObject(),
+        }));
+        typed["name"] = "Typed call";
+        var record = G(N("r", Kind("Reading"), new { arguments = new { } }), N("o", "convert", new { type = "object", value = new { kind = "unset" } }), N("s", "service", new JsonObject
+        {
+            ["service"] = "notify.notify", ["fields"] = new JsonObject { ["message"] = Lit("string", "hi"), ["data"] = new JsonObject { ["kind"] = "unset" } },
+            ["target"] = new JsonObject { ["kind"] = "unset" }, ["returnResponse"] = false,
+        }));
+        record["edges"]!.AsArray().Add(D("r", "o", "value", "result"));
+        record["edges"]!.AsArray().Add(D("o", "s", "field:data"));
+        record["name"] = "Record in a field";
+        var graphs = new Dictionary<string, JsonObject> { ["library"] = usesLibrary, ["custom"] = custom, ["service"] = service, ["plain"] = plain, ["typed"] = typed, ["record"] = record };
+        foreach (var (id, _) in Automations)
+        {
+            var saved = await Request(manager.VisualRequest, new { operation = "save", id, graph = graphs[id], expectedRevision = 0, deriveSignatures = true });
             Check(saved["active"]!.GetValue<bool>(), $"{id} is active after its save: " + saved.ToJsonString()[..Math.Min(1200, saved.ToJsonString().Length)]);
         }
     }

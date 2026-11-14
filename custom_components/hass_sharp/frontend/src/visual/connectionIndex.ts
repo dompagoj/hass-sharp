@@ -176,16 +176,19 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     const input = connectable(dataInputs(target, analysis.ownerOf(target), catalog)[targetPort])
     if (!output) messages.add('Unknown data output port')
     if (!input) messages.add(words.unknownInput(targetPort, target.kind))
-    if (output && input) {
-      if (!input.types.some(t => index.assignable(output.type, t))) messages.add(incompatibleInput(target, input, targetPort, output.type, catalog))
-      if (analysis.scopes.has(sourceId) && analysis.scopes.has(targetId) && !analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
+    if (output) {
       // The step outputs the wire brings in: the source's own, or those a value node source uses.
       const produced = sourcePure ? analysis.pureSources(source) : [{ node: source, port: sourcePort, output }]
       const crossing = (reader: GraphNode, via: GraphNode) => produced.filter(p => analysis.scopes.has(p.node.id) && !analysis.visible(p.node, reader, p.output))
         .map(p => words.pureScope(words.stepName(via, catalog), words.stepName(p.node, catalog), words.portLabel(p.output, p.port), words.stepName(reader, catalog)))
-      if (sourcePure && !targetPure && analysis.scopes.has(targetId)) for (const m of crossing(target, source)) messages.add(m)
-      // Into a value node: every step reading it, directly or through other value nodes, now reads those outputs too.
-      // A step's problem the graph already has is no new problem.
+      if (input) {
+        if (!input.types.some(t => index.assignable(output.type, t))) messages.add(incompatibleInput(target, input, targetPort, output.type, catalog))
+        if (analysis.scopes.has(sourceId) && analysis.scopes.has(targetId) && !analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
+        if (sourcePure && !targetPure && analysis.scopes.has(targetId)) for (const m of crossing(target, source)) messages.add(m)
+      }
+      // Into a value node: every step reading it, directly or through other value nodes, now reads those outputs too,
+      // even through an input that takes no wire (the validator still follows the wire). A step's problem the graph
+      // already has is no new problem.
       if (targetPure) for (const { via, reader, port } of stepReaders(target))
         if (analysis.scopes.has(reader.id)) for (const m of crossing(reader, via)) if (!oldScope.has(JSON.stringify([reader.id, port, m]))) messages.add(m)
     }

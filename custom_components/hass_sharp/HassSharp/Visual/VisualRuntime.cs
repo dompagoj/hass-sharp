@@ -18,6 +18,8 @@ public sealed class VisualSnapshot
     public object? Copy(object? value)
     {
         if(value == null) return null;
+        // A value nested very deeply (built by node code) fails its reader instead of overflowing the stack.
+        System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
         var type=value.GetType();
         if(type.IsPrimitive && type != typeof(IntPtr) && type != typeof(UIntPtr) || type.IsEnum || value is string or decimal or DateTime or DateTimeOffset or TimeSpan or Guid or DateOnly or TimeOnly or EntityStateSnapshot) return value;
         if(value is JsonElement json) return json.ValueKind==JsonValueKind.Undefined ? json : json.Clone();
@@ -82,9 +84,21 @@ public sealed class VisualSnapshot
     static Exception Cannot(Type type)=>new InvalidOperationException($"Cannot snapshot CLR type {type.FullName} at isolated scope boundary; implement IVisualSnapshot with a detached deep copy.");
 }
 
+/// <summary>
+/// The values one path of a run has made. An inner scope (a loop iteration or condition, a parallel branch) starts
+/// with none of its own: the first time it reads a value of the scope around it, it takes a copy (see
+/// <see cref="TryGetOutput"/>), so a value it never reads is never copied and cannot fail it.
+/// </summary>
 public sealed class VisualScope
 {
+    /// <summary>The values this scope made or copied. Write through <see cref="SetOutput"/>, read through <see cref="TryGetOutput"/>.</summary>
     internal Dictionary<(string Node,string Port),object?> Outputs {get;}=[];
+    // The scope around this one, which waits while this one runs, and the copier of what this scope takes from it: one
+    // identity map, so values that alias each other outside alias each other's copies inside.
+    VisualScope? outer;
+    VisualSnapshot? copies;
+    // Parallel branches take copies from the scope they share at the same time.
+    readonly object gate=new();
     /// <summary>The most recent failure on this path, kept for the error path, Error details and <see cref="NodeContext.Error"/>.</summary>
     public Exception? LastError {get;set;}
     /// <summary>The name of the step that failed with <see cref="LastError"/>, as the canvas shows it.</summary>
@@ -96,11 +110,25 @@ public sealed class VisualScope
     internal string Frame="";
     /// <summary>The traced event of the node running in this scope; null when the run is not traced.</summary>
     internal VisualTrace.Event? Trace;
-    internal VisualScope Clone(CancellationToken token) {
-        var copy=new VisualSnapshot();var result=new VisualScope{CancellationToken=token,LastError=(Exception?)copy.Copy(LastError),LastErrorStep=LastErrorStep,Frame=Frame};
-        foreach(var pair in Outputs)result.Outputs.Add(pair.Key,copy.Copy(pair.Value));
-        return result;
+    /// <summary>
+    /// An inner scope. Isolation holds as with a copy of every value up front: a value is copied when this scope or an
+    /// inner one first reads it, from the outer scope's own value, and the outer scope does not run (nor change its
+    /// values) until its inner scopes have ended; each inner scope changes only its own copies.
+    /// </summary>
+    internal VisualScope Clone(CancellationToken token)=>new(){CancellationToken=token,LastError=(Exception?)new VisualSnapshot().Copy(LastError),LastErrorStep=LastErrorStep,Frame=Frame,outer=this};
+    /// <summary>
+    /// The value of a step output on this path: this scope's own, else the outer scope's (which takes its own copy
+    /// first, so all of a scope's copies come from one identity map), copied into this scope.
+    /// </summary>
+    internal bool TryGetOutput((string Node,string Port) key,out object? value) {
+        lock(gate) {
+            if(Outputs.TryGetValue(key,out value))return true;
+            if(outer==null || !outer.TryGetOutput(key,out var around)){value=null;return false;}
+            value=Outputs[key]=(copies??=new VisualSnapshot()).Copy(around);
+            return true;
+        }
     }
+    internal void SetOutput((string Node,string Port) key,object? value) {lock(gate)Outputs[key]=value;}
 }
 
 /// <summary>
@@ -120,6 +148,8 @@ public sealed class VisualRuntime
     readonly HashSet<string> compiledConversions;
     readonly Dictionary<string,string> comparisonTypes;
     readonly JsonElement trigger;
+    /// <summary>What values of the automation's own types are written to and read from JSON with (see <see cref="JsonOptions"/>).</summary>
+    readonly JsonSerializerOptions serializer;
     readonly Dictionary<string,string[]> pureInputs=[];
     readonly Dictionary<(string,string),string?> absentTriggerOutputs=[];
     readonly CancellationToken external;
@@ -131,7 +161,8 @@ public sealed class VisualRuntime
     // Null unless the invocation carries a trace sink: every trace hook is behind this or scope.Trace.
     VisualTrace? trace;
     readonly System.Collections.Concurrent.ConcurrentQueue<Exception> stopFailures = new();
-    public VisualRuntime(string graphJson,string catalogJson,Dictionary<string,Type> types,JsonElement trigger,CancellationToken cancellation,Func<string,VisualScope,VisualRuntime,Task> custom,HashSet<string>? compiledConversions=null,Dictionary<string,string>? comparisonTypes=null) {
+    public VisualRuntime(string graphJson,string catalogJson,Dictionary<string,Type> types,JsonElement trigger,CancellationToken cancellation,Func<string,VisualScope,VisualRuntime,Task> custom,HashSet<string>? compiledConversions=null,Dictionary<string,string>? comparisonTypes=null,JsonSerializerOptions? json=null) {
+        serializer=json??JsonOptions();
         this.comparisonTypes=comparisonTypes??[];
         this.compiledConversions=compiledConversions??[];
         var graph=JsonNode.Parse(graphJson)!.AsObject();catalog=JsonNode.Parse(catalogJson)!.AsObject();this.types=types;this.custom=custom;this.trigger=trigger;external=cancellation;lifetime=new CancellationTokenSource();externalRegistration=cancellation.Register(()=>{externalCleanup=lifetime.CancelAsync();});
@@ -151,6 +182,14 @@ public sealed class VisualRuntime
             Visit(id);if(order.Count>0)pureInputs[id]=order.ToArray();
         }
     }
+    /// <summary>
+    /// Serializer options for one automation to hold (a static of its generated class, so in its own load context).
+    /// System.Text.Json caches the metadata of every type it meets in the options it is given, and shares that cache
+    /// between options it finds equal, so <see cref="JsonSerializerOptions.Default"/> would keep the automation's own
+    /// types (a library record made an object, a node's enum), and with them its load context, for the life of the
+    /// process. A resolver of its own makes these options equal to no other; they behave as the default ones.
+    /// </summary>
+    public static JsonSerializerOptions JsonOptions()=>new(){TypeInfoResolver=new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver()};
     JsonNode? Spec(string id)=>catalog["nodes"]?[Text(nodes[id],"kind")];
     bool Pure(string id)=>VisualNodeCatalog.IsPure(nodes[id],Spec(id));
     // A Custom C# node's pins are its signature's; every other node's are its kind's.
@@ -159,6 +198,8 @@ public sealed class VisualRuntime
     // The name people see on the canvas, for messages about a value node and the step that used it.
     string Title(string id)=>VisualGraphValidator.Words.StepName(nodes[id],Spec(id));
     static string Text(JsonNode? node,string key,string fallback="")=>VisualNodeCatalog.Text(node,key,fallback);
+    /// <summary>A step's input as the canvas names it: "Delay · Seconds".</summary>
+    string Pin(string id,string port)=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?[port],port);
     string? Next(string node,string port="next")=>flow.GetValueOrDefault((node,port));
     public async Task RunAsync(string root) {
         trace=VisualTrace.Create(root,nodes.Keys,TraceInputType,TraceOutputType);
@@ -168,14 +209,14 @@ public sealed class VisualRuntime
         if(!stopFailures.IsEmpty)throw new AggregateException("Stop cleanup failed after all branches drained.",stopFailures);
     }
     // Values are traced as the node sees them: after conversion, with the wire they came from.
-    public T Input<T>(VisualScope scope,string node,string port) {var value=(T)Coerce(Read(scope,node,port),typeof(T),$"{node}.{port}",false,()=>Title(node)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port))!;if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
+    public T Input<T>(VisualScope scope,string node,string port) {var value=(T)Coerce(Read(scope,node,port),typeof(T),$"{node}.{port}",false,()=>Title(node)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port),serializer)!;if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
     /// <summary>What a node method's <see cref="NodeContext"/> parameter gets: this run, as <paramref name="scope"/> sees it.</summary>
     public NodeContext Context(VisualScope scope,string node)=>new(this,scope,node,InvocationContext.Current?.RunId??"",trigger);
     public object? Input(VisualScope scope,string node,string port) {var value=Read(scope,node,port);if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
     void Traced(VisualScope scope,string node,string port,object? value)=>trace!.Input(scope.Trace!,node,port,value,data.TryGetValue((node,port),out var source)?source:null);
     object? Read(VisualScope scope,string node,string port) {
         if(data.TryGetValue((node,port),out var source)) {
-            if(!scope.Outputs.TryGetValue(source,out var value))throw new InvalidOperationException(absentTriggerOutputs.TryGetValue(source,out var reason)
+            if(!scope.TryGetOutput(source,out var value))throw new InvalidOperationException(absentTriggerOutputs.TryGetValue(source,out var reason)
                 ? $"Input {node}.{port}: trigger output {source.Item1}.{source.Item2} " + (reason==null?"is absent from this invocation's trigger payload.":$"cannot be read from this invocation's trigger payload: {reason}")
                 : $"Input {node}.{port}: producer output {source.Item1}.{source.Item2} has not executed in this invocation/scope.");
             return value;
@@ -222,28 +263,30 @@ public sealed class VisualRuntime
         }
         var effective=Nullable.GetUnderlyingType(clr)??clr;
         if(effective.IsEnum)return Enum.ToObject(effective,JsonSerializer.Deserialize(value.ToJsonString(),Enum.GetUnderlyingType(effective))!);
-        return JsonSerializer.Deserialize(value.ToJsonString(),clr);
+        return JsonSerializer.Deserialize(value.ToJsonString(),clr,serializer);
     }
     public void Output(VisualScope scope,string node,object? value,string port="value") {
         var declared=Text(OutputSpecs(node)?[port],"type");
         if(declared.StartsWith('$'))declared=Text(nodes[node]["config"],declared[1..]);
         if(declared!="")value=ConvertTo(value,declared,node+"."+port,false);
-        scope.Outputs[(node,port)]=value;
+        scope.SetOutput((node,port),value);
         if(scope.Trace!=null)trace!.Output(scope.Trace,node,port,value);
     }
     /// <param name="pin">The step and pin, as people see them, for a number that does not fit the pin's type.</param>
-    public static object? Coerce(object? value,Type type,string label,bool convert,Func<string>? pin=null) {
+    /// <param name="json">The automation's serializer options (<see cref="JsonOptions"/>), for a value of its own types.</param>
+    public static object? Coerce(object? value,Type type,string label,bool convert,Func<string>? pin=null,JsonSerializerOptions? json=null) {
+        json??=JsonSerializerOptions.Default;
         var underlying=Nullable.GetUnderlyingType(type);var target=underlying??type;
-        if(value==null) {if(!type.IsValueType||underlying!=null)return null;throw new InvalidOperationException($"{label} requires {type}, got null.");}
+        if(value==null) {if(!type.IsValueType||underlying!=null)return null;throw new InvalidOperationException($"{pin?.Invoke()??label} needs a value, and got none");}
         if(type.IsInstanceOfType(value))return value;
         if(type==typeof(JsonElement)&&value is JsonNode jsonNode)return JsonSerializer.SerializeToElement(jsonNode);
-        if(convert && target==typeof(JsonElement))return JsonSerializer.SerializeToElement(value);
+        if(convert && target==typeof(JsonElement))return JsonSerializer.SerializeToElement(value,json);
         if(target==typeof(JsonObject)||target==typeof(JsonArray)) {
-            var parsed=value is JsonElement element?JsonNode.Parse(element.GetRawText()):convert?JsonSerializer.SerializeToNode(value):null;
+            var parsed=value is JsonElement element?JsonNode.Parse(element.GetRawText()):convert?JsonSerializer.SerializeToNode(value,json):null;
             if(parsed!=null && target.IsInstanceOfType(parsed))return parsed;
         }
         if(value is JsonElement j) {
-            if(j.ValueKind==JsonValueKind.Null)return Coerce(null,type,label,convert);
+            if(j.ValueKind==JsonValueKind.Null)return Coerce(null,type,label,convert,json:json);
             if(j.ValueKind==JsonValueKind.Number && IsNumber(target)) {
                 // A JSON number (a foreach item, a field read from JSON) gets the same fit check as any other number.
                 if(pin!=null && target!=typeof(char) && Unfit(j.TryGetDecimal(out var exact)?exact:j.GetDouble(),target) is {} unfit)
@@ -258,7 +301,7 @@ public sealed class VisualRuntime
                     throw new InvalidOperationException($"Cannot materialize {label} as {type}: JSON number is invalid or outside its range.",error);
                 }
             }
-            value=j.ValueKind switch{JsonValueKind.String=>j.GetString(),JsonValueKind.Number=>j.GetDouble(),JsonValueKind.True=>true,JsonValueKind.False=>false,_=>value};
+            value=j.ValueKind switch{JsonValueKind.String=>j.GetString(),JsonValueKind.Number=>j.TryGetDouble(out var real)&&double.IsFinite(real)?real:throw new InvalidOperationException($"{pin?.Invoke()??label} got {j.GetRawText()}, a number too large to use"),JsonValueKind.True=>true,JsonValueKind.False=>false,_=>value};
             if(type.IsInstanceOfType(value))return value;
         }
         // C# char widening uses the UTF-16 code unit; IConvertible's char-to-double
@@ -292,8 +335,8 @@ public sealed class VisualRuntime
     object? ConvertTo(object? value,string type,string label,bool convert=true,Func<string>? pin=null) {
         var chain=VisualTypes.Chain(catalog,type);
         if(chain.Count==0||!types.TryGetValue(chain[^1],out var clr))throw new InvalidOperationException($"Unknown declared type {type} at {label}");
-        var root=chain[^1];var result=Coerce(value,clr,label,convert,pin);
-        if(result==null && VisualTypes.Resolve(catalog,type)?["nullable"]?.GetValue<bool>()!=true)throw new InvalidOperationException($"{label} requires non-null {type}, got null.");
+        var root=chain[^1];var result=Coerce(value,clr,label,convert,pin,serializer);
+        if(result==null && !VisualTypes.Nullable(catalog,type))throw new InvalidOperationException($"{label} requires non-null {type}, got null.");
         // A refinement narrows only when the value satisfies every pattern in its chain.
         foreach(var id in chain)if(VisualTypes.Resolve(catalog,id)?["pattern"] is JsonValue pattern && result!=null && (result is not string s || !VisualTypes.Matches(s,pattern.GetValue<string>())))throw new InvalidOperationException($"Cannot convert {label} to {type}.");
         if(root=="object" && result is not JsonObject || root=="array" && result is not JsonArray)throw new InvalidOperationException($"{label} requires JSON {type}.");
@@ -313,7 +356,7 @@ public sealed class VisualRuntime
                 if(pureInputs.TryGetValue(id,out var pure))await Prepare(id,pure,scope);
                 ev=Begin();
                 object? Get(string p)=>Input(scope,id,p);
-                double Number(string p,double min,double max,bool integer=false) {var v=Input<double>(scope,id,p);if(!double.IsFinite(v)||v<min||v>max||integer&&Math.Truncate(v)!=v)throw new InvalidOperationException($"Input {id}.{p} must be {(integer?"an integer":"finite")} in [{min}, {max}].");return v;}
+                double Number(string p,double min,double max,bool integer=false) {var v=Input<double>(scope,id,p);if(!double.IsFinite(v)||v<min||v>max||integer&&Math.Truncate(v)!=v)throw new InvalidOperationException($"{Pin(id,p)} must be {(integer?"a whole number":"a number")} from {VisualGraphValidator.Words.Number(min)} to {VisualGraphValidator.Words.Number(max)}, not {Convert.ToString(v,CultureInfo.InvariantCulture)}");return v;}
                 switch(kind) {
                     case "trigger":Trigger(id,scope,n);break;
                     case "if":port=Input<bool>(scope,id,"value")?"true":"false";next=Next(id,port);break;
@@ -379,8 +422,8 @@ public sealed class VisualRuntime
                 // Both sides in the type the generator chose by widening only (C#'s numeric promotion), so neither is rounded.
                 var clr=ComparisonTypes.TryGetValue(common,out var widened)?widened:types[VisualTypes.RootId(catalog,common)];
                 var givenLeft=Read(scope,id,"left");var givenRight=Read(scope,id,"right");
-                var a=Coerce(givenLeft,clr,id+".left",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["left"],"left"));
-                var b=Coerce(givenRight,clr,id+".right",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["right"],"right"));
+                var a=Coerce(givenLeft,clr,id+".left",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["left"],"left"),serializer);
+                var b=Coerce(givenRight,clr,id+".right",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["right"],"right"),serializer);
                 // The trace shows the values as they came, not as they were widened.
                 if(scope.Trace!=null){Traced(scope,id,"left",givenLeft);Traced(scope,id,"right",givenRight);}
                 // As in C#, an ordering with a missing number (a nullable side that is null) is false.
@@ -388,8 +431,8 @@ public sealed class VisualRuntime
             case "constant":case "convert":if(compiledConversions.Contains(id))await custom(id,scope,this);else Output(scope,id,ConvertTo(Get("value"),Text(cfg,"type"),id+".value",pin:()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["value"],"value")));break;
             case "entity_field":Output(scope,id,EntityField(Input<EntityStateSnapshot>(scope,id,"entity"),cfg,id));break;
             case "object":case "array":Output(scope,id,ConvertTo(Get("value"),kind,id,false));break;
-            case "object_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["fields"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get("field:"+p.Key))));break;
-            case "array_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["items"] as JsonArray??[]).Select((_,i)=>Get("item:"+i)).ToArray()));break;
+            case "object_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["fields"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get("field:"+p.Key)),serializer));break;
+            case "array_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["items"] as JsonArray??[]).Select((_,i)=>Get("item:"+i)).ToArray(),serializer));break;
             case "last_error":Output(scope,id,scope.LastError?.Message??"","message");Output(scope,id,scope.LastErrorStep??"","step");break;
             case "get_field":var json=Input<JsonElement>(scope,id,"value");var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}Output(scope,id,ConvertTo(json,Text(cfg,"type"),id,false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(OutputSpecs(id)?["value"],"value")));break;
             // A value node from a library (or any other kind) is compiled.
@@ -408,8 +451,9 @@ public sealed class VisualRuntime
             if(trigger.ValueKind==JsonValueKind.Undefined || !TryPointer(trigger,Text(spec,"pointer"),out var value) || value.ValueKind==JsonValueKind.Null) {absentTriggerOutputs[(id,port)]=null;continue;}
             var type=Text(spec,"type");var label=id+"."+port;
             object? output;
-            try {output=scope.Outputs[(id,port)]=types.GetValueOrDefault(VisualTypes.RootId(catalog,type))==typeof(EntityStateSnapshot)?EntityStateSnapshot.FromStateJson(value):ConvertTo(value,type,label,false);}
+            try {output=types.GetValueOrDefault(VisualTypes.RootId(catalog,type))==typeof(EntityStateSnapshot)?EntityStateSnapshot.FromStateJson(value):ConvertTo(value,type,label,false);}
             catch(Exception error) when(error is ArgumentException or InvalidOperationException){absentTriggerOutputs[(id,port)]=error.Message;continue;}
+            scope.SetOutput((id,port),output);
             if(scope.Trace!=null)trace!.Output(scope.Trace,id,port,output);
         }
     }
@@ -434,6 +478,10 @@ public sealed class VisualRuntime
     static readonly Dictionary<string,Type> ComparisonTypes=new[]{typeof(sbyte),typeof(byte),typeof(short),typeof(ushort),typeof(int),typeof(uint),typeof(long),typeof(ulong),typeof(float),typeof(double),typeof(decimal)}
         .SelectMany(t=>new[]{KeyValuePair.Create("global::"+t.FullName,t),KeyValuePair.Create("global::"+t.FullName+"?",typeof(Nullable<>).MakeGenericType(t))}).ToDictionary(StringComparer.Ordinal);
     static bool Compare(object? a,object? b,string op) {
+        // NaN compares as C# compares it: equal to nothing (itself included), so eq is false and ne true, and every
+        // ordered comparison is false. (CompareTo and Equals would put NaN below every number and equal to itself.)
+        static bool NaN(object? v)=>v is double d&&double.IsNaN(d)||v is float f&&float.IsNaN(f);
+        if(NaN(a)||NaN(b))return op=="ne";
         if(op is "eq" or "ne") {var equal=a is JsonNode an&&b is JsonNode bn?JsonNode.DeepEquals(an,bn):a is JsonElement x&&b is JsonElement y?JsonElement.DeepEquals(x,y):Equals(a,b);return op=="eq"?equal:!equal;}
         // Two values of one number type compare exactly (a long or decimal past 2^53 keeps its digits); others as doubles.
         var order=a is IComparable same&&b!=null&&a.GetType()==b.GetType()?same.CompareTo(b)
@@ -442,7 +490,7 @@ public sealed class VisualRuntime
     }
     // An optional input contributes only when it is wired or its operand is not unset.
     bool Supplied(string id,string port,JsonNode? operand)=>data.ContainsKey((id,port)) || operand is JsonObject && Text(operand,"kind")!="unset";
-    static JsonNode? Json(object? value)=>value switch{null=>null,JsonNode node=>node.DeepClone(),JsonElement element=>JsonNode.Parse(element.GetRawText()),_=>JsonSerializer.SerializeToNode(value)};
+    JsonNode? Json(object? value)=>value switch{null=>null,JsonNode node=>node.DeepClone(),JsonElement element=>JsonNode.Parse(element.GetRawText()),_=>JsonSerializer.SerializeToNode(value,serializer)};
     /// <summary>
     /// Contract C5: fields by name, then the target (a string is an entity_id, an object is flattened); a response only
     /// with returnResponse. A target key that a field already set is an error, as the validator reports, never a silent overwrite.
@@ -505,11 +553,11 @@ public sealed class VisualRuntime
             var port=(group=="carry"?"carry:":"export:")+Text(d,"name");var type=Text(d,"type");declarations[port]=type;state[port]=ConvertTo(Operand(parent,d["initial"],id+"."+port),type,id+"."+port,false,Declared(port));
         }
         object?[]? items=null;var count=0;
-        if(kind=="repeat") {var n=Input<double>(parent,id,"count");if(!double.IsFinite(n)||n<0||n!=Math.Truncate(n)||n>max)throw new InvalidOperationException($"Loop {id}: count {n} exceeds maximum {max} or is not a nonnegative integer.");count=(int)n;}
+        if(kind=="repeat") {var n=Input<double>(parent,id,"count");if(!double.IsFinite(n)||n<0||n!=Math.Truncate(n)||n>max)throw new InvalidOperationException($"{Pin(id,"count")} must be a whole number from 0 to {max} (Maximum iterations), not {Convert.ToString(n,CultureInfo.InvariantCulture)}");count=(int)n;}
         if(kind=="foreach") {
             var source=Input(parent,id,"items");var copy=new VisualSnapshot();
-            items=source switch{Array a when a.Rank==1=>a.Cast<object?>().Select(copy.Copy).ToArray(),JsonArray j=>j.Select(v=>v==null?null:(object?)JsonSerializer.SerializeToElement(v)).ToArray(),JsonElement j when j.ValueKind==JsonValueKind.Array=>j.EnumerateArray().Select(v=>(object?)v.Clone()).ToArray(),_=>throw new InvalidOperationException($"Loop {id}: items requires a CLR array or JSON array.")};
-            if(items.Length>max)throw new InvalidOperationException($"Loop {id}: {items.Length} items exceed maximum {max}.");
+            items=source switch{Array a when a.Rank==1=>a.Cast<object?>().Select(copy.Copy).ToArray(),JsonArray j=>j.Select(v=>v==null?null:(object?)JsonSerializer.SerializeToElement(v)).ToArray(),JsonElement j when j.ValueKind==JsonValueKind.Array=>j.EnumerateArray().Select(v=>(object?)v.Clone()).ToArray(),_=>throw new InvalidOperationException($"{Pin(id,"items")} needs a list")};
+            if(items.Length>max)throw new InvalidOperationException($"{Pin(id,"items")} has {items.Length} items, more than Maximum iterations ({max})");
             for(var i=0;i<items.Length;i++){var item=i+1;items[i]=ConvertTo(items[i],Text(cfg,"itemType"),id+".item["+i+"]",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["items"],"items")+", item "+item.ToString(CultureInfo.InvariantCulture));}count=items.Length;
         }
         VisualScope Scope(int iteration,string part) {
@@ -522,7 +570,7 @@ public sealed class VisualRuntime
             parent.CancellationToken.ThrowIfCancellationRequested();
             if(kind is "repeat" or "foreach" && iteration>=count)break;
             if(kind=="while"&&!await Condition(iteration))break;
-            if(iteration>=max)throw new InvalidOperationException($"Loop {id}: maximum {max} iterations exceeded.");
+            if(iteration>=max)throw new InvalidOperationException($"{Title(id)} stopped at Maximum iterations ({max})");
             var body=Scope(iteration,"body");if(items!=null){body.Outputs[(id,"item")]=new VisualSnapshot().Copy(items[iteration]);body.Outputs[(id,"index")]=(double)iteration;}
             await Walk(Next(id,"body"),body,depth+1);
             if(declarations.Count>0&&body.Updates==null)throw new InvalidOperationException($"Loop {id}: body did not return loop_result for declared carry/exports.");

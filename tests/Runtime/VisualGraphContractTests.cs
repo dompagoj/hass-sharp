@@ -97,13 +97,14 @@ public static class VisualGraphContractTests
 
     /// <summary>
     /// The catalog's descriptions are what people read in the node library, quick-add and the inspector: none uses
-    /// implementation words, the words the editor replaces ("yes/no value", "text"), pointer escapes or raw port ids.
+    /// implementation words, the words the editor replaces ("boolean", "string"), the old words for the True/False type
+    /// ("yes/no", "yes or no"), pointer escapes or raw port ids.
     /// </summary>
     [RuntimeSuite("--catalog-wording", Order = 11)]
     public static Task CatalogWording()
     {
         // The patterns themselves: implementation words and raw port ids fail, ordinary prose does not.
-        foreach (var text in new[] { "A typed value.", "Reads field:brightness.", "Exposes item:<index>.", "Uses ~1 for a slash.", "A Boolean." })
+        foreach (var text in new[] { "A typed value.", "Reads field:brightness.", "Exposes item:<index>.", "Uses ~1 for a slash.", "A Boolean.", "A yes/no value.", "Yes or no." })
             if (!BannedWording.IsMatch(text)) throw new Exception($"Catalog wording: the check misses \"{text}\"");
         foreach (var text in new[] { "The text you typed.", "Each item: its own input.", "The field: brightness." })
             if (BannedWording.IsMatch(text)) throw new Exception($"Catalog wording: the check rejects plain \"{text}\"");
@@ -132,7 +133,7 @@ public static class VisualGraphContractTests
     }
     // "typed" counts unless it is something a person did ("you typed"); a port id is a word, a colon and an id or <…>.
     static readonly System.Text.RegularExpressions.Regex BannedWording = new(
-        @"\b(?:operands?|literals?|payloads?|invocations?|snapshot(?:s|ted)?|detached|concrete|CLR|atomically|RFC|booleans?|strings?|legacy)\b|(?<!\b(?:you|they|we|I|is|was|were|are|be|been|have|has|had) )\btyped\b|scope isolation|~[01]|\b(?:branch|field|item|carry|export):(?:<|[A-Za-z0-9_])|\b[a-z_]+:<",
+        @"\b(?:operands?|literals?|payloads?|invocations?|snapshot(?:s|ted)?|detached|concrete|CLR|atomically|RFC|booleans?|strings?|legacy|yes/no|yes or no)\b|(?<!\b(?:you|they|we|I|is|was|were|are|be|been|have|has|had) )\btyped\b|scope isolation|~[01]|\b(?:branch|field|item|carry|export):(?:<|[A-Za-z0-9_])|\b[a-z_]+:<",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     /// <summary>Step and port labels that are jargon or squashed words; "Payload" stays, as MQTT's own term.</summary>
     static readonly HashSet<string> BannedLabels = new(["Xor", "Foreach", "Left", "Right", "Pointer", "Carry", "Exports", "Array"], StringComparer.OrdinalIgnoreCase);

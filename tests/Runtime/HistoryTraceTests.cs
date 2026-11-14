@@ -220,6 +220,15 @@ static class HistoryTraceTests
                 return Task.CompletedTask;
             });
 
+            await Test("service data in the debug log is redacted as traces are", () =>
+            {
+                var data = JsonNode.Parse("""{"entity_id":"lock.front","code":"1234","options":{"api_key":"k","url":"https://x/?token=abc&y=1"},"list":[{"pin":"9"}]}""");
+                var redacted = TraceJson.Redact(data)!.ToJsonString(new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+                Check(redacted == """{"entity_id":"lock.front","code":"***","options":{"api_key":"***","url":"https://x/?token=***&y=1"},"list":[{"pin":"***"}]}""", "redacted: " + redacted);
+                Check(data!["code"]!.GetValue<string>() == "1234", "redaction changed the data sent");
+                return Task.CompletedTask;
+            });
+
             await Test("traces are kept only for the newest traced runs", () =>
             {
                 var store = new RunHistoryStore(Path.Combine(folder, "trace-cap.db"), 100, 2);
@@ -232,6 +241,15 @@ static class HistoryTraceTests
                 Check(traced.SequenceEqual([(false, false), (false, false), (true, true), (true, true)]), "trace retention: " + string.Join(",", traced));
                 Check(store.Read("a", 0, 100).Count == 5, "trace retention removed runs");
                 Check(RunHistoryStore.TraceRetention == 1000 && RunHistoryStore.DefaultRetention == 10000, "retention constants");
+                // A run that has not ended is not ranked: an old one that is still going keeps its trace, and counts for no other.
+                var going = new RunHistoryStore(Path.Combine(folder, "trace-cap-going.db"), 100, 2);
+                var running = Completed("a", "r", received: start); running.EndUtc = null; running.Status = "Running";
+                going.Save(running); Check(going.SaveTrace(running.RunId, "{}", 0, false), "trace of the running run rejected");
+                var ended = Enumerable.Range(1, 3).Select(i => Completed("a", "r", received: start.AddMinutes(i))).ToArray();
+                foreach (var run in ended) { going.Save(run); going.SaveTrace(run.RunId, "{}", 0, false); }
+                going.Save(Completed("a", "r", received: start.AddMinutes(10)));
+                var kept = new[] { running }.Concat(ended).Select(r => going.ReadTrace(r.RunId) != null).ToArray();
+                Check(kept.SequenceEqual([true, false, true, true]), "trace retention with a run still going: " + string.Join(",", kept));
                 return Task.CompletedTask;
             });
 
@@ -324,11 +342,12 @@ static class HistoryTraceTests
                     Check(await Cancelled(() => api.UnloadAsync(false), 1) == "Automation reloaded", "an unload that is not a stop");
                     Check(await Cancelled(() => api.UnloadAsync(true), 2) == "Home Assistant stopping", "an unload while stopping");
                     Check(await Cancelled(() => { api.CancelRunsForShutdown(); return Task.CompletedTask; }, 3) == "Home Assistant stopping", "the stop event");
-                    // After the stop, a new run is recorded as cancelled for the same reason, and an unload still works.
+                    // After the stop, Run now is refused and records nothing, and an unload still works.
                     var automation = await Automation();
-                    var late = JsonNode.Parse(api.RunNow(automation, "VisualAutomation", VisualNodeCatalog.EffectiveTriggerMethod(hold["nodes"]![0]!.AsObject())))!["runId"]!.GetValue<string>();
-                    var lateRun = JsonNode.Parse(api.GetRunTrace(late))!["run"]!;
-                    Check(lateRun["status"]!.GetValue<string>() == "Cancelled" && lateRun["error"]!.GetValue<string>() == "Home Assistant stopping", "run after stop: " + lateRun.ToJsonString());
+                    var before = Runs(automation).Length;
+                    try { api.RunNow(automation, "VisualAutomation", VisualNodeCatalog.EffectiveTriggerMethod(hold["nodes"]![0]!.AsObject())); throw new Exception("Run now after the stop was not refused"); }
+                    catch (InvalidOperationException error) { Check(error.Message == UserScriptManager.NotRunning, "Run now after the stop: " + error.Message); }
+                    Check(Runs(automation).Length == before, "Run now after the stop recorded a run");
                     await api.UnloadAsync(true);
                     Check(VisualTests.Loaded(api, "hold") == null, "unload after stop left a script active");
                 }

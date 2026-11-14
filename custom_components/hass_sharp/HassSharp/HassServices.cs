@@ -10,7 +10,8 @@ namespace HassSharp;
 /// </summary>
 static class HassServices
 {
-    // Also what a typed service call sends a field value with (ServiceData.Value).
+    // Only for JSON nodes and framework types: each load context's typed service calls write their values with a copy of it
+    // (ServiceData.Options), so that its caches never hold an automation's own types.
     internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -22,7 +23,8 @@ static class HassServices
     internal static Task CallServiceAsync(string domain, string service, JsonObject data)
     {
         var json = JsonSerializer.Serialize(data, JsonOptions);
-        Logger.Debug($"Calling service (async): {domain}.{service} with data: {json}");
+        // Redacted as traces are: the debug log is no place for a lock's code or a token.
+        if (Logger.Level <= PyLogLevel.Debug) Logger.Debug($"Calling service (async): {domain}.{service} with data: {TraceJson.Redact(data)!.ToJsonString(JsonOptions)}");
 
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         PyInterop.CallService(
@@ -40,7 +42,8 @@ static class HassServices
     internal static Task<TResult?> CallServiceAsync<TResult>(string domain, string service, JsonObject data)
     {
         var json = JsonSerializer.Serialize(data, JsonOptions);
-        Logger.Debug($"Calling service for response (async): {domain}.{service} with data: {json}");
+        // Redacted as traces are: the debug log is no place for a lock's code or a token.
+        if (Logger.Level <= PyLogLevel.Debug) Logger.Debug($"Calling service for response (async): {domain}.{service} with data: {TraceJson.Redact(data)!.ToJsonString(JsonOptions)}");
 
         var tcs = new TaskCompletionSource<TResult?>(TaskCreationOptions.RunContinuationsAsynchronously);
         PyInterop.CallServiceWithResponse(

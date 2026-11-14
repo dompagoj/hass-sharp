@@ -96,7 +96,7 @@ static class ServiceGenerator
         Doc(3, "summary", "This Home Assistant's services, by domain, with typed fields: <c>await context.Services.Light.TurnOn(\"light.kitchen\", brightnessPct: 30);</c> " +
             "The methods follow the instance's own services. When a service goes away, code that calls it stops compiling at its next compile; " +
             "an automation that is running keeps running. For a service id known only at run time, use <c>context.CallService</c>. " +
-            "Each call waits until Home Assistant has run the service and is cancelled when the run stops.");
+            "Each call waits until Home Assistant has run the service; when the run stops, the run stops waiting for it (the call already sent is not cancelled).");
         Line(3, $"public global::{Namespace}.{Root} Services => new global::{Namespace}.{Root}(context);");
         Line(2, "}");
         Line(1, "}");
@@ -109,6 +109,9 @@ static class ServiceGenerator
         Line(1, "{");
         Line(2, $"readonly {Context} __context;");
         Line(2, $"internal {Root}({Context} context) => __context = context;");
+        // This assembly is loaded into each automation's own load context, so the serializer's caches of the automation's
+        // types (an enum or anonymous object of its code) go when the context unloads.
+        Line(2, "internal static readonly global::System.Text.Json.JsonSerializerOptions __json = global::HassSharp.ServiceData.Options();");
         foreach (var domain in domains)
         {
             Line(0, "");
@@ -163,7 +166,7 @@ static class ServiceGenerator
             foreach (var field in service.Fields)
             {
                 // Values are sent as HassServices sends them: snake_case member names, enums by name.
-            var value = field.IsTarget ? $"{field.Name}.ToJson()" : $"global::HassSharp.ServiceData.Value({field.Name})";
+                var value = field.IsTarget ? $"{field.Name}.ToJson()" : $"global::HassSharp.ServiceData.Value({field.Name}, global::{Namespace}.{Root}.__json)";
                 var set = $"__data[{Literal(field.Key)}] = {value};";
                 Line(3, field.Required ? set : $"if ({field.Name} is not null) {set}");
             }

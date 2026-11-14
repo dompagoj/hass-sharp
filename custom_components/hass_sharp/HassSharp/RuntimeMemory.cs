@@ -22,6 +22,6 @@ static class RuntimeMemory
             + $"heap {MiB(running.HeapSizeBytes)} then {MiB(collected.HeapSizeBytes)} MiB, assemblies {assemblies.Length} "
             + $"(collectible {assemblies.Count(a => a.IsCollectible)}), load contexts {contexts.Length} "
             + $"(collectible {contexts.Count(c => c.IsCollectible)}), python.net hosted {PythonNetAssemblies.PythonHosted}, "
-            + $"collectible kept from python.net {PythonNetAssemblies.IgnoreCollectible()}";
+            + $"python.net filter installed {PythonNetAssemblies.IgnoreCollectible()}";
     }
 }

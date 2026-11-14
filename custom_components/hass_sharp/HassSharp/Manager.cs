@@ -11,6 +11,8 @@ public partial class HassSharpManager
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _loadErrors = new();
     // How many problems a load error names, when it names them (compile errors, graph errors); read only beside _loadErrors.
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _loadProblems = new();
+    // The load errors a change of the typed service calls can cure: the only ones a service push retries.
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _curableLoadErrors = new();
     void RecordLoadError(string path, Exception error)
     {
         var problems = error switch
@@ -20,6 +22,11 @@ public partial class HassSharpManager
             _ => 0,
         };
         if (problems > 0) _loadProblems[path] = problems; else _loadProblems.TryRemove(path, out _);
+        // Only code that did not compile (a Custom C# or library node calling a service that is not there yet) can load
+        // once the typed service calls change; a graph error, or a storage or activation failure, cannot.
+        if (error is CompilationErrorException || error is VisualValidationException { Preview.Diagnostics: var diagnostics } && diagnostics.Any(d => d.Severity >= 3 && d.StartLine != null))
+            _curableLoadErrors[path] = 0;
+        else _curableLoadErrors.TryRemove(path, out _);
         _loadErrors[path] = error is CompilationErrorException compiled
             ? string.Join("\n", compiled.Errors) : error is VisualValidationException invalid
                 ? string.Join("\n", invalid.Preview.Diagnostics.Select(d => $"{d.NodeId ?? "graph"}: {d.Message}"))
@@ -49,7 +56,7 @@ public partial class HassSharpManager
             try { RefreshServiceCalls(); }
             catch (Exception ex) { try { Logger.Error($"Cannot generate the typed service calls; node code compiles without the new ones: {ex}"); } catch { } }
             var libraries = SavedLibraries();
-            _loadErrors.Clear();
+            _loadErrors.Clear(); _curableLoadErrors.Clear();
             ReportLegacyUserScripts();
             List<CompiledUserScript> assemblies = [];
             var store = VisualDocuments;
@@ -334,7 +341,7 @@ public partial class HassSharpManager
                 {
                     var path = VisualRuntimePath(document.Id);
                     if (_languageLifetime.IsCancellationRequested) return;
-                    if (!_loadErrors.ContainsKey(path) || _userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == path)) continue;
+                    if (!_loadErrors.ContainsKey(path) || !_curableLoadErrors.ContainsKey(path) || _userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == path)) continue;
                     try
                     {
                         var preview = new VisualGenerator(_diagnosticsProvider).Preview(document.Graph, libraries.Preview.Snapshot);
