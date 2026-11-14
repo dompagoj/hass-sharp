@@ -5,7 +5,7 @@ using static VisualExecutionTests;
 static class VisualConversionReviewTests
 {
     static void Assert(bool condition,string message)=>VisualExecutionTests.Check(condition,message);
-    static JsonObject Custom(string id,string code)=>N(id,"custom",new{code});
+    static JsonObject Custom(string id,string code)=>Code(id,code);
     static (VisualCatalogSnapshot Snapshot,Func<string,string> Kind) Library(string source) {
         var preview=new NodeLibraryCompiler(Diagnostics).Preview([new("conversion-review",source,1)]);
         Assert(preview.Valid,"review library must compile: "+string.Join(";",preview.Diagnostics.Select(d=>d.Message)));
@@ -79,16 +79,24 @@ static class VisualConversionReviewTests
         var lifted=G(N("make",k("Make"),new{arguments=new{}}),N("use",k("Nullable"),new{arguments=new{present=Lit("boolean",true)}}));lifted["edges"]!.AsArray().Add(D("make","use","value","result"));await Execute(lifted,s);
     }
     static async Task Comparer() {
-        var g=G(Custom("seed","var comparer=new StatefulComparer();values.Set(\"dictionary\",new Dictionary<string,int>(comparer));values.Set(\"comparer\",comparer);"),N("p","parallel",new{branches=new[]{"a","b"}}),Custom("a","var dictionary=values.Get<Dictionary<string,int>>(\"dictionary\",\"a\");var comparer=values.Get<StatefulComparer>(\"comparer\",\"a\");if(!ReferenceEquals(dictionary.Comparer,comparer))throw new Exception(\"scope comparer alias lost\");dictionary.Add(\"a\",1);await Task.Delay(20,CancellationToken);if(comparer.Calls!=1)throw new Exception(\"sibling comparer mutated\");"),Custom("b","await Task.Delay(5,CancellationToken);var comparer=values.Get<StatefulComparer>(\"comparer\",\"b\");if(comparer.Calls!=0)throw new Exception(\"other branch mutated comparer\");values.Get<Dictionary<string,int>>(\"dictionary\",\"b\").Add(\"b\",2);"),Custom("join","if(values.Get<StatefulComparer>(\"comparer\",\"join\").Calls!=0)throw new Exception(\"parent comparer mutated\");"));
-        g["members"]="""
+        // One step returns two values (a tuple with named elements); both reach each branch as copies that keep their aliasing.
+        var shared=Shared("""
         public sealed class StatefulComparer : StringComparer {
           public int Calls;
           public override int Compare(string? x,string? y)=>StringComparer.Ordinal.Compare(x,y);
           public override bool Equals(string? x,string? y)=>StringComparer.Ordinal.Equals(x,y);
           public override int GetHashCode(string value){Calls++;return StringComparer.Ordinal.GetHashCode(value);}
         }
-        """;
-        g["edges"]=new JsonArray(E("t","seed"),E("seed","p"),E("p","a","branch:a"),E("p","b","branch:b"),E("p","join"));await Execute(g);
+        """);
+        var g=G(Code("seed","var comparer=new Shared.StatefulComparer();return (new Dictionary<string,int>(comparer),comparer);","","(Dictionary<string,int> Dictionary, Shared.StatefulComparer Comparer)"),N("p","parallel",new{branches=new[]{"a","b"}}),
+            Code("a","if(!ReferenceEquals(dictionary.Comparer,comparer))throw new Exception(\"scope comparer alias lost\");dictionary.Add(\"a\",1);await Task.Delay(20,CancellationToken);if(comparer.Calls!=1)throw new Exception(\"sibling comparer mutated\");","Dictionary<string,int> dictionary, Shared.StatefulComparer comparer"),
+            Code("b","await Task.Delay(5,CancellationToken);if(comparer.Calls!=0)throw new Exception(\"other branch mutated comparer\");dictionary.Add(\"b\",2);","Shared.StatefulComparer comparer, Dictionary<string,int> dictionary"),
+            Code("join","if(comparer.Calls!=0)throw new Exception(\"parent comparer mutated\");","Shared.StatefulComparer comparer"));
+        g["edges"]=new JsonArray(E("t","seed"),E("seed","p"),E("p","a","branch:a"),E("p","b","branch:b"),E("p","join"),
+            D("seed","a","dictionary","dictionary"),D("seed","a","comparer","comparer"),D("seed","b","dictionary","dictionary"),D("seed","b","comparer","comparer"),D("seed","join","comparer","comparer"));
+        var derived=Derived(g,shared);var outputs=derived["nodes"]![1]!["config"]!["signature"]!["outputs"]!.AsObject();
+        Assert(outputs.Select(p=>p.Key).SequenceEqual(["dictionary","comparer"])&&outputs["comparer"]!["label"]!.GetValue<string>()=="Comparer","a tuple with named elements gives one output each: "+outputs.ToJsonString());
+        await Execute(g,shared);
     }
     static async Task Equality() {
         var (s,k)=Library("""
@@ -104,12 +112,7 @@ static class VisualConversionReviewTests
             var compare=N("compare","compare",new JsonObject{["operator"]=op,[reverse?"right":"left"]=new JsonObject{["kind"]="unset"},[reverse?"left":"right"]=Lit("number",1)});
             var g=G(N("int",k("Int"),new{arguments=new{}}),compare,N("if","if",new{value=new{kind="unset"}}),Custom("correct","Logger.Info(\"mixed comparison chosen\");"),Custom("wrong","throw new Exception(\"mixed numeric branch wrong\");"));g["edges"]=new JsonArray(E("t","int"),E("int","if"),D("int","compare",reverse?"right":"left","result"),D("compare","if","value"),E("if","correct",op=="eq"?"true":"false"),E("if","wrong",op=="eq"?"false":"true"));await Execute(g,s);
         }
-        var exact=G(N("long",k("Long"),new{arguments=new{}}),N("decimal",k("Decimal"),new{arguments=new{}}),N("compare","compare",new{@operator="eq",left=new{kind="unset"},right=new{kind="unset"},output="same"}),N("show","log",new{value=new{kind="unset"}}),Custom("check","if(!values.Get<bool>(\"same\",\"check\"))throw new Exception(\"long decimal equality\");"));exact["edges"]!.AsArray().Add(D("long","compare","left","result"));exact["edges"]!.AsArray().Add(D("decimal","compare","right","result"));exact["edges"]!.AsArray().Add(D("compare","show","value"));await Execute(exact,s);
-        // Same variable name in sibling scopes may have different declared types.
-        var scoped=G(N("p","parallel",new{branches=new[]{"a","b"}}),N("a","constant",new{type="string",value=Lit("string","one"),output="local"}),N("ca","compare",new{@operator="eq",left=new{kind="variable",name="local"},right=Lit("string","one"),output="equal"}),Custom("va","if(!values.Get<bool>(\"equal\",\"va\"))throw new Exception();"),N("b","constant",new{type="number",value=Lit("number",1),output="local"}),N("cb","compare",new{@operator="eq",left=new{kind="variable",name="local"},right=Lit("number",1),output="equal"}),Custom("vb","if(!values.Get<bool>(\"equal\",\"vb\"))throw new Exception();"));
-        // A value node publishes its variable where a step reads it: la and lb read the Constants, sa and sb the comparisons.
-        foreach(var id in new[]{"la","sa","lb","sb"})scoped["nodes"]!.AsArray().Add(N(id,"log",new{value=new{kind="unset"}}));
-        scoped["edges"]=new JsonArray(E("t","p"),E("p","la","branch:a"),E("la","sa"),E("sa","va"),D("a","la","value"),D("ca","sa","value"),E("p","lb","branch:b"),E("lb","sb"),E("sb","vb"),D("b","lb","value"),D("cb","sb","value"));await Execute(scoped);
+        var exact=G(N("long",k("Long"),new{arguments=new{}}),N("decimal",k("Decimal"),new{arguments=new{}}),N("compare","compare",new{@operator="eq",left=new{kind="unset"},right=new{kind="unset"}}),Code("check","if(!same)throw new Exception(\"long decimal equality\");","bool same"));exact["edges"]!.AsArray().Add(D("long","compare","left","result"));exact["edges"]!.AsArray().Add(D("decimal","compare","right","result"));exact["edges"]!.AsArray().Add(D("compare","check","same"));await Execute(exact,s);
         var prohibited=G(N("user",k("User"),new{arguments=new{}}),N("compare","compare",new{@operator="eq",left=new{kind="unset"},right=Lit("number",1)}));prohibited["edges"]!.AsArray().Add(D("user","compare","left","result"));Assert(!new VisualGenerator(Diagnostics).Preview(prohibited,s).Valid,"comparison never hides user conversion");
     }
     static async Task Json() {

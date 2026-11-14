@@ -11,6 +11,7 @@ import {
   setInput,
   connectData,
   resolveTypeSpec,
+  withGraphTypes,
   nodeCatalog,
   type Graph,
   type GraphNode,
@@ -255,8 +256,11 @@ export function dataConnectionError(
   const output = index.remember(JSON.stringify(['outputs', sourceId]), () => dataOutputs(source, catalog))[sourcePort],
     input = index.remember(JSON.stringify(['inputs', targetId]), () => nodeInputs(graph, target, catalog))[targetPort]
   if (!output || !input) return 'Unknown data port'
-  if (!input.types.some(t => index.assignable(output.type, t)))
-    return `${input.label ?? targetPort} requires ${input.types.map(t => typeLabel(t, catalog)).join(' / ')}; ${output.label ?? sourcePort} outputs ${typeLabel(output.type, catalog)}`
+  if (!input.types.some(t => index.assignable(output.type, t))) {
+    // A Custom C# node's own types are named from its signature.
+    const types = withGraphTypes(catalog, graph)
+    return `${input.label ?? targetPort} requires ${input.types.map(t => typeLabel(t, types)).join(' / ')}; ${output.label ?? sourcePort} outputs ${typeLabel(output.type, types)}`
+  }
   const quick = index.verdict(sourceId, sourcePort, targetId, targetPort)
   if (quick.message || options.quick || quick.fallback) return quick.message
   try {

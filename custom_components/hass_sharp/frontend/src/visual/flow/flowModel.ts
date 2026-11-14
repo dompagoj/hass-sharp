@@ -1,10 +1,10 @@
 import { createContext, useContext } from 'solid-js'
 import {
+  customSignature,
   dataOutputs,
   executionPorts,
   inputValue,
   isPure,
-  nodeCatalog,
   type GraphEdge,
   type GraphNode,
   type InputSpec,
@@ -160,8 +160,9 @@ export function keepUnrendered(original: VisualGraph, edited: VisualGraph): Visu
   }
 }
 
+/** A node's name on its card: its own label, else (a Custom C# node) its method's title, else its kind's label. */
 export const nodeTitle = (node: GraphNode | undefined, catalog: VisualCatalogSnapshot, fallback = '') =>
-  node ? (text(node.label) || (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].label : node.kind)) : fallback
+  node ? (text(node.label) || text(customSignature(node, catalog)?.title) || (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].label : node.kind)) : fallback
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
 
 /** Nodes whose `next` means "after the structure" are drawn with a named Done row instead of a header pin. */
@@ -292,7 +293,8 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     execIn, next: headerNext ? execPin('next') : undefined, rows,
     footer: execPorts.includes('error') ? execPin('error') : undefined,
     problems, errors, warnings, targetEntityIds, unreachable: unreachable(node, ctx), pure,
-    label: `${[`${title}, ${identity.label}`, summary].filter(Boolean).join('. ')}${problemText}`,
+    // A value node says so: it has no place in the run order, which a sighted reader sees from its missing pins.
+    label: `${[`${title}, ${identity.label}${pure ? ', value' : ''}`, summary].filter(Boolean).join('. ')}${problemText}`,
   }
 }
 
@@ -326,14 +328,6 @@ export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionInd
     node.kind, node.label ?? null, node.config, inputs, outputs, executionPorts(node, catalog), wires, unreachable(node, ctx), resolved, diagnostics,
     rejected ?? null,
   ])
-}
-
-/** Variables visible to inline editors: named `output`s of nodes with a value output (D7). */
-export function graphVariables(graph: VisualGraph, catalog: VisualCatalogSnapshot = nodeCatalog) {
-  return graph.nodes.flatMap(node => {
-    const output = node.config.output, value = dataOutputs(node, catalog).value
-    return typeof output === 'string' && output && value ? [{ name: output, type: value.type }] : []
-  })
 }
 
 export interface EdgeView {
@@ -396,7 +390,6 @@ export interface FlowContextValue {
   catalog(): VisualCatalogSnapshot
   view(id: string): NodeView | undefined
   graphNode(id: string): GraphNode | undefined
-  variables(): { name: string; type: string }[]
   /** False without the query client and Home Assistant context (a bare adapter): editors become value chips. */
   editable(): boolean
   trace(): FlowTrace | undefined

@@ -94,8 +94,13 @@ public static class VisualTypes
         if (Resolve(catalog, target)!.ContainsKey("refines")) return chain.Contains(target);
         var root = chain[^1];
         if (root == target) return true;
+        // The built-in number and every CLR number pin go into each other; a value that does not fit (a fraction for a
+        // whole number, or out of range) fails when the step runs. A number that may be missing does not go into number.
+        if (root == "number" && Numeric(catalog, target) || target == "number" && Numeric(catalog, root) && Resolve(catalog, root)!["nullable"]?.GetValue<bool>() != true) return true;
         return roots?.Invoke(root, target) ?? (catalog["types"]![root]?["assignableTo"] as JsonArray ?? []).Any(t => t is JsonValue v && v.TryGetValue<string>(out var id) && id == target);
     }
+
+    static bool Numeric(JsonObject catalog, string id) => Text(Resolve(catalog, id), "literalKind") is "integer" or "number";
 
     /// <summary>Literal kind of the type itself, then pattern, numeric bounds and enumValues of every type in its chain.</summary>
     public static bool ValidLiteral(JsonObject catalog, string type, JsonNode? value, bool present)

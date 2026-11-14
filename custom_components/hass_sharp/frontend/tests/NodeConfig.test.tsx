@@ -377,17 +377,27 @@ it('edits the title, offers Duplicate, Copy node ID and Delete, and never shows 
   expect(history.graph().nodes).toHaveLength(count)
 })
 
-it('puts the shared usings and helper members in a Custom C# step\'s Advanced section', () => {
-  const graph = addNode(createGraph('Code'), 'custom', 'code')
-  const { el, history } = mount(graph, 'code')
-  const advanced = el.querySelector<HTMLDetailsElement>('.hs-inspector .hs-insp-advanced')!
-  expect(advanced.open).toBe(false)
-  expect(advanced.textContent).toContain('Shared C# for this automation')
-  type(advanced.querySelector<HTMLTextAreaElement>('textarea[aria-label="Usings"]')!, 'using System.Globalization;')
-  type(advanced.querySelector<HTMLTextAreaElement>('textarea[aria-label="Helper members"]')!, 'int Twice(int x) => x * 2;')
-  expect(history.graph()).toMatchObject({ imports: 'using System.Globalization;', members: 'int Twice(int x) => x * 2;' })
-  type(el.querySelector<HTMLTextAreaElement>('.hs-inspector textarea[aria-label="C# code"]')!, 'Logger.LogInformation("hi");')
-  expect(history.graph().nodes.find(n => n.id === 'code')!.config.code).toBe('Logger.LogInformation("hi");')
+it('shows a Custom C# step\'s pins, title and description from its signature, with its source read only', () => {
+  const source = 'class CustomNode { [Node("Brightness")] public static int Run(int level) => level; }'
+  const signature = {
+    title: 'Brightness', description: 'Scales a level.', pure: false,
+    inputs: { level: { types: ['number'], required: true, label: 'Level', description: 'How bright.', nullable: false, hasDefaultValue: false } },
+    outputs: { result: { type: 'number', label: 'Result', description: 'The scaled level.' } },
+    types: {},
+  }
+  const graph = updateNode(addNode(createGraph('Code'), 'custom', 'code'), 'code', { config: { source, signature, arguments: { level: lit('number', 3) } } })
+  const { el } = mount(graph, 'code')
+  const inspector = el.querySelector('.hs-inspector')!
+  expect(inspector.querySelector<HTMLInputElement>('input[aria-label="Node label"]')!.placeholder).toBe('Brightness')
+  expect(inspector.querySelector('.hs-insp-desc')!.textContent).toBe('Scales a level.')
+  const code = inspector.querySelector('pre.hs-insp-source')!
+  expect(code.textContent).toBe(source)
+  expect(code.querySelector('textarea, input, [contenteditable]')).toBeNull()
+  expect(inspector.textContent).toContain('Editing arrives with the code editor.')
+  expect(row(el, 'level')!.textContent).toContain('Level')
+  for (const removed of ['Usings', 'Helper members', 'Expose to C#', 'Shared C#'])
+    expect(inspector.textContent, removed).not.toContain(removed)
+  expect(inspector.querySelector('textarea[aria-label="C# code"]')).toBeNull()
 })
 
 it('shows the selection count with Duplicate, Tidy selection and Delete, and a selected wire read only', () => {

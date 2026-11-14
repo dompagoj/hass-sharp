@@ -40,7 +40,9 @@ class AuthoringService:
             if not isinstance(graph, dict):
                 return error("invalid_request", "graph must be an object")
             nodes = graph.get("nodes")
-            preview = await self._request(self.manager.VisualRequest, {"operation": "preview", "graph": graph}, is_admin=True)
+            # deriveSignatures: the managed side writes each Custom C# node's pins from its code first.
+            derive = request.get("deriveSignatures") is True
+            preview = await self._request(self.manager.VisualRequest, {"operation": "preview", "graph": graph, **({"deriveSignatures": True} if derive else {})}, is_admin=True)
             if not preview.get("ok"):
                 return preview
             if isinstance(nodes, list) and all(isinstance(n, dict) and isinstance(n.get("config", {}), dict) for n in nodes):

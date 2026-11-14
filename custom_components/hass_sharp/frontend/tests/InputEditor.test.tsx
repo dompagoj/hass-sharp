@@ -141,26 +141,16 @@ it('drags a colour under one coalesce key per drag and stores [r, g, b]', () => 
   expect(changes[2].coalesce).not.toBe(changes[0].coalesce)
 })
 
-it('switches between value, variable and not set with a keyboard-operable mode menu', async () => {
-  const variables = [{ name: 'flag', type: 'boolean' }, { name: 'count', type: 'number' }]
-  const { host, changes } = mount({ input: spec(['boolean']), label: 'Enabled', variables }, { kind: 'literal', type: 'boolean', value: true })
+it('switches between value and not set with a keyboard-operable mode menu', async () => {
+  const { host, changes } = mount({ input: spec(['boolean']), label: 'Enabled' }, { kind: 'literal', type: 'boolean', value: true })
   const trigger = q<HTMLButtonElement>(host, 'button[aria-label="Enabled mode"]')
   expect(trigger.getAttribute('aria-haspopup')).toBe('menu')
   key(trigger, 'ArrowDown')
   expect(trigger.getAttribute('aria-expanded')).toBe('true')
-  expect([...host.querySelectorAll('[role="menuitem"]')].map(b => b.textContent)).toEqual(['Value', 'Variable…', 'Clear'])
+  expect([...host.querySelectorAll('[role="menuitem"]')].map(b => b.textContent)).toEqual(['Value', 'Clear'])
   expect(document.activeElement).toBe(menuItem(host, 'Value'))
   key(host.querySelector('[role="menu"]')!, 'Escape')
   expect(host.querySelector('[role="menu"]')).toBeNull()
-
-  openMenu(host, 'Enabled mode'); menuItem(host, 'Variable…').click()
-  const select = q<HTMLSelectElement>(host, 'select[aria-label="Enabled variable"]')
-  // Only variables assignable to the input are offered.
-  expect([...select.options].filter(o => !o.disabled).map(o => o.value)).toEqual(['flag'])
-  chose(select, 'flag')
-  expect(changes.at(-1)!.operand).toEqual({ kind: 'variable', name: 'flag' })
-  expect(q(host, '.hs-input-editor__state').textContent).toBe('Variable flag')
-  expect(host.querySelector('input[role="switch"]')).toBeNull()
 
   openMenu(host, 'Enabled mode'); menuItem(host, 'Clear').click()
   expect(changes.at(-1)!.operand).toEqual({ kind: 'unset' })
@@ -169,48 +159,11 @@ it('switches between value, variable and not set with a keyboard-operable mode m
 
   openMenu(host, 'Enabled mode'); menuItem(host, 'Value').click()
   expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'boolean', value: false })
-  expect(changes).toHaveLength(3)
+  expect(changes).toHaveLength(2)
   await Promise.resolve()
   expect(document.activeElement).toBe(host.querySelector('input[role="switch"]'))
   q<HTMLInputElement>(host, 'input[role="switch"]').click()
   expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'boolean', value: true })
-})
-
-it('closes the variable chooser with Escape even when no variable fits', async () => {
-  const { host } = mount({ input: spec(['boolean']), label: 'Enabled' })
-  openMenu(host, 'Enabled mode'); menuItem(host, 'Variable…').click()
-  const none = q(host, '.hs-input-editor__state')
-  expect(none.textContent).toBe('No matching variable is visible here.')
-  await Promise.resolve()
-  expect(document.activeElement).toBe(none)
-  key(none, 'Escape')
-  expect(host.querySelector('input[role="switch"]')).not.toBeNull()
-  // Focus goes back to the mode menu the chooser was opened from.
-  await Promise.resolve()
-  expect(document.activeElement).toBe(q(host, 'button[aria-label="Enabled mode"]'))
-})
-
-it('describes the variable select once, and Escape or Cancel returns to the mode menu', async () => {
-  const variables = [{ name: 'flag', type: 'boolean' }]
-  const { host } = mount({ input: spec(['boolean'], { description: 'Turns it on.' }), label: 'Enabled', variables, errors: ['Input is required'] })
-  const root = q(host, '.hs-input-editor'), trigger = q<HTMLButtonElement>(host, 'button[aria-label="Enabled mode"]')
-  openMenu(host, 'Enabled mode'); menuItem(host, 'Variable…').click()
-  const select = q<HTMLSelectElement>(host, 'select[aria-label="Enabled variable"]')
-  expect(described(host, select)).toEqual(['Input is required', 'Turns it on.'])
-  expect(root.hasAttribute('aria-describedby')).toBe(false)
-  expect(host.querySelectorAll('[aria-describedby]')).toHaveLength(1)
-  expect(q<HTMLLabelElement>(host, 'label').htmlFor).toBe(select.id)
-  key(select, 'Escape'); await Promise.resolve()
-  expect(host.querySelector('select[aria-label="Enabled variable"]')).toBeNull()
-  expect(document.activeElement).toBe(trigger)
-  openMenu(host, 'Enabled mode'); menuItem(host, 'Variable…').click()
-  ;[...host.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Cancel')!.click()
-  await Promise.resolve()
-  expect(document.activeElement).toBe(trigger)
-  // Showing a chosen variable, the group carries the descriptions instead.
-  const chosen = remount({ input: spec(['boolean']), label: 'Enabled', variables, errors: ['Input is required'] }, { kind: 'variable', name: 'flag' })
-  expect(chosen.host.querySelectorAll('[aria-describedby]')).toHaveLength(1)
-  expect(described(chosen.host, q(chosen.host, '.hs-input-editor'))).toEqual(['Input is required'])
 })
 
 it('brings back the value kept under a connection when Value is chosen', () => {
@@ -522,5 +475,5 @@ it('shows an input that can only be connected without a value mode', () => {
   const { host } = mount({ input: spec(['global::HassSharp.EntityStateSnapshot']), label: 'State' })
   expect(q(host, '.hs-input-editor__state').textContent).toBe('Connect an output of type Entity state.')
   openMenu(host, 'State mode')
-  expect([...host.querySelectorAll('[role="menuitem"]')].map(b => b.textContent)).toEqual(['Variable…', 'Clear'])
+  expect([...host.querySelectorAll('[role="menuitem"]')].map(b => b.textContent)).toEqual(['Clear'])
 })

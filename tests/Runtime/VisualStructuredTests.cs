@@ -4,23 +4,22 @@ using static VisualExecutionTests;
 
 static class VisualStructuredTests
 {
-    static JsonObject C(string id,string code)=>N(id,"custom",new{code});
-    static JsonObject V(string name)=>new(){["kind"]="variable",["name"]=name};
+    static JsonObject C(string id,string code,string parameters="",string? returns=null)=>Code(id,code,parameters,returns);
     static JsonObject Decl(string name, double value)=>new(){["name"]=name,["type"]="number",["initial"]=Lit("number",value)};
+    static JsonObject Unset()=>new(){["kind"]="unset"};
     public static async Task Run()
     {
         foreach(var kind in new[]{"while","until","repeat"}) {
+            // The next carried value and the export come from a step's output by wire.
             var cfg=new JsonObject{["maxIterations"]=3,["carry"]=new JsonArray(Decl("n",0)),["exports"]=new JsonArray(Decl("total",9))};if(kind=="repeat")cfg["count"]=Lit("number",3);
-            var g=G(N("loop",kind,cfg),N("body","constant",new{type="number",value=new{kind="unset"},output="next"}),C("inc","values.Set(\"next\", values.Get<double>(\"next\",\"inc\")+1);"),N("result","loop_result",new{values=new JsonObject{["carry:n"]=V("next"),["export:total"]=V("next")}}),N("out","constant",new{type="number",value=new{kind="unset"},output="total"}),C("verify","if(values.Get<double>(\"total\",\"verify\")!=3)throw new Exception(\"export\");"));
-            // A Constant publishes its variable when a step that reads it runs: a Log reads each one.
-            g["nodes"]!.AsArray().Add(N("show","log",new{value=new{kind="unset"}}));g["nodes"]!.AsArray().Add(N("showout","log",new{value=new{kind="unset"}}));
-            var edges=new JsonArray(E("t","loop"),E("loop","show","body"),E("show","inc"),E("inc","result"),E("loop","showout"),E("showout","verify"),D("loop","body","value","carry:n"),D("body","show","value"),D("loop","out","value","export:total"),D("out","showout","value"));g["edges"]=edges;
-            if(kind!="repeat") {g["nodes"]!.AsArray().Add(N("compare","compare",new{left=new{kind="unset"},right=Lit("number",3),@operator=kind=="while"?"lt":"ge"}));g["nodes"]!.AsArray().Add(N("condition","condition_result",new{value=new{kind="unset"}}));edges.Add(E("loop","condition","condition"));edges.Add(D("loop","compare","left","carry:n"));edges.Add(D("compare","condition","value"));}
+            var g=G(N("loop",kind,cfg),C("inc","return n+1;","double n","double"),N("result","loop_result",new{values=new JsonObject{["carry:n"]=Unset(),["export:total"]=Unset()}}),C("verify","if(total!=3)throw new Exception(\"export\");","double total"));
+            var edges=new JsonArray(E("t","loop"),E("loop","inc","body"),E("inc","result"),E("loop","verify"),D("loop","inc","n","carry:n"),D("inc","result","carry:n","result"),D("inc","result","export:total","result"),D("loop","verify","total","export:total"));g["edges"]=edges;
+            if(kind!="repeat") {g["nodes"]!.AsArray().Add(N("compare","compare",new{left=Unset(),right=Lit("number",3),@operator=kind=="while"?"lt":"ge"}));g["nodes"]!.AsArray().Add(N("condition","condition_result",new{value=Unset()}));edges.Add(E("loop","condition","condition"));edges.Add(D("loop","compare","left","carry:n"));edges.Add(D("compare","condition","value"));}
             await Execute(g);
-            if(kind=="repeat") {cfg["count"]=Lit("number",0);g["nodes"]![6]!["config"]!["code"]="if(values.Get<double>(\"total\",\"verify\")!=9)throw new Exception(\"zero export\");";await Execute(g);}
+            if(kind=="repeat") {cfg["count"]=Lit("number",0);SetCode(g,"verify","if(total!=9)throw new Exception(\"zero export\");","double total");await Execute(g);}
         }
-        var limit=G(N("w","while",new{maxIterations=2}),N("condition","condition_result",new{value=Lit("boolean",true)}),C("body","count++;"),C("error","if(count!=2 || !lastError.Message.Contains(\"maximum 2\"))throw new Exception(\"loop limit\");"));limit["members"]="int count;";limit["edges"]=new JsonArray(E("t","w"),E("w","condition","condition"),E("w","body","body"),E("w","error","error"));await Execute(limit);
-        var nested=G(N("outer","repeat",new{count=Lit("number",2)}),N("inner","repeat",new{count=Lit("number",3)}),C("body","count++;"),C("after","if(count!=6)throw new Exception(\"nested\");"));nested["members"]="int count;";nested["edges"]=new JsonArray(E("t","outer"),E("outer","inner","body"),E("inner","body","body"),E("outer","after"));await Execute(nested);
+        var limit=G(N("w","while",new{maxIterations=2}),N("condition","condition_result",new{value=Lit("boolean",true)}),C("body","Shared.count++;"),C("error","if(Shared.count!=2 || !lastError.Message.Contains(\"maximum 2\"))throw new Exception(\"loop limit\");"));limit["edges"]=new JsonArray(E("t","w"),E("w","condition","condition"),E("w","body","body"),E("w","error","error"));await Execute(limit,Shared("public static int count;"));
+        var nested=G(N("outer","repeat",new{count=Lit("number",2)}),N("inner","repeat",new{count=Lit("number",3)}),C("body","Shared.count++;"),C("after","if(Shared.count!=6)throw new Exception(\"nested\");"));nested["edges"]=new JsonArray(E("t","outer"),E("outer","inner","body"),E("inner","body","body"),E("outer","after"));await Execute(nested,Shared("public static int count;"));
         var stale=G(N("loop","repeat",new{count=Lit("number",2)}),N("if","if",new{value=Lit("boolean",true)}),N("producer","not",new{value=Lit("boolean",true)}),N("consumer","if",new{value=new{kind="unset"}}),C("error","if(!lastError.Message.Contains(\"producer.result\"))throw new Exception();"));
         // Custom library condition lets successive iterations take different paths; the producer is a library step, not a value node.
         var src="public static class Test { static int n; [Node(\"first\")] public static bool First()=>++n==1; [Node(\"produce\")] public static bool Produce()=>true; }";var lib=new NodeLibraryCompiler(Diagnostics).Preview([new("stale",src,1)]);
@@ -33,16 +32,20 @@ static class VisualStructuredTests
     }
     static async Task Parallel()
     {
-        var g=G(C("seed","values.Set(\"bag\",new List<int>{1});"),N("p","parallel",new{branches=new[]{"a","b"}}),C("a","values.Get<List<int>>(\"bag\",\"a\").Add(2); await Task.Delay(20,CancellationToken);"),C("b","await Task.Delay(40,CancellationToken);if(values.Get<List<int>>(\"bag\",\"b\").Count!=1)throw new Exception(\"alias\");"),C("join","if(values.Get<List<int>>(\"bag\",\"join\").Count!=1)throw new Exception(\"parent alias\");"));g["edges"]=new JsonArray(E("t","seed"),E("seed","p"),E("p","a","branch:a"),E("p","b","branch:b"),E("p","join"));await Execute(g);
+        // A value reaches each branch as its own copy: a branch changing it changes it for no one else.
+        var g=G(C("seed","return new List<int>{1};","","List<int>"),N("p","parallel",new{branches=new[]{"a","b"}}),C("a","bag.Add(2); await Task.Delay(20,CancellationToken);","List<int> bag"),C("b","await Task.Delay(40,CancellationToken);if(bag.Count!=1)throw new Exception(\"alias\");","List<int> bag"),C("join","if(bag.Count!=1)throw new Exception(\"parent alias\");","List<int> bag"));
+        g["edges"]=new JsonArray(E("t","seed"),E("seed","p"),E("p","a","branch:a"),E("p","b","branch:b"),E("p","join"),D("seed","a","bag","result"),D("seed","b","bag","result"),D("seed","join","bag","result"));await Execute(g);
         // Failure must cancel sibling, await finally, and enter parent recovery only after cleanup.
-        g["members"]="volatile bool cleaned;";g["nodes"]![3]!["config"]!["code"]="await Task.Delay(20,CancellationToken);throw new InvalidOperationException(\"branch failure\");";g["nodes"]![4]!["config"]!["code"]="try {await Task.Delay(60000,CancellationToken);}finally{await Task.Delay(30);cleaned=true;}";g["nodes"]![5]!["config"]!["code"]="if(!cleaned || !lastError.Message.Contains(\"branch failure\"))throw new Exception(\"cleanup not awaited\");";g["edges"]![4]!["port"]="error";await Execute(g);
+        var state=Shared("public static volatile bool cleaned;");
+        SetCode(g,"a","await Task.Delay(20,CancellationToken);throw new InvalidOperationException(\"branch failure\");");SetCode(g,"b","try {await Task.Delay(60000,CancellationToken);}finally{await Task.Delay(30);Shared.cleaned=true;}");SetCode(g,"join","if(!Shared.cleaned || !lastError.Message.Contains(\"branch failure\"))throw new Exception(\"cleanup not awaited\");");g["edges"]![4]!["port"]="error";await Execute(g,state);
         // A throwing cancellation registration must not skip awaited sibling cleanup.
-        g["nodes"]![4]!["config"]!["code"]="using var registration=CancellationToken.Register(()=>throw new Exception(\"callback fault\"));try {await Task.Delay(60000,CancellationToken);}finally{await Task.Delay(30);cleaned=true;}";await Execute(g);
+        SetCode(g,"b","using var registration=CancellationToken.Register(()=>throw new Exception(\"callback fault\"));try {await Task.Delay(60000,CancellationToken);}finally{await Task.Delay(30);Shared.cleaned=true;}");await Execute(g,state);
         // Stop is invocation-wide, including joined/error routes.
-        g["nodes"]![4]!["config"]!["code"]="try {await Task.Delay(60000,CancellationToken);}finally{await Task.Delay(30);cleaned=true;}";g["nodes"]![3]!["kind"]="stop";g["nodes"]![3]!["config"]=new JsonObject();g["nodes"]![5]!["config"]!["code"]="throw new Exception(\"stop reached recovery\");";await Execute(g);
-        g["nodes"]![3]!["kind"]="delay";g["nodes"]![3]!["config"]=new JsonObject{["seconds"]=Lit("number",60)};await Execute(g,cancel:true);
+        SetCode(g,"b","try {await Task.Delay(60000,CancellationToken);}finally{await Task.Delay(30);Shared.cleaned=true;}");g["nodes"]![3]!["kind"]="stop";g["nodes"]![3]!["config"]=new JsonObject();foreach(var wire in g["edges"]!.AsArray().Where(e=>e!["kind"]?.GetValue<string>()=="data"&&e["target"]!.GetValue<string>()=="a").ToArray())g["edges"]!.AsArray().Remove(wire);SetCode(g,"join","throw new Exception(\"stop reached recovery\");");await Execute(g,state);
+        g["nodes"]![3]!["kind"]="delay";g["nodes"]![3]!["config"]=new JsonObject{["seconds"]=Lit("number",60)};await Execute(g,state,cancel:true);
         // Every boundary copy must complete before any branch work starts.
-        g["nodes"]![1]!["config"]!["code"]="values.Set(\"bag\",new System.IO.MemoryStream());";g["nodes"]![3]!["kind"]="custom";g["nodes"]![3]!["config"]=new JsonObject{["code"]="cleaned=true;"};g["nodes"]![5]!["config"]!["code"]="if(cleaned || !lastError.Message.Contains(\"IVisualSnapshot\"))throw new Exception(\"unsafe copy\");";await Execute(g);
+        SetCode(g,"seed","return new System.IO.MemoryStream();","","System.IO.MemoryStream");g["nodes"]![3]!["kind"]="custom";g["nodes"]![3]!["config"]=Code("a","Shared.cleaned=true;")["config"]!.DeepClone();
+        SetCode(g,"join","if(Shared.cleaned || !lastError.Message.Contains(\"IVisualSnapshot\"))throw new Exception(\"unsafe copy\");");await Execute(g,state);
         // Stop after a sibling starts must drain it; cleanup callback faults are reported.
         var stop=G(N("p","parallel",new{branches=new[]{"work","stop"}}),C("work","using var registration=CancellationToken.Register(()=>throw new Exception(\"stop callback fault\"));try{await Task.Delay(60000,CancellationToken);}finally{await Task.Delay(20);Logger.Info(\"stop cleanup observed\");}"),N("delay","delay",new{seconds=Lit("number",.02)}),N("stop","stop"),C("join","throw new Exception(\"stop joined\");"));
         stop["edges"]=new JsonArray(E("t","p"),E("p","work","branch:work"),E("p","delay","branch:stop"),E("delay","stop"),E("p","join"));

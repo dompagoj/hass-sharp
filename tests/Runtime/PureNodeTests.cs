@@ -10,7 +10,7 @@ static class PureNodeTests
 {
     static JsonObject Unset() => new() { ["kind"] = "unset" };
     static JsonObject Reader(string id) => N(id, "log", new { value = Unset() });
-    static JsonObject Custom(string id, string code) => N(id, "custom", new { code });
+    static JsonObject Custom(string id, string code) => Code(id, code);
     static JsonObject Graph(JsonObject[] nodes, params JsonObject[] edges)
     {
         var graph = G(nodes);
@@ -98,8 +98,45 @@ static class PureNodeTests
                 try { await Logged(Budget(true)); throw new Exception("value nodes were not counted as steps"); }
                 catch (InvalidOperationException error) { Check(error.Message.Contains("100000"), "step limit message: " + error.Message); }
             }
+            await Readers();
             Console.WriteLine("PASS value nodes: worked out per reading step, in loop bodies, again after their source reruns, failures on the reader, step limit");
         }
         finally { PyInterop.Entity = previousEntity; HassPath.HassConfiguration = previousPath; }
+    }
+
+    static JsonObject Say(string id, string text) => N(id, "log", new { value = Lit("string", text) });
+    static JsonObject Two() => N("two", "constant", new { type = "number", value = Lit("number", 2) });
+
+    /// <summary>A value node is worked out before every kind of step that reads one, not only the plain steps.</summary>
+    static async Task Readers()
+    {
+        // If: the branch the value gives.
+        var branch = Graph([N("c", "constant", new { type = "boolean", value = Lit("boolean", false) }), N("i", "if", new { value = Unset() }), Say("yes", "true"), Say("no", "false")],
+            E("t", "i"), E("i", "yes", "true"), E("i", "no", "false"), D("c", "i", "value"));
+        Check((await Logged(branch)).SequenceEqual(["false"]), "a value node before If");
+        // A loop's own inputs: Repeat's count and For each's items.
+        var repeat = Graph([Two(), N("r", "repeat", new { count = Unset() }), Say("body", "iteration"), Say("after", "done")], E("t", "r"), E("r", "body", "body"), E("r", "after"), D("two", "r", "count"));
+        Check((await Logged(repeat)).SequenceEqual(["iteration", "iteration", "done"]), "a value node before a loop's count");
+        var items = Graph([N("a", "array_create", new { items = new[] { Lit("number", 4), Lit("number", 5) } }), N("f", "foreach", new { items = Unset(), itemType = "number" }), Reader("l")],
+            E("t", "f"), E("f", "l", "body"), D("a", "f", "items"), D("f", "l", "value", "item"));
+        Check((await Logged(items)).SequenceEqual(["4", "5"]), "a value node before a loop's items");
+        // Condition result: until stops after the first body because the value says so.
+        var until = Graph([N("u", "until", new { maxIterations = 5 }), Say("body", "iteration"), N("c", "constant", new { type = "boolean", value = Lit("boolean", true) }), N("cond", "condition_result", new { value = Unset() }), Say("after", "done")],
+            E("t", "u"), E("u", "body", "body"), E("u", "cond", "condition"), E("u", "after"), D("c", "cond", "value"));
+        Check((await Logged(until)).SequenceEqual(["iteration", "done"]), "a value node before Condition result");
+        // Loop result: the export is the value node's value.
+        var exports = Graph([N("r", "repeat", new JsonObject { ["count"] = Lit("number", 2), ["exports"] = new JsonArray(new JsonObject { ["name"] = "total", ["type"] = "number", ["initial"] = Lit("number", 0) }) }),
+                N("res", "loop_result", new { values = new JsonObject { ["export:total"] = Unset() } }), N("five", "constant", new { type = "number", value = Lit("number", 5) }), Reader("after")],
+            E("t", "r"), E("r", "res", "body"), E("r", "after"), D("five", "res", "export:total"), D("r", "after", "value", "export:total"));
+        Check((await Logged(exports)).SequenceEqual(["5"]), "a value node before Loop result");
+        // Parallel: each branch's step works the value node out in its own scope.
+        var parallel = Graph([N("p", "parallel", new { branches = new[] { "a", "b" } }), Two(), Reader("a"), Reader("b"), Say("after", "joined")],
+            E("t", "p"), E("p", "a", "branch:a"), E("p", "b", "branch:b"), E("p", "after"), D("two", "a", "value"), D("two", "b", "value"));
+        Check((await Logged(parallel)).OrderBy(m => m).SequenceEqual(["2", "2", "joined"]), "a value node in each parallel branch");
+        // Wait until: the value it waits for.
+        PyInterop.Entity = id => new() { EntityId = id, State = "2" };
+        var wait = Graph([Two(), N("w", "wait_until", new { entity = Lit("entity_id", "sensor.test"), type = "number", right = Unset(), timeout = Lit("number", 1), interval = Lit("number", .005) }), Say("after", "waited")],
+            E("t", "w"), E("w", "after"), D("two", "w", "right"));
+        Check((await Logged(wait)).SequenceEqual(["waited"]), "a value node before Wait until");
     }
 }

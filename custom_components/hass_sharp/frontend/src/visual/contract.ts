@@ -4,12 +4,12 @@ import { domainWords, typeLabel } from './typeLabels'
 /** The catalog's graphVersion is the visual graph format. The document/API envelope remains version 1. */
 export type DataType = string
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
-export type Operand = { kind: 'literal'; type: DataType; value: JsonValue } | { kind: 'variable'; name: string } | { kind: 'unset' }
+export type Operand = { kind: 'literal'; type: DataType; value: JsonValue } | { kind: 'unset' }
 export interface GraphNode { id: string; kind: string; config: Record<string, unknown>; label?: string; position?: { x: number; y: number } }
 export interface ExecutionEdge { id: string; kind?: 'execution'; source: string; target: string; port?: string }
 export interface DataEdge { id: string; kind: 'data'; source: string; target: string; sourcePort: string; targetPort: string }
 export type GraphEdge = ExecutionEdge | DataEdge
-export interface Graph { version: 5; name: string; nodes: GraphNode[]; edges: GraphEdge[]; imports?: string; members?: string }
+export interface Graph { version: 5; name: string; nodes: GraphNode[]; edges: GraphEdge[] }
 /** `code` names structural kinds (see `diagnosticCodes`), the same in both validators; other diagnostics have none. */
 export interface GraphDiagnostic { nodeId: string | null; message: string; severity: number; inputId?: string; portId?: string; code?: DiagnosticCode }
 export interface ConfigSpec { label?: string; description?: string; type: string; required?: boolean; default?: unknown; enum?: unknown[]; enumSource?: 'types'; min?: number; max?: number; pattern?: string; format?: 'date-time-offset'; minItems?: number; maxItems?: number }
@@ -22,7 +22,7 @@ export interface InputSpec {
 /** `when` names a boolean config key; the output exists only while it is true. */
 export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; pointer?: string; refineFrom?: string; when?: string }
 export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
-export interface TypeSpec { clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[] }
+export interface TypeSpec { clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[]; enumLabels?: string[] }
 export interface ParametricTypeSpec { param: string; valuePattern: string; label: string }
 /** Contract C4: one normalised Home Assistant service field. */
 export interface ServiceFieldSchema {
@@ -88,14 +88,60 @@ export function isAssignable(source: string, target: string, catalog: VisualCata
   if (source === target) return true
   if (resolveTypeSpec(target, catalog)!.refines !== undefined) return chain.includes(target)
   const root = chain.at(-1)!
-  return root === target || (catalog.types[root].assignableTo ?? []).includes(target)
+  if (root === target) return true
+  // The built-in number and every CLR number pin go into each other; a value that does not fit (a fraction for a
+  // whole number, or out of range) fails when the step runs. A number that may be missing does not go into number.
+  if ((root === 'number' && numeric(target, catalog)) || (target === 'number' && numeric(root, catalog) && catalog.types[root].nullable !== true)) return true
+  return (catalog.types[root].assignableTo ?? []).includes(target)
 }
+const numeric = (id: string, catalog: VisualCatalogSnapshot) => { const kind = resolveTypeSpec(id, catalog)?.literalKind; return kind === 'integer' || kind === 'number' }
 export function executionPorts(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
   const spec = nodeSpec(node.kind, catalog)
+  if (isPure(node, catalog)) return []
   return spec ? [...(spec.dynamicExecution === 'branches' && Array.isArray(node.config.branches) ? node.config.branches.filter((id): id is string => typeof id === 'string').map(id => `branch:${id}`) : []), ...(spec.execution ?? [])] : []
 }
-/** Whether the node is a value node: worked out each time a step reads it, with no place in the run order. */
-export const isPure = (node: GraphNode | string, catalog: VisualCatalogSnapshot = nodeCatalog) => nodeSpec(typeof node === 'string' ? node : node.kind, catalog)?.pure === true
+/**
+ * Whether the node is a value node: worked out each time a step reads it, with no place in the run order. A kind is
+ * one by its catalog entry; a Custom C# node by its signature.
+ */
+export const isPure = (node: GraphNode | string, catalog: VisualCatalogSnapshot = nodeCatalog) => {
+  const spec = nodeSpec(typeof node === 'string' ? node : node.kind, catalog)
+  return typeof node !== 'string' && spec?.dynamicInputs === 'custom' ? customSignature(node, catalog)?.pure === true : spec?.pure === true
+}
+/** The pins a Custom C# node's code gives, as the compiler wrote them into `config.signature`. */
+export interface CustomSignature { title: string; description: string; pure: boolean; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; types: Record<string, TypeSpec> }
+const pinId = '^[A-Za-z_][A-Za-z0-9_]*$'
+/**
+ * Whether a stored signature is one the compiler writes: a text `title` and `description`, a yes/no `pure`, and
+ * `inputs`, `outputs` and `types` objects; each input has a non-empty list of type ids and a yes/no `required`, each
+ * output a type id, each pin an identifier for its id, each type an object. Mirrors `VisualNodeCatalog.WellFormedSignature`.
+ */
+export function wellFormedSignature(signature: unknown): signature is CustomSignature {
+  if (!record(signature) || typeof signature.title !== 'string' || typeof signature.description !== 'string' || typeof signature.pure !== 'boolean') return false
+  const { inputs, outputs, types } = signature
+  if (!record(inputs) || !record(outputs) || !record(types)) return false
+  for (const [id, input] of Object.entries(inputs))
+    if (!matches(id, pinId) || !record(input) || !Array.isArray(input.types) || !input.types.length || !input.types.every(t => typeof t === 'string') || typeof input.required !== 'boolean') return false
+  for (const [id, output] of Object.entries(outputs)) if (!matches(id, pinId) || !record(output) || typeof output.type !== 'string') return false
+  return Object.values(types).every(record)
+}
+/** The signature of a Custom C# node when its kind takes its pins from one and it is well formed; else undefined. */
+export function customSignature(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): CustomSignature | undefined {
+  const signature = nodeSpec(node.kind, catalog)?.dynamicInputs === 'custom' && record(node.config) ? node.config.signature : undefined
+  return wellFormedSignature(signature) ? signature : undefined
+}
+/**
+ * The catalog with the types of the graph's Custom C# nodes added: each well-formed signature's `types`, in node
+ * order, where neither the catalog nor an earlier node has that id. The catalog itself when there are none. Mirrors
+ * `VisualNodeCatalog.WithGraphTypes`; both validators compare these types by their entries alone.
+ */
+export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): VisualCatalogSnapshot {
+  const added: Record<string, TypeSpec> = Object.create(null)
+  for (const node of record(graph) && Array.isArray(graph.nodes) ? graph.nodes : [])
+    if (record(node)) for (const [id, entry] of Object.entries(customSignature(node as unknown as GraphNode, catalog)?.types ?? {}))
+      if (!Object.hasOwn(catalog.types, id) && !Object.hasOwn(added, id)) added[id] = entry
+  return Object.keys(added).length ? { ...catalog, types: Object.assign(Object.create(null), catalog.types, added) } : catalog
+}
 export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, OutputSpec> {
   const spec = nodeSpec(node.kind, catalog)
   const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.outputs ?? {}).map(([key, value]) => [key, { ...value, type: configuredType(value.type, node) }]))) as Record<string, OutputSpec>
@@ -103,6 +149,7 @@ export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = no
     if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
     ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { type: item.type, label: item.name, description: `${key === 'carry' ? 'Kept between iterations' : 'Available after the loop'}: ${item.name}`, visibility: key === 'carry' ? 'loop' : 'outside' }
   }
+  if (spec?.dynamicOutputs === 'custom') Object.assign(ports, structuredClone(customSignature(node, catalog)?.outputs ?? {}))
   if (spec?.dynamicOutputs === 'trigger') Object.assign(ports, triggerOutputs(node, catalog))
   // An output with `when` exists only while that boolean config is true (D3, D9).
   for (const [key, port] of Object.entries(ports)) if (port.when && node.config[port.when] !== true) delete ports[key]
@@ -181,6 +228,7 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
       ports.target.types = ['target', ...(domains.length ? domains.map(d => `entity_id:${d}`) : ['entity_id'])]
     }
   }
+  if (dynamic === 'custom') Object.assign(ports, structuredClone(customSignature(node, catalog)?.inputs ?? {}))
   if (dynamic === 'items' && Array.isArray(node.config.items)) node.config.items.forEach((_, i) => { ports[`item:${i}`] = { types, required: true, label: `Item ${i + 1}`, description: `Item ${i + 1}` } })
   if (dynamic === 'loop' && loopOwner) for (const key of ['carry', 'exports'] as const) for (const item of declarations(loopOwner, key)) {
     if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
@@ -269,9 +317,14 @@ const blankEnds = /^[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205
 export const words = {
   /** A key or value people did not name, in words: `needs_action` → `Needs action`; never empty. */
   key: (key: string) => { const w = domainWords(key); return w.replace(blankEnds, '') ? w : 'Unnamed' },
-  /** A step as people see it on the canvas: its own label, else its kind's catalog label, else its kind in words. */
+  /**
+   * A step as people see it on the canvas: its own label, else (for a Custom C# node) its method's title, else its
+   * kind's catalog label, else its kind in words.
+   */
   stepName: (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string => {
     const label = typeof node.label === 'string' ? node.label.replace(blankEnds, '') : ''
+    const title = customSignature(node, catalog)?.title.replace(blankEnds, '') ?? ''
+    if (label || title) return label || title
     const kindLabel = typeof node.kind === 'string' && Object.hasOwn(catalog.nodes, node.kind) && typeof catalog.nodes[node.kind].label === 'string' ? catalog.nodes[node.kind].label.replace(blankEnds, '') : ''
     return label || kindLabel || words.key(typeof node.kind === 'string' ? node.kind : '')
   },
@@ -324,6 +377,18 @@ export const words = {
   scopeData: (subject: string) => `${subject} cannot use this value here: it is on the other side of a loop or parallel branch boundary`,
   /** A wire into an input the step does not have. */
   unknownInput: (port: string) => `This value wire goes into ${words.portLabel(undefined, port)}, which this step does not have`,
+  /** A Custom C# node whose stored signature is not one the compiler writes. */
+  malformedSignature: 'The pins of this node cannot be read; open Edit code and apply it',
+  /** A Custom C# node whose stored signature is not what its code gives (only the backend, which compiles it, knows). */
+  staleSignature: 'The pins are out of date with the code: open Edit code and apply it',
+  /** The things hand-written automations left behind, and what to do instead. */
+  oldCustomCode: "Custom C# code is now one static method marked [Node]; rewrite this node's code in that form",
+  imports: "Usings are no longer part of an automation; put using lines at the top of a Custom C# node's code",
+  members: "Helper members are no longer part of an automation; write them in a Custom C# node's code or a node library",
+  exposedValue: 'Steps no longer expose values to C# by name; connect a wire from this step to each step that uses its value',
+  variable: (subject: string) => `${subject} reads a variable, and variables are gone; connect a wire to it instead`,
+  entitiesExpression: 'Entities expression is gone; choose the entity in Entity',
+  schedulesExpression: 'Schedules expression is gone; set the time in Time',
 }
 /** The service a service node calls, named in its messages; undefined for other nodes or without a service id. */
 const serviceName = (node: GraphNode, catalog: VisualCatalogSnapshot) => nodeSpec(node.kind, catalog)?.dynamicInputs === 'service' && typeof node.config.service === 'string' && node.config.service ? node.config.service : undefined
@@ -367,7 +432,7 @@ export const diagnosticCodes = [
   'edge.invalid', 'edge.duplicate', 'edge.endpoint', 'edge.unknownKind', 'edge.valueWirePins', 'edge.orderWirePins', 'edge.orderPinName',
   'port.unknownExecution', 'port.executionTaken', 'port.unknownOutput', 'port.unknownInput', 'port.inputTaken', 'trigger.incoming',
   'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult',
-  'flow.pure', 'pure.unused',
+  'flow.pure', 'pure.unused', 'custom.signature',
 ] as const
 export type DiagnosticCode = typeof diagnosticCodes[number]
 /**
@@ -430,6 +495,8 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
 export const analyzeScopes = (value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog) => analyzeGraph(value, catalog).scopes
 /** Runs the validator once and keeps what it learned: diagnostics with origins, scopes and resolved input types. */
 export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): GraphAnalysis {
+  // The types of the graph's Custom C# nodes join the catalog's; they are compared by their entries alone.
+  catalog = withGraphTypes(catalog, value)
   const nodeSpec = (kind: unknown) => typeof kind === 'string' && Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined
   const knownType = (type: string) => typeChain(type, catalog).length > 0
   const executionPorts = (node: GraphNode) => catalogExecutionPorts(node, catalog)
@@ -454,7 +521,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   const scopes = new Map<string, Scope>()
   const resolvedTypes = new Map<string, Record<string, string | undefined>>()
   const ownerOf = (node: GraphNode) => { const s = scopes.get(node.id)?.at(-1); return s?.port === 'body' ? nodes.get(s.owner) : undefined }
-  const pure = (node: GraphNode) => nodeSpec(node.kind)?.pure === true
+  const pure = (node: GraphNode) => isPure(node, catalog)
   function visible(source: GraphNode, target: GraphNode, port: OutputSpec) {
     const b = scopes.get(target.id)
     return b !== undefined && visibleIn(source, b, port)
@@ -485,32 +552,11 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     visit(start)
     return found
   }
-  /** Where a node's values are worked out: a step's own scope; for a value node, the scope of every step that reads it, through other value nodes. */
-  function readerScopes(start: GraphNode) {
-    const found: Scope[] = [], seen = new Set<string>()
-    const visit = (node: GraphNode) => {
-      if (seen.has(node.id)) return
-      seen.add(node.id)
-      if (!pure(node)) { const s = scopes.get(node.id); if (s) found.push(s); return }
-      for (const edge of data) if (edge.source === node.id) visit(nodes.get(edge.target)!)
-    }
-    visit(start)
-    return found
-  }
-  /**
-   * Whether a variable a node publishes can be read by `reader`: from every scope the reader is worked out in, the
-   * producer must be visible as a wire from it would be; a value node publishes its variable where it is worked out.
-   */
-  function variableVisible(producer: GraphNode, reader: GraphNode, output: OutputSpec) {
-    const readers = readerScopes(reader)
-    if (!readers.length) return false
-    if (!pure(producer)) return readers.every(s => visibleIn(producer, s, output))
-    const producers = readerScopes(producer)
-    return readers.every(s => producers.some(at => isAncestor(at, s)))
-  }
   const analysis = (complete: boolean): GraphAnalysis => ({ diagnostics: errors, origins, complete, nodes, data, scopes, resolved: resolvedTypes, ownerOf, visible, pureSources })
   if (!record(value) || value.version !== catalog.graphVersion) { error(null, `Expected graph version ${catalog.graphVersion}`, undefined, undefined, 'graph.version'); return analysis(false) }
   if (typeof value.name !== 'string' || !value.name.trim()) error(null, 'Graph name is required', undefined, undefined, 'graph.name')
+  if (Object.hasOwn(value, 'imports')) error(null, words.imports)
+  if (Object.hasOwn(value, 'members')) error(null, words.members)
   if (!Array.isArray(value.nodes) || !Array.isArray(value.edges)) { error(null, 'Nodes and edges arrays are required', undefined, undefined, 'graph.shape'); return analysis(false) }
   const graph = value as unknown as Graph
   if (!graph.nodes.length || graph.nodes.length > catalog.limits.nodes || graph.edges.length > catalog.limits.edges) { error(null, 'Graph limit: 1–256 nodes and at most 512 edges', undefined, undefined, 'graph.limit'); return analysis(false) }
@@ -615,12 +661,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     const label = words.portLabel(spec, port), subject = inputSubject(node, spec, port, catalog), service = serviceName(node, catalog)
     if (!record(raw) || raw.kind === 'unset') { if (spec.required) error(node.id, service ? `${service} needs a value for ${label}` : `${label} is required`, port, port); else if (raw !== undefined && !record(raw)) error(node.id, `${subject} has an invalid value`, port, port); return }
     let type: string | undefined
-    if (raw.kind === 'variable') {
-      if (typeof raw.name !== 'string' || !matches(raw.name, catalog.structures.loopDeclaration.name.pattern)) { error(node.id, `${subject} uses a variable without a valid name`, port, port); return }
-      const candidates = [...nodes.values()].filter(n => typeof n.config.output === 'string' && n.config.output === raw.name && dataOutputs(n).value && variableVisible(n, node, dataOutputs(n).value))
-      type = candidates[0] ? dataOutputs(candidates[0]).value.type : undefined
-      if (!type || candidates.some(n => dataOutputs(n).value.type !== type)) error(node.id, `${subject} uses variable ${raw.name}, which no earlier step provides with a single type`, port)
-    } else if (raw.kind === 'literal') {
+    if (raw.kind === 'variable') { error(node.id, words.variable(subject), port, port); return }
+    if (raw.kind === 'literal') {
       type = text(raw.type, 'unknown')
       const v = raw.value
       const valid = validLiteral(type, v, catalog)
@@ -697,6 +739,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   }
   for (const node of nodes.values()) {
     const spec = nodeSpec(node.kind); if (!spec) continue
+    // A statement-style Custom C# node is reported once, with what to do; nothing else about it is checked.
+    if (spec.dynamicInputs === 'custom' && Object.hasOwn(node.config, 'code')) { error(node.id, words.oldCustomCode, 'source'); continue }
     for (const [field, rule] of Object.entries(spec.config)) {
       const v = node.config[field]
       const label = configLabel(rule, field)
@@ -732,12 +776,15 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       for (const d of serviceTargetDiagnostics(node, connected, catalog)) error(d.nodeId, d.message, d.inputId)
       origin = graphOrigin
     }
-    if (node.config.output !== undefined && (typeof node.config.output !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(node.config.output))) error(node.id, `${configLabel(spec.config.output, 'output')} must use only letters, digits and underscores and not start with a digit`, 'output')
+    if (Object.hasOwn(node.config, 'output')) error(node.id, words.exposedValue, 'output')
+    if (spec.dynamicInputs === 'custom' && record(node.config.signature) && !wellFormedSignature(node.config.signature)) error(node.id, words.malformedSignature, 'source', undefined, 'custom.signature')
     if (node.kind === 'trigger') {
       const type = node.config.type ?? spec.config.type.default
       const required = type === 'ha' ? ['trigger'] : type === 'entity' ? ['entity'] : type === 'daily' ? ['time','timeZone'] : type === 'once' ? ['at'] : []
       for (const field of required) if (node.config[field] === undefined || node.config[field] === '') error(node.id, `${configLabel(spec.config[field], field)} is required`, field)
       if (type === 'ha' && record(node.config.trigger) && ![node.config.trigger.trigger, node.config.trigger.platform].some(p => typeof p === 'string' && p.trim())) error(node.id, 'Home Assistant trigger needs a platform', 'trigger')
+      if (Object.hasOwn(node.config, 'entitiesExpression')) error(node.id, words.entitiesExpression, 'entitiesExpression')
+      if (Object.hasOwn(node.config, 'schedulesExpression')) error(node.id, words.schedulesExpression, 'schedulesExpression')
     }
     if (['entity_field','wait_until'].includes(node.kind) && node.config.field === 'attribute' && (typeof node.config.attribute !== 'string' || !node.config.attribute.trim())) error(node.id, 'Attribute is required', 'attribute')
     // A path that starts with / can still be wrong in one way: a ~ that is not ~0 (a ~ in a key) or ~1 (a / in a key).
@@ -788,7 +835,8 @@ export function addGraphNode(graph: Graph, kind: string, id: string, catalog: Vi
   for (const [key, value] of Object.entries(spec.config)) if (value.default !== undefined) config[key] = structuredClone(value.default)
   const storage = spec.argumentStorage === 'arguments' ? (config.arguments ??= {}) as Record<string, unknown> : config
   for (const [key, value] of Object.entries(spec.inputs)) if (value.default !== undefined) storage[key] = structuredClone(value.default)
-  return fillGraphLayout({ ...graph, nodes: [...graph.nodes, { id, kind, label: spec.label, config }] })
+  // A Custom C# node is titled by its method until someone names it.
+  return fillGraphLayout({ ...graph, nodes: [...graph.nodes, { id, kind, ...(spec.dynamicInputs === 'custom' ? {} : { label: spec.label }), config }] })
 }
 /** Returns a new immutable graph; the caller records that graph as one undo entry. */
 export function connectData(graph: Graph, source: string, sourcePort: string, target: string, targetPort: string, catalog: VisualCatalogSnapshot = nodeCatalog): Graph {

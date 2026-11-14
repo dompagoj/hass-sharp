@@ -66,16 +66,16 @@ static class VisualTypesTests
         Check(!generated.Contains("var responses=") && !generated.Contains(".Responses"), "no legacy responses variable is generated");
 
         // Convert narrows only a value that satisfies every pattern in the target chain; the Log that reads it works it out.
-        JsonObject Narrow(string text) => G(N("s", "constant", new { type = "string", value = Lit("string", text) }), N("c", "convert", new { type = "entity_id:light", value = new { kind = "unset" }, output = "light" }),
-            N("show", "log", new { value = new { kind = "unset" } }), N("verify", "custom", new { code = "if(values.Get<string>(\"light\",\"verify\")!=\"light.kitchen\")throw new Exception(\"narrowed value changed\");" }));
-        var narrow = Narrow("light.kitchen"); narrow["edges"]!.AsArray().Add(D("s", "c", "value")); narrow["edges"]!.AsArray().Add(D("c", "show", "value"));
+        JsonObject Narrow(string text) => G(N("s", "constant", new { type = "string", value = Lit("string", text) }), N("c", "convert", new { type = "entity_id:light", value = new { kind = "unset" } }),
+            N("show", "log", new { value = new { kind = "unset" } }), Code("verify", "if(light!=\"light.kitchen\")throw new Exception(\"narrowed value changed\");", "string light"));
+        var narrow = Narrow("light.kitchen"); narrow["edges"]!.AsArray().Add(D("s", "c", "value")); narrow["edges"]!.AsArray().Add(D("c", "show", "value")); narrow["edges"]!.AsArray().Add(D("c", "verify", "light"));
         await Execute(narrow);
-        var mismatch = Narrow("switch.kitchen"); mismatch["edges"]!.AsArray().Add(D("s", "c", "value")); mismatch["edges"]!.AsArray().Add(D("c", "show", "value"));
+        var mismatch = Narrow("switch.kitchen"); mismatch["edges"]!.AsArray().Add(D("s", "c", "value")); mismatch["edges"]!.AsArray().Add(D("c", "show", "value")); mismatch["edges"]!.AsArray().Add(D("c", "verify", "light"));
         try { await Execute(mismatch); throw new Exception("pattern mismatch narrowed"); }
         catch (InvalidOperationException error) when (error.Message.Contains("Cannot convert c.value to entity_id:light")) { }
         // Run time matches type patterns as the validators do (JavaScript dialect): $ ends the text, so a trailing
         // newline does not slip past it as it would with .NET's Regex.IsMatch.
-        var newline = Narrow("light.kitchen\n"); newline["edges"]!.AsArray().Add(D("s", "c", "value")); newline["edges"]!.AsArray().Add(D("c", "show", "value"));
+        var newline = Narrow("light.kitchen\n"); newline["edges"]!.AsArray().Add(D("s", "c", "value")); newline["edges"]!.AsArray().Add(D("c", "show", "value")); newline["edges"]!.AsArray().Add(D("c", "verify", "light"));
         try { await Execute(newline); throw new Exception("a trailing newline narrowed to entity_id:light"); }
         catch (InvalidOperationException error) when (error.Message.Contains("Cannot convert c.value to entity_id:light")) { }
         Console.WriteLine("PASS visual types: parametric resolution, refinement before Roslyn, library root wires and runtime narrowing");

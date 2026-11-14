@@ -897,10 +897,10 @@ it('selects new, pasted and duplicated steps when a parent applies the change la
   await vi.waitFor(() => expect(selections.at(-1)).toEqual([graph().nodes.at(-1)!.id]))
 })
 
-it('does not copy C# variable names into pasted steps, and says so; leaves Ctrl+C to selected text', async () => {
+it('copies, duplicates and pastes steps from the keyboard, and leaves Ctrl+C to selected text', async () => {
   const host = root()
   let start = addNode(createGraph('Heating'), 'constant', 'named')
-  start = updateNode(start, 'named', { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 1 }, output: 'level' } })
+  start = updateNode(start, 'named', { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 1 } } })
   const history = createGraphHistory(start)
   dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
   const node = (id: string) => host.querySelector<HTMLElement>(`.solid-flow__node[data-id="${id}"]`)!
@@ -919,14 +919,12 @@ it('does not copy C# variable names into pasted steps, and says so; leaves Ctrl+
   key(node('named'), 'd', { ctrlKey: true })
   const copy = history.graph().nodes.at(-1)!
   expect(copy.id).not.toBe('named')
-  expect(copy.config.output).toBeUndefined()
-  expect(history.graph().nodes.find(n => n.id === 'named')!.config.output).toBe('level')
-  expect(host.textContent).toContain('Duplicated 1 step; variable names were not copied')
+  expect(copy.config).toEqual(history.graph().nodes.find(n => n.id === 'named')!.config)
   key(node('named'), 'c', { ctrlKey: true })
   expect(host.textContent).toContain('Copied 1 step')
+  const before = history.graph().nodes.length
   key(host.querySelector('.hs-flow')!, 'v', { ctrlKey: true })
-  await vi.waitFor(() => expect(host.textContent).toContain('Pasted 1 step; variable names were not copied'))
-  expect(history.graph().nodes.filter(n => n.config.output === 'level')).toHaveLength(1)
+  await vi.waitFor(() => expect(history.graph().nodes).toHaveLength(before + 1))
 })
 
 it('never puts a step added from a pin on another card: after Tidy, the spot beside the pin moves below the card there', async () => {

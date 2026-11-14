@@ -232,12 +232,12 @@ function StepValues(props: {
                 ports={inputOrder(props.graph, props.node, inputs(), props.catalog)}
                 value={port => inputs()[port]}
                 label={port => inputLabel(props.graph, props.node, port, props.catalog)}
-                source={(port, value) => (
-                  <Show when={value.src} fallback={<span class="hs-trace-port__source">{inputSource(props.graph, props.node, port, value, props.catalog)}</span>}>
+                source={(_port, value) => (
+                  <Show when={value.src} fallback={<span class="hs-trace-port__source">{inputSource(props.graph, value, props.catalog)}</span>}>
                     {src => (
                       <button type="button" class="hs-insp-pill hs-trace-port__from" style={{ '--hs-chip-color': typeColor(value.type, props.catalog) }}
                         title="Select the step it came from" onClick={() => props.onSelectSource(src().node)}>
-                        <span>{inputSource(props.graph, props.node, port, value, props.catalog)}</span>
+                        <span>{inputSource(props.graph, value, props.catalog)}</span>
                       </button>
                     )}
                   </Show>

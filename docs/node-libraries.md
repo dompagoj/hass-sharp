@@ -1,93 +1,189 @@
-# Custom C# node libraries
+# Writing C# nodes
+
+C# enters a visual automation in one way: a public static method marked `[Node]`.
+The method's parameters are the node's input pins and its return value is its output
+pin. Write such a method in either of two places:
+
+- **A Custom C# node** in one automation. Its code is one static class with exactly
+  one `[Node]` method. Helper methods and types can sit beside it, and `using` lines
+  go at the top. The node shows the method's pins, title and description.
+- **A node library**, for methods several automations share. Each `[Node]` method
+  in a library becomes a node kind in the catalog.
+
+## Node methods
+
+```csharp
+public static class CustomNode
+{
+    /// <summary>Greets someone by name and writes the greeting to the log.</summary>
+    /// <param name="name">Who to greet.</param>
+    /// <returns>The greeting.</returns>
+    [Node("Greeting")]
+    public static string Greet(string name, NodeContext context)
+    {
+        var greeting = $"Hello, {name}";
+        context.Log(greeting);
+        return greeting;
+    }
+}
+```
+
+- **Title and description.** `[Node("Title")]` names the node. The XML `<summary>`
+  is its description, each `<param>` describes an input and `<returns>` describes
+  the output.
+- **Inputs.** The parameter name is the pin's id. Its label is the name in words
+  (`roomName` becomes "Room name"), or the text of `[Port("Label")]` on the
+  parameter. Optional parameters keep their C# defaults.
+- **Outputs.** A plain return value is the output `result`, labelled "Result" or by
+  `[return: Port("Label")]`. A tuple whose elements are all named gives one output
+  per element. For example, `(double Average, double Max)` gives `average` and
+  `max`, labelled "Average" and "Max". Unnamed or repeated element names are
+  refused. `void`, `Task` and `ValueTask` give no output. A `Task<T>` or
+  `ValueTask<T>` is awaited, and its value is the output.
+- **Supplied by the run.** A `CancellationToken` or `NodeContext` parameter is not a
+  pin; the run passes it in. `NodeContext` is a sealed class that may gain members
+  later. It has:
+  - `CancellationToken`: cancelled when the run stops;
+  - `RunId`: as the run history shows it;
+  - `Trigger`: the trigger's Data output;
+  - `Error`: the most recent failure on this path, or null;
+  - `State(entityId)`: reads an entity as Read entity does;
+  - `CallService(service, target, data, returnResponse)`: calls a service as Call
+    service does, and waits for it;
+  - `Log(message, level)`: writes to the Home Assistant log.
+- **Value nodes.** `[Node("Title", Pure = true)]` makes the method a value node, like
+  Constant or Compare. It has no place in the run order and is worked out each time
+  a step uses its result, in that step's scope. It must return a value.
+- **Numbers.** A pin of any CLR number type (`int`, `long`, `double`, `decimal`, …)
+  and the built-in Number go into each other. A value that does not fit fails the
+  step when it runs, with a message such as "Count · How many needs a whole number
+  from -2147483648 to 2147483647, not 2.5". A nullable number output (`int?`) does
+  not go into a Number input, because it may be missing.
+- **Enums.** An enum pin offers its members by name in words, from the type's
+  `enumLabels` (listed in the same order as `enumValues`).
+- **Refused.** Methods that are not public static, open generic methods or
+  containers, `ref`/`in`/`out` parameters, `ref` returns, pointer and ref-like
+  types, static abstract interface methods and `async void`. Two node methods of the
+  same name in one type are refused with "Give each node method its own name".
+
+Pins carry the CLR type, never a refined catalog type. A `string` parameter accepts an
+`entity_id` or `entity_id:light` value, because those refine `string`. A `string`
+result does not fit an `entity_id` input such as Read entity's, or a domain-filtered
+service target, because a string is not known to be an entity ID. Pass such a result
+through a Convert node set to the input's type (`entity_id`, or `entity_id:light` for
+a light target). An `EntityStateSnapshot` parameter can be wired directly from Read
+entity or from a trigger's New state and Previous state outputs.
+
+Pins support CLR classes, records, interfaces, enums, nullable types, arrays and
+closed generics. The catalog's `assignableTo`, `nullable` and `literalKind` metadata
+say what fits where. An arbitrary object type does not get a value editor.
+
+## Custom C# nodes
+
+A new Custom C# node starts from a template method. Its stored configuration is:
+
+- `source`: the code;
+- `arguments`: one value per input;
+- `signature`: the pins, worked out from the code.
+
+The signature holds the title, description, `pure`, the inputs and outputs, and the
+types only this code declares, such as a record defined beside the method. The code
+is compiled in its own namespace, `NodeLib.Custom_<node id>`, with the libraries in
+reach.
+
+The code editor is not built yet. The inspector shows the node's pins and description,
+and its code read-only, with the note "Editing arrives with the code editor". MCP
+authoring sends `source` and `arguments`: preview and save work the signature out from
+the code (`deriveSignatures`). Both validators refuse a stored signature that is not
+one the compiler writes, with code `custom.signature`. The backend refuses one that no
+longer matches the code: "The pins are out of date with the code: open Edit code and
+apply it". The node library API's `custom_preview` compiles one node's code and
+returns its signature and diagnostics. Completion, hover, signature help, formatting
+and go-to-definition work on a node's unsaved code beside the libraries (`custom: true`).
+
+Older Custom C# code (statements reading `values`, `lastError` and `TriggerData`) is
+refused: "Custom C# code is now one static method marked [Node]; rewrite this node's
+code in that form". The failure details of a path are now the **Error details** value
+node (its Message and Step outputs) or `NodeContext.Error`.
+
+## Node libraries
 
 Create a file in the **Node libraries** view, or use the administrator MCP
 `library_preview` / `library_save` tools. The source is wrapped inside namespace
-`NodeLib`; provide namespace contents, not an outer file-scoped namespace.
-Libraries compile together with generated entity symbols and the framework
-references used by automations. Their source is stored in Home Assistant's
+`NodeLib`; provide namespace contents, not an outer file-scoped namespace. Libraries
+compile together with generated entity symbols and the framework references used by
+automations. Their source is stored in Home Assistant's
 `.storage/hass_sharp/libraries` directory through the revision-checked authoring
 store. Editing files directly bypasses the authoring conflict checks.
 
-This complete harmless library accepts an entity snapshot, returns a record and
-then accepts its interface in another typed node:
+This complete harmless library accepts an entity's state and returns a record. A
+second node accepts the record's interface, and a third is a value node:
 
 ```csharp
 public interface IReading { string State { get; } }
 public record Reading(string State) : IReading;
 public static class Samples
 {
-    /// <summary>Describe a detached Home Assistant entity.</summary>
-    /// <param name="entity">The current entity snapshot.</param>
-    /// <returns>A typed reading.</returns>
+    /// <summary>Reads what a Home Assistant entity's state says.</summary>
+    /// <param name="entity">The entity's current state.</param>
+    /// <returns>Its reading.</returns>
     [Node("Describe", Category = "Examples")]
     [return: Port("Reading")]
-    public static Reading Describe([Port("Entity state")] EntityStateSnapshot entity)
-        => new(entity.State);
+    public static Reading Describe([Port("Entity state")] EntityStateSnapshot entity) => new(entity.State);
 
-    /// <summary>Format a reading without changing devices.</summary>
+    /// <summary>Writes a reading as a sentence, without changing devices.</summary>
     [Node("Format reading")]
     public static string Format(IReading reading) => $"State: {reading.State}";
+
+    /// <summary>The text in capitals. A value node: it is worked out when a step uses it.</summary>
+    [Node("Shout", Category = "Examples", Pure = true)]
+    public static string Shout(string text) => text.ToUpperInvariant();
 }
 ```
 
-Save it with ID `example` and name `Example.cs`. Add the following execution chain:
-**Manual trigger → Read entity → Describe → Format reading → Log**. Choose a real
-entity ID in Read entity. Wire its `value` output to Describe's `entity` input,
-Describe's `result` to Format reading's `reading`, and Format reading's `result` to
-Log's `value`. The catalog supplies those exact custom kinds and CLR types; the
-interface assignment is checked by Roslyn. The complete graph JSON, complete
-library source and the other authoring examples ship in
+Save it with ID `example` and name `Example.cs`. Add the execution chain **Manual
+trigger → Read entity → Describe → Format reading → Log**, and choose a real entity ID
+in Read entity. Then wire:
+
+- Read entity's `value` output to Describe's `entity` input;
+- Describe's `result` to Format reading's `reading`;
+- Format reading's `result` to Shout's `text`;
+- Shout's `result` to Log's `value`.
+
+Shout takes no step order wire. Roslyn checks the interface assignment. The complete
+graph JSON, the library source and the other authoring examples ship in
 [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json)
-and are returned by `get_capabilities`. Preview the graph, save, then manually run
-its `start` trigger to write a log entry. Reading state does not control a device.
+and are returned by `get_capabilities`. Preview the graph, save it, then run its
+`start` trigger by hand to write a log entry. Reading state does not control a device.
 
-`[Node]` marks public static methods on public nongeneric containing types.
-`[Port]` labels parameters and return ports; XML summary/parameter/return comments
-become catalog documentation. Parameter names are port IDs. Optional parameters
-retain their C# defaults. A `CancellationToken` parameter is supplied by the
-runtime and is not a graph input. Synchronous void and nongeneric Task/ValueTask
-produce execution only; generic Task/ValueTask results are awaited and become the
-`result` port. Preview inspects symbols without invoking attributes, static
-initializers or methods.
-
-Ports support actual CLR classes, records, interfaces, enums, nullable types,
-arrays and closed generics. Use the catalog's `assignableTo`, `nullable` and
-`literalKind` metadata; arbitrary object types do not automatically gain a JSON
-literal editor.
-
-Ports carry the CLR type, never a refined catalog type. A `string` parameter
-accepts an `entity_id` or `entity_id:light` value, because those refine
-`string`; a `string` result does not fit an `entity_id` input such as Read
-entity's, or a domain-filtered service target, because a string is not known to
-be an entity ID. Pass such a result through a Convert node set to the input's type
-(`entity_id`, or `entity_id:light` for a light target). An `EntityStateSnapshot`
-parameter can be wired directly from Read entity or from a trigger's New state and
-Previous state outputs. Open generic methods/containers, ref/in/out parameters, ref
-returns, pointer/ref-like ports, static abstract interface methods and async void
-are rejected. Custom kinds include source ID and the fully qualified method and
-parameter signature; changing a type can change a kind. Renaming a file preserves
-its stable ID and kinds.
+A library node's kind is `library:<source id>:<type>.<method>`. Each segment is
+URI-escaped, as in `library:example:global%3A%3ANodeLib.Samples.Describe`. Changing a
+method's parameters keeps its kind; renaming the method or its type changes it.
+Renaming a file keeps its stable ID and kinds. Preview inspects symbols without
+invoking attributes, static initializers or methods.
 
 The library editor supports full Roslyn completion, diagnostics, hover, signature
-help with named parameters, formatting, and cross-file go-to-definition. Drafts
-use immutable multi-file workspaces. The frontend discards obsolete responses
-using model/workspace identities; saved catalog generation differs from the draft
-source generation. A rejected save preserves the prior source and active graphs.
-A successful save/rename/delete recompiles all graphs and advances their revisions.
-Deleting a still-referenced type or method is rejected with dependency diagnostics.
+help with named parameters, formatting, and cross-file go-to-definition. Drafts use
+immutable multi-file workspaces. The frontend discards obsolete responses using
+model/workspace identities; the saved catalog generation differs from the draft
+source generation. A rejected save keeps the prior source and the active graphs. A
+successful save, rename or delete recompiles all graphs and advances their revisions.
+Deleting a type or method that is still in use is rejected with dependency
+diagnostics.
 
 ## Scope snapshots
 
 Branch, loop and structured error scopes isolate values through detached deep
-snapshots. An entity snapshot is immutable. JSON nodes, arrays, lists,
-dictionaries and ordinary user classes/records are copied; aliases within one
-scope remain aliases within that scope. Nullable values retain their null state.
-A value being compile-time assignable does not guarantee that it can be copied at
-a scope boundary.
+snapshots. An entity snapshot is immutable. JSON nodes, arrays, lists, dictionaries
+and ordinary user classes and records are copied. Aliases within one scope remain
+aliases within that scope. Nullable values keep their null state. A value being
+assignable at compile time does not guarantee that it can be copied at a scope
+boundary.
 
-Live resources such as streams, tasks, delegates, safe handles and unsupported
-framework object graphs fail with a precise snapshot error. For custom resource
-containers implement `IVisualSnapshot.CreateVisualSnapshot()` to return a detached
-instance of the same concrete type, deeply copying every reachable mutable
-object. Returning the original object or a shallow copy violates the contract.
-Keep IO/resources inside the method body; return data suitable for the next scope.
+Live resources fail with a precise snapshot error. These include streams, tasks,
+delegates, safe handles and unsupported framework object graphs. For your own
+resource containers, implement `IVisualSnapshot.CreateVisualSnapshot()`. It must
+return a detached instance of the same concrete type, deeply copying every reachable
+mutable object; returning the original object or a shallow copy violates the
+contract. Keep IO and resources inside the method body, and return data the next
+scope can use.

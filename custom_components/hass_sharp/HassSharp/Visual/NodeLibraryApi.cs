@@ -67,6 +67,37 @@ public partial class HassSharpManager
             if (operation == "catalog") return Success(new { catalog = saved.Preview.Snapshot.Catalog, generation = saved.Generation, servicesGeneration = ServiceSchemas.Generation, saved = true, valid = saved.Preview.Valid, diagnostics = saved.Preview.Diagnostics });
             if (operation == "list") return Success(new { documents = saved.Documents, generation = saved.Generation });
             if (operation == "service_ports") return Success(ServicePorts(RequiredString(request, "service"), AuthoringSnapshot(saved.Preview.Snapshot)));
+            // A Custom C# node's code: its pins as the compiler derives them, and the language services, beside the saved libraries.
+            var customRequest = request["custom"] is JsonValue flag && flag.TryGetValue<bool>(out var custom) && custom;
+            if (operation == "custom_preview" || customRequest && operation is "completion" or "hover" or "signature" or "format" or "definition")
+            {
+                var nodeId = request["nodeId"] is JsonValue node ? node.GetValue<string>() : "custom";
+                if (nodeId.Length == 0) throw new ArgumentException("nodeId must not be empty");
+                var code = new CustomNodeSource(nodeId, RequiredString(request, "source"));
+                var libraries = saved.Documents.ToDictionary(d => d.Id, d => d.AsSource(), StringComparer.Ordinal);
+                if (request["sources"] is JsonArray edited)
+                foreach (var item in edited)
+                {
+                    var change = item!.AsObject(); var sourceId = RequiredString(change, "id"); NodeLibraryStore.ValidateId(sourceId);
+                    libraries[sourceId] = new(sourceId, RequiredString(change, "source"), libraries.GetValueOrDefault(sourceId)?.Revision ?? 0);
+                }
+                var ordered = libraries.Values.OrderBy(s => s.Id, StringComparer.Ordinal).ToArray();
+                if (operation == "custom_preview")
+                {
+                    var compiled = new NodeLibraryCompiler(_diagnosticsProvider).Preview(ordered, [code], _languageLifetime.Token);
+                    var result = compiled.Snapshot.Custom[nodeId];
+                    return Success(new { valid = compiled.Valid && result.Valid, diagnostics = result.Diagnostics, signature = result.Signature });
+                }
+                var workspace = RequiredString(request, "workspaceVersion");
+                if (request["generation"] is {} current && current.GetValue<string>() != saved.Generation) throw new VisualConflictException();
+                var lifetime = _languageLifetime.Token;
+                var request_ = new NodeLibraryLanguageServices(_diagnosticsProvider).RequestAsync(operation, ordered, code, request["position"]?.GetValue<int>() ?? 0, lifetime);
+                _visualGate.Release();
+                object answer;
+                try { answer = await request_; }
+                finally { await _visualGate.WaitAsync(); }
+                return Success(new { id = nodeId, workspaceVersion = workspace, generation = saved.Generation, saved = false, data = answer });
+            }
             var id = RequiredString(request, "id"); NodeLibraryStore.ValidateId(id);
             var old = saved.Documents.SingleOrDefault(d => d.Id == id);
             if (operation == "read") return Success(old ?? throw new FileNotFoundException("Library document not found"));

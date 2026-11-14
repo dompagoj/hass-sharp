@@ -51,6 +51,15 @@ function mount(view: () => any) {
 }
 
 describe('widgetFor', () => {
+  it('names the members of a C# enum by their labels, and falls back to the values when the labels do not fit', () => {
+    const mode = { label: 'Mode', description: 'Mode', category: 'String', nullable: false, literalKind: 'enum', enumValues: [0, 1], enumLabels: ['Off', 'On'], assignableTo: ['global::NodeLib.Mode'] }
+    const types = (spec: object) => ({ ...catalog, types: { ...catalog.types, 'global::NodeLib.Mode': spec } }) as unknown as VisualCatalogSnapshot
+    const input = { types: ['global::NodeLib.Mode'], required: true, description: '' }
+    expect(widgetFor(input, types(mode))).toEqual({ kind: 'select', multiple: false, options: [{ value: 0, label: 'Off' }, { value: 1, label: 'On' }] })
+    // A card shows the member's name for a stored value.
+    expect(valueSummary(widgetFor(input, types(mode)), 1)).toBe('On')
+    expect(widgetFor(input, types({ ...mode, enumLabels: ['Off'] }))).toEqual({ kind: 'select', multiple: false, options: [{ value: 0, label: '0' }, { value: 1, label: '1' }] })
+  })
   it('maps every C3 selector row of the services fixture', () => {
     expect(widgetFor(field('hass_sharp_test.odd_texts', 'odd_label'), catalog)).toMatchObject({ kind: 'toggle' })
     expect(widgetFor(field('light.turn_on', 'brightness_pct'), catalog)).toEqual({ kind: 'number', multiple: false, slider: true, min: 0, max: 100, step: 1, unit: '%' })

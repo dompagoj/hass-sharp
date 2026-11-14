@@ -92,11 +92,19 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await self.call('list',{})).error)
         self.assertEqual(self.service.visual.await_count,1)
     async def test_editor_graph_schema_and_capability_examples(self):
-        graph={'version':5,'name':'Complete','imports':'using System;',
+        graph={'version':5,'name':'Complete',
                'nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'}},{'id':'log','kind':'log','config':{'value':{'kind':'literal','type':'string','value':'safe'}}}],
                'edges':[{'id':'flow','kind':'execution','source':'t','target':'log','port':'next'}]}
+        # A model sends a Custom C# node's code; preview and save work its pins out from it.
         self.assertFalse((await self.call('preview',{'graph':graph})).error)
-        self.service.visual.assert_awaited_with({'operation':'preview','graph':graph},is_admin=True)
+        self.service.visual.assert_awaited_with({'operation':'preview','graph':graph,'deriveSignatures':True},is_admin=True)
+        await self.call('save',{'id':'x','expectedRevision':0,'graph':graph})
+        self.service.visual.assert_awaited_with({'operation':'save','id':'x','expectedRevision':0,'graph':graph,'deriveSignatures':True},is_admin=True)
+        # Usings and helper members are no longer part of a graph.
+        calls=self.service.visual.await_count
+        for removed in ({'imports':'using System;'},{'members':'int X;'}):
+            self.assertEqual((await self.call('preview',{'graph':{**graph,**removed}})).data['error']['code'],'invalid_request')
+        self.assertEqual(self.service.visual.await_count,calls)
         self.service.node_library.return_value['result']['generation']='catalog-generation'
         result=await self.call('get_capabilities',{})
         self.assertFalse(result.error,result.data)
@@ -199,6 +207,9 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         capabilities=(await self.call('get_capabilities',{})).data['result']
         self.assertEqual(set(capabilities['semantics']),{'execution','types','triggers','service','runs','csharp'})
         self.assertIn('Value nodes (catalog pure: true',capabilities['semantics']['execution'])
+        self.assertIn('[Node(',capabilities['semantics']['csharp'])
+        for removed in ('imports','members','kind: variable','config.output','lastError','entitiesExpression'):
+            self.assertNotIn(removed,' '.join(capabilities['semantics'].values()))
 
     async def test_graph_schema_has_no_node_size(self):
         graph={'version':5,'name':'Sized','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'},'size':{'width':220,'height':112}}],'edges':[]}

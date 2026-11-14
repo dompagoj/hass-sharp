@@ -25,29 +25,34 @@ static class BackendReviewTests
             var diagnostics = new DiagnosticsProvider(); diagnostics.GenerateHassEntities(["binary_sensor.motion", "light.hall"]);
             var generator = new VisualGenerator(diagnostics);
             var compiler = new CodeCompiler(diagnostics);
-            foreach (var symbol in new[] { "Dispatch", "stopped", "values", "executed" })
+            // Custom C# code sits in its own namespace: names the generated automation uses, or that another node's code
+            // declares, never meet it.
+            async Task Runs(JsonObject graph, string name, string expected)
             {
-                await Test($"v4 {symbol} binding survives compiled execution", async () => {
-                    var preview = generator.Preview(VisualTests.MemberBindingGraph(symbol));
-                    Check(preview.Valid, "v4 member preview rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
-                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "binding-" + symbol + ".cs"), preview.Source);
-                    try {
-                        var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
-                        await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
-                        Check((bool)instance.GetType().GetField("Completed")!.GetValue(instance)!, "v4 continuation was skipped");
-                    } finally { compiled.Unload(); }
-                });
-                await Test($"saved v4 {symbol} binding survives startup regeneration", async () => {
-                    var graph = VisualTests.MemberBindingGraph(symbol);
+                var preview = generator.Preview(graph);
+                Check(preview.Valid, name + " preview rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
+                var compiled = await compiler.CompileSingleFile(Path.Combine(root, name + ".cs"), preview.Source);
+                try {
+                    var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
+                    await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
+                    lock (logs) Check(logs.Contains(expected), name + " did not log " + expected);
+                } finally { compiled.Unload(); }
+            }
+            foreach (var symbol in new[] { "Dispatch", "stopped", "values", "executed", "step", "__visual_scope", "__hassSharpStep", "Configure", "TriggerData" })
+            {
+                await Test($"v5 custom code member {symbol} survives compiled execution", () => Runs(VisualTests.IdentifierGraph(symbol), "binding-" + symbol.Trim('_'), "binding-" + symbol + "-Startup"));
+            }
+            foreach (var symbol in new[] { "Dispatch", "values" })
+                await Test($"saved v5 {symbol} binding survives startup regeneration", async () => {
+                    var graph = VisualTests.IdentifierGraph(symbol);
                     var directory = Path.Combine(root, ".storage", "hass_sharp", "visual");
                     Directory.CreateDirectory(directory);
                     var id = "binding-" + symbol.ToLowerInvariant();
-                    // A saved v4 document must load even if its old generated source is usable.
-                    var source = $$"""
+                    // A saved document must load from its graph even if its old generated source is usable.
+                    var source = """
                     public class VisualAutomation : Automation {
-                      {{graph["members"]!.GetValue<string>()}}
                       public override AutomationConfiguration Configure() => new(new AutomationAction("Run_74", Startup: true));
-                      public async Task Run_74() { {{graph["nodes"]![1]!["config"]!["code"]!.GetValue<string>()}} {{graph["nodes"]![2]!["config"]!["code"]!.GetValue<string>()}} }
+                      public Task Run_74() => Task.CompletedTask;
                     }
                     """;
                     var path = Path.Combine(directory, id + ".json");
@@ -59,55 +64,23 @@ static class BackendReviewTests
                     var api = new HassSharpManager(root);
                     try {
                         await api.Init(["binary_sensor.motion", "light.hall"]);
-                        Check(VisualTests.Loaded(api, id) != null, "saved v4 graph failed activation");
+                        Check(VisualTests.Loaded(api, id) != null, "saved v5 graph failed activation");
                         await completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
                         var stored = JsonNode.Parse(File.ReadAllText(path))!;
                         Check(stored["revision"]!.GetValue<long>() == 1 && stored["graph"]!.ToJsonString() == graph.ToJsonString(), "startup changed the saved revision or graph");
                         Check(stored["source"]!.GetValue<string>() == VisualTests.Loaded(api, id)!.CompiledScript.SourceCode, "startup did not store the regenerated source");
                     } finally { api.Unload(); PyInterop.Log = oldLog; File.Delete(path); }
                 });
-            }
-            foreach (var symbol in new[] { "Dispatch", "stopped", "executed" })
-                await Test($"v4 internal controls preserve authored {symbol} binding", async () => {
-                    var graph = VisualTests.MemberBindingGraph(symbol); graph["version"] = 5;
-                    var preview = generator.Preview(graph);
-                    Check(preview.Valid, "v4 member preview rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
-                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-binding-" + symbol + ".cs"), preview.Source);
-                    try {
-                        var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
-                        await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
-                        Check((bool)instance.GetType().GetField("Completed")!.GetValue(instance)!, "v4 continuation was skipped");
-                    } finally { compiled.Unload(); }
-                });
-            foreach (var (symbol, internalName) in new[] { ("Dispatch", "@__hassSharpDispatch"), ("stopped", "__hassSharpStopped"), ("executed", "__hassSharpExecuted"), ("step", "__hassSharpStep") })
-                await Test($"v4 controls avoid authored prefix collision for {symbol}", async () => {
-                    var graph = VisualTests.MemberBindingGraph(symbol); graph["version"] = 5;
-                    graph["members"] = graph["members"]!.GetValue<string>().Replace(symbol, internalName);
-                    foreach (var node in graph["nodes"]!.AsArray().Skip(1))
-                        node!["config"]!["code"] = node["config"]!["code"]!.GetValue<string>().Replace(symbol,internalName);
-                    var preview = generator.Preview(graph);
-                    Check(preview.Valid, "authored prefix member rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
-                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-prefix-" + symbol + ".cs"), preview.Source);
-                    try {
-                        var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
-                        await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
-                        Check((bool)instance.GetType().GetField("Completed")!.GetValue(instance)!, "authored prefix member changed control flow");
-                    } finally { compiled.Unload(); }
-                });
-            await Test("v4 internal names avoid declarations inside interpolated strings", async () => {
-                var graph = VisualTests.MemberBindingGraph("step"); graph["version"] = 5;
-                graph["members"] = "public bool Completed;";
-                graph["nodes"]![1]!["config"]!["code"] = """Logger.Info($"interpolation:{int.TryParse("7", out var __hassSharpStep)} {__hassSharpStep}"); Completed = true;""";
-                graph["nodes"]![2]!["config"]!["code"] = "if (!Completed) throw new Exception(\"interpolation node did not run\");";
-                var preview = generator.Preview(graph);
-                Check(preview.Valid, "interpolated declaration rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
-                var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-interpolation-binding.cs"), preview.Source);
-                try {
-                    var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
-                    await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
-                    Check((bool)instance.GetType().GetField("Completed")!.GetValue(instance)!, "interpolation node was skipped");
-                    Check(logs.Contains("interpolation:True 7"), "interpolated declaration did not produce its authored value");
-                } finally { compiled.Unload(); }
+            await Test("v5 internal names avoid declarations inside interpolated strings", async () => {
+                var graph = VisualTests.IdentifierGraph("step");
+                graph["nodes"]![1]!["config"]!["source"] = """
+                public static class CustomNode
+                {
+                    [Node("Interpolate")]
+                    public static void Run() => Logger.Info($"interpolation:{int.TryParse("7", out var __hassSharpStep)} {__hassSharpStep}");
+                }
+                """;
+                await Runs(VisualExecutionTests.Derived(graph), "v5-interpolation-binding", "interpolation:True 7");
             });
             await Test("delete inactive visual forgets identity", async () => {
                 var api = new HassSharpManager(root); api.GenerateHassEntities(["binary_sensor.motion", "light.hall"]);
@@ -260,7 +233,7 @@ static class BackendReviewTests
                 var directory = Path.Combine(root, ".storage", "hass_sharp", "visual");
                 var store = new VisualStore(directory, generator);
                 var saved = store.Save("uncompiled", VisualTests.Graph(), 0);
-                saved.Graph["members"] = "this is not C#";
+                saved.Graph["nodes"]!.AsArray().Add(JsonNode.Parse("""{"id":"bad","kind":"custom","config":{"source":"this is not C#","arguments":{},"signature":{"title":"Bad","description":"","pure":false,"inputs":{},"outputs":{},"types":{}}}}"""));
                 var path = Path.Combine(directory, "uncompiled.json");
                 File.WriteAllText(path, JsonSerializer.Serialize(saved with { Source = "stale" }, VisualStore.Json));
                 var persisted = File.ReadAllText(path);

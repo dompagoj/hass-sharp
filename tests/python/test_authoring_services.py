@@ -50,3 +50,11 @@ class AuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await task)['ok'])
         self.assertEqual(self.requests[-1]['graph']['name'],'safe')
         self.assertEqual(self.requests[-1]['graph']['nodes'][0]['config']['type'],'manual')
+    async def test_derive_signatures_reaches_the_managed_preview_and_save(self):
+        service=self.service();self.native.return_value=[]
+        graph={'version':5,'name':'safe','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'}}],'edges':[]}
+        await service.visual({'operation':'save','id':'safe','expectedRevision':0,'graph':graph,'deriveSignatures':True},is_admin=True)
+        self.assertEqual([(r['operation'],r.get('deriveSignatures')) for r in self.requests],[('preview',True),('save',True)])
+        self.requests.clear()
+        await service.visual({'operation':'preview','graph':graph},is_admin=True)
+        self.assertEqual([(r['operation'],r.get('deriveSignatures')) for r in self.requests],[('preview',None)])

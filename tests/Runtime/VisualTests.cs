@@ -3,25 +3,24 @@ using System.Text.Json.Nodes;
 
 static class VisualTests
 {
-    public static JsonObject MemberBindingGraph(string symbol)
+    /// <summary>
+    /// A startup graph whose two Custom C# nodes both declare a member named <paramref name="symbol"/> in a class named
+    /// CustomNode: each node's code is its own, so neither the other node nor the generated automation can meet it.
+    /// The second logs <c>binding-{symbol}-Startup</c>.
+    /// </summary>
+    public static JsonObject IdentifierGraph(string symbol)
     {
-        var (members, code, verify) = symbol switch
-        {
-            "Dispatch" => ("private bool dispatched; private Task Dispatch() { dispatched = true; return Task.CompletedTask; }", "await Dispatch();", "if (!dispatched) throw new Exception(\"helper was not called\");"),
-            "stopped" => ("private bool stopped;", "stopped = true;", "if (!stopped) throw new Exception(\"member was not set\");"),
-            "values" => ("private string values = \"original\";", "Logger.Info(values); values = \"changed\";", "if (values != \"changed\") throw new Exception(\"member was not set\");"),
-            "executed" => ("private int executed;", "executed = 10;", "if (executed != 10) throw new Exception(\"member was changed by control flow\");"),
-            "step" => ("private int step;", "step = 10;", "if (step != 10) throw new Exception(\"member was changed by control flow\");"),
-            _ => throw new ArgumentException(symbol)
-        };
-        return new JsonObject {
-            ["version"] = 5, ["name"] = "Member binding", ["members"] = members + " public bool Completed;",
+        static string Source(string symbol, string body) =>
+            "public static class CustomNode\n{\n    static int " + symbol + ";\n    [Node(\"Use " + symbol + "\")]\n    public static async Task Run(NodeContext context)\n    {\n        " + body + "\n        await Task.Yield();\n    }\n}";
+        var graph = new JsonObject {
+            ["version"] = 5, ["name"] = "Identifier binding",
             ["nodes"] = new JsonArray(
                 new JsonObject { ["id"]="t", ["kind"]="trigger", ["config"]=new JsonObject { ["type"]="startup" } },
-                new JsonObject { ["id"]="c", ["kind"]="custom", ["config"]=new JsonObject { ["code"]=code } },
-                new JsonObject { ["id"]="verify", ["kind"]="custom", ["config"]=new JsonObject { ["code"]=verify + " Completed = true; Logger.Info(\"binding-" + symbol + "-\" + Cause);" } }),
+                new JsonObject { ["id"]="c", ["kind"]="custom", ["config"]=new JsonObject { ["source"]=Source(symbol, symbol + " = 1;"), ["arguments"]=new JsonObject() } },
+                new JsonObject { ["id"]="verify", ["kind"]="custom", ["config"]=new JsonObject { ["source"]=Source(symbol, symbol + " = 10; if (" + symbol + " != 10) throw new Exception(\"member was changed\"); Logger.Info(\"binding-" + symbol + "-Startup\");"), ["arguments"]=new JsonObject() } }),
             ["edges"] = new JsonArray(JsonNode.Parse("""{"id":"tc","source":"t","target":"c"}"""),JsonNode.Parse("""{"id":"cv","source":"c","target":"verify"}"""))
         };
+        return VisualExecutionTests.Derived(graph);
     }
     public static JsonObject Graph() => JsonNode.Parse("""
     {"version":5,"name":"Motion","nodes":[

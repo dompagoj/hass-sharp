@@ -63,10 +63,16 @@ tool descriptions summarise the workflow below and the entity typing rule.
    `read({id})` returns one complete document including `source` and `sourceMap`.
 5. `preview({graph})` validates and compiles a complete graph against the
    registered service schemas, including HA-native trigger declarations, returning
-   `valid`, `source`, `sourceMap`, `diagnostics`. It does not attach triggers or
-   execute custom code.
+   `valid`, `source`, `sourceMap`, `diagnostics` and `graph`. It does not attach
+   triggers or execute custom code. A graph has `version`, `name`, `nodes` and
+   `edges` only; `imports` and `members` are refused. A Custom C# node (kind
+   `custom`) is one static method marked `[Node]` in `config.source`, with an
+   operand per input in `config.arguments`. Its pins (`config.signature`) are worked
+   out from the code: MCP preview and save pass `deriveSignatures: true`, and the
+   returned `graph` carries the pins. See [writing C# nodes](node-libraries.md).
 6. `save({id,expectedRevision,graph})` persists and activates through the editor's
-   same authoring service. New IDs use revision 0; existing edits use the exact
+   same authoring service, working out Custom C# pins as preview does. New IDs use
+   revision 0; existing edits use the exact
    read revision. Warnings are allowed; severity 3 errors prevent persistence.
    Saving can enable startup, scheduled or native effects, so authorize those
    effects before saving. The result separates `saved:true` from `active` and
@@ -134,5 +140,5 @@ Results contain `saved`, `document`, `deleted`, `generation`, `catalog` and
 errors and revision conflicts preserve their structured details. Persistence may
 succeed while activation fails for a graph; inspect each activation result.
 
-See [custom node libraries](node-libraries.md) for the complete typed example and
+See [writing C# nodes](node-libraries.md) for Custom C# nodes, the complete library example and
 [visual authoring](writing-visual-automations.md) for graph execution rules.

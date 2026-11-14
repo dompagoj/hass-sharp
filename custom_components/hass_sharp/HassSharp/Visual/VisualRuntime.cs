@@ -85,8 +85,10 @@ public sealed class VisualSnapshot
 public sealed class VisualScope
 {
     internal Dictionary<(string Node,string Port),object?> Outputs {get;}=[];
-    public VisualValues Values {get;internal set;}=new();
+    /// <summary>The most recent failure on this path, kept for the error path, Error details and <see cref="NodeContext.Error"/>.</summary>
     public Exception? LastError {get;set;}
+    /// <summary>The name of the step that failed with <see cref="LastError"/>, as the canvas shows it.</summary>
+    internal string? LastErrorStep;
     public CancellationToken CancellationToken {get;internal set;}
     internal bool? Condition;
     internal Dictionary<string,object?>? Updates;
@@ -95,7 +97,7 @@ public sealed class VisualScope
     /// <summary>The traced event of the node running in this scope; null when the run is not traced.</summary>
     internal VisualTrace.Event? Trace;
     internal VisualScope Clone(CancellationToken token) {
-        var copy=new VisualSnapshot();var result=new VisualScope{CancellationToken=token,Values=Values.Snapshot(copy),LastError=(Exception?)copy.Copy(LastError),Frame=Frame};
+        var copy=new VisualSnapshot();var result=new VisualScope{CancellationToken=token,LastError=(Exception?)copy.Copy(LastError),LastErrorStep=LastErrorStep,Frame=Frame};
         foreach(var pair in Outputs)result.Outputs.Add(pair.Key,copy.Copy(pair.Value));
         return result;
     }
@@ -116,7 +118,6 @@ public sealed class VisualRuntime
     readonly HashSet<string> compiledConversions;
     readonly Dictionary<string,string> comparisonTypes;
     readonly JsonElement trigger;
-    readonly Dictionary<string,string> variables=[];
     readonly Dictionary<string,string[]> pureInputs=[];
     readonly Dictionary<(string,string),string?> absentTriggerOutputs=[];
     readonly CancellationToken external;
@@ -133,7 +134,6 @@ public sealed class VisualRuntime
         this.compiledConversions=compiledConversions??[];
         var graph=JsonNode.Parse(graphJson)!.AsObject();catalog=JsonNode.Parse(catalogJson)!.AsObject();this.types=types;this.custom=custom;this.trigger=trigger;external=cancellation;lifetime=new CancellationTokenSource();externalRegistration=cancellation.Register(()=>{externalCleanup=lifetime.CancelAsync();});
         nodes=graph["nodes"]!.AsArray().OfType<JsonObject>().ToDictionary(n=>Text(n,"id"));
-        foreach(var n in nodes.Values)if(Text(n["config"],"output") is var name && name!="")variables[name]=Text(n,"id");
         var sources=new Dictionary<string,List<string>>();
         foreach(var e in graph["edges"]!.AsArray().OfType<JsonObject>()) {
             if(Text(e,"kind")=="data") {
@@ -149,9 +149,13 @@ public sealed class VisualRuntime
             Visit(id);if(order.Count>0)pureInputs[id]=order.ToArray();
         }
     }
-    bool Pure(string id)=>VisualNodeCatalog.IsPure(catalog["nodes"]?[Text(nodes[id],"kind")]);
+    JsonNode? Spec(string id)=>catalog["nodes"]?[Text(nodes[id],"kind")];
+    bool Pure(string id)=>VisualNodeCatalog.IsPure(nodes[id],Spec(id));
+    // A Custom C# node's pins are its signature's; every other node's are its kind's.
+    JsonNode? InputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["inputs"]:Spec(id)?["inputs"];
+    JsonNode? OutputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["outputs"]:Spec(id)?["outputs"];
     // The name people see on the canvas, for messages about a value node and the step that used it.
-    string Title(string id)=>VisualGraphValidator.Words.StepName(nodes[id],catalog["nodes"]?[Text(nodes[id],"kind")]);
+    string Title(string id)=>VisualGraphValidator.Words.StepName(nodes[id],Spec(id));
     static string Text(JsonNode? node,string key,string fallback="")=>VisualNodeCatalog.Text(node,key,fallback);
     string? Next(string node,string port="next")=>flow.GetValueOrDefault((node,port));
     public async Task RunAsync(string root) {
@@ -162,7 +166,9 @@ public sealed class VisualRuntime
         if(!stopFailures.IsEmpty)throw new AggregateException("Stop cleanup failed after all branches drained.",stopFailures);
     }
     // Values are traced as the node sees them: after conversion, with the wire they came from.
-    public T Input<T>(VisualScope scope,string node,string port) {var value=(T)Coerce(Read(scope,node,port),typeof(T),$"{node}.{port}",false)!;if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
+    public T Input<T>(VisualScope scope,string node,string port) {var value=(T)Coerce(Read(scope,node,port),typeof(T),$"{node}.{port}",false,()=>Title(node)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port))!;if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
+    /// <summary>What a node method's <see cref="NodeContext"/> parameter gets: this run, as <paramref name="scope"/> sees it.</summary>
+    public NodeContext Context(VisualScope scope,string node)=>new(this,scope,node,InvocationContext.Current?.RunId??"",trigger);
     public object? Input(VisualScope scope,string node,string port) {var value=Read(scope,node,port);if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
     void Traced(VisualScope scope,string node,string port,object? value)=>trace!.Input(scope.Trace!,node,port,value,data.TryGetValue((node,port),out var source)?source:null);
     object? Read(VisualScope scope,string node,string port) {
@@ -181,7 +187,7 @@ public sealed class VisualRuntime
         else if(Text(n,"kind")=="loop_result")operand=cfg["values"]?[port];
         else if(Text(catalog["nodes"]?[Text(n,"kind")],"argumentStorage")=="arguments")operand=cfg["arguments"]?[port];
         else operand=cfg[port];
-        if(operand==null || Text(operand,"kind")=="unset")operand=catalog["nodes"]?[Text(n,"kind")]?["inputs"]?[port]?["default"];
+        if(operand==null || Text(operand,"kind")=="unset")operand=InputSpecs(node)?[port]?["default"];
         return operand;
     }
     // The declared type a trace shows for a port: the producer's output type for a wire, else the operand's.
@@ -189,24 +195,18 @@ public sealed class VisualRuntime
         if(data.TryGetValue((node,port),out var source))return TraceOutputType(source.Item1,source.Item2);
         var operand=OperandOf(node,port);
         if(Text(operand,"kind")=="literal" && Text(operand,"type") is {Length:>0} literal)return literal;
-        if(Text(operand,"kind")=="variable")return variables.TryGetValue(Text(operand,"name"),out var producer)?TraceOutputType(producer,"value"):null;
-        return catalog["nodes"]?[Text(nodes[node],"kind")]?["inputs"]?[port]?["types"] is JsonArray {Count:1} types && types[0] is JsonValue only && only.TryGetValue<string>(out var type)?type:null;
+        return InputSpecs(node)?[port]?["types"] is JsonArray {Count:1} types && types[0] is JsonValue only && only.TryGetValue<string>(out var type)?type:null;
     }
     string? TraceOutputType(string node,string port) {
         var n=nodes[node];var kind=Text(n,"kind");var cfg=n["config"];
         if(kind=="trigger")return VisualNodeCatalog.TriggerOutputs(n,catalog)[port] is JsonObject spec?Text(spec,"type"):null;
         if(port.Split(':') is [var group and ("carry" or "export"),var name])
             return (cfg?[group=="carry"?"carry":"exports"] as JsonArray??[]).OfType<JsonObject>().FirstOrDefault(d=>Text(d,"name")==name) is {} declaration?Text(declaration,"type"):null;
-        var declared=Text(catalog["nodes"]?[kind]?["outputs"]?[port],"type");
+        var declared=Text(OutputSpecs(node)?[port],"type");
         if(declared.StartsWith('$'))declared=Text(cfg,declared[1..]);
         return declared==""?null:declared;
     }
     object? Operand(VisualScope scope,JsonNode? operand,string label) {
-        if(Text(operand,"kind")=="variable") {
-            var name=Text(operand,"name");
-            if(!scope.Values.TryGet(name,out var value))throw new InvalidOperationException($"Input {label}: producer output {variables.GetValueOrDefault(name,name)}.value ('{name}') has not executed in this invocation/scope.");
-            return value;
-        }
         if(Text(operand,"kind")!="literal")throw new InvalidOperationException($"Input {label} is unset.");
         return FromJson(operand!["value"],Text(operand,"type"),label);
     }
@@ -223,14 +223,14 @@ public sealed class VisualRuntime
         return JsonSerializer.Deserialize(value.ToJsonString(),clr);
     }
     public void Output(VisualScope scope,string node,object? value,string port="value") {
-        var declared=Text(catalog["nodes"]?[Text(nodes[node],"kind")]?["outputs"]?[port],"type");
+        var declared=Text(OutputSpecs(node)?[port],"type");
         if(declared.StartsWith('$'))declared=Text(nodes[node]["config"],declared[1..]);
         if(declared!="")value=ConvertTo(value,declared,node+"."+port,false);
         scope.Outputs[(node,port)]=value;
         if(scope.Trace!=null)trace!.Output(scope.Trace,node,port,value);
-        if(port=="value" && Text(nodes[node]["config"],"output") is var name && name!="")scope.Values.Set(name,value);
     }
-    public static object? Coerce(object? value,Type type,string label,bool convert) {
+    /// <param name="pin">The step and pin, as people see them, for a number that does not fit the pin's type.</param>
+    public static object? Coerce(object? value,Type type,string label,bool convert,Func<string>? pin=null) {
         var underlying=Nullable.GetUnderlyingType(type);var target=underlying??type;
         if(value==null) {if(!type.IsValueType||underlying!=null)return null;throw new InvalidOperationException($"{label} requires {type}, got null.");}
         if(type.IsInstanceOfType(value))return value;
@@ -261,12 +261,28 @@ public sealed class VisualRuntime
         if(value is char character && IsNumber(target) && target!=typeof(char))value=(ushort)character;
         if(convert && target==typeof(bool))return VisualValues.ConvertValue(value,"boolean");
         if(convert && target==typeof(string))return VisualValues.ConvertValue(value,"string");
+        if(pin!=null && !convert && value is not null and not char && IsNumber(value.GetType()) && IsNumber(target) && target!=typeof(char) && Unfit(value,target) is {} range)
+            throw new InvalidOperationException($"{pin()} needs {range}, not {Convert.ToString(value,CultureInfo.InvariantCulture)}");
         if(value is IConvertible && (convert || IsNumber(value.GetType())&&IsNumber(target))) {
             try {return target.IsEnum?Enum.Parse(target,Convert.ToString(value,CultureInfo.InvariantCulture)!):Convert.ChangeType(value,target,CultureInfo.InvariantCulture);}catch(Exception e)when(e is FormatException or InvalidCastException or OverflowException){throw new InvalidOperationException($"Cannot convert {label} to {type}.",e);}
         }
         throw new InvalidOperationException($"{label} requires {type}, got {value?.GetType()}.");
     }
     static bool IsNumber(Type t)=>Type.GetTypeCode(t) is TypeCode.Char or >=TypeCode.SByte and <=TypeCode.Decimal;
+    /// <summary>What a number pin of type <paramref name="target"/> takes, when <paramref name="value"/> is not that (a fraction for a whole number, or out of range); else null.</summary>
+    static string? Unfit(object value,Type target) {
+        static string N(double d)=>VisualGraphValidator.Words.Number(d);
+        var code=Type.GetTypeCode(target);
+        if(code is >=TypeCode.SByte and <=TypeCode.UInt64) {
+            var (min,max)=code switch{TypeCode.SByte=>((decimal)sbyte.MinValue,(decimal)sbyte.MaxValue),TypeCode.Byte=>(byte.MinValue,byte.MaxValue),TypeCode.Int16=>(short.MinValue,short.MaxValue),TypeCode.UInt16=>(ushort.MinValue,ushort.MaxValue),
+                TypeCode.Int32=>(int.MinValue,int.MaxValue),TypeCode.UInt32=>(uint.MinValue,uint.MaxValue),TypeCode.Int64=>(long.MinValue,long.MaxValue),_=>(ulong.MinValue,ulong.MaxValue)};
+            decimal? exact=value is double or float?(Convert.ToDouble(value,CultureInfo.InvariantCulture) is var d && double.IsFinite(d) && Math.Abs(d)<7.9e28?(decimal)d:null):Convert.ToDecimal(value,CultureInfo.InvariantCulture);
+            return exact is {} x && decimal.Truncate(x)==x && x>=min && x<=max?null:$"a whole number from {min.ToString(CultureInfo.InvariantCulture)} to {max.ToString(CultureInfo.InvariantCulture)}";
+        }
+        if(code==TypeCode.Single)return Convert.ToDouble(value,CultureInfo.InvariantCulture) is var f && (!double.IsFinite(f) || Math.Abs(f)<=float.MaxValue)?null:$"a number from {N(-float.MaxValue)} to {N(float.MaxValue)}";
+        if(code==TypeCode.Decimal)return value is decimal || Convert.ToDouble(value,CultureInfo.InvariantCulture) is var m && double.IsFinite(m) && Math.Abs(m)<7.9e28?null:$"a number from {N(-7.9e28)} to {N(7.9e28)}";
+        return null;
+    }
     object? ConvertTo(object? value,string type,string label,bool convert=true) {
         var chain=VisualTypes.Chain(catalog,type);
         if(chain.Count==0||!types.TryGetValue(chain[^1],out var clr))throw new InvalidOperationException($"Unknown declared type {type} at {label}");
@@ -316,7 +332,7 @@ public sealed class VisualRuntime
             catch(Exception error) {
                 ev??=Begin();
                 if(Next(id,"error") is not {} recovery){if(ev!=null)trace!.End(ev,"failed",null,error);throw;}
-                scope.LastError=error;next=recovery;
+                scope.LastError=error;scope.LastErrorStep=Title(id);next=recovery;
                 if(ev!=null)trace!.End(ev,"error","error",error);
             }
             id=next;
@@ -359,12 +375,13 @@ public sealed class VisualRuntime
             case "object":case "array":Output(scope,id,ConvertTo(Get("value"),kind,id,false));break;
             case "object_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["fields"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get("field:"+p.Key))));break;
             case "array_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["items"] as JsonArray??[]).Select((_,i)=>Get("item:"+i)).ToArray()));break;
+            case "last_error":Output(scope,id,scope.LastError?.Message??"","message");Output(scope,id,scope.LastErrorStep??"","step");break;
             case "get_field":var json=Input<JsonElement>(scope,id,"value");var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}Output(scope,id,ConvertTo(json,Text(cfg,"type"),id,false));break;
             // A value node from a library (or any other kind) is compiled.
             default:await custom(id,scope,this);break;
         }
     }
-    static EntityStateSnapshot ReadEntity(string entity,bool fresh=false) {
+    internal static EntityStateSnapshot ReadEntity(string entity,bool fresh=false) {
         var triggerState=UserScriptManager.CurrentTrigger.Value?.State;
         var raw=!fresh && triggerState?.EntityId==entity ? triggerState : PyInterop.Entity(entity);
         return EntityStateSnapshot.From(raw??throw new InvalidOperationException($"Entity '{entity}' is unavailable."));
@@ -413,23 +430,34 @@ public sealed class VisualRuntime
     async Task Service(string id,VisualScope scope,JsonNode cfg) {
         var payload=new JsonObject();
         foreach(var (name,operand) in cfg["fields"] as JsonObject??[])if(Supplied(id,"field:"+name,operand))payload[name]=Json(Input(scope,id,"field:"+name));
-        if(Supplied(id,"target",cfg["target"])) {
-            var target=Json(Input(scope,id,"target"));
+        var target=Supplied(id,"target",cfg["target"])?Json(Input(scope,id,"target"))??throw new InvalidOperationException($"Input {id}.target requires an entity id or a target object."):null;
+        var returnResponse=cfg["returnResponse"] is JsonValue flag && flag.TryGetValue<bool>(out var on) && on;
+        var response=await Call(scope,Text(cfg,"service"),payload,target,returnResponse,$"Input {id}.target");
+        if(returnResponse)Output(scope,id,ConvertTo(response,"object",id+".response",false),"response");
+    }
+    /// <summary><see cref="NodeContext.CallService"/>: the call the Call service step makes, from a node method.</summary>
+    internal Task<JsonElement?> CallService(VisualScope scope,string node,string service,JsonNode? target,JsonObject? data,bool returnResponse)=>
+        Call(scope,service,data==null?new JsonObject():(JsonObject)data.DeepClone(),target?.DeepClone(),returnResponse,"The target");
+    /// <summary>
+    /// The target into the payload (a string is an entity_id, an object is flattened), then the call; the response only
+    /// with returnResponse. A target key that a field already set is an error, as the validator reports, never a silent overwrite.
+    /// </summary>
+    async Task<JsonElement?> Call(VisualScope scope,string service,JsonObject payload,JsonNode? target,bool returnResponse,string targetLabel) {
+        if(target!=null) {
             // A target object holds only the five target keys (the validators say the same of a target value); a field
             // with one of them is a validation error, so the collision check below is only a defence.
-            void Set(string name,JsonNode? value){if(payload.ContainsKey(name))throw new InvalidOperationException($"{Text(cfg,"service")} sets {name} both as a field and in the target");payload[name]=value;}
+            void Set(string name,JsonNode? value){if(payload.ContainsKey(name))throw new InvalidOperationException($"{service} sets {name} both as a field and in the target");payload[name]=value;}
             if(target is JsonValue entity && entity.TryGetValue<string>(out var entityId))Set("entity_id",entityId);
-            else if(target is JsonObject properties)foreach(var (name,value) in properties) {
-                if(!VisualGraphValidator.TargetKeys.Contains(name))throw new InvalidOperationException(VisualGraphValidator.TargetKeyMessage(name));
-                Set(name,value?.DeepClone());
+            else if(target is JsonObject properties)foreach(var (key,value) in properties) {
+                if(!VisualGraphValidator.TargetKeys.Contains(key))throw new InvalidOperationException(VisualGraphValidator.TargetKeyMessage(key));
+                Set(key,value?.DeepClone());
             }
-            else throw new InvalidOperationException($"Input {id}.target requires an entity id or a target object.");
+            else throw new InvalidOperationException($"{targetLabel} requires an entity id or a target object.");
         }
-        var service=Text(cfg,"service").Split('.');
-        if(cfg["returnResponse"] is JsonValue flag && flag.TryGetValue<bool>(out var returnResponse) && returnResponse) {
-            var response=await Waiting(scope,HassServices.CallServiceAsync<JsonElement>(service[0],service[1],payload).WaitAsync(scope.CancellationToken));
-            Output(scope,id,ConvertTo(response,"object",id+".response",false),"response");
-        } else await Waiting(scope,HassServices.CallServiceAsync(service[0],service[1],payload).WaitAsync(scope.CancellationToken));
+        if(service.Split('.') is not [{Length:>0} domain,{Length:>0} name])throw new InvalidOperationException($"Service {service} is not a service id such as light.turn_on.");
+        if(returnResponse)return await Waiting(scope,HassServices.CallServiceAsync<JsonElement>(domain,name,payload).WaitAsync(scope.CancellationToken));
+        await Waiting(scope,HassServices.CallServiceAsync(domain,name,payload).WaitAsync(scope.CancellationToken));
+        return null;
     }
     async Task Parallel(string id,VisualScope parent,int depth) {
         using var cts=new CancellationTokenSource();

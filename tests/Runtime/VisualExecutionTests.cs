@@ -15,12 +15,33 @@ static class VisualExecutionTests
         var steps=new[]{"t"}.Concat(nodes.Where(n=>!VisualNodeCatalog.IsPure(VisualNodeCatalog.Root["nodes"]?[n["kind"]!.GetValue<string>()])).Select(n=>n["id"]!.GetValue<string>())).ToArray();
         return new(){["version"]=5,["name"]="Execution",["nodes"]=new JsonArray(new[]{N("t","trigger",new {type="manual"})}.Concat(nodes).ToArray<JsonNode>()),["edges"]=new JsonArray(steps.Zip(steps.Skip(1),(a,b)=>(JsonNode)E(a,b)).ToArray())};
     }
-    static JsonObject Custom(string id,string code) => N(id,"custom",new {code});
+    /// <summary>
+    /// The code of a Custom C# node whose one method runs the statements: <c>lastError</c> is the failure that led here,
+    /// <c>CancellationToken</c> the run's, and each parameter (such as <c>"bool answer"</c>) is an input pin.
+    /// </summary>
+    internal static string CodeSource(string body,string parameters="",string? returns=null) =>
+        "public static class CustomNode\n{\n    [Node(\"Check\")]\n    public static "+(returns??"async Task")+" Run(NodeContext context"+(parameters==""?"":", "+parameters)+")\n    {\n"+
+        "        var lastError = context.Error!; var CancellationToken = context.CancellationToken;\n        "+body+(returns==null?"\n        await Task.CompletedTask;":"")+"\n    }\n}";
+    /// <summary>A Custom C# node running the statements (see <see cref="CodeSource"/>); its pins are written by <see cref="Derived"/>.</summary>
+    internal static JsonObject Code(string id,string body,string parameters="",string? returns=null) => N(id,"custom",new JsonObject{["source"]=CodeSource(body,parameters,returns),["arguments"]=new JsonObject()});
+    /// <summary>Replaces a Custom C# node's code; <see cref="Derived"/> writes its pins again.</summary>
+    internal static void SetCode(JsonObject graph,string id,string body,string parameters="",string? returns=null) =>
+        graph["nodes"]!.AsArray().Single(n=>n!["id"]!.GetValue<string>()==id)!["config"]!["source"]=CodeSource(body,parameters,returns);
+    /// <summary>A node library holding state the Custom C# nodes of one run share, as <c>Shared.name</c>.</summary>
+    internal static VisualCatalogSnapshot Shared(string members) {
+        var library=new NodeLibraryCompiler(Diagnostics).Preview([new("shared","public static class Shared { "+members+" }",1)]);
+        Check(library.Valid,"shared state library compiles");return library.Snapshot;
+    }
+    static JsonObject Custom(string id,string code) => Code(id,code);
+    /// <summary>The graph with each Custom C# node's pins written from its code, as the editor applies them.</summary>
+    internal static JsonObject Derived(JsonObject graph,VisualCatalogSnapshot? snapshot=null) =>
+        new VisualGenerator(Diagnostics).DeriveSignatures(graph,snapshot??new NodeLibraryCompiler(Diagnostics).Preview([]).Snapshot);
     static JsonObject Log(string id,object value) => N(id,"log",new {value=Lit("string",value)});
     internal static readonly DiagnosticsProvider Diagnostics = new();
     internal static async Task Execute(JsonObject graph, VisualCatalogSnapshot? snapshot=null, bool cancel=false)
     {
         Diagnostics.GenerateHassEntities(["sensor.test"]);
+        graph=Derived(graph,snapshot);
         var preview = snapshot == null ? new VisualGenerator(Diagnostics).Preview(graph) : new VisualGenerator(Diagnostics).Preview(graph,snapshot);
         Check(preview.Valid, "v4 compiles: "+JsonSerializer.Serialize(preview.Diagnostics));
         var compiled=await new CodeCompiler(Diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(),Guid.NewGuid()+".cs"),preview.Source);
@@ -38,18 +59,18 @@ static class VisualExecutionTests
         var previous=HassPath.HassConfiguration; HassPath.HassConfiguration=Path.Combine(Path.GetTempPath(),"visual-v4-"+Guid.NewGuid());
         var log=PyInterop.Log; var messages=new System.Collections.Concurrent.ConcurrentQueue<string>();PyInterop.Log=(_,m)=>messages.Enqueue(m);
         try {
-            // Custom C# reads a value node's variable only after a step that reads the value node has run.
+            // Custom C# reads a value node through a pin, as every step does; the value node is worked out for each reader.
             static JsonObject Reads(JsonObject pure,string code) {
-                var graph=G(pure,N("i","if",new{value=new{kind="unset"}}),Custom("c",code));
-                graph["edges"]=new JsonArray(E("t","i"),E("i","c","true"),E("i","c","false"),D(pure["id"]!.GetValue<string>(),"i","value"));return graph;
+                var graph=G(pure,N("i","if",new{value=new{kind="unset"}}),Code("c",code,"bool answer"));var id=pure["id"]!.GetValue<string>();
+                graph["edges"]=new JsonArray(E("t","i"),E("i","c","true"),E("i","c","false"),D(id,"i","value"),D(id,"c","answer"));return graph;
             }
-            var simple=Reads(N("b","and",new {left=Lit("boolean",true),right=Lit("boolean",false),output="answer"}),"if(values.Get<bool>(\"answer\",\"c\")) throw new Exception(); Logger.Info(\"executed\");");
+            var simple=Reads(N("b","and",new {left=Lit("boolean",true),right=Lit("boolean",false)}),"if(answer) throw new Exception(); Logger.Info(\"executed\");");
             await Execute(simple); Check(messages.Contains("executed"),"compiled custom observes typed boolean");
             foreach(var kind in new[]{"and","or","xor"})foreach(var a in new[]{true,false})foreach(var b in new[]{true,false}) {
                 var expected=kind=="and"?a&&b:kind=="or"?a||b:a^b;
-                await Execute(Reads(N("b",kind,new {left=Lit("boolean",a),right=Lit("boolean",b),output="answer"}),$"if(values.Get<bool>(\"answer\",\"c\") != {expected.ToString().ToLowerInvariant()}) throw new Exception(\"logic\");"));
+                await Execute(Reads(N("b",kind,new {left=Lit("boolean",a),right=Lit("boolean",b)}),$"if(answer != {expected.ToString().ToLowerInvariant()}) throw new Exception(\"logic\");"));
             }
-            await Execute(Reads(N("n","not",new {value=Lit("boolean",false),output="yes"}),"if(!values.Get<bool>(\"yes\",\"c\")) throw new Exception();"));
+            await Execute(Reads(N("n","not",new {value=Lit("boolean",false)}),"if(!answer) throw new Exception();"));
             foreach(var choice in new[]{true,false}) {
                 var branch=G(N("if","if",new{value=Lit("boolean",choice)}),Log("chosen","branch selected "+choice),Custom("wrong","throw new Exception(\"wrong Boolean If branch\");"));
                 branch["edges"]=new JsonArray(E("t","if"),E("if","chosen",choice?"true":"false"),E("if","wrong",choice?"false":"true"));await Execute(branch);Check(messages.Contains("branch selected "+choice),"Boolean If selects the actual branch");
@@ -64,9 +85,10 @@ static class VisualExecutionTests
             await RichDefaultsAndNulls();
             await VisualStructuredTests.Run();
             await VisualDataTests.Run();
-            var bad=(JsonObject)simple.DeepClone();bad["version"]=3;Check(!new VisualGenerator(Diagnostics).Preview(bad).Valid,"legacy graphs rejected");
-            var root=Path.Combine(HassPath.HassConfiguration,"store");var store=new VisualStore(root,new VisualGenerator(Diagnostics));var saved=store.Save("v4",simple,0);var reread=store.Read("v4")!;Check(saved.Version==1 && saved.Source==reread.Source && JsonNode.DeepEquals(saved.Graph,reread.Graph),"v4 document/source roundtrip");
-            bad=(JsonObject)simple.DeepClone();bad["nodes"]!.AsArray().Single(n=>n!["id"]!.GetValue<string>()=="c")!["config"]!["code"]="this is invalid;";Check(new VisualGenerator(Diagnostics).Preview(bad).Diagnostics.Any(d=>d.NodeId=="c"&&d.Severity==3),"custom compiler diagnostics mapped");
+            var bad=Derived(simple);bad["version"]=3;Check(!new VisualGenerator(Diagnostics).Preview(bad).Valid,"legacy graphs rejected");
+            var root=Path.Combine(HassPath.HassConfiguration,"store");var store=new VisualStore(root,new VisualGenerator(Diagnostics));var saved=store.Save("v4",Derived(simple),0);var reread=store.Read("v4")!;Check(saved.Version==1 && saved.Source==reread.Source && JsonNode.DeepEquals(saved.Graph,reread.Graph),"v4 document/source roundtrip");
+            bad=Derived(simple);bad["nodes"]!.AsArray().Single(n=>n!["id"]!.GetValue<string>()=="c")!["config"]!["source"]="public static class CustomNode\n{\n    this is invalid;\n}";
+            Check(new VisualGenerator(Diagnostics).Preview(bad).Diagnostics.Any(d=>d.NodeId=="c"&&d.Severity==3&&d.InputId=="source"&&d.StartLine==3),"custom compiler diagnostics on the node's own line: "+JsonSerializer.Serialize(new VisualGenerator(Diagnostics).Preview(bad).Diagnostics));
             Console.WriteLine("PASS v4 compiled typed execution, missing producers, loops, cancellation, rich calls, storage and diagnostics");
         } finally {PyInterop.Log=log;HassPath.HassConfiguration=previous;}
     }

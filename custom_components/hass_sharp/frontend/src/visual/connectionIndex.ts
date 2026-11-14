@@ -11,6 +11,7 @@ import {
   isPure,
   nodeCatalog,
   serviceTargetDiagnostics,
+  withGraphTypes,
   words,
   type DiagnosticOrigin,
   type Graph,
@@ -57,6 +58,8 @@ export function connectionIndex(graph: Graph, catalog: VisualCatalogSnapshot = n
 }
 
 function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionIndex {
+  // The types of the graph's Custom C# nodes, as the validator reads them.
+  catalog = withGraphTypes(catalog, graph)
   const analysis = analyzeGraph(graph, catalog)
   const { diagnostics, origins } = analysis
   const old = new Set(diagnostics.map(d => JSON.stringify(d)))
@@ -68,9 +71,6 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     if (d.portId) add(byPort, pairKey(d.nodeId, d.portId), i)
   })
   const hasDataCycle = origins.some(o => o.kind === 'dataCycle')
-  let variables: Set<unknown> | undefined
-  /** Every variable name any node reads. */
-  const readVariables = () => variables ??= variablesIn([...analysis.nodes.values()].map(n => n.config))
   // The scope problems the graph has, by step input and message.
   const oldScope = new Set(diagnostics.filter(d => d.code === 'scope.data').map(d => JSON.stringify([d.nodeId, d.inputId, d.message])))
   const adjacency = new Map<string, string[]>()
@@ -135,14 +135,8 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     if (!source || analysis.nodes.get(sourceId) !== source || analysis.nodes.get(targetId) !== target) return full()
     const spec = Object.hasOwn(catalog.nodes, target.kind) ? catalog.nodes[target.kind] : undefined
     if (!spec || !storageIsPrivate(target, targetPort, spec)) return full()
-    // A value node is worked out where the steps reading it run, and sets its variable there. The wire this one
-    // replaces may leave a value node (or one upstream of it) read in fewer places, which can hide a variable it sets;
-    // a wire out of a value node adds places where a variable read upstream of it is looked up.
     const pureNode = (node: GraphNode | undefined) => node !== undefined && isPure(node, catalog)
-    const replaced = [...removed].map(i => analysis.nodes.get((graph.edges[i] as { source: string }).source))
-    if (replaced.some(n => pureNode(n) && upstream(n!, n => typeof n.config.output === 'string' && readVariables().has(n.config.output)))) return full()
     const sourcePure = pureNode(source), targetPure = pureNode(target)
-    if (sourcePure && upstream(source, n => variablesIn(n.config).size > 0)) return full()
 
     const volatile = (o: DiagnosticOrigin) =>
       (o.kind === 'edge' && removed.has(o.edge)) || o.kind === 'dataCycle' ||
@@ -189,16 +183,6 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     }
     return messages.size ? { message: [...messages].join('; '), fallback: false } : { fallback: false }
   }
-  /** Whether `test` holds for the value node or a value node it reads, directly or through others. */
-  function upstream(start: GraphNode, test: (node: GraphNode) => boolean) {
-    const seen = new Set<string>()
-    const visit = (node: GraphNode): boolean => {
-      if (seen.has(node.id)) return false
-      seen.add(node.id)
-      return test(node) || analysis.data.some(e => e.target === node.id && isPure(analysis.nodes.get(e.source)!, catalog) && visit(analysis.nodes.get(e.source)!))
-    }
-    return visit(start)
-  }
   /** The value wires from the value node, or a value node reading it, into a step: the value node on the wire, the step and its input. */
   function stepReaders(start: GraphNode) {
     const found: { via: GraphNode; reader: GraphNode; port: string }[] = [], seen = new Set([start.id])
@@ -215,23 +199,13 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
   return index
 }
 
-/** The names of the variable operands a config value holds anywhere (inputs, fields, items or arguments). */
-function variablesIn(value: unknown, names = new Set<unknown>()): Set<unknown> {
-  if (Array.isArray(value)) for (const item of value) variablesIn(item, names)
-  else if (record(value)) {
-    if (value.kind === 'variable') names.add(value.name)
-    for (const item of Object.values(value)) variablesIn(item, names)
-  }
-  return names
-}
-
 type NodeSpec = VisualCatalogSnapshot['nodes'][string]
 /**
  * Config keys of this node kind that something other than the input itself reads: the catalog config, and what
- * contract.ts derives from config for the kind (ports, scopes, trigger rules, variable outputs).
+ * contract.ts derives from config for the kind (ports, scopes, trigger rules, a Custom C# node's signature).
  */
 function sharedConfigKeys(kind: string, spec: NodeSpec): Set<string> {
-  const keys = new Set([...Object.keys(spec.config), 'output'])
+  const keys = new Set(Object.keys(spec.config))
   if (spec.dynamicInputs === 'fields' || spec.dynamicInputs === 'service') keys.add('fields')
   if (spec.dynamicInputs === 'service') for (const key of ['service', 'returnResponse']) keys.add(key)
   if (spec.dynamicInputs === 'items') keys.add('items')

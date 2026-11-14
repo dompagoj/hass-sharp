@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { render } from 'solid-js/web'
 import { NodeConfig } from '../src/visual/NodeConfig'
-import { addNode, connectNodes, createGraph, updateNode } from '../src/visual/graph'
+import { addNode, createGraph, updateNode } from '../src/visual/graph'
 import { nodeCatalog, type VisualCatalogSnapshot } from '../src/visual/contract'
 let dispose: (() => void) | undefined
 afterEach(() => {
@@ -18,8 +18,6 @@ const fixture = () => {
   let graph = addNode(createGraph('Typed'), 'constant', 'temperature')
   graph = updateNode(graph, 'temperature', { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 20 } } })
   graph = addNode(graph, 'if', 'branch')
-  graph = connectNodes(graph, 'service-1', 'temperature')
-  graph = connectNodes(graph, 'temperature', 'branch')
   return graph
 }
 it('shows typed inputs with friendly type chips and outputs, without an appearance section', () => {

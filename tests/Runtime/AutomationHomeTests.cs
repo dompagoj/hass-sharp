@@ -15,7 +15,7 @@ static class AutomationHomeTests
         (RunHistoryStore)typeof(HassSharpManager).GetField("_history", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(api)!;
 
     // One trigger of each kind the switch withholds (entity, schedule, startup) and a manual one whose run waits until cancelled.
-    static JsonObject Switchable(string name = "Door") => JsonNode.Parse("""
+    static JsonObject Switchable(string name = "Door") => VisualExecutionTests.Derived(JsonNode.Parse("""
     {"version":5,"name":"NAME","nodes":[
       {"id":"door","kind":"trigger","config":{"type":"entity","entity":"binary_sensor.door"}},
       {"id":"noon","kind":"trigger","config":{"type":"daily","time":"12:00","timeZone":"UTC"}},
@@ -24,9 +24,9 @@ static class AutomationHomeTests
       {"id":"l1","kind":"log","config":{"value":{"kind":"literal","type":"string","value":"door"}}},
       {"id":"l2","kind":"log","config":{"value":{"kind":"literal","type":"string","value":"noon"}}},
       {"id":"l3","kind":"log","config":{"value":{"kind":"literal","type":"string","value":"boot"}}},
-      {"id":"wait","kind":"custom","config":{"code":"await Task.Delay(-1, CancellationToken);"}}
+      {"id":"wait","kind":"custom","config":HOLD}
     ],"edges":[{"id":"e1","source":"door","target":"l1"},{"id":"e2","source":"noon","target":"l2"},{"id":"e3","source":"boot","target":"l3"},{"id":"e4","source":"hold","target":"wait"}]}
-    """.Replace("NAME", name))!.AsObject();
+    """.Replace("NAME", name).Replace("HOLD", VisualExecutionTests.Code("wait", "await Task.Delay(-1, CancellationToken);")["config"]!.ToJsonString()))!.AsObject());
 
     [RuntimeSuite("--automation-home", Order = 7)]
     public static async Task Run()

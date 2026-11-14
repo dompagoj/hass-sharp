@@ -132,7 +132,6 @@ static class TriggerOutputTests
             new() { ["type"] = "entity", ["entity"] = "sensor.missing" },
             new() { ["type"] = "entity", ["entity"] = "sensor.blank" },
             new() { ["type"] = "entity" },
-            new() { ["type"] = "entity", ["entity"] = "sensor.test", ["entitiesExpression"] = "[Entities.Sensor.Test]" },
             new() { ["type"] = "daily", ["time"] = "07:30", ["timeZone"] = "UTC" },
             new() { ["type"] = "once", ["at"] = "2030-01-01T10:00:00Z" },
             new() { ["type"] = "manual" },
@@ -209,7 +208,7 @@ static class TriggerOutputTests
 
         // A null from_state produces no output; its consumer's error names it.
         var absent = Wired(new() { ["type"] = "entity", ["entity"] = "sensor.test" },
-            [Field("from"), Log("lf"), N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.from_state\"))throw lastError; Logger.Info(\"absent \"+lastError.Message);" })], ("from_state", "from", "entity"));
+            [Field("from"), Log("lf"), Code("c", "if(!lastError!.Message.Contains(\"trigger output t.from_state\"))throw lastError; Logger.Info(\"absent \"+lastError.Message);")], ("from_state", "from", "entity"));
         absent["edges"] = new JsonArray(E("t", "lf"), E("lf", "c", "error"), D("t", "from", "entity", "from_state"), D("from", "lf", "value"));
         var logged = await Logged(absent, InvocationCause.Entity, TriggerPayload.Entity(current, null));
         Check(logged.Length == 1 && logged[0].Contains("t.from_state") && logged[0].Contains("from.entity"), "absent from_state names the trigger output: " + string.Join("|", logged));
@@ -242,13 +241,13 @@ static class TriggerOutputTests
         var fallback = TriggerPayload.Manual("entity", gone, _ => null);
         Check(fallback.ToString() == """{"platform":"manual"}""", "unknown entity falls back");
         var missing = Wired(gone,
-            [Field("to"), Log("lt"), N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.to_state\"))throw lastError; Logger.Info(\"missing \"+lastError.Message);" })]);
+            [Field("to"), Log("lt"), Code("c", "if(!lastError!.Message.Contains(\"trigger output t.to_state\"))throw lastError; Logger.Info(\"missing \"+lastError.Message);")]);
         missing["edges"] = new JsonArray(E("t", "lt"), E("lt", "c", "error"), D("t", "to", "entity", "to_state"), D("to", "lt", "value"));
         logged = await Logged(missing, InvocationCause.Manual, fallback);
         Check(logged.Length == 1 && logged[0].Contains("t.to_state") && logged[0].Contains("to.entity"), "unknown entity names the trigger output: " + string.Join("|", logged));
 
         // Without any payload even data is absent.
-        var none = Wired(new() { ["type"] = "manual" }, [N("p", "get_field", new { value = new { kind = "unset" }, pointer = "", type = "object" }), Log("lp"), N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.data\"))throw lastError;" })], ("data", "p", "value"));
+        var none = Wired(new() { ["type"] = "manual" }, [N("p", "get_field", new { value = new { kind = "unset" }, pointer = "", type = "object" }), Log("lp"), Code("c", "if(!lastError!.Message.Contains(\"trigger output t.data\"))throw lastError;")], ("data", "p", "value"));
         none["edges"] = new JsonArray(E("t", "lp"), E("lp", "c", "error"), D("t", "p", "value", "data"), D("p", "lp", "value"));
         await Execute(none);
 
@@ -269,7 +268,7 @@ static class TriggerOutputTests
         var hook = JsonSerializer.SerializeToElement(new { trigger = new { platform = "webhook", json = new[] { 1, 2 }, query = new { a = "b" } } });
         var webhook = Wired(Ha(new { trigger = "webhook", webhook_id = "hook" }),
             [N("q", "get_field", new { value = new { kind = "unset" }, pointer = "/a", type = "string" }), Log("lq"), N("j", "get_field", new { value = new { kind = "unset" }, pointer = "", type = "object" }), Log("lj"),
-             N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.json cannot be read\"))throw lastError; Logger.Info(\"unreadable\");" })]);
+             Code("c", "if(!lastError!.Message.Contains(\"trigger output t.json cannot be read\"))throw lastError; Logger.Info(\"unreadable\");")]);
         webhook["edges"] = new JsonArray(E("t", "lq"), E("lq", "lj"), E("lj", "c", "error"), D("t", "q", "value", "query"), D("q", "lq", "value"), D("t", "j", "value", "json"), D("j", "lj", "value"));
         Check((await Logged(webhook, InvocationCause.HomeAssistantTrigger, TriggerPayload.Native(hook))).SequenceEqual(["b", "unreadable"]), "unreadable output fails only its consumer: " + string.Join("|", messages));
     }

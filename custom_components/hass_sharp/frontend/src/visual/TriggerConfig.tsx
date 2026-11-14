@@ -3,7 +3,6 @@ import { useHass } from '../context'
 import type { GraphNode, InputSpec, JsonValue } from './contract'
 import type { VisualDiagnostic } from './api'
 import { domainWords } from './typeLabels'
-import { DraftField } from './widgets/common'
 import { fitsWidget, widgetFor, WidgetControl, type Widget } from './widgets'
 import { Glyph } from './Glyph'
 
@@ -350,16 +349,6 @@ export function TriggerAdvanced(props: { node: GraphNode; onChange: Change }) {
           <option value="false" selected={config().startup === false}>No, never at startup</option>
         </select>
       </div>
-      <For each={[['entitiesExpression', 'Entities expression', 'A C# expression that replaces the entities this trigger listens to.'], ['schedulesExpression', 'Schedules expression', 'A C# expression that replaces the schedules this trigger uses.']] as const}>
-        {([key, label, hint]) => (
-          <div class="hs-insp-field">
-            <label class="hs-insp-field__label" for={`${id}-${key}`}>{label}</label>
-            <DraftField id={`${id}-${key}`} label={label} multiline class="hs-code-input" text={typeof config()[key] === 'string' ? (config()[key] as string) : ''}
-              commit={t => { set(key, t.trim() ? t : undefined); return undefined }} describedBy={`${id}-${key}-hint`} />
-            <small id={`${id}-${key}-hint`} class="hs-field-hint">{hint}</small>
-          </div>
-        )}
-      </For>
       <Show when={config().type === 'ha'}>
         <ValueField label="Trigger as JSON" widget={{ kind: 'json', multiple: false, structured: true }} value={config().trigger}
           hint="Home Assistant checks this declaration; keys the form does not show are kept." onChange={v => set('trigger', v)} />

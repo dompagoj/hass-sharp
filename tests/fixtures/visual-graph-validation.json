@@ -17,7 +17,6 @@
           "kind": "constant",
           "config": {
             "type": "boolean",
-            "output": "flag",
             "value": {
               "kind": "literal",
               "type": "boolean",
@@ -72,7 +71,6 @@
           "kind": "constant",
           "config": {
             "type": "boolean",
-            "output": "flag",
             "value": {
               "kind": "literal",
               "type": "boolean",
@@ -129,7 +127,6 @@
           "kind": "constant",
           "config": {
             "type": "number",
-            "output": "flag",
             "value": {
               "kind": "literal",
               "type": "number",
@@ -190,7 +187,6 @@
           "kind": "constant",
           "config": {
             "type": "boolean",
-            "output": "flag",
             "value": {
               "kind": "literal",
               "type": "boolean",
@@ -262,7 +258,6 @@
           "kind": "constant",
           "config": {
             "type": "boolean",
-            "output": "flag",
             "value": {
               "kind": "literal",
               "type": "boolean",
@@ -325,7 +320,6 @@
           "kind": "constant",
           "config": {
             "type": "boolean",
-            "output": "flag",
             "value": {
               "kind": "literal",
               "type": "boolean",
@@ -677,7 +671,7 @@
     ]
   },
   {
-    "name": "variable operands preserved",
+    "name": "removed: a variable operand",
     "graph": {
       "version": 5,
       "name": "Contract",
@@ -694,7 +688,6 @@
           "kind": "constant",
           "config": {
             "type": "boolean",
-            "output": "flag",
             "value": {
               "kind": "literal",
               "type": "boolean",
@@ -745,47 +738,12 @@
         }
       ]
     },
-    "valid": true
-  },
-  {
-    "name": "unknown variable rejected",
-    "graph": {
-      "version": 5,
-      "name": "Contract",
-      "nodes": [
-        {
-          "id": "t",
-          "kind": "trigger",
-          "config": {
-            "type": "manual"
-          }
-        },
-        {
-          "id": "b",
-          "kind": "if",
-          "config": {
-            "value": {
-              "kind": "variable",
-              "name": "missing"
-            }
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "t:next:b",
-          "source": "t",
-          "target": "b",
-          "port": "next"
-        }
-      ]
-    },
-    "valid": false,
     "nodeId": "b",
     "inputId": "value",
-    "contains": "variable",
+    "contains": "reads a variable, and variables are gone",
+    "valid": false,
     "messages": [
-      "Condition uses variable missing, which no earlier step provides with a single type"
+      "Condition reads a variable, and variables are gone; connect a wire to it instead"
     ]
   },
   {
@@ -2812,97 +2770,6 @@
     "valid": true
   },
   {
-    "name": "variables cannot bypass branch isolation",
-    "graph": {
-      "version": 5,
-      "name": "Contract",
-      "nodes": [
-        {
-          "id": "t",
-          "kind": "trigger",
-          "config": {
-            "type": "manual"
-          }
-        },
-        {
-          "id": "p",
-          "kind": "parallel",
-          "config": {
-            "branches": [
-              "left",
-              "right"
-            ]
-          }
-        },
-        {
-          "id": "a",
-          "kind": "constant",
-          "config": {
-            "type": "number",
-            "value": {
-              "kind": "literal",
-              "type": "number",
-              "value": 1
-            },
-            "output": "inside"
-          }
-        },
-        {
-          "id": "b",
-          "kind": "log",
-          "config": {
-            "value": {
-              "kind": "literal",
-              "type": "number",
-              "value": 0
-            }
-          }
-        },
-        {
-          "id": "after",
-          "kind": "log",
-          "config": {
-            "value": {
-              "kind": "variable",
-              "name": "inside"
-            }
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "t:next:p",
-          "source": "t",
-          "target": "p",
-          "port": "next"
-        },
-        {
-          "id": "p:branch:right:b",
-          "source": "p",
-          "target": "b",
-          "port": "branch:right"
-        },
-        {
-          "id": "p:next:after",
-          "source": "p",
-          "target": "after",
-          "port": "next"
-        }
-      ]
-    },
-    "valid": false,
-    "nodeId": "after",
-    "inputId": "value",
-    "contains": "variable",
-    "messages": [
-      "Constant is not used",
-      "Message uses variable inside, which no earlier step provides with a single type"
-    ],
-    "codes": [
-      "pure.unused"
-    ]
-  },
-  {
     "name": "multiple consumers per output",
     "graph": {
       "version": 5,
@@ -2978,80 +2845,6 @@
       ]
     },
     "valid": true
-  },
-  {
-    "name": "parallel sibling variables never resolve",
-    "graph": {
-      "version": 5,
-      "name": "Contract",
-      "nodes": [
-        {
-          "id": "t",
-          "kind": "trigger",
-          "config": {
-            "type": "manual"
-          }
-        },
-        {
-          "id": "p",
-          "kind": "parallel",
-          "config": {
-            "branches": [
-              "a",
-              "b"
-            ]
-          }
-        },
-        {
-          "id": "a",
-          "kind": "constant",
-          "config": {
-            "type": "boolean",
-            "output": "branch_value",
-            "value": {
-              "kind": "literal",
-              "type": "boolean",
-              "value": true
-            }
-          }
-        },
-        {
-          "id": "b",
-          "kind": "if",
-          "config": {
-            "value": {
-              "kind": "variable",
-              "name": "branch_value"
-            }
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "t:next:p",
-          "source": "t",
-          "target": "p",
-          "port": "next"
-        },
-        {
-          "id": "p:branch:b:b",
-          "source": "p",
-          "target": "b",
-          "port": "branch:b"
-        }
-      ]
-    },
-    "valid": false,
-    "nodeId": "b",
-    "inputId": "value",
-    "contains": "variable",
-    "messages": [
-      "Condition uses variable branch_value, which no earlier step provides with a single type",
-      "Constant is not used"
-    ],
-    "codes": [
-      "pure.unused"
-    ]
   },
   {
     "name": "constructor wire replaces only matching field",
@@ -3882,7 +3675,7 @@
     "valid": true
   },
   {
-    "name": "variable name absent rejected",
+    "name": "removed: a variable operand without a name",
     "graph": {
       "version": 5,
       "name": "Review regressions",
@@ -3925,300 +3718,13 @@
         }
       ]
     },
-    "valid": false,
     "nodeId": "b",
     "inputId": "value",
-    "contains": "variable",
-    "messages": [
-      "Constant is not used",
-      "Message uses a variable without a valid name"
-    ],
-    "codes": [
-      "pure.unused"
-    ]
-  },
-  {
-    "name": "variable name empty rejected",
-    "graph": {
-      "version": 5,
-      "name": "Review regressions",
-      "nodes": [
-        {
-          "id": "t",
-          "kind": "trigger",
-          "config": {
-            "type": "manual"
-          }
-        },
-        {
-          "id": "a",
-          "kind": "constant",
-          "config": {
-            "type": "number",
-            "value": {
-              "kind": "literal",
-              "type": "number",
-              "value": 2
-            }
-          }
-        },
-        {
-          "id": "b",
-          "kind": "log",
-          "config": {
-            "value": {
-              "kind": "variable",
-              "name": ""
-            }
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "t:next:a",
-          "source": "t",
-          "target": "b",
-          "port": "next"
-        }
-      ]
-    },
+    "contains": "reads a variable, and variables are gone",
     "valid": false,
-    "nodeId": "b",
-    "inputId": "value",
-    "contains": "variable",
     "messages": [
       "Constant is not used",
-      "Message uses a variable without a valid name"
-    ],
-    "codes": [
-      "pure.unused"
-    ]
-  },
-  {
-    "name": "variable name null rejected",
-    "graph": {
-      "version": 5,
-      "name": "Review regressions",
-      "nodes": [
-        {
-          "id": "t",
-          "kind": "trigger",
-          "config": {
-            "type": "manual"
-          }
-        },
-        {
-          "id": "a",
-          "kind": "constant",
-          "config": {
-            "type": "number",
-            "value": {
-              "kind": "literal",
-              "type": "number",
-              "value": 2
-            }
-          }
-        },
-        {
-          "id": "b",
-          "kind": "log",
-          "config": {
-            "value": {
-              "kind": "variable",
-              "name": null
-            }
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "t:next:a",
-          "source": "t",
-          "target": "b",
-          "port": "next"
-        }
-      ]
-    },
-    "valid": false,
-    "nodeId": "b",
-    "inputId": "value",
-    "contains": "variable",
-    "messages": [
-      "Constant is not used",
-      "Message uses a variable without a valid name"
-    ],
-    "codes": [
-      "pure.unused"
-    ]
-  },
-  {
-    "name": "variable name number rejected",
-    "graph": {
-      "version": 5,
-      "name": "Review regressions",
-      "nodes": [
-        {
-          "id": "t",
-          "kind": "trigger",
-          "config": {
-            "type": "manual"
-          }
-        },
-        {
-          "id": "a",
-          "kind": "constant",
-          "config": {
-            "type": "number",
-            "value": {
-              "kind": "literal",
-              "type": "number",
-              "value": 2
-            }
-          }
-        },
-        {
-          "id": "b",
-          "kind": "log",
-          "config": {
-            "value": {
-              "kind": "variable",
-              "name": 12
-            }
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "t:next:a",
-          "source": "t",
-          "target": "b",
-          "port": "next"
-        }
-      ]
-    },
-    "valid": false,
-    "nodeId": "b",
-    "inputId": "value",
-    "contains": "variable",
-    "messages": [
-      "Constant is not used",
-      "Message uses a variable without a valid name"
-    ],
-    "codes": [
-      "pure.unused"
-    ]
-  },
-  {
-    "name": "variable name object rejected",
-    "graph": {
-      "version": 5,
-      "name": "Review regressions",
-      "nodes": [
-        {
-          "id": "t",
-          "kind": "trigger",
-          "config": {
-            "type": "manual"
-          }
-        },
-        {
-          "id": "a",
-          "kind": "constant",
-          "config": {
-            "type": "number",
-            "value": {
-              "kind": "literal",
-              "type": "number",
-              "value": 2
-            }
-          }
-        },
-        {
-          "id": "b",
-          "kind": "log",
-          "config": {
-            "value": {
-              "kind": "variable",
-              "name": {
-                "toString": null
-              }
-            }
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "t:next:a",
-          "source": "t",
-          "target": "b",
-          "port": "next"
-        }
-      ]
-    },
-    "valid": false,
-    "nodeId": "b",
-    "inputId": "value",
-    "contains": "variable",
-    "messages": [
-      "Constant is not used",
-      "Message uses a variable without a valid name"
-    ],
-    "codes": [
-      "pure.unused"
-    ]
-  },
-  {
-    "name": "variable name invalid identifier rejected",
-    "graph": {
-      "version": 5,
-      "name": "Review regressions",
-      "nodes": [
-        {
-          "id": "t",
-          "kind": "trigger",
-          "config": {
-            "type": "manual"
-          }
-        },
-        {
-          "id": "a",
-          "kind": "constant",
-          "config": {
-            "type": "number",
-            "value": {
-              "kind": "literal",
-              "type": "number",
-              "value": 2
-            }
-          }
-        },
-        {
-          "id": "b",
-          "kind": "log",
-          "config": {
-            "value": {
-              "kind": "variable",
-              "name": "not valid"
-            }
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "t:next:a",
-          "source": "t",
-          "target": "b",
-          "port": "next"
-        }
-      ]
-    },
-    "valid": false,
-    "nodeId": "b",
-    "inputId": "value",
-    "contains": "variable",
-    "messages": [
-      "Constant is not used",
-      "Message uses a variable without a valid name"
+      "Message reads a variable, and variables are gone; connect a wire to it instead"
     ],
     "codes": [
       "pure.unused"
@@ -11194,7 +10700,7 @@
     ]
   },
   {
-    "name": "service variable target with an entity_id field rejected",
+    "name": "service wired target with an entity_id field rejected",
     "graph": {
       "version": 5,
       "name": "Service node",
@@ -11217,8 +10723,7 @@
               "value": {
                 "entity_id": "light.kitchen"
               }
-            },
-            "output": "chosen"
+            }
           }
         },
         {
@@ -11234,8 +10739,7 @@
             },
             "returnResponse": false,
             "target": {
-              "kind": "variable",
-              "name": "chosen"
+              "kind": "unset"
             },
             "service": "light.turn_on"
           }
@@ -11245,7 +10749,9 @@
           "kind": "log",
           "config": {
             "value": {
-              "kind": "unset"
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
             }
           }
         }
@@ -11263,12 +10769,12 @@
           "port": "next"
         },
         {
-          "id": "e.value:l.value",
+          "id": "e.value:s.target",
           "kind": "data",
           "source": "e",
-          "target": "l",
+          "target": "s",
           "sourcePort": "value",
-          "targetPort": "value"
+          "targetPort": "target"
         }
       ]
     },
@@ -14342,9 +13848,7 @@
     ]
   },
   {
-    "name": "value node: a variable it sets is read where a step reads the value node",
-    "valid": true,
-    "noDiagnostics": true,
+    "name": "custom node: its signature gives the pins a wire joins",
     "graph": {
       "version": 5,
       "name": "Contract",
@@ -14360,13 +13864,49 @@
           "id": "c",
           "kind": "constant",
           "config": {
-            "type": "boolean",
+            "type": "number",
             "value": {
               "kind": "literal",
-              "type": "boolean",
-              "value": true
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "x",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Check\")] public static int Run(int level) => level; }",
+            "signature": {
+              "title": "Check",
+              "description": "Checks a level.",
+              "pure": false,
+              "inputs": {
+                "level": {
+                  "types": [
+                    "number"
+                  ],
+                  "required": true,
+                  "label": "Level",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {
+                "result": {
+                  "type": "number",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {}
             },
-            "output": "flag"
+            "arguments": {
+              "level": {
+                "kind": "unset"
+              }
+            }
           }
         },
         {
@@ -14377,14 +13917,493 @@
               "kind": "unset"
             }
           }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:x",
+          "source": "t",
+          "target": "x",
+          "port": "next"
         },
         {
-          "id": "i",
-          "kind": "if",
+          "id": "x:next:l",
+          "source": "x",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "c.value:x.level",
+          "kind": "data",
+          "source": "c",
+          "target": "x",
+          "sourcePort": "value",
+          "targetPort": "level"
+        },
+        {
+          "id": "x.result:l.value",
+          "kind": "data",
+          "source": "x",
+          "target": "l",
+          "sourcePort": "result",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "custom node: an input its signature does not have",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "x",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Check\")] public static int Run(int level) => level; }",
+            "signature": {
+              "title": "Check",
+              "description": "Checks a level.",
+              "pure": false,
+              "inputs": {
+                "level": {
+                  "types": [
+                    "number"
+                  ],
+                  "required": true,
+                  "label": "Level",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {
+                "result": {
+                  "type": "number",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {}
+            },
+            "arguments": {
+              "level": {
+                "kind": "literal",
+                "type": "number",
+                "value": 1
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:x",
+          "source": "t",
+          "target": "x",
+          "port": "next"
+        },
+        {
+          "id": "c.value:x.count",
+          "kind": "data",
+          "source": "c",
+          "target": "x",
+          "sourcePort": "value",
+          "targetPort": "count"
+        }
+      ]
+    },
+    "nodeId": "x",
+    "valid": false,
+    "messages": [
+      "This value wire goes into Count, which this step does not have"
+    ],
+    "codes": [
+      "port.unknownInput"
+    ]
+  },
+  {
+    "name": "custom node: a required input of its signature",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "x",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Check\")] public static int Run(int level) => level; }",
+            "signature": {
+              "title": "Check",
+              "description": "Checks a level.",
+              "pure": false,
+              "inputs": {
+                "level": {
+                  "types": [
+                    "number"
+                  ],
+                  "required": true,
+                  "label": "Level",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {
+                "result": {
+                  "type": "number",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {}
+            },
+            "arguments": {
+              "level": {
+                "kind": "unset"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:x",
+          "source": "t",
+          "target": "x",
+          "port": "next"
+        }
+      ]
+    },
+    "nodeId": "x",
+    "inputId": "level",
+    "valid": false,
+    "messages": [
+      "Level is required"
+    ]
+  },
+  {
+    "name": "code custom.signature: a signature the compiler does not write",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "x",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Check\")] public static int Run(int level) => level; }",
+            "signature": {
+              "title": "Check",
+              "inputs": [],
+              "outputs": {}
+            },
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:x",
+          "source": "t",
+          "target": "x",
+          "port": "next"
+        }
+      ]
+    },
+    "nodeId": "x",
+    "inputId": "source",
+    "contains": "The pins of this node cannot be read",
+    "valid": false,
+    "messages": [
+      "The pins of this node cannot be read; open Edit code and apply it"
+    ],
+    "codes": [
+      "custom.signature"
+    ]
+  },
+  {
+    "name": "custom node: a type its signature declares joins pins of that type",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { public record Reading(int Level); [Node(\"Make reading\")] public static Reading Run() => new(1); }",
+            "signature": {
+              "title": "Make reading",
+              "description": "Makes a reading.",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Custom_make.Reading",
+                  "label": "Reading",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Custom_make.Reading": {
+                  "label": "Reading",
+                  "description": "A reading.",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::NodeLib.Custom_make.Reading"
+                  ]
+                }
+              }
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "use",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Use reading\")] public static void Run(global::NodeLib.Custom_make.Reading reading) { } }",
+            "signature": {
+              "title": "Use reading",
+              "description": "Uses a reading.",
+              "pure": false,
+              "inputs": {
+                "reading": {
+                  "types": [
+                    "global::NodeLib.Custom_make.Reading"
+                  ],
+                  "required": true,
+                  "label": "Reading",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {}
+            },
+            "arguments": {
+              "reading": {
+                "kind": "unset"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:use",
+          "source": "make",
+          "target": "use",
+          "port": "next"
+        },
+        {
+          "id": "make.result:use.reading",
+          "kind": "data",
+          "source": "make",
+          "target": "use",
+          "sourcePort": "result",
+          "targetPort": "reading"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "custom node: a type its signature declares does not go into a number pin",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { public record Reading(int Level); [Node(\"Make reading\")] public static Reading Run() => new(1); }",
+            "signature": {
+              "title": "Make reading",
+              "description": "Makes a reading.",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Custom_make.Reading",
+                  "label": "Reading",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Custom_make.Reading": {
+                  "label": "Reading",
+                  "description": "A reading.",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::NodeLib.Custom_make.Reading"
+                  ]
+                }
+              }
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:d",
+          "source": "make",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "make.result:d.seconds",
+          "kind": "data",
+          "source": "make",
+          "target": "d",
+          "sourcePort": "result",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "nodeId": "d",
+    "inputId": "seconds",
+    "valid": false,
+    "messages": [
+      "Seconds accepts Number, not Reading"
+    ]
+  },
+  {
+    "name": "custom node: a pure one is a value and takes no step order wire",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "x",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Check\")] public static int Run(int level) => level; }",
+            "signature": {
+              "title": "Check",
+              "description": "Checks a level.",
+              "pure": true,
+              "inputs": {
+                "level": {
+                  "types": [
+                    "number"
+                  ],
+                  "required": true,
+                  "label": "Level",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {
+                "result": {
+                  "type": "number",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {}
+            },
+            "arguments": {
+              "level": {
+                "kind": "literal",
+                "type": "number",
+                "value": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
           "config": {
             "value": {
-              "kind": "variable",
-              "name": "flag"
+              "kind": "unset"
             }
           }
         }
@@ -14397,9 +14416,363 @@
           "port": "next"
         },
         {
-          "id": "l:next:i",
+          "id": "l:next:x",
           "source": "l",
-          "target": "i",
+          "target": "x",
+          "port": "next"
+        },
+        {
+          "id": "x.result:l.value",
+          "kind": "data",
+          "source": "x",
+          "target": "l",
+          "sourcePort": "result",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "nodeId": "x",
+    "contains": "Check is a value and is not part of the run order",
+    "valid": false,
+    "messages": [
+      "Check is a value and is not part of the run order"
+    ],
+    "codes": [
+      "flow.pure"
+    ]
+  },
+  {
+    "name": "custom node: a pure one is read by the step that uses it",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "x",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Check\")] public static int Run(int level) => level; }",
+            "signature": {
+              "title": "Check",
+              "description": "Checks a level.",
+              "pure": true,
+              "inputs": {
+                "level": {
+                  "types": [
+                    "number"
+                  ],
+                  "required": true,
+                  "label": "Level",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {
+                "result": {
+                  "type": "number",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {}
+            },
+            "arguments": {
+              "level": {
+                "kind": "literal",
+                "type": "number",
+                "value": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "x.result:l.value",
+          "kind": "data",
+          "source": "x",
+          "target": "l",
+          "sourcePort": "result",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "noDiagnostics": true,
+    "valid": true
+  },
+  {
+    "name": "error details: a value node a step reads",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "e",
+          "kind": "last_error",
+          "config": {}
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "e.message:l.value",
+          "kind": "data",
+          "source": "e",
+          "target": "l",
+          "sourcePort": "message",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "noDiagnostics": true,
+    "valid": true
+  },
+  {
+    "name": "value node: read from inside a loop body and from after the loop, only the reader inside may use the loop item",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "f",
+          "kind": "foreach",
+          "config": {
+            "items": {
+              "kind": "literal",
+              "type": "array",
+              "value": [
+                1,
+                2
+              ]
+            },
+            "itemType": "number"
+          }
+        },
+        {
+          "id": "cmp",
+          "kind": "compare",
+          "config": {
+            "left": {
+              "kind": "unset"
+            },
+            "right": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "operator": "eq"
+          }
+        },
+        {
+          "id": "inside",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "after",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:f",
+          "source": "t",
+          "target": "f",
+          "port": "next"
+        },
+        {
+          "id": "f:body:inside",
+          "source": "f",
+          "target": "inside",
+          "port": "body"
+        },
+        {
+          "id": "f:next:after",
+          "source": "f",
+          "target": "after",
+          "port": "next"
+        },
+        {
+          "id": "f.item:cmp.left",
+          "kind": "data",
+          "source": "f",
+          "target": "cmp",
+          "sourcePort": "item",
+          "targetPort": "left"
+        },
+        {
+          "id": "cmp.value:inside.value",
+          "kind": "data",
+          "source": "cmp",
+          "target": "inside",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "cmp.value:after.value",
+          "kind": "data",
+          "source": "cmp",
+          "target": "after",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "nodeId": "after",
+    "inputId": "value",
+    "contains": "Compare uses For each · Item, which Log cannot use here",
+    "valid": false,
+    "messages": [
+      "Compare uses For each · Item, which Log cannot use here: it is on the other side of a loop or parallel branch boundary"
+    ],
+    "codes": [
+      "scope.data"
+    ]
+  },
+  {
+    "name": "removed: usings and helper members of the automation",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ],
+      "imports": "using System.Linq;",
+      "members": "static int Twice(int x) => x * 2;"
+    },
+    "contains": "Usings are no longer part of an automation",
+    "valid": false,
+    "messages": [
+      "Helper members are no longer part of an automation; write them in a Custom C# node's code or a node library",
+      "Usings are no longer part of an automation; put using lines at the top of a Custom C# node's code"
+    ]
+  },
+  {
+    "name": "removed: a step exposing its value to C# by name",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "output": "level"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
           "port": "next"
         },
         {
@@ -14411,13 +14784,62 @@
           "targetPort": "value"
         }
       ]
-    }
+    },
+    "nodeId": "c",
+    "inputId": "output",
+    "contains": "Steps no longer expose values to C# by name",
+    "valid": false,
+    "messages": [
+      "Steps no longer expose values to C# by name; connect a wire from this step to each step that uses its value"
+    ]
   },
   {
-    "name": "value node: a variable it sets is not read where no step reads the value node",
+    "name": "removed: trigger entities and schedules expressions",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual",
+            "entitiesExpression": "[\"light.hall\"]",
+            "schedulesExpression": "[]"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "nodeId": "t",
+    "inputId": "entitiesExpression",
+    "contains": "Entities expression is gone",
     "valid": false,
-    "nodeId": "i",
-    "contains": "uses variable flag, which no earlier step provides",
+    "messages": [
+      "Entities expression is gone; choose the entity in Entity",
+      "Schedules expression is gone; set the time in Time"
+    ]
+  },
+  {
+    "name": "removed: Custom C# code written as statements",
     "graph": {
       "version": 5,
       "name": "Contract",
@@ -14430,61 +14852,28 @@
           }
         },
         {
-          "id": "c",
-          "kind": "constant",
+          "id": "x",
+          "kind": "custom",
           "config": {
-            "type": "boolean",
-            "value": {
-              "kind": "literal",
-              "type": "boolean",
-              "value": true
-            },
-            "output": "flag"
-          }
-        },
-        {
-          "id": "l",
-          "kind": "log",
-          "config": {
-            "value": {
-              "kind": "literal",
-              "type": "string",
-              "value": "hello"
-            }
-          }
-        },
-        {
-          "id": "i",
-          "kind": "if",
-          "config": {
-            "value": {
-              "kind": "variable",
-              "name": "flag"
-            }
+            "code": "Logger.LogInformation(\"hi\");"
           }
         }
       ],
       "edges": [
         {
-          "id": "t:next:l",
+          "id": "t:next:x",
           "source": "t",
-          "target": "l",
-          "port": "next"
-        },
-        {
-          "id": "l:next:i",
-          "source": "l",
-          "target": "i",
+          "target": "x",
           "port": "next"
         }
       ]
     },
+    "nodeId": "x",
+    "inputId": "source",
+    "contains": "Custom C# code is now one static method marked [Node]",
+    "valid": false,
     "messages": [
-      "Condition uses variable flag, which no earlier step provides with a single type",
-      "Constant is not used"
-    ],
-    "codes": [
-      "pure.unused"
+      "Custom C# code is now one static method marked [Node]; rewrite this node's code in that form"
     ]
   }
 ]

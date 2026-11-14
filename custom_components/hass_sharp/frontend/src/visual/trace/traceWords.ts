@@ -1,4 +1,4 @@
-import { dataOutputs, inputValue, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../contract'
+import { dataOutputs, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../contract'
 import { nodeTitle } from '../flow/flowModel'
 import { nodeInputs, portLabel } from '../graph'
 import { serviceFieldLabel } from '../nodeSummary'
@@ -16,14 +16,12 @@ export function inputLabel(graph: Graph, node: GraphNode, port: string, catalog:
 export const outputLabel = (node: GraphNode | undefined, port: string, catalog: VisualCatalogSnapshot) =>
   (node ? own(dataOutputs(node, catalog), port)?.label : undefined) ?? portLabel(port)
 
-/** Where an input's value came from: "From Motion · Entity", "Variable level" or "Value". */
-export function inputSource(graph: Graph, node: GraphNode, port: string, value: TraceValue, catalog: VisualCatalogSnapshot): string {
+/** Where an input's value came from: "From Motion · Entity" or "Value". */
+export function inputSource(graph: Graph, value: TraceValue, catalog: VisualCatalogSnapshot): string {
   if (value.src) {
     const source = graph.nodes.find(n => n.id === value.src!.node)
     return `From ${nodeTitle(source, catalog, 'a removed step')} · ${outputLabel(source, value.src.port, catalog)}`
   }
-  const operand = inputValue(node, port, catalog) as { kind?: unknown; name?: unknown } | undefined
-  if (operand?.kind === 'variable' && typeof operand.name === 'string') return `Variable ${operand.name}`
   return 'Value'
 }
 

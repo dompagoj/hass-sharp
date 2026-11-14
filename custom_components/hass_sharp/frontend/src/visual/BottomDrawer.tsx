@@ -134,7 +134,7 @@ export function ProblemsPanel(props: {
       const key = diagnostic.nodeId ?? ''
       byKey.set(key, [...(byKey.get(key) ?? []), diagnostic])
     }
-    // The automation's own problems first, then steps in the graph's order, then anything about a missing step.
+    // The automation's own problems first, then node libraries, then steps in the graph's order, then anything about a missing step.
     const order = (key: string) => (key === '' ? -2 : key.startsWith('$') ? -1 : props.graph.nodes.findIndex(n => n.id === key) + 1 || 1e9)
     return [...byKey].sort(([a], [b]) => order(a) - order(b))
   })
@@ -144,7 +144,7 @@ export function ProblemsPanel(props: {
         <For each={groups()}>
           {([key, list]) => {
             const node = () => props.graph.nodes.find(n => n.id === key)
-            const heading = () => (key === '' ? 'This automation' : key.startsWith('$') ? 'Shared C#' : nodeTitle(node(), props.catalog, 'Missing step'))
+            const heading = () => (key === '' ? 'This automation' : key.startsWith('$') ? 'Node libraries' : nodeTitle(node(), props.catalog, 'Missing step'))
             return (
               <section class="hs-problems__group" style={{ '--hs-cat': node() ? nodeIdentity(node()!.kind, props.catalog).color : undefined }}>
                 <h3 class="hs-problems__step">
@@ -157,9 +157,6 @@ export function ProblemsPanel(props: {
                     )}
                   </Show>
                 </h3>
-                <Show when={key.startsWith('$')}>
-                  <p class="hs-problems__note">Usings and helper members are edited in a Custom C# step, under Advanced.</p>
-                </Show>
                 <ul class="hs-problems__list" aria-label={`Problems of ${heading()}`}>
                   <For each={list}>
                     {diagnostic => (

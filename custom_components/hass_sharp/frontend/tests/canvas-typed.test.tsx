@@ -518,7 +518,6 @@ it('connects a data pin from the keyboard and says why a refused one cannot conn
   let graph = addNode(addNode(createGraph('Data'), 'constant', 'a'), 'constant', 'b')
   for (const id of ['a', 'b']) graph = updateNode(graph, id, { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 1 } } })
   graph = addNode(graph, 'if', 'branch')
-  graph = connectNodes(connectNodes(connectNodes(graph, 'service-1', 'a'), 'a', 'b'), 'b', 'branch')
   const history = createGraphHistory(graph)
   dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, el)
   const pin = (id: string, side: string, handle = 'data:value') => el.querySelector<HTMLElement>(`[data-id="${id}"] .${side}[data-handleid="${handle}"]`)!

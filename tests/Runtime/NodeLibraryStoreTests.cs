@@ -63,8 +63,19 @@ static class NodeLibraryStoreTests
             var failureSource = source.Replace("public static class Nodes {", "public static class Nodes { public static bool Fail => false;");
             Result(await Request(manager,new{operation="save",id="shared",name="Shared.cs",source=failureSource,expectedRevision=4}));
             var beforeFailure=Result(await Visual(manager,new{operation="read",id="dependent"}));
-            var failingGraph=graph.DeepClone().AsObject(); failingGraph["members"]="public VisualAutomation() { if(NodeLib.Nodes.Fail) throw new Exception(\"activation blocked\"); }";
-            Result(await Visual(manager,new{operation="save",id="dependent",graph=failingGraph,expectedRevision=beforeFailure["revision"]!.GetValue<long>()}));
+            // A module initializer runs as the automation loads: it fails activation once the library says so.
+            var failingGraph=graph.DeepClone().AsObject();
+            failingGraph["nodes"]!.AsArray().Add(N("block","custom",new JsonObject{["source"]="""
+                public static class Blocker
+                {
+                    [System.Runtime.CompilerServices.ModuleInitializer]
+                    internal static void Load() { if (NodeLib.Nodes.Fail) throw new Exception("activation blocked"); }
+                    [Node("Block")]
+                    public static void Run() { }
+                }
+                """,["arguments"]=new JsonObject()}));
+            failingGraph["edges"]!.AsArray().Add(E("use","block"));
+            Result(await Visual(manager,new{operation="save",id="dependent",graph=failingGraph,expectedRevision=beforeFailure["revision"]!.GetValue<long>(),deriveSignatures=true}));
             var runningBefore=Result(await Visual(manager,new{operation="read",id="dependent"}));
             var failedActivation=Result(await Request(manager,new{operation="save",id="shared",name="Shared.cs",source=failureSource.Replace("Fail => false", "Fail => true"),expectedRevision=5}));
             Check(failedActivation["automations"]![0]!["active"]!.GetValue<bool>()==false,"post-commit activation failure visible");
@@ -79,8 +90,8 @@ static class NodeLibraryStoreTests
             Check(!helperDelete["ok"]!.GetValue<bool>() && helperDelete.ToJsonString().Contains("shared"),"deletion rejects indirect cross-file helper dependency");
             var helperEdit=await Request(manager,new{operation="save",id="helper",name="Helper.cs",source="public static class Helper { }",expectedRevision=1});
             Check(!helperEdit["ok"]!.GetValue<bool>(),"helper signature edit rejected before commit");
-            var helperGraph=G(N("code","custom",new{code="var count = NodeLib.Helper.Count;"}));
-            Result(await Visual(manager,new{operation="save",id="advanced",graph=helperGraph,expectedRevision=0}));
+            var helperGraph=G(Code("code","var count = NodeLib.Helper.Count;"));
+            Result(await Visual(manager,new{operation="save",id="advanced",graph=helperGraph,expectedRevision=0,deriveSignatures=true}));
             Result(await Request(manager,new{operation="save",id="shared",name="Shared.cs",source=failureSource,expectedRevision=7}));
             var advancedDelete=await Request(manager,new{operation="delete",id="helper",expectedRevision=1});
             Check(!advancedDelete["ok"]!.GetValue<bool>() && advancedDelete.ToJsonString().Contains("advanced") && advancedDelete.ToJsonString().Contains("code"),"advanced C# dependency mapped to graph and node");

@@ -5,8 +5,8 @@ import { TriggerAdvanced, TriggerConfig } from './TriggerConfig'
 import { Glyph } from './Glyph'
 import { Errors, focusRow, InputRow, type RowContext } from './InputRow'
 import { ArrayItems, Branches, Declarations, ObjectFields, type StructureContext } from './StructureEditors'
-import { buildNodeView, graphVariables } from './flow/flowModel'
-import { words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { buildNodeView } from './flow/flowModel'
+import { customSignature, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
 import { typeLabel } from './typeLabels'
@@ -19,8 +19,8 @@ const record = (value: unknown): value is Record<string, unknown> => value !== n
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((v, i) => v === b[i])
 const operators: Record<string, string> = { eq: 'is equal to', ne: 'is not equal to', lt: 'is less than', le: 'is at most', gt: 'is greater than', ge: 'is at least' }
 /** Config keys edited by a kind's own section, or not at all (`values` of a loop result are its inputs). */
-const ownConfig = new Set(['output', 'carry', 'exports', 'branches'])
-const kindConfig: Record<string, string[]> = { service: ['service', 'fields', 'returnResponse'], custom: ['code'], object_create: ['fields'], array_create: ['items'], loop_result: ['values'] }
+const ownConfig = new Set(['carry', 'exports', 'branches'])
+const kindConfig: Record<string, string[]> = { service: ['service', 'fields', 'returnResponse'], custom: ['source', 'signature', 'arguments'], object_create: ['fields'], array_create: ['items'], loop_result: ['values'] }
 
 export interface NodeConfigProps {
   node: GraphNode
@@ -55,11 +55,14 @@ export function NodeConfig(props: NodeConfigProps) {
   const ports = createMemo(() => [...inputs().keys()], undefined, { equals: sameList })
   const outputs = createMemo(() => view().rows.flatMap(row => (row.output?.kind === 'data' ? [row.output] : [])))
   const outputIds = createMemo(() => outputs().map(pin => pin.id), undefined, { equals: sameList })
-  const variables = createMemo(() => graphVariables(props.graph, props.catalog).filter(v => v.name !== props.node.config.output))
   const problems = createMemo(() => (props.diagnostics ?? []).filter(d => d.nodeId === props.node.id && d.severity >= 2))
   const errorsFor = (key: string) => problems().filter(d => d.severity === 3 && (d.inputId === key || d.portId === key)).map(d => d.message)
   const kind = () => props.node.kind
   const kindLabel = () => spec()?.label ?? words.key(kind())
+  /** A Custom C# node's pins, title and description, as its code gives them. */
+  const signature = () => customSignature(props.node, props.catalog)
+  /** What the card shows when the node has no label of its own. */
+  const unnamed = () => signature()?.title || kindLabel()
   const [status, setStatus] = createSignal('')
   const [more, setMore] = createSignal(false)
   const focus = (port: string) => queueMicrotask(() => focusRow(root, port))
@@ -77,7 +80,6 @@ export function NodeConfig(props: NodeConfigProps) {
     node: () => props.node,
     catalog: () => props.catalog,
     input: port => inputs().get(port),
-    variables,
     targetEntityIds: () => view().targetEntityIds,
     onChange: (config, options) => props.onChange(config, options),
     onSelect: id => props.onSelect?.(id),
@@ -164,7 +166,7 @@ export function NodeConfig(props: NodeConfigProps) {
     { label: 'Copy node ID', onSelect: () => copy(props.node.id, 'Node ID copied') },
     ...(props.onDelete ? [{ label: 'Delete', onSelect: () => props.onDelete?.(), danger: true }] : []),
   ]
-  const description = () => spec()?.description ?? 'This kind of step is not available. Its settings are kept.'
+  const description = () => signature()?.description || (spec()?.description ?? 'This kind of step is not available. Its settings are kept.')
   const stored = () => JSON.stringify({ kind: props.node.kind, ...(props.node.label ? { label: props.node.label } : {}), config: props.node.config }, null, 2)
   const loop = () => !!spec()?.config.carry
 
@@ -173,7 +175,7 @@ export function NodeConfig(props: NodeConfigProps) {
       <header class="hs-insp-head" classList={{ 'hs-insp-head--trigger': kind() === 'trigger' }}>
         <span class="hs-insp-head__icon" title={view().identity.label}><Glyph paths={view().identity.icon} /></span>
         <div class="hs-insp-head__titles">
-          <input ref={title} class="hs-insp-title" aria-label="Node label" aria-describedby={descriptionId} value={props.node.label ?? ''} placeholder={kindLabel()}
+          <input ref={title} class="hs-insp-title" aria-label="Node label" aria-describedby={descriptionId} value={props.node.label ?? ''} placeholder={unnamed()}
             onInput={e => props.onGraphChange(updateNode(props.graph, props.node.id, { label: e.currentTarget.value || undefined }), { coalesce: `label:${props.node.id}` })} />
           <small class="hs-insp-kind">{kindLabel() === view().identity.label ? kindLabel() : `${kindLabel()} · ${view().identity.label}`}</small>
         </div>
@@ -214,11 +216,13 @@ export function NodeConfig(props: NodeConfigProps) {
           <TriggerConfig node={props.node} onChange={props.onChange} diagnostics={props.diagnostics} />
         </Show>
         <Show when={kind() === 'custom'}>
-          <div class="hs-insp-field" data-input-id="code" aria-invalid={errorsFor('code').length > 0 || undefined}>
-            <label class="hs-insp-field__label" for={`${descriptionId}-code`}>C# code</label>
-            <DraftField id={`${descriptionId}-code`} label="C# code" multiline shortcutHint class="hs-code-input hs-insp-code" text={typeof props.node.config.code === 'string' ? props.node.config.code : ''}
-              invalid={errorsFor('code').length > 0} commit={text => { set('code', text); return undefined }} />
-            <Errors list={errorsFor('code')} />
+          <div class="hs-insp-field" data-input-id="source" aria-invalid={errorsFor('source').length > 0 || undefined}>
+            <span class="hs-insp-field__label" id={`${descriptionId}-source`}>Code</span>
+            <pre class="hs-insp-source" tabindex="0" role="region" aria-labelledby={`${descriptionId}-source`} aria-describedby={`${descriptionId}-source-hint`}>
+              <code>{typeof props.node.config.source === 'string' ? props.node.config.source : ''}</code>
+            </pre>
+            <small id={`${descriptionId}-source-hint`} class="hs-field-hint">Editing arrives with the code editor.</small>
+            <Errors list={errorsFor('source')} />
           </div>
         </Show>
         <For each={configFields()}>{name => <ConfigField name={name} rule={spec()!.config[name]} />}</For>
@@ -264,18 +268,7 @@ export function NodeConfig(props: NodeConfigProps) {
       <details class="hs-insp-advanced">
         <summary>Advanced</summary>
         <div class="hs-insp-advanced__body">
-          <Show when={spec()?.config.output}>
-            <div class="hs-insp-field" data-input-id="output" aria-invalid={errorsFor('output').length > 0 || undefined}>
-              <label class="hs-insp-field__label" for={`${descriptionId}-output`}>Expose to C# as</label>
-              <DraftField id={`${descriptionId}-output`} label="Expose to C# as" text={typeof props.node.config.output === 'string' ? props.node.config.output : ''}
-                placeholder="Not exposed" describedBy={`${descriptionId}-output-hint`} invalid={errorsFor('output').length > 0}
-                commit={text => { set('output', text.trim() || undefined); return undefined }} />
-              <small id={`${descriptionId}-output-hint`} class="hs-field-hint">A name Custom C# steps can read this value by. Leave empty to keep it to the canvas.</small>
-              <Errors list={errorsFor('output')} />
-            </div>
-          </Show>
           <Show when={kind() === 'trigger'}><TriggerAdvanced node={props.node} onChange={props.onChange} /></Show>
-          <Show when={kind() === 'custom'}><SharedCode /></Show>
           <div class="hs-insp-field">
             <div class="hs-insp-field__row">
               <span class="hs-insp-field__label">Stored data</span>
@@ -287,30 +280,4 @@ export function NodeConfig(props: NodeConfigProps) {
       </details>
     </div>
   )
-
-  /** "Shared C# for this automation": the graph's usings and helper members, only on Custom C# nodes. */
-  function SharedCode() {
-    const id = createUniqueId()
-    const setGraph = (key: 'imports' | 'members', text: string) => {
-      const next: VisualGraph = { ...props.graph }
-      if (text.trim()) next[key] = text
-      else delete next[key]
-      props.onGraphChange(next)
-    }
-    return (
-      <fieldset class="hs-insp-group">
-        <legend class="hs-insp-field__label">Shared C# for this automation</legend>
-        <For each={[['imports', 'Usings', 'Using lines for every Custom C# step, for example using System.Globalization;'], ['members', 'Helper members', 'Fields, properties and methods every Custom C# step of this automation can use.']] as const}>
-          {([key, label, hint]) => (
-            <div class="hs-insp-field">
-              <label class="hs-insp-field__label" for={`${id}-${key}`}>{label}</label>
-              <DraftField id={`${id}-${key}`} label={label} multiline shortcutHint class="hs-code-input" text={props.graph[key] ?? ''} describedBy={`${id}-${key}-hint`}
-                commit={text => { setGraph(key, text); return undefined }} />
-              <small id={`${id}-${key}-hint`} class="hs-field-hint">{hint}</small>
-            </div>
-          )}
-        </For>
-      </fieldset>
-    )
-  }
 }

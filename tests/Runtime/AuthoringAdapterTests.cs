@@ -29,7 +29,13 @@ static class AuthoringAdapterTests
                 }
             }
             var graphs=examples["graphs"]!.AsArray().Select(g=>g!.AsObject()).ToArray();
-            foreach(var item in graphs) Clean(item,builtIn,"capability example "+item["name"]);
+            // A Custom C# node's pins in an example are the ones its code gives (preview and save would write the same).
+            void Derives(JsonObject example,VisualCatalogSnapshot snapshot,string label) {
+                var derived=new VisualGenerator(exampleDiagnostics).DeriveSignatures((JsonObject)example.DeepClone(),snapshot);
+                VisualExecutionTests.Check(JsonNode.DeepEquals(derived,example),$"{label}: its Custom C# signatures are what the code gives: "+string.Join(", ",derived["nodes"]!.AsArray().Where(n=>n!["kind"]!.GetValue<string>()=="custom").Select(n=>n!["config"]!["signature"]!.ToJsonString())));
+            }
+            foreach(var item in graphs) { Derives(item,builtIn,"capability example "+item["name"]); Clean(item,builtIn,"capability example "+item["name"]); }
+            VisualExecutionTests.Check(graphs.Any(g=>g["nodes"]!.AsArray().Any(n=>n!["kind"]!.GetValue<string>()=="custom"&&n["config"]!["source"]!.GetValue<string>().Contains("[Node(")&&n["config"]!["signature"]!["inputs"]!.AsObject().Count>0)),"capability examples include a Custom C# node with pins");
             VisualExecutionTests.Check(graphs.Any(g=>g["nodes"]!.AsArray().Any(n=>n!["kind"]!.GetValue<string>()=="service")),"capability examples include a service call");
             // The documented typing rule, against the examples themselves: with services attached, a plain entity_id
             // into light.turn_on's domain-filtered target is an error, as a literal and as a wire (Convert removed).
@@ -47,6 +53,8 @@ static class AuthoringAdapterTests
             var candidate=new NodeLibraryCompiler(exampleDiagnostics).Preview([new(library["id"]!.GetValue<string>(),library["source"]!.GetValue<string>(),1)]);
             VisualExecutionTests.Check(candidate.Valid,"capability library source compiles");
             Clean(library["graph"]!.AsObject(),candidate.Snapshot,"complete read-entity/custom-library example");
+            var pureKinds=library["graph"]!["nodes"]!.AsArray().Select(n=>n!["kind"]!.GetValue<string>()).Where(k=>candidate.Snapshot.Root["nodes"]?[k]?["pure"]?.GetValue<bool>()==true).ToArray();
+            VisualExecutionTests.Check(pureKinds.Length==1&&pureKinds[0].StartsWith("library:example:",StringComparison.Ordinal),"the library example uses a pure library method: "+string.Join(", ",pureKinds));
             // service_ports: the ports MCP shows for a service are the validator's own (DataInputs/DataOutputs).
             manager.SetServiceDescriptions(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,"ha-service-descriptions.json")));
             async Task<JsonNode> Ports(string service)=>JsonNode.Parse(await manager.NodeLibraryRequest(JsonSerializer.Serialize(new{operation="service_ports",service})))!;
@@ -92,8 +100,18 @@ static class AuthoringAdapterTests
             // observe the replacement's saved revision, including a failed activation.
             var gate=(SemaphoreSlim)typeof(HassSharpManager).GetField("_visualGate",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.GetValue(manager)!;
             await gate.WaitAsync();
-            graph["members"]="public VisualAutomation() { throw new Exception(\"blocked\"); }";
-            var replacement=Request(manager,new{operation="save",id="safe",graph,expectedRevision=1});
+            // Code that runs as the automation loads (a module initializer) makes its activation fail.
+            graph["nodes"]!.AsArray().Add(N("block","custom",new JsonObject{["source"]="""
+                public static class Blocker
+                {
+                    [System.Runtime.CompilerServices.ModuleInitializer]
+                    internal static void Load() => throw new Exception("blocked");
+                    [Node("Block")]
+                    public static void Run() { }
+                }
+                """,["arguments"]=new JsonObject()}));
+            graph["edges"]!.AsArray().Add(E("l","block"));
+            var replacement=Request(manager,new{operation="save",id="safe",graph,expectedRevision=1,deriveSignatures=true});
             var racing=Request(manager,new{operation="run",id="safe",triggerId="t"});
             var ws=Task.Run(()=>manager.RunNow(automation,"VisualAutomation","Run_74"));
             VisualExecutionTests.Check(!racing.IsCompleted,"visual run waits for authoring gate");

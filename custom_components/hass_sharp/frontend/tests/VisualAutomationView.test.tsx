@@ -295,7 +295,7 @@ it('authors two triggers, saves/reloads them, then dispatches either saved actio
   expect(runNow.title).toBe('Runs the last saved version; unsaved changes are not included')
 })
 
-it('edits all trigger kinds, boolean overrides and expressions without changing its ID or custom code', () => {
+it('edits all trigger kinds and boolean overrides without changing its ID, and offers no trigger expressions', () => {
   const { root } = setup()
   for (const type of ['once', 'startup', 'manual', 'entity', 'daily']) {
     chooseTrigger(root, type)
@@ -315,15 +315,11 @@ it('edits all trigger kinds, boolean overrides and expressions without changing 
   setControl(root, 'Run when Home Assistant starts', 'true')
   const manualRuns = [...root.querySelectorAll('.hs-inspector label')].find(l => l.textContent?.includes('Can be started with Run now'))!
   manualRuns.querySelector('input')!.click()
-  setControl(root, 'Entities expression', '["sensor.temperature"]')
-  setControl(root, 'Schedules expression', '[]')
+  expect(root.querySelector('.hs-inspector [aria-label="Entities expression"], .hs-inspector [aria-label="Schedules expression"]')).toBeNull()
   expect(json(root).nodes[0]).toMatchObject({ id: 'trigger-1', config: {
-    type: 'daily', startup: true, manual: false, entitiesExpression: '["sensor.temperature"]', schedulesExpression: '[]',
-    at: '2026-12-01T07:30:00+01:00', entity: 'sensor.temperature',
+    type: 'daily', startup: true, manual: false, at: '2026-12-01T07:30:00+01:00', entity: 'sensor.temperature',
   } })
-  button(root, 'Add step').click(); button(root, 'Create Custom C#').click()
-  setControl(root, 'C# code', 'await Task.Delay(10, CancellationToken);')
-  expect(json(root).nodes.at(-1).config.code).toBe('await Task.Delay(10, CancellationToken);')
+  expect('entitiesExpression' in json(root).nodes[0].config).toBe(false)
 })
 
 it('rejects old saved graph versions without offering upgrade or overwriting the document',async()=>{
@@ -334,25 +330,25 @@ it('rejects old saved graph versions without offering upgrade or overwriting the
  expect(fixture.documents.get('motion')!.revision).toBe(4)
 })
 
-it('lists shared C# problems under Shared C#, shows their line, and marks every range of the selected trigger', async () => {
+it('lists node library problems under Node libraries, shows their line, and marks every range of the selected trigger', async () => {
   const { root, fixture } = setup()
   // Replace only the external preview response; the editor/adapter/session stay real.
   fixture.controls.preview = {
-    valid: false, source: 'using Missing;\nclass VisualAutomation {\n int x = nope;\n void Configure() {}\n void Run_61() {}\n}',
-    sourceMap: [{ nodeId: '$imports', startLine: 1, endLine: 1 }, { nodeId: '$members', startLine: 3, endLine: 3 },
+    valid: false, source: '// header\nclass VisualAutomation {\n int x = nope;\n void Configure() {}\n void Run_61() {}\n}',
+    sourceMap: [{ nodeId: '$library:rooms', startLine: 3, endLine: 3 },
       { nodeId: 'trigger-1', startLine: 4, endLine: 4 }, { nodeId: 'trigger-1', startLine: 5, endLine: 5 }],
-    diagnostics: [{ nodeId: '$members', message: 'Unknown member', severity: 3, startLine: 3, startColumn: 10 }],
+    diagnostics: [{ nodeId: '$library:rooms', message: 'Unknown member', severity: 3, startLine: 3, startColumn: 10 }],
   }
   await vi.waitFor(() => expect(root.querySelector('.hs-problems')?.textContent).toContain('Unknown member'))
   const group = root.querySelector('.hs-problems__group')!
-  expect(group.querySelector('.hs-problems__step')?.textContent).toBe('Shared C#')
-  expect(group.textContent).toContain('edited in a Custom C# step')
+  expect(group.querySelector('.hs-problems__step')?.textContent).toBe('Node libraries')
   button(group, 'Unknown member').click()
   expect(root.querySelector('.hs-drawer [role="tab"][aria-selected="true"]')?.textContent).toBe('Generated C#')
   expect(root.querySelector('[data-source-line="3"]')?.getAttribute('aria-current')).toBe('true')
-  // A line of the shared C# belongs to no step.
-  button(root, 'Select source line 1').click()
-  expect(root.querySelector('[data-source-line="1"]')?.getAttribute('aria-current')).toBe('true')
+  // A line of a node library belongs to no step.
+  button(root, 'Select source line 4').click()
+  button(root, 'Select source line 3').click()
+  expect(root.querySelector('[data-source-line="3"]')?.getAttribute('aria-current')).toBe('true')
   await vi.waitFor(() => expect(root.querySelector('[data-id="trigger-1"]')?.classList.contains('selected')).toBe(false))
   root.querySelector('[data-id="trigger-1"]')!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
   expect(root.querySelector('[data-source-line="4"]')?.getAttribute('aria-current')).toBe('true')

@@ -38,8 +38,8 @@ it('follows a linear run: every step reached once, every wire travelled, values 
   expect(flow.value!('n', 'value', 'out')?.v).toBe('No')
   // A port the step did not record has no chip.
   expect(flow.value!('log', 'other', 'in')).toBeUndefined()
-  expect(inputSource(g, g.nodes[2], 'value', model.value('log', 'value', 'in', '')!, nodeCatalog)).toBe('From Not · Result')
-  expect(inputSource(g, g.nodes[1], 'value', model.value('n', 'value', 'in', '')!, nodeCatalog)).toBe('Value')
+  expect(inputSource(g, model.value('log', 'value', 'in', '')!, nodeCatalog)).toBe('From Not · Result')
+  expect(inputSource(g, model.value('n', 'value', 'in', '')!, nodeCatalog)).toBe('Value')
 })
 
 it('leaves a value node no step read unreached, and its wire not travelled', () => {
@@ -65,14 +65,14 @@ it('leaves a value node no step read unreached, and its wire not travelled', () 
 
 it('marks only the branch a condition took, and leaves the other side unreached', () => {
   const g = graph(
-    [node('t', 'trigger'), node('if', 'if', { value: { kind: 'variable', name: 'home' } }), node('yes', 'log'), node('no', 'log')],
+    [node('t', 'trigger'), node('if', 'if', { value: { kind: 'literal', type: 'boolean', value: false } }), node('yes', 'log'), node('no', 'log')],
     [{ id: 'e1', source: 't', target: 'if' }, { id: 'yes', source: 'if', target: 'yes', port: 'true' }, { id: 'no', source: 'if', target: 'no', port: 'false' }],
   )
   const model = traceModel(trace([{ node: 't', port: 'next' }, { node: 'if', port: 'false', inputs: { value: { type: 'boolean', v: false } } }, { node: 'no' }]), g, nodeCatalog)
   expect([...model.edges].sort()).toEqual(['e1', 'no'])
   expect(Object.keys(flowTrace(model, g, '').nodes).sort()).toEqual(['if', 'no', 't'])
   expect(model.reached('yes')).toBe(false)
-  expect(inputSource(g, g.nodes[1], 'value', model.value('if', 'value', 'in', '')!, nodeCatalog)).toBe('Variable home')
+  expect(inputSource(g, model.value('if', 'value', 'in', '')!, nodeCatalog)).toBe('Value')
 })
 
 it('follows a recovered error through the error output, and a condition\'s "next" wire as its true side', () => {

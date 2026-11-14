@@ -25,7 +25,6 @@ import {
   buildNodeView,
   dataPortOf,
   FlowContext,
-  graphVariables,
   keepUnrendered,
   nodeTitle,
   renderableGraph,
@@ -160,7 +159,6 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     cache = next
     return next
   })
-  const variables = createMemo(() => graphVariables(graph(), catalog()))
   const pinView = (pin: PinRef): PinView | undefined => {
     const view = views().get(pin.nodeId)?.view
     if (!view) return
@@ -275,7 +273,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     const from = origin()
     const states = new Map<string, PinState>()
     if (!from) return states
-    // Keys carry the side: inputs and outputs share handle ids (`data:value` on both sides of Set value).
+    // Keys carry the side: inputs and outputs share handle ids (`data:value` on both sides of Not).
     states.set(`${from.nodeId}|${from.type}|${from.handle}`, 'origin')
     const side = from.type === 'source' ? 'target' : 'source'
     const data = dataPortOf(from.handle) !== undefined
@@ -772,7 +770,6 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     const dy = roomBelow(result.graph.nodes.filter(node => added.has(node.id)).map(node => ({ x: node.position?.x ?? 0, y: node.position?.y ?? 0, ...size })))
     change(dy ? { ...result.graph, nodes: result.graph.nodes.map(node => (added.has(node.id) ? { ...node, position: { x: node.position?.x ?? 0, y: (node.position?.y ?? 0) + dy } } : node)) } : result.graph)
     selectAdded(result.ids)
-    if (result.unnamed) notify(`${verb} ${steps(result.ids.length)}; variable names were not copied`)
     return result.ids
   }
   const paste = async () => {
@@ -964,7 +961,6 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     catalog,
     view: id => views().get(id)?.view,
     graphNode: id => graph().nodes.find(n => n.id === id),
-    variables,
     editable: () => editable,
     trace: () => props.trace,
     pinState: (nodeId, handle, type) => pinStates().get(`${nodeId}|${type}|${handle}`),

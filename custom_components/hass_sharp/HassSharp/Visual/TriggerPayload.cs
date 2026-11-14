@@ -54,7 +54,7 @@ public static class TriggerPayload
         var platform = native == null ? null : Text(native["trigger"]) ?? Text(native["platform"]);
         var entityId = type switch
         {
-            "entity" when Text(config?["entitiesExpression"]) is null or "" => Text(config?["entity"]),
+            "entity" => Text(config?["entity"]),
             "ha" when platform is "state" or "numeric_state" => native!["entity_id"] switch
             {
                 JsonArray list => list.Count > 0 ? Text(list[0]) : null,

@@ -124,12 +124,11 @@ export const pasteRefusals: ReadonlySet<DiagnosticCode> = new Set<DiagnosticCode
   'cycle.execution', 'cycle.data',
 ])
 
-/** `unnamed`: how many pasted steps had a C# variable name ("Expose to C# as"), which copies do not keep. */
-export type PasteResult = { graph: VisualGraph; ids: string[]; unnamed: number } | { error: string }
+export type PasteResult = { graph: VisualGraph; ids: string[] } | { error: string }
 /**
  * Adds a copy of the steps to the graph with new ids, at `at` (their top-left corner, in flow coordinates) or
  * moved by `offset` from where they were copied. Wires between the pasted steps are kept with new ids; wires to
- * steps outside the copy were never copied. A C# variable name ("Expose to C# as") is not copied. The result goes through the editor's validation: a paste that would
+ * steps outside the copy were never copied. The result goes through the editor's validation: a paste that would
  * add a problem the editor refuses (too many steps, an unknown kind, a cycle, a second wire into one port) is not
  * made, and the result says why.
  */
@@ -153,14 +152,7 @@ export function pasteSteps(
   const corner = data.nodes.reduce<Point>((min, node) => ({ x: Math.min(min.x, position(node).x), y: Math.min(min.y, position(node).y) }), { x: Infinity, y: Infinity })
   const move = 'at' in place ? { x: place.at.x - corner.x, y: place.at.y - corner.y } : place.offset
   const snap = (value: number) => (grid ? Math.round(value / grid) * grid : Math.round(value))
-  // Two steps publishing one variable name would silently change what Custom C# reads: copies are left unnamed.
-  let unnamed = 0
-  const nodes = data.nodes.map(node => {
-    const copy = { ...structuredClone(node), id: ids.get(node.id)!, position: { x: snap(position(node).x + move.x), y: snap(position(node).y + move.y) } }
-    if (typeof copy.config.output === 'string' && copy.config.output !== '') unnamed++
-    if ('output' in copy.config) delete copy.config.output
-    return copy
-  })
+  const nodes = data.nodes.map(node => ({ ...structuredClone(node), id: ids.get(node.id)!, position: { x: snap(position(node).x + move.x), y: snap(position(node).y + move.y) } }))
   const edgeIds = new Set((Array.isArray(graph.edges) ? graph.edges : []).flatMap(edge => (record(edge) && typeof edge.id === 'string' ? [edge.id] : [])))
   const unique = (base: string) => {
     let id = base
@@ -187,7 +179,7 @@ export function pasteSteps(
     return count === 0
   })
   if (added.length) return { error: [...new Set(added.map(key => (JSON.parse(key) as { message: string }).message))].join('; ') }
-  return { graph: next, ids: nodes.map(node => node.id), unnamed }
+  return { graph: next, ids: nodes.map(node => node.id) }
 }
 
 const finite = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)

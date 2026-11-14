@@ -301,9 +301,10 @@ static class HistoryTraceTests
                 var hold = JsonNode.Parse("""
                 {"version":5,"name":"Hold","nodes":[
                   {"id":"t","kind":"trigger","config":{"type":"startup"}},
-                  {"id":"c","kind":"custom","config":{"code":"await Task.Delay(-1, CancellationToken);"}}
+                  {"id":"c","kind":"custom","config":HOLD}
                 ],"edges":[{"id":"tc","source":"t","target":"c"}]}
-                """)!.AsObject();
+                """.Replace("HOLD", VisualExecutionTests.Code("c", "await Task.Delay(-1, CancellationToken);")["config"]!.ToJsonString()))!.AsObject();
+                hold = VisualExecutionTests.Derived(hold);
                 var diagnostics = new DiagnosticsProvider(); diagnostics.GenerateHassEntities([]);
                 new VisualStore(Path.Combine(root, ".storage", "hass_sharp", "visual"), new VisualGenerator(diagnostics)).Save("hold", hold, 0);
                 var api = new HassSharpManager(root);

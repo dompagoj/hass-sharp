@@ -145,7 +145,7 @@ public static class NodeLibraryTests
             }
             """, 1)]);
         Check(fakeAttributes.Valid && fakeAttributes.Snapshot.Methods.Count == 1, "only real Node attribute defines nodes");
-        Check(fakeAttributes.Snapshot.Catalog["nodes"]!.AsObject().Last().Value!["inputs"]!["text"]!["label"]!.GetValue<string>() == "text", "only real Port attribute overrides labels");
+        Check(fakeAttributes.Snapshot.Catalog["nodes"]!.AsObject().Last().Value!["inputs"]!["text"]!["label"]!.GetValue<string>() == "Text", "only real Port attribute overrides labels; a parameter name is put in words");
         var spoof = compiler.Preview([new("spoof", """
             }
             namespace HassSharp { public sealed class NodeAttribute(string title) : Attribute { } }

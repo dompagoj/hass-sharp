@@ -82,7 +82,10 @@ public partial class HassSharpManager
             var store = VisualDocuments;
             var libraries = SavedLibraries();
             var authoring = AuthoringSnapshot(libraries.Preview.Snapshot);
-            if (operation == "preview") result = new VisualGenerator(_diagnosticsProvider).Preview(request["graph"]!.AsObject(), authoring);
+            // deriveSignatures: each Custom C# node's pins are first written from its code, so a caller can send only the code.
+            var derive = request["deriveSignatures"] is JsonValue deriveFlag && deriveFlag.TryGetValue<bool>(out var deriving) && deriving;
+            JsonObject Graph() => derive ? new VisualGenerator(_diagnosticsProvider).DeriveSignatures(request["graph"]!.AsObject(), authoring) : request["graph"]!.AsObject();
+            if (operation == "preview") { var graph = Graph(); result = new VisualGenerator(_diagnosticsProvider).Preview(graph, authoring) with { Graph = derive ? graph : null }; }
             // The automations page: no graphs, an outline of each instead, and how each has been running (one history query).
             else if (operation == "list" && request["view"]?.GetValue<string>() == "home") result = HomeList(store.List().Select(WithRuntimeIdentity).ToArray(), request["todayUtc"]);
             // Listing omits the generated source and its map; "read" returns them.
@@ -110,7 +113,7 @@ public partial class HassSharpManager
                     var revision = request["expectedRevision"]!.GetValue<long>();
                     if (operation == "save")
                     {
-                        var document = store.Save(id, request["graph"]!.AsObject(), revision, authoring, libraries.Generation);
+                        var document = store.Save(id, Graph(), revision, authoring, libraries.Generation);
                         result = await ActivateVisualDocument(document);
                     }
                     else if (operation == "delete")

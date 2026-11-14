@@ -1,7 +1,7 @@
 import { createSignal, For, Show } from 'solid-js'
 import { InputEditor } from './InputEditor'
 import { Glyph } from './Glyph'
-import type { graphVariables, InputView } from './flow/flowModel'
+import type { InputView } from './flow/flowModel'
 import { inputValue, resolveTypeSpec, setInput, words, type GraphNode, type InputSpec, type Operand, type VisualCatalogSnapshot } from './contract'
 import { typeColor, typeIsList, typeLabel } from './typeLabels'
 
@@ -86,7 +86,6 @@ export interface RowContext {
   node(): GraphNode
   catalog(): VisualCatalogSnapshot
   input(port: string): InputView | undefined
-  variables(): ReturnType<typeof graphVariables>
   targetEntityIds(): string[]
   onChange(config: GraphNode['config'], options?: Options): void
   /** Select another node (a connected input's source). */
@@ -124,7 +123,7 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
     <div class="hs-insp-input" data-input-id={row.port} aria-invalid={errors().length > 0 || undefined}>
       <Show when={!wired() && !muted() && editSpec()} fallback={<span class="hs-insp-input__label">{label()}</span>}>
         {current => (
-          <InputEditor variant="panel" input={current()} value={operand()} label={label()} catalog={ctx.catalog()} variables={ctx.variables()}
+          <InputEditor variant="panel" input={current()} value={operand()} label={label()} catalog={ctx.catalog()}
             context={{ targetEntityIds: ctx.targetEntityIds() }} errors={errors()} onChange={change} />
         )}
       </Show>

@@ -122,7 +122,7 @@
     },
     {
       "version": 5,
-      "name": "CSharp log",
+      "name": "CSharp greeting",
       "nodes": [
         {
           "id": "start",
@@ -133,10 +133,51 @@
           }
         },
         {
-          "id": "code",
+          "id": "greet",
           "kind": "custom",
           "config": {
-            "code": "Logger.Info(\"Hello from a C# node\");"
+            "source": "public static class CustomNode\n{\n    /// <summary>Greets someone by name and writes the greeting to the log.</summary>\n    /// <param name=\"name\">Who to greet.</param>\n    /// <returns>The greeting.</returns>\n    [Node(\"Greeting\")]\n    public static string Greet(string name, NodeContext context)\n    {\n        var greeting = $\"Hello, {name}\";\n        context.Log(greeting);\n        return greeting;\n    }\n}",
+            "signature": {
+              "title": "Greeting",
+              "description": "Greets someone by name and writes the greeting to the log.",
+              "pure": false,
+              "inputs": {
+                "name": {
+                  "types": [
+                    "global::System.String"
+                  ],
+                  "required": true,
+                  "label": "Name",
+                  "description": "Who to greet.",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {
+                "result": {
+                  "type": "global::System.String",
+                  "label": "Result",
+                  "description": "The greeting."
+                }
+              },
+              "types": {}
+            },
+            "arguments": {
+              "name": {
+                "kind": "literal",
+                "type": "string",
+                "value": "HassSharp"
+              }
+            }
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
           }
         }
       ],
@@ -144,8 +185,22 @@
         {
           "id": "flow",
           "source": "start",
-          "target": "code",
+          "target": "greet",
           "port": "next"
+        },
+        {
+          "id": "then",
+          "source": "greet",
+          "target": "log",
+          "port": "next"
+        },
+        {
+          "id": "greeting",
+          "kind": "data",
+          "source": "greet",
+          "sourcePort": "result",
+          "target": "log",
+          "targetPort": "value"
         }
       ]
     },
@@ -463,10 +518,10 @@
   "library": {
     "id": "example",
     "name": "Example.cs",
-    "source": "public interface IReading { string State { get; } }\npublic record Reading(string State) : IReading;\npublic static class Samples\n{\n    /// <summary>Describe a detached Home Assistant entity.</summary>\n    /// <param name=\"entity\">The current entity snapshot.</param>\n    /// <returns>A typed reading.</returns>\n    [Node(\"Describe\", Category = \"Examples\")]\n    [return: Port(\"Reading\")]\n    public static Reading Describe([Port(\"Entity state\")] EntityStateSnapshot entity) => new(entity.State);\n\n    /// <summary>Format a reading without changing devices.</summary>\n    [Node(\"Format reading\")]\n    public static string Format(IReading reading) => $\"State: {reading.State}\";\n}",
+    "source": "public interface IReading { string State { get; } }\npublic record Reading(string State) : IReading;\npublic static class Samples\n{\n    /// <summary>Reads what a Home Assistant entity's state says.</summary>\n    /// <param name=\"entity\">The entity's current state.</param>\n    /// <returns>Its reading.</returns>\n    [Node(\"Describe\", Category = \"Examples\")]\n    [return: Port(\"Reading\")]\n    public static Reading Describe([Port(\"Entity state\")] EntityStateSnapshot entity) => new(entity.State);\n\n    /// <summary>Writes a reading as a sentence, without changing devices.</summary>\n    [Node(\"Format reading\")]\n    public static string Format(IReading reading) => $\"State: {reading.State}\";\n\n    /// <summary>The text in capitals. A value node: it is worked out when a step uses it.</summary>\n    [Node(\"Shout\", Category = \"Examples\", Pure = true)]\n    public static string Shout(string text) => text.ToUpperInvariant();\n}",
     "graph": {
       "version": 5,
-      "name": "Read entity through typed library",
+      "name": "Read entity through a library",
       "nodes": [
         {
           "id": "start",
@@ -489,14 +544,21 @@
         },
         {
           "id": "describe",
-          "kind": "library:example:global%3A%3ANodeLib.Samples.Describe%28global%3A%3AHassSharp.EntityStateSnapshot%29",
+          "kind": "library:example:global%3A%3ANodeLib.Samples.Describe",
           "config": {
             "arguments": {}
           }
         },
         {
           "id": "format",
-          "kind": "library:example:global%3A%3ANodeLib.Samples.Format%28global%3A%3ANodeLib.IReading%29",
+          "kind": "library:example:global%3A%3ANodeLib.Samples.Format",
+          "config": {
+            "arguments": {}
+          }
+        },
+        {
+          "id": "shout",
+          "kind": "library:example:global%3A%3ANodeLib.Samples.Shout",
           "config": {
             "arguments": {}
           }
@@ -556,6 +618,14 @@
           "id": "d3",
           "kind": "data",
           "source": "format",
+          "sourcePort": "result",
+          "target": "shout",
+          "targetPort": "text"
+        },
+        {
+          "id": "d4",
+          "kind": "data",
+          "source": "shout",
           "sourcePort": "result",
           "target": "log",
           "targetPort": "value"

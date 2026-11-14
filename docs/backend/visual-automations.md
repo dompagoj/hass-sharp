@@ -66,14 +66,39 @@ automationId from the supplied saved visual document ID.
 ## Graph 5 contract
 
 ```text
-Graph: {version:5,name,nodes,edges,imports?:string,members?:string}
+Graph: {version:5,name,nodes,edges}
 Node: {id,kind,config:object,label?,position?:{x,y}}
 Execution edge: {id,kind?:"execution",source,target,port?:"next"}
 Data edge: {id,kind:"data",source,sourcePort,target,targetPort}
 Operand: {kind:"literal",type:<type ID>,value:<JSON value>}
-       | {kind:"variable",name}
        | {kind:"unset"}
+Custom C# config: {source:string,signature:Signature,arguments:{<input>:Operand}}
+Signature: {title,description,pure:boolean,
+            inputs:{<id>:{types:[<type ID>],required,label,description,nullable,hasDefaultValue}},
+            outputs:{<id>:{type,label,description}},
+            types:{<type ID>:<type entry>}}
 ```
+
+Removed in graph 5's current form, and refused by both validators with a sentence
+saying what to do instead: graph `imports` and `members`, a node's `config.output`
+(a value exposed to C# by name), the `variable` operand, a trigger's
+`entitiesExpression` and `schedulesExpression`, and Custom C# `config.code`
+(statements). An old saved graph that uses them is refused until it is edited.
+
+A Custom C# node's pins come from `config.signature`, which the compiler writes from
+the code (`VisualGenerator.DeriveSignatures`; the `deriveSignatures` flag of
+preview and save). `signature.types` holds only the types the code itself declares.
+Both validators merge those into the catalog (`WithGraphTypes`/`withGraphTypes`:
+catalog types first, then each well-formed signature's types in node order, the
+first entry for an id winning). Both compare such types by their entries alone. A
+signature that is not well formed is refused by both validators with code
+`custom.signature`. One that the code no longer gives is refused by the backend,
+which compiles the code to know. The code compiles in namespace
+`NodeLib.Custom_<escaped node id>`, beside the libraries; its diagnostics map to the
+node's `source` input and to lines of its code. `NodeLibraryRequest` offers
+`custom_preview` (`{nodeId?,source,sources?}` returns
+`{valid,diagnostics,signature}`), and the language operations take `custom: true`
+for a node's unsaved code.
 
 The actual catalog comes from `NodeLibraryRequest({operation:"catalog"})`, merged
 by Roslyn from the packaged built-ins and saved library sources. MCP
@@ -84,7 +109,8 @@ Library arguments live in `config.arguments`; built-in input values follow their
 catalog definitions. Data edges read previously produced values and do not execute
 a producing step. Control edges schedule steps. Value nodes (catalog `pure: true`:
 constant, object, array, object_create, array_create, get_field, entity_field,
-convert, and, or, xor, not, compare) take no execution edges; the runtime works out
+convert, and, or, xor, not, compare, last_error, and any `[Node(Pure = true)]`
+method) take no execution edges; the runtime works out
 the value nodes a step reads, in post-order and in the step's scope, just before
 that step runs, counting each against the step limit and recording it in the trace
 with `src` set to the value node. A failure is the reading step's failure, named
@@ -137,7 +163,7 @@ list), gets the payload a real firing would carry, with the entity's current
 state (`PyInterop.Entity`, as Read entity) as both `from_state` and `to_state`,
 a native trigger's configured `id` and `attribute`, `numeric_state`'s configured
 `below`/`above`, and `manual: true` (never `for`, `description` or `context`).
-Other triggers, an `entitiesExpression`, or an entity without a state give
+Other triggers, or an entity without a state, give
 `{platform: "manual"}`. So does a state that cannot be read or normalised; that is
 logged as a warning naming the entity, and the run still starts.
 The cause stays `Manual`; the run's trigger summary is `{kind: "manual"}` plus
@@ -168,7 +194,7 @@ rule below still applies.
 
 Whatever the services section holds, a target value may only contain `entity_id`,
 `device_id`, `area_id`, `floor_id` and `label_id`, and a node whose target is set
-(a value, a connection or a variable) may not also have a field with one of those
+(a value or a connection) may not also have a field with one of those
 names; a node with no target may. At run time a target object with any other key
 fails with the same sentence the validators use.
 

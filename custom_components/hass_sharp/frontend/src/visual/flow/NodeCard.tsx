@@ -85,8 +85,6 @@ export function NodeCard(props: NodeProps) {
       return value?.kind === 'literal' ? value.value : undefined
     }
     const configured = () => {
-      const value = operand(input().port)
-      if (value?.kind === 'variable') return `Variable ${value.name}`
       return literal() === undefined ? '' : valueSummary(widgetFor(input().spec, flow.catalog()), literal(), flow.names())
     }
     const traced = () => trace()?.value?.(id, input().port, 'in')
@@ -243,7 +241,6 @@ export function NodeCard(props: NodeProps) {
               value={operand(input().port)}
               label={input().pin.label}
               catalog={flow.catalog()}
-              variables={flow.variables()}
               context={{ targetEntityIds: view()?.targetEntityIds ?? [] }}
               errors={input().errors}
               onChange={(next, options) => flow.setInput(id, input().port, next, options)}

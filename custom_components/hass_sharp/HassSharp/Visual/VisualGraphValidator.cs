@@ -35,7 +35,7 @@ public static class VisualGraphValidator
         "edge.invalid", "edge.duplicate", "edge.endpoint", "edge.unknownKind", "edge.valueWirePins", "edge.orderWirePins", "edge.orderPinName",
         "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
         "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult",
-        "flow.pure", "pure.unused",
+        "flow.pure", "pure.unused", "custom.signature",
     ];
 
     /// <summary>
@@ -59,9 +59,13 @@ public static class VisualGraphValidator
         internal static string DomainWords(string domain) => Capital(domain.Replace('_', ' '));
         /// <summary>A key or value people did not name, in words: <c>needs_action</c> → <c>Needs action</c>; never empty.</summary>
         internal static string KeyWords(string key) => DomainWords(key) is var words && Trimmed(words).Length > 0 ? words : "Unnamed";
-        /// <summary>A step as people see it on the canvas: its own label, else its kind's catalog label, else its kind in words.</summary>
+        /// <summary>
+        /// A step as people see it on the canvas: its own label, else (for a Custom C# node) its method's title, else its
+        /// kind's catalog label, else its kind in words.
+        /// </summary>
         internal static string StepName(JsonObject node, JsonNode? spec) =>
             node["label"] is JsonValue l && l.TryGetValue<string>(out var label) && Trimmed(label).Length > 0 ? Trimmed(label)
+            : Text(CustomSignature(node, spec), "title") is { } title && Trimmed(title).Length > 0 ? Trimmed(title)
             : Text(spec, "label") is { } kindLabel && Trimmed(kindLabel).Length > 0 ? Trimmed(kindLabel)
             : KeyWords(node["kind"] is JsonValue k && k.TryGetValue<string>(out var kind) ? kind : "");
         /// <summary>A step that execution never reaches, and what to do about it.</summary>
@@ -75,6 +79,18 @@ public static class VisualGraphValidator
         /// <summary>A step reads a value node that uses an output the step could not read over a wire of its own.</summary>
         internal static string PureScope(string node, string source, string output, string step) =>
             $"{node} uses {source} · {output}, which {step} cannot use here: it is on the other side of a loop or parallel branch boundary";
+        /// <summary>A Custom C# node whose stored signature is not one the compiler writes.</summary>
+        internal const string MalformedSignature = "The pins of this node cannot be read; open Edit code and apply it";
+        /// <summary>A Custom C# node whose stored signature is not what its code gives (the backend compiles it to know).</summary>
+        internal const string StaleSignature = "The pins are out of date with the code: open Edit code and apply it";
+        /// <summary>The things hand-written automations left behind, and what to do instead.</summary>
+        internal const string OldCustomCode = "Custom C# code is now one static method marked [Node]; rewrite this node's code in that form";
+        internal const string Imports = "Usings are no longer part of an automation; put using lines at the top of a Custom C# node's code";
+        internal const string Members = "Helper members are no longer part of an automation; write them in a Custom C# node's code or a node library";
+        internal const string ExposedValue = "Steps no longer expose values to C# by name; connect a wire from this step to each step that uses its value";
+        internal static string Variable(string subject) => $"{subject} reads a variable, and variables are gone; connect a wire to it instead";
+        internal const string EntitiesExpression = "Entities expression is gone; choose the entity in Entity";
+        internal const string SchedulesExpression = "Schedules expression is gone; set the time in Time";
         /// <summary>A name or id quoted as written, without surrounding whitespace; <c>Unnamed</c> when nothing is left.</summary>
         internal static string Name(string name) => Trimmed(name) is { Length: > 0 } trimmed ? trimmed : "Unnamed";
         /// <summary>JavaScript's whitespace (as <c>String.prototype.trim</c> removes it), spelled out: .NET's differs at U+FEFF.</summary>
@@ -237,7 +253,7 @@ public static class VisualGraphValidator
         bool ScopePort(JsonObject node, string port) => Strings(Spec(node)?["scopePorts"]).Contains(port) || Kind(node) == "parallel" && port.StartsWith("branch:", StringComparison.Ordinal);
         static bool Ancestor((string Owner, string Port)[] a, (string Owner, string Port)[] b) => a.Length <= b.Length && a.SequenceEqual(b.Take(a.Length));
         JsonObject? Owner(JsonObject node) => scopes.TryGetValue(Id(node), out var scope) && scope.LastOrDefault() is var last && last.Port == "body" ? nodes[last.Owner] : null;
-        bool Pure(JsonObject node) => IsPure(Spec(node));
+        bool Pure(JsonObject node) => IsPure(node, Spec(node));
         bool Visible(JsonObject source, JsonObject target, JsonNode port) => scopes.TryGetValue(Id(target), out var b) && VisibleIn(source, b, port);
         /// <summary>Whether an output of <paramref name="source"/> may be read by a step in scope <paramref name="b"/>.</summary>
         bool VisibleIn(JsonObject source, (string Owner, string Port)[] b, JsonNode port)
@@ -273,36 +289,15 @@ public static class VisualGraphValidator
             Visit(pure);
             return found;
         }
-        /// <summary>Where a node's values are worked out: a step's own scope; for a value node, the scope of every step that reads it, through other value nodes.</summary>
-        List<(string Owner, string Port)[]> ReaderScopes(JsonObject node)
-        {
-            var found = new List<(string Owner, string Port)[]>(); var seen = new HashSet<string>(StringComparer.Ordinal);
-            void Visit(JsonObject current)
-            {
-                if (!seen.Add(Id(current))) return;
-                if (!Pure(current)) { if (scopes.TryGetValue(Id(current), out var scope)) found.Add(scope); return; }
-                foreach (var edge in data.Where(e => Text(e, "source") == Id(current))) Visit(nodes[Text(edge, "target")]);
-            }
-            Visit(node);
-            return found;
-        }
-        /// <summary>
-        /// Whether a variable a node publishes can be read by <paramref name="reader"/>: from every scope the reader is worked out
-        /// in, the producer must be visible as a wire from it would be; a value node publishes its variable where it is worked out.
-        /// </summary>
-        bool VariableVisible(JsonObject producer, JsonObject reader, JsonNode output)
-        {
-            var readers = ReaderScopes(reader);
-            if (readers.Count == 0) return false;
-            if (!Pure(producer)) return readers.All(scope => VisibleIn(producer, scope, output));
-            var producers = ReaderScopes(producer);
-            return readers.All(scope => producers.Any(at => Ancestor(at, scope)));
-        }
         public List<VisualDiagnostic> Run(JsonObject graph)
         {
             var version = Number(Root["graphVersion"]);
             if (Number(graph["version"]) != version) { Error(null, $"Expected graph version {version}", code: "graph.version"); return errors; }
             if (string.IsNullOrWhiteSpace(Text(graph, "name"))) Error(null, "Graph name is required", code: "graph.name");
+            if (graph.ContainsKey("imports")) Error(null, Words.Imports);
+            if (graph.ContainsKey("members")) Error(null, Words.Members);
+            // The types of the graph's Custom C# nodes join the catalog's; they are compared by their entries alone.
+            if (WithGraphTypes(Root, graph) is var merged && !ReferenceEquals(merged, Root)) snapshot = snapshot.WithRoot(merged);
             if (graph["nodes"] is not JsonArray ns || graph["edges"] is not JsonArray es) { Error(null, "Nodes and edges arrays are required", code: "graph.shape"); return errors; }
             if (ns.Count is < 1 or > 256 || es.Count > 512) { Error(null, "Graph limit: 1–256 nodes and at most 512 edges", code: "graph.limit"); return errors; }
             foreach (var raw in ns)
@@ -414,15 +409,8 @@ public static class VisualGraphValidator
                 return null;
             }
             string? type = null;
-            if (Text(operand, "kind") == "variable")
-            {
-                var name = Text(operand, "name");
-                if (!Match(name, Text(Root["structures"]?["loopDeclaration"]?["name"], "pattern"))) { Error(Id(node), $"{subject} uses a variable without a valid name", port, port); return null; }
-                var candidates = nodes.Values.Where(n => Config(n)["output"] is JsonValue outputName && outputName.TryGetValue<string>(out var named) && named == name && DataOutputs(n)["value"] is { } output && VariableVisible(n, node, output)).ToArray();
-                type = candidates.Length > 0 ? Text(DataOutputs(candidates[0])["value"], "type") : null;
-                if (type == null || candidates.Any(n => Text(DataOutputs(n)["value"], "type") != type)) Error(Id(node), $"{subject} uses variable {name}, which no earlier step provides with a single type", port);
-            }
-            else if (Text(operand, "kind") == "literal")
+            if (Text(operand, "kind") == "variable") { Error(Id(node), Words.Variable(subject), port, port); return null; }
+            if (Text(operand, "kind") == "literal")
             {
                 type = Text(operand, "type", "unknown"); var value = operand["value"];
                 var valid = ValidLiteral(type, value, operand.ContainsKey("value"), snapshot);
@@ -503,7 +491,7 @@ public static class VisualGraphValidator
         /// <summary>
         /// The target rules of a service node, with or without services. A target the service does not take is an
         /// error (with services only). A target object holds only <see cref="TargetKeys"/>, as the runtime enforces.
-        /// A node whose target is set in any form (a value, a connection or a variable) may not also have a field named
+        /// A node whose target is set in any form (a value or a connection) may not also have a field named
         /// like a target key; a node without a target may (homeassistant.update_entity takes entity_id as a field).
         /// </summary>
         void TargetRules(JsonObject node, JsonObject spec, JsonObject cfg, string id)
@@ -524,6 +512,8 @@ public static class VisualGraphValidator
         {
             var spec = Spec(node); if (spec == null) return;
             var cfg = Config(node); var id = Id(node); var kind = Kind(node);
+            // A statement-style Custom C# node is reported once, with what to do; nothing else about it is checked.
+            if (Text(spec, "dynamicInputs") == "custom" && cfg.ContainsKey("code")) { Error(id, Words.OldCustomCode, "source"); return; }
             foreach (var (field, rawRule) in spec["config"]!.AsObject())
             {
                 var rule = rawRule!; var value = cfg[field];
@@ -576,13 +566,16 @@ public static class VisualGraphValidator
                     Error(id, $"Less-than and greater-than comparisons need {Words.TypeLabel(Root, orderingType)} values", leftInput != "" ? leftInput : typeConfig);
             }
             if (Text(spec, "dynamicInputs") == "service") { Service(node, spec, cfg, id); TargetRules(node, spec, cfg, id); }
-            if (cfg.ContainsKey("output") && !Match(Text(cfg, "output"), "^[A-Za-z_][A-Za-z0-9_]{0,63}$")) Error(id, $"{ConfigLabel(spec["config"]?["output"], "output")} must use only letters, digits and underscores and not start with a digit", "output");
+            if (cfg.ContainsKey("output")) Error(id, Words.ExposedValue, "output");
+            if (Text(spec, "dynamicInputs") == "custom" && cfg["signature"] is JsonObject signature && !WellFormedSignature(signature)) Error(id, Words.MalformedSignature, "source", code: "custom.signature");
             if (kind == "trigger")
             {
                 var type = TriggerType(node, snapshot);
                 string[] required = type switch { "ha" => ["trigger"], "entity" => ["entity"], "daily" => ["time", "timeZone"], "once" => ["at"], _ => [] };
                 foreach (var field in required) if (!cfg.ContainsKey(field) || cfg[field] is JsonValue v && v.TryGetValue<string>(out var s) && s == "") Error(id, $"{ConfigLabel(spec["config"]?[field], field)} is required", field);
                 if (type == "ha" && cfg["trigger"] is JsonObject trigger && string.IsNullOrWhiteSpace(Text(trigger, "trigger")) && string.IsNullOrWhiteSpace(Text(trigger, "platform"))) Error(id, "Home Assistant trigger needs a platform", "trigger");
+                if (cfg.ContainsKey("entitiesExpression")) Error(id, Words.EntitiesExpression, "entitiesExpression");
+                if (cfg.ContainsKey("schedulesExpression")) Error(id, Words.SchedulesExpression, "schedulesExpression");
             }
             if (kind is "entity_field" or "wait_until" && Text(cfg, "field") == "attribute" && string.IsNullOrWhiteSpace(Text(cfg, "attribute"))) Error(id, "Attribute is required", "attribute");
             // A path that starts with / can still be wrong in one way: a ~ that is not ~0 (a ~ in a key) or ~1 (a / in a key).

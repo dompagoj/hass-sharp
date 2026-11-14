@@ -249,11 +249,11 @@ it('blocks a connection only on cycle and scope errors themselves, not on a name
   const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
   const graph = { version: 5 as const, name: 'Names', nodes: [
     { id: 't', kind: 'trigger', config: { type: 'manual' } },
-    { id: 'a', kind: 'constant', config: { type: 'number', value: lit('number', 1) } },
-    { id: 'l', kind: 'log', config: { value: { kind: 'variable', name: 'cycle_scope' } } },
+    { id: 'a', kind: 'constant', label: 'Cycle scope', config: { type: 'number', value: lit('number', 1) } },
+    { id: 'l', kind: 'log', label: 'Scope cycle', config: { value: { kind: 'unset' } } },
     { id: 'd', kind: 'delay', config: { seconds: lit('number', 2) } },
   ], edges: [{ id: 'tl', source: 't', target: 'l' }, { id: 'ld', source: 'l', target: 'd' }] }
-  expect(contract.validateGraph(graph).map(d => d.message)).toEqual(['Constant is not used', 'Message uses variable cycle_scope, which no earlier step provides with a single type'])
+  expect(contract.validateGraph(graph).map(d => d.message)).toEqual(['Cycle scope is not used', 'Message is required'])
   expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).not.toThrow()
 })
 describe('refusing a connection only for a problem it causes (fix round 2)', () => {
@@ -338,5 +338,30 @@ describe('refusing a connection only for a problem it causes (fix round 2)', () 
     for (const d of contract.validateGraph({ version: 5, name: 'Codes', nodes: [trigger, { id: 'q', kind: 'nope', config: {} }], edges: [] }))
       if (d.code) expect(contract.diagnosticCodes).toContain(d.code)
     expect(contract.validateGraph({ version: 5, name: 'Codes', nodes: [trigger, { id: 'q', kind: 'nope', config: {} }], edges: [] }).map(d => d.code)).toContain('node.unknownKind')
+  })
+})
+
+describe('Custom C# node signatures', () => {
+  const reading = (label: string) => ({ label, description: label, category: 'Object', nullable: false, literalKind: null, assignableTo: ['global::NodeLib.Custom_a.Reading'] })
+  const signature = (types: Record<string, unknown> = {}) => ({ title: 'Check', description: 'Checks.', pure: false, inputs: { level: { types: ['number'], required: true } }, outputs: { result: { type: 'number' } }, types })
+  const node = (id: string, config: Record<string, unknown>) => ({ id, kind: 'custom', config })
+  it('reads the pins of a well-formed signature only, and only on a Custom C# node', () => {
+    expect(contract.customSignature(node('a', { signature: signature() }))?.title).toBe('Check')
+    expect(Object.keys(contract.dataInputs(node('a', { signature: signature(), arguments: {} }), contract.nodeCatalog))).toEqual(['level'])
+    expect(Object.keys(contract.dataOutputs(node('a', { signature: signature() })))).toEqual(['result'])
+    for (const broken of [{ ...signature(), pure: 'no' }, { ...signature(), inputs: [] }, { ...signature(), outputs: { 'not a pin': { type: 'number' } } }, { ...signature(), types: { x: 1 } }, null])
+      expect(contract.customSignature(node('a', { signature: broken })), JSON.stringify(broken)).toBeUndefined()
+    expect(contract.customSignature({ id: 'l', kind: 'log', config: { signature: signature() } })).toBeUndefined()
+  })
+  it('adds the types of the graph\'s signatures to the catalog: a catalog type and the first node\'s entry win', () => {
+    const graph = { version: 5, name: 'Types', nodes: [
+      node('a', { signature: signature({ 'global::NodeLib.Custom_a.Reading': reading('First'), number: reading('Not the catalog number') }) }),
+      node('b', { signature: signature({ 'global::NodeLib.Custom_a.Reading': reading('Second') }) }),
+    ], edges: [] }
+    const merged = contract.withGraphTypes(contract.nodeCatalog, graph)
+    expect(merged.types['global::NodeLib.Custom_a.Reading'].label).toBe('First')
+    expect(merged.types.number).toBe(contract.nodeCatalog.types.number)
+    expect(contract.withGraphTypes(contract.nodeCatalog, { ...graph, nodes: [] })).toBe(contract.nodeCatalog)
+    expect(contract.nodeCatalog.types['global::NodeLib.Custom_a.Reading']).toBeUndefined()
   })
 })

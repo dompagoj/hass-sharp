@@ -1,4 +1,4 @@
-import { dataOutputs, inputValue, nodeCatalog, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { customSignature, dataOutputs, inputValue, nodeCatalog, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 
 /** Registry names used to say "Hallway" rather than `light.hallway`; every list is optional. */
@@ -89,7 +89,7 @@ interface Context {
   registry?: SummaryNames
   graph?: Graph
 }
-/** What an input currently reads: a literal, a variable or the wired output's label; undefined when not set. */
+/** What an input currently reads: a literal or the wired output's label; undefined when not set. */
 function operandText(ctx: Context, port: string): string | undefined {
   const edge = ctx.graph?.edges.find(e => e?.kind === 'data' && e.target === ctx.node.id && e.targetPort === port)
   if (edge?.kind === 'data') {
@@ -99,7 +99,6 @@ function operandText(ctx: Context, port: string): string | undefined {
   }
   const operand = inputValue(ctx.node, port, ctx.catalog)
   if (!record(operand)) return
-  if (operand.kind === 'variable') return text(operand.name) || undefined
   if (operand.kind === 'literal') return valueText(operand.value, ctx.registry)
 }
 const entityOperand = (ctx: Context, port: string) => {
@@ -223,7 +222,8 @@ function kindText(ctx: Context): string | undefined {
     case 'parallel': { const n = Array.isArray(config.branches) ? config.branches.length : 0; return `${n} branch${n === 1 ? '' : 'es'} at once` }
     case 'stop': return 'End the run'
     case 'custom': {
-      const line = text(config.code).split('\n').map(l => l.trim()).find(l => l && !l.startsWith('//'))
+      // What the method's documentation says it does; the code itself is in the panel.
+      const line = text(customSignature(ctx.node, ctx.catalog)?.description).split('\n').map(l => l.trim()).find(Boolean)
       return line ? (line.length > 60 ? `${line.slice(0, 59)}…` : line) : undefined
     }
     case 'get_field': return text(config.pointer) ? `Field ${text(config.pointer)}` : undefined

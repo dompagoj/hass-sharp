@@ -57,6 +57,7 @@ static class VisualTraceTests
     static async Task<Loaded> Load(JsonObject graph, VisualCatalogSnapshot? snapshot = null)
     {
         Diagnostics.GenerateHassEntities(["sensor.test"]);
+        graph = Derived(graph, snapshot);
         var preview = snapshot == null ? new VisualGenerator(Diagnostics).Preview(graph) : new VisualGenerator(Diagnostics).Preview(graph, snapshot);
         Check(preview.Valid, "graph compiles: " + JsonSerializer.Serialize(preview.Diagnostics));
         var compiled = await new CodeCompiler(Diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cs"), preview.Source);
@@ -73,7 +74,7 @@ static class VisualTraceTests
     }
 
     static JsonObject Unset() => new() { ["kind"] = "unset" };
-    static JsonObject C(string id, string code) => N(id, "custom", new { code });
+    static JsonObject C(string id, string code) => Code(id, code);
     static JsonObject Log(string id, string value) => N(id, "log", new { value = Lit("string", value) });
     static JsonArray Events(JsonObject doc) => doc["events"]!.AsArray();
     static JsonObject[] Of(JsonObject doc, string node) => Events(doc).Select(e => e!.AsObject()).Where(e => e["node"]!.GetValue<string>() == node).ToArray();
@@ -528,16 +529,14 @@ static class VisualTraceTests
 
             await Test("while and until loops record condition frames with the carried values", async () =>
             {
-                static JsonObject V(string name) => new() { ["kind"] = "variable", ["name"] = name };
                 foreach (var kind in new[] { "while", "until" })
                 {
                     var cfg = new JsonObject { ["maxIterations"] = 5, ["carry"] = new JsonArray(new JsonObject { ["name"] = "n", ["type"] = "number", ["initial"] = Lit("number", 0) }) };
-                    var graph = G(N("loop", kind, cfg), N("body", "constant", new { type = "number", value = Unset(), output = "next" }), C("inc", "values.Set(\"next\", values.Get<double>(\"next\",\"inc\")+1);"),
-                        N("result", "loop_result", new { values = new JsonObject { ["carry:n"] = V("next") } }),
+                    var graph = G(N("loop", kind, cfg), Code("inc", "return n+1;", "double n", "double"),
+                        N("result", "loop_result", new { values = new JsonObject { ["carry:n"] = Unset() } }),
                         N("compare", "compare", new { left = Unset(), right = Lit("number", 3), @operator = kind == "while" ? "lt" : "ge" }), N("condition", "condition_result", new { value = Unset() }));
-                    // The Constant body publishes next when the Log show that reads it runs; compare is worked out for condition.
-                    graph["nodes"]!.AsArray().Add(N("show", "log", new { value = Unset() }));
-                    graph["edges"] = new JsonArray(E("t", "loop"), E("loop", "show", "body"), E("show", "inc"), E("inc", "result"), D("loop", "body", "value", "carry:n"), D("body", "show", "value"),
+                    // The body step inc gives the next carried value by wire; compare is worked out for condition.
+                    graph["edges"] = new JsonArray(E("t", "loop"), E("loop", "inc", "body"), E("inc", "result"), D("loop", "inc", "n", "carry:n"), D("inc", "result", "carry:n", "result"),
                         E("loop", "condition", "condition"), D("loop", "compare", "left", "carry:n"), D("compare", "condition", "value"));
                     var (_, doc, _) = await Trace(graph);
                     Shape(doc);
@@ -547,7 +546,7 @@ static class VisualTraceTests
                     Check(compares.Select(e => S(e["frame"])).SequenceEqual(tested.Select((_, i) => $"loop#{i}:condition")), kind + " condition frames: " + string.Join(",", compares.Select(e => S(e["frame"]))));
                     Check(compares.Select(e => e["inputs"]!["left"]!["v"]!.GetValue<double>()).SequenceEqual(tested.Select(n => (double)n)) && compares.All(e => Same(e["inputs"]!["left"]!["src"], """{"node":"loop","port":"carry:n"}""")), kind + " carried values: " + string.Join(",", compares.Select(e => e["inputs"]!.ToJsonString())));
                     Check(Of(doc, "condition").Select(e => S(e["frame"])).SequenceEqual(compares.Select(e => S(e["frame"]))) && Of(doc, "condition").All(e => e["port"] == null && S(e["status"]) == "ok"), kind + " condition_result events: " + doc.ToJsonString());
-                    Check(Of(doc, "body").Select(e => S(e["frame"])).SequenceEqual(["loop#0:body", "loop#1:body", "loop#2:body"]) && Of(doc, "inc").Length == 3, kind + " body frames");
+                    Check(Of(doc, "inc").Select(e => S(e["frame"])).SequenceEqual(["loop#0:body", "loop#1:body", "loop#2:body"]), kind + " body frames");
                     Check(S(One(doc, "loop")["frame"]) == "" && S(One(doc, "loop")["status"]) == "ok" && S(One(doc, "loop")["port"]) == "next", kind + " loop event: " + One(doc, "loop").ToJsonString());
                 }
             });

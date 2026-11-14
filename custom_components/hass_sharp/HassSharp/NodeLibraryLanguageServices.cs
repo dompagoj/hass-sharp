@@ -17,24 +17,35 @@ public sealed record LibrarySignatureHelp(LibrarySignature[] Signatures, int Act
 /// <summary>Request-local immutable solutions. No unsaved document is ever added to the shared workspace.</summary>
 public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
 {
-    static int Offset => NodeLibraryCompiler.WrapperPrefix.Length;
-    public async Task<object> RequestAsync(string operation, IEnumerable<NodeLibrarySource> sources, string id, int position,
-        CancellationToken cancellationToken = default)
+    /// <summary>The id a Custom C# node's code has among the documents, in a definition result.</summary>
+    public const string CustomDocumentId = "$custom";
+    public Task<object> RequestAsync(string operation, IEnumerable<NodeLibrarySource> sources, string id, int position,
+        CancellationToken cancellationToken = default) => RequestAsync(operation, sources, id, null, position, cancellationToken);
+    /// <summary>The same services for a Custom C# node's unsaved code, beside the libraries, in the namespace it compiles in.</summary>
+    public Task<object> RequestAsync(string operation, IEnumerable<NodeLibrarySource> sources, CustomNodeSource custom, int position,
+        CancellationToken cancellationToken = default) => RequestAsync(operation, sources, CustomDocumentId, custom, position, cancellationToken);
+    async Task<object> RequestAsync(string operation, IEnumerable<NodeLibrarySource> sources, string id, CustomNodeSource? custom, int position,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var snapshot = sources.ToDictionary(s => s.Id, StringComparer.Ordinal);
+        var snapshot = sources.Where(s => custom == null || s.Id != CustomDocumentId).ToDictionary(s => s.Id, s => (Source: s.Source, Prefix: NodeLibraryCompiler.WrapperPrefix), StringComparer.Ordinal);
+        if (custom != null) snapshot[CustomDocumentId] = (custom.Source, NodeLibraryCompiler.CustomWrapperPrefix(custom.NodeId));
         var source = snapshot.TryGetValue(id, out var current) ? current.Source : throw new ArgumentException("Unknown selected library");
+        var offset = current.Prefix.Length;
         ArgumentOutOfRangeException.ThrowIfNegative(position);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(position, source.Length);
         var project = diagnostics.CreateLibraryProject();
         var documents = new Dictionary<string, DocumentId>();
-        foreach (var item in snapshot.Values)
+        foreach (var (itemId, item) in snapshot)
         {
-            var added = project.AddDocument(item.Id, SourceText.From(NodeLibraryCompiler.WrapSource(item.Source)), filePath: item.Id);
-            documents.Add(item.Id, added.Id); project = added.Project;
+            var added = project.AddDocument(itemId, SourceText.From(item.Prefix + item.Source + NodeLibraryCompiler.WrapperSuffix), filePath: itemId);
+            documents.Add(itemId, added.Id); project = added.Project;
         }
         var document = project.GetDocument(documents[id])!;
-        var adjusted = position + Offset;
+        var adjusted = position + offset;
+        bool InSource(TextSpan span, string text) => span.Start >= offset && span.End <= offset + text.Length;
+        CompletionTextEdit Edit(TextChange change) => new() { Start = change.Span.Start - offset, Length = change.Span.Length, NewText = change.NewText ?? "" };
+        LibrarySourceRange Range(string text, TextSpan wrapped) => SourceRange(text, wrapped, offset);
         switch (operation)
         {
             case "completion":
@@ -45,7 +56,7 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
                 var list = await service.GetCompletionsAsync(document, adjusted, trigger, cancellationToken: cancellationToken);
                 if (list == null) return Array.Empty<CompletionModel>();
                 var items = list.ItemsList;
-                var full = NodeLibraryCompiler.WrapSource(source);
+                var full = current.Prefix + source + NodeLibraryCompiler.WrapperSuffix;
                 var filter = full.Substring(list.Span.Start, Math.Max(0, adjusted-list.Span.Start));
                 if (filter.Length > 0) items = service.FilterItems(document, [.. items], filter);
                 var results = new List<CompletionModel>();
@@ -54,7 +65,7 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
                     var change = await service.GetChangeAsync(document,item,cancellationToken: cancellationToken);
                     var edits = change.TextChanges.IsDefaultOrEmpty ? [change.TextChange] : change.TextChanges;
                     var primary = edits.FirstOrDefault(e => e.Span.Start <= adjusted && e.Span.End >= adjusted);
-                    if (primary.NewText == null || edits.Any(e => e.Span.Start < Offset || e.Span.End > Offset+source.Length)) continue;
+                    if (primary.NewText == null || edits.Any(e => e.Span.Start < offset || e.Span.End > offset+source.Length)) continue;
                     results.Add(new() { DisplayText=item.DisplayText, DisplayTextPrefix=item.DisplayTextPrefix,DisplayTextSuffix=item.DisplayTextSuffix,
                         FilterText=item.FilterText,Tags=item.Tags.ToArray(),TextEdit=Edit(primary),AdditionalTextEdits=edits.Where(e=>e!=primary).Select(Edit).ToArray() });
                 }
@@ -75,8 +86,8 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
                 foreach (var location in symbol.OriginalDefinition.Locations.Where(l=>l.IsInSource))
                 {
                     var targetId=location.SourceTree?.FilePath;
-                    if (targetId != null && snapshot.TryGetValue(targetId,out var target) && InSource(location.SourceSpan,target.Source))
-                        definitions.Add(new(targetId,Range(target.Source,location.SourceSpan)));
+                    if (targetId != null && snapshot.TryGetValue(targetId,out var target) && location.SourceSpan.Start>=target.Prefix.Length && location.SourceSpan.End<=target.Prefix.Length+target.Source.Length)
+                        definitions.Add(new(targetId,SourceRange(target.Source,location.SourceSpan,target.Prefix.Length)));
                 }
                 return definitions;
             }
@@ -111,19 +122,17 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
             }
             case "format":
             {
-                var formatted = await Formatter.FormatAsync(document,new TextSpan(Offset,source.Length),cancellationToken:cancellationToken);
+                var formatted = await Formatter.FormatAsync(document,new TextSpan(offset,source.Length),cancellationToken:cancellationToken);
                 var changes = await formatted.GetTextChangesAsync(document,cancellationToken);
                 return SourceText.From(source).WithChanges(changes.Where(c=>InSource(c.Span,source))
-                    .Select(c=>new TextChange(new TextSpan(c.Span.Start-Offset,c.Span.Length),c.NewText ?? ""))).ToString();
+                    .Select(c=>new TextChange(new TextSpan(c.Span.Start-offset,c.Span.Length),c.NewText ?? ""))).ToString();
             }
             default: throw new ArgumentException("Unknown language operation");
         }
     }
-    static bool InSource(TextSpan span,string source) => span.Start>=Offset && span.End<=Offset+source.Length;
-    static CompletionTextEdit Edit(TextChange change) => new() { Start=change.Span.Start-Offset,Length=change.Span.Length,NewText=change.NewText ?? "" };
-    static LibrarySourceRange Range(string source,TextSpan wrapped)
+    static LibrarySourceRange SourceRange(string source,TextSpan wrapped,int offset)
     {
-        var span=new TextSpan(wrapped.Start-Offset,wrapped.Length);
+        var span=new TextSpan(wrapped.Start-offset,wrapped.Length);
         var lines=SourceText.From(source).Lines.GetLinePositionSpan(span);
         return new(span.Start,span.Length,lines.Start.Line+1,lines.Start.Character+1,lines.End.Line+1,lines.End.Character+1);
     }

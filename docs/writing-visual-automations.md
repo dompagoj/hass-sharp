@@ -27,16 +27,21 @@ producer must have executed on the chosen path before the consumer reads it.
 Missing producer output is a mapped runtime error, not an implicit default.
 
 Value nodes (Constant, Object, List, Create object, Create list, Get field, Entity
-field, Convert, And, Or, Exclusive or, Not and Compare; `"pure": true` in the catalog) are
-not part of the run order: they have no control pins and no Error path. Each one is
-worked out again, in that step's scope, whenever a step reads it, so a step reads
-current values; when a value node fails, the step reading it fails (and takes its
-own Error path), and a value node that no step reads is a warning.
+field, Convert, And, Or, Exclusive or, Not, Compare and Error details; `"pure": true`
+in the catalog, and any `[Node(Pure = true)]` method) are not part of the run order:
+they have no control pins and no Error path. A value node is worked out each time a
+step that reads it runs, in the scope of that step, so the step gets the value as it
+is at that moment. One exception: Wait until works out a wired Expected value once,
+when the wait starts, not again at each poll. When a value
+node fails, the step reading it fails (and takes its own Error path). A value node
+that no step reads is a warning.
 
-Inputs can be literals, named variable references, explicit unset values, or
-connected data ports. A connection replaces the input's own value. Use Custom C#
-nodes for calculations; graph imports and members and trigger override
-expressions provide the existing C# escape hatches. Null and absence are distinct.
+Inputs can be values you type, explicit unset values, or connected data ports. A
+connection replaces the input's own value. A step's value reaches another step only
+over a data wire; there are no named variables. Use a Custom C# node, or a
+[node library](node-libraries.md), for calculations the built-in nodes do not cover.
+Null and absence are distinct. Error details gives the message and step of the most
+recent failure on the path, for an Error path to report or log.
 
 Read entity returns a detached `HassSharp.EntityStateSnapshot`. Use Entity field
 to extract a scalar state/attribute, or pass the snapshot directly to a typed
@@ -135,9 +140,8 @@ configured `below` and `above`. `for`, `description` and `context` are left out:
 only a real firing knows them. Both states are the entity's current state, read as
 Read entity reads it, so Entity, New state and Previous state resolve and the run
 trace shows them. The run is still recorded as a manual run and its summary names
-the entity, never a change. A manual run of any other trigger, of an entity trigger
-whose entities come from an Entities expression, or of an entity that does not
-exist or whose state cannot be read (a warning is logged), carries
+the entity, never a change. A manual run of any other trigger, or of an entity that
+does not exist or whose state cannot be read (a warning is logged), carries
 `{platform: "manual"}`, and a step reading one of those outputs fails as above.
 
 Daily schedules require a local time and an explicit time zone. Once schedules
@@ -198,9 +202,9 @@ them to their ports.
 More complete examples are in
 [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json)
 and are also returned by the MCP `get_capabilities` tool: a native event, a bounded
-loop, custom C#, lights at sunset with typed fields, a heater switched off after
+loop, a Custom C# node, lights at sunset with typed fields, a heater switched off after
 30 minutes with a notification, a light named in an event, a service response, and
-a typed custom library. Every example validates and compiles with and without the
+a library with a value node. Every example validates and compiles with and without the
 service schemas. Substitute your own entities and services before saving one.
 
 ## Run history and traces
@@ -218,15 +222,16 @@ a very long run keeps the path of its oldest steps without their values. Traces
 are kept for the newest 1,000 traced runs. MCP clients read them with the `trace`
 tool; see [MCP authoring](mcp-authoring.md).
 
-## C# escape hatch
+## C# nodes
 
-Custom C# nodes run statements with `values`, `lastError`, `TriggerData` (the
-normalised trigger payload) and `CancellationToken` in scope. For example,
-`Logger.Info("Hello from a C# node");` is a complete harmless node body. Graph
-`imports` and `members` provide shared imports and class members. Compiler errors
-map back to node/input/source positions. Custom code is trusted administrator
-code, and preview compiles it without executing it. Use
-[custom libraries](node-libraries.md) for reusable typed methods.
+A Custom C# node is one public static method marked `[Node]`: its parameters are the
+node's inputs and its return value is its output. A `NodeContext` parameter gives it
+the run's cancellation, run id, trigger data, error details, entity states, service
+calls and the log. The same methods in a [node library](node-libraries.md) become
+node kinds every automation can use. Compiler errors map back to the node and to the
+line in its code. Custom code is trusted administrator code, and preview compiles it
+without executing it. The panel shows a Custom C# node's pins and its code read-only;
+editing arrives with the code editor.
 
 Editor and [MCP authoring](mcp-authoring.md) use the same revision-checked services.
 On a conflict, reload the current document and reconcile edits. Library changes

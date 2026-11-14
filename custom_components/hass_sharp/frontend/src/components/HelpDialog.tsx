@@ -10,8 +10,9 @@ export function HelpDialog(props: { open: boolean; onClose: () => void }){
  <h3>Edit a step</h3>
  <p>Select a step to edit it in the panel on the right. Simple values can also be changed on the step itself; both show the same value. A value that comes from another step shows where it comes from. On a phone, selecting a step shows its name at the bottom: tap it to edit the step.</p>
  <p>Search for an entity or a service by its name or its id. Optional fields are added with "+ Add field" and removed with their remove button.</p>
- <h3>Values and logic</h3>
- <p>Read entity gives a state or an attribute. Set value stores a value or converts it. And, Or, Exclusive or, Not and Compare give Yes/No values, and If continues on one of them. A step can only use a value from a step that ran before it. A missing or unsuitable value follows On error.</p>
+ <h3>Steps and values</h3>
+ <p>Steps run in order along the step order wires, from the trigger on. Value nodes, such as Constant, Compare, And, Not and Error details, have no place in that order: a value node is worked out each time a step that uses it runs, so it always gives the value of that moment. Read entity gives a state or an attribute; Convert changes a value's type; If continues on a Yes/No value.</p>
+ <p>A step can use a value from a step that ran before it on its path, or from a value node. A missing or unsuitable value follows On error.</p>
  <h3>Repeat and wait</h3>
  <p>Repeat runs its Body up to 1,000 times, then continues with Next. Stop ends the whole run. Wait until checks an entity until it matches or the time limit passes. Waits and repeats stop when the run is cancelled.</p>
  <h3>Problems, code and runs</h3>
@@ -19,7 +20,7 @@ export function HelpDialog(props: { open: boolean; onClose: () => void }){
  <h3>Keyboard</h3>
  <p>Ctrl+Z undoes and Ctrl+Y (or Ctrl+Shift+Z) redoes. On the canvas, arrow keys move the selected steps, Ctrl+C, Ctrl+V and Ctrl+D copy, paste and duplicate, and Delete removes. F makes the canvas full screen; Escape or "Exit full screen" leaves it.</p>
  <h3>Custom C#</h3>
- <p>A Custom C# step runs your own code. Its Advanced section also has the C# shared by this automation: usings, for example <code>using System.Linq;</code>, and helper members, for example <code>private bool IsEven(int value) =&gt; value % 2 == 0;</code>. Fields keep their value between runs. Await other work and pass CancellationToken to delays and I/O.</p>
+ <p>A Custom C# step is one static method marked <code>[Node]</code>: each parameter is an input, and the return value is the output (a tuple with named values gives one output each). Mark it <code>[Node("Title", Pure = true)]</code> to make it a value node. A parameter of type <code>NodeContext</code> gives the run: its cancellation token, the trigger, the most recent error, entity states, service calls and the log. Pass the cancellation token to delays and I/O. Node libraries hold methods every automation can use.</p>
  <p>Saving activates the automation; a trigger set to run when Home Assistant starts may run right away.</p>
  </Dialog>
 }

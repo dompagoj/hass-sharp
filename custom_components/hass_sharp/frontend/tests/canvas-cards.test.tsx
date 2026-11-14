@@ -100,6 +100,10 @@ it('draws execution and typed data pins, with inputs on the left and outputs on 
   expect(card.querySelector('[data-handleid="in"], [data-handleid="next"], [data-handleid="error"], .hs-card__row--footer')).toBeNull()
   expect(card.textContent).not.toContain('On error')
   expect(el.querySelector('[data-id="service-1"] .hs-card')!.classList).not.toContain('hs-card--pure')
+  // Its accessible name says it is a value; a step's does not.
+  const name = (id: string) => el.querySelector(`.solid-flow__node[data-id="${id}"]`)!.getAttribute('aria-label')!
+  expect(name('temperature')).toMatch(/^Constant, [^.]+, value\b/)
+  expect(name('service-1')).not.toContain(', value')
   // A step's execution pins sit in the header; the default output is the header's right pin.
   const step = el.querySelector('[data-id="service-1"] .hs-card')!
   const execIn = step.querySelector('.hs-card__head [data-handleid="in"]')!
@@ -880,7 +884,7 @@ it('rebuilds a card whose wired input shows its source when only the source outp
   const el = host()
   let start = addNode(addNode(createGraph('Outputs'), 'constant', 'source'), 'get_field', 'pick')
   start = updateNode(start, 'source', { config: { type: 'object', value: lit('object', {}) } })
-  start = contract.connectData(connectNodes(connectNodes(start, 'service-1', 'source'), 'source', 'pick'), 'source', 'value', 'pick', 'value')
+  start = contract.connectData(start, 'source', 'value', 'pick', 'value')
   const [graph, setGraph] = createSignal(start)
   dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, el)
   const pin = () => el.querySelector<HTMLElement>('[data-id="pick"] .target[data-handleid="data:value"]')!
@@ -892,7 +896,7 @@ it('rebuilds a card whose wired input shows its source when only the source outp
   let loop = addNode(addNode(createGraph('Loop'), 'repeat', 'loop'), 'constant', 'shown')
   loop = updateNode(loop, 'loop', { config: { count: lit('number', 3), carry: [{ name: 'total', type: 'number', initial: lit('number', 0) }], exports: [] } })
   loop = updateNode(loop, 'shown', { config: { type: 'number', value: lit('number', 0) } })
-  loop = contract.connectData(connectNodes(connectNodes(loop, 'service-1', 'loop'), 'loop', 'shown', 'body'), 'loop', 'carry:total', 'shown', 'value')
+  loop = contract.connectData(connectNodes(loop, 'service-1', 'loop'), 'loop', 'carry:total', 'shown', 'value')
   setGraph(loop)
   const chip = () => el.querySelector('[data-id="shown"] [data-input-id="value"] .hs-source-chip')?.textContent
   await vi.waitFor(() => expect(chip()).toMatch(/· total$/))

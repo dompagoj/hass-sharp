@@ -17,7 +17,10 @@ public static class VisualGraphContract
                     ? config["arguments"] as JsonObject ?? (JsonObject)(config["arguments"] = new JsonObject()) : config;
                 storage[key] = fallback?.DeepClone();
             }
-        return new() { ["id"] = id, ["kind"] = kind, ["label"] = Text(spec, "label"), ["config"] = config };
+        var node = new JsonObject { ["id"] = id, ["kind"] = kind, ["config"] = config };
+        // A Custom C# node is titled by its method until someone names it.
+        if (Text(spec, "dynamicInputs") != "custom") node["label"] = Text(spec, "label");
+        return node;
     }
     /// <summary>A copy with a position for every node that lacks one. Nodes have no stored size (the editor measures
     /// them), so a <c>size</c> an older client still sends is dropped.</summary>

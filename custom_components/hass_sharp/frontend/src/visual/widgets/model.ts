@@ -151,8 +151,11 @@ export function widgetFor(input: InputSpec, catalog: VisualCatalogSnapshot = nod
       ? { kind: 'entity', multiple: false, domains: entityDomains(literal, catalog) }
       : { kind: 'text', multiple: false }
     case 'enum': {
-      const values = literal.length === 1 ? resolveTypeSpec(literal[0], catalog)!.enumValues ?? [] : []
-      return values.length ? { kind: 'select', multiple: false, options: values.map(value => ({ value, label: displayValue(value) })) } : { kind: 'json', multiple: false }
+      // A CLR enum's members by name in words (enumLabels, beside its numeric enumValues); else the values themselves.
+      const type = literal.length === 1 ? resolveTypeSpec(literal[0], catalog)! : undefined
+      const values = type?.enumValues ?? [], labels = type?.enumLabels
+      const named = Array.isArray(labels) && labels.length === values.length && labels.every(label => typeof label === 'string' && label !== '')
+      return values.length ? { kind: 'select', multiple: false, options: values.map((value, i) => ({ value, label: named ? labels[i] : displayValue(value) })) } : { kind: 'json', multiple: false }
     }
     default: return { kind: 'json', multiple: false }
   }

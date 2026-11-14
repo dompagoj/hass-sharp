@@ -29,15 +29,12 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   const from = graph.nodes.find(n => n.id === source)!, to = graph.nodes.find(n => n.id === target)!
   const output = contract.dataOutputs(from, catalog)[sourcePort], input = nodeInputs(graph, to, catalog)[targetPort]
   if (!output || !input) return 'Unknown data port'
-  if (!input.types.some(t => contract.isAssignable(output.type, t, catalog))) return 'type'
+  if (!input.types.some(t => contract.isAssignable(output.type, t, contract.withGraphTypes(catalog, graph)))) return 'type'
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
-// Pinned totals of the agreement runs below.
-const GRAPHS = 241, PAIRS = 940, ACCEPTED = 389, BY_VALIDATION = 174, SERVICES_ACCEPTED = 336, SERVICES_BY_VALIDATION = 183
-// The only pairs the index hands to connectData: each replaces the one wire reading a Constant that sets a variable
-// another step reads, which can hide that variable from it.
-const FALLBACKS = ['variable operands preserved', 'service variable target with an entity_id field rejected', 'value node: a variable it sets is read where a step reads the value node']
-  .flatMap(name => [`${name}: t.data -> l.value`, `${name}: ${name.startsWith('service') ? 'e' : name.startsWith('value') ? 'c' : 'a'}.value -> l.value`])
+// Pinned totals of the agreement runs below. No pair needs the full check: the index decides every one itself.
+const GRAPHS = 245, PAIRS = 955, ACCEPTED = 389, BY_VALIDATION = 181, SERVICES_ACCEPTED = 336, SERVICES_BY_VALIDATION = 190
+const FALLBACKS: string[] = []
 // The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit).
 const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config']
 const RICH: Totals = { graphs: 21, pairs: 193, accepted: 41, rejected: 152, byValidation: 0, fallbacks: [], skipped: [] }

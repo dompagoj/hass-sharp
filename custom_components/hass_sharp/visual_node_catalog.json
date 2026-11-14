@@ -106,7 +106,6 @@
   },
   "operandKinds": [
     "literal",
-    "variable",
     "unset"
   ],
   "nodes": {
@@ -172,16 +171,6 @@
           "type": "boolean",
           "description": "Whether to also run when Home Assistant starts; when not set, only a startup trigger runs then.",
           "label": "Startup"
-        },
-        "entitiesExpression": {
-          "type": "string",
-          "description": "A C# expression that replaces the entities this trigger listens to.",
-          "label": "Entities expression"
-        },
-        "schedulesExpression": {
-          "type": "string",
-          "description": "A C# expression that replaces the schedules this trigger uses.",
-          "label": "Schedules expression"
         },
         "at": {
           "type": "string",
@@ -323,15 +312,61 @@
     "custom": {
       "label": "Custom C#",
       "category": "Code",
-      "description": "Run your own C# code; it can read the trigger's data and values steps exposed to C#.",
+      "description": "A step you write in C#: one static method marked [Node]. Its parameters are the inputs and its return value is the output.",
       "minGraphVersion": 5,
+      "dynamicInputs": "custom",
+      "dynamicOutputs": "custom",
+      "argumentStorage": "arguments",
       "config": {
-        "code": {
+        "source": {
           "type": "string",
           "required": true,
-          "default": "// Add your C# here",
-          "description": "The C# statements to run. They can use TriggerData, values (what earlier steps exposed to C#), lastError and anything an automation can.",
-          "label": "Code"
+          "default": "public static class CustomNode\n{\n    /// <summary>Describe what this step does.</summary>\n    /// <param name=\"text\">Each parameter is an input pin.</param>\n    /// <returns>The return value is the output pin.</returns>\n    [Node(\"Rename this node\")]\n    public static string RenameThisNode(string text)\n    {\n        return text;\n    }\n}",
+          "label": "Code",
+          "description": "The C# code: one static class with one method marked [Node]. Helper methods and types can sit beside it."
+        },
+        "signature": {
+          "type": "object",
+          "required": true,
+          "default": {
+            "title": "Rename this node",
+            "description": "Describe what this step does.",
+            "pure": false,
+            "inputs": {
+              "text": {
+                "types": [
+                  "global::System.String"
+                ],
+                "required": true,
+                "label": "Text",
+                "description": "Each parameter is an input pin.",
+                "nullable": false,
+                "hasDefaultValue": false
+              }
+            },
+            "outputs": {
+              "result": {
+                "type": "global::System.String",
+                "label": "Result",
+                "description": "The return value is the output pin."
+              }
+            },
+            "types": {}
+          },
+          "label": "Pins",
+          "description": "The pins the code gives: its inputs, outputs and the types they use, as worked out from the code."
+        },
+        "arguments": {
+          "type": "object",
+          "default": {
+            "text": {
+              "kind": "literal",
+              "type": "string",
+              "value": ""
+            }
+          },
+          "label": "Values",
+          "description": "The values this step takes"
         }
       },
       "inputs": {},
@@ -342,6 +377,12 @@
       ],
       "runtimeVersions": [
         5
+      ],
+      "keywords": [
+        "code",
+        "script",
+        "csharp",
+        "method"
       ]
     },
     "if": {
@@ -381,13 +422,7 @@
       "description": "Combine two yes/no values: the result is yes only when both are yes.",
       "pure": true,
       "minGraphVersion": 5,
-      "config": {
-        "output": {
-          "type": "string",
-          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Expose to C# as"
-        }
-      },
+      "config": {},
       "inputs": {
         "left": {
           "types": [
@@ -431,13 +466,7 @@
       "description": "Combine two yes/no values: the result is yes when at least one is yes.",
       "pure": true,
       "minGraphVersion": 5,
-      "config": {
-        "output": {
-          "type": "string",
-          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Expose to C# as"
-        }
-      },
+      "config": {},
       "inputs": {
         "left": {
           "types": [
@@ -481,13 +510,7 @@
       "description": "Combine two yes/no values: the result is yes when exactly one is yes.",
       "pure": true,
       "minGraphVersion": 5,
-      "config": {
-        "output": {
-          "type": "string",
-          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Expose to C# as"
-        }
-      },
+      "config": {},
       "inputs": {
         "left": {
           "types": [
@@ -531,13 +554,7 @@
       "description": "Turn a yes/no value around: yes becomes no and no becomes yes.",
       "pure": true,
       "minGraphVersion": 5,
-      "config": {
-        "output": {
-          "type": "string",
-          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Expose to C# as"
-        }
-      },
+      "config": {},
       "inputs": {
         "value": {
           "types": [
@@ -584,11 +601,6 @@
           "default": "eq",
           "description": "How to compare. Less than, at most, greater than and at least work only with numbers.",
           "label": "Operator"
-        },
-        "output": {
-          "type": "string",
-          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -652,13 +664,7 @@
       "category": "Hass",
       "description": "Read an entity's current state and attributes for later steps to use.",
       "minGraphVersion": 5,
-      "config": {
-        "output": {
-          "type": "string",
-          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Expose to C# as"
-        }
-      },
+      "config": {},
       "inputs": {
         "entity": {
           "types": [
@@ -711,11 +717,6 @@
           "description": "The type of the value, such as Number or Text.",
           "label": "Type",
           "enumSource": "types"
-        },
-        "output": {
-          "type": "string",
-          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -771,11 +772,6 @@
           "description": "The type to change the value into, such as Number or Entity.",
           "label": "Type",
           "enumSource": "types"
-        },
-        "output": {
-          "type": "string",
-          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -815,6 +811,35 @@
       "execution": [],
       "runtimeVersions": [
         5
+      ]
+    },
+    "last_error": {
+      "label": "Error details",
+      "category": "Flow",
+      "description": "What went wrong on this path: the message of the most recent failure and the step that failed. Both are empty while no step has failed.",
+      "pure": true,
+      "minGraphVersion": 5,
+      "config": {},
+      "inputs": {},
+      "outputs": {
+        "message": {
+          "type": "string",
+          "label": "Message",
+          "description": "What the failure says; empty when no step on this path has failed."
+        },
+        "step": {
+          "type": "string",
+          "label": "Step",
+          "description": "The name of the step that failed; empty when no step on this path has failed."
+        }
+      },
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "exception",
+        "failed",
+        "catch"
       ]
     },
     "log": {
@@ -1523,11 +1548,6 @@
           "default": "string",
           "description": "The type to turn the value into, such as Number for a temperature sensor's state.",
           "label": "Type"
-        },
-        "output": {
-          "type": "string",
-          "description": "A name other steps and Custom C# can read this value by; inside a loop or branch, only steps there can use it.",
-          "label": "Expose to C# as"
         }
       },
       "inputs": {
@@ -1765,13 +1785,6 @@
         "constraintsSource": "types",
         "description": "A value written into the step."
       },
-      "variable": {
-        "required": [
-          "kind",
-          "name"
-        ],
-        "scope": "same or ancestor snapshot"
-      },
       "unset": {
         "required": [
           "kind"
@@ -1799,7 +1812,7 @@
       "carry:<name>": "own body or condition descendants",
       "export:<name>": "outside own body and condition; initialized for zero iterations"
     },
-    "parallelJoin": "All branch executions complete before next. Branch values and lastError are isolated and never implicitly merged.",
+    "parallelJoin": "All branch executions complete before next. Branch values and the most recent failure are isolated and never implicitly merged.",
     "loopConditionOrder": {
       "while": "before body",
       "until": "after body"

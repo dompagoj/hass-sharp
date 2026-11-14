@@ -29,6 +29,49 @@ public static class VisualNodeCatalog
     internal static string Text(JsonNode? node, string key, string fallback = "") => node is JsonObject obj && obj[key] is JsonValue v && v.TryGetValue<string>(out var result) ? result : fallback;
     /// <summary>A value node (<c>"pure": true</c>): no execution pins, worked out each time a step that reads it runs.</summary>
     internal static bool IsPure(JsonNode? spec) => spec is JsonObject obj && obj["pure"] is JsonValue v && v.TryGetValue<bool>(out var pure) && pure;
+    /// <summary>Whether this node is a value node: by its kind, or for a Custom C# node by its signature.</summary>
+    internal static bool IsPure(JsonObject node, JsonNode? spec) => Text(spec, "dynamicInputs") == "custom" ? CustomSignature(node, spec)?["pure"] is JsonValue v && v.TryGetValue<bool>(out var pure) && pure : IsPure(spec);
+    /// <summary>
+    /// The pins of a Custom C# node, as the compiler derived them from its code, when the node's kind takes its pins
+    /// from <c>config.signature</c> and that signature is well formed; else null. Mirrored by <c>customSignature</c> in
+    /// <c>contract.ts</c>.
+    /// </summary>
+    internal static JsonObject? CustomSignature(JsonObject node, JsonNode? spec) =>
+        Text(spec, "dynamicInputs") == "custom" && node["config"] is JsonObject config && config["signature"] is JsonObject signature && WellFormedSignature(signature) ? signature : null;
+    /// <summary>
+    /// A signature has a text <c>title</c> and <c>description</c>, a yes/no <c>pure</c>, and <c>inputs</c>, <c>outputs</c>
+    /// and <c>types</c> objects; each input has a non-empty list of type ids and a yes/no <c>required</c>, each output a
+    /// type id, each pin an identifier for its id, each type an object.
+    /// </summary>
+    internal static bool WellFormedSignature(JsonObject signature)
+    {
+        static bool Is<T>(JsonNode? value) => value is JsonValue v && v.TryGetValue<T>(out _);
+        const string pin = "^[A-Za-z_][A-Za-z0-9_]*$";
+        if (!Is<string>(signature["title"]) || !Is<string>(signature["description"]) || !Is<bool>(signature["pure"])) return false;
+        if (signature["inputs"] is not JsonObject inputs || signature["outputs"] is not JsonObject outputs || signature["types"] is not JsonObject types) return false;
+        foreach (var (id, input) in inputs)
+            if (!VisualTypes.Matches(id, pin) || input is not JsonObject rule || rule["types"] is not JsonArray list || list.Count == 0 || !list.All(Is<string>) || !Is<bool>(rule["required"])) return false;
+        foreach (var (id, output) in outputs)
+            if (!VisualTypes.Matches(id, pin) || output is not JsonObject port || !Is<string>(port["type"])) return false;
+        return types.All(t => t.Value is JsonObject);
+    }
+    /// <summary>
+    /// The catalog with the types of the graph's Custom C# nodes added (C# and TS alike): each well-formed signature's
+    /// <c>types</c>, in node order, where neither the catalog nor an earlier node has that id. The catalog itself when
+    /// there are none.
+    /// </summary>
+    internal static JsonObject WithGraphTypes(JsonObject catalog, JsonObject graph)
+    {
+        var known = catalog["types"] as JsonObject ?? [];
+        var added = new JsonObject();
+        foreach (var node in graph["nodes"] as JsonArray ?? [])
+            if (node is JsonObject n && CustomSignature(n, catalog["nodes"]?[Text(n, "kind")])?["types"] is JsonObject types)
+                foreach (var (id, entry) in types) if (!known.ContainsKey(id) && !added.ContainsKey(id)) added[id] = entry?.DeepClone();
+        if (added.Count == 0) return catalog;
+        var merged = (JsonObject)catalog.DeepClone();
+        foreach (var (id, entry) in added.ToArray()) { added.Remove(id); merged["types"]![id] = entry; }
+        return merged;
+    }
     internal static IEnumerable<JsonObject> Declarations(JsonObject node, string key) => (node["config"]?[key] as JsonArray ?? []).OfType<JsonObject>();
     internal static string ResolveType(string type, JsonObject node) => type.StartsWith('$') ? Text(node["config"], type[1..]) : type;
     public static string EffectiveTriggerMethod(JsonObject node) => "Run_" + Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(Text(node, "id")));
@@ -38,6 +81,7 @@ public static class VisualNodeCatalog
     {
         var spec = Spec(node, snapshot);
         var ports = new List<string>();
+        if (IsPure(node, spec)) return [];
         if (Text(spec, "dynamicExecution") == "branches" && node["config"]?["branches"] is JsonArray branches)
             ports.AddRange(branches.Select(id => "branch:" + id?.ToString()));
         ports.AddRange((spec?["execution"] as JsonArray ?? []).Select(p => p!.GetValue<string>()));
@@ -48,6 +92,7 @@ public static class VisualNodeCatalog
         var spec = Spec(node, snapshot);
         var ports = (spec?["outputs"]?.DeepClone() as JsonObject) ?? [];
         foreach (var (_, value) in ports) if (value is JsonObject port) port["type"] = ResolveType(Text(port, "type"), node);
+        if (Text(spec, "dynamicOutputs") == "custom" && CustomSignature(node, spec)?["outputs"] is JsonObject custom) foreach (var (key, value) in custom) ports[key] = value?.DeepClone();
         if (Text(spec, "dynamicOutputs") == "loop") foreach (var key in new[] { "carry", "exports" }) foreach (var item in Declarations(node, key))
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = new JsonObject { ["type"] = Text(item, "type"), ["description"] = (key == "carry" ? "Kept between iterations: " : "Available after the loop: ") + Text(item, "name"), ["visibility"] = key == "carry" ? "loop" : "outside" };
         if (Text(spec, "dynamicOutputs") == "trigger") foreach (var (key, value) in TriggerOutputs(node, snapshot?.Root ?? Root)) ports[key] = value?.DeepClone();
@@ -141,6 +186,7 @@ public static class VisualNodeCatalog
         }
         var all = (snapshot?.Root ?? Root)["types"]!.AsObject().Select(p => p.Key).ToArray();
         var dynamic = Text(spec, "dynamicInputs");
+        if (dynamic == "custom" && CustomSignature(node, spec)?["inputs"] is JsonObject custom) foreach (var (key, value) in custom) ports[key] = value?.DeepClone();
         if (dynamic == "fields" && node["config"]?["fields"] is JsonObject fields)
             foreach (var (key, _) in fields) ports["field:" + key] = Input(all, true, "Field " + key);
         if (dynamic == "service")

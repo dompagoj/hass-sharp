@@ -58,6 +58,35 @@ public static class VisualGraphContractTests
     }
 
     /// <summary>
+    /// Not a test: prints what the C# validator reports for each case of a cases file (the shape of
+    /// visual-graph-validation.json), as JSON, so a script can fill in a new or changed case's messages and codes.
+    /// <c>dotnet run --project tests/Runtime -- --describe-visual-graph=/path/cases.json</c>
+    /// </summary>
+    [RuntimeSuite("--describe-visual-graph", RunByDefault = false)]
+    public static Task Describe(string? path)
+    {
+        var cases = JsonNode.Parse(File.ReadAllText(path ?? throw new Exception("--describe-visual-graph needs =<cases file>")))!.AsArray();
+        var described = new JsonArray();
+        foreach (var fixture in cases)
+        {
+            var name = fixture!["name"]!.GetValue<string>();
+            var snapshot = fixture["catalogPatch"] is JsonObject patch ? Patched(patch) : VisualCatalogSnapshot.BuiltIn;
+            if (fixture["services"]?.GetValue<bool>() == true) snapshot = snapshot.WithServices(Services(name));
+            var diagnostics = VisualGraphValidator.Validate(fixture["graph"]!.AsObject(), snapshot);
+            described.Add(new JsonObject
+            {
+                ["name"] = name,
+                ["valid"] = diagnostics.All(d => d.Severity != 3),
+                ["messages"] = new JsonArray(diagnostics.Select(d => d.Message).Order(StringComparer.Ordinal).Select(m => (JsonNode)m).ToArray()),
+                ["codes"] = new JsonArray(diagnostics.Where(d => d.Code != null).Select(d => d.Code!).Order(StringComparer.Ordinal).Select(m => (JsonNode)m).ToArray()),
+                ["diagnostics"] = new JsonArray(diagnostics.Select(d => (JsonNode)new JsonObject { ["severity"] = d.Severity, ["nodeId"] = d.NodeId, ["inputId"] = d.InputId, ["message"] = d.Message }).ToArray()),
+            });
+        }
+        Console.WriteLine(described.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// The catalog's descriptions are what people read in the node library, quick-add and the inspector: none uses
     /// implementation words, the words the editor replaces ("yes/no value", "text"), pointer escapes or raw port ids.
     /// </summary>

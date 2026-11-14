@@ -134,19 +134,6 @@ it('reads the system clipboard when this tab has no copy (steps copied in anothe
   expect(readText).toHaveBeenCalledTimes(1)
 })
 
-it('does not copy a C# variable name, so a pasted step never publishes the same variable as its original', () => {
-  const graph = updateNode(sample(), 'value', { config: { type: 'number', value: lit('number', 4), output: 'level' } })
-  const result = pasteSteps(graph, copySteps(graph, ['value', 'log'])!, nodeCatalog, { offset: { x: 40, y: 40 } })
-  if ('error' in result) throw new Error(result.error)
-  expect(result.unnamed).toBe(1)
-  const pasted = result.graph.nodes.find(n => n.id === result.ids[0])!
-  expect('output' in pasted.config).toBe(false)
-  expect(graph.nodes.find(n => n.id === 'value')!.config.output).toBe('level')
-  expect(validateGraph(result.graph).some(d => /level/.test(d.message))).toBe(false)
-  const plain = pasteSteps(sample(), copySteps(sample(), ['log'])!, nodeCatalog, { offset: { x: 0, y: 0 } })
-  expect('unnamed' in plain && plain.unnamed).toBe(0)
-})
-
 it('refuses a paste only by structural codes the validator really produces', () => {
   // Every refused code is a declared code, and none is one pasted steps have until they are wired in.
   for (const code of pasteRefusals) expect(diagnosticCodes).toContain(code)
@@ -182,7 +169,7 @@ it('refuses a paste only by structural codes the validator really produces', () 
     'trigger.incoming': [{ ...base, edges: [...base.edges, { id: 'back', source: service.id, target: trigger.id }] }],
     'cycle.execution': [{ ...base, edges: [...base.edges, { id: 'loop', source: service.id, target: condition.id }] }],
     'cycle.data': [(() => {
-      const g = connectNodes(connectNodes(addNode(addNode(base, 'and', 'a'), 'and', 'b'), 'service-1', 'a'), 'a', 'b')
+      const g = addNode(addNode(base, 'and', 'a'), 'and', 'b')
       const wire = (source: string, target: string) => ({ id: `${source}-${target}`, kind: 'data', source, target, sourcePort: 'value', targetPort: 'left' })
       return { ...g, edges: [...g.edges, wire('a', 'b'), wire('b', 'a')] }
     })()],
