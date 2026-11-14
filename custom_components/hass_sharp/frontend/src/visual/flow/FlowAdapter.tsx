@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, untrack, useContext, type Component, type JSX } from 'solid-js'
+import { createEffect, createMemo, createSignal, getOwner, on, onCleanup, onMount, runWithOwner, Show, untrack, useContext, type Component, type JSX } from 'solid-js'
 import { createStore, produce, reconcile } from 'solid-js/store'
 import { QueryClientContext } from '@tanstack/solid-query'
 import { Background, getViewportForBounds, MiniMap, SolidFlow, useSolidFlow, type Edge, type Node } from '@dschz/solid-flow'
@@ -379,6 +379,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   }
   let suppressPaneClick = false
   const [gestureMoved, setGestureMoved] = createSignal(false)
+  /** A person has panned or zoomed this canvas (the canvas's own fits and centring do not count). */
+  let viewMoved = false
   let gestureStart: Point | undefined
   let pointerHeld = false
   let lastPointer: Point | undefined
@@ -511,6 +513,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   const Viewport = () => {
     const api = useSolidFlow()
     flow = api
+    const owner = getOwner()
     /** Runs once every card has been measured (their sizes are unknown on the first frames), or after a second. */
     const whenMeasured = (run: () => void) => {
       let frames = 0
@@ -555,6 +558,9 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     // wider, at zoom 0.5 centred on the step that failed, or on the path's first step (its trigger); narrower, the
     // whole path however far out, except that a run with a failed step opens centred on it (the focus, below).
     let opening: 'pending' | 'done' | undefined
+    // How the view opened (the canvas's own fit unless a run's opening view or focus took over), to take it again once
+    // the trace view has moved overlapping cards apart (below): that can push cards out of a view fitted before.
+    let openingView: () => void = () => void api.fitView(fitOptions)
     createEffect(
       on(
         () => props.trace,
@@ -565,18 +571,22 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
           opening = 'done'
           if (!wide() && trace.focusNodeId) return
           opening = 'pending'
-          whenMeasured(() => {
-            opening = 'done'
+          openingView = () => {
             const focus = untrack(() => props.trace?.focusNodeId)
             // The zoom the whole path needs in this canvas, as fitView works it out.
             const { zoom } = getViewportForBounds(api.getNodesBounds(reached), canvas.clientWidth, canvas.clientHeight, pathFitOptions.minZoom, pathFitOptions.maxZoom, pathFitOptions.padding)
             if (zoom >= READABLE_ZOOM || !wide()) return void api.fitView({ ...pathFitOptions, nodes: reached.map(id => ({ id })) })
             const first = reached.find(id => graph().nodes.find(n => n.id === id)?.kind === 'trigger') ?? reached[0]
             centreOn(focus ?? first, () => READABLE_ZOOM)
+          }
+          whenMeasured(() => {
+            opening = 'done'
+            openingView()
           })
         },
       ),
     )
+    let separated = false
     // In the read-only trace view a card never overlaps another: one that has grown taller than the stored layout
     // allowed for (a run's values, a newer card design) pushes the cards below it down, for this view only. Once every
     // card is measured, and again when one changes size; the graph keeps its positions.
@@ -590,7 +600,16 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       }
       const next = separateCards(boxes)
       const current = untrack(spread)
-      if (next.size !== current.size || [...next].some(([id, at]) => current.get(id)?.x !== at.x || current.get(id)?.y !== at.y)) setSpread(next)
+      if (next.size !== current.size || [...next].some(([id, at]) => current.get(id)?.x !== at.x || current.get(id)?.y !== at.y)) {
+        setSpread(next)
+        // The first time cards move apart, the view opened before may leave some outside it: open it again, on the
+        // moved cards, unless the person has already moved the view. Once only; later size changes leave the view be.
+        if (next.size && !separated) {
+          separated = true
+          // Owned by the canvas, not this effect: its next run (a card measured again) must not cancel it.
+          if (!viewMoved) runWithOwner(owner, () => whenMeasured(() => { if (!viewMoved) openingView() }))
+        }
+      }
     })
     // Centre the run's focus node once it is measured, then leave the viewport to the user: a new trace object for
     // the same node (a live run polling) does not move the view again. On a wide screen the opening view (above) takes
@@ -599,6 +618,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     createEffect(
       on(focusNode, id => {
         if (!id || (opening === 'pending' && wide())) return
+        if (!separated) openingView = () => centreOn(id, zoom => Math.max(zoom, 0.8))
         whenMeasured(() => centreOn(id, zoom => Math.max(zoom, 0.8), 200))
       }),
     )
@@ -1231,7 +1251,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
           onMoveStart={() => closeQuickAdd()}
           // Only a person's pan or zoom (it has a source event): a view the canvas moves itself (a run's path fitted on
           // open, a step centred) must not swallow the next click.
-          onMove={event => { if (event) setGestureMoved(true) }}
+          onMove={event => { if (event) { setGestureMoved(true); viewMoved = true } }}
           onConnectStart={(_event, params) => {
             closeQuickAdd()
             setRejected(undefined)

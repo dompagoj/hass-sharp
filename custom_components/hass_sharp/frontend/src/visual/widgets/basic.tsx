@@ -53,10 +53,12 @@ export function NumberWidget(props: WidgetProps) {
   return <Show when={props.widget.slider} fallback={<span class="hs-widget-row">
     <DraftField id={props.id} label={props.label} inputmode={decimalMode(props.widget.min)} text={value() === undefined ? displayValue(props.value) : String(value())}
       placeholder="Not set" describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled} force={props.stale}
-      initialError={props.stale && Number.isNaN(parseNumber(displayValue(props.value))) ? 'Enter a number.' : undefined}
+      initialError={props.stale && !Number.isFinite(parseNumber(displayValue(props.value)) ?? Number.NaN) ? 'Enter a number.' : undefined}
       commit={text => {
         const parsed = parseNumber(text)
         if (Number.isNaN(parsed)) return 'Enter a number.'
+        // A stored empty text is kept, with the error, until the person types or clears it (Clear in the menu).
+        if (parsed === undefined && props.stale && text === displayValue(props.value)) return 'Enter a number.'
         props.commit(parsed)
       }} />
     <Show when={unit()}><span class="hs-unit">{unit()}</span></Show>

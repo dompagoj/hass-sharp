@@ -4,7 +4,7 @@
 .hs-app .hs-button--secondary { background: var(--hs-surface); color: var(--hs-text); border-color: var(--hs-line); }
 .hs-app .hs-button--ghost { background: transparent; color: var(--hs-muted); }
 .hs-app .hs-button--danger { background: #ad2339; color: #fff; }
-.hs-app .hs-button:hover:not(:disabled) { filter: brightness(.93); }
+.hs-app .hs-button:hover:not(:disabled, [aria-disabled="true"]) { filter: brightness(.93); }
 .hs-app .hs-button--ghost:hover:not(:disabled) { background: var(--hs-soft); color: var(--hs-text); }
 .hs-app .hs-icon-button { width: 44px; height: 44px; flex: none; padding: 10px; }
 /* The header's sidebar toggle is a ghost icon button; its visibility must follow .hs-button. */

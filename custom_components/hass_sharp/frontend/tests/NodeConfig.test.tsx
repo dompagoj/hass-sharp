@@ -299,7 +299,9 @@ it('"Return response": locked on for a service that only answers, a switch for a
 
 it('"Return response" of a service that only answers, stored off, shows off and can be turned on', () => {
   const graph = updateNode(createGraph('Response'), 'service-1', { config: { service: 'todo.get_items', target: lit('target', { entity_id: 'todo.list' }), fields: {} } })
-  const message = 'todo.get_items only returns a response; turn on Return response'
+  // The validator's own message, as both validators word it.
+  const message = 'Get to-do list items (todo.get_items) only returns a response; turn on Return response'
+  expect(validateGraph(graph, catalog).map(d => d.message)).toContain(message)
   const diagnostics: VisualDiagnostic[] = [{ nodeId: 'service-1', message, severity: 3, inputId: 'returnResponse' } as VisualDiagnostic]
   const { el, node } = mount(graph, 'service-1', { diagnostics })
   const toggle = responseSwitch(el)!

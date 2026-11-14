@@ -10,6 +10,7 @@ afterEach(async () => {
   dispose?.()
   dispose = undefined
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   document.body.innerHTML = ''
   await new Promise(resolve => setTimeout(resolve, 0))
 })
@@ -64,4 +65,41 @@ it('leaves stored positions as they are in the editor (where Tidy is the way to 
   await vi.waitFor(() => expect(el.querySelector('.solid-flow__node[data-id="value"]')?.getAttribute('style')).toContain('translate'))
   await new Promise(resolve => setTimeout(resolve, 50))
   expect(top(el, 'value')).toBe(280)
+})
+
+it('opens the trace view again once cards have moved apart, so none starts outside it', async () => {
+  // A canvas 1000 × 520; every card 260 wide, the trigger 400 tall and the others 120.
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList?.contains('solid-flow__node') ? 260 : 1000
+  })
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    return !this.classList?.contains('solid-flow__node') ? 520 : this.dataset.id === 'trigger-1' ? 400 : 120
+  })
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(520)
+  // jsdom has no ResizeObserver: the canvas learns its size when it starts observing, as in a browser.
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private readonly report: (entries: unknown[], observer: unknown) => void) {}
+    observe(target: Element) { queueMicrotask(() => this.report([{ target, contentRect: { width: 1000, height: 520 } }], this)) }
+    unobserve() {}
+    disconnect() {}
+  })
+  const el = document.createElement('div')
+  el.className = 'hs-app'
+  document.body.append(el)
+  dispose = render(() => <FlowAdapter graph={crowded()} readOnly onSelect={() => {}} onChange={() => {}} />, el)
+  await vi.waitFor(() => expect(top(el, 'value')).toBe(524))
+  const view = () => {
+    const match = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px\)\s*scale\(\s*([\d.]+)\s*\)/.exec(el.querySelector<HTMLElement>('.solid-flow__viewport')!.style.transform)
+    return match ? { y: Number(match[2]), zoom: Number(match[3]) } : undefined
+  }
+  // Every card, where the view puts it on screen, lies inside the canvas's 520 px.
+  const inside = () => {
+    const v = view()!
+    return [['trigger-1', 400], ['value', 120]].every(([id, height]) => {
+      const y = top(el, id as string) * v.zoom + v.y
+      return y >= 0 && y + (height as number) * v.zoom <= 520
+    })
+  }
+  await vi.waitFor(() => expect(inside()).toBe(true))
 })

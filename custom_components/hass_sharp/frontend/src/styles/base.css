@@ -23,7 +23,7 @@ ha-panel-hass-sharp-view > #app { height: 100%; }
 .hs-app a { -webkit-tap-highlight-color: transparent; color: inherit; text-decoration: none; }
 .hs-app :focus-visible { outline: 3px solid var(--hs-focus); outline-offset: 3px; }
 .hs-app [hidden] { display: none !important; }
-.hs-app button:disabled { cursor: not-allowed; opacity: .55; }
+.hs-app button:disabled, .hs-app button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
 .hs-app .hs-icon { width: 20px; height: 20px; flex: none; }
 .hs-app .hs-muted { color: var(--hs-muted); }
 .hs-app .hs-eyebrow { font-size: 10px; font-weight: 750; letter-spacing: .13em; color: var(--hs-muted); margin-bottom: 6px; }

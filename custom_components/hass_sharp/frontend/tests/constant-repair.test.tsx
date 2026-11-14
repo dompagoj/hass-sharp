@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
 import { VisualEditor } from '../src/visual/VisualEditor'
 import { NodeConfig } from '../src/visual/NodeConfig'
-import { nodeCatalog, validateGraph, type Graph } from '../src/visual/contract'
+import { dataInputs, nodeCatalog, validateGraph, type Graph, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { InputEditor } from '../src/visual/InputEditor'
 import { addNode, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { visualFixture } from './visual-fixture'
 import { constantTypeLabels, constantTypes, ConstantType } from '../src/visual/constant'
@@ -253,4 +254,111 @@ it('names no two entries of the Type list alike, and offers a type that is the s
     const names = [...select.options].map(o => o.textContent)
     expect(new Set(names).size).toBe(names.length)
   }
+})
+
+it('names two offered types with the same short name apart by as much of their full name as it takes, never "Mode (Mode)"', () => {
+  const base = (rich as any).catalog
+  const mode = base.types['global::NodeLib.Mode']
+  const enumType = (label: string, id: string) => ({ ...mode, label, description: label, assignableTo: [id, 'global::System.Enum'] })
+  const ids = ['global::Lights.Node1.Mode', 'global::Lights.Node2.Mode', 'global::Heat.Node1.Mode', 'global::Fans.Outer.Mode']
+  const catalog = {
+    ...base,
+    types: {
+      ...base.types,
+      // Two Custom C# nodes declaring `enum Mode`, a third under another namespace with the same node name, and the
+      // library's NodeLib.Mode: all read as "Mode".
+      [ids[0]]: enumType('Lights.Node1.Mode', ids[0]),
+      [ids[1]]: enumType('Lights.Node2.Mode', ids[1]),
+      [ids[2]]: enumType('Heat.Node1.Mode', ids[2]),
+      [ids[3]]: enumType('Fans.Outer.Mode', ids[3]),
+    },
+  }
+  const labels = constantTypeLabels(catalog)
+  const modes = ['global::NodeLib.Mode', ...ids].map(id => labels.get(id))
+  expect(modes).toEqual(['Mode (NodeLib.Mode)', 'Mode (Lights.Node1.Mode)', 'Mode (Node2.Mode)', 'Mode (Heat.Node1.Mode)', 'Mode (Outer.Mode)'])
+  const offered = constantTypes(catalog).map(id => labels.get(id))
+  expect(new Set(offered).size).toBe(offered.length)
+  expect(offered.some(label => /^(.+) \(\1\)$/.test(label!))).toBe(false)
+  // A label alone that is unique keeps no suffix; one shared only by C# types gets the shortest name that differs.
+  const two = { ...base, types: { ...base.types, [ids[0]]: enumType('Lights.Node1.Mode', ids[0]) } }
+  expect(['global::NodeLib.Mode', ids[0]].map(id => constantTypeLabels(two).get(id))).toEqual(['Mode (NodeLib.Mode)', 'Mode (Node1.Mode)'])
+  const one = constantTypeLabels(base)
+  expect(one.get('global::NodeLib.Mode')).toBe('Mode')
+})
+
+/** A Constant's Value input under this Type, as its card and panel edit it. */
+const constantValue = (type: string, catalog: VisualCatalogSnapshot) => {
+  let g = addNode(createGraph('Value'), 'constant', 'c', catalog)
+  g = updateNode(g, 'c', { config: { type, value: { kind: 'unset' } } })
+  return dataInputs(g.nodes.find(n => n.id === 'c')!, undefined, catalog).value
+}
+const editor = (type: string, value: unknown, catalog: VisualCatalogSnapshot) => {
+  const changes: unknown[] = [], el = root()
+  dispose = render(() => providers(() => <InputEditor variant="panel" input={constantValue(type, catalog)} value={value as any} label="Value" catalog={catalog} retype
+    onChange={next => changes.push(next)} />), el)
+  return { el, changes }
+}
+
+it('leaves a value its Type takes as it is (a number under a C# int, an entity id under Text): focus and leave change nothing', async () => {
+  for (const [type, value, catalog] of [['global::System.Int32', lit('number', 21), (rich as any).catalog], ['string', lit('entity_id', 'light.hall'), nodeCatalog]] as const) {
+    const { el, changes } = editor(type, value, catalog)
+    const field = el.querySelector<HTMLInputElement>('input[aria-label="Value"]')!
+    expect(field.value, type).toBe(String(value.value))
+    expect(field.getAttribute('aria-invalid'), type).toBeNull()
+    field.focus(); blur(field)
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    expect(changes, type).toEqual([])
+    dispose!(); dispose = undefined; document.body.innerHTML = ''
+  }
+  // In the editor: no undo step, nothing to save.
+  let g = addNode(createGraph('Repair'), 'constant', 'c', nodeCatalog)
+  g = updateNode(g, 'c', { config: { type: 'string', value: lit('entity_id', 'light.hall') }, position: { x: 400, y: 300 } })
+  const host = mount(g)
+  await vi.waitFor(() => expect(cardField(host)).not.toBeNull())
+  blur(cardField(host))
+  expect(configOf(host)).toEqual({ type: 'string', value: lit('entity_id', 'light.hall') })
+  expect(byLabel(host, 'Undo')!.disabled).toBe(true)
+})
+
+it('stores an enum value of another type as the Type with an explicit action, since its select already shows it: one change', () => {
+  const catalog = (rich as any).catalog
+  const { el, changes } = editor('global::NodeLib.Mode', lit('number', 1), catalog)
+  const select = el.querySelector<HTMLSelectElement>('select[aria-label="Value"]')!
+  expect(select.selectedOptions[0].textContent).toBe('On')
+  byLabel(el, 'Store as Mode')!.click()
+  expect(changes).toEqual([lit('global::NodeLib.Mode', 1)])
+  dispose!(); dispose = undefined; document.body.innerHTML = ''
+  // A value of the Type has no such action.
+  const valid = editor('global::NodeLib.Mode', lit('global::NodeLib.Mode', 1), catalog)
+  expect(byLabel(valid.el, 'Store as Mode')).toBeUndefined()
+})
+
+it('stores the unchanged text again after Undo, in the same field', async () => {
+  const host = mount(stale('21'))
+  await vi.waitFor(() => expect(cardField(host)).not.toBeNull())
+  const field = cardField(host)
+  blur(field)
+  expect(configOf(host)).toEqual({ type: 'number', value: lit('number', 21) })
+  byLabel(host, 'Undo')!.click()
+  expect(configOf(host)).toEqual({ type: 'number', value: lit('string', '21') })
+  // The same field (its text never changed) stores it again.
+  expect(cardField(host)).toBe(field)
+  blur(field)
+  expect(configOf(host)).toEqual({ type: 'number', value: lit('number', 21) })
+})
+
+it('keeps an empty stored text under Number with the field\'s error, until a number is typed', async () => {
+  const host = mount(stale(''))
+  await vi.waitFor(() => expect(cardField(host)).not.toBeNull())
+  const error = () => host.querySelector('[data-id="c"] .hs-card-editor .hs-error')
+  expect(error()?.textContent).toBe('Enter a number.')
+  blur(cardField(host))
+  cardField(host).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  expect(configOf(host)).toEqual({ type: 'number', value: lit('string', '') })
+  expect(error()?.textContent).toBe('Enter a number.')
+  expect(byLabel(host, 'Undo')!.disabled).toBe(true)
+  cardField(host).value = '7'
+  cardField(host).dispatchEvent(new Event('input', { bubbles: true }))
+  blur(cardField(host))
+  expect(configOf(host)).toEqual({ type: 'number', value: lit('number', 7) })
 })

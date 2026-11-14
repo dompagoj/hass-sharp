@@ -14,6 +14,8 @@ export interface VisualDiagnostic {
   code?: string | null
   /** Set by the editor on a problem about a value wire whose pin is missing: that wire, which the problem can remove. */
   edgeId?: string
+  /** That wire's place in the graph's edges (another wire may have its id). */
+  edgeIndex?: number
   nodeId: string | null
   message: string
   severity: number

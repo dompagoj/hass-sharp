@@ -67,6 +67,9 @@ export function DraftField(props: {
   // The last draft handed to the parent, until the parent's new text arrives.
   let reported: string | undefined
   createEffect(on(() => props.text, text => { setDraft(text); setError(props.initialError); reported = undefined }, { defer: true }))
+  // The stored value can change while its text does not (the text "21" and the number 21, after Undo): once the field
+  // is to store its text again, whatever it handed over before no longer counts.
+  createEffect(on(() => props.force, force => { if (force) { reported = undefined; setError(props.initialError) } }, { defer: true }))
   const finish = () => {
     if (draft() === props.text && !props.force) { setError(); return }
     if (draft() === reported) return

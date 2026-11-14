@@ -10,7 +10,7 @@ import type { VisualGraph } from './graph'
  */
 export function RemoveWire(props: {
   graph: VisualGraph
-  diagnostic: { edgeId?: string }
+  diagnostic: { edgeId?: string; edgeIndex?: number }
   catalog: VisualCatalogSnapshot
   class: string
   onRemove(graph: VisualGraph): void
@@ -20,9 +20,9 @@ export function RemoveWire(props: {
   return (
     <Show when={edge()}>
       {wire => (
-        <button type="button" class={props.class} aria-label={removeWireLabel(props.graph, wire(), props.catalog)}
+        <button type="button" class={props.class} aria-label={removeWireLabel(props.graph, wire().edge, props.catalog)}
           onClick={() => {
-            props.onRemove(withoutWire(props.graph, wire().id))
+            props.onRemove(withoutWire(props.graph, wire().index))
             queueMicrotask(() => props.focusAfter?.()?.focus())
           }}>
           Remove connection

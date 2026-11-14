@@ -184,29 +184,37 @@ it('reads and renames a saved graph without changing its automation identity', a
   expect(fixture.calls.filter(c => c.request?.operation === 'save').at(-1).request.expectedRevision).toBe(4)
 })
 
-it('disables Save while there is nothing to save, and says why; an edit enables it, and undoing the edit disables it again', async () => {
+it('marks Save unavailable while there is nothing to save, keeps it focusable and tied to why; an edit enables it, and undoing the edit marks it again', async () => {
   const { root, fixture } = setup(true)
   await vi.waitFor(() => expect(chip(root).textContent).toBe('Saved'))
   const save = () => button(root, 'Save')
   const saves = () => fixture.calls.filter(c => c.request?.operation === 'save').length
-  expect(save().disabled).toBe(true)
+  const unavailable = () => save().getAttribute('aria-disabled') === 'true'
+  expect(unavailable()).toBe(true)
   expect(save().title).toBe('Nothing to save: every change is saved')
+  // Not natively disabled: the keyboard reaches it, and the reason is its description.
+  expect(save().disabled).toBe(false)
+  save().focus()
+  expect(document.activeElement).toBe(save())
+  const reason = document.getElementById(save().getAttribute('aria-describedby')!)
+  expect(reason?.textContent).toBe('Nothing to save: every change is saved')
   // Clicking it anyway (or anything that would save) does nothing.
   save().click()
   await Promise.resolve()
   expect(saves()).toBe(0)
   const name = root.querySelector<HTMLInputElement>('[aria-label="Automation name"]')!
   name.value = 'Renamed motion'; name.dispatchEvent(new Event('input', { bubbles: true })); name.dispatchEvent(new FocusEvent('blur'))
-  await vi.waitFor(() => expect(save().disabled).toBe(false))
+  await vi.waitFor(() => expect(unavailable() || save().disabled).toBe(false))
   expect(save().hasAttribute('title')).toBe(false)
+  expect(save().hasAttribute('aria-describedby')).toBe(false)
   button(root, 'Undo').click()
-  await vi.waitFor(() => expect(save().disabled).toBe(true))
+  await vi.waitFor(() => expect(unavailable()).toBe(true))
   name.value = 'Renamed motion'; name.dispatchEvent(new Event('input', { bubbles: true })); name.dispatchEvent(new FocusEvent('blur'))
-  await vi.waitFor(() => expect(save().disabled).toBe(false))
+  await vi.waitFor(() => expect(unavailable() || save().disabled).toBe(false))
   save().click()
   await saved(root, 5)
   expect(saves()).toBe(1)
-  expect(save().disabled).toBe(true)
+  expect(unavailable()).toBe(true)
   expect(save().title).toBe('Nothing to save: every change is saved')
 })
 it('keeps Save enabled for a saved version that is not active, so saving it again can activate it', async () => {
@@ -237,7 +245,7 @@ it('opens valid API graphs without optional canvas metadata and preserves their 
   await vi.waitFor(()=>expect(root.querySelector('[data-id="trigger-1"] .hs-flow-card strong')?.textContent).toBe('Trigger'))
   // Opening it is not a change: nothing to save until something is edited.
   await vi.waitFor(() => expect(chip(root).textContent).toBe('Saved'))
-  expect(button(root, 'Save').disabled).toBe(true)
+  expect(button(root, 'Save').getAttribute('aria-disabled')).toBe('true')
   const name = root.querySelector<HTMLInputElement>('[aria-label="Automation name"]')!
   name.value = 'Renamed motion'; name.dispatchEvent(new Event('input', { bubbles: true })); name.dispatchEvent(new FocusEvent('blur'))
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))

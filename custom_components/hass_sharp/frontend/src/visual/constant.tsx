@@ -46,21 +46,54 @@ export function constantTypes(catalog: VisualCatalogSnapshot): string[] {
   const own = all.filter(builtIn)
   return all.filter(id => builtIn(id) || !own.some(b => same(id, b, catalog)))
 }
-/** A C# type's own short name for a label: `int`, `float`, `JsonObject` (the last part of a dotted name). */
-const csharpName = (id: string, catalog: VisualCatalogSnapshot) => (catalog.types[id]?.label ?? id.replace(/^global::/, '')).split('.').pop()!
+/** The parts of a dotted name, splitting only outside type arguments (`List<System.String>` stays one part). */
+function nameParts(name: string): string[] {
+  const parts: string[] = []
+  let depth = 0, start = 0
+  for (let i = 0; i < name.length; i++) {
+    const c = name[i]
+    if (c === '<' || c === '[' || c === '(') depth++
+    else if (c === '>' || c === ']' || c === ')') depth--
+    else if (c === '.' && depth === 0) { parts.push(name.slice(start, i)); start = i + 1 }
+  }
+  parts.push(name.slice(start))
+  return parts
+}
+/**
+ * The names a C# type can go by after its label, shortest first: its own short name (`int`, `JsonObject`: the last
+ * part of its catalog label), then its full name less `global::` from the last part outwards (`Mode`, `A.Mode`,
+ * `NodeLib.A.Mode`), then its id.
+ */
+function csharpNames(id: string, catalog: VisualCatalogSnapshot): string[] {
+  const full = id.replace(/^global::/, '')
+  const parts = nameParts(full)
+  const names = [nameParts(catalog.types[id]?.label ?? full).pop()!]
+  for (let k = 1; k <= parts.length; k++) names.push(parts.slice(-k).join('.'))
+  names.push(id)
+  return [...new Set(names)]
+}
 /**
  * How the Type list names each type: no two entries read the same. A type of the editor's own keeps its plain label;
- * another type with the same label shows its C# name after it ("Number (int)", "Number (float)"). `extra` is a stored
- * Type that is not offered, named by the same rule.
+ * another type with the same label shows a C# name after it ("Number (int)", "Number (float)"), the shortest one that
+ * tells it apart from the others with that label ("Mode (A.Mode)", "Mode (B.Mode)"), and never the label again
+ * ("Mode (Mode)"). `extra` is a stored Type that is not offered, named by the same rule.
  */
 export function constantTypeLabels(catalog: VisualCatalogSnapshot, extra?: string): Map<string, string> {
   const ids = [...new Set([...constantTypes(catalog), ...(extra ? [extra] : [])])]
   const plain = new Map(ids.map(id => [id, typeLabel(id, catalog)] as const))
-  return new Map(ids.map(id => {
-    const label = plain.get(id)!
-    const shared = ids.some(other => other !== id && plain.get(other) === label)
-    return [id, shared && !builtIn(id) ? `${label} (${csharpName(id, catalog)})` : label] as const
-  }))
+  const labels = new Map(plain)
+  for (const label of new Set(plain.values())) {
+    const group = ids.filter(id => plain.get(id) === label)
+    const named = group.filter(id => !builtIn(id))
+    if (group.length < 2 || !named.length) continue
+    const choices = named.map(id => csharpNames(id, catalog).filter(name => name !== label))
+    // Each takes its first name that no other type of the group can go by; the id, last, is its own.
+    named.forEach((id, i) => {
+      const own = choices[i].find(name => choices.every((others, j) => j === i || !others.includes(name))) ?? id
+      labels.set(id, `${label} (${own})`)
+    })
+  }
+  return labels
 }
 
 /** The card's Type select of a Constant, beside its value editor (the panel has its own, with the same options). */
@@ -72,7 +105,8 @@ export function ConstantType(props: { type: unknown; catalog: VisualCatalogSnaps
   // The chosen option follows the Type once the options are in place (and again when the Type changes elsewhere: undo).
   createEffect(() => { options(); select.value = current() ?? '' })
   return (
-    <select ref={select} class="hs-input hs-kind-switch nodrag nopan" aria-label="Type" disabled={props.disabled}
+    <select ref={select} class="hs-input hs-kind-switch hs-constant-type nodrag nopan" aria-label="Type" disabled={props.disabled}
+      title={current() === undefined ? undefined : labels().get(current()!)}
       onChange={event => props.onChange(event.currentTarget.value === '' ? undefined : event.currentTarget.value)}>
       <Show when={current() === undefined || !options().includes(current()!)}>
         <option value={current() ?? ''} selected>{current() === undefined ? 'Not set' : labels().get(current()!)}</option>

@@ -126,3 +126,36 @@ it('shows a Constant with a wire into it as a problem on its card and in its pan
   await vi.waitFor(() => expect(host.querySelector('.hs-inspector [data-input-id="value"] input[aria-label="Value"]')).not.toBeNull())
   expect(host.querySelector('.hs-inspector [data-input-id="value"] .hs-insp-pill')).toBeNull()
 })
+
+it('removes exactly the one wire of its problem when another wire has the same id', async () => {
+  const g = wired()
+  // The Constant's own (drawn) wire into the Log shares the dangling wire's id: an error of its own, but neither goes
+  // with the other.
+  const graph = { ...g, edges: g.edges.map(e => e.id === 'said' ? { ...e, id: 'into-constant' } : e) } as VisualGraph
+  const host = mount(graph)
+  await vi.waitFor(() => expect(host.querySelector('[data-id="c"]')).not.toBeNull())
+  const tab = [...host.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith('Problems'))!
+  tab.click()
+  const drawer = host.querySelector<HTMLElement>('.hs-problems')!
+  await vi.waitFor(() => expect(byLabel(drawer, LABEL)).toBeDefined())
+  byLabel(drawer, LABEL)!.click()
+  const after = graphOf(host)
+  expect(after.edges).toHaveLength(graph.edges.length - 1)
+  expect(after.edges.filter(e => e.id === 'into-constant')).toEqual([graph.edges.find(e => e.id === 'into-constant' && e.target === 'l')])
+})
+
+it('names two dangling wires from one output into one step apart by the pin each goes into', async () => {
+  const g = wired()
+  const graph = { ...g, edges: [...g.edges, { id: 'into-extra', kind: 'data', source: 't', sourcePort: 'entity_id', target: 'c', targetPort: 'extra' }] } as VisualGraph
+  const host = mount(graph)
+  await vi.waitFor(() => expect(host.querySelector('[data-id="c"]')).not.toBeNull())
+  const tab = [...host.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith('Problems'))!
+  tab.click()
+  const drawer = host.querySelector<HTMLElement>('.hs-problems')!
+  const names = () => [...drawer.querySelectorAll('button')].filter(b => b.textContent?.trim() === 'Remove connection').map(b => b.getAttribute('aria-label'))
+  await vi.waitFor(() => expect(names()).toHaveLength(2))
+  expect(new Set(names()).size).toBe(2)
+  expect(names()).toEqual(expect.arrayContaining([`${LABEL} into Value`, `${LABEL} into Extra`]))
+  byLabel(drawer, `${LABEL} into Value`)!.click()
+  expect(graphOf(host).edges.map(e => e.id)).toEqual(graph.edges.map(e => e.id).filter(id => id !== 'into-constant'))
+})

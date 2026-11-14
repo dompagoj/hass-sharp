@@ -1,7 +1,8 @@
 import { createMemo, createUniqueId, For, Show } from 'solid-js'
 import { Menu, type MenuItem } from '../components/Menu'
-import { nodeCatalog, type InputSpec, type JsonValue, type Operand, type VisualCatalogSnapshot } from './contract'
+import { isAssignable, nodeCatalog, type InputSpec, type JsonValue, type Operand, type VisualCatalogSnapshot } from './contract'
 import { typeLabel } from './typeLabels'
+import { constantTypeLabels } from './constant'
 import { commitLiteral, fitsWidget, initialValue, inlineWidget, jsonEqual, keepsNull, literalFor, valueKind, namesRegistryItems, registryNames, valueSummary, WidgetControl, widgetFor, type CommitOptions, type Widget } from './widgets'
 import { useRegistry } from '../registry'
 
@@ -58,12 +59,20 @@ export function InputEditor(props: InputEditorProps) {
   // in the JSON editor it is a value someone wrote, and stays one.
   const literal = () => { const o = operand(); return o.kind === 'literal' && (o.value !== null || keepsNull(widget())) ? o.value : undefined }
   const widget = createMemo(() => widgetFor(props.input, catalog()))
-  // A Constant's stored text or number of another kind than its Type is shown in the Type's own editor (see `retype`).
+  // A Constant's stored text or number that the validator refuses for its Type is shown in the Type's own editor (see
+  // `retype`). A value the Type takes as it is (a number under a C# `int`, an entity id under Text: the same check as a
+  // wire's) is left alone, so focusing and leaving its field changes nothing.
   const stale = () => {
     const value = literal(), kind = widget().kind, stored = operand()
-    return !!props.retype && (kind === 'number' || kind === 'text' || kind === 'toggle') && !widget().multiple && (typeof value === 'string' || typeof value === 'number')
-      && (!fitsWidget(widget(), value) || (stored.kind === 'literal' && !props.input.types.includes(stored.type)))
+    return !!props.retype && (kind === 'number' || kind === 'text' || kind === 'toggle' || kind === 'select') && !widget().multiple
+      && (typeof value === 'string' || typeof value === 'number')
+      && (!fitsWidget(widget(), value) || (stored.kind === 'literal' && !props.input.types.some(type => isAssignable(stored.type, type, catalog()))))
   }
+  // A select cannot report choosing the option it already shows: a stale value that is one of its options is stored as
+  // the Type by an explicit action instead (one change).
+  // The Type as the Constant's Type list names it ("Mode (Lights.Mode)" when another type reads "Mode" too).
+  const storeAsName = () => props.input.types.length === 1 ? constantTypeLabels(catalog(), props.input.types[0]).get(props.input.types[0]) ?? typeNames() : typeNames()
+  const storeAs = () => stale() && widget().kind === 'select' && !!widget().options?.some(option => jsonEqual(option.value, literal()))
   // A stored value of another shape stays editable as JSON instead of being misread by the widget.
   const shown = () => fitsWidget(widget(), literal()) || stale() ? widget() : jsonWidget
   const view = () => props.wiredFrom !== undefined ? 'wired' : 'value'
@@ -110,6 +119,10 @@ export function InputEditor(props: InputEditorProps) {
         <Show when={!summary()} fallback={<Summary widget={shown()} value={literal()} />}>
           <WidgetControl widget={shown()} value={literal()} commit={commit} id={id} label={props.label} describedBy={describedBy()} required={props.input.required}
             invalid={errors().length > 0} disabled={!!props.disabled} compact={props.variant === 'inline'} context={props.context} stale={stale()} />
+          <Show when={storeAs()}>
+            <button type="button" class="hs-button hs-button--secondary hs-store-as nodrag nopan" disabled={props.disabled}
+              onClick={() => commit(literal())}>Store as {storeAsName()}</button>
+          </Show>
         </Show>
       </Show>
     </Show>

@@ -983,12 +983,14 @@ it('centres a run on its focus node once: a new trace object for the same node l
   const [current, setCurrent] = createSignal(trace('service-1'))
   centred.calls = []
   dispose = render(() => <FlowAdapter graph={createGraph('Run')} readOnly trace={current()} onSelect={() => {}} />, el)
-  await vi.waitFor(() => expect(centred.calls).toHaveLength(1))
+  // The 800 × 570 cards overlap: the view opens on the node, and once more on it after the cards are moved apart.
+  await vi.waitFor(() => expect(centred.calls).toHaveLength(2))
+  expect(centred.calls[1][0]).toBe(centred.calls[0][0])
   setCurrent(trace('service-1'))
   await new Promise(resolve => setTimeout(resolve, 100))
-  expect(centred.calls).toHaveLength(1)
+  expect(centred.calls).toHaveLength(2)
   setCurrent(trace('trigger-1'))
-  await vi.waitFor(() => expect(centred.calls).toHaveLength(2))
+  await vi.waitFor(() => expect(centred.calls).toHaveLength(3))
 })
 
 // A window below 900 px (happy-dom's own is 1024 px wide).
@@ -1007,7 +1009,9 @@ it('opens a run fitted to its path, at whatever zoom a narrow screen needs, once
   centred.fits = []
   const paths = () => centred.fits.filter(([options]) => (options as { nodes?: unknown })?.nodes)
   dispose = render(() => <FlowAdapter graph={createGraph('Run')} readOnly trace={current()} onSelect={() => {}} />, el)
-  await vi.waitFor(() => expect(paths()).toHaveLength(1))
+  // The 800 × 570 cards overlap: the path is fitted, and fitted again (the same path) once they are moved apart.
+  await vi.waitFor(() => expect(paths()).toHaveLength(2))
+  expect(paths()[1]).toEqual(paths()[0])
   const [options] = paths()[0] as [{ nodes: { id: string }[]; minZoom: number }]
   expect(options.nodes).toEqual([{ id: 'trigger-1' }, { id: 'condition-1' }])
   // A trace zooms out further than the editor (0.5 to fit, 0.25 by hand): a 360 px screen fits a long path.
@@ -1015,13 +1019,16 @@ it('opens a run fitted to its path, at whatever zoom a narrow screen needs, once
   // A live run reaching more steps leaves the view where the person put it.
   setCurrent(trace(['trigger-1', 'condition-1', 'service-1']))
   await new Promise(resolve => setTimeout(resolve, 100))
-  expect(paths()).toHaveLength(1)
+  expect(paths()).toHaveLength(2)
   expect(centred.calls).toHaveLength(0)
   dispose()
 
   centred.fits = []
+  centred.calls = []
   dispose = render(() => <FlowAdapter graph={createGraph('Run')} readOnly trace={trace(['trigger-1', 'service-1'], 'service-1')} onSelect={() => {}} />, host())
-  await vi.waitFor(() => expect(centred.calls).toHaveLength(1))
+  // Centred on the focus step, and again on it once the cards are moved apart.
+  await vi.waitFor(() => expect(centred.calls).toHaveLength(2))
+  expect(centred.calls[1][0]).toBe(centred.calls[0][0])
   await new Promise(resolve => setTimeout(resolve, 100))
   expect(paths()).toHaveLength(0)
 })

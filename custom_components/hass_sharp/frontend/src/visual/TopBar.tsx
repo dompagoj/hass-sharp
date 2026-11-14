@@ -85,6 +85,7 @@ export function TopBar(props: {
   }
   const chip = () => saveChip(props.save ?? { saving: false, dirty: false, errors: 0 })
   const explanationId = createUniqueId()
+  const saveReasonId = createUniqueId()
   const run = children(() => props.run)
   const status = children(() => props.status)
   return (
@@ -151,9 +152,15 @@ export function TopBar(props: {
             <div class="hs-fs-hide">{run()}</div>
           </Show>
           <Show when={props.onSave}>
-            <Button variant="primary" class="hs-topbar__save" busy={props.save?.saving} disabled={!props.canSave} title={props.saveTitle} onClick={() => props.onSave?.()}>
+            {/* Unavailable with a reason ("Nothing to save…"): marked, not disabled, so it stays in the tab order and the
+                reason, tied to it, is read with it; a press does nothing. Without a reason it is simply disabled. */}
+            <Button variant="primary" class="hs-topbar__save" busy={props.save?.saving} disabled={!props.canSave && !props.saveTitle}
+              aria-disabled={!props.canSave && props.saveTitle ? 'true' : undefined} title={props.saveTitle}
+              aria-describedby={!props.canSave && props.saveTitle ? saveReasonId : undefined}
+              onClick={() => { if (props.canSave) props.onSave?.() }}>
               Save
             </Button>
+            <Show when={!props.canSave && props.saveTitle}><span id={saveReasonId} class="hs-visually-hidden">{props.saveTitle}</span></Show>
           </Show>
           {props.actions}
           <Show when={props.fullscreen}>
