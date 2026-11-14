@@ -111,7 +111,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         if(sources.Length==0)return snapshot;
         // The editor previews after each edit, and deriving pins compiles once more; most edits leave the code alone.
         // The last few compiles are kept, keyed by all that goes into one: the service calls, the libraries and the code.
-        var services=diagnostics.ServicesSyntaxTree();
+        var services=diagnostics.ServiceCalls();
         var key=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
             string.Join("\0",snapshot.Sources.Select(s=>s.Id+"\0"+s.Revision+"\0"+s.Source))+"\u0001"+string.Join("\0",sources.Select(c=>c.NodeId+"\0"+c.Source)))));
         VisualCatalogSnapshot? hit=null;
@@ -120,12 +120,13 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 if(ReferenceEquals(entry.Value.Services,services)&&entry.Value.Key==key) {hit=entry.Value.Compiled;CompiledCustom.Remove(entry);CompiledCustom.AddFirst(entry);break;}
         }
         if(hit==null) {
-            hit=new NodeLibraryCompiler(diagnostics).Preview(snapshot.Sources,sources).Snapshot;
+            hit=new NodeLibraryCompiler(diagnostics,services).Preview(snapshot.Sources,sources).Snapshot;
             lock(CompiledCustom) {CompiledCustom.AddFirst((services,key,hit));while(CompiledCustom.Count>4)CompiledCustom.RemoveLast();}
         }
         return hit.WithServices(snapshot.Services);
     }
-    static readonly LinkedList<(object Services,string Key,VisualCatalogSnapshot Compiled)> CompiledCustom=new();
+    // Keyed by the accepted typed service calls (the object, swapped whole when they change) and a hash of the sources.
+    static readonly LinkedList<(GeneratedServiceCalls Services,string Key,VisualCatalogSnapshot Compiled)> CompiledCustom=new();
     /// <summary>
     /// Whether a stored signature has the pins the code gives: the same pure, input ids with their types, required,
     /// nullable and default, and output ids with their types. Titles, words and type entries are not compared.
@@ -291,11 +292,12 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             }
             var source=string.Join('\n',lines)+"\n";
             var tree=CSharpSyntaxTree.ParseText(source,new CSharpParseOptions(LanguageVersion.Latest));
-            var trees=new List<SyntaxTree>{tree,CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings),diagnostics.ServicesSyntaxTree()};
-            var compilation=CSharpCompilation.Create("VisualPreview",trees,NodeLibraryCompiler.FrameworkReferences(),new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,allowUnsafe:true,nullableContextOptions:NullableContextOptions.Enable));
+            var trees=new List<SyntaxTree>{tree,CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings)};
+            var compilation=CSharpCompilation.Create("VisualPreview",trees,NodeLibraryCompiler.FrameworkReferences().Add(diagnostics.ServiceCalls().Reference),new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,allowUnsafe:true,nullableContextOptions:NullableContextOptions.Enable));
             foreach(var d in compilation.GetDiagnostics().Where(d=>d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning)) {
-                // Only a diagnostic in the generated automation has a line a node owns: one in the typed service calls
-                // (or the global usings) is the graph's, never the node whose section has the same line number.
+                // Only a diagnostic in the generated automation has a line a node owns: one elsewhere (the global usings)
+                // is the graph's, never the node whose section has the same line number. The typed service calls are a
+                // built assembly here, so nothing in them is bound or reported again.
                 if(d.Location.SourceTree is {} other&&other!=tree) {
                     if(d.Severity==DiagnosticSeverity.Error)errors.Add(new(null,(other.FilePath==DiagnosticsProvider.ServicesPath?"In the typed service calls: ":"")+d.GetMessage()));
                     continue;

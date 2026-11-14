@@ -26,12 +26,19 @@ public class CompiledUserScript
 
     public required Assembly Assembly { get; init; }
 
+    /// <summary>
+    /// The load context <see cref="Assembly"/> is in, held for as long as the script is: a collectible context nothing
+    /// references is finalised and starts unloading, after which it cannot load the typed service calls its code asks
+    /// for on first use.
+    /// </summary>
+    public AssemblyLoadContext? LoadContext { get; init; }
+
     public string Id() => FilePath;
 
     public void Unload()
     {
         if (_unloaded) return;
-        var loadContext = AssemblyLoadContext.GetLoadContext(Assembly);
+        var loadContext = LoadContext ?? AssemblyLoadContext.GetLoadContext(Assembly);
         if (loadContext?.IsCollectible == true) loadContext.Unload();
         _unloaded = true;
     }

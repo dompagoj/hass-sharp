@@ -15,27 +15,31 @@ public class CodeCompiler(
     /// <param name="path">The script's identity; nothing is read from or written to it.</param>
     public Task<CompiledUserScript> CompileSingleFile(string path, string source)
     {
-        var assemblyBytes = CompileSingleFileToBytes(source, path, _diagnosticsProvider.ServicesSyntaxTree());
+        // Taken once: the assembly this script references is the one its load context can load.
+        var services = _diagnosticsProvider.ServiceCalls();
+        var assemblyBytes = CompileSingleFileToBytes(source, path, services);
+        var (assembly, loadContext) = LoadAssembly(assemblyBytes, services);
 
         return Task.FromResult(new CompiledUserScript
         {
-            Assembly = LoadAssembly(assemblyBytes),
+            Assembly = assembly,
+            LoadContext = loadContext,
             FilePath = path,
             FileName = Path.GetFileNameWithoutExtension(path),
             SourceCode = source,
         });
     }
 
-    static Assembly LoadAssembly(byte[] assemblyBytes)
+    static (Assembly, ScriptLoadContext) LoadAssembly(byte[] assemblyBytes, GeneratedServiceCalls services)
     {
-        var loadContext = new ScriptLoadContext();
+        var loadContext = new ScriptLoadContext(services);
 
         using var stream = new MemoryStream(assemblyBytes, writable: false);
-        try { return loadContext.LoadFromStream(stream); }
+        try { return (loadContext.LoadFromStream(stream), loadContext); }
         catch { loadContext.Unload(); throw; }
     }
 
-    byte[] CompileSingleFileToBytes(string source, string path, SyntaxTree services)
+    byte[] CompileSingleFileToBytes(string source, string path, GeneratedServiceCalls services)
     {
         var tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Latest), path: path);
 
@@ -43,10 +47,9 @@ public class CodeCompiler(
         [
             tree,
             CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings),
-            services,
         ];
 
-        var references = NodeLibraryCompiler.FrameworkReferences();
+        var references = NodeLibraryCompiler.FrameworkReferences().Add(services.Reference);
 
         var compilation = CSharpCompilation.Create(
             assemblyName: "Automation_" + Guid.NewGuid(),

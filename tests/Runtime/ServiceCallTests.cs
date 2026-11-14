@@ -51,6 +51,8 @@ static class ServiceCallTests
             await HostileText();
             await Rejected();
             Attribution();
+            await Assembly();
+            await SwappedWhileRunning();
             await UnknownEntities();
             await Recovers();
             await LibraryGeneration();
@@ -315,6 +317,7 @@ static class ServiceCallTests
             var run = await Visual(api, new { operation = "run", id = "dim", triggerId = "t" });
             Check(run["ok"]!.GetValue<bool>(), "Run now refused after the schema change: " + run.ToJsonString());
             for (var i = 0; i < 200 && !Made.Any(); i++) await Task.Delay(10);
+            Check(Made.Any(), "the running automation made no call after its service was dropped: " + api.GetRunTrace(run["result"]!["runId"]!.GetValue<string>()));
             Expect(0, "light.turn_on", """{"entity_id":"light.kitchen","brightness_pct":30}""", false, "the running automation's call after its service was dropped");
             Check(ReferenceEquals(loaded, VisualTests.Loaded(api, "dim")), "the schema change replaced the running automation");
         }
@@ -469,11 +472,12 @@ static class ServiceCallTests
         Console.WriteLine("PASS service calls: a tree that does not compile is never installed or persisted: a broken service is left out, a broken tree keeps the previous one, each logged once");
     }
 
-    // A diagnostic in the services tree is the graph's, never the node whose section has the same line number.
+    // The typed service calls are a built assembly that compilations reference: nothing in their source is bound or
+    // reported again, so it cannot put an error on a node. A type they declare that node code also declares is no
+    // clash: the node code's own type wins.
     static void Attribution()
     {
         var provider = new DiagnosticsProvider();
-        // Compiles alone; together with an automation the second VisualAutomation is an error, in the services tree.
         provider.Generator = items =>
         {
             var generated = ServiceGenerator.GenerateWithSpans(items);
@@ -482,12 +486,118 @@ static class ServiceCallTests
         provider.UseServiceSchema(Schema(Calls));
         Check(provider.ServicesSyntaxTree().ToString().Contains("public class VisualAutomation { }"), "the test tree was not installed");
         var preview = new VisualGenerator(provider).Preview(G(N("l", "log", new JsonObject { ["value"] = Lit("string", "x") })));
-        var duplicate = preview.Diagnostics.Where(d => d.Message.Contains("VisualAutomation")).ToArray();
-        Check(!preview.Valid && duplicate.Any(d => d.NodeId == null && d.Message.StartsWith("In the typed service calls: ", StringComparison.Ordinal) && d.StartLine == null), "an error in the services tree is not the graph's: " + JsonSerializer.Serialize(preview.Diagnostics));
-        Check(!preview.Diagnostics.Any(d => d.NodeId != null && d.Message.StartsWith("In the typed service calls", StringComparison.Ordinal)), "an error in the services tree landed on a node: " + JsonSerializer.Serialize(preview.Diagnostics));
+        Check(preview.Valid && !preview.Diagnostics.Any(d => d.Severity == 3), "a type in the typed service calls broke node code that does not use them: " + JsonSerializer.Serialize(preview.Diagnostics));
         var library = new NodeLibraryCompiler(provider).Preview([new NodeLibrarySource("lib", "public static class Lib { [Node(\"X\")] public static int X() => 1; }", 1)]);
-        Check(library.Diagnostics.All(d => d.SourceId != "lib" || !d.Message.Contains("typed service calls")), "a services tree diagnostic was put on a library: " + JsonSerializer.Serialize(library.Diagnostics));
-        Console.WriteLine("PASS service calls: diagnostics are attributed by syntax tree: one in the typed service calls is never a node's");
+        Check(library.Valid && library.Snapshot.Compilation!.SyntaxTrees.All(t => t.FilePath != DiagnosticsProvider.ServicesPath)
+            && library.Snapshot.Compilation.References.Contains(provider.ServiceCalls().Reference), "a library compilation binds the generated source instead of referencing its assembly");
+        Console.WriteLine("PASS service calls: compilations reference the typed calls' assembly, not their source: nothing in it is reported on a node, and a type it declares does not clash with node code");
+    }
+
+    // The accepted typed calls are built once into an assembly named after their source; an automation references it only
+    // when it calls a service, and loads it into its own load context from the bytes it was compiled against.
+    static async Task Assembly()
+    {
+        var provider = Provider(Schema(Calls));
+        var calls = provider.ServiceCalls();
+        Check(calls.AssemblyName.StartsWith(GeneratedServiceCalls.AssemblyPrefix, StringComparison.Ordinal) && Provider(Schema(Calls)).ServiceCalls().AssemblyName == calls.AssemblyName
+            && Provider(Schema(Script)).ServiceCalls().AssemblyName != calls.AssemblyName && new DiagnosticsProvider().ServiceCalls().AssemblyName != calls.AssemblyName, "the assembly name is not unique per source");
+        Double();
+        var compiled = await Compiled(provider, "await context.Services.Light.TurnOn(light);");
+        var quiet = await Compiled(provider, "await Task.CompletedTask;");
+        try
+        {
+            Check(compiled.Assembly.GetReferencedAssemblies().Any(a => a.Name == calls.AssemblyName), "a node calling a service does not reference the services assembly");
+            Check(!quiet.Assembly.GetReferencedAssemblies().Any(a => a.Name!.StartsWith(GeneratedServiceCalls.AssemblyPrefix, StringComparison.Ordinal)), "a node that calls no service references the services assembly");
+            await Invoke(compiled);
+            var context = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(compiled.Assembly)!;
+            Check(context.Assemblies.Any(a => a.GetName().Name == calls.AssemblyName), "the services assembly was not loaded into the automation's own context");
+            Check(!System.Runtime.Loader.AssemblyLoadContext.Default.Assemblies.Any(a => a.GetName().Name == calls.AssemblyName), "the services assembly was loaded into the default context");
+            Check(Made.Single().Service == "light.turn_on", "the call: " + string.Join(",", Made.Select(m => m.Service)));
+        }
+        finally { compiled.Unload(); quiet.Unload(); }
+
+        // Two schema changes after a compile took its assembly: the compiled code still loads and runs the one it took.
+        var early = await Compiled(provider, "await context.Services.Light.TurnOn(light);");
+        provider.UseServiceSchema(Schema(Calls[..^1] + ""","extra":{"one":{"fields":{}}}}"""));
+        provider.UseServiceSchema(Schema(Calls[..^1] + ""","extra":{"two":{"fields":{}}}}"""));
+        Check(provider.ServiceCalls().AssemblyName != calls.AssemblyName, "the schema changes did not replace the assembly");
+        // Nothing but the compiled script holds its load context: it must stay alive to load the assembly on first use.
+        GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+        try { Made.Clear(); await Invoke(early); Check(Made.Single().Service == "light.turn_on", "the early compile lost its services assembly"); }
+        finally { early.Unload(); }
+
+        // Swaps racing compiles: every compile references, and loads, an assembly it was given.
+        var schemas = new[] { Calls, Calls[..^1] + ""","extra":{"one":{"fields":{}}}}""", Calls[..^1] + ""","extra":{"two":{"fields":{}}}}""" }.Select(Schema).ToArray();
+        using var stop = new CancellationTokenSource();
+        var swapping = Task.Run(() => { for (var i = 0; !stop.IsCancellationRequested; i++) provider.UseServiceSchema(schemas[i % schemas.Length]); });
+        try
+        {
+            for (var i = 0; i < 6; i++)
+            {
+                Made.Clear();
+                var raced = await Compiled(provider, "await context.Services.Light.TurnOn(light);");
+                try { await Invoke(raced); Check(Made.Single().Service == "light.turn_on", "a compile racing a swap lost its call"); }
+                finally { raced.Unload(); }
+            }
+        }
+        finally { stop.Cancel(); await swapping; }
+        Console.WriteLine("PASS service calls: the typed calls are one assembly per accepted source, referenced only by code that calls them, loaded into the automation's own context, and kept by a compile across later changes");
+    }
+
+    static async Task<CompiledUserScript> Compiled(DiagnosticsProvider diagnostics, string body)
+    {
+        var snapshot = new NodeLibraryCompiler(diagnostics).Preview([]).Snapshot;
+        var graph = new VisualGenerator(diagnostics).DeriveSignatures(CustomGraph(body), snapshot);
+        var preview = new VisualGenerator(diagnostics).Preview(graph, snapshot);
+        Check(preview.Valid, "the node does not compile: " + JsonSerializer.Serialize(preview.Diagnostics));
+        return await new CodeCompiler(diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cs"), preview.Source);
+    }
+
+    static async Task Invoke(CompiledUserScript compiled)
+    {
+        var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
+        using var cts = new CancellationTokenSource(); instance._cancellationToken.Value = cts.Token;
+        await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    // A schema change while an automation compiled against the previous assembly is loaded: it keeps running and its
+    // next call works; an automation saved afterwards uses the new assembly.
+    static async Task SwappedWhileRunning()
+    {
+        Double();
+        var root = Path.Combine(Path.GetTempPath(), "service-calls-swapped-" + Guid.NewGuid());
+        var api = new HassSharpManager(root);
+        async Task<JsonNode> Visual(object request) => JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(request)))!;
+        static string Referenced(UserScript script) => script.CompiledScript.Assembly.GetReferencedAssemblies().Single(a => a.Name!.StartsWith(GeneratedServiceCalls.AssemblyPrefix, StringComparison.Ordinal)).Name!;
+        async Task RunAndWait(string id, string service = "light.turn_on")
+        {
+            var count = Made.Count;
+            var run = await Visual(new { operation = "run", id, triggerId = "t" });
+            Check(run["ok"]!.GetValue<bool>(), $"run {id}: " + run.ToJsonString());
+            for (var i = 0; i < 300 && Made.Count == count; i++) await Task.Delay(10);
+            Check(Made.Count == count + 1 && Made[^1].Service == service, $"the call of {id}: " + string.Join(",", Made.Select(m => m.Service)));
+        }
+        try
+        {
+            await api.Init();
+            api.SetServiceDescriptions(Calls, started: true);
+            var before = ProviderOf(api).ServiceCalls().AssemblyName;
+            var saved = await Visual(new { operation = "save", id = "old", graph = CustomGraph("await context.Services.Light.TurnOn(light);"), expectedRevision = 0, deriveSignatures = true });
+            Check(saved["result"]?["active"]?.GetValue<bool>() == true, "old: " + saved.ToJsonString());
+            await RunAndWait("old");
+            var loaded = VisualTests.Loaded(api, "old")!;
+            api.SetServiceDescriptions(Calls[..^1] + ""","extra":{"thing":{"fields":{}}}}""", started: true);
+            var after = ProviderOf(api).ServiceCalls().AssemblyName;
+            Check(after != before, "the push did not replace the services assembly");
+            GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+            await RunAndWait("old");
+            Check(ReferenceEquals(loaded, VisualTests.Loaded(api, "old")) && Referenced(loaded) == before, "the running automation was replaced or rebound");
+            var fresh = await Visual(new { operation = "save", id = "new", graph = CustomGraph("await context.Services.Extra.Thing();"), expectedRevision = 0, deriveSignatures = true });
+            Check(fresh["result"]?["active"]?.GetValue<bool>() == true && Referenced(VisualTests.Loaded(api, "new")!) == after, "a newly saved automation does not use the new assembly: " + fresh.ToJsonString());
+            await RunAndWait("new", "extra.thing");
+        }
+        finally { await api.UnloadAsync(); Directory.Delete(root, true); }
+        Console.WriteLine("PASS service calls: a schema change leaves a loaded automation on the assembly it was compiled against, still calling; a new save uses the new one");
     }
 
     // An entity id Home Assistant has no state for is a warning on preview and save (websocket and MCP), never an error,
@@ -570,10 +680,15 @@ static class ServiceCallTests
             await api.Init();
             Check(VisualTests.Loaded(api, "dim") == null, "an automation calling a dropped service loaded");
             api.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}}}""", started: true);
-            await api.RetryFailedLoads();
-            Check(VisualTests.Loaded(api, "dim") == null, "an unchanged schema loaded it");
+            await api.RetriesDone();
+            Check(VisualTests.Loaded(api, "dim") == null && api.RetriesQueued == 0, "an unchanged schema loaded it, or retried: " + api.RetriesQueued);
+            // A push that only drops a service cannot make a failed load succeed: no retry.
+            api.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}},"weather":{"get_forecasts":{"fields":{}}}}""", started: true);
+            api.SetServiceDescriptions("""{"light":{"turn_off":{"fields":{}}}}""", started: true);
+            Check(api.RetriesQueued == 1, "adding a service queues one retry and dropping it none: " + api.RetriesQueued);
             api.SetServiceDescriptions(Calls, started: true);
-            await api.RetryFailedLoads();
+            Check(api.RetriesQueued == 2, "a push that brings the service back did not retry: " + api.RetriesQueued);
+            await api.RetriesDone();
             Check(VisualTests.Loaded(api, "dim") != null && (JsonNode.Parse(await api.VisualRequest("""{"operation":"read","id":"dim"}"""))!["result"]!["activationError"]) == null,
                 "the automation did not load once its service came back");
             await api.OnTrackedEntityChange("binary_sensor.door", new() { EntityId = "binary_sensor.door", State = "on" }, new() { EntityId = "binary_sensor.door", State = "off" });

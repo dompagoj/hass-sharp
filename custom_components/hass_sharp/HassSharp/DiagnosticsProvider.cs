@@ -12,8 +12,7 @@ public class DiagnosticsProvider
 
     readonly object _gate = new();
     DocumentId? _servicesDocumentId;
-    SyntaxTree _servicesSyntaxTree = null!;
-    string? _servicesSource;
+    GeneratedServiceCalls _serviceCalls = null!;
 
     public const string GlobalUsings = """
                                        global using System;
@@ -52,13 +51,20 @@ public class DiagnosticsProvider
     }
 
     /// <summary>
-    /// The typed service calls (<c>context.Services</c>) that every compilation and the language services include;
-    /// until a schema is given, there are no domains.
+    /// The accepted typed service calls (<c>context.Services</c>): their source, and the assembly built from it once,
+    /// which every compilation references. Swapped whole under the lock: a compilation takes it once and keeps it, so it
+    /// never references an assembly it was not given. Until a schema is given, there are no domains.
     /// </summary>
-    public SyntaxTree ServicesSyntaxTree()
+    public GeneratedServiceCalls ServiceCalls()
     {
-        lock (_gate) return _servicesSyntaxTree;
+        lock (_gate) return _serviceCalls;
     }
+
+    /// <summary>
+    /// The source of the accepted typed service calls, as the language services' workspace has it (completion, hover,
+    /// signatures and definitions read it there); compilations reference <see cref="ServiceCalls"/>' assembly instead.
+    /// </summary>
+    public SyntaxTree ServicesSyntaxTree() => ServiceCalls().Tree;
 
     /// <summary>
     /// Replaces the typed service calls with those of <paramref name="services"/> (normalised, keyed by
@@ -70,22 +76,24 @@ public class DiagnosticsProvider
 
     /// <summary>What a new schema did to the typed service calls.</summary>
     /// <param name="Accepted">False when no tree from it compiles: the previous tree stays.</param>
-    /// <param name="Changed">Whether the tree every compilation gets was replaced.</param>
+    /// <param name="Changed">Whether the assembly every compilation gets was replaced.</param>
+    /// <param name="Grew">Whether that replacement added a service or changed one (rather than only dropping some).</param>
     /// <param name="Services">The services the tree now has: the schema's, less <paramref name="Excluded"/>.</param>
     /// <param name="Excluded">Services whose generated code did not compile, left out; the others are kept.</param>
     /// <param name="Errors">The compiler's errors, when there were any.</param>
-    internal sealed record ServiceSchemaResult(bool Accepted, bool Changed, IReadOnlyList<KeyValuePair<string, System.Text.Json.Nodes.JsonObject>> Services,
+    internal sealed record ServiceSchemaResult(bool Accepted, bool Changed, bool Grew, IReadOnlyList<KeyValuePair<string, System.Text.Json.Nodes.JsonObject>> Services,
         IReadOnlyList<string> Excluded, IReadOnlyList<string> Errors);
 
     /// <summary>How the typed service calls are generated; a test may break them on purpose.</summary>
     internal Func<IEnumerable<KeyValuePair<string, System.Text.Json.Nodes.JsonObject>>, ServiceGenerator.Generated> Generator { get; set; } = ServiceGenerator.GenerateWithSpans;
 
     /// <summary>
-    /// Generates the typed service calls of <paramref name="services"/> and installs them if they compile on their own,
-    /// without errors. A service whose own code does not compile is left out and the rest are tried again; when no tree
-    /// compiles, the previous one stays (at first, the empty one). Schema text cannot reach beyond comments and string
-    /// literals (<see cref="ServiceGenerator"/>), so this is a safety net: what one schema holds never stops node code
-    /// that does not call that service from compiling. Generating and checking run outside the lock.
+    /// Generates the typed service calls of <paramref name="services"/> and, if they compile on their own without errors,
+    /// builds them once into an assembly and installs it. A service whose own code does not compile is left out and the
+    /// rest are tried again; when no tree compiles, the previous assembly stays (at first, the empty one). Schema text
+    /// cannot reach beyond comments and string literals (<see cref="ServiceGenerator"/>), so this is a safety net: what
+    /// one schema holds never stops node code that does not call that service from compiling. Generating, building and
+    /// checking run outside the lock; only the swap takes it.
     /// </summary>
     internal ServiceSchemaResult UseServiceSchema(IReadOnlyCollection<KeyValuePair<string, System.Text.Json.Nodes.JsonObject>> services)
     {
@@ -97,14 +105,11 @@ public class DiagnosticsProvider
             ServiceGenerator.Generated generated;
             try { generated = Generator(candidate); }
             catch (InvalidOperationException ex) { errors.Add(ex.Message); break; }
-            lock (_gate) if (_servicesSource == generated.Source) return new(true, false, candidate, [.. excluded], errors);
-            var tree = CSharpSyntaxTree.ParseText(generated.Source, new CSharpParseOptions(LanguageVersion.Latest), path: ServicesPath);
-            var failures = CSharpCompilation.Create("HassSharpServiceCalls", [tree], NodeLibraryCompiler.FrameworkReferences(),
-                    new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable))
-                .GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
-            if (failures.Length == 0)
+            lock (_gate) if (_serviceCalls?.Source == generated.Source) return new(true, false, false, candidate, [.. excluded], errors);
+            var built = GeneratedServiceCalls.Build(generated.Source, candidate, out var failures);
+            if (built != null)
             {
-                lock (_gate) return new(true, Install(generated.Source, tree), candidate, [.. excluded], errors);
+                lock (_gate) { var (changed, grew) = Install(built); return new(true, changed, grew, candidate, [.. excluded], errors); }
             }
             errors.AddRange(failures.Take(10).Select(d => d.ToString()));
             var ids = candidate.Select(p => p.Key).ToArray();
@@ -115,13 +120,14 @@ public class DiagnosticsProvider
             excluded.UnionWith(broken.SelectMany(b => b));
             candidate = candidate.Where(p => !excluded.Contains(p.Key)).ToList();
         }
-        return new(false, false, [], [.. excluded], errors);
+        return new(false, false, false, [], [.. excluded], errors);
     }
 
     // Under _gate.
-    bool Install(string source, SyntaxTree tree)
+    (bool Changed, bool Grew) Install(GeneratedServiceCalls built)
     {
-        if (_servicesSource == source) return false;
+        if (_serviceCalls?.Source == built.Source) return (false, false);
+        var tree = built.Tree;
         var solution = _workspace.CurrentSolution;
         if (_servicesDocumentId is null)
         {
@@ -134,8 +140,9 @@ public class DiagnosticsProvider
         }
         if (!_workspace.TryApplyChanges(solution))
             throw new InvalidOperationException("Could not replace the generated services document.");
-        (_servicesSyntaxTree, _servicesSource) = (tree, source);
-        return true;
+        var grew = _serviceCalls == null || built.Schemas.Any(p => !_serviceCalls.Schemas.TryGetValue(p.Key, out var before) || before != p.Value);
+        _serviceCalls = built;
+        return (true, grew);
     }
 
     /// <summary>The path of the services tree: a diagnostic in it is told apart from one in node code by its tree.</summary>
@@ -149,6 +156,47 @@ public class DiagnosticsProvider
                 .WithCompilationOptions(new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
                     allowUnsafe: true, nullableContextOptions: NullableContextOptions.Enable))
                 .AddDocument("GlobalUsings.g.cs", SourceText.From(GlobalUsings)).Project;
+    }
+}
+
+/// <summary>
+/// One accepted set of typed service calls: the generated source and its syntax tree, and the assembly built from it
+/// once. The assembly's name is unique per source (<c>HassSharpServiceCalls_</c> and a hash of it), so code compiled
+/// against an older set keeps finding the one it was compiled against: its load context loads <see cref="Image"/> by
+/// that name (<see cref="ScriptLoadContext"/>).
+/// </summary>
+public sealed class GeneratedServiceCalls
+{
+    public const string AssemblyPrefix = "HassSharpServiceCalls_";
+    public string Source { get; }
+    /// <summary>The source parsed, as the language services' workspace has it.</summary>
+    public SyntaxTree Tree { get; }
+    public string AssemblyName { get; }
+    /// <summary>The built assembly, loaded from these bytes into each automation's load context that uses it.</summary>
+    public byte[] Image { get; }
+    /// <summary>What every compilation references in place of the source.</summary>
+    public MetadataReference Reference { get; }
+    /// <summary>Each service's normalised schema as JSON, to tell an added or changed service from a dropped one.</summary>
+    internal IReadOnlyDictionary<string, string> Schemas { get; }
+
+    GeneratedServiceCalls(string source, SyntaxTree tree, string name, byte[] image, IReadOnlyDictionary<string, string> schemas)
+    {
+        (Source, Tree, AssemblyName, Image, Schemas) = (source, tree, name, image, schemas);
+        Reference = MetadataReference.CreateFromImage(System.Collections.Immutable.ImmutableArray.Create(image), filePath: name + ".dll");
+    }
+
+    /// <summary>Parses and builds <paramref name="source"/> on its own; null, with the errors, when it does not compile.</summary>
+    internal static GeneratedServiceCalls? Build(string source, IEnumerable<KeyValuePair<string, System.Text.Json.Nodes.JsonObject>> services, out Diagnostic[] errors)
+    {
+        var tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Latest), path: DiagnosticsProvider.ServicesPath);
+        var name = AssemblyPrefix + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(source)))[..16].ToLowerInvariant();
+        var compilation = CSharpCompilation.Create(name, [tree], NodeLibraryCompiler.FrameworkReferences(),
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release, nullableContextOptions: NullableContextOptions.Enable));
+        using var image = new MemoryStream();
+        var result = compilation.Emit(image);
+        errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
+        if (!result.Success) { if (errors.Length == 0) errors = result.Diagnostics.ToArray(); return null; }
+        return new(source, tree, name, image.ToArray(), services.ToDictionary(p => p.Key, p => p.Value.ToJsonString(), StringComparer.Ordinal));
     }
 }
 

@@ -6,8 +6,9 @@ using Microsoft.CodeAnalysis.CSharp;
 
 /// <summary>
 /// What the typed service calls cost (not run by default): the Home Assistant fixture scaled to about 600 services, the
-/// size of its generated source, the time to generate and check it, and the time to compile one small automation with
-/// and without it. Medians of several runs, after one warm-up.
+/// size of its generated source, the time to generate it and build its assembly once, the time to preview and compile
+/// one small automation with and without that assembly referenced (and one whose node calls a service), and Init with 20
+/// saved automations. Medians of several runs, after one warm-up.
 /// </summary>
 static class ServiceCallCost
 {
@@ -62,7 +63,7 @@ static class ServiceCallCost
             if (i > 0) installs.Add(watch.Elapsed.TotalMilliseconds);
         }
         installs.Sort();
-        Console.WriteLine($"UseServiceSchema (generate, parse, check alone, install) {installs[installs.Count / 2]:F0} ms");
+        Console.WriteLine($"UseServiceSchema (generate, parse, build the assembly once, install) {installs[installs.Count / 2]:F0} ms");
 
         var graph = JsonNode.Parse("""
             {"version":5,"name":"Small","nodes":[
@@ -80,6 +81,63 @@ static class ServiceCallCost
             var library = Median(7, () => new NodeLibraryCompiler(provider).Preview([]));
             Console.WriteLine($"{name} the services: preview {previewTime:F0} ms, compile {compileTime:F0} ms, empty library preview {library:F0} ms");
         }
-        await Task.CompletedTask;
+        {
+            // One Custom C# node that does call a service, against the assembly.
+            var snapshot = new NodeLibraryCompiler(full).Preview([]).Snapshot;
+            var calling = new VisualGenerator(full).DeriveSignatures(VisualExecutionTests.G(VisualExecutionTests.N("c", "custom", new JsonObject
+            {
+                ["source"] = VisualExecutionTests.CodeSource("await context.Services.Light.TurnOn(\"light.kitchen\", brightnessPct: 30);"), ["arguments"] = new JsonObject(),
+            })), snapshot);
+            var preview = new VisualGenerator(full).Preview(calling, snapshot);
+            if (!preview.Valid) throw new Exception("the calling graph does not preview: " + string.Join(" | ", preview.Diagnostics.Select(d => d.Message)));
+            var previewTime = Median(7, () => new VisualGenerator(full).Preview(calling, snapshot));
+            var compiler = new CodeCompiler(full);
+            var compileTime = Median(7, () => compiler.CompileSingleFile(Path.Combine(Path.GetTempPath(), "cost.cs"), preview.Source).Result.Unload());
+            Console.WriteLine($"with the services, a node calling one: preview {previewTime:F0} ms, compile {compileTime:F0} ms");
+        }
+        // Init with 20 saved automations (10 call a service, 10 do not), with the 600 services persisted and with none.
+        var root = Path.Combine(Path.GetTempPath(), "service-call-cost-" + Guid.NewGuid());
+        var file = Path.Combine(root, ".storage", "hass_sharp", "service_schema.json");
+        try
+        {
+            PyInterop.Log = (_, _) => { };
+            var setup = new HassSharpManager(root);
+            await setup.Init();
+            setup.SetServiceDescriptions(scaled.ToJsonString(), started: true);
+            for (var i = 0; i < 20; i++)
+            {
+                var body = i % 2 == 0 ? "await context.Services.Light.TurnOn(light, brightnessPct: 30);" : "await Task.CompletedTask;";
+                var code = "public static class CustomNode\n{\n    [Node(\"Call\")]\n    public static async Task Call(NodeContext context, string light)\n    {\n        " + body + "\n    }\n}";
+                var automation = new JsonObject
+                {
+                    ["version"] = 5, ["name"] = "Cost " + i,
+                    ["nodes"] = new JsonArray(
+                        new JsonObject { ["id"] = "t", ["kind"] = "trigger", ["config"] = new JsonObject { ["type"] = "manual" } },
+                        new JsonObject { ["id"] = "c", ["kind"] = "custom", ["config"] = new JsonObject { ["source"] = code, ["arguments"] = new JsonObject { ["light"] = new JsonObject { ["kind"] = "literal", ["type"] = "string", ["value"] = "light.kitchen" } } } }),
+                    ["edges"] = new JsonArray(new JsonObject { ["id"] = "e", ["source"] = "t", ["target"] = "c", ["port"] = "next" }),
+                };
+                var saved = JsonNode.Parse(await setup.VisualRequest(new JsonObject { ["operation"] = "save", ["id"] = "cost" + i, ["expectedRevision"] = 0, ["deriveSignatures"] = true, ["graph"] = automation }.ToJsonString()))!;
+                if (saved["result"]?["active"]?.GetValue<bool>() != true) throw new Exception("cost automation not active: " + saved.ToJsonString());
+            }
+            await setup.UnloadAsync();
+            var persisted = File.ReadAllText(file);
+            foreach (var (name, stored) in new[] { ("none", "{\"version\":1,\"items\":{}}"), ("600 services", persisted) })
+            {
+                var times = new List<double>();
+                for (var i = 0; i < 4; i++)
+                {
+                    File.WriteAllText(file, stored);
+                    var api = new HassSharpManager(root);
+                    var watch = Stopwatch.StartNew();
+                    await api.Init();
+                    var elapsed = watch.Elapsed.TotalMilliseconds;
+                    await api.UnloadAsync();
+                    if (i > 0) times.Add(elapsed);
+                }
+                times.Sort();
+                Console.WriteLine($"Init with 20 automations (10 call a service), {name} persisted: {times[times.Count / 2]:F0} ms");
+            }
+        }
+        finally { try { Directory.Delete(root, true); } catch (IOException) { } }
     }
 }

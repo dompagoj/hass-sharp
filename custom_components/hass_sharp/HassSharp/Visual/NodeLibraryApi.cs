@@ -25,9 +25,9 @@ public partial class HassSharpManager
     string LibraryWorkspaceGeneration(IEnumerable<NodeLibraryDocument> documents, NodeLibraryPreview? preview = null)
     {
         var content = NodeLibraryStore.Generation(documents);
-        if (preview?.Snapshot.Compilation?.SyntaxTrees.FirstOrDefault(t => t.FilePath == DiagnosticsProvider.ServicesPath) is { } services &&
-            preview.Snapshot.Types.Values.Any(t => t.Symbol.OriginalDefinition.DeclaringSyntaxReferences.Any(r => r.SyntaxTree == services)))
-            content += "\0services\0" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(services.ToString())));
+        // The services assembly's name is a hash of its source.
+        if (preview?.Snapshot.Types.Values.Select(t => t.Symbol.OriginalDefinition.ContainingAssembly?.Name).FirstOrDefault(n => n?.StartsWith(GeneratedServiceCalls.AssemblyPrefix, StringComparison.Ordinal) == true) is { } services)
+            content += "\0services\0" + services;
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
     }
 

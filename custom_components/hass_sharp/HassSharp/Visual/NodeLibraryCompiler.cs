@@ -9,7 +9,8 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace HassSharp;
 
 /// <summary>Discovers source symbols only. Never emits or loads a user assembly.</summary>
-public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
+/// <param name="serviceCalls">The typed service calls to compile against; the accepted ones when not given.</param>
+public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, GeneratedServiceCalls? serviceCalls = null)
 {
     public const string WrapperPrefix = "#nullable enable\nnamespace NodeLib\n{\n";
     public const string WrapperSuffix = "\n}\n";
@@ -79,8 +80,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
         }
         var syntaxTrees = trees.Keys.Concat(customTrees.Keys).ToList();
         syntaxTrees.Add(CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings, cancellationToken: cancellationToken));
-        syntaxTrees.Add(diagnostics.ServicesSyntaxTree());
-        var compilation = CSharpCompilation.Create("HassSharpNodeLibrary", syntaxTrees, FrameworkReferences(),
+        // The typed service calls as their built assembly: nothing of them is bound again here.
+        var compilation = CSharpCompilation.Create("HassSharpNodeLibrary", syntaxTrees, FrameworkReferences().Add((serviceCalls ?? diagnostics.ServiceCalls()).Reference),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true, nullableContextOptions: NullableContextOptions.Enable));
         void Report(Location location, string message, int severity = 3)
         {

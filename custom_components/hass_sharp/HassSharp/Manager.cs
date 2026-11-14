@@ -192,7 +192,8 @@ public partial class HassSharpManager
     /// that is logged once per schema. Compilations made earlier, and the automations running from them, are not
     /// touched: their calls go by service id.
     /// </summary>
-    /// <returns>Whether the typed calls every compilation gets were replaced.</returns>
+    /// <returns>Whether the typed calls every compilation gets were replaced with ones that add or change a service: only
+    /// then can an automation that failed to load for a missing service load now.</returns>
     bool RefreshServiceCalls()
     {
         // Read inside the lock: a refresh never applies a push older than one an earlier refresh applied.
@@ -211,7 +212,7 @@ public partial class HassSharpManager
                         ". This is a HassSharp bug; please report it with these errors:\n" + string.Join("\n", result.Errors));
                 }
                 catch { }
-            return result.Changed;
+            return result.Grew;
         }
     }
 
@@ -219,14 +220,20 @@ public partial class HassSharpManager
     Task _retry = Task.CompletedTask;
 
     /// <summary>
-    /// After the typed service calls changed: tries again to activate each saved automation whose last load failed and
+    /// After the typed service calls changed to add or change a service: tries again to activate each saved automation whose last load failed and
     /// that is not loaded (one that did not compile against a service that was missing, say). Loaded automations are
     /// left alone. Runs after anything queued before it, under the same gate as every other activation.
     /// </summary>
     internal Task RetryFailedLoads()
     {
-        lock (_retryGate) return _retry = _retry.ContinueWith(_ => RetryFailedLoadsAsync(), TaskScheduler.Default).Unwrap();
+        lock (_retryGate) { RetriesQueued++; return _retry = _retry.ContinueWith(_ => RetryFailedLoadsAsync(), TaskScheduler.Default).Unwrap(); }
     }
+
+    /// <summary>How many retries were queued; for tests.</summary>
+    internal int RetriesQueued { get; private set; }
+
+    /// <summary>The retries queued so far, done; for tests.</summary>
+    internal Task RetriesDone() { lock (_retryGate) return _retry; }
 
     async Task RetryFailedLoadsAsync()
     {
