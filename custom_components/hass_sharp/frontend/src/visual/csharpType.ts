@@ -65,7 +65,7 @@ const keywords: Record<string, string> = {
   'System.Object': 'object', 'System.String': 'string', 'System.Void': 'void',
 }
 /** Namespaces every node's code has in scope: the global usings, and `System.Text.Json.Nodes` for JsonObject and JsonArray. */
-const inScope = new Set(['System', 'System.Threading', 'System.Threading.Tasks', 'System.Collections.Generic', 'System.Linq', 'HassSharp', 'System.Text.Json.Nodes'])
+const inScope = new Set(['System', 'System.Threading', 'System.Threading.Tasks', 'System.Collections.Generic', 'System.Linq', 'HassSharp', 'HassSharp.Entities', 'System.Text.Json.Nodes'])
 const customNamespace = /^NodeLib\.Custom_[A-Za-z0-9_]+\./
 
 /** Neighbouring plain pieces as one. */

@@ -38,6 +38,12 @@ public sealed class ServiceTarget
     /// <summary>Several entities.</summary>
     [return: NotNullIfNotNull(nameof(entityIds))]
     public static implicit operator ServiceTarget?(string[]? entityIds) => entityIds == null ? null : Entities(entityIds);
+    /// <summary>One entity, given as a handle.</summary>
+    [return: NotNullIfNotNull(nameof(entity))]
+    public static implicit operator ServiceTarget?(HassSharp.Entities.Entity? entity) => entity == null ? null : new(entity.EntityId);
+    /// <summary>Several entities, given as handles.</summary>
+    [return: NotNullIfNotNull(nameof(entities))]
+    public static implicit operator ServiceTarget?(HassSharp.Entities.Entity[]? entities) => entities == null ? null : Entities([.. entities.Select(e => e.EntityId)]);
     /// <summary>Several entities.</summary>
     [return: NotNullIfNotNull(nameof(entityIds))]
     public static implicit operator ServiceTarget?(List<string>? entityIds) => entityIds == null ? null : Entities([.. entityIds]);

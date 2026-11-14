@@ -21,6 +21,7 @@ public class DiagnosticsProvider
                                        global using System.Collections.Generic;
                                        global using System.Linq;
                                        global using HassSharp;
+                                       global using HassSharp.Entities;
 
                                        """;
 

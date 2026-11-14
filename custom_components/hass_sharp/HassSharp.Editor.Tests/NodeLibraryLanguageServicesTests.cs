@@ -84,7 +84,11 @@ public class NodeLibraryLanguageServicesTests
         const string source="public class Main { void Run() { Entit } }";
         var items=(await Request("completion",[new("main",source,1)],"main",source.IndexOf("Entit")+5)).AsArray();
         Assert.DoesNotContain(items,i=>i!["displayText"]!.GetValue<string>() is "Entities" or "EntityRef" or "HassServices");
-        Assert.Contains(items,i=>i!["displayText"]!.GetValue<string>()=="EntityStateSnapshot");
+        // The filter keeps the best matches: Entity (the handle class) now matches "Entit" better than the snapshot does, so it is asked for by more of its name.
+        Assert.Contains(items,i=>i!["displayText"]!.GetValue<string>()=="Entity");
+        const string snapshot="public class Main { void Run() { EntityStat } }";
+        var states=(await Request("completion",[new("main",snapshot,1)],"main",snapshot.IndexOf("EntityStat")+10)).AsArray();
+        Assert.Contains(states,i=>i!["displayText"]!.GetValue<string>()=="EntityStateSnapshot");
     }
     static async Task<JsonNode> WithServices(string operation, string source, int position)
     {

@@ -21,7 +21,7 @@ public sealed class VisualSnapshot
         // A value nested very deeply (built by node code) fails its reader instead of overflowing the stack.
         System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
         var type=value.GetType();
-        if(type.IsPrimitive && type != typeof(IntPtr) && type != typeof(UIntPtr) || type.IsEnum || value is string or decimal or DateTime or DateTimeOffset or TimeSpan or Guid or DateOnly or TimeOnly or EntityStateSnapshot) return value;
+        if(type.IsPrimitive && type != typeof(IntPtr) && type != typeof(UIntPtr) || type.IsEnum || value is string or decimal or DateTime or DateTimeOffset or TimeSpan or Guid or DateOnly or TimeOnly or EntityStateSnapshot or HassSharp.Entities.Entity) return value;
         if(value is JsonElement json) return json.ValueKind==JsonValueKind.Undefined ? json : json.Clone();
         if(copyingErrors.Contains(value)||copyingComparers.Contains(value))throw Cannot(type);
         if(copies.TryGetValue(value,out var found)) return found;
@@ -166,9 +166,11 @@ public sealed class VisualRuntime
     int stopped;
     // Null unless the invocation carries a trace sink: every trace hook is behind this or scope.Trace.
     VisualTrace? trace;
+    // How an entity id becomes the handle a node asks for: a generated automation passes its own, so the handle classes are its own.
+    readonly Func<string,HassSharp.Entities.Entity> entities;
     readonly System.Collections.Concurrent.ConcurrentQueue<Exception> stopFailures = new();
-    public VisualRuntime(string graphJson,string catalogJson,Dictionary<string,Type> types,JsonElement trigger,CancellationToken cancellation,Func<string,VisualScope,VisualRuntime,Task> custom,HashSet<string>? compiledConversions=null,Dictionary<string,string>? comparisonTypes=null,JsonSerializerOptions? json=null) {
-        serializer=json??JsonOptions();
+    public VisualRuntime(string graphJson,string catalogJson,Dictionary<string,Type> types,JsonElement trigger,CancellationToken cancellation,Func<string,VisualScope,VisualRuntime,Task> custom,HashSet<string>? compiledConversions=null,Dictionary<string,string>? comparisonTypes=null,JsonSerializerOptions? json=null,Func<string,HassSharp.Entities.Entity>? entities=null) {
+        serializer=json??JsonOptions();this.entities=entities??(id=>new HassSharp.Entities.Entity(id));
         this.comparisonTypes=comparisonTypes??[];
         this.compiledConversions=compiledConversions??[];
         var graph=JsonNode.Parse(graphJson)!.AsObject();catalog=JsonNode.Parse(catalogJson)!.AsObject();this.types=types;this.custom=custom;this.trigger=trigger;external=cancellation;lifetime=new CancellationTokenSource();externalRegistration=cancellation.Register(()=>{externalCleanup=lifetime.CancelAsync();});
@@ -215,7 +217,7 @@ public sealed class VisualRuntime
         if(!stopFailures.IsEmpty)throw new AggregateException("Stop cleanup failed after all branches drained.",stopFailures);
     }
     // Values are traced as the node sees them: after conversion, with the wire they came from.
-    public T Input<T>(VisualScope scope,string node,string port) {var value=(T)Coerce(Read(scope,node,port),typeof(T),$"{node}.{port}",false,()=>Title(node)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port),serializer)!;if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
+    public T Input<T>(VisualScope scope,string node,string port) {var value=(T)Coerce(Read(scope,node,port),typeof(T),$"{node}.{port}",false,()=>Title(node)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port),serializer,entities)!;if(scope.Trace!=null)Traced(scope,node,port,value is HassSharp.Entities.Entity handle?handle.EntityId:value);return value;}
     /// <summary>What a node method's <see cref="NodeContext"/> parameter gets: this run, as <paramref name="scope"/> sees it.</summary>
     public NodeContext Context(VisualScope scope,string node)=>new(this,scope,node,InvocationContext.Current?.RunId??"",trigger);
     /// <summary>What a node method's flow parameters call, for one run of the step <paramref name="node"/> in <paramref name="scope"/>.</summary>
@@ -302,7 +304,7 @@ public sealed class VisualRuntime
     }
     /// <param name="pin">The step and pin, as people see them, for a number that does not fit the pin's type.</param>
     /// <param name="json">The automation's serializer options (<see cref="JsonOptions"/>), for a value of its own types.</param>
-    public static object? Coerce(object? value,Type type,string label,bool convert,Func<string>? pin=null,JsonSerializerOptions? json=null) {
+    public static object? Coerce(object? value,Type type,string label,bool convert,Func<string>? pin=null,JsonSerializerOptions? json=null,Func<string,HassSharp.Entities.Entity>? entities=null) {
         json??=JsonSerializerOptions.Default;
         var underlying=Nullable.GetUnderlyingType(type);var target=underlying??type;
         if(value==null) {if(!type.IsValueType||underlying!=null)return null;throw new InvalidOperationException($"{pin?.Invoke()??label} needs a value, and got none");}
@@ -314,7 +316,7 @@ public sealed class VisualRuntime
             if(parsed!=null && target.IsInstanceOfType(parsed))return parsed;
         }
         if(value is JsonElement j) {
-            if(j.ValueKind==JsonValueKind.Null)return Coerce(null,type,label,convert,pin,json);
+            if(j.ValueKind==JsonValueKind.Null)return Coerce(null,type,label,convert,pin,json,entities);
             if(j.ValueKind==JsonValueKind.Number && IsNumber(target)) {
                 // A JSON number (a foreach item, a field read from JSON) gets the same fit check as any other number. One no
                 // number holds (1e400, a 400-digit integer from an attribute or a service response) is named as such.
@@ -338,6 +340,11 @@ public sealed class VisualRuntime
         // C# char widening uses the UTF-16 code unit; IConvertible's char-to-double
         // implementation does not implement that standard language conversion.
         if(value is char character && IsNumber(target) && target!=typeof(char))value=(ushort)character;
+        if(value is HassSharp.Entities.Entity handle&&target==typeof(string))return handle.EntityId;
+        if(value is string id&&typeof(HassSharp.Entities.Entity).IsAssignableFrom(target)) {
+            var made=(entities??(s=>new HassSharp.Entities.Entity(s)))(id);
+            return target.IsInstanceOfType(made)?made:throw new InvalidOperationException($"{pin?.Invoke()??label} needs {target.Name}, and {id} is not one");
+        }
         if(convert && target==typeof(bool))return VisualValues.ConvertValue(value,"boolean");
         if(convert && target==typeof(string))return VisualValues.ConvertValue(value,"string");
         if(pin!=null && value is not null and not char && IsNumber(value.GetType()) && IsNumber(target) && target!=typeof(char) && Unfit(value,target) is {} range)

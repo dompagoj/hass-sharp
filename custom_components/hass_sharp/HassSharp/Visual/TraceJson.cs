@@ -328,10 +328,11 @@ static class TraceJson
             }
             var type = value.GetType();
             var shape = ShapeOf(type);
-            var special = value is EntityStateSnapshot or Exception;
+            var special = value is EntityStateSnapshot or HassSharp.Entities.Entity or Exception;
             if (depth >= MaxDepth && (special || shape.Walk != Walk.Opaque)) { cut = true; w.WriteNullValue(); return; }
             switch (value)
             {
+                case HassSharp.Entities.Entity handle: String(handle.EntityId); return;
                 case EntityStateSnapshot entity:
                     Object(Pairs(("entity_id", entity.EntityId), ("state", entity.State), ("attributes", entity.Attributes),
                         ("last_changed", entity.LastChanged), ("last_updated", entity.LastUpdated), ("last_reported", entity.LastReported)), depth); return;
