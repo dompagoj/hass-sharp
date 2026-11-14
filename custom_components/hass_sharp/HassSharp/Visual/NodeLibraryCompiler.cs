@@ -118,11 +118,28 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         var portAttribute = frameworkAssembly.GetTypeByMetadataName("HassSharp.PortAttribute");
         var nodeContext = frameworkAssembly.GetTypeByMetadataName("HassSharp.NodeContext");
         string? PortLabel(ImmutableArray<AttributeData> attributes) => attributes.FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, portAttribute))?.ConstructorArguments.FirstOrDefault().Value as string;
-        // A Custom C# node's code need not document itself, wholly or in part (an injected NodeContext or
-        // CancellationToken is no pin to describe): its card says what the node is.
+        // A missing doc comment matters only on a library's [Node] method, whose summary is the node's description in the
+        // editor: not on a type, a record's parameters and properties, or another member, which would only drown what
+        // matters; and a parameter without its <param> only on such a method (a pin). A Custom C# node's code need not
+        // document itself, wholly or in part: its card and its title say what the node is (an injected NodeContext or
+        // CancellationToken is no pin to describe), and every automation using it would carry the warning.
+        bool NodeMethod(ISymbol? symbol) => symbol is IMethodSymbol method && method.GetAttributes().Any(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, nodeAttribute));
+        var models = new Dictionary<SyntaxTree, SemanticModel>();
+        ISymbol? DeclaredAt(Location location)
+        {
+            if (location.SourceTree is not { } tree) return null;
+            if (!models.TryGetValue(tree, out var model)) models[tree] = model = compilation.GetSemanticModel(tree);
+            for (var node = tree.GetRoot(cancellationToken).FindToken(location.SourceSpan.Start).Parent; node != null; node = node.Parent)
+                if (model.GetDeclaredSymbol(node, cancellationToken) is { } declared) return declared;
+            return null;
+        }
         foreach (var diagnostic in compilation.GetDiagnostics(cancellationToken).Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning))
-            if (!(diagnostic.Id is "CS1591" or "CS1573" && diagnostic.Location.SourceTree is { } tree && customTrees.ContainsKey(tree)))
-                Report(diagnostic.Location, diagnostic.GetMessage(), (int)diagnostic.Severity);
+        {
+            if (diagnostic.Id is "CS1591" or "CS1573" && diagnostic.Location.SourceTree is { } tree && customTrees.ContainsKey(tree)) continue;
+            if (diagnostic.Id == "CS1591" && !NodeMethod(DeclaredAt(diagnostic.Location))) continue;
+            if (diagnostic.Id == "CS1573" && !NodeMethod(DeclaredAt(diagnostic.Location)?.ContainingSymbol)) continue;
+            Report(diagnostic.Location, diagnostic.GetMessage(), (int)diagnostic.Severity);
+        }
         var root = VisualNodeCatalog.GetCatalog();
         var graphVersion = root["graphVersion"]!.GetValue<int>();
         var typeSymbols = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);

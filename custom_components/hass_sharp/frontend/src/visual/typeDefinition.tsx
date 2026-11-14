@@ -4,13 +4,30 @@ import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
 import { createLoader, LoadFailed } from '../components/LazyLoad'
 import type { VisualCatalogSnapshot } from './contract'
-import { csharpTypeParts, type CSharpPart } from './csharpType'
+import { csharpTypeParts, csharpTypes, type CSharpPart } from './csharpType'
 import { nodeTitle } from './flow/flowModel'
 import type { VisualGraph } from './graph'
 import type { TypeDefinition } from './library-api'
 
-// Monaco shows the definition; it loads with the first one opened, never with the panel.
+// Monaco shows the definition: it loads when the first one is shown ({@link DefinitionCode} mounts), never with the
+// page or the panel; later ones show at once.
 const loadView = createLoader(() => import('../components/Editor/CodeView').then(module => module.CodeView))
+
+/** The definition's code, read only: Monaco once loaded (it starts loading here), plain text until then. */
+function DefinitionCode(props: { text: string; name: string }) {
+  const view = loadView()
+  const plain = () => <pre class="hs-typedef__plain"><code>{props.text}</code></pre>
+  return (
+    <Show when={view.component()} fallback={
+      <Show when={view.failed()} fallback={plain()}>
+        <LoadFailed what="code view" error={view.error()} onRetry={view.retry} />
+        {plain()}
+      </Show>
+    }>
+      {component => <Dynamic component={component()} text={props.text} label={`C# definition of ${props.name}`} />}
+    </Show>
+  )
+}
 
 /** What opens a type's definition: given by the editor page and the trace view to the panel inside them. */
 interface Links { show(type: string, label: string): void }
@@ -55,7 +72,6 @@ type Answer = { state: 'loading' } | { state: 'ready'; definition: TypeDefinitio
 export function TypeDefinitions(props: TypeDefinitionsProps) {
   const [shown, setShown] = createSignal<Shown>()
   const [answer, setAnswer] = createSignal<Answer>({ state: 'loading' })
-  const view = loadView()
   let asked = 0
   const fetch = (target: Shown) => {
     const mine = ++asked
@@ -118,15 +134,8 @@ export function TypeDefinitions(props: TypeDefinitionsProps) {
                   <Show when={props.run && found().origin.nodeId !== undefined}>
                     <p class="hs-typedef__note">From the code this run used.</p>
                   </Show>
-                  <Show when={view.component()} fallback={
-                    <Show when={view.failed()} fallback={<pre class="hs-typedef__plain"><code>{found().text}</code></pre>}>
-                      <LoadFailed what="code view" error={view.error()} onRetry={view.retry} />
-                      <pre class="hs-typedef__plain"><code>{found().text}</code></pre>
-                    </Show>
-                  }>
-                    {component => <Dynamic component={component()} text={found().text} label={`C# definition of ${found().name}`} />}
-                  </Show>
-                  <Show when={found().truncated}><p class="hs-typedef__note">The definition is longer than 64 KiB; the rest is not shown.</p></Show>
+                  <DefinitionCode text={found().text} name={found().name} />
+                  <Show when={found().truncated}><p class="hs-typedef__note">The definition is longer than 64,000 characters; the rest is not shown.</p></Show>
                 </>
               )}
             </Match>
@@ -182,5 +191,5 @@ export function CSharpTypeText(props: { types: readonly string[]; catalog: Visua
 
 /** The C# text of catalog types, as {@link CSharpTypeText} shows it, for a title or an accessible name. */
 export function csharpText(types: readonly string[], catalog: VisualCatalogSnapshot): string {
-  return [...new Set(types.map(id => csharpTypeParts(id, catalog)?.map(p => p.text).join('')).filter((t): t is string => !!t))].join(' or ')
+  return csharpTypes(types, catalog).join(' or ')
 }

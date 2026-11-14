@@ -11,13 +11,16 @@ import { NodeConfig } from '../src/visual/NodeConfig'
 import { VisualEditor } from '../src/visual/VisualEditor'
 import { RunTraceView } from '../src/views/RunTraceView'
 import { TypeDefinitions } from '../src/visual/typeDefinition'
-import { LibraryApiError, type TypeDefinition } from '../src/visual/library-api'
+import { LibraryApiError, libraryApi, type TypeDefinition } from '../src/visual/library-api'
 import { nodeCatalog, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { addNode, createGraph, type VisualGraph } from '../src/visual/graph'
 import type { RunTrace, RunTraceResponse, TraceEvent } from '../src/types'
 
 vi.mock('monaco-editor', async () => (await import('./fake-monaco')).host)
 vi.mock('monaco-vim', () => ({ initVimMode: () => ({ dispose() {} }) }))
+// Counts imports of the code view (and so of Monaco): none until a definition is first opened.
+const codeView = vi.hoisted(() => ({ imported: 0 }))
+vi.mock('../src/components/Editor/CodeView', async importOriginal => { codeView.imported++; return importOriginal() })
 
 // The C# types in the panel are links to their definitions (Task 31): a library, Custom C# or HassSharp type opens a
 // dialog with its code, read only; C#'s own types are plain text.
@@ -55,6 +58,17 @@ function panel(id: string, links?: Partial<Parameters<typeof TypeDefinitions>[0]
     : config(), el)
   return el
 }
+
+// First in the file: the code view's module is imported once per file, by the first dialog opened.
+it('loads Monaco only when a definition is first opened, not with the page or the panel', async () => {
+  const el = panel('consume', {})
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(link(row(el, 'reading'), 'NodeLib.IReading')).not.toBeNull()
+  expect(codeView.imported, 'the panel with its links imports no code view').toBe(0)
+  link(row(el, 'reading'), 'NodeLib.IReading')!.click()
+  await vi.waitFor(() => expect(code()).toBe('public interface IReading { }'))
+  expect(codeView.imported).toBe(1)
+})
 
 it('links the library, Custom C# and HassSharp parts of a pin\'s C# type, and leaves C#\'s own types as plain text', () => {
   const el = panel('consume', {})
@@ -144,6 +158,38 @@ it('says it is loading, then shows the backend\'s refusal in the dialog and trie
   await vi.waitFor(() => expect(code()).toBe('public enum Mode { Off, On }'))
   expect(shown()!.querySelector('[role="alert"]')).toBeNull()
   expect(load).toHaveBeenCalledTimes(2)
+})
+
+it('drops a slow answer that arrives after Close, or after another type was opened', async () => {
+  const fixture = visualFixture({ catalog, libraries: [library] })
+  let release!: () => void
+  fixture.controls.holdTypeDefinition = new Promise<void>(resolve => { release = resolve })
+  const el = panel('consume', { load: (type, code) => libraryApi(fixture).typeDefinition(type, code) })
+  // IReading is asked for and its answer held; the dialog is closed before it arrives.
+  link(row(el, 'reading'), 'NodeLib.IReading')!.click()
+  await vi.waitFor(() => expect(shown()?.querySelector('[role="status"]')).not.toBeNull())
+  button(shown()!, 'Close')!.click()
+  await vi.waitFor(() => expect(shown()).toBeUndefined())
+  // Mode is opened and answers at once; then IReading's late answer arrives.
+  fixture.controls.holdTypeDefinition = undefined
+  link(row(el, 'mode'), 'NodeLib.Mode')!.click()
+  await vi.waitFor(() => expect(code()).toBe('public enum Mode { Off, On }'))
+  release()
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(fixture.calls.filter(m => m.request?.operation === 'type_definition').map(m => m.request.type)).toEqual(['global::NodeLib.IReading', 'global::NodeLib.Mode'])
+  expect(shown()!.querySelector('h2')!.textContent).toBe('Mode')
+  expect(code()).toBe('public enum Mode { Off, On }')
+  expect(shown()!.textContent).not.toContain('IReading')
+  // An answer that arrives after Close opens nothing.
+  fixture.controls.holdTypeDefinition = new Promise<void>(resolve => { release = resolve })
+  button(shown()!, 'Close')!.click()
+  await vi.waitFor(() => expect(shown()).toBeUndefined())
+  link(row(el, 'reading'), 'NodeLib.IReading')!.click()
+  await vi.waitFor(() => expect(shown()).toBeDefined())
+  button(shown()!, 'Close')!.click()
+  release()
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(shown()).toBeUndefined()
 })
 
 it('asks for a type a Custom C# node declares with that node\'s code, and offers Edit code on the editor page', async () => {

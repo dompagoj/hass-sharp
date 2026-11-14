@@ -77,6 +77,10 @@ static class TypeDefinitionTests
         Console.WriteLine("PASS graph limit first: preview, deriving signatures and the entity check answer a graph past the limits, or of the wrong shape, without compiling or walking it");
         DeepSupertypes();
         Console.WriteLine("PASS supertypes nested deeper than a pin may be are not registered or compared, for libraries and Custom C# nodes");
+        MetadataDetails();
+        Console.WriteLine("PASS metadata definitions: summaries keep a see's own words, a failed documentation read gives none, overloads keep their own summaries, interfaces list only public members");
+        MissingDocComments();
+        Console.WriteLine("PASS missing doc comments are reported only on a node library's [Node] methods, and not in Custom C# code");
     }
 
     // A pin's type may nest 8 levels; a base type or interface of it nested deeper is left out, as a member of such a type is.
@@ -101,6 +105,77 @@ static class TypeDefinitionTests
         var own = custom.Signature!["types"]!.AsObject();
         Check(!own.Any(t => t.Key.Contains("IDeep") || t.Key.Contains(".Base<")) && !own["global::NodeLib.Custom_d.Shallow"]!["assignableTo"]!.AsArray().Any(t => t!.GetValue<string>().Contains("IDeep") || t!.GetValue<string>().Contains("Base<")),
             "a Custom C# type lists no deep supertype: " + own.ToJsonString()[..Math.Min(1500, own.ToJsonString().Length)]);
+    }
+
+    // The parts of a metadata definition a HassSharp type of today does not show: read through the same code on a type
+    // compiled here, with its summaries given by documentation id.
+    static void MetadataDetails()
+    {
+        // A summary's words: a see with words of its own gives them; an empty one gives the last part of what it names.
+        var summary = System.Xml.Linq.XElement.Parse("<summary>Reads <see cref=\"T:HassSharp.EntityStateSnapshot\">the entity state</see> and <see cref=\"M:HassSharp.X.Run(System.Int32)\"/>, see <seealso href=\"https://x\">the docs</seealso>.</summary>");
+        var words = TypeDefinitions.Words(summary);
+        Check(words == "Reads the entity state and Run, see the docs.", "a see keeps its own words: " + words);
+        // A documentation file that cannot be read for any reason gives no summaries, never an error.
+        Check(TypeDefinitions.ReadSummaries(() => throw new NotSupportedException("odd location")).Count == 0, "a failed documentation read gives no summaries");
+        var read = TypeDefinitions.ReadSummaries(() => new MemoryStream(System.Text.Encoding.UTF8.GetBytes("<doc><members><member name=\"T:A\"><summary>An A.</summary></member></members></doc>")));
+        Check(read.Count == 1 && read["T:A"] == "An A.", "a documentation file is read: " + string.Join(", ", read));
+
+        var code = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText("""
+            namespace Shown;
+            public interface IThing
+            {
+                void Visible();
+                int Count { get; }
+                private void Hidden() { }
+                internal int Secret => 1;
+                protected static void Guarded() { }
+            }
+            public class Overloads
+            {
+                public void Run() { }
+                public void Run(int times) { }
+            }
+            """);
+        var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create("Shown", [code], NodeLibraryCompiler.FrameworkReferences());
+        var thing = compilation.GetTypeByMetadataName("Shown.IThing")!;
+        var (interfaceText, _) = TypeDefinitions.MetadataText(thing, new Dictionary<string, string>(), CancellationToken.None);
+        Check(interfaceText.Contains("void Visible();", StringComparison.Ordinal) && interfaceText.Contains("int Count { get; }", StringComparison.Ordinal)
+            && !interfaceText.Contains("Hidden", StringComparison.Ordinal) && !interfaceText.Contains("Secret", StringComparison.Ordinal) && !interfaceText.Contains("Guarded", StringComparison.Ordinal),
+            "an interface lists only its public members: " + interfaceText);
+        var overloads = compilation.GetTypeByMetadataName("Shown.Overloads")!;
+        var summaries = new Dictionary<string, string> { ["M:Shown.Overloads.Run"] = "Runs once.", ["M:Shown.Overloads.Run(System.Int32)"] = "Runs a number of times." };
+        var (overloadText, _) = TypeDefinitions.MetadataText(overloads, summaries, CancellationToken.None);
+        Check(overloadText.Contains("    /// <summary>Runs once.</summary>\n    public void Run();", StringComparison.Ordinal)
+            && overloadText.Contains("    /// <summary>Runs a number of times.</summary>\n    public void Run(int times);", StringComparison.Ordinal), "each overload has its own summary: " + overloadText);
+    }
+
+    // A missing doc comment matters only on a library's [Node] method (its summary is the node's description in the
+    // editor): an undocumented record, its properties, its parameters or a class are not reported. The same compile gives
+    // the editor's live diagnostics and a save's, so one check covers both.
+    static void MissingDocComments()
+    {
+        const string Code = """
+            public record Address(string City, int Zip);
+            public record User(string UserName, int Age, Address Home)
+            {
+                public string Label => UserName;
+            }
+            public static class Users
+            {
+                [Node("Make user")] public static User MakeUser(string name) => new(name, 1, new("Zagreb", 10000));
+                /// <summary>Documented.</summary>
+                [Node("Documented")] public static void Documented(int count) { }
+                public static int Helper() => 1;
+            }
+            """;
+        static string[] Missing(IEnumerable<NodeLibraryDiagnostic> diagnostics) => diagnostics.Where(d => d.Message.StartsWith("Missing XML comment", StringComparison.Ordinal)).Select(d => $"{d.StartLine}: {d.Message}").ToArray();
+        var library = new NodeLibraryCompiler(Diagnostics).Preview([new("users", Code, 1)]);
+        var missing = Missing(library.Diagnostics);
+        Check(missing.Length == 1 && missing[0].StartsWith("8: ", StringComparison.Ordinal) && missing[0].Contains("MakeUser", StringComparison.Ordinal), "one warning, on the undocumented [Node] method: " + string.Join(" | ", missing));
+        var custom = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("u", Code.Replace("[Node(\"Documented\")]", "").Replace("Users", "CustomNode"))]).Snapshot.Custom["u"];
+        var customMissing = Missing(custom.Diagnostics);
+        // A Custom C# node's code is not asked to document itself at all (its card says what it is).
+        Check(customMissing.Length == 0, "none in a Custom C# node's code: " + string.Join(" | ", customMissing));
     }
 
     static async Task Definitions()
@@ -186,6 +261,8 @@ static class TypeDefinitionTests
             Check(source["text"]!.GetValue<string>().Contains("public sealed record NodeLibrarySource(string Id, string Source, long Revision)", StringComparison.Ordinal)
                 && !source["text"]!.GetValue<string>().Contains("EqualityContract", StringComparison.Ordinal) && !source["text"]!.GetValue<string>().Contains("Deconstruct", StringComparison.Ordinal)
                 && !source["text"]!.GetValue<string>().Contains("<Clone>", StringComparison.Ordinal), "a HassSharp record has its primary constructor: " + source["text"]);
+            foreach (var made in (string[])["ToString", "Equals", "GetHashCode", "PrintMembers", "op_Equality", "operator =="])
+                Check(!source["text"]!.GetValue<string>().Contains(made, StringComparison.Ordinal), $"a HassSharp record lists none of the compiler's {made}: " + source["text"]);
             // An enum of HassSharp: its members with their values.
             var level = await Definition(new { operation = "type_definition", type = "global::HassSharp.PyLogLevel" });
             Check(level["text"]!.GetValue<string>().Contains("public enum PyLogLevel", StringComparison.Ordinal) && System.Text.RegularExpressions.Regex.IsMatch(level["text"]!.GetValue<string>(), @"\n    Info = \d+,"),
@@ -198,6 +275,14 @@ static class TypeDefinitionTests
                 var (code, detail) = await Refused(new { operation = "type_definition", type });
                 Check(code == "invalid_request" && detail == $"{name} is a built-in C# type, so it has no definition to show", $"{type} is refused as built in: {code} {detail}");
             }
+            // A type of another assembly that a pin uses (not System's, not HassSharp's): refused, saying which types have one.
+            // An array of a library type: refused, pointing to the type of its items.
+            var extra = "public static class ExtraNodes { [Node(\"Handle\")] public static void Handle(Microsoft.Win32.SafeHandles.SafeFileHandle handle) { } [Node(\"Modes\")] public static void Modes(Mode[] modes) { } }\n";
+            Check((await Library(new { operation = "save", id = "extra", name = "Extra.cs", expectedRevision = 0, source = extra }))["ok"]!.GetValue<bool>(), "the extra library saves");
+            var (otherCode, otherDetail) = await Refused(new { operation = "type_definition", type = "global::Microsoft.Win32.SafeHandles.SafeFileHandle" });
+            Check(otherCode == "invalid_request" && otherDetail == "SafeFileHandle has no definition to show: only types of node libraries, Custom C# nodes and HassSharp have one", "another assembly's type: " + otherCode + " " + otherDetail);
+            var (arrayCode, arrayDetail) = await Refused(new { operation = "type_definition", type = "global::NodeLib.Mode[]" });
+            Check(arrayCode == "invalid_request" && arrayDetail == "Mode[] is an array: ask for Mode, the type of its items", "an array of a library type: " + arrayCode + " " + arrayDetail);
             var (unknownCode, unknownDetail) = await Refused(new { operation = "type_definition", type = "global::NodeLib.Nobody" });
             Check(unknownCode == "not_found" && unknownDetail == "There is no type NodeLib.Nobody; it may have been renamed or removed", "an unknown id: " + unknownDetail);
             var (emptyCode, _) = await Refused(new { operation = "type_definition" });
@@ -208,7 +293,7 @@ static class TypeDefinitionTests
             Check((await Library(new { operation = "save", id = "big", name = "Big.cs", expectedRevision = 0, source = big }))["ok"]!.GetValue<bool>(), "the big library saves");
             var cut = await Definition(new { operation = "type_definition", type = "global::NodeLib.Big" });
             var cutText = cut["text"]!.GetValue<string>();
-            Check(cut["truncated"]!.GetValue<bool>() && cutText.Length <= TypeDefinitions.MaxText && cutText.EndsWith("\n// The rest is not shown: the definition is longer than 64 KiB", StringComparison.Ordinal)
+            Check(cut["truncated"]!.GetValue<bool>() && cutText.Length <= TypeDefinitions.MaxText && cutText.EndsWith("\n// The rest is not shown: the definition is longer than 64,000 characters", StringComparison.Ordinal)
                 && cutText.StartsWith("public class Big\n{\n    public int Field0000 = 0;", StringComparison.Ordinal), "a long definition is cut: " + cutText.Length + " " + cutText[^120..]);
         }
         finally { await manager.UnloadAsync(); HassPath.HassConfiguration = previous; try { Directory.Delete(path, true); } catch { } }

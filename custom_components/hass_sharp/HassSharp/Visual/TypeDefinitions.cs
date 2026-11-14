@@ -30,8 +30,8 @@ public sealed record TypeDefinition(string Name, string Kind, string Text, TypeD
 internal static class TypeDefinitions
 {
     /// <summary>The longest text answered; a longer definition is cut at a line and says so.</summary>
-    public const int MaxText = 64 * 1024;
-    const string Cut = "\n// The rest is not shown: the definition is longer than 64 KiB";
+    public const int MaxText = 64_000;
+    const string Cut = "\n// The rest is not shown: the definition is longer than 64,000 characters";
 
     /// <summary>A requested id as a person reads it: without <c>global::</c>, and cut at 200 characters.</summary>
     static string Named(string typeId)
@@ -54,6 +54,15 @@ internal static class TypeDefinitions
             ?? throw new FileNotFoundException($"There is no type {Named(typeId)}; it may have been renamed or removed");
         // A value that may be empty is of the type it wraps: Point? shows Point.
         if (symbol is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable && nullable.TypeArguments[0] is INamedTypeSymbol { SpecialType: SpecialType.None, TypeKind: not TypeKind.Error } wrapped && !InSystem(wrapped)) symbol = wrapped;
+        // An array of a type that has a definition points to that type (an array of C#'s own types is C#'s own).
+        if (symbol is IArrayTypeSymbol array)
+        {
+            ITypeSymbol items = array;
+            for (var depth = 0; items is IArrayTypeSymbol inner && depth < 8; depth++) items = inner.ElementType;
+            if (items is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } wrappedItems) items = wrappedItems.TypeArguments[0];
+            if (items is INamedTypeSymbol { IsTupleType: false, SpecialType: SpecialType.None, TypeKind: not TypeKind.Error } element && !InSystem(element))
+                throw new ArgumentException($"{Written(symbol)} is an array: ask for {Written(element)}, the type of its items");
+        }
         if (symbol is not INamedTypeSymbol { IsTupleType: false, TypeKind: not TypeKind.Error } named || named.SpecialType != SpecialType.None || InSystem(named))
             throw new ArgumentException($"{(Written(symbol) is var written && typeId.EndsWith('?') && !written.EndsWith('?') ? written + "?" : written)} is a built-in C# type, so it has no definition to show");
         var definition = named.OriginalDefinition;
@@ -197,11 +206,12 @@ internal static class TypeDefinitions
     /// constructor when its <c>Deconstruct</c> tells it), each public member's signature with no body, and the summary of
     /// each from HassSharp's documentation file when it is published; nested public types are listed by their declaration.
     /// </summary>
-    static (string Text, bool Truncated) MetadataText(INamedTypeSymbol type, CancellationToken cancellationToken)
+    static (string Text, bool Truncated) MetadataText(INamedTypeSymbol type, CancellationToken cancellationToken) => MetadataText(type, Summaries.Value, cancellationToken);
+    /// <summary>The same, with the summaries given by documentation id (tests give their own).</summary>
+    internal static (string Text, bool Truncated) MetadataText(INamedTypeSymbol type, IReadOnlyDictionary<string, string> summaries, CancellationToken cancellationToken)
     {
         var text = new StringBuilder();
         if (!type.ContainingNamespace.IsGlobalNamespace) text.Append("namespace ").Append(type.ContainingNamespace.ToDisplayString()).Append(";\n\n");
-        var summaries = Summaries.Value;
         void Summary(StringBuilder into, ISymbol symbol, string indent)
         {
             if (symbol.GetDocumentationCommentId() is { } id && summaries.TryGetValue(id, out var summary)) into.Append(indent).Append("/// <summary>").Append(summary).Append("</summary>\n");
@@ -222,7 +232,9 @@ internal static class TypeDefinitions
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (text.Length + body.Length > MaxText) break;
-            if (member.DeclaredAccessibility != Accessibility.Public && type.TypeKind != TypeKind.Interface || Generated(member)) continue;
+            // Public members only: an interface's too (one without a modifier is public; a private, protected or internal
+            // one is not part of what the type offers).
+            if (member.DeclaredAccessibility != Accessibility.Public || Generated(member)) continue;
             if (member is INamedTypeSymbol inner) { nested.Add(inner); continue; }
             string? line = member switch
             {
@@ -335,27 +347,35 @@ internal static class TypeDefinitions
     /// published beside the assembly (<c>HassSharp.xml</c>); empty without one. Read once: it holds HassSharp's own
     /// words only, no type or symbol.
     /// </summary>
-    static readonly Lazy<IReadOnlyDictionary<string, string>> Summaries = new(() =>
+    static readonly Lazy<IReadOnlyDictionary<string, string>> Summaries = new(() => ReadSummaries(() =>
+        System.IO.File.OpenRead(Path.ChangeExtension(typeof(NodeAttribute).Assembly.Location, ".xml"))));
+    /// <summary>The summaries of a documentation file <paramref name="open"/> gives.</summary>
+    internal static IReadOnlyDictionary<string, string> ReadSummaries(Func<Stream> open)
     {
         var found = new Dictionary<string, string>(StringComparer.Ordinal);
         try
         {
-            var file = Path.ChangeExtension(typeof(NodeAttribute).Assembly.Location, ".xml");
-            if (!System.IO.File.Exists(file)) return found;
-            foreach (var member in XDocument.Load(file).Root?.Element("members")?.Elements("member") ?? [])
+            using var stream = open();
+            foreach (var member in XDocument.Load(stream).Root?.Element("members")?.Elements("member") ?? [])
                 if ((string?)member.Attribute("name") is { } name && member.Element("summary") is { } summary && Words(summary) is { Length: > 0 } words)
                     found[name] = words;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Xml.XmlException) { }
+        // Whatever goes wrong (no file, an odd location, a broken file), definitions are shown without summaries: never a
+        // failure kept by the Lazy and thrown at every later request.
+        catch (Exception) { found.Clear(); }
         return found;
-    });
-    /// <summary>A summary as one line of words: a <c>see</c> by the last part of what it names, a <c>paramref</c> by its name.</summary>
-    static string Words(XElement summary)
+    }
+    /// <summary>
+    /// A summary as one line of words: a <c>see</c> by its own words, or without any by the last part of what it names; a
+    /// <c>paramref</c> by its name.
+    /// </summary>
+    internal static string Words(XElement summary)
     {
         var words = new StringBuilder();
         foreach (var node in summary.DescendantNodes())
         {
-            if (node is XText text && text.Parent is { } parent && (parent == summary || parent.Name.LocalName is not ("see" or "seealso" or "paramref" or "typeparamref") || !parent.HasAttributes)) words.Append(text.Value);
+            // Text is words wherever it is, a see's own (<see cref="X">the entity state</see>) too.
+            if (node is XText text) words.Append(text.Value);
             else if (node is XElement { Name.LocalName: "see" or "seealso" or "paramref" or "typeparamref" } element && !element.Nodes().Any())
             {
                 var target = (string?)element.Attribute("cref") ?? (string?)element.Attribute("name") ?? (string?)element.Attribute("langword") ?? "";

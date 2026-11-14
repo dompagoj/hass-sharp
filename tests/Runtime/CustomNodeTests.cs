@@ -596,6 +596,8 @@ static class CustomNodeTests
                 && breaking["error"]!["detail"]!["automations"]!.AsArray().Select(a => a!["id"]!.GetValue<string>()).SequenceEqual(["uses"])
                 // Named as a person knows them, not only by id.
                 && breaking["error"]!["detail"]!["automations"]!.AsArray().Select(a => a!["name"]?.GetValue<string>()).SequenceEqual(["Execution"])
+                // Each problem names its step by its title, as the editor does, not only by the node's id.
+                && breaking["error"]!["detail"]!["automations"]![0]!["diagnostics"]!.AsArray().Where(d => d!["nodeId"]?.GetValue<string>() == "u").Select(d => d!["step"]?.GetValue<string>()).ToArray() is [_, ..] steps && steps.All(step => step == "Check")
                 && breaking["error"]!["detail"]!["invalid"]!.AsArray().Select(a => a!["id"]!.GetValue<string>()).SequenceEqual(["derived"])
                 && breaking["error"]!["detail"]!["invalid"]!.AsArray().Select(a => a!["name"]?.GetValue<string>()).SequenceEqual(["Execution"]), "a save that breaks a valid graph is refused: " + breaking.ToJsonString()[..Math.Min(1200, breaking.ToJsonString().Length)]);
             var allowed = await Library(new { operation = "save", id = "helpers", name = "Helpers", expectedRevision = 1, source = "public static class Helper { public static int Twice(int value) => value * 2; public static int Thrice(int value) => value * 3; }" });

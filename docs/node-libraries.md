@@ -31,7 +31,8 @@ public static class CustomNode
 - **Title and description.** `[Node("Title")]` names the node. The XML `<summary>`
   is its description, each `<param>` describes an input and `<returns>` describes
   the output. For a tuple, `<returns>` describes the first element's output; the
-  others have no description.
+  others have no description. In a node library, a `[Node]` method without a doc
+  comment gets a warning; other types and members, and Custom C# code, get none.
 - **Inputs.** The parameter name is the pin's id. Its label is the name in words
   (`roomName` becomes "Room name"), or the text of `[Port("Label")]` on the
   parameter. Optional parameters keep their C# defaults.

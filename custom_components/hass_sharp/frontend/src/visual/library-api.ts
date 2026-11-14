@@ -27,7 +27,7 @@ export interface TypeDefinition {
   text: string
   origin: { library?: string; file?: string; nodeId?: string; assembly?: string }
   line?: number
-  /** Cut at 64 KiB. */
+  /** Cut at 64,000 characters. */
   truncated?: boolean
 }
 export interface LibraryActivation { id: string; saved: true; document: VisualDocument; active: boolean; activationError: string | null }
@@ -78,7 +78,9 @@ export function libraryApi(hass: Pick<HomeAssistant, 'callWS'>) {
   }
 }
 export type LibraryApi = ReturnType<typeof libraryApi>
-export interface LibraryValidationDetail { diagnostics?: LibraryDiagnostic[]; automations?: { id: string; name?: string | null; diagnostics: VisualDiagnostic[] }[] }
+/** A problem a refused save would cause in an automation; `step` is the step's title, as the editor names it. */
+export interface LibraryAutomationDiagnostic extends VisualDiagnostic { step?: string | null }
+export interface LibraryValidationDetail { diagnostics?: LibraryDiagnostic[]; automations?: { id: string; name?: string | null; diagnostics: LibraryAutomationDiagnostic[] }[] }
 /** The node library view with a file open at a line (`?file=<id>&line=<n>`), as a type's "Open in library" goes there. */
 export const libraryHref = (id: string, line?: number) => `/libraries?file=${encodeURIComponent(id)}${line ? `&line=${line}` : ''}`
 export const librariesChanged = () => window.dispatchEvent(new Event('hass-sharp-libraries-changed'))

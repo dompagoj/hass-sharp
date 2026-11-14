@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
-import { NodeLibraryEditor } from '../src/views/NodeLibraryView'
+import { NodeLibraryEditor, NodeLibraryView } from '../src/views/NodeLibraryView'
+import { createMemoryHistory, MemoryRouter, Route } from '@solidjs/router'
 import { editors, resetHost, definitions, completions, openers } from './fake-monaco'
 import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
 vi.mock('monaco-editor', async () => (await import('./fake-monaco')).host)
@@ -132,7 +133,7 @@ it('names each automation a library save re-activated by its name, not its id', 
 it('names the automation a refused library save would break, and drops the previous save’s results', async () => {
   const activations = [{ id: 'visual-1f2e', saved: true, document: { id: 'visual-1f2e', revision: 3, graph: { version: 5, name: 'Porch lights', nodes: [], edges: [] } }, active: true, activationError: null }]
   let refuse = false
-  const refusal = { version: 1, ok: false, error: { code: 'validation', detail: { diagnostics: [], automations: [{ id: 'visual-9a8b', name: 'Night mode', diagnostics: [{ nodeId: 'up', inputId: 'lamp', message: 'Lamp is required', severity: 3 }] }], invalid: [] } } }
+  const refusal = { version: 1, ok: false, error: { code: 'validation', detail: { diagnostics: [], automations: [{ id: 'visual-9a8b', name: 'Night mode', diagnostics: [{ nodeId: 'up', inputId: 'lamp', step: 'Turn on lamp', message: 'Lamp is required', severity: 3 }] }], invalid: [] } } }
   mount(false, (r, result) => r.operation !== 'save' ? result : refuse ? { envelope: refusal } : { ...result, automations: activations })
   await vi.advanceTimersByTimeAsync(900)
   editors[0].change('public class Updated {}'); await vi.advanceTimersByTimeAsync(900)
@@ -142,7 +143,9 @@ it('names the automation a refused library save would break, and drops the previ
   editors[0].change('public class Renamed {}'); await vi.advanceTimersByTimeAsync(900)
   host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
   expect(host.querySelector('[role="alert"]')?.textContent).toContain('Night mode')
-  expect(host.querySelector('[aria-label="Library workspace diagnostics"]')!.textContent).toContain('Night mode · up · lamp: Lamp is required')
+  // The step by its title, as the editor names it, never by its id or the input's.
+  expect(host.querySelector('[aria-label="Library workspace diagnostics"]')!.textContent).toContain('Error · Night mode · Turn on lamp: Lamp is required')
+  expect(host.querySelector('[aria-label="Library workspace diagnostics"]')!.textContent).not.toContain('up · lamp')
   expect(host.textContent).not.toContain('Porch lights: Saved and active')
 })
 it('drops the previous save’s results when a delete starts, and names what a refused delete would break as a delete', async () => {
@@ -168,4 +171,57 @@ it('says which automations a library save left as they were, because they alread
   editors[0].change('public class Updated {}'); await vi.advanceTimersByTimeAsync(900)
   host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
   expect(host.querySelector('[aria-label="Dependent automations"]')!.textContent).toContain('Old heating: Not rebuilt, because it has errors; it is not running')
+})
+
+// "Open in library" from a type's definition: `?file=<id>&line=<n>` opens that file at that line once, then leaves the
+// address (replaced, not a new history entry), so a reload does not jump back there.
+function mountAt(path: string) {
+  requests = []
+  const callWS = async (message: any) => {
+    const r = message.request; requests.push(r)
+    const result = r.operation === 'list' ? { documents: documents(), generation: 'g1' }
+      : r.operation === 'catalog' ? { catalog: rich.catalog, generation: 'g1', saved: true, valid: true, diagnostics: [] }
+      : { id: r.id, workspaceVersion: r.workspaceVersion, generation: r.generation, sourceGeneration: `source-${r.workspaceVersion}`, saved: false, data: r.operation === 'preview' ? { valid: true, catalog: rich.catalog, diagnostics: [] } : [] }
+    return { version: 1, ok: true, result }
+  }
+  const history = createMemoryHistory()
+  history.set({ value: '/automations' }); history.set({ value: path })
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS, user: { is_admin: true } } as any}>
+    <MemoryRouter history={history}><Route path="/libraries" component={NodeLibraryView} /><Route path="/automations" component={() => <p>Automations</p>} /></MemoryRouter>
+  </HassCtx.Provider></QueryClientProvider>, host)
+  return history
+}
+it('opens the file and line an address names, once, and then clears them from the address', async () => {
+  const history = mountAt('/libraries?file=helper&line=1')
+  await vi.advanceTimersByTimeAsync(900)
+  expect(editors[0].getModel().getValue()).toBe('public class Helper {}')
+  expect(editors[0].selection).toMatchObject({ startLineNumber: 1, endLineNumber: 1 })
+  expect(history.get()).toBe('/libraries')
+  // Replaced: Back goes to the page before, not to the address with the file.
+  history.back()
+  expect(history.get()).toBe('/automations')
+})
+it('says when the file an address names is not there, and clears the address', async () => {
+  const history = mountAt('/libraries?file=gone&line=3')
+  await vi.advanceTimersByTimeAsync(900)
+  expect(host.querySelector('.hs-notice')?.textContent).toBe('The library file to open is not there; it may have been renamed or deleted.')
+  expect(editors[0].getModel().getValue()).toBe(rich.source)
+  expect(history.get()).toBe('/libraries')
+})
+
+it('counts what a refused save would break as an error, and lists errors first, marked as the others are', async () => {
+  const warnings = Array.from({ length: 3 }, (_, i) => ({ sourceId: 'shared', startLine: i + 1, startColumn: 1, endLine: i + 1, endColumn: 2, severity: 2, message: `Missing XML comment ${i}` }))
+  const refusal = { version: 1, ok: false, error: { code: 'validation', detail: { diagnostics: warnings, automations: [{ id: 'visual-15ee', name: 'Smoke Select property', diagnostics: [
+    { nodeId: 'd26fa2a6-6669-46f5-ab5e-242c40ccd69d', inputId: 'property', step: 'Select property', message: 'User has no property UserName; choose another', severity: 3 },
+    { nodeId: null, message: 'The graph has no trigger', severity: 3 }] }], invalid: [] } } }
+  mount(false, (r, result) => r.operation === 'save' ? { envelope: refusal } : result); await vi.advanceTimersByTimeAsync(900)
+  editors[0].change('public class Renamed {}'); await vi.advanceTimersByTimeAsync(900)
+  host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
+  const section = host.querySelector('[aria-label="Library workspace diagnostics"]')!
+  expect(section.querySelector('p')!.textContent).toBe('2 errors · 3 warnings')
+  const entries = [...section.querySelectorAll('li')].map(li => li.textContent)
+  expect(entries).toHaveLength(5)
+  expect(entries.slice(0, 2)).toEqual(['Error · Smoke Select property · Select property: User has no property UserName; choose another', 'Error · Smoke Select property: The graph has no trigger'])
+  expect(entries.slice(2).every(text => text!.startsWith('Warning · Shared.cs'))).toBe(true)
+  expect(section.textContent).not.toContain('d26fa2a6')
 })

@@ -59,6 +59,21 @@ public partial class HassSharpManager
     // integrations had registered services (C4, D3); the catalog root never contains them (D2).
     VisualCatalogSnapshot AuthoringSnapshot(VisualCatalogSnapshot saved) => saved.WithServices(ServiceSchemas);
     /// <summary>The automation's name, as the automations page shows it; null when the graph has none.</summary>
+    /// <summary>
+    /// An automation's problems with the step each is about named as the editor names it (<c>step</c>: its label, a
+    /// Custom C# node's title, else its kind's): the library page lists them without the graph.
+    /// </summary>
+    static IEnumerable<object> Described(JsonObject graph, IEnumerable<VisualDiagnostic> diagnostics, VisualCatalogSnapshot snapshot)
+    {
+        var nodes = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var node in graph["nodes"] as JsonArray ?? [])
+            if (node is JsonObject item && item["id"] is JsonValue id && id.TryGetValue<string>(out var text)) nodes.TryAdd(text, item);
+        return diagnostics.Select(d => new
+        {
+            nodeId = d.NodeId, message = d.Message, severity = d.Severity, startLine = d.StartLine, startColumn = d.StartColumn, inputId = d.InputId, portId = d.PortId, code = d.Code,
+            step = d.NodeId != null && nodes.TryGetValue(d.NodeId, out var node) ? VisualGraphValidator.Words.StepName(node, VisualNodeCatalog.Spec(node, snapshot)) : null,
+        }).ToArray();
+    }
     static string? AutomationName(VisualDocument document) => document.Graph["name"] is JsonValue name && name.TryGetValue<string>(out var text) && text.Length > 0 ? text : null;
     static string Success(object result) => JsonSerializer.Serialize(new { version = 1, ok = true, result }, VisualStore.Json);
     static bool IsServicesRequest(string requestJson)
@@ -219,7 +234,7 @@ public partial class HassSharpManager
                         : "Not rebuilt, because it has errors; it is not running" };
             }).ToArray();
             if (!candidate.Valid || previews.Any(p => !p.Preview.Valid))
-                return Error("validation", new { diagnostics = candidate.Diagnostics, automations = previews.Where(p => !p.Preview.Valid).Select(p => new { id = p.Document.Id, name = AutomationName(p.Document), diagnostics = p.Preview.Diagnostics }), invalid });
+                return Error("validation", new { diagnostics = candidate.Diagnostics, automations = previews.Where(p => !p.Preview.Valid).Select(p => new { id = p.Document.Id, name = AutomationName(p.Document), diagnostics = Described(p.Document.Graph, p.Preview.Diagnostics, candidate.Snapshot) }), invalid });
             var rebuilt = previews.Select(p => new VisualDocument(1,p.Document.Id,checked(p.Document.Revision+1),p.Preview.Graph ?? p.Document.Graph,p.Preview.Source,p.Preview.SourceMap) { CatalogGeneration = generation, EmbeddedCatalog = p.Preview.EmbeddedCatalog, Enabled = p.Document.Enabled, SavedUtc = p.Document.SavedUtc }).ToArray();
             var changes = rebuilt.ToDictionary(d => VisualDocuments.FilePath(d.Id), d => (string?)JsonSerializer.Serialize(d, VisualStore.Json));
             changes[LibraryDocuments.DocumentPath(id)] = document == null ? null : JsonSerializer.Serialize(document, VisualStore.Json);

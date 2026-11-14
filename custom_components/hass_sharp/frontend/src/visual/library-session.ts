@@ -1,5 +1,5 @@
 import { batch, createMemo, createSignal, onCleanup } from 'solid-js'
-import { LibraryApiError, librariesChanged, type LibraryApi, type LibraryContext, type LibraryDocument, type LibraryPreview, type LibraryReply, type LibraryActivation, type LibraryNotRebuilt, type LibraryValidationDetail } from './library-api'
+import { LibraryApiError, librariesChanged, type LibraryApi, type LibraryAutomationDiagnostic, type LibraryDiagnostic, type LibraryContext, type LibraryDocument, type LibraryPreview, type LibraryReply, type LibraryActivation, type LibraryNotRebuilt, type LibraryValidationDetail } from './library-api'
 
 export const libraryTemplate = `/// <summary>Reusable nodes.</summary>
 public static class Nodes
@@ -11,6 +11,21 @@ public static class Nodes
     public static string MyNode([Port("Text")] string text) => text;
 }`
 interface Draft extends LibraryDocument { baseline: LibraryDocument; conflict?: boolean }
+/** One line of Workspace diagnostics: a library file's, or an automation's that a refused save would break. */
+export type WorkspaceDiagnostic =
+  | { kind: 'library'; severity: number; diagnostic: LibraryDiagnostic }
+  | { kind: 'automation'; severity: number; automation: string; diagnostic: LibraryAutomationDiagnostic }
+/**
+ * The workspace's diagnostics with what a refused save would break in each automation: errors first (each list keeps
+ * its order), so the reason for a refusal is never under the warnings.
+ */
+export function workspaceDiagnostics(diagnostics: readonly LibraryDiagnostic[], detail?: LibraryValidationDetail): WorkspaceDiagnostic[] {
+  const all: WorkspaceDiagnostic[] = [
+    ...(detail?.automations ?? []).flatMap(graph => graph.diagnostics.map(d => ({ kind: 'automation' as const, severity: d.severity ?? 3, automation: graph.name || graph.id, diagnostic: d }))),
+    ...diagnostics.map(d => ({ kind: 'library' as const, severity: d.severity, diagnostic: d })),
+  ]
+  return [...all.filter(d => d.severity === 3), ...all.filter(d => d.severity !== 3)]
+}
 export function createLibrarySession(api: LibraryApi) {
   const [files, setFiles] = createSignal<Draft[]>([])
   const [selectedId, setSelectedId] = createSignal<string>()
@@ -169,6 +184,6 @@ export function createLibrarySession(api: LibraryApi) {
   window.addEventListener('focus', onFocus)
   onCleanup(() => { disposed = true; ++loadRequest; clearTimeout(timer); window.removeEventListener('hass-sharp-libraries-changed', onChanged); window.removeEventListener('focus', onFocus) })
   void refresh()
-  return { files, selected, selectedId, select, edit, rename, create, remove, save, validateAndSave, reload, refresh, invalidate, dirty, dirtyFile, conflict, canSave, preview, previewing, validatePreview: runPreview, diagnostics: () => validation()?.diagnostics ?? preview()?.diagnostics ?? [], validation, error, loading, saving, activations, notRebuilt, workspaceVersion, generation, sourceGeneration, context, accepts }
+  return { files, selected, selectedId, select, edit, rename, create, remove, save, validateAndSave, reload, refresh, invalidate, dirty, dirtyFile, conflict, canSave, preview, previewing, validatePreview: runPreview, diagnostics: () => validation()?.diagnostics ?? preview()?.diagnostics ?? [], workspace: () => workspaceDiagnostics(validation()?.diagnostics ?? preview()?.diagnostics ?? [], validation()), validation, error, loading, saving, activations, notRebuilt, workspaceVersion, generation, sourceGeneration, context, accepts }
 }
 export type LibrarySession = ReturnType<typeof createLibrarySession>
