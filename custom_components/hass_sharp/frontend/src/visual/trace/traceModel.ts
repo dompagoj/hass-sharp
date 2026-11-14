@@ -139,7 +139,18 @@ export function traceModel(trace: RunTrace, graph: Graph, catalog: VisualCatalog
   const events = [...trace.events].sort((a, b) => a.seq - b.seq)
   const bySeq = new Map(events.map(event => [event.seq, event]))
   const byNode = new Map<string, TraceEvent[]>()
-  for (const event of events) byNode.set(event.node, [...(byNode.get(event.node) ?? []), event])
+  // The runs that read each step's outputs (a value a step does not record itself is found there).
+  const readersOf = new Map<string, TraceEvent[]>()
+  for (const event of events) {
+    const runs = byNode.get(event.node)
+    if (runs) runs.push(event)
+    else byNode.set(event.node, [event])
+    for (const source of new Set(Object.values(event.inputs ?? {}).flatMap(v => (v.src ? [v.src.node] : [])))) {
+      const readers = readersOf.get(source)
+      if (readers) readers.push(event)
+      else readersOf.set(source, [event])
+    }
+  }
   const nodes = new Map(graph.nodes.map(node => [node.id, node]))
   const settled = trace.complete && !trace.truncated && !trace.dropped
   const eventsOf = (id: string) => byNode.get(id) ?? []
@@ -226,7 +237,7 @@ export function traceModel(trace: RunTrace, graph: Graph, catalog: VisualCatalog
     const recorded = side === 'in' ? own?.inputs?.[port] : own?.outputs?.[port]
     if (recorded || side === 'in') return recorded
     // Not recorded as an output (a loop's item and index, a trigger's outputs): what a step downstream read from it.
-    const readers = events.filter(e => framesAgree(e.frame, frame) && (!own || withinFrame(e.frame, own.frame)))
+    const readers = (readersOf.get(id) ?? []).filter(e => framesAgree(e.frame, frame) && (!own || withinFrame(e.frame, own.frame)))
     for (const reader of readers.reverse()) {
       const read = Object.values(reader.inputs ?? {}).find(v => v.src?.node === id && v.src.port === port)
       if (read) return { type: read.type, v: read.v, trunc: read.trunc, redacted: read.redacted }

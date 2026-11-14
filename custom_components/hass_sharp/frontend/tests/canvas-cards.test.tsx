@@ -1193,3 +1193,50 @@ it('keeps a card\'s problem tag inside the canvas and clear of a floating panel:
   await vi.waitFor(() => expect(tip.classList).toContain('hs-node-errors--below'))
   expect(tip.style.getPropertyValue('--hs-tip-shift')).toBe('-20px')
 })
+
+it('makes one undo step of each run of arrow-key moves', () => {
+  const el = host()
+  const history = createGraphHistory(createGraph('Moves'))
+  dispose = render(() => <FlowAdapter graph={history.graph()} selectedId="service-1" onSelect={() => {}} onChange={history.commit} />, el)
+  const x = () => history.graph().nodes.find(n => n.id === 'service-1')!.position!.x
+  const start = x()
+  const key = (type: 'keydown' | 'keyup', key: string) =>
+    el.querySelector('[data-id="service-1"]')!.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, cancelable: true }))
+  // An arrow held down repeats its keydown, then is let go once.
+  for (let i = 0; i < 5; i++) key('keydown', 'ArrowRight')
+  key('keyup', 'ArrowRight')
+  expect(x()).toBe(start + 50)
+  key('keydown', 'ArrowRight'); key('keyup', 'ArrowRight')
+  key('keydown', 'ArrowRight'); key('keyup', 'ArrowRight')
+  expect(x()).toBe(start + 70)
+  history.undo()
+  expect(x()).toBe(start + 60)
+  history.undo()
+  expect(x()).toBe(start + 50)
+  history.undo()
+  expect(x()).toBe(start)
+  expect(history.canUndo()).toBe(false)
+})
+
+it('finds the timeline row in the Tab order once per selection, not once per row', () => {
+  const el = host()
+  const graph = createGraph('Long run')
+  const events = Array.from({ length: 2000 }, (_, i) => ({ node: 'service-1', frame: '', t: i, ms: 1, status: 'ok', port: 'next', seq: i + 1 }) as TraceEvent)
+  const run: RunTrace = { format: 1, runId: 'run-1', rootNodeId: 'trigger-1', startedUtc: '2026-11-12T18:00:00Z', complete: true, truncated: false, dropped: 0, trigger: {}, events,
+    summary: { 'service-1': { count: 2000, failed: 0, last: 'ok' } } }
+  const model = traceModel(run, graph, contract.nodeCatalog)
+  // Counts the scans of the whole run for the selected row.
+  let scans = 0
+  const find = model.events.findIndex.bind(model.events)
+  Object.defineProperty(model.events, 'findIndex', { value: (...args: Parameters<typeof find>) => { scans++; return find(...args) } })
+  const [seq, setSeq] = createSignal<number | undefined>(1)
+  dispose = render(() => <Timeline model={model} graph={graph} catalog={contract.nodeCatalog} selectedSeq={seq()} live={false} onSelect={() => {}} />, el)
+  const rows = el.querySelectorAll<HTMLButtonElement>('.hs-trace-step')
+  expect(rows).toHaveLength(2000)
+  expect(rows[0].tabIndex).toBe(0)
+  expect(scans).toBeLessThanOrEqual(2)
+  setSeq(1500)
+  expect(rows[1499].tabIndex).toBe(0)
+  expect(rows[0].tabIndex).toBe(-1)
+  expect(scans).toBeLessThanOrEqual(3)
+})

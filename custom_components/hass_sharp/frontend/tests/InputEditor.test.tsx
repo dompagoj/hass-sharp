@@ -502,3 +502,28 @@ it('keeps a literal null in a JSON value visible as null: it is a value there, n
   expect(valueSummary({ kind: 'json', multiple: false }, null)).toBe('null')
   expect(valueSummary({ kind: 'text', multiple: false }, null)).toBe('Not set')
 })
+
+it('reads a decimal comma as the decimal point when the number has no point, and refuses more than one separator', () => {
+  const { host, changes } = mount({ input: field('hass_sharp_test.sectioned', 'level'), label: 'Level' })
+  const input = q<HTMLInputElement>(host, 'input[aria-label="Level"]')
+  type(input, '21,5'); blur(input)
+  expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'number', value: 21.5 })
+  type(input, '1.5'); blur(input)
+  expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'number', value: 1.5 })
+  const count = changes.length
+  for (const text of ['1,2,3', '1.2,3']) {
+    type(input, text); blur(input)
+    expect(changes, text).toHaveLength(count)
+    expect(described(host, input).at(-1)).toBe('Enter a number.')
+  }
+  // A field that may be negative takes a comma too.
+  const step = remount({ input: spec(['number'], { min: -10 }), label: 'Step' })
+  const box = q<HTMLInputElement>(step.host, 'input[aria-label="Step"]')
+  type(box, '-1,5'); blur(box)
+  expect(step.changes).toEqual([{ operand: { kind: 'literal', type: 'number', value: -1.5 } }])
+  // So does a part of a duration.
+  const delay = remount({ input: spec(['number', 'object'], { selector: { duration: {} } }), label: 'Delay' })
+  const seconds = q<HTMLInputElement>(delay.host, 'input[aria-label="Delay seconds"]')
+  type(seconds, '2,5'); blur(seconds)
+  expect(delay.changes).toEqual([{ operand: { kind: 'literal', type: 'object', value: { hours: 0, minutes: 0, seconds: 2.5 } } }])
+})

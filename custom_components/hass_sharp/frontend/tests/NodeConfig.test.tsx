@@ -869,3 +869,19 @@ it('describes a setting by its hint only when the hint is shown, and does not ma
   }
   expect(inspector(el).querySelectorAll('.hs-insp-output[tabindex]')).toHaveLength(0)
 })
+
+it('reads a setting\'s decimal comma as a point, and refuses a whole number written with a fraction or two separators', () => {
+  const graph = addNode(createGraph('Loops'), 'repeat', 'loop')
+  const { el, node } = mount(graph, 'loop')
+  const field = () => row(el, 'maxIterations')!.querySelector<HTMLInputElement>('input')!
+  const error = () => row(el, 'maxIterations')!.querySelector('.hs-draft-error, [role="alert"], .hs-input-editor__errors')?.textContent ?? field().getAttribute('aria-invalid')
+  type(field(), '12,0')
+  expect(node().config.maxIterations).toBe(12)
+  type(field(), '7')
+  expect(node().config.maxIterations).toBe(7)
+  for (const text of ['1,5', '1,2,3', '1.2,3']) {
+    type(field(), text)
+    expect(node().config.maxIterations, text).toBe(7)
+    expect(error(), text).toBeTruthy()
+  }
+})

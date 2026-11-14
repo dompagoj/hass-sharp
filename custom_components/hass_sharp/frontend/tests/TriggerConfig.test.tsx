@@ -292,3 +292,16 @@ it('chooses the trigger type from the keyboard: arrows move without choosing, En
   expect(config().type).toBe(triggerChoices.at(-1)!.id === 'other' ? 'ha' : triggerChoices.at(-1)!.id)
   await vi.waitFor(() => expect(document.activeElement).toBe(change))
 })
+
+it('reads a numeric threshold typed with a decimal comma as a number', () => {
+  const { host, config } = mount({ type: 'ha', trigger: { trigger: 'numeric_state', entity_id: ['sensor.temperature'] } })
+  type(field(host, 'Above'), '21,5')
+  expect((config().trigger as any).above).toBe(21.5)
+  type(field(host, 'Below'), '1,2,3')
+  expect((config().trigger as any).below).toBe('1,2,3')
+})
+
+it('offers a daily trigger\'s time to the minute: both validators refuse seconds', () => {
+  const { host } = mount({ type: 'daily', time: '07:30', timeZone: 'UTC' })
+  expect(field(host, 'Time of day').getAttribute('step')).toBe('60')
+})

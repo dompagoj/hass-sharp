@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/solid-query'
 import { useHass } from './context'
-import { registryQuery, type Registry } from './registry'
+import { keepSame, registryQuery, type Registry } from './registry'
 
 export interface EntityInfo {
   entity_id: string
@@ -26,5 +26,5 @@ export { entityQueryKey } from './registry'
 /** The entities of the shared registry query (one `get_entities` request). */
 export function useEntities() {
   const hass = useHass()
-  return useQuery(() => ({ ...registryQuery(hass), select: (registry: Registry) => registry.entities }))
+  return useQuery(() => ({ ...registryQuery(hass), select: (registry: Registry) => registry.entities, reconcile: keepSame<EntityInfo[]> }))
 }

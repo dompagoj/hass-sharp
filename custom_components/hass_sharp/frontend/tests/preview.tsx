@@ -86,6 +86,8 @@ const typedDemo = (): Graph => {
   return { ...g, nodes: [...g.nodes, ...sample.nodes.map((node, i) => ({ ...node, position: { x: 40 + i * 400, y: 820 } }))], edges: [...g.edges, ...sample.edges] }
 }
 if(typedFixture)visualBackend.controls.services = services as unknown as ServicesSection
+// For checking by eye: the stored documents and controls (a revision saved elsewhere, a refused check).
+;(window as any).visualBackend = visualBackend
 if(typedFixture)visualBackend.documents.set('typed-demo',{version:1,id:'typed-demo',revision:1,graph:typedDemo(),source:'// Typed fixture generated on the server',sourceMap:[],automationId:'visual:typed-demo',currentRevisionActive:true,catalogGeneration:'saved-fixture'})
 // A run of "Motion lights v2": a branch (only its true side ran), a loop over four lights where the second one failed
 // and was recovered through its error output, a cut value (the weather's forecast), a hidden value (an API key) and

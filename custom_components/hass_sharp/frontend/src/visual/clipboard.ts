@@ -152,7 +152,11 @@ export function pasteSteps(
   const corner = data.nodes.reduce<Point>((min, node) => ({ x: Math.min(min.x, position(node).x), y: Math.min(min.y, position(node).y) }), { x: Infinity, y: Infinity })
   const move = 'at' in place ? { x: place.at.x - corner.x, y: place.at.y - corner.y } : place.offset
   const snap = (value: number) => (grid ? Math.round(value / grid) * grid : Math.round(value))
-  const nodes = data.nodes.map(node => ({ ...structuredClone(node), id: ids.get(node.id)!, position: { x: snap(position(node).x + move.x), y: snap(position(node).y + move.y) } }))
+  const types = customTypeRenames(data.nodes, ids, catalog)
+  const nodes = data.nodes.map(node => ({
+    ...structuredClone(node), id: ids.get(node.id)!, position: { x: snap(position(node).x + move.x), y: snap(position(node).y + move.y) },
+    ...(types ? { config: renameTypes(node.config, types) } : {}),
+  }))
   const edgeIds = new Set((Array.isArray(graph.edges) ? graph.edges : []).flatMap(edge => (record(edge) && typeof edge.id === 'string' ? [edge.id] : [])))
   const unique = (base: string) => {
     let id = base
@@ -183,3 +187,38 @@ export function pasteSteps(
 }
 
 const finite = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+
+/**
+ * The namespace a Custom C# node's code is compiled in (`NodeLibraryCompiler.CustomNamespace`): letters and digits of
+ * the node id are kept, every other character is written as `_` and four hex digits.
+ */
+export function customNamespace(nodeId: string): string {
+  let name = 'Custom_'
+  for (let i = 0; i < nodeId.length; i++) {
+    const code = nodeId.charCodeAt(i)
+    name += /[A-Za-z0-9]/.test(nodeId[i]) ? nodeId[i] : `_${code.toString(16).toUpperCase().padStart(4, '0')}`
+  }
+  return name
+}
+/**
+ * For each copied Custom C# node, its types' namespace and the one its copy's code compiles in: a type its code
+ * declares has an id under its own node's namespace (`global::NodeLib.Custom_<id>.T`), so a copy that kept the old
+ * ids would not match what its code compiles to, and would read as out of date with its code.
+ */
+function customTypeRenames(nodes: GraphNode[], ids: Map<string, string>, catalog: VisualCatalogSnapshot) {
+  const renames = nodes.flatMap(node => {
+    const spec = Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind] : undefined
+    return spec?.dynamicInputs === 'custom' ? [{ pattern: new RegExp(`(^|[^A-Za-z0-9_])NodeLib\\.${customNamespace(node.id)}\\.`, 'g'), to: `NodeLib.${customNamespace(ids.get(node.id)!)}.` }] : []
+  })
+  return renames.length ? renames : undefined
+}
+/** The settings with every type id under a renamed namespace moved to the new one; a node's code stays as written. */
+function renameTypes(config: GraphNode['config'], renames: { pattern: RegExp; to: string }[]): GraphNode['config'] {
+  const text = (value: string) => renames.reduce((current, { pattern, to }) => current.replace(pattern, (_, before: string) => before + to), value)
+  const walk = (value: unknown): unknown =>
+    typeof value === 'string' ? text(value)
+      : Array.isArray(value) ? value.map(walk)
+        : record(value) ? Object.fromEntries(Object.entries(value).map(([key, item]) => [text(key), walk(item)]))
+          : value
+  return Object.fromEntries(Object.entries(config).map(([key, value]) => [key, key === 'source' ? value : walk(value)]))
+}

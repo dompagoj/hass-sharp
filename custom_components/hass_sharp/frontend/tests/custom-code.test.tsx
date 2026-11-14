@@ -240,6 +240,20 @@ it('takes a step that becomes a value node out of the step order, joining the st
   expect(history.graph()).toEqual(graph)
 })
 
+it('tells same-named steps apart in what a new value node\'s notice says', () => {
+  // Log → code → Log: the two Logs read alike, so each is named with its id.
+  let graph = addNode(sample(), 'log', 'first', catalog)
+  graph = { ...graph, edges: graph.edges.filter(e => !(e.kind !== 'data' && e.target === 'code')) }
+  graph = connectNodes(connectNodes(graph, 'service-1', 'first', undefined, catalog), 'first', 'code', undefined, catalog)
+  const pure = applyCustomCode(graph, 'code', 'code', signature({ text: S }, { result: S }, true), catalog)
+  expect(pure.notice).toBe('Rename this node is now a value node; Log · note now follows Log · first.')
+  // Two same-named steps no longer reached are both named.
+  let split = addNode(sample(), 'log', 'other', catalog)
+  split = connectNodes(split, 'code', 'other', 'error', catalog)
+  expect(applyCustomCode(split, 'code', 'code', signature({ text: S }, { result: S }, true), catalog).notice)
+    .toBe('It is now a value node: removed its 3 step order wires; Log · note and Log · other are no longer reached.')
+})
+
 it('names the steps a new value node no longer leads to when it cannot join them', () => {
   // Its error path goes on to a second Log: two wires out, so nothing is joined.
   let graph = addNode(sample(), 'log', 'oops', catalog)

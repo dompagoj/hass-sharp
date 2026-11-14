@@ -78,6 +78,10 @@ export function visualFixture(
     setEnabledError: undefined as string | undefined,
     /** The automations page's list fails. */
     homeError: false,
+    /** `set_enabled` waits for this before the server takes the switch. */
+    holdEnabled: undefined as Promise<unknown> | undefined,
+    /** A save is taken at once; its reply waits for this. */
+    holdSaveReply: undefined as Promise<unknown> | undefined,
   }
   const makePreview = (_graph: VisualGraph): VisualPreview => ({
     valid: !controls.invalid,
@@ -190,6 +194,7 @@ export function visualFixture(
       }))
     } else if (req.operation === 'list') result = [...documents.values()].map(({ source: _source, sourceMap: _sourceMap, savedUtc: _saved, ...summary }) => ({ enabled: true, ...summary }))
     else if (req.operation === 'set_enabled') {
+      if (controls.holdEnabled) await controls.holdEnabled
       if (controls.setEnabledError) return fail(controls.setEnabledError, 'Fixture refused the switch')
       const document = documents.get(req.id)
       if (!document) return fail('not_found', 'Document missing')
@@ -221,7 +226,8 @@ export function visualFixture(
         savedUtc: new Date().toISOString(),
       }
       documents.set(req.id, document)
-      result = { document, active: controls.active, activationError: controls.active ? null : 'Compilation failed during activation' }
+      result = { document: structuredClone(document), active: controls.active, activationError: controls.active ? null : 'Compilation failed during activation' }
+      if (controls.holdSaveReply) await controls.holdSaveReply
     } else if (req.operation === 'delete') {
       if (controls.deleteConflict || documents.get(req.id)?.revision !== req.expectedRevision) return fail('conflict', 'Changed elsewhere')
       documents.delete(req.id)

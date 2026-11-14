@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { clipboardMarker, copySteps, parseSteps, pasteRefusals, pasteSteps, readSteps, writeSteps } from '../src/visual/clipboard'
-import { addNode, connectNodes, createGraph, updateNode } from '../src/visual/graph'
+import { clipboardMarker, copySteps, customNamespace, parseSteps, pasteRefusals, pasteSteps, readSteps, writeSteps } from '../src/visual/clipboard'
+import { addNode, connectNodes, createGraph, updateNode, type VisualGraph } from '../src/visual/graph'
+import richFixture from '../../../../tests/fixtures/visual-rich-catalog.json'
 import { analyzeGraph, connectData, diagnosticCodes, nodeCatalog, validateGraph, words, type DiagnosticCode, type VisualCatalogSnapshot } from '../src/visual/contract'
 
 afterEach(() => {
@@ -180,4 +181,32 @@ it('refuses a paste only by structural codes the validator really produces', () 
     const codes = analyzeGraph(graph, catalog ?? nodeCatalog).diagnostics.map(d => d.code)
     expect(codes, code).toContain(code)
   }
+})
+
+it('moves the types a pasted Custom C# node\'s code declares to the copy\'s own namespace, as its code compiles them', () => {
+  const rich = richFixture.catalog as unknown as VisualCatalogSnapshot
+  const graph = structuredClone(richFixture.cases.find(c => c.name === 'custom: a record the code declares into the library interface it implements')!.graph) as unknown as VisualGraph
+  const copy = copySteps(graph, ['make', 'consume'])!
+  const result = pasteSteps(graph, copy, rich, { offset: { x: 40, y: 40 } })
+  if ('error' in result) throw new Error(result.error)
+  const [made] = result.ids
+  const pasted = result.graph.nodes.find(n => n.id === made)!
+  const own = `global::NodeLib.${customNamespace(made)}.Own`
+  const signature = pasted.config.signature as any
+  expect(Object.keys(signature.types)).toEqual([own])
+  expect(signature.outputs.result.type).toBe(own)
+  expect(signature.types[own].label).toBe(`NodeLib.${customNamespace(made)}.Own`)
+  // What it converts to: its own type moves, a library's type stays.
+  expect(signature.types[own].assignableTo).toEqual(['global::NodeLib.IReading', 'global::System.Object', own, `global::System.IEquatable<${own}>`])
+  // The code is as written; the original keeps its types.
+  expect(pasted.config.source).toBe(graph.nodes.find(n => n.id === 'make')!.config.source)
+  expect(Object.keys((graph.nodes.find(n => n.id === 'make')!.config.signature as any).types)).toEqual(['global::NodeLib.Custom_make.Own'])
+  // The pasted wire between the two still fits (pasted steps are not connected into the flow yet, as any paste).
+  const errors = (g: VisualGraph) => analyzeGraph(g, rich).diagnostics.filter(d => d.severity === 3 && d.code !== 'node.unreachable')
+  expect(errors(result.graph)).toEqual(errors(graph))
+})
+
+it('writes a Custom C# node\'s namespace as the compiler does', () => {
+  expect(customNamespace('make')).toBe('Custom_make')
+  expect(customNamespace('a-1_b')).toBe('Custom_a_002D1_005Fb')
 })

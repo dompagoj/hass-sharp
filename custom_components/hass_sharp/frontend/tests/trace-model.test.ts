@@ -287,3 +287,22 @@ it('reads a recorded state with the labels of its entity\'s states when the step
   expect(chipValue({ type: 'string', v: 'fan_only' }, unknown).v).toBe('Fan only')
   expect(valueText({ type: 'string', v: 'Living Room' }, unknown)).toBe('Living Room')
 })
+
+it('answers values read downstream in a long run without scanning the whole run for every chip', () => {
+  // 400 values that record nothing themselves, read by 2,000 runs of a log step in a loop (5 reads of each).
+  const sources = Array.from({ length: 400 }, (_, i) => node(`c${i}`, 'constant', { type: 'string', value: lit('string', '') }))
+  const g = graph([node('t', 'trigger', { type: 'manual' }), node('loop', 'repeat'), node('log', 'log', { level: 'Info' }), ...sources],
+    [{ id: 'e1', source: 't', target: 'loop' }, { id: 'e2', source: 'loop', target: 'log', port: 'body' }])
+  const reads = Array.from({ length: 2000 }, (_, i) => ({ node: 'log', port: 'next', frame: `loop#${i}:body`, inputs: { value: { type: 'string', v: `read ${i}`, src: { node: `c${i % 400}`, port: 'value' } } } }))
+  const started = performance.now()
+  const model = traceModel(trace([{ node: 't', port: 'next' }, { node: 'loop', port: 'done' }, ...reads]), g, nodeCatalog)
+  // A person steps through 25 iterations; each shows the chip of every value on the canvas.
+  for (let i = 0; i < 25; i++)
+    for (let k = 0; k < 400; k++) {
+      const value = model.value(`c${k}`, 'value', 'out', `loop#${i}:body`)
+      if (k === i % 400) expect(value?.v).toBe(`read ${i}`)
+    }
+  expect(model.value('c0', 'value', 'out', '')?.v).toBe('read 1600')
+  expect(model.eventsOf('log')).toHaveLength(2000)
+  expect(performance.now() - started).toBeLessThan(1000)
+})

@@ -884,11 +884,14 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     change(next)
     requestAnimationFrame(() => void flow?.fitView({ ...fitOptions, duration: motion() }))
   }
+  // One run of arrow presses (an arrow held down, or pressed again before it was let go) is one undo step: the run
+  // ends when an arrow key is released, or with any other change.
+  let nudgeRun = 0
   const nudge = (ids: string[], [dx, dy]: [number, number], large: boolean) => {
     const step = (snap() ? GRID : 10) * (large ? 4 : 1)
     const moving = new Set(ids)
     const next = { ...graph(), nodes: graph().nodes.map(node => (moving.has(node.id) ? { ...node, position: { x: (node.position?.x ?? 60) + dx * step, y: (node.position?.y ?? 100) + dy * step } } : node)) }
-    change(next)
+    change(next, { coalesce: `nudge:${nudgeRun}:${[...moving].sort().join(' ')}` })
   }
   props.controls?.({
     duplicate: duplicateSteps,
@@ -1210,6 +1213,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
           if (id && !selectedSet().has(id)) select([id])
         }}
         on:keydown={keyboard}
+        on:keyup={event => { if (event.key.startsWith('Arrow')) nudgeRun++ }}
       >
         {/* CSS never escapes the canvas into HA's light DOM. Requires CSS @scope support. */}
         <style>{`@scope (.hs-flow) { ${flowStyles} }`}</style>

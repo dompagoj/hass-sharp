@@ -65,7 +65,12 @@ export function applyCustomCode(graph: VisualGraph, nodeId: string, source: stri
   // A value node has no place in the step order. Between one step before and one after, those two are joined (so
   // the run still reaches what followed); otherwise the steps that only it led to are named.
   const pure = signature.pure === true
-  const title = (id: string) => nodeTitle(next.nodes.find(n => n.id === id), types, id)
+  // A step is named as on its card; when another step reads the same, its id tells them apart (as Run now's list does).
+  const plainTitle = (id: string) => nodeTitle(next.nodes.find(n => n.id === id), types, id)
+  const title = (id: string) => {
+    const name = plainTitle(id)
+    return next.nodes.some(node => node.id !== id && plainTitle(node.id) === name) ? `${name} · ${id}` : name
+  }
   let steps = 0, joined: { before: string; after: string } | undefined
   const unreached: string[] = []
   if (pure) {

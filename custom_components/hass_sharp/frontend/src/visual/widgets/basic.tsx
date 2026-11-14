@@ -2,11 +2,9 @@ import { createEffect, createSignal, createUniqueId, For, Index, on, Show, type 
 import type { JsonValue } from '../contract'
 import { Chips, DraftField, dragSession, textPlaceholder, type WidgetProps } from './common'
 import { displayValue, jsonEqual } from './json'
+import { numberText, parseNumber } from './number'
 import { durationParts, durationSeconds, durationValue, valueKind, type ValueKind, type Widget, type WidgetKind, type WidgetOption } from './model'
 
-const numberText = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/
-/** Parse a typed number; undefined for empty text, NaN for anything that is not a finite number. */
-const parseNumber = (text: string) => text.trim() === '' ? undefined : numberText.test(text.trim()) && Number.isFinite(Number(text)) ? Number(text) : Number.NaN
 const items = (value: JsonValue | undefined): JsonValue[] => Array.isArray(value) ? value : value === undefined ? [] : [value]
 /** The decimal keypad has no minus sign on some phones; offer it only when values cannot be negative. */
 const decimalMode = (min: number | undefined) => min !== undefined && min >= 0 ? 'decimal' as const : undefined
@@ -163,7 +161,7 @@ export function DateTimeWidget(props: WidgetProps) {
   const text = () => { const m = stored(); return m ? `${m[1]}T${m[3]}` : displayValue(props.value) }
   const suffix = () => stored()?.[5] ?? ''
   return <span class="hs-widget-row">
-    <DraftField id={props.id} label={props.label} type={type()} step={props.widget.kind === 'date' ? undefined : '1'} text={text()} placeholder={textPlaceholder(props.value)}
+    <DraftField id={props.id} label={props.label} type={type()} step={props.widget.kind === 'date' ? undefined : String(props.widget.step ?? 1)} text={text()} placeholder={textPlaceholder(props.value)}
       describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
       commit={value => {
         if (value === '') { props.commit(undefined); return }

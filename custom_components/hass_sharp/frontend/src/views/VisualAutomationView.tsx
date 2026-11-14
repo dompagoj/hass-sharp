@@ -10,6 +10,8 @@ export function VisualAutomationView() {
   const navigate = useNavigate()
   const [dirty, setDirty] = createSignal(false)
   const [leave, setLeave] = createSignal<(() => void)>()
+  // Leaving through Discard changes also drops the draft the editor keeps of them.
+  let discardDraft: (() => void) | undefined
   // Leaving with unsaved changes (the back button, a link, the browser's back) asks first.
   useBeforeLeave(event => {
     if (!dirty()) return
@@ -21,13 +23,15 @@ export function VisualAutomationView() {
   onMount(() => { if (params.drawer !== undefined) setParams({ drawer: undefined }, { replace: true }) })
   return <>
     <VisualEditor documentId={route.id && route.id !== 'new' ? route.id : undefined} onDirtyChange={setDirty}
-      onSaved={doc => { if (route.id === 'new') navigate(`/visual/${doc.id}`, { replace: true }) }}
+      discardRef={discard => (discardDraft = discard)}
+      // A first save, or a copy saved instead of a conflicting revision, has an id of its own.
+      onSaved={doc => { if (route.id !== doc.id) navigate(`/visual/${doc.id}`, { replace: true }) }}
       onBack={() => navigate('/automations')}
       drawer={params.drawer === 'runs' ? 'runs' : undefined}
       name={typeof params.name === 'string' && params.name.trim() ? params.name : 'Untitled visual automation'} />
     <Dialog open={!!leave()} title="Unsaved changes" width="small" onClose={() => setLeave(undefined)} footer={<>
       <Button onClick={() => setLeave(undefined)}>Keep editing</Button>
-      <Button variant="danger" onClick={() => { const retry = leave(); setLeave(undefined); retry?.() }}>Discard changes</Button>
-    </>}><p>Leave and discard your unsaved changes? Export the graph from the "⋯" menu first if you want to keep a copy.</p></Dialog>
+      <Button variant="danger" onClick={() => { const retry = leave(); setLeave(undefined); discardDraft?.(); retry?.() }}>Discard changes</Button>
+    </>}><p>Leave and discard your unsaved changes?</p></Dialog>
   </>
 }

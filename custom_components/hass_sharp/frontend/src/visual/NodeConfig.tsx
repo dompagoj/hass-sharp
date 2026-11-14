@@ -14,6 +14,7 @@ import { updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
 import { typeLabel } from './typeLabels'
 import { DraftField } from './widgets/common'
+import { parseNumber } from './widgets/number'
 import { stateField, WidgetControl } from './widgets'
 import type { VisualDiagnostic } from './api'
 
@@ -133,7 +134,7 @@ export function NodeConfig(props: NodeConfigProps) {
                 commit={text => {
                   if (!number()) { set(field.name, text === '' && !field.rule.required ? undefined : text); return }
                   if (text.trim() === '') { set(field.name, undefined); return }
-                  const parsed = Number(text)
+                  const parsed = parseNumber(text) ?? Number.NaN
                   if (!Number.isFinite(parsed) || (field.rule.type === 'integer' && !Number.isInteger(parsed))) return field.rule.type === 'integer' ? 'Enter a whole number.' : 'Enter a number.'
                   set(field.name, parsed)
                 }} />

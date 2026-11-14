@@ -112,7 +112,7 @@ it('saves server generated source, opens persisted identity and exposes run/hist
   root.querySelector<HTMLAnchorElement>('a')!.click(); await Promise.resolve()
   expect(root.textContent).toContain('Elsewhere')
 })
-it('keeps a conflicted local draft until the user explicitly reloads it', async () => {
+it('keeps a conflicted local draft until the person chooses what to keep, and can still reload and discard it', async () => {
   const { root, fixture } = setup()
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   button(root, 'Save').click()
@@ -123,10 +123,142 @@ it('keeps a conflicted local draft until the user explicitly reloads it', async 
   button(root, 'Save').click()
   await vi.waitFor(() => expect(root.textContent).toContain('Changed elsewhere'))
   expect((root.querySelector('[aria-label="Node label"]') as HTMLInputElement).value).toBe('My unsaved change')
+  // The choices, and no advice to export first.
+  const dialog = () => root.querySelector('dialog[open]')
+  await vi.waitFor(() => expect(dialog()?.textContent).toContain('This automation changed elsewhere'))
+  expect(dialog()!.textContent).not.toContain('Export')
+  expect(root.querySelector('.hs-visual-alert')!.textContent).not.toContain('Export')
+  for (const choice of ['Keep my version', 'Save as a copy', 'Discard my changes']) expect(button(dialog()!, choice), choice).toBeDefined()
+  // Closed, the choices come back from the alert and from Save.
+  button(dialog()!, 'Close dialog').click()
+  expect(dialog()).toBeNull()
+  button(root, 'Save').click()
+  expect(dialog()?.textContent).toContain('This automation changed elsewhere')
+  button(dialog()!, 'Close dialog').click()
+  button(root, 'Choose what to keep…').click()
+  expect(dialog()?.textContent).toContain('This automation changed elsewhere')
+  button(dialog()!, 'Close dialog').click()
   more(root, 'Reload saved graph')
   expect(root.querySelector('dialog[open]')?.textContent).toContain('Discard local changes')
   button(root, 'Reload and discard').click()
   await vi.waitFor(() => expect((root.querySelector('[aria-label="Node label"]') as HTMLInputElement).value).toBe('Entity changes'))
+})
+it('Keep my version saves the changes over the revision saved elsewhere', async () => {
+  const { root, fixture } = setup(true)
+  await saved(root, 4)
+  edit(root, 'Mine')
+  // Saved elsewhere meanwhile (a node library save rebuilds it).
+  const stored = fixture.documents.get('motion')!
+  fixture.documents.set('motion', { ...stored, revision: 6 })
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  const dialog = () => root.querySelector('dialog[open]')
+  await vi.waitFor(() => expect(dialog()?.textContent).toContain('This automation changed elsewhere'))
+  button(dialog()!, 'Keep my version').click()
+  await saved(root, 7)
+  expect(fixture.documents.get('motion')!.graph.nodes[0].label).toBe('Mine')
+  expect(root.querySelector('[role="alert"]')).toBeNull()
+})
+it('Save as a copy saves the changes as a new automation, turned off, and opens it', async () => {
+  const { root, fixture, history } = setup(true)
+  await saved(root, 4)
+  edit(root, 'Mine')
+  fixture.controls.conflict = true
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  const dialog = () => root.querySelector('dialog[open]')
+  await vi.waitFor(() => expect(dialog()?.textContent).toContain('This automation changed elsewhere'))
+  fixture.controls.conflict = false
+  button(dialog()!, 'Save as a copy').click()
+  await vi.waitFor(() => expect(fixture.documents.size).toBe(2))
+  const copy = [...fixture.documents.values()].find(d => d.id !== 'motion')!
+  expect(copy).toMatchObject({ revision: 1, enabled: false })
+  expect(copy.graph.name).toBe('Saved motion (copy)')
+  expect(copy.graph.nodes[0].label).toBe('Mine')
+  expect(fixture.documents.get('motion')!.graph.nodes[0].label).not.toBe('Mine')
+  await vi.waitFor(() => expect(history.get()).toBe(`/visual/${copy.id}`))
+  await saved(root, 1)
+  expect(root.querySelector('h1')?.textContent).toBe('Saved motion (copy)')
+})
+it('saves on the first click right after an edit, while its check is still running', async () => {
+  const { root, fixture } = setup(true)
+  await saved(root, 4)
+  edit(root, 'Saved at once')
+  // The click lands before the check of the edit answers: Save is available and says what it waits on.
+  expect(button(root, 'Save').disabled).toBe(false)
+  expect(button(root, 'Save').title).toBe('Checking…')
+  button(root, 'Save').click()
+  await saved(root, 5)
+  expect(fixture.documents.get('motion')!.graph.nodes[0].label).toBe('Saved at once')
+})
+it('says when the graph could not be checked, still saves, and checks again when the page comes back', async () => {
+  const { root, fixture } = setup(true)
+  await saved(root, 4)
+  fixture.controls.previewError = true
+  edit(root, 'Unchecked')
+  await vi.waitFor(() => expect(button(root, 'Save').title).toBe('Could not check the graph'))
+  expect(button(root, 'Save').disabled).toBe(false)
+  fixture.controls.previewError = false
+  window.dispatchEvent(new Event('focus'))
+  await vi.waitFor(() => expect(button(root, 'Save').hasAttribute('title')).toBe(false))
+  button(root, 'Save').click()
+  await saved(root, 5)
+})
+it('offers the unsaved changes of a panel torn down without asking, and restores them as one undo step', async () => {
+  const first = setup(true)
+  await saved(first.root, 4)
+  edit(first.root, 'Left unsaved')
+  // Home Assistant's sidebar removes the panel: no router guard, no beforeunload.
+  dispose!(); dispose = undefined; document.body.innerHTML = ''
+  const { root } = setup(true)
+  const dialog = () => root.querySelector('dialog[open]')
+  await vi.waitFor(() => expect(dialog()?.textContent).toContain('Restore unsaved changes from'))
+  expect(chip(root).textContent).toBe('Saved')
+  button(dialog()!, 'Restore').click()
+  expect(dialog()).toBeNull()
+  await vi.waitFor(() => expect((root.querySelector('[aria-label="Node label"]') as HTMLInputElement).value).toBe('Left unsaved'))
+  expect(chip(root).textContent).toBe('Unsaved changes')
+  button(root, 'Undo').click()
+  await vi.waitFor(() => expect((root.querySelector('[aria-label="Node label"]') as HTMLInputElement).value).toBe('Entity changes'))
+  expect(chip(root).textContent).toBe('Saved')
+})
+it('offers no restore after leaving with nothing unsaved, or after discarding the changes on the way out', async () => {
+  const first = setup(true)
+  await saved(first.root, 4)
+  dispose!(); dispose = undefined; document.body.innerHTML = ''
+  const second = setup(true)
+  await saved(second.root, 4)
+  expect(second.root.querySelector('dialog[open]')).toBeNull()
+  edit(second.root, 'Thrown away')
+  second.root.querySelector<HTMLAnchorElement>('a')!.click(); await Promise.resolve()
+  button(second.root, 'Discard changes').click()
+  await vi.waitFor(() => expect(second.root.textContent).toContain('Elsewhere'))
+  dispose!(); dispose = undefined; document.body.innerHTML = ''
+  const third = setup(true)
+  await saved(third.root, 4)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(third.root.querySelector('dialog[open]')).toBeNull()
+})
+it('keeps the switch as the server took it when a save that the server took first answers after it', async () => {
+  const { root, fixture } = setup(true)
+  await saved(root, 4)
+  const toggle = () => root.querySelector<HTMLInputElement>('.hs-topbar__enabled input[role="switch"]')!
+  await vi.waitFor(() => expect(toggle()).not.toBeNull())
+  let takeSwitch!: () => void, answerSave!: () => void
+  fixture.controls.holdEnabled = new Promise<void>(resolve => { takeSwitch = resolve })
+  fixture.controls.holdSaveReply = new Promise<void>(resolve => { answerSave = resolve })
+  // Off is pressed; before the server takes it, a save goes in and is taken first (the automation still on).
+  toggle().click()
+  expect(toggle().checked).toBe(false)
+  edit(root, 'Saved during the switch')
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(fixture.documents.get('motion')!.revision).toBe(5))
+  takeSwitch()
+  await vi.waitFor(() => expect(fixture.documents.get('motion')!.enabled).toBe(false))
+  answerSave()
+  await saved(root, 5)
+  // The save's answer says on; the server holds off, and so does the switch.
+  expect(toggle().checked).toBe(false)
 })
 it('shows persistence succeeded when runtime activation fails', async () => {
   const { root, fixture } = setup(); fixture.controls.active = false
@@ -205,8 +337,9 @@ it('marks Save unavailable while there is nothing to save, keeps it focusable an
   const name = root.querySelector<HTMLInputElement>('[aria-label="Automation name"]')!
   name.value = 'Renamed motion'; name.dispatchEvent(new Event('input', { bubbles: true })); name.dispatchEvent(new FocusEvent('blur'))
   await vi.waitFor(() => expect(unavailable() || save().disabled).toBe(false))
-  expect(save().hasAttribute('title')).toBe(false)
+  // Available at once; until the check of the edit answers, its title says it is running.
   expect(save().hasAttribute('aria-describedby')).toBe(false)
+  await vi.waitFor(() => expect(save().hasAttribute('title')).toBe(false))
   button(root, 'Undo').click()
   await vi.waitFor(() => expect(unavailable()).toBe(true))
   name.value = 'Renamed motion'; name.dispatchEvent(new Event('input', { bubbles: true })); name.dispatchEvent(new FocusEvent('blur'))
@@ -222,7 +355,7 @@ it('keeps Save enabled for a saved version that is not active, so saving it agai
   fixture.documents.get('motion')!.currentRevisionActive = false
   await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Saved motion'))
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  expect(button(root, 'Save').hasAttribute('title')).toBe(false)
+  await vi.waitFor(() => expect(button(root, 'Save').hasAttribute('title')).toBe(false))
   button(root, 'Save').click()
   await vi.waitFor(() => expect(fixture.calls.filter(c => c.request?.operation === 'save')).toHaveLength(1))
 })

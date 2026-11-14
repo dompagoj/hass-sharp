@@ -6,6 +6,7 @@ import type { VisualDiagnostic } from './api'
 import { domainWords } from './typeLabels'
 import { fitsWidget, stateField, widgetFor, WidgetControl, type Widget } from './widgets'
 import { Glyph } from './Glyph'
+import { parseNumber } from './widgets/number'
 
 type Config = GraphNode['config']
 type Change = (config: Config, options?: { coalesce?: string }) => void
@@ -214,8 +215,10 @@ const entityValue = (value: JsonValue | undefined) => (Array.isArray(value) && v
 /** "07:30:00" is stored as Home Assistant and HassSharp write a time of day without seconds. */
 const timeOfDay = (value: JsonValue | undefined) => (typeof value === 'string' && /^\d\d:\d\d:00$/.test(value) ? value.slice(0, 5) : value)
 /** A number stays a number; anything else (an entity holding the limit) is kept as text. */
-const numberOrText = (value: JsonValue | undefined) =>
-  typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value)) ? Number(value) : value
+const numberOrText = (value: JsonValue | undefined) => {
+  const number = typeof value === 'string' ? parseNumber(value) : undefined
+  return number !== undefined && Number.isFinite(number) ? number : value
+}
 const timeZones = (() => {
   try {
     return (Intl as unknown as { supportedValuesOf?(key: string): string[] }).supportedValuesOf?.('timeZone') ?? []
@@ -379,7 +382,7 @@ export function TriggerConfig(props: {
           onChange={v => set('entity', typeof v === 'string' ? v : undefined)} />
       </Show>
       <Show when={type() === 'daily'}>
-        <ValueField label="Time of day" inputId="time" widget={{ kind: 'time', multiple: false }} value={config().time} required errors={errors('time')}
+        <ValueField label="Time of day" inputId="time" widget={{ kind: 'time', multiple: false, step: 60 }} value={config().time} required errors={errors('time')}
           onChange={v => set('time', timeOfDay(v))} />
         <ValueField label="Time zone" inputId="timeZone" widget={{ ...text, options: timeZones.map(zone => ({ value: zone, label: zone })) }} value={config().timeZone}
           required errors={errors('timeZone')} hint="For example Europe/Zagreb or UTC." onChange={v => set('timeZone', v)} />

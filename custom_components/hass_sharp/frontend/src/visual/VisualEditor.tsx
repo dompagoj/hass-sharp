@@ -49,9 +49,13 @@ export function VisualEditor(props: {
   onBack?: () => void
   /** Opens with the bottom drawer on this tab (a run's trace goes back to the Runs tab). */
   drawer?: DrawerTab
+  /** Receives what discards the unsaved changes' draft, for leaving without saving. */
+  discardRef?: (discard: () => void) => void
 }) {
   const hass = useHass()
-  const session = createVisualSession(hass, createGraph(props.name))
+  // Unapplied code counts as unsaved: a revision saved elsewhere is then never reloaded over it.
+  const session = createVisualSession(hass, createGraph(props.name), { unsaved: () => codeDirty() })
+  props.discardRef?.(session.discardDraft)
   const queryClient = useQueryClient()
   const entities = useEntities()
   onMount(() => {
@@ -89,19 +93,25 @@ export function VisualEditor(props: {
       ([id, name], previous) => {
         if (id && id !== session.document()?.id) void session.load(id)
         else if (!id && previous) session.newDraft(createGraph(name))
+        else if (!id) session.openNew()
       },
     ),
   )
   // Saved, unchanged and active: Save would store the same revision again. A saved version that is not active can be
   // saved again (to activate it), and a new automation always can.
   const nothingToSave = () => { const doc = session.document(); return !!doc && !session.dirty() && doc.currentRevisionActive !== false }
+  /** A save (or a copy, or a resolved conflict) went through: the lists show it, and the address follows a new id. */
+  const stored = (result: Awaited<ReturnType<typeof session.save>>) => {
+    if (!result) return
+    void queryClient.invalidateQueries({ queryKey: ['visual-automations'] })
+    if (!session.dirty()) props.onSaved?.(result.document)
+  }
   const save = async () => {
+    if (session.conflict()) return setConflictOpen(true)
     if (nothingToSave()) return
-    const result = await session.save()
-    if (result) {
-      void queryClient.invalidateQueries({ queryKey: ['visual-automations'] })
-      if (!session.dirty()) props.onSaved?.(result.document)
-    }
+    if (switching()) savedWhileSwitching = true
+    stored(await session.save())
+    savedWhileSwitching = false
   }
   const [reloadDialog, setReloadDialog] = createSignal(false)
   const reload = () => {
@@ -109,6 +119,26 @@ export function VisualEditor(props: {
     if (session.dirty()) setReloadDialog(true)
     else if (props.documentId) void session.load(props.documentId)
   }
+  // ---- A revision saved elsewhere while there are unsaved changes here: the person chooses what to keep.
+  const [conflictOpen, setConflictOpen] = createSignal(false)
+  createEffect(on(session.conflict, conflicted => setConflictOpen(conflicted)))
+  const resolve = async (choice: 'keep' | 'copy' | 'discard') => {
+    setConflictOpen(false)
+    // An open code editor stays, or offers its unapplied code when its step is gone (as on any reload).
+    if (choice === 'discard') return session.discardChanges()
+    stored(await (choice === 'keep' ? session.keepMine() : session.saveCopy()))
+  }
+  const draftTime = (at: number | undefined) => (at === undefined ? '' : new Date(at).toLocaleString())
+  // ---- A check of the graph that could not run is tried again when the page comes back or reconnects.
+  const retryFailedPreview = () => { if (session.previewError()) session.retryPreview() }
+  onMount(() => {
+    window.addEventListener('focus', retryFailedPreview)
+    hass.connection?.addEventListener?.('ready', retryFailedPreview)
+  })
+  onCleanup(() => {
+    window.removeEventListener('focus', retryFailedPreview)
+    hass.connection?.removeEventListener?.('ready', retryFailedPreview)
+  })
   const [helpOpen, setHelpOpen] = createSignal(false)
   const beforeUnload = (event: BeforeUnloadEvent) => {
     if (dirty()) {
@@ -260,7 +290,7 @@ export function VisualEditor(props: {
   const runUnavailable = () => {
     const doc = session.document()
     if (!doc) return
-    if (session.conflict()) return 'The saved automation changed elsewhere; reload it first'
+    if (session.conflict()) return 'The saved automation changed elsewhere; choose what to keep first'
     if (session.catalogError()) return 'The node catalog could not be loaded'
     if (!doc.currentRevisionActive) return 'The saved version is not active'
   }
@@ -275,14 +305,23 @@ export function VisualEditor(props: {
     const local = switched()
     return local?.id === doc.id ? local.enabled : doc.enabled ?? true
   }
-  createEffect(on(() => session.document(), () => setSwitched(undefined), { defer: true }))
+  // A save's reply may come from before a switch the server took after it (the switch was pressed first): the switch's
+  // own answer wins until a document says the same, another automation opens, or the saved one is read again.
+  let savedWhileSwitching = false
+  createEffect(on(() => session.document(), doc => {
+    const local = switched()
+    if (!local) return
+    if (!doc || doc.id !== local.id || (doc.enabled ?? true) === local.enabled || (!switching() && !savedWhileSwitching)) setSwitched(undefined)
+  }, { defer: true }))
+  createEffect(on(session.loading, loading => { if (loading && !switching()) setSwitched(undefined) }, { defer: true }))
   const toggleEnabled = async (wanted: boolean) => {
     const doc = session.document()
     if (!doc || switching()) return
     const before = enabled() ?? true
     batch(() => { setSwitching(true); setSwitched({ id: doc.id, enabled: wanted }) })
     try {
-      await setAutomationEnabled(hass, queryClient, doc.id, wanted)
+      const now = await setAutomationEnabled(hass, queryClient, doc.id, wanted)
+      setSwitched({ id: doc.id, enabled: now })
     } catch (error) {
       setSwitched({ id: doc.id, enabled: before })
       showRunNotice({ text: `Could not turn it ${wanted ? 'on' : 'off'}: ${visualError(error)}`, error: true })
@@ -365,6 +404,14 @@ export function VisualEditor(props: {
   ]
 
   const busy = () => session.loading() || session.saving()
+  /** Save's title: why it does nothing, or what it is waiting on (it saves anyway; the server checks a save itself). */
+  const saveTitle = () => {
+    if (session.conflict()) return 'The saved automation changed elsewhere: choose what to keep'
+    if (nothingToSave()) return 'Nothing to save: every change is saved'
+    if (!session.canSave()) return
+    if (session.previewError()) return 'Could not check the graph'
+    if (session.previewPending()) return 'Checking…'
+  }
 
   return (
     <section
@@ -390,8 +437,8 @@ export function VisualEditor(props: {
         canRedo={history.canRedo()}
         onUndo={history.undo}
         onRedo={history.redo}
-        canSave={session.canSave() && !nothingToSave()}
-        saveTitle={nothingToSave() ? 'Nothing to save: every change is saved' : undefined}
+        canSave={session.conflict() || (session.canSave() && !nothingToSave())}
+        saveTitle={saveTitle()}
         onSave={() => void save()}
         run={
           admin() ? (
@@ -422,7 +469,7 @@ export function VisualEditor(props: {
         <div class="hs-visual-alert hs-notice--danger" role="alert">
           {session.error()}
           <Show when={session.conflict()}>
-            <p>Your local graph is preserved. Export it from the "⋯" menu before reloading the saved graph to resolve this conflict.</p>
+            <p>Your changes are still here. <Button onClick={() => setConflictOpen(true)}>Choose what to keep…</Button></p>
           </Show>
         </div>
       </Show>
@@ -534,7 +581,7 @@ export function VisualEditor(props: {
               variant="danger"
               onClick={() => {
                 setReloadDialog(false)
-                if (props.documentId) void session.load(props.documentId)
+                void session.discardChanges()
               }}
             >
               Reload and discard
@@ -542,7 +589,34 @@ export function VisualEditor(props: {
           </>
         }
       >
-        <p>Reloading replaces your local graph with the saved revision. Export your graph first to keep a copy.</p>
+        <p>Reloading replaces your unsaved changes with the saved version.</p>
+      </Dialog>
+      <Dialog open={session.conflict() && conflictOpen()} title="This automation changed elsewhere" width="medium" onClose={() => setConflictOpen(false)}
+        footer={
+          <>
+            <Button variant="danger" disabled={busy()} onClick={() => void resolve('discard')}>Discard my changes</Button>
+            <Button disabled={busy()} onClick={() => void resolve('copy')}>Save as a copy</Button>
+            <Button variant="primary" disabled={busy()} onClick={() => void resolve('keep')}>Keep my version</Button>
+          </>
+        }
+      >
+        <Show when={session.conflictDraft()} fallback={
+          <p>It was saved again somewhere else while you had unsaved changes here. Saving a node library does this to every automation that uses it.</p>
+        }>
+          {at => <p>Your unsaved changes from {draftTime(at())} were made before this automation was saved again somewhere else.</p>}
+        </Show>
+        <p><strong>Keep my version</strong> saves your changes over the saved one. <strong>Save as a copy</strong> saves them as a new automation, turned off, and leaves the saved one as it is. <strong>Discard my changes</strong> opens the saved version.</p>
+      </Dialog>
+      <Dialog open={!!session.restoreOffer()} title="Restore unsaved changes?" width="small" preventClose onClose={() => {}}
+        footer={
+          <>
+            <Button onClick={() => session.dismissDraft()}>Discard</Button>
+            <Button variant="primary" autofocus onClick={() => session.restoreDraft()}>Restore</Button>
+          </>
+        }
+      >
+        <p>Restore unsaved changes from {draftTime(session.restoreOffer()?.at)}?</p>
+        <p>They were left when this page closed before they were saved. Restoring them can be undone.</p>
       </Dialog>
       <HelpDialog open={helpOpen()} onClose={() => setHelpOpen(false)} />
       {/* Inside the page root, so it also covers the full-screen editor. */}

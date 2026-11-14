@@ -3,6 +3,8 @@ import { Button } from './Controls'
 import { Dialog } from './Dialog'
 
 export interface CatalogItem { id: string; name?: string; description?: string }
+/** Results drawn at most: thousands of entities would take long to draw, and the search finds the rest. */
+export const shownResults = 200
 
 const domainPaths: Record<string, string> = {
   light: 'M9 18h6m-5 3h4M8 14a6 6 0 1 1 8 0l-1 2H9Z',
@@ -63,9 +65,10 @@ export function CatalogPicker(props: CatalogPickerProps) {
   const matches = createMemo(() => offered().filter(item =>
     (!domain() || item.id.startsWith(domain() + '.')) &&
     `${item.id} ${item.name ?? ''} ${item.description ?? ''}`.toLocaleLowerCase().includes(search().toLocaleLowerCase())))
+  const shown = createMemo(() => matches().length > shownResults ? matches().slice(0, shownResults) : matches())
   // A refreshed catalog can reorder results while the dialog remains open.
   createEffect(() => { matches(); setActive(-1) })
-  const activeId = () => active() >= 0 && active() < matches().length ? `${id}-${active()}` : undefined
+  const activeId = () => active() >= 0 && active() < shown().length ? `${id}-${active()}` : undefined
   const values = () => props.values ?? []
   const selected = (item: string) => props.multiple ? values().includes(item) : props.value === item
   const choose = (value: string) => {
@@ -88,16 +91,16 @@ export function CatalogPicker(props: CatalogPickerProps) {
   const keyboard = (event: KeyboardEvent) => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
-      const count = matches().length
+      const count = shown().length
       if (count) {
         setActive(index => (index + (event.key === 'ArrowDown' ? 1 : index < 0 ? 0 : -1) + count) % count)
         const root = (event.currentTarget as HTMLElement).getRootNode() as Document | ShadowRoot
         root.querySelector(`#${activeId()}`)?.scrollIntoView?.({ block: 'nearest' })
       }
     }
-    if (event.key === 'Enter' && matches()[active()]) {
+    if (event.key === 'Enter' && shown()[active()]) {
       event.preventDefault()
-      choose(matches()[active()].id)
+      choose(shown()[active()].id)
     }
   }
 
@@ -133,13 +136,16 @@ export function CatalogPicker(props: CatalogPickerProps) {
         <p role="status">No matching {props.kind}. Enter an exact ID to retain an unavailable item.</p>
       </Show>
       <div class="hs-picker-results" role="listbox" id={`${id}-list`} aria-label={`${label()} results`} aria-multiselectable={props.multiple || undefined}>
-        <For each={matches()}>{(item, index) => <button type="button" tabindex="-1" role="option" id={`${id}-${index()}`}
+        <For each={shown()}>{(item, index) => <button type="button" tabindex="-1" role="option" id={`${id}-${index()}`}
           aria-selected={selected(item.id)} classList={{ 'hs-picker-active': active() === index() }} onClick={() => choose(item.id)}>
           <DomainIcon domain={item.id.split('.')[0]} />
           <span><strong>{item.name || item.id}</strong><small>{item.id}</small><Show when={item.description}><small>{item.description}</small></Show></span>
           <Show when={selected(item.id)}><span aria-label="Current selection">Selected</span></Show>
         </button>}</For>
       </div>
+      <Show when={matches().length > shownResults}>
+        <p class="hs-muted hs-picker-more">Showing the first {shownResults} of {matches().length.toLocaleString()} matches. Refine the search to find others.</p>
+      </Show>
     </Dialog>
   </div>
 }

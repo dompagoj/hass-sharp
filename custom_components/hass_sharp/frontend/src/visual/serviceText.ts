@@ -27,17 +27,25 @@ export interface ServiceText {
  */
 export function useServiceText(): ServiceText {
   const hass = useHass() as unknown as Translating | undefined
-  const [localize, setLocalize] = createSignal<Localize | undefined>(typeof hass?.localize === 'function' ? hass.localize.bind(hass) : undefined)
+  /** Home Assistant's localize of this moment (the panel's `hass` is the latest one; see `liveHass`). */
+  const live = () => (typeof hass?.localize === 'function' ? hass.localize : undefined)
+  // The localize that includes the services category, and the one Home Assistant had when it was loaded: once Home
+  // Assistant has a newer one (it took the loaded category in, or the language changed), that one is used.
+  const [loaded, setLoaded] = createSignal<{ fn: Localize; base: Localize | undefined }>()
   onMount(() => {
     const load = hass?.loadBackendTranslation
     if (typeof load !== 'function') return
     try {
       // Home Assistant resolves to the localize function that includes the loaded category.
-      Promise.resolve(load.call(hass, 'services')).then(fn => { if (typeof fn === 'function') setLocalize(() => fn as Localize) }, () => {})
+      Promise.resolve(load.call(hass, 'services')).then(fn => { if (typeof fn === 'function') setLoaded({ fn: fn as Localize, base: live() }) }, () => {})
     } catch {
       // Names fall back to the services section.
     }
   })
+  const localize = () => {
+    const now = live(), services = loaded()
+    return services && services.base === now ? services.fn : now
+  }
   const t = (key: string) => {
     const f = localize()
     if (!f) return ''

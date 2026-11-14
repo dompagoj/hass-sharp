@@ -30,3 +30,37 @@ it('searches and filters in a dialog without mutating selection until keyboard c
  host.querySelector<HTMLButtonElement>('[aria-label="Close dialog"]')!.click()
  expect(value()).toBe('light.hall')
 })
+
+it('draws the first 200 matches with a line to refine the search, and asks for the entities again only when they are old', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  try {
+    const host = document.createElement('div'); document.body.append(host)
+    const entity = (i: number) => ({ entity_id: `sensor.room_${i}`, name: `Room ${i}`, domain: 'sensor', area_id: null, device_id: null, device_class: null, supported_features: 0, unit: null, icon: null, disabled: false, state_options: null })
+    const callWS = vi.fn(async () => ({ entities: Array.from({ length: 500 }, (_, i) => entity(i)), areas: [], devices: [], floors: [], labels: [] }))
+    client = new QueryClient()
+    dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={{ callWS } as any}><EntityAutocomplete value="" onChange={() => {}} /></HassCtx.Provider></QueryClientProvider>, host)
+    const open = () => host.querySelector<HTMLButtonElement>('.hs-picker-field')!.click()
+    const close = () => host.querySelector<HTMLButtonElement>('[aria-label="Close dialog"]')!.click()
+    const options = () => host.querySelectorAll('[role="option"]')
+    const more = () => host.querySelector('.hs-picker-more')?.textContent
+    open()
+    await vi.waitFor(() => expect(options()).toHaveLength(200))
+    expect(more()).toBe('Showing the first 200 of 500 matches. Refine the search to find others.')
+    const search = host.querySelector<HTMLInputElement>('input[aria-label="Search entities"]')!
+    search.value = 'room_4'; search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(options()).toHaveLength(111)
+    expect(more()).toBeUndefined()
+    close()
+    // Open again soon after: the entities already here are used.
+    open()
+    expect(callWS).toHaveBeenCalledTimes(1)
+    const first = options()[0]
+    close()
+    // Later they are asked for again; the same answer keeps the list (and every row) as it was.
+    vi.setSystemTime(Date.now() + 61_000)
+    open()
+    await vi.waitFor(() => expect(callWS).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(client.isFetching()).toBe(0))
+    expect(options()[0]).toBe(first)
+  } finally { vi.useRealTimers() }
+})

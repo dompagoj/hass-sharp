@@ -1,4 +1,4 @@
-import { createEffect, Index, on, Show } from 'solid-js'
+import { createEffect, createMemo, Index, on, Show } from 'solid-js'
 import { Glyph } from '../Glyph'
 import { isPure, type Graph, type VisualCatalogSnapshot } from '../contract'
 import { durationLabel, nodeTitle, traceStatusLabel, type TraceStatus } from '../flow/flowModel'
@@ -38,11 +38,12 @@ export function Timeline(props: {
   const node = (id: string) => props.graph.nodes.find(n => n.id === id)
   // Registry names, once loaded, for the steps' summaries (as on their cards).
   const names = useLoadedRegistry()
-  const current = () => {
+  // The row in the Tab order: found once per selection, not once per row.
+  const current = createMemo(() => {
     const events = props.model.events
     const index = events.findIndex(e => e.seq === props.selectedSeq)
     return index >= 0 ? index : 0
-  }
+  })
   // A step chosen elsewhere (the canvas, the panel) scrolls its run into view here, without taking focus.
   createEffect(
     on(

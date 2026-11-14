@@ -35,13 +35,30 @@ export function createRegistry(raw: Partial<EntityRegistry> | null | undefined):
 }
 
 export const entityQueryKey = ['hass-entities'] as const
-/** One `get_entities` request shared by every registry and entity consumer. */
+/**
+ * Solid Query's `reconcile`: the data already there when a refetch brings the same (compared as JSON; a registry's
+ * lookups are functions, which JSON leaves out), else the new data.
+ */
+export function keepSame<T>(old: T | undefined, next: T): T {
+  try {
+    return old !== undefined && JSON.stringify(old) === JSON.stringify(next) ? old : next
+  } catch {
+    return next
+  }
+}
+/**
+ * One `get_entities` request shared by every registry and entity consumer. A refetch that brings the same registry
+ * keeps the one already there, so nothing that reads it (card summaries, entity lists) is built again.
+ */
 export const registryQuery = (hass: Pick<HomeAssistant, 'callWS'>) => ({
   queryKey: entityQueryKey,
   queryFn: async () => createRegistry(await hass.callWS<EntityRegistry>({ type: 'hass_sharp/get_entities' })),
   staleTime: Infinity,
   retry: false,
+  reconcile: keepSame<Registry>,
 })
+/** How long an entity list is used as it is before opening a picker asks for it again. */
+export const registryFreshFor = 60_000
 export function useRegistry() {
   const hass = useHass()
   return useQuery(() => registryQuery(hass))

@@ -1,7 +1,9 @@
 import { LitElement, html } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
+import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import App from './App'
+import { liveHass } from './context'
 import type { HomeAssistant } from './types'
 import { injectGlobalStyle, panelStylesheetUrl } from './panel-stylesheet'
 
@@ -15,9 +17,15 @@ export class HassSharpView extends LitElement {
   public hass!: HomeAssistant
 
   private _solidDispose?: () => void
+  // Home Assistant sets a new `hass` on every update: the app reads the latest through `liveHass`.
+  private _hass = createSignal<HomeAssistant>()
 
   protected override createRenderRoot(): HTMLElement | DocumentFragment {
     return this
+  }
+
+  protected override updated(changed: Map<PropertyKey, unknown>) {
+    if (changed.has('hass') && this.hass) this._hass[1](() => this.hass)
   }
 
   protected override firstUpdated() {
@@ -30,7 +38,9 @@ export class HassSharpView extends LitElement {
     }
 
     if (container) {
-      this._solidDispose = render(() => App({ hass: this.hass }), container)
+      this._hass[1](() => this.hass)
+      const current = this._hass[0] as () => HomeAssistant
+      this._solidDispose = render(() => App({ hass: liveHass(current) }), container)
     }
   }
 
