@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using HassSharp;
 using HassSharp.Entities;
 using static VisualExecutionTests;
@@ -30,6 +31,7 @@ static class EntityHandleTests
             TriggerState();
             OwnNames();
             await Copied();
+            await Pins();
         }
         finally { PyInterop.Entity = entity; UserScriptManager.CurrentTrigger.Value = trigger; }
     }
@@ -143,5 +145,146 @@ static class EntityHandleTests
         }
         finally { PyInterop.Log = log; }
         Console.WriteLine("PASS entity handles: a handle wired into a For each body is read there");
+    }
+
+    const string Motion = """
+        public static class Motion
+        {
+            [Node("Is on")] public static bool IsOn(BinarySensorEntity sensor) => sensor.State == BinarySensorState.On;
+            [Node("Id")] public static string Id(Entity entity) => entity.EntityId;
+            [Node("Pick")] public static LightEntity Pick(LightEntity light, LightEntity? other = null) => other ?? light;
+            [Node("Both")] public static (LightEntity Light, BinarySensorEntity Sensor) Both(LightEntity? maybe) => (new("light.a"), new("binary_sensor.b"));
+            [Node("Each")] public static async Task Each([Port("Each", FlowControl = true)] Func<LightEntity, Task> each) => await each(new("light.a"));
+        }
+        """;
+    const string TurnOn = """{"light":{"turn_on":{"target":{"entity":{"domain":"light"}},"fields":{}}}}""";
+
+    /// <summary>Records the last document a run's trace writes.</summary>
+    sealed class Sink : IRunTraceSink
+    {
+        public JsonObject? Final;
+        void IRunTraceSink.Write(string json, int eventCount, bool truncated, bool final, bool immediate) { if (final) Final = JsonNode.Parse(json)!.AsObject(); }
+    }
+
+    /// <summary>Compiles the graph against the provider's classes, runs its trigger with the payload, and returns the run's trace.</summary>
+    static async Task<JsonObject> Traced(DiagnosticsProvider provider, JsonObject graph, VisualCatalogSnapshot snapshot, JsonElement payload)
+    {
+        var preview = new VisualGenerator(provider).Preview(graph, snapshot);
+        Check(preview.Valid, "the graph does not compile: " + JsonSerializer.Serialize(preview.Diagnostics));
+        var compiled = await new CodeCompiler(provider).CompileSingleFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cs"), preview.Source);
+        try
+        {
+            var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
+            using var cts = new CancellationTokenSource(); instance._cancellationToken.Value = cts.Token;
+            var sink = new Sink(); var prior = InvocationContext.Current; Task run;
+            InvocationContext.Current = new("run-" + Guid.NewGuid().ToString("N"), InvocationCause.Entity, null, payload) { TraceSink = sink };
+            try { run = (Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!; }
+            finally { InvocationContext.Current = prior; }
+            await run.WaitAsync(TimeSpan.FromSeconds(10));
+            return sink.Final ?? throw new Exception("the run wrote no final trace");
+        }
+        finally { compiled.Unload(); }
+    }
+    static JsonObject Event(JsonObject trace, string node) => trace["events"]!.AsArray().Select(e => e!.AsObject()).Single(e => e["node"]!.GetValue<string>() == node);
+
+    // A handle type on a node method is a pin of the entity id type, of its domain for a domain's class; the wire and
+    // the trace carry the id, the method gets the handle.
+    static async Task Pins()
+    {
+        var provider = new DiagnosticsProvider();
+        var installed = provider.UseEntitySchema([.. EntitySchemaCatalog.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ha-entity-components.json"))).Items.Select(p => KeyValuePair.Create(p.Key, (JsonObject)p.Value!))]);
+        Check(installed.Accepted, "the fixture's classes were not installed");
+        var services = ServiceSchemaCatalog.Parse(TurnOn, _ => { });
+        provider.UseServiceSchema(services);
+        var library = new NodeLibraryCompiler(provider).Preview([new("motion", Motion, 1)]);
+        Check(library.Valid, "the library taking handles: " + string.Join("; ", library.Diagnostics.Select(d => d.Message)));
+        var snapshot = library.Snapshot.WithServices(services);
+        var catalog = snapshot.Catalog;
+        string Kind(string name) => snapshot.Methods.Values.Single(m => m.Method.Name == name).Kind;
+        JsonNode node(string name) => catalog["nodes"]![Kind(name)]!;
+        static IEnumerable<string> Types(JsonNode node, string input) => node["inputs"]![input]!["types"]!.AsArray().Select(t => t!.GetValue<string>());
+
+        Check(Types(node("IsOn"), "sensor").SequenceEqual(["entity_id:binary_sensor"]), "domain pin");
+        Check(Types(node("Id"), "entity").SequenceEqual(["entity_id"]), "any entity");
+        Check(node("Pick")["outputs"]!["result"]!["type"]!.GetValue<string>() == "entity_id:light", "result");
+        Check(node("Pick")["inputs"]!["other"]!["required"]!.GetValue<bool>() == false && node("Pick")["inputs"]!["other"]!["default"] == null, "optional");
+        Check(Types(node("Pick"), "other").SequenceEqual(["entity_id:light"]), "a ? does not change the pin's type");
+        Check(!catalog["types"]!.AsObject().ContainsKey("global::HassSharp.Entities.LightEntity"), "no second type");
+        Check(!catalog["types"]!.AsObject().Any(t => t.Key.StartsWith("global::HassSharp.Entities.", StringComparison.Ordinal) && t.Key.EndsWith("Entity", StringComparison.Ordinal)), "no handle class is a type: " + string.Join(", ", catalog["types"]!.AsObject().Select(t => t.Key).Where(k => k.Contains("Entities"))));
+        Check(node("Both")["outputs"]!["light"]!["type"]!.GetValue<string>() == "entity_id:light" && node("Both")["outputs"]!["sensor"]!["type"]!.GetValue<string>() == "entity_id:binary_sensor", "tuple elements");
+        Check(node("Both")["inputs"]!["maybe"]!["required"]!.GetValue<bool>() == false && node("Both")["inputs"]!["maybe"]!["default"] == null, "nullable without a default");
+        Check(node("Each")["outputs"]!["each"]!["type"]!.GetValue<string>() == "entity_id:light", "flow value");
+        var pick = snapshot.Methods.Values.Single(m => m.Method.Name == "Pick");
+        Check(pick.Parameters[0].TypeId == "entity_id:light" && pick.Parameters[0].TypeExpression == "global::HassSharp.Entities.LightEntity", "the C# identity stays the expression");
+
+        PyInterop.Entity = id => new() { EntityId = id, State = "on" };
+        HasEntityState State(string id) => new() { EntityId = id, State = "on", LastChanged = 1_700_000_000, LastReported = 1_700_000_000 };
+        JsonObject Step(string name, string id) => VisualGraphContract.CreateNode(Kind(name), id, snapshot);
+        string Errors(JsonObject graph) => string.Join("; ", VisualGraphValidator.Validate(graph, snapshot).Select(d => d.Message));
+        // An entity trigger's entity into the pin: its domain's class reaches the method, its id the trace.
+        JsonObject Triggered(string entity)
+        {
+            var graph = G(Step("IsOn", "on"));
+            graph["nodes"]![0]!["config"] = new JsonObject { ["type"] = "entity", ["entity"] = entity };
+            graph["edges"]!.AsArray().Add(D("t", "on", "sensor", "entity_id"));
+            return graph;
+        }
+        var hall = Triggered("binary_sensor.hall");
+        Check(Errors(hall) == "", "the binary sensor trigger into the pin: " + Errors(hall));
+        var traced = Event(await Traced(provider, hall, snapshot, TriggerPayload.Entity(State("binary_sensor.hall"), null)), "on");
+        Check(traced["inputs"]!["sensor"]!["v"]!.GetValue<string>() == "binary_sensor.hall" && traced["outputs"]!["result"]!["v"]!.GetValue<bool>(), "the trace of the pin: " + traced.ToJsonString());
+        var light = Triggered("light.hall");
+        var wrong = VisualGraphValidator.Validate(light, snapshot);
+        var expected = VisualGraphValidator.Words.Incompatible(catalog, "Sensor", "entity_id:light", ["entity_id:binary_sensor"]);
+        Check(wrong.Any(d => d.NodeId == "on" && d.InputId == "sensor" && d.Message == expected), $"a light into the binary sensor pin, expected {expected}: " + Errors(light));
+
+        // A literal entity of the pin's domain is typed in; one of another domain is refused.
+        var literal = G(Step("IsOn", "on"));
+        literal["nodes"]![1]!["config"]!["arguments"]!["sensor"] = Lit("entity_id:binary_sensor", "binary_sensor.hall");
+        Check(Errors(literal) == "", "a literal binary sensor: " + Errors(literal));
+        traced = Event(await Traced(provider, literal, snapshot, TriggerPayload.Manual()), "on");
+        Check(traced["inputs"]!["sensor"]!["v"]!.GetValue<string>() == "binary_sensor.hall" && traced["outputs"]!["result"]!["v"]!.GetValue<bool>(), "the trace of a literal: " + traced.ToJsonString());
+        literal["nodes"]![1]!["config"]!["arguments"]!["sensor"] = Lit("entity_id:binary_sensor", "light.hall");
+        Check(VisualGraphValidator.Validate(literal, snapshot).Any(d => d.NodeId == "on" && d.InputId == "sensor"), "a literal light into the binary sensor pin: " + Errors(literal));
+
+        // A returned handle goes out as its id: into a Call service target that takes lights.
+        var made = new List<string>(); var call = PyInterop.CallService;
+        PyInterop.CallService = (domain, name, json, done, _) => { lock (made) made.Add(domain + "." + name + " " + json); done?.Invoke(); };
+        try
+        {
+            var picked = G(Step("Pick", "pick"), N("s", "service", new JsonObject { ["service"] = "light.turn_on", ["fields"] = new JsonObject(), ["target"] = new JsonObject { ["kind"] = "unset" }, ["returnResponse"] = false }));
+            picked["nodes"]![1]!["config"]!["arguments"]!["light"] = Lit("entity_id:light", "light.kitchen");
+            picked["edges"]!.AsArray().Add(D("pick", "s", "target", "result"));
+            Check(Errors(picked) == "", "a picked light into the light target: " + Errors(picked));
+            await Traced(provider, picked, snapshot, TriggerPayload.Manual());
+            Check(made.Count == 1 && made[0].StartsWith("light.turn_on ", StringComparison.Ordinal) && JsonNode.DeepEquals(JsonNode.Parse(made[0]["light.turn_on ".Length..]), JsonNode.Parse("""{"entity_id":"light.kitchen"}""")), "the call: " + string.Join(" | ", made));
+        }
+        finally { PyInterop.CallService = call; }
+
+        // A handle that may be empty goes out of no pin, and none goes inside a list, another type or a tuple.
+        void Refused(string code, string message)
+        {
+            var preview = new NodeLibraryCompiler(provider).Preview([new("bad", "public static class Bad { " + code + " }", 1)]);
+            Check(!preview.Valid && preview.Diagnostics.Any(d => d.Message == message) && preview.Snapshot.Methods.Count == 0, code + ": " + string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
+        }
+        Refused("[Node(\"Find\")] public static LightEntity? Find() => null;", NodeLibraryCompiler.EntityResultMessage);
+        Refused("[Node(\"Find\")] public static Task<LightEntity?> Find() => Task.FromResult<LightEntity?>(null);", NodeLibraryCompiler.EntityResultMessage);
+        Refused("[Node(\"Find\")] public static (LightEntity? Light, int Count) Find() => default;", NodeLibraryCompiler.EntityResultMessage);
+        Refused("[Node(\"Each\")] public static async Task Each([Port(\"Each\", FlowControl = true)] Func<LightEntity?, Task> each) => await each(null);", NodeLibraryCompiler.EntityResultMessage);
+        Refused("[Node(\"Count\")] public static int Count(List<LightEntity> lights) => lights.Count;", NodeLibraryCompiler.EntityNestedMessage);
+        Refused("[Node(\"Count\")] public static int Count(Entity[] lights) => lights.Length;", NodeLibraryCompiler.EntityNestedMessage);
+        Refused("[Node(\"Count\")] public static int Count((LightEntity Light, int Count) pair) => pair.Count;", NodeLibraryCompiler.EntityNestedMessage);
+        Refused("[Node(\"All\")] public static List<LightEntity> All() => [];", NodeLibraryCompiler.EntityNestedMessage);
+        Refused("[Node(\"All\")] public static (LightEntity[] Lights, int Count) All() => default;", NodeLibraryCompiler.EntityNestedMessage);
+
+        // A Custom C# node's pins are derived the same way, and deriving again leaves them as they are.
+        var custom = G(N("c", "custom", new JsonObject { ["source"] = "public static class CustomNode\n{\n    [Node(\"Motion\")]\n    public static bool Run(BinarySensorEntity motionSensor) => motionSensor.State == BinarySensorState.On;\n}", ["arguments"] = new JsonObject() }));
+        var derived = new VisualGenerator(provider).DeriveSignatures(custom, snapshot);
+        var signature = derived["nodes"]![1]!["config"]!["signature"]!.AsObject();
+        Check(Types(signature, "motionSensor").SequenceEqual(["entity_id:binary_sensor"]), "the custom node's pin: " + signature.ToJsonString());
+        Check(signature["types"]!.AsObject().Count == 0, "the custom node lists a handle class as a type: " + signature["types"]!.ToJsonString());
+        var again = new VisualGenerator(provider).DeriveSignatures(derived, snapshot)["nodes"]![1]!["config"]!["signature"]!.AsObject();
+        Check(VisualGenerator.SamePins(signature, again), "deriving again changed the pins: " + again.ToJsonString());
+        Console.WriteLine("PASS entity handles: a handle type is a pin of its domain's entity id; the wire and the trace carry the id");
     }
 }

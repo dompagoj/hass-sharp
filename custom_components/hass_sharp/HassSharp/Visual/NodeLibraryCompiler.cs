@@ -80,6 +80,10 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     internal const string FlowPureMessage = "A value node (Pure = true) has no flows; remove Pure or the FlowControl parameters";
     /// <summary>A flow named as a port every step or loop already has.</summary>
     internal static string FlowNameMessage(string id) => $"Name this flow something other than {id}: next, error and condition are taken";
+    /// <summary>At an entity type that may be empty where a value goes out (a result, a returned tuple element, a flow's value): an entity pin is always set.</summary>
+    internal const string EntityResultMessage = "A node returns an entity, or nothing at all: remove the ? from this entity type";
+    /// <summary>At a pin whose type holds an entity type within it: a wire carries one entity id.</summary>
+    internal const string EntityNestedMessage = "An entity cannot be inside a list or another type on a pin; take or return one entity";
 
     public NodeLibraryPreview Preview(IEnumerable<NodeLibrarySource> librarySources, CancellationToken cancellationToken = default) => Preview(librarySources, null, cancellationToken);
     /// <summary>
@@ -144,6 +148,25 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         var nodeAttribute = frameworkAssembly.GetTypeByMetadataName("HassSharp.NodeAttribute");
         var portAttribute = frameworkAssembly.GetTypeByMetadataName("HassSharp.PortAttribute");
         var nodeContext = frameworkAssembly.GetTypeByMetadataName("HassSharp.NodeContext");
+        var entityBase = frameworkAssembly.GetTypeByMetadataName("HassSharp.Entities.Entity");
+        var entityDomain = frameworkAssembly.GetTypeByMetadataName("HassSharp.Entities.EntityDomainAttribute");
+        // An entity handle on a pin is the entity id it wraps: entity_id for Entity, entity_id:<domain> for a domain's
+        // generated class (the type's own [EntityDomain]); null for any other type. A ? does not change the id.
+        string? EntityPin(ITypeSymbol type)
+        {
+            if (SymbolEqualityComparer.Default.Equals(type, entityBase)) return "entity_id";
+            return type is INamedTypeSymbol named && named.ContainingAssembly?.Name.StartsWith(GeneratedEntities.AssemblyPrefix, StringComparison.Ordinal) == true
+                && named.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, entityDomain))?.ConstructorArguments.FirstOrDefault().Value is string domain
+                ? "entity_id:" + domain : null;
+        }
+        // The catalog id of a pin of this type.
+        string PinType(ITypeSymbol type) => EntityPin(type) ?? TypeIdentity(type);
+        // Whether an entity handle is inside the type (an array's element, a type argument, a tuple's element); the type is no deeper than a pin may be.
+        bool EntityInside(ITypeSymbol type) => Inner(type).Any(inner => EntityPin(inner) != null || EntityInside(inner));
+        // What is wrong with an entity handle in the type of a value going out (a result, a returned tuple element, a flow's
+        // value), if anything: it may not be empty, and none may be inside the type.
+        string? EntityOutputProblem(ITypeSymbol type) =>
+            EntityPin(type) != null && Nullable(type) ? EntityResultMessage : EntityInside(type) ? EntityNestedMessage : null;
         AttributeData? Port(ImmutableArray<AttributeData> attributes) => attributes.FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, portAttribute));
         string? PortLabel(ImmutableArray<AttributeData> attributes) => Port(attributes)?.ConstructorArguments.FirstOrDefault().Value as string;
         // A missing doc comment matters only on a library's [Node] method, whose summary is the node's description in the
@@ -174,6 +197,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         void Register(Dictionary<string, ITypeSymbol> into, ITypeSymbol type, IReadOnlyDictionary<string, ITypeSymbol>? known = null)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            // An entity handle's pin is an entity id type, which the catalog has: the class is never a type of its own.
+            if (EntityPin(type) != null) return;
             var id = TypeIdentity(type);
             if (known?.ContainsKey(id) == true || !into.TryAdd(id, type)) return;
             if (type is IArrayTypeSymbol array) Register(into, array.ElementType, known);
@@ -195,7 +220,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 foreach (var contract in declared.AllInterfaces)
                     if (!Unsupported(contract) && !TooDeep(contract) && compilation.IsSymbolAccessibleWithin(contract, compilation.Assembly)) into.TryAdd(TypeIdentity(contract), contract);
                 for (var baseType = declared.BaseType; baseType != null; baseType = baseType.BaseType)
-                    if (!Unsupported(baseType) && !TooDeep(baseType) && compilation.IsSymbolAccessibleWithin(baseType, compilation.Assembly)) into.TryAdd(TypeIdentity(baseType), baseType);
+                    if (!Unsupported(baseType) && !TooDeep(baseType) && EntityPin(baseType) == null && compilation.IsSymbolAccessibleWithin(baseType, compilation.Assembly)) into.TryAdd(TypeIdentity(baseType), baseType);
             }
         }
         foreach (var (id, descriptor) in root["types"]!.AsObject())
@@ -231,18 +256,20 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Length) { Report(declaration.ReturnType.GetLocation(), "Give each value the method returns its own name"); return null; }
                 if (elements.FirstOrDefault(e => !PinId(LowerFirst(e.Name))) is { } unnamed) { Report(unnamed.Locations.FirstOrDefault() ?? declaration.ReturnType.GetLocation(), PinNameMessage("value", unnamed.Name)); return null; }
                 if (elements.FirstOrDefault(e => TooDeep(e.Type)) is { } deep) { Report(deep.Locations.FirstOrDefault() ?? declaration.ReturnType.GetLocation(), TooDeepMessage); return null; }
+                if (elements.FirstOrDefault(e => EntityOutputProblem(e.Type) != null) is { } entity) { Report(entity.Locations.FirstOrDefault() ?? declaration.ReturnType.GetLocation(), EntityOutputProblem(entity.Type)!); return null; }
                 for (var i = 0; i < elements.Length; i++)
                 {
                     register(elements[i].Type);
-                    outputs[ids[i]] = new JsonObject { ["type"] = TypeIdentity(elements[i].Type), ["label"] = InWords(elements[i].Name), ["description"] = i == 0 ? DocText(doc?.Element("returns")) : "" };
+                    outputs[ids[i]] = new JsonObject { ["type"] = PinType(elements[i].Type), ["label"] = InWords(elements[i].Name), ["description"] = i == 0 ? DocText(doc?.Element("returns")) : "" };
                 }
                 outputPorts = elements.Select((e, i) => new NodeOutputDescriptor(ids[i], Escape(e.Name))).ToImmutableArray();
             }
             else if (result != null)
             {
                 if (TooDeep(result)) { Report(declaration.ReturnType.GetLocation(), TooDeepMessage); return null; }
+                if (EntityOutputProblem(result) is { } entity) { Report(declaration.ReturnType.GetLocation(), entity); return null; }
                 register(result);
-                outputs["result"] = new JsonObject { ["type"] = TypeIdentity(result), ["label"] = PortLabel(method.GetReturnTypeAttributes()) ?? "Result", ["description"] = DocText(doc?.Element("returns")) };
+                outputs["result"] = new JsonObject { ["type"] = PinType(result), ["label"] = PortLabel(method.GetReturnTypeAttributes()) ?? "Result", ["description"] = DocText(doc?.Element("returns")) };
                 outputPorts = [new("result", null)];
             }
             // Flows: each [Port(..., FlowControl = true)] parameter is an execution port and a scope, its values outputs read there.
@@ -267,21 +294,23 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                     if (elements.Any(e => !e.IsExplicitlyNamedTupleElement)) { Report(location, FlowTupleMessage); return null; }
                     if (elements.FirstOrDefault(e => !PinId(LowerFirst(e.Name))) is { } unnamed) { Report(location, PinNameMessage("value", unnamed.Name)); return null; }
                     if (elements.Any(e => TooDeep(e.Type))) { Report(location, TooDeepMessage); return null; }
+                    if (elements.Select(e => EntityOutputProblem(e.Type)).FirstOrDefault(m => m != null) is { } entity) { Report(location, entity); return null; }
                     values = elements.Select((e, i) => new NodeFlowValue(LowerFirst(e.Name), i)).ToImmutableArray();
                     for (var i = 0; i < elements.Length; i++)
                     {
                         if (flowOutputs.ContainsKey(values[i].Port)) { Report(location, FlowDuplicateMessage); return null; }
                         register(elements[i].Type);
-                        flowOutputs[values[i].Port] = new JsonObject { ["type"] = TypeIdentity(elements[i].Type), ["label"] = InWords(elements[i].Name), ["description"] = i == 0 ? description : "", ["scope"] = p.Name };
+                        flowOutputs[values[i].Port] = new JsonObject { ["type"] = PinType(elements[i].Type), ["label"] = InWords(elements[i].Name), ["description"] = i == 0 ? description : "", ["scope"] = p.Name };
                     }
                 }
                 else if (shape.Value != null)
                 {
                     if (TooDeep(shape.Value)) { Report(location, TooDeepMessage); return null; }
+                    if (EntityOutputProblem(shape.Value) is { } entity) { Report(location, entity); return null; }
                     if (flowOutputs.ContainsKey(p.Name)) { Report(location, FlowDuplicateMessage); return null; }
                     register(shape.Value);
                     values = [new(p.Name, null)];
-                    flowOutputs[p.Name] = new JsonObject { ["type"] = TypeIdentity(shape.Value), ["label"] = label, ["description"] = description, ["scope"] = p.Name };
+                    flowOutputs[p.Name] = new JsonObject { ["type"] = PinType(shape.Value), ["label"] = label, ["description"] = description, ["scope"] = p.Name };
                 }
                 if (flowPorts.Contains(p.Name) || outputs.Any(o => flowOutputs.ContainsKey(o.Key))) { Report(location, FlowDuplicateMessage); return null; }
                 flowPorts.Add(p.Name); flowLabels[p.Name] = label;
@@ -299,12 +328,13 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 foreach (var (key, value) in outputs.ToArray()) { outputs.Remove(key); flowOutputs[key] = value; }
                 outputs = flowOutputs;
             }
-            var parameters = method.Parameters.Select(p => new NodeParameterDescriptor(p.Name, TypeIdentity(p.Type), TypeIdentity(p.Type),
+            var parameters = method.Parameters.Select(p => new NodeParameterDescriptor(p.Name, PinType(p.Type), TypeIdentity(p.Type),
                 p.Type.ToDisplayString() == "System.Threading.CancellationToken", p.HasExplicitDefaultValue, p.HasExplicitDefaultValue ? p.ExplicitDefaultValue : null, p,
                 SymbolEqualityComparer.Default.Equals(p.Type, nodeContext), flows.GetValueOrDefault(p))).ToImmutableArray();
             // A pin is named by its parameter: C# takes letters of any language, a pin id only English ones.
             if (parameters.FirstOrDefault(p => !p.Injected && !PinId(p.Name)) is { } foreign) { Report(foreign.Symbol.Locations.FirstOrDefault() ?? declaration.Identifier.GetLocation(), PinNameMessage("input", foreign.Name)); return null; }
             if (parameters.FirstOrDefault(p => !p.Injected && TooDeep(p.Symbol.Type)) is { } nested) { Report(nested.Symbol.Locations.FirstOrDefault() ?? declaration.Identifier.GetLocation(), TooDeepMessage); return null; }
+            if (parameters.FirstOrDefault(p => !p.Injected && EntityInside(p.Symbol.Type)) is { } holds) { Report(holds.Symbol.Locations.FirstOrDefault() ?? declaration.Identifier.GetLocation(), EntityNestedMessage); return null; }
             var input = new JsonObject();
             foreach (var parameter in parameters.Where(p => !p.Injected))
             {
@@ -315,10 +345,11 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                     ["label"] = PortLabel(p.GetAttributes()) ?? InWords(p.Name), ["description"] = DocText(doc?.Elements("param").FirstOrDefault(e => (string?)e.Attribute("name") == p.Name)),
                     ["nullable"] = Nullable(p.Type), ["hasDefaultValue"] = p.HasExplicitDefaultValue };
                 if (p.HasExplicitDefaultValue && CanLiteral(p.Type) && (p.ExplicitDefaultValue is not double dv || double.IsFinite(dv)) && (p.ExplicitDefaultValue is not float fv || float.IsFinite(fv))) rule["default"] = new JsonObject { ["kind"] = "literal", ["type"] = parameter.TypeId, ["value"] = JsonSerializer.SerializeToNode(p.ExplicitDefaultValue) };
-                else if (Nullable(p.Type) && (!p.HasExplicitDefaultValue || p.ExplicitDefaultValue == null)) rule["default"] = new JsonObject { ["kind"] = "literal", ["type"] = parameter.TypeId, ["value"] = null };
+                // An entity pin left unset is passed nothing (or its C# default): no null entity id is typed in.
+                else if (Nullable(p.Type) && EntityPin(p.Type) == null && (!p.HasExplicitDefaultValue || p.ExplicitDefaultValue == null)) rule["default"] = new JsonObject { ["kind"] = "literal", ["type"] = parameter.TypeId, ["value"] = null };
                 input[p.Name] = rule;
             }
-            var descriptor = new NodeMethodDescriptor(kind, sourceId, TypeIdentity(method.ContainingType), Escape(method.Name), result == null ? null : TypeIdentity(result), awaitResult, parameters, method)
+            var descriptor = new NodeMethodDescriptor(kind, sourceId, TypeIdentity(method.ContainingType), Escape(method.Name), result == null ? null : PinType(result), awaitResult, parameters, method)
                 { Outputs = outputPorts, Pure = pure };
             return (title, DocText(doc?.Element("summary")), attribute.NamedArguments.FirstOrDefault(a => a.Key == "Category").Value.Value as string ?? "Custom", pure, input, outputs, descriptor, flowSpec);
         }
