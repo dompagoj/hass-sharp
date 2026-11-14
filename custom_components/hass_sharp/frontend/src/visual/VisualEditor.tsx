@@ -18,9 +18,11 @@ import { BottomDrawer, CodePanel, ProblemsPanel } from './BottomDrawer'
 import { createFullscreen, createFullscreenPage, FullscreenButton } from './fullscreen'
 import { media } from './media'
 import { createVisualSession } from './session'
-import type { VisualDiagnostic, VisualDocument } from './api'
+import { visualError, type VisualDiagnostic, type VisualDocument } from './api'
 import { createGraph, createNodeAt, serializeGraph, type NodeKind } from './graph'
 import { RunNowButton } from './RunNow'
+import { EnabledSwitch } from '../automations/EnabledSwitch'
+import { setAutomationEnabled } from '../automations/enabled'
 import { soon } from './soon'
 import { createNotice, TopBar } from './TopBar'
 
@@ -229,6 +231,31 @@ export function VisualEditor(props: {
     if (!doc.currentRevisionActive) return 'The saved version is not active'
   }
   const automationId = () => session.document()?.automationId
+  // On/off of the saved automation: stored beside the graph, so it is not an edit (no undo step, no unsaved changes).
+  // Shown at once; put back with a message when the request fails.
+  const [switched, setSwitched] = createSignal<{ id: string; enabled: boolean }>()
+  const [switching, setSwitching] = createSignal(false)
+  const enabled = () => {
+    const doc = session.document()
+    if (!doc) return
+    const local = switched()
+    return local?.id === doc.id ? local.enabled : doc.enabled ?? true
+  }
+  createEffect(on(() => session.document(), () => setSwitched(undefined), { defer: true }))
+  const toggleEnabled = async (wanted: boolean) => {
+    const doc = session.document()
+    if (!doc || switching()) return
+    const before = enabled() ?? true
+    batch(() => { setSwitching(true); setSwitched({ id: doc.id, enabled: wanted }) })
+    try {
+      await setAutomationEnabled(hass, queryClient, doc.id, wanted)
+    } catch (error) {
+      setSwitched({ id: doc.id, enabled: before })
+      showRunNotice({ text: `Could not turn it ${wanted ? 'on' : 'off'}: ${visualError(error)}`, error: true })
+    } finally {
+      setSwitching(false)
+    }
+  }
   // Registry names for summaries outside the canvas (the canvas reads the same cached query).
   const registry = useRegistry()
   const names = () => (registry.isSuccess ? registry.data : undefined)
@@ -333,8 +360,13 @@ export function VisualEditor(props: {
         onSave={() => void save()}
         run={
           admin() ? (
-            <RunNowButton document={session.document()} catalog={session.catalog()} names={names()} unavailable={runUnavailable()} dirty={session.dirty()} busy={busy()}
-              onNotice={showRunNotice} />
+            <div class="hs-topbar__run-group">
+              <Show when={session.document()}>
+                <EnabledSwitch class="hs-topbar__enabled" name={graph().name} enabled={enabled() ?? true} disabled={busy() || switching()} onChange={wanted => void toggleEnabled(wanted)} />
+              </Show>
+              <RunNowButton document={session.document()} catalog={session.catalog()} names={names()} unavailable={runUnavailable()} dirty={session.dirty()} busy={busy()}
+                onNotice={showRunNotice} />
+            </div>
           ) : undefined
         }
         notice={runNotice()}
@@ -401,6 +433,7 @@ export function VisualEditor(props: {
           commit={commit}
           onShowProblems={showProblems}
           lastRun={lastRun()}
+          enabled={enabled()}
           docked={!floating()}
           open={panelOpen()}
           onClose={() => setPanelOpen(false)}

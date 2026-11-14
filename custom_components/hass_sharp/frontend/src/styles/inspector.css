@@ -44,6 +44,7 @@
 .hs-app .hs-insp-note--warning { background: color-mix(in oklab, var(--hs-warning) 10%, var(--hs-surface)); border: 1px solid color-mix(in oklab, var(--hs-warning) 40%, var(--hs-line)); }
 .hs-app .hs-insp-meta { margin: 0; color: var(--hs-muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .hs-app .hs-insp-hint { margin: 0; font-size: 12px; }
+.hs-app .hs-insp-off { margin: 0; padding: 8px 10px; border: 1px solid var(--hs-line); border-radius: 8px; background: color-mix(in oklab, var(--hs-bg) 55%, var(--hs-surface)); font-size: 13px; }
 .hs-app .hs-insp-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .hs-app .hs-insp-list > li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; }
 .hs-app .hs-insp-add-button { min-height: 36px; padding: 6px 12px; justify-self: start; }

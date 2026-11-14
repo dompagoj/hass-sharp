@@ -3,6 +3,38 @@ namespace HassSharp;
 class UserScript
 {
     internal bool Active { get; set; } = true;
+    volatile bool _enabled = true;
+    /// <summary>
+    /// Off: the script stays loaded and subscribed, so a manual run still works, but its entity, Home Assistant and
+    /// schedule triggers and its startup run are dropped (a schedule occurrence that passes is skipped, not caught up).
+    /// </summary>
+    internal bool Enabled { get => _enabled; init => _enabled = value; }
+
+    /// <summary>The runs started since the automation was last turned off; turning it off again cancels them.</summary>
+    internal sealed class RunScope
+    {
+        readonly CancellationTokenSource _cancellation = new();
+        public CancellationToken Token => _cancellation.Token;
+        public volatile string? Reason;
+        public void Cancel(string reason) { Reason ??= reason; _cancellation.Cancel(); }
+    }
+    volatile RunScope _runs = new();
+    internal RunScope Runs => _runs;
+
+    /// <summary>Turns the automation on or off without reloading it; turning it off cancels its runs in progress.</summary>
+    internal void SetEnabled(bool enabled)
+    {
+        RunScope cancelled;
+        lock (ScriptManager.ActivationGate)
+        {
+            if (_enabled == enabled) return;
+            _enabled = enabled;
+            if (enabled) return;
+            cancelled = _runs;
+            _runs = new();
+        }
+        cancelled.Cancel(CancelReasons.TurnedOff);
+    }
     internal bool Invalidated { get; private set; }
     internal string Generation { get; } = Guid.NewGuid().ToString("N");
     Task _preparation = Task.CompletedTask;

@@ -55,8 +55,10 @@ class AuthoringService:
         if result.get("ok"):
             data = result["result"]
             documents = data if operation == "list" else [data] if operation == "read" else [data["document"]] if operation == "save" else []
+            # The automations page's list (view "home") sends outlines, not graphs: the page works its triggers out itself.
             for document in documents:
-                document["triggers"] = runnable_triggers(document)
+                if "graph" in document:
+                    document["triggers"] = runnable_triggers(document)
         return result
 
     async def node_library(self, request, *, is_admin):

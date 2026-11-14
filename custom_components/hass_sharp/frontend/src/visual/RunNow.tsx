@@ -20,7 +20,7 @@ export interface ManualTrigger {
 }
 
 /** The saved graph's triggers that allow manual runs, in the graph's order; summaries name entities as the cards do. */
-export function manualTriggers(document: VisualDocument | undefined, catalog: VisualCatalogSnapshot, names?: SummaryNames): ManualTrigger[] {
+export function manualTriggers(document: RunnableDocument | undefined, catalog: VisualCatalogSnapshot, names?: SummaryNames): ManualTrigger[] {
   if (!document) return []
   const graph = document.graph
   const labels = visualActionLabels(graph, catalog)
@@ -40,6 +40,8 @@ export function manualTriggers(document: VisualDocument | undefined, catalog: Vi
 }
 
 export interface RunNotice { text: string; error?: boolean }
+/** What Run now needs of a saved automation: its graph (or the automations page's outline of it) and identity. */
+export type RunnableDocument = Pick<VisualDocument, 'graph' | 'automationId'>
 
 /**
  * The editor's one place to start a run of the saved automation. With one trigger that allows manual runs it runs
@@ -47,7 +49,7 @@ export interface RunNotice { text: string; error?: boolean }
  * is remembered so the Runs tab polls until it has finished.
  */
 export function RunNowButton(props: {
-  document?: VisualDocument
+  document?: RunnableDocument
   catalog: VisualCatalogSnapshot
   /** Registry names for the menu's summaries. */
   names?: SummaryNames

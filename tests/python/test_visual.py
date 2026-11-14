@@ -31,3 +31,42 @@ class VisualApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(bool(results), admin)
             self.assertEqual(bool(errors), not admin)
         self.assertEqual(calls, [{'operation': 'list'}])
+
+    async def test_set_enabled_is_admin_only_and_home_list_has_no_trigger_list(self):
+        source = pathlib.Path('custom_components/hass_sharp/websocket.py').read_text()
+        register = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == 'register_websocket_routes')
+        handler = next(n for n in register.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'websocket_visual')
+        handler.decorator_list = []
+        calls = []
+        graph = {'nodes': [{'id': 't', 'kind': 'trigger', 'config': {}}]}
+        async def run(hass, method, request):
+            request = json.loads(request)
+            calls.append(request)
+            if request['operation'] == 'set_enabled':
+                return json.dumps({'version': 1, 'ok': True, 'result': {'id': request['id'], 'enabled': request['enabled']}})
+            documents = [{'id': 'a', 'outline': {'nodes': []}}] if request.get('view') == 'home' else [{'id': 'a', 'graph': graph, 'enabled': False, 'currentRevisionActive': True}]
+            return json.dumps({'version': 1, 'ok': True, 'result': documents})
+        env = {'json': json, 'logger': Mock(), 'hass_sharp': types.SimpleNamespace(VisualRequest=object()),
+               'dotnet_tasks': types.SimpleNamespace(async_run_dotnet_task=run)}
+        service_tree = ast.parse(pathlib.Path('custom_components/hass_sharp/authoring.py').read_text())
+        service_tree.body = [n for n in service_tree.body if not isinstance(n, ast.ImportFrom)]
+        exec(compile(service_tree, '<authoring>', 'exec'), env)
+        env['authoring'] = env['AuthoringService'](None, env['hass_sharp'])
+        exec(compile(ast.Module(body=[handler], type_ignores=[]), '<visual>', 'exec'), env)
+        async def send(admin, request):
+            results, errors = [], []
+            connection = types.SimpleNamespace(user=types.SimpleNamespace(is_admin=admin),
+                send_result=lambda *v: results.append(v), send_error=lambda *v: errors.append(v))
+            await env['websocket_visual'](None, connection, {'id': 1, 'request': request})
+            return results, errors
+        results, errors = await send(False, {'operation': 'set_enabled', 'id': 'a', 'enabled': False})
+        self.assertEqual((results, calls), ([], []))
+        self.assertEqual(errors[0][1], 'unauthorized')
+        results, errors = await send(True, {'operation': 'set_enabled', 'id': 'a', 'enabled': False})
+        self.assertEqual(results[0][1]['result'], {'id': 'a', 'enabled': False})
+        self.assertEqual(calls, [{'operation': 'set_enabled', 'id': 'a', 'enabled': False}])
+        results, _ = await send(True, {'operation': 'list'})
+        self.assertEqual(results[0][1]['result'][0]['enabled'], False)
+        self.assertEqual(results[0][1]['result'][0]['triggers'][0]['triggerId'], 't')
+        results, _ = await send(True, {'operation': 'list', 'view': 'home', 'todayUtc': '2026-11-14T00:00:00Z'})
+        self.assertEqual(results[0][1]['result'], [{'id': 'a', 'outline': {'nodes': []}}])

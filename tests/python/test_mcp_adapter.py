@@ -55,11 +55,11 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         return await tool.async_call(self.hass,llm.ToolInput(tool_name=tool.name,tool_args=args),context or self.context)
     async def test_schema_validation_and_annotations(self):
         import probatio
-        self.assertEqual(len(self.instance.tools),16)
+        self.assertEqual(len(self.instance.tools),17)
         for tool in self.instance.tools:
             schema=probatio.to_openapi(tool.parameters,openapi_version='3.1.0')
             self.assertEqual(schema['type'],'object')
-            self.assertEqual(tool.annotations.read_only,tool.name.split('__')[1] not in ('save','delete','run','library_save','library_delete'))
+            self.assertEqual(tool.annotations.read_only,tool.name.split('__')[1] not in ('save','set_enabled','delete','run','library_save','library_delete'))
         save=next(t for t in self.instance.tools if t.name.endswith('__save'))
         schema=probatio.to_openapi(save.parameters,openapi_version='3.1.0')
         self.assertEqual(set(schema['required']),{'id','graph','expectedRevision'})
@@ -68,6 +68,18 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue((await self.call('delete',args)).error)
         self.assertTrue((await self.call('history',{'id':'x','limit':101})).error)
         self.service.visual.assert_not_called()
+    async def test_set_enabled_and_list_keep_their_shape(self):
+        self.service.visual.return_value={'version':1,'ok':True,'result':{'id':'x','enabled':False}}
+        result=await self.call('set_enabled',{'id':'x','enabled':False})
+        self.assertFalse(result.error,result.data)
+        self.service.visual.assert_awaited_with({'operation':'set_enabled','id':'x','enabled':False},is_admin=True)
+        for args in ({'id':'x'},{'id':'x','enabled':1},{'id':'x','enabled':'off'}):
+            self.assertTrue((await self.call('set_enabled',args)).error)
+        self.assertFalse(next(t for t in self.instance.tools if t.name=='hass_sharp__set_enabled').annotations.read_only)
+        # list asks for the plain listing (complete documents with enabled), never the automations page's view.
+        self.service.visual.return_value={'version':1,'ok':True,'result':[]}
+        await self.call('list',{})
+        self.service.visual.assert_awaited_with({'operation':'list'},is_admin=True)
     async def test_admin_and_cached_readiness(self):
         self.assertFalse((await self.call('list',{})).error)
         self.admin.is_admin=False

@@ -123,7 +123,7 @@ public partial class HassSharpManager
             var previews = graphs.Select(g => (Document: g, Preview: new VisualGenerator(_diagnosticsProvider).Preview(g.Graph, candidate.Snapshot))).ToArray();
             if (!candidate.Valid || previews.Any(p => !p.Preview.Valid))
                 return Error("validation", new { diagnostics = candidate.Diagnostics, automations = previews.Where(p => !p.Preview.Valid).Select(p => new { id = p.Document.Id, diagnostics = p.Preview.Diagnostics }) });
-            var rebuilt = previews.Select(p => new VisualDocument(1,p.Document.Id,checked(p.Document.Revision+1),p.Document.Graph,p.Preview.Source,p.Preview.SourceMap) { CatalogGeneration = generation, EmbeddedCatalog = p.Preview.EmbeddedCatalog }).ToArray();
+            var rebuilt = previews.Select(p => new VisualDocument(1,p.Document.Id,checked(p.Document.Revision+1),p.Document.Graph,p.Preview.Source,p.Preview.SourceMap) { CatalogGeneration = generation, EmbeddedCatalog = p.Preview.EmbeddedCatalog, Enabled = p.Document.Enabled, SavedUtc = p.Document.SavedUtc }).ToArray();
             var changes = rebuilt.ToDictionary(d => VisualDocuments.FilePath(d.Id), d => (string?)JsonSerializer.Serialize(d, VisualStore.Json));
             changes[LibraryDocuments.DocumentPath(id)] = document == null ? null : JsonSerializer.Serialize(document, VisualStore.Json);
             AuthoringFiles.Commit(changes);

@@ -10,6 +10,8 @@ public class CompiledUserScript
     public string? DesignatedRootType { get; set; }
     public long? VisualRevision { get; set; }
     public string? CatalogGeneration { get; set; }
+    /// <summary>The saved on/off state the script starts with (see <see cref="UserScript.Enabled"/>).</summary>
+    public bool Enabled { get; set; } = true;
     /// <summary>The visual document id (the editor's <c>/visual/:id</c>); null for a script compiled outside the visual store.</summary>
     public string? VisualId { get; set; }
     /// <summary>Trigger method name to its graph node id and label (null when the node has none).</summary>

@@ -13,6 +13,13 @@ public sealed record VisualDocument(int Version, string Id, long Revision, JsonO
     public string? ActiveSourceHash { get; init; }
     public bool CurrentRevisionActive { get; init; }
     public string? CatalogGeneration { get; init; }
+    /// <summary>
+    /// Off: nothing starts the automation by itself (its triggers and startup run are withheld); a manual run still
+    /// works. Stored with the document, not in the graph: a document without it is on, and saving keeps it.
+    /// </summary>
+    public bool Enabled { get; init; } = true;
+    /// <summary>When the graph was last saved (null for a document saved before this was recorded); toggling never changes it.</summary>
+    public DateTime? SavedUtc { get; init; }
     /// <summary>The pruned catalog the generated source embeds, for the run snapshot; derived, never stored.</summary>
     [System.Text.Json.Serialization.JsonIgnore] public string? EmbeddedCatalog { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
@@ -76,7 +83,8 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
             var snapshot = VisualGraphContract.FillMissingLayout(graph);
             var preview = catalog == null ? generator.Preview(snapshot) : generator.Preview(snapshot, catalog);
             if (!preview.Valid) throw new VisualValidationException(preview);
-            var document = new VisualDocument(1, id, checked(expectedRevision + 1), snapshot, preview.Source, preview.SourceMap) { CatalogGeneration = catalogGeneration, EmbeddedCatalog = preview.EmbeddedCatalog };
+            var document = new VisualDocument(1, id, checked(expectedRevision + 1), snapshot, preview.Source, preview.SourceMap)
+                { CatalogGeneration = catalogGeneration, EmbeddedCatalog = preview.EmbeddedCatalog, Enabled = old?.Enabled ?? true, SavedUtc = DateTime.UtcNow };
             Directory.CreateDirectory(directory);
             Write(path, document);
             return document;
@@ -90,8 +98,22 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
             var path = FilePath(id); var old = Read(id);
             if (old == null || old.Revision != expectedRevision) return false;
             if (old.Source == source && old.SourceMap.SequenceEqual(sourceMap) && old.CatalogGeneration == catalogGeneration) return false;
-            Write(path, new VisualDocument(1, id, old.Revision, old.Graph, source, sourceMap) { CatalogGeneration = catalogGeneration });
+            Write(path, new VisualDocument(1, id, old.Revision, old.Graph, source, sourceMap) { CatalogGeneration = catalogGeneration, Enabled = old.Enabled, SavedUtc = old.SavedUtc });
             return true;
+        }
+    }
+    /// <summary>Turns the automation on or off at its current revision; the graph, revision and save time stay as they are.</summary>
+    public VisualDocument SetEnabled(string id, bool enabled)
+    {
+        lock (Gate)
+        {
+            var path = FilePath(id);
+            var old = Read(id) ?? throw new FileNotFoundException("Visual document not found");
+            if (old.Enabled == enabled) return old;
+            var document = new VisualDocument(1, id, old.Revision, old.Graph, old.Source, old.SourceMap)
+                { CatalogGeneration = old.CatalogGeneration, Enabled = enabled, SavedUtc = old.SavedUtc };
+            Write(path, document);
+            return document;
         }
     }
     static void Write(string path, VisualDocument document)

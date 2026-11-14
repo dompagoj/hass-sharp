@@ -7,10 +7,22 @@ public partial class HassSharpManager
     readonly UserScriptManager _userScriptManager;
     readonly RunHistoryStore _history;
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _loadErrors = new();
-    void RecordLoadError(string path, Exception error) => _loadErrors[path] = error is CompilationErrorException compilation
-        ? string.Join("\n", compilation.Errors) : error is VisualValidationException visual
-            ? string.Join("\n", visual.Preview.Diagnostics.Select(d => $"{d.NodeId ?? "graph"}: {d.Message}"))
-            : error.GetBaseException().Message;
+    // How many problems a load error names, when it names them (compile errors, graph errors); read only beside _loadErrors.
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _loadProblems = new();
+    void RecordLoadError(string path, Exception error)
+    {
+        var problems = error switch
+        {
+            CompilationErrorException compilation => compilation.Errors.Length,
+            VisualValidationException visual => visual.Preview.Diagnostics.Count(d => d.Severity >= 3),
+            _ => 0,
+        };
+        if (problems > 0) _loadProblems[path] = problems; else _loadProblems.TryRemove(path, out _);
+        _loadErrors[path] = error is CompilationErrorException compiled
+            ? string.Join("\n", compiled.Errors) : error is VisualValidationException invalid
+                ? string.Join("\n", invalid.Preview.Diagnostics.Select(d => $"{d.NodeId ?? "graph"}: {d.Message}"))
+                : error.GetBaseException().Message;
+    }
 
     public HassSharpManager(string hassConfigPath)
     {

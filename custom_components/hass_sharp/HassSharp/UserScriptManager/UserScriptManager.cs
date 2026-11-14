@@ -124,6 +124,7 @@ class UserScriptManager
         var userScript = new UserScript
         {
             Active = !staged,
+            Enabled = compiledScript.Enabled,
             AutomationId = History?.Identity(compiledScript.FilePath) ?? compiledScript.FilePath,
             CompiledScript = compiledScript,
             Classes = null!,
@@ -178,6 +179,17 @@ class UserScriptManager
         }
     }
 
+    /// <summary>
+    /// Turns the loaded script at <paramref name="scriptPath"/> on or off (see <see cref="UserScript.Enabled"/>); no
+    /// recompile or resubscription. Turning it off cancels its runs in progress with <see cref="CancelReasons.TurnedOff"/>.
+    /// </summary>
+    public void SetEnabled(string scriptPath, bool enabled)
+    {
+        UserScript[] scripts;
+        lock (ActivationGate) scripts = _userScripts.Concat(_preparing).Where(s => s.CompiledScript.FilePath == scriptPath).Distinct().ToArray();
+        foreach (var script in scripts) script.SetEnabled(enabled);
+    }
+
     public void TrackEntityCall(string entityId, UserScriptClass scriptClass, string method) =>
         DependencyTracking.TrackEntityCall(entityId, scriptClass, method);
 
@@ -188,7 +200,7 @@ class UserScriptManager
         lock (ActivationGate)
         {
             var entries = DependencyTracking.GetEntries(entityId);
-            return Task.WhenAll(entries.Where(e => e.ScriptClass.Script.Active).Select(e => RunEntry(e, trigger, payload)));
+            return Task.WhenAll(entries.Where(e => e.ScriptClass.Script is { Active: true, Enabled: true }).Select(e => RunEntry(e, trigger, payload)));
         }
     }
 

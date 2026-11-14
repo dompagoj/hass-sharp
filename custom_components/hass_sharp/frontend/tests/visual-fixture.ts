@@ -1,11 +1,28 @@
 import { nodeCatalog, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
-import type { VisualDocument, VisualPreview } from '../src/visual/api'
+import type { GraphOutline, HomeAutomation, VisualDocument, VisualPreview } from '../src/visual/api'
 import type { VisualGraph } from '../src/visual/graph'
+
+/** The server's outline of a graph (VisualApi.Outline): node kinds, positions and labels, trigger ids and configs, execution edges. */
+export function outlineOf(graph: VisualGraph): GraphOutline {
+  const index = new Map(graph.nodes.map((node, i) => [node.id, i]))
+  return {
+    name: graph.name,
+    nodes: graph.nodes.map(node => ({
+      kind: node.kind, x: Math.round(node.position?.x ?? 0), y: Math.round(node.position?.y ?? 0),
+      ...(node.label ? { label: node.label } : {}),
+      ...(node.kind === 'trigger' ? { id: node.id, config: structuredClone(node.config) } : {}),
+    })),
+    edges: graph.edges.flatMap(edge => (edge.kind !== 'data' && index.has(edge.source) && index.has(edge.target) ? [[index.get(edge.source)!, index.get(edge.target)!] as [number, number]] : [])),
+  }
+}
+/** How a fixture automation has been running, for the automations page; nothing when it never ran. */
+export type FixtureRuns = Partial<Pick<HomeAutomation, 'recentRuns' | 'runsToday' | 'failedLastDay' | 'lastRunUtc' | 'problemCount'>>
 
 export function visualFixture(
   options: { catalog?: VisualCatalogSnapshot; libraries?: { id: string; name: string; revision: number; source: string }[] } = {},
 ) {
   const documents = new Map<string, VisualDocument>()
+  const runs = new Map<string, FixtureRuns>()
   const calls: any[] = []
   const libraries = new Map((options.libraries ?? []).map(d => [d.id, { version: 1, ...d }]))
   let libraryRevision = 0
@@ -21,6 +38,10 @@ export function visualFixture(
     /** The C4 services section; the catalog reports its generation. Undefined: no services op (an older backend). */
     services: undefined as ServicesSection | undefined,
     servicesError: false,
+    /** `set_enabled` fails with this error code. */
+    setEnabledError: undefined as string | undefined,
+    /** The automations page's list fails. */
+    homeError: false,
   }
   const makePreview = (_graph: VisualGraph): VisualPreview => ({
     valid: !controls.invalid,
@@ -121,7 +142,22 @@ export function visualFixture(
       if (controls.previewError) throw new Error('Preview offline')
       result = controls.preview ?? makePreview(req.graph)
     // Like the backend, list omits the generated source; read returns it.
-    } else if (req.operation === 'list') result = [...documents.values()].map(({ source: _source, sourceMap: _sourceMap, ...summary }) => summary)
+    } else if (req.operation === 'list' && req.view === 'home') {
+      if (controls.homeError) throw new Error('Automations offline')
+      result = [...documents.values()].map((document): HomeAutomation => ({
+        id: document.id, revision: document.revision, automationId: document.automationId, enabled: document.enabled ?? true,
+        active: document.active, currentRevisionActive: document.currentRevisionActive ?? true, activationError: document.activationError ?? null,
+        savedUtc: document.savedUtc ?? null, catalogGeneration: document.catalogGeneration, outline: outlineOf(document.graph),
+        recentRuns: [], runsToday: 0, failedLastDay: 0, lastRunUtc: null, problemCount: null, ...structuredClone(runs.get(document.id) ?? {}),
+      }))
+    } else if (req.operation === 'list') result = [...documents.values()].map(({ source: _source, sourceMap: _sourceMap, savedUtc: _saved, ...summary }) => ({ enabled: true, ...summary }))
+    else if (req.operation === 'set_enabled') {
+      if (controls.setEnabledError) return fail(controls.setEnabledError, 'Fixture refused the switch')
+      const document = documents.get(req.id)
+      if (!document) return fail('not_found', 'Document missing')
+      documents.set(req.id, { ...document, enabled: req.enabled })
+      result = { id: req.id, enabled: req.enabled }
+    }
     else if (req.operation === 'read') {
       if (!documents.has(req.id)) return fail('not_found', 'Document missing')
       result = documents.get(req.id)
@@ -141,6 +177,8 @@ export function visualFixture(
         catalogGeneration: 'saved-fixture',
         activeRevision: controls.active ? req.expectedRevision + 1 : null,
         automationId: `visual:${req.id}`,
+        enabled: documents.get(req.id)?.enabled ?? true,
+        savedUtc: new Date().toISOString(),
       }
       documents.set(req.id, document)
       result = { document, active: controls.active, activationError: controls.active ? null : 'Compilation failed during activation' }
@@ -153,6 +191,7 @@ export function visualFixture(
   }
   return {
     documents,
+    runs,
     libraries,
     calls,
     controls,

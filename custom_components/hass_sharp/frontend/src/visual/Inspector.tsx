@@ -35,6 +35,8 @@ export interface InspectorProps {
   /** Shows the problems list (the overview's problem count links to it). */
   onShowProblems?(): void
   lastRun?: InspectorLastRun
+  /** False when the saved automation is turned off (the overview says so); undefined for a draft. */
+  enabled?: boolean
   /**
    * Docked: a side panel beside the canvas, always shown, with the overview when nothing is selected. Otherwise
    * (below 900px, or floating over a full-screen canvas) it is a sheet in two stages: a peek bar naming the
@@ -216,6 +218,9 @@ export function Inspector(props: InspectorProps) {
     }
     return (
       <section class="hs-insp-overview" aria-label="Automation overview">
+        <Show when={props.enabled === false}>
+          <p class="hs-insp-off" role="note"><strong>Off:</strong> nothing starts this automation by itself. Run now still works.</p>
+        </Show>
         <h2 class="hs-insp-heading">Starts when</h2>
         <Show when={triggers().length} fallback={<p class="hs-muted">This automation has no trigger yet.</p>}>
           <ul class="hs-insp-triggers">

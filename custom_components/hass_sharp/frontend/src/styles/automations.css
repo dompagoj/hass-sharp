@@ -1,15 +1,95 @@
-/* Automation list and its rows. */
-.hs-app .hs-list-toolbar { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 20px; }
-.hs-app .hs-list-toolbar .hs-field { flex: 1; max-width: 440px; }
-.hs-app .hs-count { margin-left: auto; padding-bottom: 12px; white-space: nowrap; font-size: 12px; }
-.hs-app .hs-automation-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
-.hs-app .hs-automation-card { border: 1px solid var(--hs-line); border-radius: 12px; background: var(--hs-surface); }
-.hs-app .hs-file-row { display: flex; align-items: center; gap: 16px; padding: 18px 20px; }
-.hs-app .hs-file-icon, .hs-app .hs-empty-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 11px; color: var(--hs-accent); background: var(--hs-soft); flex: none; }
-.hs-app .hs-file-link { display: block; flex: 1; min-width: 0; border-radius: 4px; overflow-wrap: anywhere; }
-.hs-app .hs-file-link:hover h2 { color: var(--hs-accent); }
-.hs-app .hs-file-link .hs-muted { font-size: 12px; }
+/* The automations home page: header, tools, a grid of cards and its states. */
+.hs-app .hs-home { max-width: 1240px; }
+.hs-app .hs-home-heading { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 16px 24px; margin-bottom: 24px; }
+.hs-app .hs-home-heading__text { min-width: 0; }
+.hs-app .hs-home-heading h1 { margin-bottom: 6px; }
+.hs-app .hs-home-summary { font-size: 14px; font-variant-numeric: tabular-nums; }
+.hs-app .hs-home-heading__actions { display: flex; align-items: center; gap: 8px; }
+.hs-app .hs-home-notice { margin: 0 0 16px; }
+
+.hs-app .hs-home-tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; margin-bottom: 20px; }
+.hs-app .hs-home-search { flex: 1 1 220px; max-width: 340px; }
+.hs-app .hs-home-search label, .hs-app .hs-home-sort > span { font-size: 12px; font-weight: 650; color: var(--hs-muted); }
+.hs-app .hs-home-filters { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 2px; }
+.hs-app .hs-home-filter { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 6px 14px; border: 1px solid var(--hs-line); border-radius: 999px; background: var(--hs-surface); color: var(--hs-text); font-size: 13px; font-weight: 600; transition: background var(--hs-motion) ease-out, border-color var(--hs-motion) ease-out; }
+.hs-app .hs-home-filter:hover { border-color: color-mix(in srgb, var(--hs-accent) 45%, var(--hs-line)); }
+.hs-app .hs-home-filter[aria-pressed="true"] { border-color: var(--hs-accent); background: var(--hs-soft); color: var(--hs-accent); }
+.hs-app .hs-home-filter__count { color: var(--hs-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.hs-app .hs-home-sort { display: flex; flex-direction: column; gap: 6px; margin-left: auto; }
+.hs-app .hs-home-sort .hs-input { width: auto; min-height: 40px; padding-block: 6px; }
+
+.hs-app .hs-home-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+
+/* A card: the picture of its graph, then what starts it, its health and its runs; the actions sit on top of the link. */
+.hs-app .hs-home-card { position: relative; display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--hs-line); border-radius: 14px; background: var(--hs-surface); box-shadow: var(--hs-card-shadow); transition: box-shadow var(--hs-motion) ease-out, border-color var(--hs-motion) ease-out; }
+.hs-app .hs-home-card:hover { box-shadow: var(--hs-card-shadow-raised); }
+.hs-app .hs-home-card__picture { position: relative; height: 104px; border-bottom: 1px solid var(--hs-line); border-radius: 13px 13px 0 0; overflow: hidden;
+  background: radial-gradient(color-mix(in srgb, var(--hs-muted) 22%, transparent) 1px, transparent 1.2px) 0 0 / 14px 14px, color-mix(in oklab, var(--hs-text) 3%, var(--hs-surface)); }
+.hs-app .hs-thumb { display: block; width: 100%; height: 100%; padding: 10px 14px; }
+.hs-app .hs-thumb__node { fill: color-mix(in oklab, var(--hs-thumb-color) 24%, var(--hs-surface)); stroke: var(--hs-thumb-color); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.hs-app .hs-thumb__node--trigger { fill: var(--hs-thumb-color); }
+.hs-app .hs-thumb__wire { fill: none; stroke: var(--hs-muted); stroke-width: 1.4; vector-effect: non-scaling-stroke; opacity: .75; }
+.hs-app .hs-home-card__body { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 14px 16px 6px; }
+.hs-app .hs-home-card__title { font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; }
+.hs-app .hs-home-card__link { color: inherit; outline: none; }
+.hs-app .hs-home-card__link::after { content: ''; position: absolute; inset: 0; border-radius: 14px; }
+.hs-app .hs-home-card__link:hover { color: var(--hs-accent); }
+.hs-app .hs-home-card__link:focus-visible::after { outline: 3px solid var(--hs-focus); outline-offset: 2px; }
+.hs-app .hs-home-card__about { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.hs-app .hs-home-card__starts { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 13px; }
+.hs-app .hs-home-card__starts li { display: flex; align-items: flex-start; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.hs-app .hs-home-card__glyph { width: 14px; height: 14px; flex: none; margin-top: 3px; }
+.hs-app .hs-home-card__starts .hs-home-card__glyph { color: var(--hs-cat-trigger); }
+.hs-app .hs-home-card__more { padding-left: 20px; color: var(--hs-muted); font-size: 12px; }
+.hs-app .hs-home-card__health { display: flex; align-items: flex-start; gap: 6px; color: var(--hs-danger); font-size: 13px; font-weight: 650; }
+.hs-app .hs-home-card__runs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: var(--hs-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.hs-app .hs-home-card__actions { position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 8px 10px 12px 16px; }
+.hs-app .hs-home-card__actions .hs-enabled { margin-right: auto; }
+.hs-app .hs-home-card__actions .hs-topbar__run { min-height: 40px; padding: 6px 14px; }
+
+/* The run dots: the run history's colours and shapes (runs.css), newest last. */
+.hs-app .hs-run-dots { display: inline-flex; align-items: center; gap: 3px; }
+.hs-app .hs-run-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--hs-muted); }
+.hs-app .hs-run-dot--succeeded { background: var(--hs-run-succeeded); }
+.hs-app .hs-run-dot--failed { background: var(--hs-danger); }
+.hs-app .hs-run-dot--cancelled { background: var(--hs-run-cancelled); }
+.hs-app .hs-run-dot--stopped { border-radius: 2px; }
+.hs-app .hs-run-dot--skipped { background: transparent; border: 2px solid var(--hs-muted); }
+.hs-app .hs-run-dot--running { background: var(--hs-accent); animation: hs-run-pulse 1.4s ease-in-out infinite; }
+
+/* The on/off switch, with its state in words. */
+.hs-app .hs-enabled { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; cursor: pointer; font-size: 13px; font-weight: 650; }
+.hs-app .hs-enabled__text { min-width: 2ch; }
+.hs-app .hs-home-chip { display: inline-flex; align-items: center; padding: 2px 9px; border: 1px solid var(--hs-line); border-radius: 999px; background: var(--hs-surface); color: var(--hs-muted); font-size: 11px; font-weight: 750; letter-spacing: .04em; }
+.hs-app .hs-home-card__picture .hs-home-chip { position: absolute; top: 8px; left: 10px; }
+
+/* Off: quieter; something wrong: tinted. */
+.hs-app .hs-home-card--off { background: color-mix(in oklab, var(--hs-bg) 45%, var(--hs-surface)); box-shadow: none; }
+.hs-app .hs-home-card--off .hs-thumb { opacity: .4; filter: grayscale(1); }
+.hs-app .hs-home-card--off .hs-home-card__starts { color: var(--hs-muted); }
+.hs-app .hs-home-card--attention { border-color: color-mix(in srgb, var(--hs-danger) 50%, var(--hs-line)); background: color-mix(in srgb, var(--hs-danger) 5%, var(--hs-surface)); }
+.hs-app .hs-home-card--attention .hs-home-card__picture { border-bottom-color: color-mix(in srgb, var(--hs-danger) 35%, var(--hs-line)); }
+
+/* Loading: skeleton cards. */
+.hs-app .hs-home-card--skeleton { min-height: 236px; padding: 120px 16px 16px; gap: 10px; box-shadow: none; }
+.hs-app .hs-home-card--skeleton span { display: block; height: 12px; border-radius: 6px; background: color-mix(in srgb, var(--hs-muted) 18%, var(--hs-surface)); animation: hs-run-pulse 1.6s ease-in-out infinite; }
+.hs-app .hs-home-card--skeleton span:first-child { width: 60%; height: 16px; }
+.hs-app .hs-home-card--skeleton span:nth-child(2) { width: 85%; }
+.hs-app .hs-home-card--skeleton span:last-child { width: 40%; }
+.hs-app .hs-home-card--skeleton::before { content: ''; position: absolute; inset: 0 0 auto; height: 104px; border-radius: 13px 13px 0 0; background: color-mix(in srgb, var(--hs-muted) 10%, var(--hs-surface)); }
+
+/* Empty and no results. */
+.hs-app .hs-home-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 560px; margin: 24px auto 0; padding: 32px 20px 40px; border: 1px dashed var(--hs-line); border-radius: 14px; text-align: center; }
+.hs-app .hs-home-empty p { color: var(--hs-muted); max-width: 46ch; }
+.hs-app .hs-home-empty__drawing { width: min(260px, 100%); height: 96px; padding: 0; }
+.hs-app .hs-home-none { padding: 40px 20px; }
+
 @media (max-width: 700px) {
-  .hs-app .hs-file-row { gap: 10px; padding: 14px 12px; }
-  .hs-app .hs-file-icon { display: none; }
+  .hs-app .hs-home-heading { align-items: stretch; flex-direction: column; gap: 16px; }
+  .hs-app .hs-home-heading__actions .hs-home-new { flex: 1; }
+  .hs-app .hs-home-search { flex-basis: 100%; max-width: none; }
+  .hs-app .hs-home-sort { flex-direction: row; align-items: center; margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hs-app .hs-run-dot--running, .hs-app .hs-home-card--skeleton span { animation: none; }
 }

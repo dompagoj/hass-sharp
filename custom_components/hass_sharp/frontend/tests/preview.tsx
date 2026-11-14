@@ -187,9 +187,43 @@ if (traceFixture) visualBackend.documents.set('trace-demo', { version: 1, id: 't
 ;(window as any).visualFixture = visualBackend
 const visualFixture = new URLSearchParams(location.search).get('view') === 'visual'
 const libraryFixture = new URLSearchParams(location.search).get('view') === 'library'
-// The automations list (no view): saved automations, one with a long name to check wrapping on a small screen.
-if (!traceFixture && !libraryFixture && !visualFixture) for (const [id, name] of [['evening-lights', 'Evening lights'], ['long-name', 'A very long automation name to check wrapping on a small screen']])
-  visualBackend.documents.set(id, { version: 1, id, revision: 1, graph: createGraph(name), source: '// List fixture', sourceMap: [], automationId: `visual:${id}`, currentRevisionActive: true, catalogGeneration: 'saved-fixture' })
+// The automations list (no view, or `?view=list`): six saved automations: healthy with mixed runs and two triggers, not
+// active with problems, never run, running now, a long name (wrapping on a small screen) and off. `&state=loading`
+// keeps the list loading, `&state=empty` has no automations, `&state=error` fails the list (Try again still fails).
+const listState = new URLSearchParams(location.search).get('state')
+const listFixture = !traceFixture && !libraryFixture && !visualFixture
+if (listFixture && listState !== 'empty') {
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+  const recent = (statuses: AutomationRun['status'][], every = 47) =>
+    statuses.map((status, i) => ({ runId: `fixture-home-${i}`, status, startUtc: ago((statuses.length - i) * every), durationMs: status === 'Running' ? null : 20 + i * 7 }))
+  const sample = (id: string, name: string, options: { triggers?: Record<string, unknown>[]; extra?: number; active?: boolean; enabled?: boolean; savedMinutes?: number } = {}) => {
+    let graph = updateNode(createGraph(name), 'trigger-1', { config: { type: 'entity', entity: 'binary_sensor.hall_0', manual: true, mode: 'Single' } })
+    for (const [i, config] of (options.triggers ?? []).entries()) {
+      graph = addNode(graph, 'trigger', `trigger-${i + 2}`)
+      graph = updateNode(graph, `trigger-${i + 2}`, { config, position: { x: 60, y: 300 + i * 200 } })
+    }
+    for (let i = 0; i < (options.extra ?? 0); i++) {
+      graph = addNode(graph, 'service', `step-${i}`)
+      graph = updateNode(graph, `step-${i}`, { position: { x: 960 + i * 300, y: 100 + (i % 2) * 160 } })
+      graph = connectNodes(graph, i ? `step-${i - 1}` : 'service-1', `step-${i}`)
+    }
+    visualBackend.documents.set(id, { version: 1, id, revision: 3, graph, source: '// List fixture', sourceMap: [], automationId: `visual:${id}`,
+      currentRevisionActive: options.active ?? true, active: options.active ?? true, enabled: options.enabled, catalogGeneration: 'saved-fixture',
+      activationError: options.active === false ? 'Compilation failed during activation' : null, savedUtc: ago(options.savedMinutes ?? 600) })
+  }
+  sample('evening-lights', 'Evening lights', { triggers: [{ type: 'daily', time: '19:30' }], extra: 2, savedMinutes: 30 })
+  visualBackend.runs.set('evening-lights', { recentRuns: recent(['Succeeded', 'Succeeded', 'Failed', 'Succeeded', 'Skipped', 'Succeeded', 'Cancelled', 'Succeeded', 'Stopped', 'Succeeded']), runsToday: 6, failedLastDay: 1, lastRunUtc: ago(47) })
+  sample('broken', 'Heating schedule', { triggers: [{ type: 'daily', time: '06:00' }, { type: 'entity', entity: 'binary_sensor.hall_2' }, { type: 'startup' }], active: false, savedMinutes: 5 })
+  visualBackend.runs.set('broken', { recentRuns: recent(['Succeeded', 'Succeeded', 'Failed'], 600), runsToday: 0, lastRunUtc: ago(600), problemCount: 2 })
+  sample('never', 'Garage door reminder', { triggers: [{ type: 'entity', entity: 'binary_sensor.hall_4' }], savedMinutes: 2000 })
+  sample('running', 'Morning coffee', { extra: 4, savedMinutes: 900 })
+  visualBackend.runs.set('running', { recentRuns: recent(['Succeeded', 'Succeeded', 'Running'], 1), runsToday: 3, lastRunUtc: ago(0.2) })
+  sample('long-name', 'A very long automation name to check that wrapping works on a small phone screen without overflow')
+  visualBackend.runs.set('long-name', { recentRuns: recent(['Succeeded'], 3000), runsToday: 0, lastRunUtc: ago(3000) })
+  sample('off', 'Holiday lights', { triggers: [{ type: 'daily', time: '17:00' }], enabled: false, savedMinutes: 9000 })
+  visualBackend.runs.set('off', { recentRuns: recent(['Succeeded', 'Succeeded'], 20000), runsToday: 0, lastRunUtc: ago(20000) })
+}
+if (listFixture && listState === 'error') visualBackend.controls.homeError = true
 history.replaceState(null, '', traceFixture ? '/hass-sharp/visual/trace-demo/runs/fixture-trace-run' : libraryFixture ? '/hass-sharp/libraries' : visualFixture ? typedFixture?'/hass-sharp/visual/typed-demo':'/hass-sharp/visual/new?name=Motion%20lights' : '/hass-sharp/automations')
 const hass = {
   user: { is_admin: true },
@@ -197,6 +231,7 @@ const hass = {
   async callWS(message: { type: string }) {
     if (message.type === 'hass_sharp/get_entities') return { entities: Array.from({length:80},(_,i)=>({entity_id: `${i%2?'light':'binary_sensor'}.hall_${i}`, name: `Hall ${i%2?'lamp':'motion'} ${i}`})) }
     if (message.type === 'get_services') return { light: { turn_on: {name:'Turn on',description:'Turn on a light'}, turn_off: {name:'Turn off',description:'Turn off a light'} }, climate: { set_temperature: {name:'Set temperature',description:'Change the target temperature'} } }
+    if (listState === 'loading' && (message as any).request?.view === 'home') return new Promise(() => {})
     if (message.type === 'hass_sharp/visual'||message.type==='hass_sharp/node_library') return visualBackend.callWS(message)
     if (message.type === 'hass_sharp/run_trace') {
       if (dropTrace && ++traceReads % 3 === 0) throw { code: 3, message: 'Connection lost' }

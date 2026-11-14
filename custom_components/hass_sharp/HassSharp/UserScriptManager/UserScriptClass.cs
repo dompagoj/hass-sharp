@@ -82,7 +82,7 @@ class UserScriptClass
     {
         lock (Script.ScriptManager.ActivationGate)
         {
-            if (!Script.Active || lifetime.IsCancellationRequested) return Task.CompletedTask;
+            if (!Script.Active || !Script.Enabled || lifetime.IsCancellationRequested) return Task.CompletedTask;
             using var document = System.Text.Json.JsonDocument.Parse(payload);
             return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method),
                 _actions[method].Mode, InvocationCause.HomeAssistantTrigger, TriggerPayload.Native(document.RootElement));
@@ -93,7 +93,8 @@ class UserScriptClass
     {
         lock (Script.ScriptManager.ActivationGate)
         {
-            if (!Script.Active || Script.LifetimeToken.IsCancellationRequested) return Task.CompletedTask;
+            // Off: the occurrence is skipped and not claimed; it is not caught up when the automation is turned on.
+            if (!Script.Active || !Script.Enabled || Script.LifetimeToken.IsCancellationRequested) return Task.CompletedTask;
             var utc = DateTimeOffset.Parse(planned, System.Globalization.CultureInfo.InvariantCulture).UtcDateTime;
             var identity = System.Text.Json.JsonSerializer.Serialize(new[] {
                 Script.AutomationId, ClassName, method, scheduleId, utc.ToString("O") });
@@ -107,7 +108,8 @@ class UserScriptClass
 
     internal Task StartupCompletion { get; private set; } = Task.CompletedTask;
 
-    internal void Start() => StartupCompletion = Task.WhenAll(
+    /// <summary>Runs the startup actions, unless the automation is off.</summary>
+    internal void Start() => StartupCompletion = !Script.Enabled ? Task.CompletedTask : Task.WhenAll(
         _actions.Values.Where(a => a.Startup).Select(a => RunMethod(a.Method, InvocationCause.Startup)));
 
     /// <param name="payload">The normalised trigger payload; manual and startup runs build their own when omitted.</param>

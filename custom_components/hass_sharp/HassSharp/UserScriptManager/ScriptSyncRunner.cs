@@ -8,14 +8,17 @@ static class CancelReasons
     public const string Restarted = "Restarted by a newer trigger";
     public const string Reloaded = "Automation reloaded";
     public const string Stopping = "Home Assistant stopping";
+    public const string TurnedOff = "Automation turned off";
     public const string Unknown = "Invocation cancelled";
 }
 
 class ScriptSyncRunner
 {
-    sealed class ActiveRun(CancellationTokenSource cancellation)
+    sealed class ActiveRun(CancellationTokenSource cancellation, UserScript.RunScope scope)
     {
         public CancellationTokenSource Cancellation { get; } = cancellation;
+        /// <summary>The script's runs when this one started; turning the automation off cancels them with its reason.</summary>
+        public UserScript.RunScope Scope { get; } = scope;
         /// <summary>Set before this run alone is cancelled; a lifetime cancellation leaves it null.</summary>
         public volatile string? CancelReason;
         public Task? CancellationTask { get; set; }
@@ -112,7 +115,7 @@ class ScriptSyncRunner
                 catch (OperationCanceledException) when (registration.Run.Token.IsCancellationRequested)
                 {
                     record.Status = "Cancelled";
-                    record.Error = registration.Run.CancelReason ?? scriptClass.Script.CancelReason ?? CancelReasons.Unknown;
+                    record.Error = registration.Run.CancelReason ?? registration.Run.Scope.Reason ?? scriptClass.Script.CancelReason ?? CancelReasons.Unknown;
                 }
                 catch (Exception ex)
                 { record.Status = "Failed"; record.Error = ex.GetBaseException().Message; Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}"); }
@@ -158,7 +161,8 @@ class ScriptSyncRunner
 
     RunRegistration? TryRegister(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode)
     {
-        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(scriptClass.Script.LifetimeToken);
+        var runs = scriptClass.Script.Runs;
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(scriptClass.Script.LifetimeToken, runs.Token);
 
         using var scope = _gate.EnterScope();
         if (cancellation.IsCancellationRequested)
@@ -192,7 +196,7 @@ class ScriptSyncRunner
         // Cancellation callbacks finishing does not mean user code has exited.
         // Keep the completion chain even when an intermediate restart is cancelled.
         var predecessor = mode is AutomationMode.Queued or AutomationMode.Restart ? state.Tail : null;
-        var run = new ActiveRun(cancellation);
+        var run = new ActiveRun(cancellation, runs);
         state.CurrentRun = run;
         state.Tail = run.Completed.Task;
         return new(state, run, restartCancellation, predecessor);

@@ -29,6 +29,10 @@ public sealed class InvocationRecord
 }
 /// <summary>The graph and pruned catalog a visual revision ran, keyed by the run <c>Revision</c> (D10).</summary>
 public sealed record GraphSnapshot(string Revision, string VisualId, long VisualRevision, string Graph, string Catalog);
+/// <summary>A run as the automations page shows it: one dot and the last-run line.</summary>
+public sealed record RecentRun(string RunId, string Status, DateTime? StartUtc, double? DurationMs);
+/// <summary>How one automation has been running: its newest runs (oldest first, newest last) and counts.</summary>
+public sealed record RecentRuns(IReadOnlyList<RecentRun> Runs, int RunsToday, int FailedLastDay, DateTime? LastRunUtc);
 public sealed record RunTraceRecord(string RunId, int Format, string Json, int EventCount, bool Truncated, DateTime UpdatedUtc);
 internal sealed class AutomationIdentity
 {
@@ -234,6 +238,53 @@ public sealed class RunHistoryStore
             return runs.OrderByDescending(r => r.ReceivedUtc).ThenByDescending(r => r.RunId).Skip(offset).Take(limit).ToList();
         }
     }
+    /// <summary>
+    /// For every automation in <paramref name="automationIds"/> that has runs, in one query: its newest
+    /// <paramref name="limit"/> runs, newest last; how many arrived since <paramref name="todayUtc"/>; how many failed
+    /// (Failed or Interrupted) since <paramref name="failedSinceUtc"/>; and when the newest arrived.
+    /// </summary>
+    public Dictionary<string, RecentRuns> Recent(IReadOnlyCollection<string> automationIds, DateTime todayUtc, DateTime failedSinceUtc, int limit = 10)
+    {
+        if (limit < 1 || limit > 100) throw new ArgumentOutOfRangeException(nameof(limit));
+        var result = new Dictionary<string, RecentRuns>(StringComparer.Ordinal);
+        if (automationIds.Count == 0) return result;
+        lock (gate)
+        {
+            using var db = new HistoryContext(path);
+            var connection = db.Database.GetDbConnection();
+            connection.Open();
+            using var command = connection.CreateCommand();
+            // Each automation's rows come from the (AutomationId, ReceivedUtc, RunId) index, newest first.
+            command.CommandText = RecentSql;
+            void Parameter(string name, object value) { var p = command.CreateParameter(); p.ParameterName = name; p.Value = value; command.Parameters.Add(p); }
+            Parameter("$ids", System.Text.Json.JsonSerializer.Serialize(automationIds));
+            Parameter("$today", DateTime.SpecifyKind(todayUtc, DateTimeKind.Utc));
+            Parameter("$failed", DateTime.SpecifyKind(failedSinceUtc, DateTimeKind.Utc));
+            Parameter("$limit", limit);
+            var rows = new Dictionary<string, (List<RecentRun> Runs, int Today, int Failed, DateTime Last)>(StringComparer.Ordinal);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var id = reader.GetString(0);
+                if (!rows.TryGetValue(id, out var row))
+                    rows[id] = row = ([], reader.GetInt32(5), reader.GetInt32(6), Utc(reader.GetDateTime(7)));
+                row.Runs.Add(new(reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : Utc(reader.GetDateTime(3)), reader.IsDBNull(4) ? null : reader.GetDouble(4)));
+            }
+            foreach (var (id, row) in rows) { row.Runs.Reverse(); result[id] = new(row.Runs, row.Today, row.Failed, row.Last); }
+            return result;
+        }
+    }
+    internal const string RecentSql = """
+        SELECT AutomationId, RunId, Status, StartUtc, DurationMs, Today, Failed, Last FROM (
+          SELECT AutomationId, RunId, Status, StartUtc, DurationMs,
+            ROW_NUMBER() OVER (PARTITION BY AutomationId ORDER BY ReceivedUtc DESC, RunId DESC) AS Position,
+            SUM(ReceivedUtc >= $today) OVER (PARTITION BY AutomationId) AS Today,
+            SUM(Status IN ('Failed', 'Interrupted') AND ReceivedUtc >= $failed) OVER (PARTITION BY AutomationId) AS Failed,
+            MAX(ReceivedUtc) OVER (PARTITION BY AutomationId) AS Last
+          FROM Runs WHERE AutomationId IN (SELECT value FROM json_each($ids)))
+        WHERE Position <= $limit ORDER BY AutomationId, Position
+        """;
+    static DateTime Utc(DateTime value) => DateTime.SpecifyKind(value, DateTimeKind.Utc);
     public InvocationRecord? ReadRun(string runId)
     {
         lock (gate) { using var db = new HistoryContext(path); return db.Runs.AsNoTracking().SingleOrDefault(r => r.RunId == runId); }

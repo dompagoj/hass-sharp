@@ -283,7 +283,7 @@ it('authors two triggers, saves/reloads them, then dispatches either saved actio
   // The Runs tab shows history only.
   tab(root, 'Runs')
   await vi.waitFor(() => expect(root.querySelector('[aria-label="Run history"]')).not.toBeNull())
-  expect(root.querySelector('.hs-drawer [aria-label="Run automation"], .hs-run-action')).toBeNull()
+  expect(root.querySelector('.hs-drawer [aria-label="Run automation"]')).toBeNull()
   const methods = fixture.calls.filter(c => c.type === 'hass_sharp/run_now').map(c => c.method)
   expect(methods).toContain('Run_747269676765722D31')
   // UUIDs are ASCII; independently derive the request expectation from the persisted ID.
@@ -392,4 +392,50 @@ it('opens with the drawer closed otherwise', async () => {
   const { root } = setup(true)
   await saved(root, 4)
   expect(root.querySelector('.hs-drawer')!.classList).not.toContain('hs-drawer--open')
+})
+it('turns a saved automation off and on from the top bar without a change to save, and rolls back a refused switch', async () => {
+  const { root, fixture } = setup(true)
+  await saved(root, 4)
+  const toggle = () => root.querySelector<HTMLInputElement>('.hs-topbar__enabled input[role="switch"]')!
+  await vi.waitFor(() => expect(toggle()).not.toBeNull())
+  expect(toggle().getAttribute('aria-label')).toBe('Saved motion on')
+  expect(toggle().checked).toBe(true)
+  // Nothing selected: the side panel shows the overview.
+  const node = root.querySelector('.solid-flow__node')!
+  node.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+  const overview = () => root.querySelector('.hs-insp-overview')?.textContent ?? ''
+  await vi.waitFor(() => expect(root.querySelector('.hs-insp-overview')).not.toBeNull())
+  expect(overview()).not.toContain('Off:')
+  const undo = button(root, 'Undo')
+  const undoBefore = undo?.disabled
+  const runNow = () => root.querySelector<HTMLButtonElement>('.hs-topbar__run')!
+  const runBefore = runNow().disabled
+
+  toggle().click()
+  // Optimistic: the switch and the overview say off at once, before the backend answers.
+  expect(toggle().checked).toBe(false)
+  await vi.waitFor(() => expect(overview()).toContain('Off: nothing starts this automation by itself. Run now still works.'))
+  await vi.waitFor(() => expect(fixture.documents.get('motion')!.enabled).toBe(false))
+  expect(fixture.calls).toContainEqual(expect.objectContaining({ request: expect.objectContaining({ operation: 'set_enabled', id: 'motion', enabled: false }) }))
+  // It is not an edit: still saved at the same revision, nothing to undo, and Run now is still offered.
+  expect(chip(root).textContent).toBe('Saved')
+  expect(chipTip(root)).toBe('Saved revision 4')
+  if (undo) expect(undo.disabled).toBe(undoBefore)
+  expect(runNow().disabled).toBe(runBefore)
+
+  // Refused: the switch goes back and says why.
+  fixture.controls.setEnabledError = 'forbidden'
+  toggle().click()
+  expect(toggle().checked).toBe(true)
+  await vi.waitFor(() => expect(root.querySelector('.hs-topbar__notice')?.textContent).toContain('Could not turn it on'))
+  expect(toggle().checked).toBe(false)
+  expect(overview()).toContain('Off:')
+  expect(fixture.documents.get('motion')!.enabled).toBe(false)
+
+  fixture.controls.setEnabledError = undefined
+  toggle().click()
+  await vi.waitFor(() => expect(fixture.documents.get('motion')!.enabled).toBe(true))
+  expect(toggle().checked).toBe(true)
+  await vi.waitFor(() => expect(overview()).not.toContain('Off:'))
+  expect(chip(root).textContent).toBe('Saved')
 })

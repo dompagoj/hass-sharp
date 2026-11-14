@@ -1,4 +1,4 @@
-import type { HomeAssistant, RunTraceResponse } from '../types'
+import type { HomeAssistant, RunStatus, RunTraceResponse } from '../types'
 import type { VisualGraph } from './graph'
 import type { ServicesSection, VisualCatalogSnapshot } from './contract'
 
@@ -36,9 +36,55 @@ export interface VisualDocument {
   active?: boolean
   activationError?: string | null
   automationId: string
+  /** Off: nothing starts it by itself, Run now still works. Missing means on. */
+  enabled?: boolean
+  /** When the graph was last saved (`read` only; null for a document saved before this was recorded). */
+  savedUtc?: string | null
 }
 /** A `list` entry: the document without its generated source; `read` returns the source. */
 export type VisualDocumentSummary = Omit<VisualDocument, 'source' | 'sourceMap'>
+/** A node of an {@link GraphOutline}: trigger nodes also carry their id and config, for summaries and Run now. */
+export interface OutlineNode {
+  kind: string
+  x: number
+  y: number
+  label?: string
+  id?: string
+  config?: Record<string, unknown>
+}
+/** What the automations page draws a graph from: its nodes and its execution edges as pairs of node indexes. */
+export interface GraphOutline {
+  name: string
+  nodes: OutlineNode[]
+  edges: [number, number][]
+}
+/** One of an automation's most recent runs. */
+export interface RecentRun {
+  runId: string
+  status: RunStatus
+  startUtc: string | null
+  durationMs: number | null
+}
+/** An entry of the automations page's list (`list` with `view: 'home'`): no graph, an outline, and how it has been running. */
+export interface HomeAutomation {
+  id: string
+  revision: number
+  automationId: string
+  enabled: boolean
+  active?: boolean
+  currentRevisionActive: boolean
+  activationError?: string | null
+  /** How many problems keep the saved version from loading, when known. */
+  problemCount?: number | null
+  savedUtc?: string | null
+  catalogGeneration?: string | null
+  outline: GraphOutline
+  /** The newest runs, up to 10, newest last. */
+  recentRuns: RecentRun[]
+  runsToday: number
+  failedLastDay: number
+  lastRunUtc: string | null
+}
 export interface VisualSaveResult {
   document: VisualDocument
   active: boolean
@@ -84,6 +130,9 @@ export function visualApi(hass: Pick<HomeAssistant, 'callWS'>) {
     runTrace: (runId: string) => hass.callWS<RunTraceResponse>({ type: 'hass_sharp/run_trace', runId }),
     preview: (graph: VisualGraph) => request<VisualPreview>('preview', { graph }),
     list: () => request<VisualDocumentSummary[]>('list'),
+    /** The automations page's list; `todayUtc` is the start of the viewer's day, for `runsToday`. */
+    home: (todayUtc: string) => request<HomeAutomation[]>('list', { view: 'home', todayUtc }),
+    setEnabled: (id: string, enabled: boolean) => request<{ id: string; enabled: boolean }>('set_enabled', { id, enabled }),
     read: (id: string) => request<VisualDocument>('read', { id }),
     save: (id: string, graph: VisualGraph, expectedRevision: number) => request<VisualSaveResult>('save', { id, graph, expectedRevision }),
     delete: (id: string, expectedRevision: number) => request<{ deleted: true }>('delete', { id, expectedRevision }),
