@@ -49,8 +49,8 @@ const runs: AutomationRun[] = Array.from({ length: 23 }, (_, i) => visualRun(i))
 const visualBackend = makeVisualFixture({catalog:rich.catalog as unknown as VisualCatalogSnapshot,libraries:[{id:rich.sourceId,name:'Typed sample.cs',revision:rich.revision,source:rich.source}, {id:'helper',name:'Helper.cs',revision:1,source:'public static class Factory { public static Reading Make(string? label, int count = 1) => new(label ?? ""); public static Reading Read(EntityStateSnapshot entity) => Samples.Describe(entity); }'}]})
 const typedFixture=new URLSearchParams(location.search).has('typed')
 // Node cards: a state trigger, light.turn_on with a target and two fields, a condition with both branches, a delay,
-// a connected and an unconnected input, value nodes (a Constant read by the service and a Compare read by a Log step)
-// and the rich library sample below them.
+// a connected and an unconnected input, value nodes (a Constant read by the service and a Compare read by a Log step),
+// a Custom C# node (Edit code) and the rich library sample below them.
 const typedDemo = (): Graph => {
   const catalog = rich.catalog as unknown as VisualCatalogSnapshot, lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
   const config = (graph: Graph, id: string) => graph.nodes.find(n => n.id === id)!.config
@@ -72,6 +72,11 @@ const typedDemo = (): Graph => {
   g = connectData(g, 'level', 'value', 'service-1', 'field:brightness_pct', catalog)
   g = connectData(g, 'level', 'value', 'bright', 'left', catalog)
   g = connectData(g, 'bright', 'value', 'note', 'value', catalog)
+  // A Custom C# node from the template after the log; its code editor checks with the fixture (`!!` is an error).
+  g = addNode(g, 'custom', 'greeting', catalog)
+  g = updateNode(g, 'greeting', { position: { x: 2040, y: 20 } })
+  g = connectNodes(g, 'note', 'greeting', undefined, catalog)
+  g = connectData(g, 'trigger-1', 'entity_id', 'greeting', 'text', catalog)
   const sample = fillGraphLayout(rich.cases[0].graph as Graph)
   return { ...g, nodes: [...g.nodes, ...sample.nodes.map((node, i) => ({ ...node, position: { x: 40 + i * 400, y: 820 } }))], edges: [...g.edges, ...sample.edges] }
 }

@@ -323,6 +323,28 @@ export function NodeCard(props: NodeProps) {
                 </Show>
               </span>
             </Show>
+            <Show when={flow.hasCode(id)}>
+              <button
+                type="button"
+                class="hs-card__code nodrag nopan"
+                aria-label={`${flow.readOnly() ? 'View' : 'Edit'} code of ${current().title}`}
+                title={flow.readOnly() ? 'View code' : 'Edit code'}
+                on:click={(event: MouseEvent) => {
+                  event.stopPropagation()
+                  flow.editCode(id)
+                }}
+                on:dblclick={(event: MouseEvent) => event.stopPropagation()}
+                on:keydown={(event: KeyboardEvent) => {
+                  // The canvas takes Enter and Space for node selection; this button keeps them.
+                  if (event.key !== 'Enter' && event.key !== ' ') return
+                  event.preventDefault()
+                  event.stopPropagation()
+                  flow.editCode(id)
+                }}
+              >
+                <Icon paths={icons.code} class="hs-card__code-icon" />
+              </button>
+            </Show>
             <Show when={current().problems.length}>
               <button
                 type="button"

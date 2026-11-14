@@ -11,6 +11,7 @@ import { icons } from '../icons'
 import { media } from '../media'
 import { nodeCatalog } from '../contract'
 import { TopBar } from '../TopBar'
+import { CustomCodeEditor } from '../CustomCodeEditor'
 import type { RunStatus, RunTraceResponse, TraceEvent } from '../../types'
 import { Timeline } from './Timeline'
 import { runDuration, runTime, TraceInspector } from './TraceInspector'
@@ -62,6 +63,9 @@ export function TracePage(props: {
   const [seq, setSeq] = createSignal<number>()
   const [frame, setFrame] = createSignal('')
   const [focusId, setFocusId] = createSignal<string>()
+  /** A Custom C# node whose code is on view (read only). */
+  const [codeNodeId, setCodeNodeId] = createSignal<string>()
+  const codeNode = () => graph()?.nodes.find(n => n.id === codeNodeId())
   const event = () => {
     const current = model()?.event(seq())
     return current && current.node === nodeId() ? current : undefined
@@ -276,6 +280,7 @@ export function TracePage(props: {
                   onSelect={selectNode}
                   toolbarExtra={<FullscreenButton fullscreen={fullscreen} onToggle={fullscreenPage.toggle} />}
                   controls={controls => (flow = controls)}
+                  onEditCode={id => { selectNode(id); setCodeNodeId(id) }}
                 />
               </div>
               <TraceInspector
@@ -322,6 +327,9 @@ export function TracePage(props: {
             </Show>
           </>
         )}
+      </Show>
+      <Show when={codeNode() && codeNodeId()} keyed>
+        {_id => <CustomCodeEditor node={codeNode()!} catalog={catalog()} readOnly onClose={() => setCodeNodeId(undefined)} />}
       </Show>
     </section>
   )

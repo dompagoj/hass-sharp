@@ -15,6 +15,42 @@ export function outlineOf(graph: VisualGraph): GraphOutline {
     edges: graph.edges.flatMap(edge => (edge.kind !== 'data' && index.has(edge.source) && index.has(edge.target) ? [[index.get(edge.source)!, index.get(edge.target)!] as [number, number]] : [])),
   }
 }
+const clrTypes: Record<string, string> = { string: 'global::System.String', int: 'global::System.Int32', double: 'global::System.Double', bool: 'global::System.Boolean', 'string?': 'global::System.String?', 'double?': 'global::System.Double?' }
+const inWords = (name: string) => { const words = name.replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().trim(); return words.charAt(0).toUpperCase() + words.slice(1) }
+/**
+ * A fixture's `custom_preview`: no compiler, only enough to try the code editor. The one `[Node("Title")]` method's
+ * parameters (`string`, `int`, `double`, `bool`; `NodeContext` and `CancellationToken` are supplied by the run) and
+ * its return value (one value, a named tuple, or `void`/`Task`) give the pins; `Pure = true` a value node. Code with
+ * `!!` in it has an error there.
+ */
+export function fixtureCustomPreview(nodeId: string, source: string) {
+  const bad = source.indexOf('!!')
+  if (bad >= 0) {
+    const lines = source.slice(0, bad).split('\n')
+    const line = lines.length, column = lines.at(-1)!.length + 1
+    return { valid: false, signature: null, diagnostics: [{ sourceId: nodeId, startLine: line, startColumn: column, endLine: line, endColumn: column + 2, severity: 3, message: "Unexpected '!!' (fixture)" }] }
+  }
+  const method = /\[Node\("([^"]*)"([^\]]*)\)\]\s*public\s+static\s+(?:async\s+)?([\w<>?,\s()]+?)\s+(\w+)\s*\(([^)]*)\)/.exec(source)
+  if (!method) return { valid: false, signature: null, diagnostics: [{ sourceId: nodeId, startLine: 1, startColumn: 1, endLine: 1, endColumn: 2, severity: 3, message: 'Mark exactly one public static method with [Node] (fixture)' }] }
+  const [, title, options, returns, , parameters] = method
+  const summary = /<summary>([\s\S]*?)<\/summary>/.exec(source.slice(0, method.index))?.[1].trim() ?? ''
+  const inputs: Record<string, unknown> = {}
+  for (const parameter of parameters.split(',').map(p => p.trim()).filter(Boolean)) {
+    const [, type, name, fallback] = /^(?:\[Port\("[^"]*"\)\]\s*)?([\w?]+)\s+(\w+)(?:\s*=\s*(.+))?$/.exec(parameter) ?? []
+    if (!type || type === 'NodeContext' || type === 'CancellationToken') continue
+    const typeId = clrTypes[type] ?? clrTypes.string
+    inputs[name] = { types: [typeId], required: fallback === undefined && !type.endsWith('?'), label: /\[Port\("([^"]*)"\)\]/.exec(parameter)?.[1] ?? inWords(name), description: '', nullable: type.endsWith('?'), hasDefaultValue: fallback !== undefined }
+  }
+  const outputs: Record<string, unknown> = {}
+  const result = returns.replace(/^(?:Task|ValueTask)<(.+)>$/, '$1').trim()
+  const tuple = /^\((.+)\)$/.exec(result)
+  if (tuple) for (const element of tuple[1].split(',')) {
+    const [type, name] = element.trim().split(/\s+/)
+    outputs[name.charAt(0).toLowerCase() + name.slice(1)] = { type: clrTypes[type] ?? clrTypes.string, label: inWords(name), description: '' }
+  } else if (!['void', 'Task', 'ValueTask'].includes(result)) outputs.result = { type: clrTypes[result] ?? clrTypes.string, label: 'Result', description: '' }
+  return { valid: true, diagnostics: [], signature: { title, description: summary, pure: /Pure\s*=\s*true/.test(options), inputs, outputs, types: {} } }
+}
+
 /** How a fixture automation has been running, for the automations page; nothing when it never ran. */
 export type FixtureRuns = Partial<Pick<HomeAutomation, 'recentRuns' | 'runsToday' | 'failedLastDay' | 'lastRunUtc' | 'problemCount'>>
 
@@ -90,13 +126,16 @@ export function visualFixture(
       }
       if (request.generation && request.generation !== controls.generation) return fail('conflict', 'Saved library generation changed')
       if (controls.previewError) throw new Error('Library fixture offline')
+      if (request.operation === 'custom_preview') return ok(fixtureCustomPreview(request.nodeId ?? 'custom', request.source))
+      // A Custom C# node's code (`custom: true`): replies name the node; its own code is the `$custom` document.
+      const custom = request.custom === true
       const sources = new Map([...libraries.values()].map(d => [d.id, d.source]))
       for (const other of request.sources ?? []) sources.set(other.id, other.source)
-      sources.set(request.id, request.source)
+      sources.set(custom ? '$custom' : request.id, request.source)
       const identity = JSON.stringify([...sources].sort()) + controls.generation
       let hash = 2166136261
       for (let i = 0; i < identity.length; i++) hash = Math.imul(hash ^ identity.charCodeAt(i), 16777619)
-      const wrap = (data: unknown) => ok({ id: request.id, workspaceVersion: request.workspaceVersion, generation: controls.generation, sourceGeneration: `fixture-source-${hash >>> 0}`, saved: false, data })
+      const wrap = (data: unknown) => ok({ id: custom ? request.nodeId ?? 'custom' : request.id, workspaceVersion: request.workspaceVersion, generation: controls.generation, sourceGeneration: `fixture-source-${hash >>> 0}`, saved: false, data })
       const range = (source: string, start: number, length: number) => {
         const position = (offset: number) => { const lines = source.slice(0, offset).split('\n'); return { line: lines.length, column: lines.at(-1)!.length + 1 } }
         const a = position(start), b = position(start + length)

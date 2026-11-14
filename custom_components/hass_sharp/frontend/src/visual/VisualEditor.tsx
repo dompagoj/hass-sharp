@@ -25,6 +25,8 @@ import { EnabledSwitch } from '../automations/EnabledSwitch'
 import { setAutomationEnabled } from '../automations/enabled'
 import { soon } from './soon'
 import { createNotice, TopBar } from './TopBar'
+import { CustomCodeEditor } from './CustomCodeEditor'
+import { applyCustomCode } from './customCode'
 
 export type DrawerTab = 'problems' | 'code' | 'runs'
 /** Focus is where keys mean text or a choice in a list: the page's shortcuts leave those keys alone. */
@@ -65,7 +67,12 @@ export function VisualEditor(props: {
   const inspector = () => editor.querySelector<HTMLElement>('.hs-inspector')
   const card = (id: string) => [...editor.querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.dataset.id === id)
 
-  createEffect(() => props.onDirtyChange?.(session.dirty()))
+  // ---- The code editor of a Custom C# node; its unapplied changes count as unsaved.
+  const [codeNodeId, setCodeNodeId] = createSignal<string>()
+  const [codeDirty, setCodeDirty] = createSignal(false)
+  const codeNode = createMemo(() => graph().nodes.find(node => node.id === codeNodeId()))
+  const dirty = () => session.dirty() || codeDirty()
+  createEffect(() => props.onDirtyChange?.(dirty()))
   createEffect(
     on(
       () => [props.documentId, props.name] as const,
@@ -90,7 +97,7 @@ export function VisualEditor(props: {
   }
   const [helpOpen, setHelpOpen] = createSignal(false)
   const beforeUnload = (event: BeforeUnloadEvent) => {
-    if (session.dirty()) {
+    if (dirty()) {
       event.preventDefault()
       event.returnValue = ''
     }
@@ -219,6 +226,18 @@ export function VisualEditor(props: {
     } else focusCard(nodeId)
   }
   const focusCard = (id: string) => soon(() => { const target = card(id); target?.focus(); return !!target }, editor)
+  /** Opens a Custom C# node's code (from its card or the panel), with the node selected. */
+  const editCode = (id: string) => {
+    if (!graph().nodes.some(n => n.id === id)) return
+    if (selectedId() !== id) choose(id)
+    setCodeNodeId(id)
+  }
+  /** Writes the code and its pins as one undo step, and says which values and wires no longer fit. */
+  const applyCode = (id: string, source: string, signature: Parameters<typeof applyCustomCode>[3]) => {
+    const result = applyCustomCode(graph(), id, source, signature, session.catalog())
+    commit(result.graph)
+    if (result.notice) flow?.notify(result.notice)
+  }
 
   // ---- Runs: Run now in the top bar (RunNow.tsx), the last run in the overview.
   const [runNotice, showRunNotice] = createNotice()
@@ -419,6 +438,7 @@ export function VisualEditor(props: {
             fitViewKey={loads() || undefined}
             toolbarExtra={<FullscreenButton fullscreen={fullscreen} onToggle={toggleFullscreen} />}
             controls={controls => (flow = controls)}
+            onEditCode={editCode}
           />
         </div>
         <Inspector
@@ -439,6 +459,7 @@ export function VisualEditor(props: {
           onClose={() => setPanelOpen(false)}
           onOpen={() => openPanel()}
           onDuplicate={ids => inPanel(() => flow?.duplicate(ids) ?? [])}
+          onEditCode={editCode}
         />
       </div>
       <BottomDrawer
@@ -507,6 +528,14 @@ export function VisualEditor(props: {
         <p>Reloading replaces your local graph with the saved revision. Export your graph first to keep a copy.</p>
       </Dialog>
       <HelpDialog open={helpOpen()} onClose={() => setHelpOpen(false)} />
+      {/* Inside the page root, so it also covers the full-screen editor. */}
+      <Show when={codeNode() && codeNodeId()} keyed>
+        {id => (
+          <CustomCodeEditor node={codeNode()!} catalog={session.catalog()} onDirtyChange={setCodeDirty}
+            onApply={(source, signature) => applyCode(id, source, signature)}
+            onClose={() => { setCodeNodeId(undefined); setCodeDirty(false) }} />
+        )}
+      </Show>
     </section>
   )
 }

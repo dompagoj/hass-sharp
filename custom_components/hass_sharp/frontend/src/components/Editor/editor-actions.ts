@@ -1,7 +1,7 @@
 import * as monaco from 'monaco-editor'
 import type { CompletionItem, CompletionTextEdit, Diagnostic, HomeAssistant } from '../../types'
 import { createSignal, onCleanup } from 'solid-js'
-import { libraryApi, type LibraryContext, type LibraryDiagnostic, type LibraryReply, type LibraryPreview, type LibraryDefinition, type LibraryRange, type LibrarySignatureHelp } from '../../visual/library-api'
+import { customDocumentId, libraryApi, type CustomPreview, type LibraryContext, type LibraryDiagnostic, type LibraryReply, type LibraryPreview, type LibraryDefinition, type LibraryRange, type LibrarySignatureHelp } from '../../visual/library-api'
 
 function itemToLabel(item: CompletionItem) {
   if (!item.displayTextPrefix && !item.displayTextSuffix) return item.displayText
@@ -47,14 +47,30 @@ function signatureDocumentation(xml: string) {
   return (sections.length ? sections.map(section => `${section.tagName === 'param' ? `${section.getAttribute('name')}: ` : section.tagName === 'returns' ? 'Returns: ' : ''}${section.textContent ?? ''}`).join('\n\n') : document.documentElement.textContent ?? '').trim()
 }
 
+/** Why a check failed, in the words of the server or the connection. */
+const customReason = (error: unknown) => {
+  const e = error as { message?: unknown; code?: unknown } | null
+  return typeof e?.message === 'string' && e.message ? e.message : typeof e?.code === 'string' ? e.code : String(error)
+}
 export const libraryModelUri = (id: string) => monaco.Uri.parse(`hass-sharp-library:///${encodeURIComponent(id)}.cs`)
+/** The model of a Custom C# node's code, by the node's id. */
+export const customModelUri = (nodeId: string) => monaco.Uri.parse(`hass-sharp-custom:///${encodeURIComponent(nodeId)}.cs`)
 
 export interface LibraryEditorContext {
+  /** In the custom mode, `id` is the node's id and `workspaceVersion` names this editing session; the rest is unused. */
   context: () => LibraryContext | undefined
   sourceGeneration?: () => string | undefined
   documents?: () => { id: string; source: string }[]
   onDefinition?: (definition: LibraryDefinition) => void
+  /**
+   * The third mode, beside a library file: a Custom C# node's code. Diagnostics come from `custom_preview` (about
+   * 400 ms after the last keystroke) and the language services from the `custom: true` requests, both for this node's
+   * unsaved code beside the saved libraries. Read-only code is never checked.
+   */
+  custom?: { readOnly?: boolean }
 }
+/** The latest check of a Custom C# node's code: the text checked, whether it compiles, and the signature it gives. */
+export interface CustomCheck { source: string; valid: boolean; signature: unknown }
 
 // Language services of the node library editor. Each registration owns its requests and providers;
 // responses are tied to the exact model revision and library workspace.
@@ -65,7 +81,11 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
   const [hasErrors, setHasErrors] = createSignal(false)
   const [diagnostics, setDiagnostics] = createSignal<Diagnostic[]>([])
   const [validationError, setValidationError] = createSignal<string | null>(null)
+  const [customCheck, setCustomCheck] = createSignal<CustomCheck>()
+  const custom = library.custom
+  const validationDelay = custom ? 400 : 500
   let navigate: (diagnostic: Diagnostic) => void = () => {}
+  let revalidate: () => void = () => {}
   const [saving, setSaving] = createSignal(false)
   let disposeRegistration: (() => void) | undefined
   let saveCommand: () => Promise<void> = async () => {}
@@ -135,7 +155,27 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
         pending.set(kind, cancel)
         subscription = token?.onCancellationRequested(cancel)
         if (settled) { subscription?.dispose(); return }
+        // A Custom C# node's code: the reply names the node and the editing session; it carries no source generation.
+        const customRequest = async () => {
+          const code = { nodeId: capturedContext.id, source: model.getValue(), workspaceVersion: capturedContext.workspaceVersion }
+          const position = (fields as { position?: number }).position ?? 0
+          if (kind === 'diagnostics') {
+            const preview = await api.customPreview(code)
+            return isCurrent() ? { value: preview as T, isCurrent } : null
+          }
+          let reply
+          switch (kind) {
+            case 'completion': reply = await api.customCompletion(code, position); break
+            case 'hover': reply = await api.customHover(code, position); break
+            case 'signature': reply = await api.customSignature(code, position); break
+            case 'definition': reply = await api.customDefinition(code, position); break
+            default: reply = await api.customFormat(code)
+          }
+          if (reply.saved !== false || reply.id !== code.nodeId || reply.workspaceVersion !== code.workspaceVersion || !isCurrent()) return null
+          return { value: reply.data as T, isCurrent }
+        }
         const libraryRequest = async () => {
+          if (custom) return customRequest()
           const c = { ...capturedContext, source: model.getValue() }
           const position = (fields as { position?: number }).position ?? 0
           let reply: LibraryReply<unknown>
@@ -183,12 +223,16 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
       clearTimeout(validationTimer)
       const model = editor.getModel()
       if (!model || !owns(model)) return false
+      if (custom?.readOnly) { setValidating(false); return false }
       setValidating(true)
       const validationEpoch = epoch
       const validationContext = JSON.stringify(library.context())
       try {
-        const diagnostics = await request<LibraryDiagnostic[]>('diagnostics', model)
-        if (!diagnostics?.isCurrent()) return false
+        const checked = model.getValue()
+        const reply = await request<LibraryDiagnostic[] | CustomPreview>('diagnostics', model)
+        if (!reply?.isCurrent()) return false
+        const preview = custom ? reply.value as CustomPreview : undefined
+        const diagnostics = { value: preview ? preview.diagnostics : reply.value as LibraryDiagnostic[] }
         const selectedDiagnostics = diagnostics.value.filter(d => d.sourceId === library.context()?.id)
         const markers: monaco.editor.IMarkerData[] = selectedDiagnostics.map(d => ({
           startLineNumber: d.startLine,
@@ -203,17 +247,20 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
         monaco.editor.setModelMarkers(model, 'csharp', markers)
         setDiagnostics(selectedDiagnostics)
         setValidationError(null)
-        const errors = diagnostics.value.some(d => d.severity === 3)
+        // Custom code that does not compile with the libraries, or gives no node, is invalid without an error of its own.
+        const errors = diagnostics.value.some(d => d.severity === 3) || (preview !== undefined && !preview.valid)
+        if (preview) setCustomCheck({ source: checked, valid: preview.valid, signature: preview.signature })
         setHasErrors(errors)
         setValidating(false)
         return !errors
       } catch (error) {
-        if (owns(model) && validationEpoch === epoch && validationContext === JSON.stringify(library.context())) { setDiagnostics([]); monaco.editor.setModelMarkers(model, 'csharp', []); setValidationError(String(error)); setHasErrors(true); setValidating(false) }
+        if (owns(model) && validationEpoch === epoch && validationContext === JSON.stringify(library.context())) { setDiagnostics([]); monaco.editor.setModelMarkers(model, 'csharp', []); setValidationError(custom ? customReason(error) : String(error)); setHasErrors(true); setValidating(false) }
         console.error('Failed to get diagnostics', error)
         return false
       }
     }
 
+    revalidate = () => { void validate() }
     saveCommand = () => {
       if (savingPromise) return savingPromise
       const model = editor.getModel()
@@ -302,7 +349,9 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
         try {
           const reply = await request<LibraryDefinition[]>('definition', model, { position: model.getOffsetAt(position) }, token)
           if (!reply?.isCurrent()) return null
-          return reply.value.map(target => ({ uri: libraryModelUri(target.id), range: {
+          // Custom code has its own model; definitions in library files it cannot show are left out.
+          const targets = custom ? reply.value.filter(target => target.id === customDocumentId) : reply.value
+          return targets.map(target => ({ uri: custom ? model.uri : libraryModelUri(target.id), range: {
             startLineNumber: target.range.startLine, startColumn: target.range.startColumn,
             endLineNumber: target.range.endLine, endColumn: target.range.endColumn,
           } }))
@@ -323,7 +372,7 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
       // content listener. Let that listener retain its pending-completion typing recovery.
       if (observedModel === editor.getModel() && observedModel?.getVersionId() !== observedVersion) return
       invalidate(); cancelCompletionRetry(); clearDiagnostics(); setValidating(true)
-      clearTimeout(validationTimer); validationTimer = setTimeout(() => void validate(), 500)
+      clearTimeout(validationTimer); validationTimer = setTimeout(() => void validate(), validationDelay)
     }
     const contentSubscription = editor.onDidChangeModelContent(() => {
       observedModel = editor.getModel(); observedVersion = observedModel?.getVersionId()
@@ -346,7 +395,7 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
       }
       setValidating(true)
       clearTimeout(validationTimer)
-      validationTimer = setTimeout(() => { void validate() }, 500)
+      validationTimer = setTimeout(() => { void validate() }, validationDelay)
     })
     const keySubscription = editor.onKeyDown(event => {
       if (event.keyCode === monaco.KeyCode.Escape) cancelCompletionRetry()
@@ -368,7 +417,7 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
       void validate()
     })
     const saveAction = editor.addAction({
-      id: 'hass-sharp.save', label: 'Save node library', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+      id: 'hass-sharp.save', label: custom ? 'Apply code' : 'Save node library', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
       run: async () => {
         try { await runSave() } catch (error) { console.error('Failed to save node library', error) }
       },
@@ -399,6 +448,10 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
     diagnostics,
     validationError,
     validating,
+    /** The custom mode's latest check (kept while the next one runs, so the pins it gave stay on view). */
+    customCheck,
+    /** Checks the code again at once (after a failed check). */
+    revalidate: () => revalidate(),
     goToDiagnostic: (diagnostic: Diagnostic) => navigate(diagnostic),
     save: () => saveCommand(),
     dispose: () => disposeRegistration?.(),

@@ -90,7 +90,9 @@
 .hs-app .hs-insp-copy { min-height: 32px; padding: 4px 12px; }
 .hs-app .hs-insp-json { display: block; margin: 0; max-height: 240px; overflow: auto; padding: 8px 12px; border: 1px solid var(--hs-line); border-radius: 8px; background: var(--hs-bg); font: 12px/1.5 monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* A Custom C# node's code, read-only until the code editor: scrolls both ways and keeps its lines as written. */
-.hs-app .hs-insp-source { margin: 0; max-height: 320px; overflow: auto; padding: 8px 12px; border: 1px solid var(--hs-line); border-radius: 8px; background: var(--hs-bg); font: 12px/1.5 monospace; white-space: pre; tab-size: 4; }
+/* A Custom C# node: its code opens in the code editor. */
+.hs-app .hs-insp-code__edit { width: 100%; }
+.hs-app .hs-insp-code__edit .hs-insp-glyph { width: 18px; height: 18px; }
 
 /* Trigger: "When" card and choices, run modes. */
 .hs-app .hs-when { display: grid; gap: 8px; }

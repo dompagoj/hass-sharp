@@ -46,7 +46,7 @@ function type(field: HTMLInputElement | HTMLTextAreaElement, value: string) {
 }
 
 /** The inspector over a graph history (and the canvas beside it when asked), as the editor wires them. */
-function mount(graph: VisualGraph, id: string | undefined, options: { canvas?: boolean; diagnostics?: VisualDiagnostic[]; catalog?: VisualCatalogSnapshot; hass?: Record<string, unknown>; edge?: string } = {}) {
+function mount(graph: VisualGraph, id: string | undefined, options: { canvas?: boolean; diagnostics?: VisualDiagnostic[]; catalog?: VisualCatalogSnapshot; hass?: Record<string, unknown>; edge?: string; onEditCode?: (id: string) => void } = {}) {
   const el = host()
   const history = createGraphHistory(graph)
   const [selected, setSelected] = createSignal(id)
@@ -65,7 +65,7 @@ function mount(graph: VisualGraph, id: string | undefined, options: { canvas?: b
             )}
             <Inspector graph={history.graph()} catalog={current} diagnostics={options.diagnostics ?? []} commit={history.commit}
               selected={history.graph().nodes.find(n => n.id === selected())} selectedIds={selection().ids} selectedEdgeId={selection().edge}
-              onSelect={next => { setSelected(next); setSelection({ ids: next ? [next] : [] }) }} />
+              onSelect={next => { setSelected(next); setSelection({ ids: next ? [next] : [] }) }} onEditCode={options.onEditCode} />
           </div>
         </HassCtx.Provider>
       </QueryClientProvider>
@@ -377,7 +377,7 @@ it('edits the title, offers Duplicate, Copy node ID and Delete, and never shows 
   expect(history.graph().nodes).toHaveLength(count)
 })
 
-it('shows a Custom C# step\'s pins, title and description from its signature, with its source read only', () => {
+it('shows a Custom C# step\'s pins, title and description from its signature, and an Edit code button instead of its source', () => {
   const source = 'class CustomNode { [Node("Brightness")] public static int Run(int level) => level; }'
   const signature = {
     title: 'Brightness', description: 'Scales a level.', pure: false,
@@ -386,14 +386,16 @@ it('shows a Custom C# step\'s pins, title and description from its signature, wi
     types: {},
   }
   const graph = updateNode(addNode(createGraph('Code'), 'custom', 'code'), 'code', { config: { source, signature, arguments: { level: lit('number', 3) } } })
-  const { el } = mount(graph, 'code')
+  const onEditCode = vi.fn()
+  const { el } = mount(graph, 'code', { onEditCode })
   const inspector = el.querySelector('.hs-inspector')!
   expect(inspector.querySelector<HTMLInputElement>('input[aria-label="Node label"]')!.placeholder).toBe('Brightness')
   expect(inspector.querySelector('.hs-insp-desc')!.textContent).toBe('Scales a level.')
-  const code = inspector.querySelector('pre.hs-insp-source')!
-  expect(code.textContent).toBe(source)
-  expect(code.querySelector('textarea, input, [contenteditable]')).toBeNull()
-  expect(inspector.textContent).toContain('Editing arrives with the code editor.')
+  expect(inspector.querySelector('pre.hs-insp-source')).toBeNull()
+  expect(inspector.textContent).not.toContain('Editing arrives')
+  expect(inspector.textContent).not.toContain(source)
+  button(inspector, 'Edit code')!.click()
+  expect(onEditCode).toHaveBeenCalledWith('code')
   expect(row(el, 'level')!.textContent).toContain('Level')
   for (const removed of ['Usings', 'Helper members', 'Expose to C#', 'Shared C#'])
     expect(inspector.textContent, removed).not.toContain(removed)

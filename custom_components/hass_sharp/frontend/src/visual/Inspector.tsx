@@ -50,6 +50,8 @@ export interface InspectorProps {
   onOpen?(): void
   /** Duplicates steps with the canvas's own placement and returns the copies' ids (else the panel places them). */
   onDuplicate?(ids: string[]): string[]
+  /** Opens the code editor of a Custom C# node. */
+  onEditCode?(id: string): void
 }
 
 /**
@@ -147,7 +149,8 @@ export function Inspector(props: InspectorProps) {
               <NodeConfig node={node()} graph={props.graph} catalog={props.catalog} diagnostics={props.diagnostics}
                 onChange={(config, options) => props.commit(updateNode(props.graph, id, { config }), options)}
                 onGraphChange={props.commit} onSelect={selectAndFocus}
-                onDuplicate={() => duplicate([id])} onDelete={() => remove([id])} />
+                onDuplicate={() => duplicate([id])} onDelete={() => remove([id])}
+                onEditCode={props.onEditCode ? () => props.onEditCode?.(id) : undefined} />
             )
           }}
         </Show>

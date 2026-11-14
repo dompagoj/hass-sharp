@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { Route, Navigate, Router } from '@solidjs/router'
+import { lazy } from 'solid-js'
 
 import type { HomeAssistant } from './types'
 import { TODOView } from './views/TODOView'
@@ -7,9 +8,11 @@ import { MainLayout } from './layout/MainLayout'
 import { HassCtx } from './context'
 import { AutomationsListView } from './views/AutomationsListView'
 import { VisualAutomationView } from './views/VisualAutomationView'
-import { NodeLibraryView } from './views/NodeLibraryView'
 import { RunTraceView } from './views/RunTraceView'
 import { findCustomComponent } from './utils'
+
+// Monaco comes with the node library editor (and a Custom C# node's code editor): never in the first paint.
+const NodeLibraryView = lazy(() => import('./views/NodeLibraryView').then(module => ({ default: module.NodeLibraryView })))
 
 const client = new QueryClient({
   defaultOptions: {

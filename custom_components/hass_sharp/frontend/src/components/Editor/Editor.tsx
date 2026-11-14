@@ -1,21 +1,13 @@
 import { createEffect, createSignal, createUniqueId, onMount, onCleanup, Show, For } from 'solid-js'
 import * as monaco from 'monaco-editor'
-import { initVimMode, type VimAdapterInstance } from 'monaco-vim'
-
-import './monaco-worker'
-
-import visualAssistTheme from '../../visual-assist.json'
 
 import { useHass } from '../../context'
-import { useLocalStorage } from '../../hooks'
 import { useMutation } from '@tanstack/solid-query'
 import { useEditorActions, libraryModelUri, type LibraryEditorContext } from './editor-actions'
+import { applyEditorSettings, codeEditorOptions, editorFontSize, followTheme, useEditorSettings } from './monaco-setup'
 import type { LibraryRange } from '../../visual/library-api'
 import { Button, Icon, Status } from '../Controls'
 import { Tabs } from '../Tabs'
-
-// @ts-ignore
-monaco.editor.defineTheme('visual-assist', visualAssistTheme)
 
 // The node library's C# editor.
 interface Props {
@@ -37,13 +29,9 @@ export const Editor = (props: Props) => {
   let statusBarRef: HTMLDivElement = undefined!
   let editor: monaco.editor.IStandaloneCodeEditor
 
-  const [editorSettings, setEditorSettings] = useLocalStorage<{ vimEnabled: boolean; fontSize?: number }>(
-    'editor-settings',
-    { vimEnabled: false, fontSize: 16 },
-  )
+  const [editorSettings, setEditorSettings] = useEditorSettings()
 
-  const editorSettingsFont = () => editorSettings().fontSize ?? 16
-  let monacoVimMode: VimAdapterInstance | undefined = undefined
+  const editorSettingsFont = () => editorFontSize(editorSettings())
 
   const editorActions = useEditorActions(hass, props.library)
 
@@ -51,77 +39,9 @@ export const Editor = (props: Props) => {
     const initialModel = props.documentId ? monaco.editor.createModel(props.initial ?? '', 'csharp', libraryModelUri(props.documentId)) : undefined
     editor = monaco.editor.create(editorRef, {
       ...(initialModel ? { model: initialModel } : { value: props.initial ?? '', language: 'csharp' }),
-      inlayHints: {
-        enabled: 'on',
-      },
-      theme: 'visual-assist',
-      renderLineHighlight: 'all',
-      fixedOverflowWidgets: true,
-      automaticLayout: true,
-      domReadOnly: true,
-      smoothScrolling: true,
-      cursorSmoothCaretAnimation: 'on',
-      fontSize: 16,
-      padding: {
-        top: 25,
-      },
-      hover: {
-        enabled: 'on',
-        delay: 300,
-        sticky: true,
-        above: true,
-      },
-      suggest: {
-        insertMode: 'replace',
-        snippetsPreventQuickSuggestions: false,
-        showWords: false,
-        showMethods: true,
-        showFunctions: true,
-        showIcons: true,
-        showConstructors: true,
-        showFields: true,
-        showVariables: true,
-        showClasses: true,
-        showInterfaces: true,
-        showModules: true,
-        showProperties: true,
-        showEvents: true,
-        showOperators: true,
-        showUnits: true,
-        showValues: true,
-        showConstants: true,
-        showEnums: true,
-        showEnumMembers: true,
-        showKeywords: true,
-        showFolders: true,
-        showColors: true,
-        showFiles: true,
-        showReferences: true,
-        showSnippets: false,
-        showTypeParameters: true,
-        showIssues: true,
-        showUsers: true,
-      },
+      ...codeEditorOptions,
     })
-
-    // Follow HA's inherited theme, including changes while the panel stays mounted.
-    const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    const updateTheme = () => {
-      const channels = getComputedStyle(editorRef).backgroundColor.match(/[\d.]+/g)?.map(Number)
-      const dark = channels && channels.length >= 3 && channels[3] !== 0
-        ? channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722 < 128
-        : darkQuery.matches
-      editor.updateOptions({ theme: dark ? 'visual-assist' : 'vs' })
-    }
-    updateTheme()
-    const themeObserver = new MutationObserver(updateTheme)
-    let ancestor: Node | null = editorRef.parentElement
-    while (ancestor) {
-      if (ancestor instanceof Element) themeObserver.observe(ancestor, { attributes: true, attributeFilter: ['class', 'style'] })
-      ancestor = ancestor.parentNode ?? (ancestor instanceof ShadowRoot ? ancestor.host : null)
-    }
-    darkQuery.addEventListener('change', updateTheme)
-    onCleanup(() => { themeObserver.disconnect(); darkQuery.removeEventListener('change', updateTheme) })
+    followTheme(editor, editorRef)
 
     const model = editor.getModel()
     const models = new Map<string, monaco.editor.ITextModel>()
@@ -173,13 +93,7 @@ export const Editor = (props: Props) => {
       props.library.context() // All file/generation changes invalidate semantic providers, even with an unchanged active model.
       editorActions.invalidateContext()
     })
-    createEffect(() => { editor.updateOptions({ fontSize: editorSettingsFont() }) })
-    createEffect(() => {
-      if (editorSettings().vimEnabled) {
-        monacoVimMode = initVimMode(editor, statusBarRef)
-        onCleanup(() => { monacoVimMode?.dispose(); monacoVimMode = undefined })
-      }
-    })
+    applyEditorSettings(editor, editorSettings, () => statusBarRef)
     onCleanup(() => {
       changes.dispose(); opener.dispose()
       editorActions.dispose()

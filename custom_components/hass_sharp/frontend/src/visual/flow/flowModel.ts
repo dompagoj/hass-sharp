@@ -408,6 +408,9 @@ export interface FlowContextValue {
   moved(): boolean
   setInput(nodeId: string, port: string, operand: Operand, options?: { coalesce?: string }): void
   locateProblem(nodeId: string): void
+  /** Whether the node's code can be opened (a Custom C# node on a page with the code editor). */
+  hasCode(nodeId: string): boolean
+  editCode(nodeId: string): void
 }
 export const FlowContext = createContext<FlowContextValue>()
 export function useFlow(): FlowContextValue {

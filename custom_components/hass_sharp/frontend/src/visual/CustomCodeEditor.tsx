@@ -1,0 +1,277 @@
+import { createEffect, createMemo, createSignal, createUniqueId, For, lazy, onCleanup, onMount, Show, Suspense } from 'solid-js'
+import { delegateEvents } from 'solid-js/web'
+import { Button } from '../components/Controls'
+import { Dialog } from '../components/Dialog'
+import { Menu, type MenuItem } from '../components/Menu'
+import type { CustomCodeHandle } from '../components/Editor/CustomCode'
+import { customSignature, wellFormedSignature, type CustomSignature, type GraphNode, type InputSpec, type VisualCatalogSnapshot } from './contract'
+import { exampleSource } from './customCode'
+import { nodeTitle } from './flow/flowModel'
+import { Glyph } from './Glyph'
+import { TypeChip } from './InputRow'
+import { icons } from './icons'
+import { typeColor, typeIsList, typeLabel } from './typeLabels'
+import { displayValue } from './widgets/json'
+
+// Monaco and the language services load only when the code editor opens: never in the editor page's first paint.
+const CustomCodeSurface = lazy(() => import('../components/Editor/CustomCode').then(module => ({ default: module.CustomCodeSurface })))
+
+const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
+const focusable = 'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]'
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+/** Code that compiles neither with an error of its own: the libraries beside it do not. */
+const librariesBroken = 'The node libraries have errors, so this code cannot be used until they are fixed in Node libraries'
+
+export interface CustomCodeEditorProps {
+  node: GraphNode
+  catalog: VisualCatalogSnapshot
+  /** A run on view: the code is shown, never checked or applied. */
+  readOnly?: boolean
+  /** The code and the pins its latest check gave; the dialog closes after it. */
+  onApply?(source: string, signature: CustomSignature): void
+  onClose(): void
+  /** Whether the text differs from the node's code (the page counts it as unsaved). */
+  onDirtyChange?(dirty: boolean): void
+}
+
+/**
+ * The code editor of a Custom C# node: a full-screen dialog with the node's title, the state of the latest check,
+ * Apply and Cancel; Monaco on the code; the pins the code gives right now; and its problems (each goes to its line).
+ * Apply writes the code and its pins as one undo step (the page does that); Cancel with unapplied changes asks first.
+ */
+export function CustomCodeEditor(props: CustomCodeEditorProps) {
+  let dialog!: HTMLDialogElement
+  const titleId = createUniqueId()
+  const initial = typeof props.node.config.source === 'string' ? props.node.config.source : ''
+  const [handle, setHandle] = createSignal<CustomCodeHandle>()
+  const [confirm, setConfirm] = createSignal(false)
+  const [help, setHelp] = createSignal(false)
+  const source = () => handle()?.source() ?? initial
+  const dirty = () => !props.readOnly && source() !== initial
+  createEffect(() => props.onDirtyChange?.(dirty()))
+  onCleanup(() => props.onDirtyChange?.(false))
+
+  const check = () => handle()?.check()
+  const error = () => handle()?.error() ?? null
+  const checking = () => !props.readOnly && (!handle() || handle()!.checking())
+  /** The latest check is of the text as it is now (not one from before an edit). */
+  const current = () => { const c = check(); return c && c.source === source() ? c : undefined }
+  const checkedSignature = () => { const c = check(); return c && wellFormedSignature(c.signature) ? c.signature : undefined }
+  const canApply = () => !props.readOnly && !checking() && !error() && !!current()?.valid && !!checkedSignature()
+  const problems = createMemo(() => (props.readOnly ? [] : (handle()?.diagnostics() ?? []).filter(d => d.severity >= 2)))
+  /** Invalid code with no problem of its own to show. */
+  const unexplained = () => !checking() && !error() && current()?.valid === false && !problems().some(d => d.severity === 3)
+  const problemCount = () => problems().length + (unexplained() ? 1 : 0)
+  const status = () => {
+    if (props.readOnly) return 'Read only'
+    if (error()) return 'Not checked'
+    if (checking()) return 'Checking…'
+    return problemCount() ? plural(problemCount(), 'problem') : 'No problems'
+  }
+  const tone = () => (props.readOnly ? 'quiet' : error() || problems().some(d => d.severity === 3) || unexplained() ? 'error' : checking() ? 'busy' : problemCount() ? 'warning' : 'ok')
+  // The pins of the latest code that compiled, else the node's own.
+  const shown = () => (checkedSignature() ?? customSignature(props.node, props.catalog))
+  const outdated = () => !props.readOnly && !checking() && !!check() && !current()?.valid
+  const title = () => nodeTitle(props.node, props.catalog, 'Custom C#')
+
+  const close = () => props.onClose()
+  const cancel = () => (dirty() ? setConfirm(true) : close())
+  const apply = () => {
+    const signature = checkedSignature()
+    if (!canApply() || !signature) return
+    props.onApply?.(source(), structuredClone(signature))
+    close()
+  }
+
+  onMount(() => {
+    const root = dialog.getRootNode() as Document | ShadowRoot
+    const previous = root.activeElement as HTMLElement | null
+    // Native modality keeps the rest of the page (and Home Assistant) inert, also over a full-screen editor.
+    dialog.showModal?.()
+    onCleanup(() => { dialog.close?.(); previous?.focus?.() })
+  })
+  createEffect(() => handle()?.focus())
+
+  const keys = (event: KeyboardEvent) => {
+    // Home Assistant's shortcuts and the editor page's never see keys typed here.
+    event.stopPropagation()
+    if (event.defaultPrevented) return
+    const target = event.target as Element
+    if (event.key === 'Escape') {
+      // Escape that Monaco (a suggestion list, Vim) or a menu used is theirs.
+      if (target.closest?.('[role="menu"]')) return
+      event.preventDefault()
+      cancel()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const items = [...dialog.querySelectorAll<HTMLElement>(focusable)].filter(el => !el.closest('dialog:not(.hs-code-dialog)'))
+    const first = items[0], last = items.at(-1)
+    const active = (dialog.getRootNode() as Document | ShadowRoot).activeElement
+    if (!first) { event.preventDefault(); dialog.focus() }
+    else if (event.shiftKey && (active === first || active === dialog)) { event.preventDefault(); last?.focus() }
+    else if (!event.shiftKey && active === last) { event.preventDefault(); first.focus() }
+  }
+
+  const menu = (): MenuItem[] => [
+    ...(props.readOnly ? [] : [{ label: 'Reset to example', onSelect: () => handle()?.replace(exampleSource(props.node.kind, props.catalog)) }]),
+    ...(handle() ? [{ label: handle()!.vim() ? 'Turn off Vim mode' : 'Turn on Vim mode', onSelect: () => handle()?.setVim(!handle()!.vim()) }] : []),
+  ]
+
+  return (
+    <dialog
+      ref={element => { dialog = element; delegateEvents(['keydown', 'keyup'], element as unknown as Document) }}
+      class="hs-dialog hs-code-dialog"
+      aria-labelledby={titleId}
+      aria-modal="true"
+      onCancel={event => { event.preventDefault(); cancel() }}
+      on:keydown={keys}
+      on:keyup={event => event.stopPropagation()}
+      on:keypress={event => event.stopPropagation()}
+    >
+      <header class="hs-code-bar">
+        <span class="hs-code-bar__icon" aria-hidden="true"><Glyph paths={icons.code} /></span>
+        <div class="hs-code-bar__titles">
+          <span class="hs-code-bar__kind">{props.readOnly ? 'Custom C# code, read only' : 'Custom C# code'}</span>
+          <h2 id={titleId} class="hs-code-bar__title">{title()}</h2>
+        </div>
+        <span class={`hs-code-state hs-code-state--${tone()}`} role="status" aria-live="polite">{status()}</span>
+        <div class="hs-code-bar__actions">
+          <Button variant="ghost" class="hs-icon-button hs-code-help" aria-label="How to write a node" title="How to write a node" onClick={() => setHelp(true)}>?</Button>
+          <Show when={menu().length}><Menu label="Code actions" items={menu()} /></Show>
+          <Show when={!props.readOnly} fallback={<Button variant="primary" onClick={close}>Close</Button>}>
+            <Button onClick={cancel}>Cancel</Button>
+            <Button variant="primary" disabled={!canApply()} title={canApply() ? 'Write this code and its pins to the node' : 'Apply when the code has been checked and has no errors'} onClick={apply}>Apply</Button>
+          </Show>
+        </div>
+      </header>
+      <div class="hs-code-body">
+        <div class="hs-code-main">
+          <Suspense fallback={<p class="hs-code-loading" role="status">Loading the code editor…</p>}>
+            <CustomCodeSurface nodeId={props.node.id} initial={initial} readOnly={props.readOnly} label={`Code of ${title()}`} onReady={setHandle} onApply={apply} />
+          </Suspense>
+          <Show when={error()}>
+            {reason => (
+              <div class="hs-code-failed" role="alert">
+                <span>Could not check the code: {reason()}</span>
+                <Button onClick={() => handle()?.retry()}>Try again</Button>
+              </div>
+            )}
+          </Show>
+          <Show when={problemCount()}>
+            <section class="hs-code-problems" aria-label="Problems">
+              <ul>
+                <For each={problems()}>
+                  {problem => (
+                    <li>
+                      <button type="button" class="hs-code-problem" classList={{ 'hs-code-problem--warning': problem.severity !== 3 }} onClick={() => handle()?.goTo(problem)}>
+                        <Glyph paths={problem.severity === 3 ? icons.problem : icons.warning} />
+                        <span class="hs-code-problem__where">Line {problem.startLine}, column {problem.startColumn}</span>
+                        <span class="hs-code-problem__message">{problem.message}</span>
+                      </button>
+                    </li>
+                  )}
+                </For>
+                <Show when={unexplained()}>
+                  <li><span class="hs-code-problem"><Glyph paths={icons.problem} /><span class="hs-code-problem__message">{librariesBroken}</span></span></li>
+                </Show>
+              </ul>
+            </section>
+          </Show>
+        </div>
+        <Pins signature={shown()} catalog={props.catalog} outdated={outdated()} />
+      </div>
+      <Dialog open={confirm()} title="Discard your changes to the code?" width="small" onClose={() => setConfirm(false)}
+        footer={<><Button onClick={() => setConfirm(false)}>Keep editing</Button><Button variant="danger" onClick={() => { setConfirm(false); close() }}>Discard</Button></>}>
+        <p>The node keeps its code as it was before you opened the editor.</p>
+      </Dialog>
+      <CustomCodeHelp open={help()} onClose={() => setHelp(false)} />
+    </dialog>
+  )
+}
+
+/** The pins the code gives, as the node will show them: inputs, outputs, and whether it is a value node or a step. */
+function Pins(props: { signature?: CustomSignature; catalog: VisualCatalogSnapshot; outdated: boolean }) {
+  // The code's own types are named from its signature.
+  const types = () => (props.signature && Object.keys(props.signature.types).length ? { ...props.catalog, types: { ...props.signature.types, ...props.catalog.types } } : props.catalog)
+  const chip = (type: string) => <TypeChip text={typeLabel(type, types())} color={typeColor(type, types())} list={typeIsList(type, types())} />
+  const fallback = (input: InputSpec) => {
+    const value = record(input.default) && input.default.kind === 'literal' ? input.default.value : undefined
+    return value === undefined ? undefined : value === null ? 'none' : displayValue(value as never) || 'empty text'
+  }
+  return (
+    <aside class="hs-code-pins" aria-label="Pins">
+      <h3 class="hs-insp-heading">Pins</h3>
+      <Show when={props.signature} fallback={<p class="hs-muted">The code gives no pins yet.</p>}>
+        {signature => (
+          <>
+            <Show when={props.outdated}><p class="hs-code-pins__note">From the last code that compiled.</p></Show>
+            <p class="hs-code-pins__kind">
+              {signature().pure ? 'Value node: worked out each time a step uses it, outside the step order.' : 'Step: runs in the step order.'}
+            </p>
+            <h4 class="hs-code-pins__heading">Inputs</h4>
+            <Show when={Object.keys(signature().inputs).length} fallback={<p class="hs-muted">None</p>}>
+              <ul class="hs-code-pins__list">
+                <For each={Object.entries(signature().inputs)}>
+                  {([id, input]) => (
+                    <li class="hs-code-pin" data-pin-id={id}>
+                      <span class="hs-code-pin__name">{input.label ?? id}</span>
+                      <span class="hs-code-pin__types">
+                        <For each={input.types}>{type => chip(type)}</For>
+                      </span>
+                      <span class="hs-code-pin__meta">
+                        {input.required ? 'Required' : 'Optional'}
+                        <Show when={fallback(input)}>{text => <> · default {text()}</>}</Show>
+                      </span>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+            <h4 class="hs-code-pins__heading">Outputs</h4>
+            <Show when={Object.keys(signature().outputs).length} fallback={<p class="hs-muted">None</p>}>
+              <ul class="hs-code-pins__list">
+                <For each={Object.entries(signature().outputs)}>
+                  {([id, output]) => (
+                    <li class="hs-code-pin" data-pin-id={id}>
+                      <span class="hs-code-pin__name">{output.label ?? id}</span>
+                      <span class="hs-code-pin__types">{chip(output.type)}</span>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </>
+        )}
+      </Show>
+    </aside>
+  )
+}
+
+/** A short reference for writing a node's code, in the style of the editor's help. */
+export function CustomCodeHelp(props: { open: boolean; onClose(): void }) {
+  return (
+    <Dialog open={props.open} title="Writing a node in C#" width="large" onClose={props.onClose}>
+      <p>The code is one static class with exactly one method marked <code>[Node("Title")]</code>. Helper methods and types can sit beside it, and <code>using</code> lines go at the top.</p>
+      <h3>Inputs</h3>
+      <p>Each parameter is an input pin. The parameter name is the pin's id; its label is the name in words (<code>roomName</code> becomes "Room name"), or the text of <code>[Port("Label")]</code> on the parameter. Optional parameters keep their C# defaults.</p>
+      <h3>Outputs</h3>
+      <p>The return value is the output <code>result</code>, labelled "Result" or by <code>[return: Port("Label")]</code>. A tuple whose elements are all named gives one output per element: <code>(double Average, double Max)</code> gives <code>average</code> and <code>max</code>. <code>void</code>, <code>Task</code> and <code>ValueTask</code> give no output; a <code>Task&lt;T&gt;</code> or <code>ValueTask&lt;T&gt;</code> is awaited and its value is the output.</p>
+      <h3>Value nodes</h3>
+      <p><code>[Node("Title", Pure = true)]</code> makes the method a value node, like Constant or Compare: it has no place in the step order and is worked out each time a step uses its result. It must return a value.</p>
+      <h3>Supplied by the run</h3>
+      <p>A <code>CancellationToken</code> or <code>NodeContext</code> parameter is not a pin; the run passes it in. <code>NodeContext</code> has:</p>
+      <ul>
+        <li><code>CancellationToken</code>: cancelled when the run stops;</li>
+        <li><code>RunId</code>: as the run history shows it;</li>
+        <li><code>Trigger</code>: the trigger's Data output;</li>
+        <li><code>Error</code>: the most recent failure on this path, or null;</li>
+        <li><code>State(entityId)</code>: reads an entity as Read entity does;</li>
+        <li><code>CallService(service, target, data, returnResponse)</code>: calls a service as Call service does, and waits for it;</li>
+        <li><code>Log(message, level)</code>: writes to the Home Assistant log.</li>
+      </ul>
+      <h3>Descriptions</h3>
+      <p>The XML <code>&lt;summary&gt;</code> is the node's description, each <code>&lt;param&gt;</code> describes an input and <code>&lt;returns&gt;</code> describes the output.</p>
+    </Dialog>
+  )
+}

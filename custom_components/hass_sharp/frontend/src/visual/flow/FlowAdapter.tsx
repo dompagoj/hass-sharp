@@ -58,6 +58,11 @@ export interface FlowAdapterProps {
   toolbarExtra?: JSX.Element
   /** Receives the canvas's own actions for the page around it (the inspector's Duplicate, the library's click-to-add). */
   controls?(controls: FlowControls): void
+  /**
+   * Opens the code editor of a Custom C# node: its card's "Edit code" ("View code" when read only) control, a
+   * double-click on the card and E on the focused card. Without it, cards have no code control.
+   */
+  onEditCode?(id: string): void
 }
 
 /** What the page may ask of the canvas: the same placement the canvas uses for its own additions. */
@@ -923,8 +928,21 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   const released = () => {
     pointerHeld = false
   }
+  /** Whether the node's code can be opened: a Custom C# node, on a page that has the code editor. */
+  const hasCode = (id: string) => {
+    const kind = graph().nodes.find(n => n.id === id)?.kind
+    return !!props.onEditCode && !!kind && Object.hasOwn(catalog().nodes, kind) && catalog().nodes[kind].dynamicInputs === 'custom'
+  }
+  const editCode = (id: string) => { if (hasCode(id)) props.onEditCode?.(id) }
   const doubleClick = (event: MouseEvent) => {
-    if (emptyPane(event.target)) openQuickAdd({ x: event.clientX, y: event.clientY })
+    const target = event.target as Element
+    if (emptyPane(target)) return openQuickAdd({ x: event.clientX, y: event.clientY })
+    // A double-click on a Custom C# card (not in its own editors, pins or buttons) opens its code.
+    const id = target.closest?.('.solid-flow__node')?.getAttribute('data-id')
+    if (id && hasCode(id) && !target.closest('.hs-card-editor, .solid-flow__handle, input, textarea, select, button, a')) {
+      event.preventDefault()
+      editCode(id)
+    }
   }
   onMount(() => {
     const doc = canvas.ownerDocument
@@ -975,6 +993,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     moved: gestureMoved,
     setInput: setNodeInput,
     locateProblem,
+    hasCode,
+    editCode,
   }
 
   const selectedText = () => {
@@ -1035,6 +1055,12 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     if (event.key === 'Enter' || event.key === ' ') {
       consume(event)
       select([id])
+      return
+    }
+    // E on a focused Custom C# card opens its code (Enter selects the step and opens the panel).
+    if (!command && !event.altKey && key === 'e' && hasCode(id)) {
+      consume(event)
+      editCode(id)
       return
     }
     if (event.key === 'Escape') {

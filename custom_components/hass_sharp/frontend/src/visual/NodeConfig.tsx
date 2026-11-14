@@ -34,6 +34,8 @@ export interface NodeConfigProps {
   onSelect?(id?: string): void
   onDuplicate?(): void
   onDelete?(): void
+  /** Opens the code editor of a Custom C# node. */
+  onEditCode?(): void
 }
 
 /**
@@ -216,12 +218,13 @@ export function NodeConfig(props: NodeConfigProps) {
           <TriggerConfig node={props.node} onChange={props.onChange} diagnostics={props.diagnostics} />
         </Show>
         <Show when={kind() === 'custom'}>
-          <div class="hs-insp-field" data-input-id="source" aria-invalid={errorsFor('source').length > 0 || undefined}>
-            <span class="hs-insp-field__label" id={`${descriptionId}-source`}>Code</span>
-            <pre class="hs-insp-source" tabindex="0" role="region" aria-labelledby={`${descriptionId}-source`} aria-describedby={`${descriptionId}-source-hint`}>
-              <code>{typeof props.node.config.source === 'string' ? props.node.config.source : ''}</code>
-            </pre>
-            <small id={`${descriptionId}-source-hint`} class="hs-field-hint">Editing arrives with the code editor.</small>
+          <div class="hs-insp-field hs-insp-code" data-input-id="source" aria-invalid={errorsFor('source').length > 0 || undefined}>
+            <Show when={props.onEditCode}>
+              <button type="button" class="hs-button hs-button--primary hs-insp-code__edit" onClick={() => props.onEditCode?.()}>
+                <Glyph paths={icons.code} />Edit code
+              </button>
+            </Show>
+            <small class="hs-field-hint">Its inputs and outputs come from the code.</small>
             <Errors list={errorsFor('source')} />
           </div>
         </Show>

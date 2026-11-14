@@ -72,6 +72,11 @@
 .hs-app .hs-card__badge--warning { background: var(--hs-warning); }
 .hs-app .hs-card__badge:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
 .hs-app .hs-card__badge-icon { width: 14px; height: 14px; }
+/* A Custom C# card's code control: quiet until hovered or focused. */
+.hs-app .hs-card__code { flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--hs-muted); cursor: pointer; }
+.hs-app .hs-card__code:hover { border-color: var(--hs-line); background: var(--hs-surface); color: var(--hs-text); }
+.hs-app .hs-card__code:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
+.hs-app .hs-card__code-icon { width: 16px; height: 16px; }
 .hs-app .hs-card__trace { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 22px; padding: 0 8px; border-radius: 11px; background: color-mix(in oklab, var(--hs-trace, var(--hs-muted)) 14%, var(--hs-surface)); color: color-mix(in oklab, var(--hs-trace, var(--hs-muted)) 70%, var(--hs-text)); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hs-app .hs-card__trace--unreached { background: var(--hs-soft); color: var(--hs-muted); }
 .hs-app .hs-card__trace-icon { flex: none; width: 13px; height: 13px; }

@@ -10,6 +10,13 @@ export interface LibrarySignatureHelp { signatures: { label: string; documentati
 export interface LibraryPreview { valid: boolean; catalog: VisualCatalogSnapshot; diagnostics: LibraryDiagnostic[] }
 export interface LibraryContext { id: string; source: string; workspaceVersion: string; generation: string; sources: { id: string; source: string }[] }
 export interface LibraryReply<T> { id: string; workspaceVersion: string; generation: string; sourceGeneration: string; saved: false; data: T }
+/** A Custom C# node's unsaved code, for `custom_preview` and the `custom: true` language services. */
+export interface CustomCode { nodeId: string; source: string; workspaceVersion: string }
+/** What the compiler makes of a Custom C# node's code; diagnostics are 1-based in the node's own code. */
+export interface CustomPreview { valid: boolean; diagnostics: LibraryDiagnostic[]; signature: unknown }
+/** A language-service reply about a Custom C# node's code: `id` is the node's id; definitions in its code name `$custom`. */
+export interface CustomReply<T> { id: string; workspaceVersion: string; generation: string; saved: false; data: T }
+export const customDocumentId = '$custom'
 export interface LibraryActivation { id: string; saved: true; document: VisualDocument; active: boolean; activationError: string | null }
 export interface LibraryMutation { saved: true; document: LibraryDocument | null; deleted: boolean; generation: string; catalog: VisualCatalogSnapshot; automations: LibraryActivation[] }
 export class LibraryApiError extends Error {
@@ -23,7 +30,16 @@ export function libraryApi(hass: Pick<HomeAssistant, 'callWS'>) {
     return response.result
   }
   const language = <T>(operation: string, context: LibraryContext, position = 0) => request<LibraryReply<T>>(operation, { ...context, position })
+  // The node's own id always goes along: the namespace its code compiles in, and so its own type ids, derive from it.
+  const custom = <T>(operation: string, code: CustomCode, position = 0) =>
+    request<CustomReply<T>>(operation, { custom: true, nodeId: code.nodeId, source: code.source, workspaceVersion: code.workspaceVersion, position })
   return {
+    customPreview: (code: Pick<CustomCode, 'nodeId' | 'source'>) => request<CustomPreview>('custom_preview', { nodeId: code.nodeId, source: code.source }),
+    customCompletion: (code: CustomCode, position: number) => custom<CompletionItem[]>('completion', code, position),
+    customHover: (code: CustomCode, position: number) => custom<{ text?: string; range?: LibraryRange }>('hover', code, position),
+    customSignature: (code: CustomCode, position: number) => custom<LibrarySignatureHelp>('signature', code, position),
+    customDefinition: (code: CustomCode, position: number) => custom<LibraryDefinition[]>('definition', code, position),
+    customFormat: (code: CustomCode) => custom<string>('format', code),
     list: () => request<{ documents: LibraryDocument[]; generation: string }>('list'),
     read: (id: string) => request<LibraryDocument>('read', { id }),
     catalog: () => request<LibraryPreview & { generation: string; saved: true }>('catalog'),
