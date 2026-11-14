@@ -8,6 +8,9 @@ import { HassCtx } from '../src/context'
 import * as contract from '../src/visual/contract'
 import { addNode, connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { visualFixture } from './visual-fixture'
+import { Timeline } from '../src/visual/trace/Timeline'
+import { flowTrace, traceModel } from '../src/visual/trace/traceModel'
+import type { RunTrace, TraceEvent } from '../src/types'
 import services from '../../../../tests/fixtures/visual-services.json'
 
 // Counts full validations of a dropped wire (D12: hover is quick, a drop is validated once).
@@ -78,12 +81,11 @@ const providers = (children: () => any, fixture = visualFixture()) => (
   </QueryClientProvider>
 )
 const typed = () => {
-  let graph = addNode(createGraph('Cards'), 'set_value', 'temperature')
+  let graph = addNode(createGraph('Cards'), 'constant', 'temperature')
   graph = updateNode(graph, 'temperature', { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 20 } } })
-  graph = addNode(graph, 'set_value', 'rooms')
+  graph = addNode(graph, 'constant', 'rooms')
   graph = updateNode(graph, 'rooms', { config: { type: 'array', value: { kind: 'literal', type: 'array', value: [] } } })
-  graph = connectNodes(graph, 'service-1', 'temperature')
-  graph = connectNodes(graph, 'temperature', 'rooms')
+  // Constants are values: they take no place in the run order, so there is nothing to connect by execution.
   return graph
 }
 
@@ -91,13 +93,19 @@ it('draws execution and typed data pins, with inputs on the left and outputs on 
   const el = host()
   dispose = render(() => <FlowAdapter graph={typed()} onSelect={() => {}} onChange={() => {}} />, el)
   const card = el.querySelector('[data-id="temperature"] .hs-card')!
-  expect(card.querySelector('.hs-card__title')?.textContent).toBe('Set value')
+  expect(card.querySelector('.hs-card__title')?.textContent).toBe('Constant')
   expect(card.getAttribute('data-category')).toBe('data')
-  // Execution pins sit in the header; the default output is the header's right pin.
-  const execIn = card.querySelector('.hs-card__head [data-handleid="in"]')!
+  // A value node has no execution pins and no "On error" row, and a lighter, compact card.
+  expect(card.classList).toContain('hs-card--pure')
+  expect(card.querySelector('[data-handleid="in"], [data-handleid="next"], [data-handleid="error"], .hs-card__row--footer')).toBeNull()
+  expect(card.textContent).not.toContain('On error')
+  expect(el.querySelector('[data-id="service-1"] .hs-card')!.classList).not.toContain('hs-card--pure')
+  // A step's execution pins sit in the header; the default output is the header's right pin.
+  const step = el.querySelector('[data-id="service-1"] .hs-card')!
+  const execIn = step.querySelector('.hs-card__head [data-handleid="in"]')!
   expect(execIn.classList).toContain('hs-pin--exec')
   expect(execIn.classList).toContain('hs-pin--connected')
-  expect(card.querySelector('.hs-card__head [data-handleid="next"]')?.classList).toContain('hs-pin--exec')
+  expect(step.querySelector('.hs-card__head [data-handleid="next"]')?.classList).toContain('hs-pin--exec')
   // One row carries the Value input (left) and the Value output (right).
   const row = card.querySelector('[data-input-id="value"]')!.closest('.hs-card__row')!
   expect(row.querySelector('[data-output-id="value"]')).not.toBeNull()
@@ -125,7 +133,7 @@ it('draws execution and typed data pins, with inputs on the left and outputs on 
   expect(el.querySelector('[data-id="trigger-1"] [data-handleid="in"]')).toBeNull()
   expect(el.querySelector('[data-id="trigger-1"] .hs-card')?.classList).toContain('hs-card--trigger')
   // The error output is a secondary footer row.
-  expect(el.querySelector('[data-id="temperature"] .hs-card__row--footer [data-handleid="error"]')?.classList).toContain('hs-pin--error')
+  expect(el.querySelector('[data-id="service-1"] .hs-card__row--footer [data-handleid="error"]')?.classList).toContain('hs-pin--error')
 })
 
 it('shows the wired source on a connected input instead of an editor', () => {
@@ -133,9 +141,9 @@ it('shows the wired source on a connected input instead of an editor', () => {
   const graph = contract.connectData(typed(), 'temperature', 'value', 'rooms', 'value')
   dispose = render(() => <FlowAdapter graph={graph} onSelect={() => {}} onChange={() => {}} />, el)
   const cell = el.querySelector('[data-id="rooms"] [data-input-id="value"]')!
-  expect(cell.querySelector('.hs-source-chip')?.textContent).toBe('Set value · Value')
+  expect(cell.querySelector('.hs-source-chip')?.textContent).toBe('Constant · Value')
   expect(cell.querySelector('.hs-card-editor')).toBeNull()
-  expect(cell.querySelector('[data-handleid="data:value"]')?.getAttribute('aria-label')).toBe('Input Value, Number, required, connected to Set value · Value')
+  expect(cell.querySelector('[data-handleid="data:value"]')?.getAttribute('aria-label')).toBe('Input Value, Number, required, connected to Constant · Value')
 })
 
 it('edits an unconnected input on the card: one graph change, the same value in the inspector, no canvas keys', async () => {
@@ -408,11 +416,11 @@ it('marks pin states by side: a twin pin with the same id on the other side is n
   const el = host()
   dispose = render(() => <FlowAdapter graph={typed()} onSelect={() => {}} onChange={() => {}} />, el)
   const pin = (id: string, side: 'source' | 'target') => el.querySelector<HTMLElement>(`[data-id="${id}"] .${side}[data-handleid="data:value"]`)!
-  // Set value has data:value on both sides; pick the output of one from the keyboard.
+  // Constant has data:value on both sides; pick the output of one from the keyboard.
   pin('temperature', 'source').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
   expect(pin('temperature', 'source').classList).toContain('hs-pin--origin')
   expect(pin('temperature', 'target').classList).not.toContain('hs-pin--origin')
-  // The other Set value's input is a candidate target; its output, with the same handle id, is not marked at all.
+  // The other Constant's input is a candidate target; its output, with the same handle id, is not marked at all.
   expect(pin('rooms', 'target').className).toMatch(/hs-pin--(compatible|incompatible)/)
   expect(pin('rooms', 'source').className).not.toMatch(/hs-pin--(origin|compatible|incompatible)/)
 })
@@ -480,9 +488,9 @@ it('rebuilds a card when what it shows changes elsewhere: a loop carry adds a lo
   const el = host()
   let start = addNode(addNode(createGraph('Loop'), 'repeat', 'loop'), 'loop_result', 'result')
   start = updateNode(start, 'loop', { config: { count: lit('number', 3), carry: [], exports: [] } })
-  start = addNode(start, 'set_value', 'source')
+  start = addNode(start, 'constant', 'source')
   start = updateNode(start, 'source', { config: { type: 'number', value: lit('number', 1) } })
-  start = connectNodes(connectNodes(connectNodes(start, 'service-1', 'source'), 'source', 'loop'), 'loop', 'result', 'body')
+  start = connectNodes(connectNodes(start, 'service-1', 'loop'), 'loop', 'result', 'body')
   const [graph, setGraph] = createSignal(start)
   dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, el)
   const carryPin = () => el.querySelector('[data-id="result"] .target[data-handleid="data:carry:total"]')
@@ -494,7 +502,7 @@ it('rebuilds a card when what it shows changes elsewhere: a loop carry adds a lo
   // A wired input names its source; renaming the source updates the chip on the other card.
   setGraph(contract.connectData(graph(), 'source', 'value', 'result', 'carry:total'))
   const chip = () => el.querySelector('[data-id="result"] [data-input-id="carry:total"] .hs-source-chip')?.textContent
-  await vi.waitFor(() => expect(chip()).toBe('Set value · Value'))
+  await vi.waitFor(() => expect(chip()).toBe('Constant · Value'))
   setGraph(updateNode(graph(), 'source', { label: 'Running total' }))
   await vi.waitFor(() => expect(chip()).toBe('Running total · Value'))
 })
@@ -569,12 +577,57 @@ it('shows trace value chips only where the run recorded a value', async () => {
   await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge')).not.toBeNull())
   // Connected and not traced: the source chip only, no "No value" noise.
   const connected = el.querySelector('[data-id="rooms"] [data-input-id="value"]')!
-  expect(connected.querySelector('.hs-source-chip')?.textContent).toBe('Set value · Value')
+  expect(connected.querySelector('.hs-source-chip')?.textContent).toBe('Constant · Value')
   expect(connected.querySelector('.hs-value-chip')).toBeNull()
   // Not connected and not traced: the configured value.
   expect(el.querySelector('[data-id="temperature"] [data-input-id="value"] .hs-value-chip')?.textContent).toBe('20')
   expect(el.querySelector('[data-id="temperature"] [data-output-id="value"] .hs-value-chip')?.textContent).toBe('20')
   expect(el.textContent).not.toContain('No value')
+})
+
+it('shows a run of value nodes: their cards with status and values, "Not used" for one no step read, lesser timeline rows before the step that used them, and their wires lit', async () => {
+  layout()
+  const el = host()
+  let graph = addNode(addNode(createGraph('Values'), 'constant', 'level'), 'constant', 'spare')
+  graph = updateNode(graph, 'level', { config: { type: 'number', value: lit('number', 20) } })
+  graph = updateNode(graph, 'spare', { config: { type: 'number', value: lit('number', 3) } })
+  graph = connectNodes(addNode(graph, 'log', 'say'), 'service-1', 'say')
+  graph = contract.connectData(graph, 'level', 'value', 'say', 'value')
+  const list: Omit<TraceEvent, 'seq'>[] = [
+    { node: 'trigger-1', frame: '', t: 0, ms: 1, status: 'ok', port: 'next' },
+    { node: 'condition-1', frame: '', t: 1, ms: 1, status: 'ok', port: 'true' },
+    { node: 'service-1', frame: '', t: 2, ms: 3, status: 'ok', port: 'next' },
+    { node: 'level', frame: '', t: 5, ms: 0, status: 'ok', outputs: { value: { type: 'number', v: 20 } } },
+    { node: 'say', frame: '', t: 5, ms: 1, status: 'ok', port: 'next', inputs: { value: { type: 'number', v: 20, src: { node: 'level', port: 'value' } } } },
+  ]
+  const events = list.map((event, i) => ({ ...event, seq: i + 1 }) as TraceEvent)
+  const summary: RunTrace['summary'] = Object.fromEntries(events.map(e => [e.node, { count: 1, failed: 0, last: 'ok' as const }]))
+  const run: RunTrace = { format: 1, runId: 'run-1', rootNodeId: 'trigger-1', startedUtc: '2026-11-12T18:00:00Z', complete: true, truncated: false, dropped: 0, trigger: {}, events, summary }
+  const model = traceModel(run, graph, contract.nodeCatalog)
+  dispose = render(() => (
+    <>
+      <FlowAdapter graph={graph} readOnly trace={flowTrace(model, graph, '')} onSelect={() => {}} />
+      <Timeline model={model} graph={graph} catalog={contract.nodeCatalog} live={false} onSelect={() => {}} />
+    </>
+  ), el)
+  await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge')).not.toBeNull())
+  const card = (id: string) => el.querySelector(`[data-id="${id}"] .hs-card`)!
+  expect(card('level').querySelector('.hs-card__trace-word')!.textContent).toBe('Done')
+  expect(card('level').querySelector('[data-output-id="value"] .hs-value-chip')!.textContent).toBe('20')
+  // A value node no step read was not used, which is what the card says (not "Not reached").
+  expect(card('spare').querySelector('.hs-card__trace-word')!.textContent).toBe('Not used')
+  expect(card('spare').classList).toContain('hs-card--unreached')
+  expect(card('say').querySelector('.hs-card__trace-word')!.textContent).toBe('Done')
+  // The wire out of the value node is lit: the Log read it.
+  const wire = graph.edges.find(e => e.kind === 'data')!
+  expect([...el.querySelectorAll<SVGElement>('.solid-flow__edge')].find(edge => edge.dataset.id === wire.id)!.outerHTML).toContain('hs-wire--travelled')
+  // The timeline: the value node is a lesser row labelled Value, directly before the step that used it.
+  const rows = [...el.querySelectorAll<HTMLButtonElement>('.hs-trace-step')]
+  expect(rows.map(row => row.classList.contains('hs-trace-step--value'))).toEqual([false, false, false, true, false])
+  expect(rows[3].querySelector('.hs-trace-step__detail')!.textContent).toBe('Value')
+  expect(rows[3].querySelector('.hs-trace-step__title')!.textContent).toBe('Constant')
+  expect(rows[4].querySelector('.hs-trace-step__title')!.textContent).toBe('Log')
+  expect(rows[4].querySelector('.hs-trace-step__detail')).toBeNull()
 })
 
 it('names registry items on read-only value chips', async () => {
@@ -598,9 +651,9 @@ it('names branch rows by the branch name, else by position; keeps the execution 
   const el = host()
   let graph = addNode(typed(), 'parallel', 'parallel')
   graph = updateNode(graph, 'parallel', { config: { branches: ['lights', '6f1c2b9e-0d4a-4b7e-9a51-2f8e3c4d5a6b'] } })
-  graph = connectNodes(graph, 'rooms', 'parallel')
+  graph = connectNodes(graph, 'service-1', 'parallel')
   graph = { ...graph, nodes: [...graph.nodes, { id: 'gone', kind: 'library:Gone.Node', position: { x: 900, y: 100 }, config: {} }] }
-  graph = { ...graph, edges: [...graph.edges, { id: 'rooms->gone', kind: 'execution', source: 'rooms', target: 'gone' } as any] }
+  graph = { ...graph, edges: [...graph.edges, { id: 'parallel->gone', kind: 'execution', source: 'parallel', target: 'gone' } as any] }
   dispose = render(
     () => <FlowAdapter graph={graph} onSelect={() => {}} onChange={() => {}} diagnostics={[{ severity: 2, message: 'Slow', nodeId: 'rooms', startLine: null, startColumn: null }, { severity: 3, message: 'Broken', nodeId: 'temperature', startLine: null, startColumn: null }]} />,
     el,
@@ -610,7 +663,7 @@ it('names branch rows by the branch name, else by position; keeps the execution 
   expect(labels).toContain('Branch 2')
   expect(el.querySelector('[data-id="parallel"]')!.textContent).not.toContain('6f1c2b9e')
   expect(el.querySelector('[data-id="gone"] .target[data-handleid="in"]')).not.toBeNull()
-  await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge[data-id="rooms->gone"]')).not.toBeNull())
+  await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge[data-id="parallel->gone"]')).not.toBeNull())
   const icon = (id: string) => [...el.querySelectorAll(`[data-id="${id}"] .hs-card__badge path`)].map(p => p.getAttribute('d')).join(' ')
   expect(icon('rooms')).not.toBe(icon('temperature'))
   expect(el.querySelector('[data-id="rooms"] .hs-card__badge')?.classList).toContain('hs-card__badge--warning')
@@ -825,7 +878,7 @@ it('centres a run on its focus node once: a new trace object for the same node l
 
 it('rebuilds a card whose wired input shows its source when only the source output changes: its type or its label', async () => {
   const el = host()
-  let start = addNode(addNode(createGraph('Outputs'), 'set_value', 'source'), 'get_field', 'pick')
+  let start = addNode(addNode(createGraph('Outputs'), 'constant', 'source'), 'get_field', 'pick')
   start = updateNode(start, 'source', { config: { type: 'object', value: lit('object', {}) } })
   start = contract.connectData(connectNodes(connectNodes(start, 'service-1', 'source'), 'source', 'pick'), 'source', 'value', 'pick', 'value')
   const [graph, setGraph] = createSignal(start)
@@ -836,7 +889,7 @@ it('rebuilds a card whose wired input shows its source when only the source outp
   setGraph(updateNode(graph(), 'source', { config: { type: 'array', value: lit('array', []) } }))
   await vi.waitFor(() => expect(pin().getAttribute('data-type')).toBe('array'))
   // A loop carry renamed (with its wire): the consumer's chip names the new output.
-  let loop = addNode(addNode(createGraph('Loop'), 'repeat', 'loop'), 'set_value', 'shown')
+  let loop = addNode(addNode(createGraph('Loop'), 'repeat', 'loop'), 'constant', 'shown')
   loop = updateNode(loop, 'loop', { config: { count: lit('number', 3), carry: [{ name: 'total', type: 'number', initial: lit('number', 0) }], exports: [] } })
   loop = updateNode(loop, 'shown', { config: { type: 'number', value: lit('number', 0) } })
   loop = contract.connectData(connectNodes(connectNodes(loop, 'service-1', 'loop'), 'loop', 'shown', 'body'), 'loop', 'carry:total', 'shown', 'value')
@@ -854,11 +907,10 @@ it('names a data wire into a service field by the field label, as the card row d
   const catalog = withServices(section => {
     section.items['light.turn_on'].fields.brightness_pct.label = 'Brightness'
   })
-  let graph = addNode(lightOn({ brightness_pct: lit('number', 50) }), 'set_value', 'level')
+  let graph = addNode(lightOn({ brightness_pct: lit('number', 50) }), 'constant', 'level')
   graph = updateNode(graph, 'level', { config: { type: 'number', value: lit('number', 80) } })
-  graph = connectNodes(connectNodes({ ...graph, edges: graph.edges.filter(e => e.target !== 'service-1') }, 'condition-1', 'level', 'true'), 'level', 'service-1')
   graph = contract.connectData(graph, 'level', 'value', 'service-1', 'field:brightness_pct', catalog)
   dispose = render(() => <FlowAdapter graph={graph} catalog={catalog} onSelect={() => {}} onChange={() => {}} />, el)
   await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge[aria-label^="Data wire"]')).not.toBeNull())
-  expect(el.querySelector('.solid-flow__edge[aria-label^="Data wire"]')!.getAttribute('aria-label')).toBe('Data wire from Set value · Value to Call service · Brightness')
+  expect(el.querySelector('.solid-flow__edge[aria-label^="Data wire"]')!.getAttribute('aria-label')).toBe('Data wire from Constant · Value to Call service · Brightness')
 })

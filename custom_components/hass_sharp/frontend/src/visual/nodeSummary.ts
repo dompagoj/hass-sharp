@@ -213,7 +213,7 @@ function kindText(ctx: Context): string | undefined {
       const entity = operandText(ctx, 'entity') ?? 'entity'
       return `${entity} · ${text(config.field) === 'attribute' ? text(config.attribute) || 'attribute' : 'state'}`
     }
-    case 'set_value': { const value = operandText(ctx, 'value'); return value ? `Set to ${value}` : undefined }
+    case 'constant': return operandText(ctx, 'value')
     case 'convert': return text(config.type) ? `To ${typeLabel(text(config.type), catalog).toLowerCase()}` : undefined
     case 'log': { const value = operandText(ctx, 'value'); return value ? `Log ${value}` : undefined }
     case 'repeat': { const count = operandText(ctx, 'count'); return count ? `Repeat ${count} times` : undefined }

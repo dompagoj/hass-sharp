@@ -3,6 +3,7 @@ import {
   dataOutputs,
   executionPorts,
   inputValue,
+  isPure,
   nodeCatalog,
   type GraphEdge,
   type GraphNode,
@@ -95,6 +96,8 @@ export interface NodeView {
   targetEntityIds: string[]
   /** Not reachable by execution from a trigger: drawn muted. */
   unreachable: boolean
+  /** A value node: worked out each time a step reads it, with no execution pins and no error path. */
+  pure: boolean
   /** Accessible name of the whole card. */
   label: string
 }
@@ -197,7 +200,7 @@ const typeName = (types: string[], catalog: VisualCatalogSnapshot) => {
 
 const unreachable = (node: GraphNode, ctx: ViewContext) => {
   const analysis = connectionIndex(ctx.graph, ctx.catalog).analysis
-  return analysis.complete && node.kind !== 'trigger' && !analysis.scopes.has(node.id)
+  return analysis.complete && node.kind !== 'trigger' && !isPure(node, ctx.catalog) && !analysis.scopes.has(node.id)
 }
 /** The card of one node: pins, rows, summary and problems. Pure: the adapter caches it per node content. */
 export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
@@ -227,8 +230,9 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     }
   }
   const execInConnected = incoming.some(e => e.kind !== 'data')
-  // Unknown kinds keep their execution input, so wires into a node whose library vanished still show.
-  const execIn: PinView | undefined = node.kind === 'trigger' ? undefined : {
+  const pure = isPure(node, catalog)
+  // Unknown kinds keep their execution input, so wires into a node whose library vanished still show. A value node has none.
+  const execIn: PinView | undefined = node.kind === 'trigger' || pure ? undefined : {
     id: 'in', side: 'in', kind: 'exec', label: 'Execution input', name: `Execution input, ${connectedText(execInConnected)}`,
     color: 'var(--hs-port-execution)', list: false, connected: execInConnected, error: false,
   }
@@ -287,7 +291,7 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     id: node.id, kind: node.kind, known, title, kindLabel: spec?.label ?? node.kind, summary, identity,
     execIn, next: headerNext ? execPin('next') : undefined, rows,
     footer: execPorts.includes('error') ? execPin('error') : undefined,
-    problems, errors, warnings, targetEntityIds, unreachable: unreachable(node, ctx),
+    problems, errors, warnings, targetEntityIds, unreachable: unreachable(node, ctx), pure,
     label: `${[`${title}, ${identity.label}`, summary].filter(Boolean).join('. ')}${problemText}`,
   }
 }
@@ -378,9 +382,9 @@ export function durationLabel(ms: number): string {
 export const traceStatusLabel: Record<TraceStatus, string> = {
   ok: 'Done', error: 'Recovered', failed: 'Failed', running: 'Running', cancelled: 'Cancelled', stopped: 'Stopped',
 }
-/** A card's trace state in words: "Done, 3 times, 12 ms", or "Not reached". */
-export function traceText(status: { status: TraceStatus; runs: number; ms?: number } | undefined): string {
-  if (!status) return 'Not reached'
+/** A card's trace state in words: "Done, 3 times, 12 ms", or "Not reached" ("Not used" for a value node no step read). */
+export function traceText(status: { status: TraceStatus; runs: number; ms?: number } | undefined, pure = false): string {
+  if (!status) return pure ? 'Not used' : 'Not reached'
   return [traceStatusLabel[status.status], status.runs > 1 && `${status.runs} times`, status.ms !== undefined && durationLabel(status.ms)].filter(Boolean).join(', ')
 }
 

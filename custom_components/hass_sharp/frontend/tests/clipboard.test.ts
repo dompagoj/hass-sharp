@@ -8,12 +8,12 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
-/** trigger → condition → service → value → log, with the value wired into the log by data. */
+/** trigger → condition → service → log, with a Constant (a value, outside the run order) wired into the log. */
 const sample = () => {
-  let graph = addNode(addNode(createGraph('Copy'), 'set_value', 'value'), 'log', 'log')
+  let graph = addNode(addNode(createGraph('Copy'), 'constant', 'value'), 'log', 'log')
   graph = updateNode(graph, 'value', { config: { type: 'number', value: lit('number', 4) }, position: { x: 500, y: 300 } })
   graph = updateNode(graph, 'log', { position: { x: 800, y: 340 } })
-  graph = connectNodes(connectNodes(graph, 'service-1', 'value'), 'value', 'log')
+  graph = connectNodes(graph, 'service-1', 'log')
   return connectData(graph, 'value', 'value', 'log', 'value')
 }
 
@@ -22,8 +22,8 @@ it('copies the chosen steps with the wires between them only', () => {
   const copy = copySteps(graph, ['value', 'log', 'missing'])!
   expect(copy.marker).toBe(clipboardMarker)
   expect(copy.nodes.map(n => n.id)).toEqual(['value', 'log'])
-  // The execution wire into Set value comes from outside the copy and is left behind.
-  expect(copy.edges.map(e => [e.source, e.target, e.kind ?? 'execution'])).toEqual([['value', 'log', 'execution'], ['value', 'log', 'data']])
+  // The execution wire into the Log comes from outside the copy and is left behind.
+  expect(copy.edges.map(e => [e.source, e.target, e.kind ?? 'execution'])).toEqual([['value', 'log', 'data']])
   // A detached copy: editing the graph later does not change it.
   graph.nodes.find(n => n.id === 'value')!.config.type = 'string'
   expect(copy.nodes[0].config.type).toBe('number')
@@ -36,14 +36,13 @@ it('pastes with new ids, keeps internal wires remapped, drops outside wires and 
   const result = pasteSteps(graph, copy, nodeCatalog, { offset: { x: 40, y: 40 } })
   if ('error' in result) throw new Error(result.error)
   const added = result.graph.nodes.slice(graph.nodes.length)
-  expect(added.map(n => n.kind)).toEqual(['set_value', 'log'])
+  expect(added.map(n => n.kind)).toEqual(['constant', 'log'])
   expect(result.ids).toEqual(added.map(n => n.id))
   for (const node of added) expect(graph.nodes.some(n => n.id === node.id)).toBe(false)
   expect(added.map(n => n.position)).toEqual([{ x: 540, y: 340 }, { x: 840, y: 380 }])
   const [value, log] = result.ids
   const wires = result.graph.edges.slice(graph.edges.length)
   expect(wires).toEqual([
-    { id: `${value}->${log}`, source: value, target: log },
     { id: JSON.stringify([value, 'value', log, 'value']), kind: 'data', source: value, target: log, sourcePort: 'value', targetPort: 'value' },
   ])
   // The originals are untouched and every edge id is unique.

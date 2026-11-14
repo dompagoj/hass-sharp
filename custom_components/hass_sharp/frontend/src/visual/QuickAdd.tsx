@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, createUniqueId, For, onCleanup, onMount, Show } from 'solid-js'
-import { catalogPalette, type NodeKind } from './graph'
+import { catalogPalette, paletteMatches, type NodeKind } from './graph'
 import { nodeCatalog, type VisualCatalogSnapshot } from './contract'
 import { nodeIdentity } from './icons'
 
@@ -37,11 +37,7 @@ export function QuickAdd(props: {
   const catalog = () => props.catalog ?? nodeCatalog
   const offered = createMemo(() => catalogPalette(catalog()).filter(item => props.allowed(item.kind)))
   const items = createMemo(() => {
-    const words = search().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-    return offered().filter(item => {
-      const text = `${item.label} ${item.kind} ${item.category} ${item.description}`.toLocaleLowerCase()
-      return words.every(word => text.includes(word))
-    })
+    return offered().filter(item => paletteMatches(item, search(), item.category))
   })
   // Categories in catalog order, each with the steps that match; the flat order is what the arrow keys walk.
   const groups = createMemo(() => {

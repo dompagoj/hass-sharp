@@ -30,7 +30,7 @@ const scopePort = (node: GraphNode, port: string, catalog: VisualCatalogSnapshot
  *
  * Within a band, execution wires decide the columns: every node sits one column after the furthest step that runs it
  * (longest path), and what runs after a loop or a parallel step sits right of every step inside it. A node with only
- * data wires sits in the column before its first consumer. Within a column the order follows execution (a branch's
+ * data wires (a value node) sits in the column before its first reader: the one in the leftmost column. Within a column the order follows execution (a branch's
  * ports top to bottom), then a few barycentre sweeps reduce crossings. Each card is placed level with the steps that
  * feed it where there is room, and never overlaps another: columns are as wide as their widest card and cards in a
  * column are stacked. The result depends only on the graph, the sizes and the order of the bands' triggers, so the
@@ -136,13 +136,16 @@ export function tidyLayout(graph: VisualGraph, catalog: VisualCatalogSnapshot = 
       }
     }
     for (const id of members) if (onExec(id) && !layer.has(id)) layer.set(id, Math.max(0, ...afterIn.get(id)!.map(p => (layer.get(p) ?? -1) + 1)))
-    // Data-only nodes: the column before their first consumer that has one (chains resolve over a few passes).
+    // Data-only nodes: the column before their first reader, the leftmost one that has a column. Chains settle over a
+    // few passes: a node is moved left again when a reader placed later sits further left.
     for (let pass = 0; pass < members.length; pass++) {
       let changed = false
       for (const id of members) {
-        if (layer.has(id) || onExec(id)) continue
-        const consumer = dataOut.get(id)!.find(target => layer.has(target))
-        if (consumer !== undefined) { layer.set(id, layer.get(consumer)! - 1); changed = true }
+        if (onExec(id)) continue
+        const readers = dataOut.get(id)!.filter(target => layer.has(target))
+        if (!readers.length) continue
+        const column = Math.min(...readers.map(target => layer.get(target)!)) - 1
+        if (layer.get(id) !== column) { layer.set(id, column); changed = true }
       }
       if (!changed) break
     }

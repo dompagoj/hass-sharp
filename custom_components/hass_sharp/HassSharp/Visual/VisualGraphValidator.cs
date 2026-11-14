@@ -35,6 +35,7 @@ public static class VisualGraphValidator
         "edge.invalid", "edge.duplicate", "edge.endpoint", "edge.unknownKind", "edge.valueWirePins", "edge.orderWirePins", "edge.orderPinName",
         "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
         "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult",
+        "flow.pure", "pure.unused",
     ];
 
     /// <summary>
@@ -65,6 +66,15 @@ public static class VisualGraphValidator
             : KeyWords(node["kind"] is JsonValue k && k.TryGetValue<string>(out var kind) ? kind : "");
         /// <summary>A step that execution never reaches, and what to do about it.</summary>
         internal static string Unreachable(string step) => $"{step} is not connected into the flow; connect a step to its execution input";
+        /// <summary>A step order wire into or out of a value node.</summary>
+        internal static string NotInFlow(string node) => $"{node} is a value and is not part of the run order";
+        /// <summary>A node on a cycle of value wires.</summary>
+        internal static string OwnResult(string node) => $"{node} would depend on its own result";
+        /// <summary>A value node none of whose outputs is connected.</summary>
+        internal static string Unused(string node) => $"{node} is not used";
+        /// <summary>A step reads a value node that uses an output the step could not read over a wire of its own.</summary>
+        internal static string PureScope(string node, string source, string output, string step) =>
+            $"{node} uses {source} · {output}, which {step} cannot use here: it is on the other side of a loop or parallel branch boundary";
         /// <summary>A name or id quoted as written, without surrounding whitespace; <c>Unnamed</c> when nothing is left.</summary>
         internal static string Name(string name) => Trimmed(name) is { Length: > 0 } trimmed ? trimmed : "Unnamed";
         /// <summary>JavaScript's whitespace (as <c>String.prototype.trim</c> removes it), spelled out: .NET's differs at U+FEFF.</summary>
@@ -227,9 +237,12 @@ public static class VisualGraphValidator
         bool ScopePort(JsonObject node, string port) => Strings(Spec(node)?["scopePorts"]).Contains(port) || Kind(node) == "parallel" && port.StartsWith("branch:", StringComparison.Ordinal);
         static bool Ancestor((string Owner, string Port)[] a, (string Owner, string Port)[] b) => a.Length <= b.Length && a.SequenceEqual(b.Take(a.Length));
         JsonObject? Owner(JsonObject node) => scopes.TryGetValue(Id(node), out var scope) && scope.LastOrDefault() is var last && last.Port == "body" ? nodes[last.Owner] : null;
-        bool Visible(JsonObject source, JsonObject target, JsonNode port)
+        bool Pure(JsonObject node) => IsPure(Spec(node));
+        bool Visible(JsonObject source, JsonObject target, JsonNode port) => scopes.TryGetValue(Id(target), out var b) && VisibleIn(source, b, port);
+        /// <summary>Whether an output of <paramref name="source"/> may be read by a step in scope <paramref name="b"/>.</summary>
+        bool VisibleIn(JsonObject source, (string Owner, string Port)[] b, JsonNode port)
         {
-            if (!scopes.TryGetValue(Id(source), out var a) || !scopes.TryGetValue(Id(target), out var b) || !Ancestor(a, b)) return false;
+            if (!scopes.TryGetValue(Id(source), out var a) || !Ancestor(a, b)) return false;
             var owned = b.Length > a.Length && b[a.Length].Owner == Id(source);
             return Text(port, "visibility") switch
             {
@@ -241,6 +254,50 @@ public static class VisualGraphValidator
         }
         /// <summary>A wire whose value is not visible where it arrives.</summary>
         internal static string ScopeData(string subject) => $"{subject} cannot use this value here: it is on the other side of a loop or parallel branch boundary";
+        /// <summary>
+        /// The step outputs a value node reads, directly or through other value nodes: each once, in the order of the
+        /// graph's value wires, depth first. A step reading the value node must be able to read each of them.
+        /// </summary>
+        List<(JsonObject Node, string Port, JsonObject Output)> PureSources(JsonObject pure)
+        {
+            var found = new List<(JsonObject, string, JsonObject)>(); var seen = new HashSet<string>(StringComparer.Ordinal) { Id(pure) };
+            void Visit(JsonObject node)
+            {
+                foreach (var edge in data.Where(e => Text(e, "target") == Id(node)))
+                {
+                    var source = nodes[Text(edge, "source")]; var port = Text(edge, "sourcePort");
+                    if (Pure(source)) { if (seen.Add(Id(source))) Visit(source); }
+                    else if (DataOutputs(source)[port] is JsonObject output && !found.Any(f => f.Item1 == source && f.Item2 == port)) found.Add((source, port, output));
+                }
+            }
+            Visit(pure);
+            return found;
+        }
+        /// <summary>Where a node's values are worked out: a step's own scope; for a value node, the scope of every step that reads it, through other value nodes.</summary>
+        List<(string Owner, string Port)[]> ReaderScopes(JsonObject node)
+        {
+            var found = new List<(string Owner, string Port)[]>(); var seen = new HashSet<string>(StringComparer.Ordinal);
+            void Visit(JsonObject current)
+            {
+                if (!seen.Add(Id(current))) return;
+                if (!Pure(current)) { if (scopes.TryGetValue(Id(current), out var scope)) found.Add(scope); return; }
+                foreach (var edge in data.Where(e => Text(e, "source") == Id(current))) Visit(nodes[Text(edge, "target")]);
+            }
+            Visit(node);
+            return found;
+        }
+        /// <summary>
+        /// Whether a variable a node publishes can be read by <paramref name="reader"/>: from every scope the reader is worked out
+        /// in, the producer must be visible as a wire from it would be; a value node publishes its variable where it is worked out.
+        /// </summary>
+        bool VariableVisible(JsonObject producer, JsonObject reader, JsonNode output)
+        {
+            var readers = ReaderScopes(reader);
+            if (readers.Count == 0) return false;
+            if (!Pure(producer)) return readers.All(scope => VisibleIn(producer, scope, output));
+            var producers = ReaderScopes(producer);
+            return readers.All(scope => producers.Any(at => Ancestor(at, scope)));
+        }
         public List<VisualDiagnostic> Run(JsonObject graph)
         {
             var version = Number(Root["graphVersion"]);
@@ -271,6 +328,13 @@ public static class VisualGraphValidator
                 {
                     if (edge.ContainsKey("sourcePort") || edge.ContainsKey("targetPort")) Error(source, "This step order wire names value pins; connect step order pins to step order pins", code: "edge.orderWirePins");
                     if (edge.ContainsKey("port") && (edge["port"] is not JsonValue pv || !pv.TryGetValue<string>(out _))) { Error(source, "This step order wire leaves from a pin without a valid name", code: "edge.orderPinName"); continue; }
+                    // A value node has no execution pins; the wire is reported on it and otherwise ignored.
+                    if (Pure(nodes[source]) || Pure(nodes[target]))
+                    {
+                        if (Pure(nodes[source])) Error(source, Words.NotInFlow(Words.StepName(nodes[source], Spec(nodes[source]))), code: "flow.pure");
+                        if (Pure(nodes[target]) && target != source) Error(target, Words.NotInFlow(Words.StepName(nodes[target], Spec(nodes[target]))), code: "flow.pure");
+                        continue;
+                    }
                     var node = nodes[source]; var port = FlowPort(node, edge);
                     if (!ExecutionPorts(node).Contains(port)) Error(source, "Unknown execution port", port: port, code: "port.unknownExecution");
                     if (outgoing[source].Any(e => FlowPort(node, e) == port)) Error(source, "Only one execution edge per port", port: port, code: "port.executionTaken");
@@ -283,7 +347,10 @@ public static class VisualGraphValidator
             var roots = nodes.Values.Where(n => Kind(n) == "trigger").ToArray();
             if (roots.Length == 0) Error(null, "At least one trigger is required", code: "graph.noTrigger");
             foreach (var root in roots) Scope(Id(root), []);
-            foreach (var (id, node) in nodes) if (!scopes.ContainsKey(id)) Error(id, Words.Unreachable(Words.StepName(node, Spec(node))), code: "node.unreachable");
+            // A value node is never reached by execution; it is a warning when nothing reads it.
+            foreach (var (id, node) in nodes)
+                if (Pure(node)) { if (!data.Any(e => Text(e, "source") == id)) errors.Add(new(id, Words.Unused(Words.StepName(node, Spec(node))), 2, Code: "pure.unused")); }
+                else if (!scopes.ContainsKey(id)) Error(id, Words.Unreachable(Words.StepName(node, Spec(node))), code: "node.unreachable");
             foreach (var edge in data)
             {
                 var source = nodes[Text(edge, "source")]; var target = nodes[Text(edge, "target")];
@@ -299,6 +366,11 @@ public static class VisualGraphValidator
                     // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable.
                     if (scopes.ContainsKey(Id(source)) && scopes.ContainsKey(Id(target)) && !Visible(source, target, output))
                         Error(Id(target), ScopeData(Prefix(target) + Words.PortLabel(input, tp)), tp, tp, "scope.data");
+                    // A step reading a value node reads, in effect, every step output that value node uses.
+                    if (Pure(source) && !Pure(target) && scopes.ContainsKey(Id(target)))
+                        foreach (var (producer, port, spec) in PureSources(source))
+                            if (scopes.ContainsKey(Id(producer)) && !Visible(producer, target, spec))
+                                Error(Id(target), Words.PureScope(Words.StepName(source, Spec(source)), Words.StepName(producer, Spec(producer)), Words.PortLabel(spec, port), Words.StepName(target, Spec(target))), tp, tp, "scope.data");
                 }
             }
             foreach (var node in nodes.Values) ValidateNode(node);
@@ -309,7 +381,7 @@ public static class VisualGraphValidator
             var active = new HashSet<string>(); var done = new HashSet<string>();
             void Visit(string id)
             {
-                if (active.Contains(id)) { Error(id, label + " cycle is forbidden", code: label == "Data" ? "cycle.data" : "cycle.execution"); return; }
+                if (active.Contains(id)) { if (label == "Data") Error(id, Words.OwnResult(Words.StepName(nodes[id], Spec(nodes[id]))), code: "cycle.data"); else Error(id, "Execution cycle is forbidden", code: "cycle.execution"); return; }
                 if (done.Contains(id)) return;
                 active.Add(id);
                 foreach (var edge in edges.Where(e => Text(e, "source") == id)) Visit(Text(edge, "target"));
@@ -346,7 +418,7 @@ public static class VisualGraphValidator
             {
                 var name = Text(operand, "name");
                 if (!Match(name, Text(Root["structures"]?["loopDeclaration"]?["name"], "pattern"))) { Error(Id(node), $"{subject} uses a variable without a valid name", port, port); return null; }
-                var candidates = nodes.Values.Where(n => Config(n)["output"] is JsonValue outputName && outputName.TryGetValue<string>(out var named) && named == name && DataOutputs(n)["value"] is { } output && Visible(n, node, output)).ToArray();
+                var candidates = nodes.Values.Where(n => Config(n)["output"] is JsonValue outputName && outputName.TryGetValue<string>(out var named) && named == name && DataOutputs(n)["value"] is { } output && VariableVisible(n, node, output)).ToArray();
                 type = candidates.Length > 0 ? Text(DataOutputs(candidates[0])["value"], "type") : null;
                 if (type == null || candidates.Any(n => Text(DataOutputs(n)["value"], "type") != type)) Error(Id(node), $"{subject} uses variable {name}, which no earlier step provides with a single type", port);
             }

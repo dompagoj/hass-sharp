@@ -85,7 +85,7 @@ public static class ServiceNodeTests
             // A target object holds only the five target keys: one that carries anything else (here brightness, which a
             // field also sets) fails the call with the validators' sentence, never a silent overwrite. A node with a set
             // target cannot have a field named like a target key, so the remaining collision is caught before run time.
-            var twice = G(N("value", "set_value", new { type = "target", value = Lit("target", new { entity_id = "light.a", brightness = 5 }) }),
+            var twice = G(N("value", "constant", new { type = "target", value = Lit("target", new { entity_id = "light.a", brightness = 5 }) }),
                 Service("s", "light.turn_on", new JsonObject { ["brightness"] = Lit("number", 1) }, Unset()));
             twice["edges"]!.AsArray().Add(D("value", "s", "target"));
             var failure = await Record(() => Execute(twice));

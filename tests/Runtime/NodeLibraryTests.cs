@@ -107,13 +107,13 @@ public static class NodeLibraryTests
         }
         var sourceError = compiler.Preview([new("broken", "public static class Broken {\n [Node(\"Bad\")] public static Missing Bad() => null;\n}", 1)]);
         Check(!sourceError.Valid && sourceError.Diagnostics.Any(d => d.SourceId == "broken" && d.StartLine == 2), "mapped compiler errors");
-        var passThrough = VisualGraphContract.CreateNode("set_value", "passthrough", snapshot);
+        var passThrough = VisualGraphContract.CreateNode("constant", "passthrough", snapshot);
         passThrough["config"]!["type"] = "global::NodeLib.Reading";
         var richGraph = (JsonObject)graph.DeepClone();
         richGraph["nodes"]!.AsArray().Add(passThrough);
-        richGraph["edges"]!.AsArray().Add(JsonNode.Parse("""{"id":"e3","source":"custom","target":"passthrough"}"""));
         richGraph["edges"]!.AsArray().Add(JsonNode.Parse("""{"id":"d2","kind":"data","source":"custom","sourcePort":"result","target":"passthrough","targetPort":"value"}"""));
-        Check(VisualGraphValidator.Validate(richGraph, snapshot).Count == 0, "rich value flows into generic built-in node");
+        // The Constant is a value node outside the run order; nothing reads it, which is only a warning.
+        Check(VisualGraphValidator.Validate(richGraph, snapshot).Select(d => d.Code).SequenceEqual(["pure.unused"]), "rich value flows into generic built-in node");
         var literalMethod = snapshot.Methods.Values.Single(m => m.Method.Name == "Literal");
         var literalNode = VisualGraphContract.CreateNode(literalMethod.Kind, "literal", snapshot);
         var literalGraph = JsonNode.Parse("""{"version":5,"name":"Literal","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}}],"edges":[{"id":"e","source":"t","target":"literal"}]}""")!.AsObject();

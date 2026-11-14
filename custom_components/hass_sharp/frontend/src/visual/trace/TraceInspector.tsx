@@ -4,7 +4,7 @@ import { TriggerSummary } from '../../components/TriggerSummary'
 import { Glyph } from '../Glyph'
 import { SheetBar, SheetPeek } from '../Inspector'
 import { TypeChip } from '../InputRow'
-import type { Graph, GraphNode, VisualCatalogSnapshot } from '../contract'
+import { isPure, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../contract'
 import { durationLabel, execLabel, nodeTitle, traceStatusLabel, traceText } from '../flow/flowModel'
 import { icons, nodeIdentity } from '../icons'
 import { focusSoon } from '../soon'
@@ -85,7 +85,7 @@ export function TraceInspector(props: TraceInspectorProps) {
       const current = node()
       if (!current) return [props.run.status, runDuration(props.run.durationMs)].filter(t => t !== '—').join(' · ')
       if (!props.model) return ''
-      return traceText(props.event ? { status: props.event.status, runs: props.model.runs(current.id), ms: props.event.ms } : undefined)
+      return traceText(props.event ? { status: props.event.status, runs: props.model.runs(current.id), ms: props.event.ms } : undefined, isPure(current, props.catalog))
     }
     return (
       <SheetPeek title={title()} line={line()} icon={identity()?.icon ?? icons.flow} color={identity()?.color} verb="Show" label={`Show values of ${title()}`} onOpen={() => props.onOpen()} />
@@ -150,6 +150,8 @@ function StepValues(props: {
   // Another run or the whole run can be chosen: more than one run, or one iteration or branch is on view.
   const chooser = () => runs().length > 1 || (!whole() && runs().length > 0)
   const frameLabel = () => props.model?.frameLabel(props.frame) ?? ''
+  // A value node is worked out each time a step reads it; one no step read was not used.
+  const pure = () => isPure(props.node, props.catalog)
   // Values that were too large to record take their wires' highlight with them.
   const readsValues = () => props.graph.edges.some(e => e.kind === 'data' && e.target === props.node.id)
   const count = () => props.model?.runs(props.node.id) ?? 0
@@ -180,7 +182,7 @@ function StepValues(props: {
             <option value="whole" selected={whole()}>Whole run</option>
             {/* The iteration or branch on view, when this step did not run in it: the control says so. */}
             <Show when={!whole() && !props.event}>
-              <option value="none" selected disabled>{`${frameLabel()} (did not run)`}</option>
+              <option value="none" selected disabled>{`${frameLabel()} (${pure() ? 'not used' : 'did not run'})`}</option>
             </Show>
             <For each={runs()}>{(run, index) => <option value={String(run.seq)} selected={!whole() && run.seq === props.event?.seq}>{choice(run, index())}</option>}</For>
           </select>
@@ -191,7 +193,9 @@ function StepValues(props: {
       </Show>
       <Show when={props.model && props.event} fallback={
         <p class="hs-insp-note">
-          {!props.model ? 'No values were recorded for this run.' : runs().length && !whole() ? `This step did not run in ${frameLabel()}.` : 'This step did not run.'}
+          {!props.model ? 'No values were recorded for this run.'
+            : pure() ? (runs().length && !whole() ? `Not used in ${frameLabel()}: no step read this value there.` : 'Not used: no step read this value.')
+              : runs().length && !whole() ? `This step did not run in ${frameLabel()}.` : 'This step did not run.'}
         </p>
       }>
         {_shown => {
@@ -205,7 +209,7 @@ function StepValues(props: {
                   {' · '}
                   {event().ms === undefined ? 'still running' : `took ${durationLabel(event().ms!)}`}
                   {` · ${durationLabel(event().t) || '0 ms'} into the run`}
-                  <Show when={count() > 1}> · ran {count().toLocaleString()} times</Show>
+                  <Show when={count() > 1}> · {pure() ? 'worked out' : 'ran'} {count().toLocaleString()} times</Show>
                 </span>
               </p>
               <Show when={event().error}>

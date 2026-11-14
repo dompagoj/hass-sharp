@@ -113,7 +113,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 return snapshot.IsAssignable(left,right)?right:left;
             });
             var compiledConversions=new Dictionary<string,(string Source,string Target)>();
-            foreach(var node in nodes.Where(n=>Text(n,"kind") is "convert" or "set_value")) {
+            foreach(var node in nodes.Where(n=>Text(n,"kind") is "convert" or "constant")) {
                 // CLR conversions are between roots; Output still narrows to the declared (possibly refined) type.
                 var sourceType=VisualTypes.RootId(snapshot.Root,InputType(node,"value"));var target=VisualTypes.RootId(snapshot.Root,Text(node["config"],"type"));
                 if(snapshot.Types.TryGetValue(sourceType,out var from)&&snapshot.Types.TryGetValue(target,out var to) && snapshot.Compilation.ClassifyConversion(from.Symbol,to.Symbol).IsUserDefined)

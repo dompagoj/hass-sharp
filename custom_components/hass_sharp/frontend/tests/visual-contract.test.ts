@@ -249,29 +249,30 @@ it('blocks a connection only on cycle and scope errors themselves, not on a name
   const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
   const graph = { version: 5 as const, name: 'Names', nodes: [
     { id: 't', kind: 'trigger', config: { type: 'manual' } },
-    { id: 'a', kind: 'set_value', config: { type: 'number', value: lit('number', 1) } },
+    { id: 'a', kind: 'constant', config: { type: 'number', value: lit('number', 1) } },
     { id: 'l', kind: 'log', config: { value: { kind: 'variable', name: 'cycle_scope' } } },
     { id: 'd', kind: 'delay', config: { seconds: lit('number', 2) } },
-  ], edges: [{ id: 'ta', source: 't', target: 'a' }, { id: 'al', source: 'a', target: 'l' }, { id: 'ld', source: 'l', target: 'd' }] }
-  expect(contract.validateGraph(graph).map(d => d.message)).toEqual(['Message uses variable cycle_scope, which no earlier step provides with a single type'])
+  ], edges: [{ id: 'tl', source: 't', target: 'l' }, { id: 'ld', source: 'l', target: 'd' }] }
+  expect(contract.validateGraph(graph).map(d => d.message)).toEqual(['Constant is not used', 'Message uses variable cycle_scope, which no earlier step provides with a single type'])
   expect(() => contract.connectData(graph, 'a', 'value', 'd', 'seconds')).not.toThrow()
 })
 describe('refusing a connection only for a problem it causes (fix round 2)', () => {
   const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
   const trigger = { id: 't', kind: 'trigger', config: { type: 'manual' } }
-  const producer = { id: 'a', kind: 'set_value', config: { type: 'number', value: lit('number', 1) } }
+  const producer = { id: 'a', kind: 'constant', config: { type: 'number', value: lit('number', 1) } }
   const delay = { id: 'd', kind: 'delay', config: { seconds: lit('number', 2) } }
+  // The Constant is a value: it has no place in the run order.
   const base = (extra: object[], edges: object[]) => ({ version: 5 as const, name: 'Blocking', nodes: [trigger, producer, delay, ...extra],
-    edges: [{ id: 'ta', source: 't', target: 'a' }, { id: 'ad', source: 'a', target: 'd' }, ...edges] })
+    edges: [{ id: 'td', source: 't', target: 'd' }, ...edges] })
   const cycle = () => base([{ id: 'x', kind: 'log', config: { value: lit('string', 'x') } }, { id: 'y', kind: 'log', config: { value: lit('string', 'y') } }],
     [{ id: 'dx', source: 'd', target: 'x' }, { id: 'xy', source: 'x', target: 'y' }, { id: 'yx', source: 'y', target: 'x' }])
   const conditionResult = () => base([{ id: 'r', kind: 'condition_result', config: { value: lit('boolean', true) } }], [{ id: 'dr', source: 'd', target: 'r' }])
-  // A value made in a For each body cannot reach the step after the loop.
+  // A value a step makes in a For each body cannot reach the step after the loop.
   const loop = (extra: object[] = [], edges: object[] = []) => ({ version: 5 as const, name: 'Scope', nodes: [trigger,
     { id: 'f', kind: 'foreach', config: { items: lit('array', [1, 2]), itemType: 'number' } },
-    { id: 'b', kind: 'set_value', config: { type: 'number', value: lit('number', 1) } }, delay, ...extra],
-    edges: [{ id: 'tf', source: 't', target: 'f' }, { id: 'fb', source: 'f', target: 'b', port: 'body' }, { id: 'fd', source: 'f', target: 'd', port: 'next' }, ...edges] })
-  const crossing = 'Seconds cannot use this value here: it is on the other side of a loop or parallel branch boundary'
+    { id: 'b', kind: 'read_entity', config: { entity: lit('entity_id', 'sensor.a') } }, delay, { id: 'm', kind: 'log', config: { value: { kind: 'unset' } } }, ...extra],
+    edges: [{ id: 'tf', source: 't', target: 'f' }, { id: 'fb', source: 'f', target: 'b', port: 'body' }, { id: 'fd', source: 'f', target: 'd', port: 'next' }, { id: 'dm', source: 'd', target: 'm' }, ...edges] })
+  const crossing = 'Message cannot use this value here: it is on the other side of a loop or parallel branch boundary'
   const quick = (graph: contract.Graph, ...wire: [string, string, string, string]) => connectionIndex(graph).verdict(...wire).message
 
   it('accepts an unrelated wire while the graph already has an execution cycle', () => {
@@ -288,10 +289,10 @@ describe('refusing a connection only for a problem it causes (fix round 2)', () 
     }
   })
   it('still refuses a wire that itself makes a data cycle, with or without a cycle already there', () => {
-    const own = loop([{ id: 'c', kind: 'convert', config: { type: 'number', value: { kind: 'unset' } } }], [{ id: 'dc', source: 'd', target: 'c' }])
+    const own = loop([{ id: 'c', kind: 'convert', config: { type: 'number', value: { kind: 'unset' } } }])
     for (const graph of [own, { ...own, edges: [...own.edges, ...cycle().edges.slice(2).map(e => ({ ...e, id: 'z' + e.id }))], nodes: [...own.nodes, ...cycle().nodes.slice(3)] }]) {
-      expect(() => contract.connectData(graph, 'c', 'value', 'c', 'value')).toThrow('Data cycle is forbidden')
-      expect(quick(graph, 'c', 'value', 'c', 'value')).toContain('Data cycle is forbidden')
+      expect(() => contract.connectData(graph, 'c', 'value', 'c', 'value')).toThrow('Convert would depend on its own result')
+      expect(quick(graph, 'c', 'value', 'c', 'value')).toContain('Convert would depend on its own result')
     }
   })
   it('still refuses a wire that itself crosses a scope, with or without a scope error already there', () => {
@@ -299,14 +300,14 @@ describe('refusing a connection only for a problem it causes (fix round 2)', () 
     const broken = loop([{ id: 'r', kind: 'condition_result', config: { value: lit('boolean', true) } }], [{ id: 'dr', source: 'd', target: 'r' }])
     expect(contract.validateGraph(broken).map(d => d.code)).toContain('scope.conditionResult')
     for (const graph of [plain, broken]) {
-      expect(() => contract.connectData(graph, 'b', 'value', 'd', 'seconds')).toThrow(crossing)
-      expect(quick(graph, 'b', 'value', 'd', 'seconds')).toBe(crossing)
+      expect(() => contract.connectData(graph, 'b', 'value', 'm', 'value')).toThrow(crossing)
+      expect(quick(graph, 'b', 'value', 'm', 'value')).toBe(crossing)
     }
   })
   it('does not refuse a wire from an output because the input of the same name has a problem (fix round 3)', () => {
     const graph = { version: 5 as const, name: 'Not', nodes: [trigger, producer,
       { id: 'n', kind: 'not', config: { value: { kind: 'unset' } } }, { id: 'i', kind: 'if', config: { value: { kind: 'unset' } } }],
-    edges: [{ id: 'ta', source: 't', target: 'a' }, { id: 'an', source: 'a', target: 'n' }, { id: 'ni', source: 'n', target: 'i' },
+    edges: [{ id: 'ti', source: 't', target: 'i' },
       { id: 'a.value:n.value', kind: 'data', source: 'a', target: 'n', sourcePort: 'value', targetPort: 'value' }] }
     // The existing problem names the Not step's input pin `value`, the same name as its output.
     expect(contract.validateGraph(graph)).toContainEqual(expect.objectContaining({ nodeId: 'n', inputId: 'value', portId: 'value', message: 'Value accepts Yes/No, not Number' }))
@@ -317,16 +318,15 @@ describe('refusing a connection only for a problem it causes (fix round 2)', () 
     const convert = (id: string) => ({ id, kind: 'convert', config: { type: 'number', value: { kind: 'unset' } } })
     const data = (s: string, t: string) => ({ id: `${s}:${t}`, kind: 'data', source: s, target: t, sourcePort: 'value', targetPort: 'value' })
     const graph = { version: 5 as const, name: 'Cycle', nodes: [trigger, convert('c1'), convert('c2'), convert('c3'), convert('c4')],
-      edges: [{ id: 't1', source: 't', target: 'c1' }, { id: '12', source: 'c1', target: 'c2' }, { id: '23', source: 'c2', target: 'c3' }, { id: '34', source: 'c3', target: 'c4' },
-        data('c1', 'c2'), data('c2', 'c1')] }
+      edges: [data('c1', 'c2'), data('c2', 'c1')] }
     expect(contract.validateGraph(graph).map(d => d.code)).toContain('cycle.data')
     // (a) An unrelated wire is made by both checks.
     expect(() => contract.connectData(graph, 'c3', 'value', 'c4', 'value')).not.toThrow()
     expect(quick(graph, 'c3', 'value', 'c4', 'value')).toBeUndefined()
     // (b) A wire (not a self-wire) that closes a second cycle is refused by both.
     const linked = { ...graph, edges: [...graph.edges, data('c3', 'c4')] }
-    expect(() => contract.connectData(linked, 'c4', 'value', 'c3', 'value')).toThrow('Data cycle is forbidden')
-    expect(quick(linked, 'c4', 'value', 'c3', 'value')).toContain('Data cycle is forbidden')
+    expect(() => contract.connectData(linked, 'c4', 'value', 'c3', 'value')).toThrow('Convert would depend on its own result')
+    expect(quick(linked, 'c4', 'value', 'c3', 'value')).toContain('Convert would depend on its own result')
   })
   it('does not count a node whose id merely reads like a code as blocking', () => {
     const graph = base([{ id: 'cycle_count', kind: 'log', config: { value: { kind: 'variable', name: 'scope.data' } } }], [{ id: 'dc', source: 'd', target: 'cycle_count' }])

@@ -3,11 +3,11 @@ import { applyLayout, tidyLayout } from '../src/visual/layout'
 import { addNode, connectNodes, createGraph, updateNode, type VisualGraph } from '../src/visual/graph'
 
 const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
-/** trigger → condition → (true) service, (false) delay → stop, and a Set value nothing runs. */
+/** trigger → condition → (true) service, (false) delay → stop, and a Constant nothing reads. */
 const branching = () => {
   let graph = addNode(addNode(createGraph('Layout'), 'delay', 'wait'), 'stop', 'halt')
   graph = connectNodes(connectNodes(graph, 'condition-1', 'wait', 'false'), 'wait', 'halt')
-  graph = addNode(graph, 'set_value', 'feed')
+  graph = addNode(graph, 'constant', 'feed')
   graph = updateNode(graph, 'feed', { config: { type: 'entity_id', value: lit('entity_id', 'binary_sensor.hall') } })
   return graph
 }
@@ -47,7 +47,7 @@ it('is deterministic: the same graph and sizes give the same positions, whatever
 
 it('places a node with only data wires left of its first consumer, and unmeasured cards at a fallback size', () => {
   let graph = createGraph('Data')
-  graph = addNode(graph, 'set_value', 'value')
+  graph = addNode(graph, 'constant', 'value')
   graph = updateNode(graph, 'value', { config: { type: 'number', value: lit('number', 1) } })
   graph = addNode(graph, 'log', 'log')
   graph = connectNodes(graph, 'service-1', 'log')
@@ -59,6 +59,23 @@ it('places a node with only data wires left of its first consumer, and unmeasure
   const ids = [...positions.keys()]
   const fallback = { width: 260, height: 120 }
   for (const a of ids) for (const b of ids) if (a < b) expect(overlap(positions.get(a)!, fallback, positions.get(b)!, fallback), `${a} and ${b}`).toBe(false)
+})
+
+it('places a value node left of its first reader: the one that runs first, whatever the wire order', () => {
+  let graph = addNode(addNode(createGraph('Values'), 'log', 'early'), 'log', 'late')
+  graph = connectNodes(connectNodes(graph, 'service-1', 'early'), 'early', 'late')
+  graph = updateNode(addNode(graph, 'constant', 'value'), 'value', { config: { type: 'number', value: lit('number', 1) } })
+  graph = updateNode(addNode(graph, 'compare', 'test'), 'test', { config: { left: { kind: 'unset' }, right: lit('number', 2), operator: 'eq' } })
+  // The later Log's wire comes first in the graph; the chain Constant → Compare → Log ends at the later Log.
+  const data = (source: string, target: string, targetPort: string) => ({ id: `${source}-${target}`, kind: 'data' as const, source, target, sourcePort: 'value', targetPort })
+  graph = { ...graph, edges: [...graph.edges, data('value', 'late', 'value'), data('value', 'test', 'left'), data('test', 'early', 'value')] }
+  const positions = tidyLayout(graph)
+  const x = (id: string) => positions.get(id)!.x
+  expect(x('value')).toBeLessThan(x('early'))
+  expect(x('test')).toBeLessThan(x('early'))
+  expect(x('value')).toBeLessThan(x('test'))
+  // Directly left: the Compare in the column before the earlier Log, level with the service.
+  expect(x('test')).toBe(x('service-1'))
 })
 
 it('lays out only the chosen nodes, from their own top-left corner, and leaves the rest alone', () => {

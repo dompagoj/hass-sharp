@@ -282,14 +282,8 @@
           "port": "next"
         },
         {
-          "id": "flow-name",
-          "source": "off",
-          "target": "name",
-          "port": "next"
-        },
-        {
           "id": "flow-notify",
-          "source": "name",
+          "source": "off",
           "target": "notify",
           "port": "next"
         },
@@ -366,20 +360,8 @@
       ],
       "edges": [
         {
-          "id": "flow-entity",
-          "source": "request",
-          "target": "entity",
-          "port": "next"
-        },
-        {
-          "id": "flow-convert",
-          "source": "entity",
-          "target": "as_light",
-          "port": "next"
-        },
-        {
           "id": "flow-on",
-          "source": "as_light",
+          "source": "request",
           "target": "on",
           "port": "next"
         },

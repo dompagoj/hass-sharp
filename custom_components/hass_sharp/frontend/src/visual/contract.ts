@@ -21,7 +21,7 @@ export interface InputSpec {
 }
 /** `when` names a boolean config key; the output exists only while it is true. */
 export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; pointer?: string; refineFrom?: string; when?: string }
-export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
+export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 export interface TypeSpec { clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[] }
 export interface ParametricTypeSpec { param: string; valuePattern: string; label: string }
 /** Contract C4: one normalised Home Assistant service field. */
@@ -92,8 +92,10 @@ export function isAssignable(source: string, target: string, catalog: VisualCata
 }
 export function executionPorts(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
   const spec = nodeSpec(node.kind, catalog)
-  return spec ? [...(spec.dynamicExecution === 'branches' && Array.isArray(node.config.branches) ? node.config.branches.filter((id): id is string => typeof id === 'string').map(id => `branch:${id}`) : []), ...spec.execution] : []
+  return spec ? [...(spec.dynamicExecution === 'branches' && Array.isArray(node.config.branches) ? node.config.branches.filter((id): id is string => typeof id === 'string').map(id => `branch:${id}`) : []), ...(spec.execution ?? [])] : []
 }
+/** Whether the node is a value node: worked out each time a step reads it, with no place in the run order. */
+export const isPure = (node: GraphNode | string, catalog: VisualCatalogSnapshot = nodeCatalog) => nodeSpec(typeof node === 'string' ? node : node.kind, catalog)?.pure === true
 export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, OutputSpec> {
   const spec = nodeSpec(node.kind, catalog)
   const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.outputs ?? {}).map(([key, value]) => [key, { ...value, type: configuredType(value.type, node) }]))) as Record<string, OutputSpec>
@@ -275,6 +277,15 @@ export const words = {
   },
   /** A step that execution never reaches, and what to do about it. */
   unreachable: (step: string) => `${step} is not connected into the flow; connect a step to its execution input`,
+  /** A step order wire into or out of a value node. */
+  notInFlow: (node: string) => `${node} is a value and is not part of the run order`,
+  /** A node on a cycle of value wires. */
+  ownResult: (node: string) => `${node} would depend on its own result`,
+  /** A value node none of whose outputs is connected. */
+  unused: (node: string) => `${node} is not used`,
+  /** A step reads a value node that uses an output the step could not read over a wire of its own. */
+  pureScope: (node: string, source: string, output: string, step: string) =>
+    `${node} uses ${source} · ${output}, which ${step} cannot use here: it is on the other side of a loop or parallel branch boundary`,
   /** A name or id quoted as written, without surrounding whitespace; `Unnamed` when nothing is left. */
   name: (name: string) => name.replace(blankEnds, '') || 'Unnamed',
   or: (items: string[]) => items.length <= 1 ? items.join('') : items.slice(0, -1).join(', ') + ' or ' + items.at(-1),
@@ -356,6 +367,7 @@ export const diagnosticCodes = [
   'edge.invalid', 'edge.duplicate', 'edge.endpoint', 'edge.unknownKind', 'edge.valueWirePins', 'edge.orderWirePins', 'edge.orderPinName',
   'port.unknownExecution', 'port.executionTaken', 'port.unknownOutput', 'port.unknownInput', 'port.inputTaken', 'trigger.incoming',
   'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult',
+  'flow.pure', 'pure.unused',
 ] as const
 export type DiagnosticCode = typeof diagnosticCodes[number]
 /**
@@ -395,6 +407,8 @@ export interface GraphAnalysis {
   ownerOf(node: GraphNode): GraphNode | undefined
   /** Whether a data output of `source` may be read by `target` across structured scopes. */
   visible(source: GraphNode, target: GraphNode, port: OutputSpec): boolean
+  /** The step outputs a value node reads, directly or through other value nodes: each once, in data wire order, depth first. */
+  pureSources(pure: GraphNode): { node: GraphNode; port: string; output: OutputSpec }[]
 }
 /** The comparison rule of a node, given its resolved input types. Used by the validator and the connection index. */
 export function comparisonDiagnostics(node: GraphNode, spec: NodeSpec, resolved: Record<string, string | undefined>, catalog: VisualCatalogSnapshot = nodeCatalog): GraphDiagnostic[] {
@@ -440,16 +454,61 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   const scopes = new Map<string, Scope>()
   const resolvedTypes = new Map<string, Record<string, string | undefined>>()
   const ownerOf = (node: GraphNode) => { const s = scopes.get(node.id)?.at(-1); return s?.port === 'body' ? nodes.get(s.owner) : undefined }
+  const pure = (node: GraphNode) => nodeSpec(node.kind)?.pure === true
   function visible(source: GraphNode, target: GraphNode, port: OutputSpec) {
-    const a = scopes.get(source.id), b = scopes.get(target.id)
-    if (!a || !b || !isAncestor(a, b)) return false
+    const b = scopes.get(target.id)
+    return b !== undefined && visibleIn(source, b, port)
+  }
+  /** Whether an output of `source` may be read by a step in scope `b`. */
+  function visibleIn(source: GraphNode, b: Scope, port: OutputSpec) {
+    const a = scopes.get(source.id)
+    if (!a || !isAncestor(a, b)) return false
     const owned = b[a.length]?.owner === source.id
     if (port.visibility === 'outside') return !owned
     if (port.visibility === 'body') return owned && b[a.length]?.port === 'body'
     if (port.visibility === 'loop') return owned && ['body', 'condition'].includes(b[a.length]?.port)
     return true
   }
-  const analysis = (complete: boolean): GraphAnalysis => ({ diagnostics: errors, origins, complete, nodes, data, scopes, resolved: resolvedTypes, ownerOf, visible })
+  /**
+   * The step outputs a value node reads, directly or through other value nodes: each once, in the order of the
+   * graph's value wires, depth first. A step reading the value node must be able to read each of them.
+   */
+  function pureSources(start: GraphNode) {
+    const found: { node: GraphNode; port: string; output: OutputSpec }[] = [], seen = new Set([start.id])
+    const visit = (node: GraphNode) => {
+      for (const edge of data) if (edge.target === node.id) {
+        const source = nodes.get(edge.source)!, port = edge.sourcePort
+        if (pure(source)) { if (!seen.has(source.id)) { seen.add(source.id); visit(source) } }
+        else { const output = dataOutputs(source)[port]; if (output && !found.some(f => f.node === source && f.port === port)) found.push({ node: source, port, output }) }
+      }
+    }
+    visit(start)
+    return found
+  }
+  /** Where a node's values are worked out: a step's own scope; for a value node, the scope of every step that reads it, through other value nodes. */
+  function readerScopes(start: GraphNode) {
+    const found: Scope[] = [], seen = new Set<string>()
+    const visit = (node: GraphNode) => {
+      if (seen.has(node.id)) return
+      seen.add(node.id)
+      if (!pure(node)) { const s = scopes.get(node.id); if (s) found.push(s); return }
+      for (const edge of data) if (edge.source === node.id) visit(nodes.get(edge.target)!)
+    }
+    visit(start)
+    return found
+  }
+  /**
+   * Whether a variable a node publishes can be read by `reader`: from every scope the reader is worked out in, the
+   * producer must be visible as a wire from it would be; a value node publishes its variable where it is worked out.
+   */
+  function variableVisible(producer: GraphNode, reader: GraphNode, output: OutputSpec) {
+    const readers = readerScopes(reader)
+    if (!readers.length) return false
+    if (!pure(producer)) return readers.every(s => visibleIn(producer, s, output))
+    const producers = readerScopes(producer)
+    return readers.every(s => producers.some(at => isAncestor(at, s)))
+  }
+  const analysis = (complete: boolean): GraphAnalysis => ({ diagnostics: errors, origins, complete, nodes, data, scopes, resolved: resolvedTypes, ownerOf, visible, pureSources })
   if (!record(value) || value.version !== catalog.graphVersion) { error(null, `Expected graph version ${catalog.graphVersion}`, undefined, undefined, 'graph.version'); return analysis(false) }
   if (typeof value.name !== 'string' || !value.name.trim()) error(null, 'Graph name is required', undefined, undefined, 'graph.name')
   if (!Array.isArray(value.nodes) || !Array.isArray(value.edges)) { error(null, 'Nodes and edges arrays are required', undefined, undefined, 'graph.shape'); return analysis(false) }
@@ -475,6 +534,13 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     } else if (edge.kind === undefined || edge.kind === 'execution') {
       if ('sourcePort' in edge || 'targetPort' in edge) error(edge.source, 'This step order wire names value pins; connect step order pins to step order pins', undefined, undefined, 'edge.orderWirePins')
       if (edge.port !== undefined && typeof edge.port !== 'string') { error(edge.source, 'This step order wire leaves from a pin without a valid name', undefined, undefined, 'edge.orderPinName'); continue }
+      // A value node has no execution pins; the wire is reported on it and otherwise ignored.
+      const from = nodes.get(edge.source)!, to = nodes.get(edge.target)!
+      if (pure(from) || pure(to)) {
+        if (pure(from)) error(from.id, words.notInFlow(words.stepName(from, catalog)), undefined, undefined, 'flow.pure')
+        if (pure(to) && to.id !== from.id) error(to.id, words.notInFlow(words.stepName(to, catalog)), undefined, undefined, 'flow.pure')
+        continue
+      }
       const node = nodes.get(edge.source)!, port = flowPort(node, edge)
       if (!executionPorts(node).includes(port)) error(node.id, 'Unknown execution port', undefined, port, 'port.unknownExecution')
       if (outgoing.get(node.id)!.some(e => flowPort(node, e) === port)) error(node.id, 'Only one execution edge per port', undefined, port, 'port.executionTaken')
@@ -486,7 +552,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   function cycles(edges: { source: string; target: string }[], label: string) {
     const active = new Set<string>(), done = new Set<string>()
     function visit(id: string) {
-      if (active.has(id)) { error(id, `${label} cycle is forbidden`, undefined, undefined, label === 'Data' ? 'cycle.data' : 'cycle.execution'); return }
+      if (active.has(id)) { if (label === 'Data') error(id, words.ownResult(words.stepName(nodes.get(id)!, catalog)), undefined, undefined, 'cycle.data'); else error(id, 'Execution cycle is forbidden', undefined, undefined, 'cycle.execution'); return }
       if (done.has(id)) return
       active.add(id)
       for (const edge of edges) if (edge.source === id) visit(edge.target)
@@ -510,7 +576,10 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   const roots = [...nodes.values()].filter(n => n.kind === 'trigger')
   if (!roots.length) error(null, 'At least one trigger is required', undefined, undefined, 'graph.noTrigger')
   roots.forEach(n => scope(n.id, []))
-  for (const [id, node] of nodes) if (!scopes.has(id)) error(id, words.unreachable(words.stepName(node, catalog)), undefined, undefined, 'node.unreachable')
+  // A value node is never reached by execution; it is a warning when nothing reads it.
+  for (const [id, node] of nodes)
+    if (pure(node)) { if (!data.some(e => e.source === id)) { errors.push({ nodeId: id, message: words.unused(words.stepName(node, catalog)), severity: 2, code: 'pure.unused' }); origins.push(origin) } }
+    else if (!scopes.has(id)) error(id, words.unreachable(words.stepName(node, catalog)), undefined, undefined, 'node.unreachable')
   const incoming = new Map<string, DataEdge>()
   const key = (node: string, port: string) => JSON.stringify([node, port])
   for (const edge of data) {
@@ -526,6 +595,11 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable.
       if (scopes.has(source.id) && scopes.has(target.id) && !visible(source, target, output))
         error(target.id, words.scopeData(inputSubject(target, input, edge.targetPort, catalog)), edge.targetPort, edge.targetPort, 'scope.data')
+      // A step reading a value node reads, in effect, every step output that value node uses.
+      if (pure(source) && !pure(target) && scopes.has(target.id))
+        for (const { node: producer, port, output: spec } of pureSources(source))
+          if (scopes.has(producer.id) && !visible(producer, target, spec))
+            error(target.id, words.pureScope(words.stepName(source, catalog), words.stepName(producer, catalog), words.portLabel(spec, port), words.stepName(target, catalog)), edge.targetPort, edge.targetPort, 'scope.data')
     }
   }
   origin = graphOrigin
@@ -543,7 +617,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     let type: string | undefined
     if (raw.kind === 'variable') {
       if (typeof raw.name !== 'string' || !matches(raw.name, catalog.structures.loopDeclaration.name.pattern)) { error(node.id, `${subject} uses a variable without a valid name`, port, port); return }
-      const candidates = [...nodes.values()].filter(n => typeof n.config.output === 'string' && n.config.output === raw.name && dataOutputs(n).value && visible(n, node, dataOutputs(n).value))
+      const candidates = [...nodes.values()].filter(n => typeof n.config.output === 'string' && n.config.output === raw.name && dataOutputs(n).value && variableVisible(n, node, dataOutputs(n).value))
       type = candidates[0] ? dataOutputs(candidates[0]).value.type : undefined
       if (!type || candidates.some(n => dataOutputs(n).value.type !== type)) error(node.id, `${subject} uses variable ${raw.name}, which no earlier step provides with a single type`, port)
     } else if (raw.kind === 'literal') {
@@ -731,13 +805,14 @@ export function connectData(graph: Graph, source: string, sourcePort: string, ta
   // included), or any diagnostic on the input it fills or about the output it reads (one with no inputId: an input
   // of the same name as the output is another pin). A blocking diagnostic the graph already has is no reason. A cycle diagnostic names the
   // node where the search happened to close the loop, which another wire can move, so cycles are judged by whether
-  // the new wire itself lies on one (a data wire never changes execution cycles).
+  // the new wire itself lies on one (a data wire never changes execution cycles). A value node left unused by the
+  // wire it replaces is only a warning about that value node, not a problem the new wire causes.
   const after = analyzeGraph(next, catalog)
-  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && (!old.includes(JSON.stringify(e)) ||
+  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && (!old.includes(JSON.stringify(e)) ||
     (e.nodeId === target && (e.inputId === targetPort || e.portId === targetPort)) ||
     (e.nodeId === source && e.portId === sourcePort && e.inputId === undefined)))
   const messages = addedErrors.map(e => e.message)
-  if (after.complete && closesDataCycle(after.data, source, target)) messages.push('Data cycle is forbidden')
+  if (after.complete && closesDataCycle(after.data, source, target)) messages.push(words.ownResult(words.stepName(node, catalog)))
   if (messages.length) throw new Error(messages.join('; '))
   return next
 }

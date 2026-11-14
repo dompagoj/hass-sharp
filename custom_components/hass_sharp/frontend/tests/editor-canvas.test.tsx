@@ -527,13 +527,50 @@ it('drops a data pin on empty canvas: lists only steps that take its type, and r
   // Only steps with an input that takes the pin's type: no trigger, no Delay (its only input is a duration).
   expect(host.querySelector('[aria-label="Create Entity changes"]')).toBeNull()
   expect(host.querySelector('[aria-label="Create Delay"]')).toBeNull()
-  button(host, 'Create Set value').click()
+  button(host, 'Create Read entity').click()
   const after = history.graph()
   const created = after.nodes.at(-1)!
-  expect(created.kind).toBe('set_value')
+  expect(created.kind).toBe('read_entity')
   expect(after.edges).toEqual([...before.edges, expect.objectContaining({ source: 'trigger-1', target: created.id }), expect.objectContaining({ kind: 'data', source: 'trigger-1', sourcePort: 'entity_id', target: created.id })])
   history.undo()
   expect(history.graph()).toEqual(before)
+})
+
+it('drops a data pin on empty canvas and connects a new value node by its value only, never by execution', async () => {
+  fixedLayout()
+  const host = root()
+  const start = connectNodes(addNode(createGraph('Heating'), 'log', 'log'), 'service-1', 'log')
+  const history = createGraphHistory({ ...start, edges: start.edges.filter(e => e.source !== 'trigger-1') })
+  dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  for (const [node, side, port, kind, label] of [['trigger-1', 'source', 'entity_id', 'constant', 'Constant'], ['log', 'target', 'value', 'compare', 'Compare']] as const) {
+    const before = history.graph()
+    dropOnPane(host, dataPin(host, node, side, port))
+    button(host, `Create ${label}`).click()
+    const after = history.graph()
+    const created = after.nodes.at(-1)!
+    expect(created.kind).toBe(kind)
+    // The trigger's next stays free and the Log keeps its one execution wire: only the value wire is new.
+    const ends = side === 'source' ? { source: node, sourcePort: port, target: created.id } : { source: created.id, target: node, targetPort: port }
+    expect(after.edges).toEqual([...before.edges, expect.objectContaining({ kind: 'data', ...ends })])
+    expect(unreachable(after)).toEqual(unreachable(before))
+    await vi.waitFor(() => expect(host.querySelector('.hs-canvas-notice')?.textContent).toMatch(new RegExp(`^Added ${label} and connected .+$`)))
+    expect(host.querySelector('.hs-canvas-notice')!.textContent).not.toMatch(/into the flow/)
+    history.undo()
+    expect(history.graph()).toEqual(before)
+  }
+})
+
+it('never offers a value node for an execution pin', async () => {
+  fixedLayout()
+  const host = root()
+  const start = createGraph('Heating')
+  dispose = render(() => <FlowAdapter graph={start} onSelect={() => {}} onChange={() => {}} />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  dropOnPane(host, host.querySelector('[data-id="service-1"] .source[data-handleid="next"]')!)
+  expect(host.querySelector('.hs-quick-add')).not.toBeNull()
+  expect(host.querySelector('[aria-label="Create Log"]')).not.toBeNull()
+  for (const label of ['Constant', 'Compare', 'Not', 'Get field', 'Convert', 'Create object']) expect(host.querySelector(`[aria-label="Create ${label}"]`), label).toBeNull()
 })
 
 /** Renders `graph` in an adapter with undo, waiting for its wires. */
@@ -551,17 +588,17 @@ const title = (host: Element, id: string) => host.querySelector(`.solid-flow__no
 it('puts a step with a next onto the one wire after a data output, then wires the value, and says where it went', async () => {
   const { host, history, before } = await adapter(createGraph('Heating'))
   dropOnPane(host, dataPin(host, 'trigger-1', 'source', 'entity_id'))
-  button(host, 'Create Set value').click()
+  button(host, 'Create Read entity').click()
   const after = history.graph()
   const created = after.nodes.at(-1)!.id
   expect(after.edges).toEqual([
     ...before.edges.filter(e => e.id !== 'trigger-1->condition-1'),
     { id: `trigger-1->${created}`, source: 'trigger-1', target: created },
     { id: `${created}->condition-1`, source: created, target: 'condition-1' },
-    expect.objectContaining({ kind: 'data', source: 'trigger-1', sourcePort: 'entity_id', target: created, targetPort: 'value' }),
+    expect.objectContaining({ kind: 'data', source: 'trigger-1', sourcePort: 'entity_id', target: created, targetPort: 'entity' }),
   ])
   expect(unreachable(after)).toEqual([])
-  expect(host.textContent).toContain(`Added Set value between ${title(host, 'trigger-1')} and ${title(host, 'condition-1')}`)
+  expect(host.textContent).toContain(`Added Read entity between ${title(host, 'trigger-1')} and ${title(host, 'condition-1')}`)
   expect(host.querySelector('[role="alert"]')).toBeNull()
   history.undo()
   expect(history.graph()).toEqual(before)
@@ -571,7 +608,7 @@ it('puts a step with a next onto the one wire into a data input\'s step, before 
   const { host, history, before } = await adapter(connectNodes(addNode(createGraph('Heating'), 'log', 'log'), 'service-1', 'log'))
   dropOnPane(host, dataPin(host, 'log', 'target', 'value'))
   expect(host.querySelector('.hs-quick-add')!.getAttribute('aria-label')).toMatch(/^Get .+ from…$/)
-  button(host, 'Create Set value').click()
+  button(host, 'Create Read entity').click()
   const after = history.graph()
   const created = after.nodes.at(-1)!.id
   expect(after.edges).toEqual([
@@ -581,7 +618,7 @@ it('puts a step with a next onto the one wire into a data input\'s step, before 
     expect.objectContaining({ kind: 'data', source: created, sourcePort: 'value', target: 'log', targetPort: 'value' }),
   ])
   expect(unreachable(after)).toEqual([])
-  expect(host.textContent).toContain(`Added Set value between ${title(host, 'service-1')} and ${title(host, 'log')}`)
+  expect(host.textContent).toContain(`Added Read entity between ${title(host, 'service-1')} and ${title(host, 'log')}`)
   history.undo()
   expect(history.graph()).toEqual(before)
 })
@@ -589,10 +626,10 @@ it('puts a step with a next onto the one wire into a data input\'s step, before 
 it.each([
   ['a kind without a next on an occupied port', (g: VisualGraph) => g, 'trigger-1', 'source', 'entity_id', 'State condition', 'Entity'],
   ['a data input whose step has two incoming wires',
-    (g: VisualGraph) => connectNodes(connectNodes(addNode(g, 'log', 'log'), 'service-1', 'log'), 'condition-1', 'log', 'false'), 'log', 'target', 'value', 'Set value', undefined],
-  ['a data input on a step that does not run', (g: VisualGraph) => addNode(g, 'log', 'log'), 'log', 'target', 'value', 'Set value', undefined],
+    (g: VisualGraph) => connectNodes(connectNodes(addNode(g, 'log', 'log'), 'service-1', 'log'), 'condition-1', 'log', 'false'), 'log', 'target', 'value', 'Read entity', undefined],
+  ['a data input on a step that does not run', (g: VisualGraph) => addNode(g, 'log', 'log'), 'log', 'target', 'value', 'Read entity', undefined],
   ['a data output on a step that does not run',
-    (g: VisualGraph) => updateNode(addNode(g, 'set_value', 'loose'), 'loose', { config: { type: 'string', value: { kind: 'literal', type: 'string', value: 'x' } } }), 'loose', 'source', 'value', 'Set value', 'Value'],
+    (g: VisualGraph) => updateNode(addNode(g, 'read_entity', 'loose'), 'loose', { config: { entity: { kind: 'literal', type: 'entity_id', value: 'sensor.a' } } }), 'loose', 'source', 'value', 'Log', undefined],
 ] as const)('adds the step with no existing wire changed for %s, connects the value to it, and says to connect it into the flow', async (_, build, node, side, port, label, pin) => {
   const { host, history, before } = await adapter(build(createGraph('Heating')))
   dropOnPane(host, dataPin(host, node, side, port))
@@ -862,7 +899,7 @@ it('selects new, pasted and duplicated steps when a parent applies the change la
 
 it('does not copy C# variable names into pasted steps, and says so; leaves Ctrl+C to selected text', async () => {
   const host = root()
-  let start = addNode(createGraph('Heating'), 'set_value', 'named')
+  let start = addNode(createGraph('Heating'), 'constant', 'named')
   start = updateNode(start, 'named', { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 1 }, output: 'level' } })
   const history = createGraphHistory(start)
   dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)

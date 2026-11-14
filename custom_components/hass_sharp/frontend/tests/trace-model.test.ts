@@ -20,16 +20,18 @@ const trace = (events: Partial<TraceEvent>[], extra: Partial<RunTrace> = {}): Ru
 }
 
 it('follows a linear run: every step reached once, every wire travelled, values by port', () => {
+  // The Not is a value node: worked out (without an execution port) just before the Log that reads it.
   const g = graph(
     [node('t', 'trigger', { type: 'entity', entity: 'binary_sensor.hall' }), node('n', 'not', { value: lit('boolean', true) }), node('log', 'log', { level: 'Info' })],
-    [{ id: 'e1', source: 't', target: 'n' }, { id: 'e2', source: 'n', target: 'log' }, { id: 'd1', kind: 'data', source: 'n', sourcePort: 'value', target: 'log', targetPort: 'value' }],
+    [{ id: 'e1', source: 't', target: 'log' }, { id: 'd1', kind: 'data', source: 'n', sourcePort: 'value', target: 'log', targetPort: 'value' }],
   )
   const model = traceModel(trace([
     { node: 't', port: 'next' },
-    { node: 'n', port: 'next', inputs: { value: { type: 'boolean', v: true } }, outputs: { value: { type: 'boolean', v: false } } },
+    { node: 'n', inputs: { value: { type: 'boolean', v: true } }, outputs: { value: { type: 'boolean', v: false } } },
     { node: 'log', port: 'next', inputs: { value: { type: 'boolean', v: false, src: { node: 'n', port: 'value' } } } },
   ]), g, nodeCatalog)
-  expect([...model.edges].sort()).toEqual(['d1', 'e1', 'e2'])
+  // The value wire out of the value node is travelled: the Log read it.
+  expect([...model.edges].sort()).toEqual(['d1', 'e1'])
   const flow = flowTrace(model, g, '')
   expect(flow.nodes).toEqual({ t: { status: 'ok', runs: 1, ms: 1 }, n: { status: 'ok', runs: 1, ms: 1 }, log: { status: 'ok', runs: 1, ms: 1 } })
   expect(flow.value!('n', 'value', 'in')).toEqual({ type: 'boolean', v: 'Yes', trunc: undefined, src: undefined })
@@ -38,6 +40,27 @@ it('follows a linear run: every step reached once, every wire travelled, values 
   expect(flow.value!('log', 'other', 'in')).toBeUndefined()
   expect(inputSource(g, g.nodes[2], 'value', model.value('log', 'value', 'in', '')!, nodeCatalog)).toBe('From Not · Result')
   expect(inputSource(g, g.nodes[1], 'value', model.value('n', 'value', 'in', '')!, nodeCatalog)).toBe('Value')
+})
+
+it('leaves a value node no step read unreached, and its wire not travelled', () => {
+  const g = graph(
+    [node('t', 'trigger', { type: 'manual' }), node('c', 'constant', { type: 'number', value: lit('number', 1) }), node('unused', 'constant', { type: 'number', value: lit('number', 2) }),
+      node('i', 'if', { value: { kind: 'unset' } }), node('cmp', 'compare', { left: { kind: 'unset' }, right: lit('number', 1), operator: 'eq' }), node('yes', 'log'), node('no', 'log')],
+    [{ id: 'e1', source: 't', target: 'i' }, { id: 'e2', source: 'i', target: 'yes', port: 'true' }, { id: 'e3', source: 'i', target: 'no', port: 'false' },
+      { id: 'd1', kind: 'data', source: 'c', sourcePort: 'value', target: 'cmp', targetPort: 'left' }, { id: 'd2', kind: 'data', source: 'cmp', sourcePort: 'value', target: 'i', targetPort: 'value' },
+      { id: 'd3', kind: 'data', source: 'unused', sourcePort: 'value', target: 'no', targetPort: 'value' }],
+  )
+  const model = traceModel(trace([
+    { node: 't', port: 'next' },
+    { node: 'c', outputs: { value: { type: 'number', v: 1 } } },
+    { node: 'cmp', inputs: { left: { type: 'number', v: 1, src: { node: 'c', port: 'value' } }, right: { type: 'number', v: 1 } }, outputs: { value: { type: 'boolean', v: true } } },
+    { node: 'i', port: 'true', inputs: { value: { type: 'boolean', v: true, src: { node: 'cmp', port: 'value' } } } },
+    { node: 'yes', port: 'next' },
+  ]), g, nodeCatalog)
+  expect([...model.edges].sort()).toEqual(['d1', 'd2', 'e1', 'e2'])
+  const flow = flowTrace(model, g, '')
+  expect(Object.keys(flow.nodes).sort()).toEqual(['c', 'cmp', 'i', 't', 'yes'])
+  expect(flow.value!('cmp', 'value', 'out')?.v).toBe('Yes')
 })
 
 it('marks only the branch a condition took, and leaves the other side unreached', () => {

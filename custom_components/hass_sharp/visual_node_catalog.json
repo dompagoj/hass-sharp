@@ -379,6 +379,7 @@
       "label": "And",
       "category": "Logic",
       "description": "Combine two yes/no values: the result is yes only when both are yes.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {
         "output": {
@@ -420,10 +421,6 @@
           "label": "Result"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "runtimeVersions": [
         5
       ]
@@ -432,6 +429,7 @@
       "label": "Or",
       "category": "Logic",
       "description": "Combine two yes/no values: the result is yes when at least one is yes.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {
         "output": {
@@ -473,10 +471,6 @@
           "label": "Result"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "runtimeVersions": [
         5
       ]
@@ -485,6 +479,7 @@
       "label": "Exclusive or",
       "category": "Logic",
       "description": "Combine two yes/no values: the result is yes when exactly one is yes.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {
         "output": {
@@ -526,10 +521,6 @@
           "label": "Result"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "runtimeVersions": [
         5
       ]
@@ -538,6 +529,7 @@
       "label": "Not",
       "category": "Logic",
       "description": "Turn a yes/no value around: yes becomes no and no becomes yes.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {
         "output": {
@@ -567,10 +559,6 @@
           "label": "Result"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "runtimeVersions": [
         5
       ]
@@ -579,6 +567,7 @@
       "label": "Compare",
       "category": "Logic",
       "description": "Compare two values, such as whether a temperature is above 21.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {
         "operator": {
@@ -637,10 +626,6 @@
           "label": "Result"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "runtimeVersions": [
         5
       ],
@@ -655,7 +640,12 @@
           "ge"
         ],
         "orderingType": "number"
-      }
+      },
+      "keywords": [
+        "equals",
+        "greater",
+        "less"
+      ]
     },
     "read_entity": {
       "label": "Read entity",
@@ -699,10 +689,11 @@
         5
       ]
     },
-    "set_value": {
-      "label": "Set value",
+    "constant": {
+      "label": "Constant",
       "category": "Data",
-      "description": "Make a value of the type you choose for later steps to use.",
+      "description": "A fixed value of the type you choose, for any number of steps to use.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {
         "type": {
@@ -749,18 +740,20 @@
           "label": "Value"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "runtimeVersions": [
         5
+      ],
+      "keywords": [
+        "set value",
+        "literal",
+        "variable"
       ]
     },
     "convert": {
       "label": "Convert",
       "category": "Data",
       "description": "Change a value into another type, such as text into a number.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {
         "type": {
@@ -791,7 +784,7 @@
             "$any"
           ],
           "required": true,
-          "description": "The value to change. If it cannot be changed, the step takes its On error path.",
+          "description": "The value to change. If it cannot be changed, the step that uses the result fails.",
           "default": {
             "kind": "literal",
             "type": "string",
@@ -807,10 +800,6 @@
           "label": "Value"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "runtimeVersions": [
         5
       ]
@@ -1328,6 +1317,7 @@
       "label": "Object",
       "category": "Data",
       "description": "Provide an object you write out, such as data for a service.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {},
       "inputs": {
@@ -1351,10 +1341,6 @@
           "label": "Object"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "runtimeVersions": [
         5
       ]
@@ -1363,6 +1349,7 @@
       "label": "List",
       "category": "Data",
       "description": "Provide a list you write out, such as a list of entity ids.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {},
       "inputs": {
@@ -1386,10 +1373,6 @@
           "label": "List"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "runtimeVersions": [
         5
       ]
@@ -1398,6 +1381,7 @@
       "label": "Create object",
       "category": "Data",
       "description": "Build an object from named fields, each set or connected on its own.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {
         "fields": {
@@ -1415,10 +1399,6 @@
           "label": "Object"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "dynamicInputs": "fields",
       "runtimeVersions": [
         5
@@ -1428,6 +1408,7 @@
       "label": "Create list",
       "category": "Data",
       "description": "Build a list from items, each set or connected on its own.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {
         "items": {
@@ -1445,10 +1426,6 @@
           "label": "List"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "dynamicInputs": "items",
       "runtimeVersions": [
         5
@@ -1458,6 +1435,7 @@
       "label": "Get field",
       "category": "Data",
       "description": "Take one value out of an object or list, such as a field of a service response.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {
         "pointer": {
@@ -1479,7 +1457,7 @@
             "entity_id"
           ],
           "default": "string",
-          "description": "The type of the value you expect, such as Number; a value of another type takes the On error path.",
+          "description": "The type of the value you expect, such as Number; a value of another type fails the step that uses it.",
           "label": "Type"
         }
       },
@@ -1501,18 +1479,19 @@
           "label": "Value"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "runtimeVersions": [
         5
+      ],
+      "keywords": [
+        "property",
+        "path"
       ]
     },
     "entity_field": {
       "label": "Entity field",
       "category": "Hass",
       "description": "Get the state or one attribute from an entity state, as the type you choose.",
+      "pure": true,
       "minGraphVersion": 5,
       "config": {
         "field": {
@@ -1568,10 +1547,6 @@
           "label": "Value"
         }
       },
-      "execution": [
-        "next",
-        "error"
-      ],
       "runtimeVersions": [
         5
       ]
@@ -1743,7 +1718,7 @@
       "schedulesDependencies": false,
       "maxSourcesPerInput": 1,
       "maxConsumersPerOutput": null,
-      "description": "Passes a value an earlier step has already made; it never runs that step."
+      "description": "Passes a value into an input. A step's value must have been made by an earlier step; a value node is worked out each time a step uses it."
     }
   },
   "structures": {

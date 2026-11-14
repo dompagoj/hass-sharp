@@ -8,6 +8,7 @@ import {
   dataOutputs,
   incompatibleInput,
   isAssignable,
+  isPure,
   nodeCatalog,
   serviceTargetDiagnostics,
   words,
@@ -67,6 +68,11 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     if (d.portId) add(byPort, pairKey(d.nodeId, d.portId), i)
   })
   const hasDataCycle = origins.some(o => o.kind === 'dataCycle')
+  let variables: Set<unknown> | undefined
+  /** Every variable name any node reads. */
+  const readVariables = () => variables ??= variablesIn([...analysis.nodes.values()].map(n => n.config))
+  // The scope problems the graph has, by step input and message.
+  const oldScope = new Set(diagnostics.filter(d => d.code === 'scope.data').map(d => JSON.stringify([d.nodeId, d.inputId, d.message])))
   const adjacency = new Map<string, string[]>()
   for (const edge of analysis.data) adjacency.set(edge.source, [...(adjacency.get(edge.source) ?? []), edge.target])
   const reachable = new Map<string, Set<string>>()
@@ -129,6 +135,14 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     if (!source || analysis.nodes.get(sourceId) !== source || analysis.nodes.get(targetId) !== target) return full()
     const spec = Object.hasOwn(catalog.nodes, target.kind) ? catalog.nodes[target.kind] : undefined
     if (!spec || !storageIsPrivate(target, targetPort, spec)) return full()
+    // A value node is worked out where the steps reading it run, and sets its variable there. The wire this one
+    // replaces may leave a value node (or one upstream of it) read in fewer places, which can hide a variable it sets;
+    // a wire out of a value node adds places where a variable read upstream of it is looked up.
+    const pureNode = (node: GraphNode | undefined) => node !== undefined && isPure(node, catalog)
+    const replaced = [...removed].map(i => analysis.nodes.get((graph.edges[i] as { source: string }).source))
+    if (replaced.some(n => pureNode(n) && upstream(n!, n => typeof n.config.output === 'string' && readVariables().has(n.config.output)))) return full()
+    const sourcePure = pureNode(source), targetPure = pureNode(target)
+    if (sourcePure && upstream(source, n => variablesIn(n.config).size > 0)) return full()
 
     const volatile = (o: DiagnosticOrigin) =>
       (o.kind === 'edge' && removed.has(o.edge)) || o.kind === 'dataCycle' ||
@@ -147,11 +161,20 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     if (output && input) {
       if (!input.types.some(t => index.assignable(output.type, t))) messages.add(incompatibleInput(target, input, targetPort, output.type, catalog))
       if (analysis.scopes.has(sourceId) && analysis.scopes.has(targetId) && !analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
+      // The step outputs the wire brings in: the source's own, or those a value node source uses.
+      const produced = sourcePure ? analysis.pureSources(source) : [{ node: source, port: sourcePort, output }]
+      const crossing = (reader: GraphNode, via: GraphNode) => produced.filter(p => analysis.scopes.has(p.node.id) && !analysis.visible(p.node, reader, p.output))
+        .map(p => words.pureScope(words.stepName(via, catalog), words.stepName(p.node, catalog), words.portLabel(p.output, p.port), words.stepName(reader, catalog)))
+      if (sourcePure && !targetPure && analysis.scopes.has(targetId)) for (const m of crossing(target, source)) messages.add(m)
+      // Into a value node: every step reading it, directly or through other value nodes, now reads those outputs too.
+      // A step's problem the graph already has is no new problem.
+      if (targetPure) for (const { via, reader, port } of stepReaders(target))
+        if (analysis.scopes.has(reader.id)) for (const m of crossing(reader, via)) if (!oldScope.has(JSON.stringify([reader.id, port, m]))) messages.add(m)
     }
     // The new wire lies on a cycle. Without one in the graph, a path from the target back to the source cannot use
     // the wire it replaces, so the memoised reach of the current graph answers.
     const rewired = () => [...analysis.data.filter(e => !(e.target === targetId && e.targetPort === targetPort)), { source: sourceId, target: targetId }]
-    if (sourceId === targetId || (hasDataCycle ? closesDataCycle(rewired(), sourceId, targetId) : reach(targetId).has(sourceId))) messages.add('Data cycle is forbidden')
+    if (sourceId === targetId || (hasDataCycle ? closesDataCycle(rewired(), sourceId, targetId) : reach(targetId).has(sourceId))) messages.add(words.ownResult(words.stepName(target, catalog)))
     if (spec.comparison && input) {
       const resolved = { ...analysis.resolved.get(targetId), [targetPort]: output?.type }
       for (const d of comparisonDiagnostics(target, spec, resolved, catalog))
@@ -166,7 +189,40 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     }
     return messages.size ? { message: [...messages].join('; '), fallback: false } : { fallback: false }
   }
+  /** Whether `test` holds for the value node or a value node it reads, directly or through others. */
+  function upstream(start: GraphNode, test: (node: GraphNode) => boolean) {
+    const seen = new Set<string>()
+    const visit = (node: GraphNode): boolean => {
+      if (seen.has(node.id)) return false
+      seen.add(node.id)
+      return test(node) || analysis.data.some(e => e.target === node.id && isPure(analysis.nodes.get(e.source)!, catalog) && visit(analysis.nodes.get(e.source)!))
+    }
+    return visit(start)
+  }
+  /** The value wires from the value node, or a value node reading it, into a step: the value node on the wire, the step and its input. */
+  function stepReaders(start: GraphNode) {
+    const found: { via: GraphNode; reader: GraphNode; port: string }[] = [], seen = new Set([start.id])
+    for (const stack = [start]; stack.length; ) {
+      const via = stack.pop()!
+      for (const e of analysis.data) if (e.source === via.id) {
+        const reader = analysis.nodes.get(e.target)!
+        if (!isPure(reader, catalog)) found.push({ via, reader, port: e.targetPort })
+        else if (!seen.has(reader.id)) { seen.add(reader.id); stack.push(reader) }
+      }
+    }
+    return found
+  }
   return index
+}
+
+/** The names of the variable operands a config value holds anywhere (inputs, fields, items or arguments). */
+function variablesIn(value: unknown, names = new Set<unknown>()): Set<unknown> {
+  if (Array.isArray(value)) for (const item of value) variablesIn(item, names)
+  else if (record(value)) {
+    if (value.kind === 'variable') names.add(value.name)
+    for (const item of Object.values(value)) variablesIn(item, names)
+  }
+  return names
 }
 
 type NodeSpec = VisualCatalogSnapshot['nodes'][string]

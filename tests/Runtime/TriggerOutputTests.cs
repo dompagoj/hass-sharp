@@ -202,15 +202,15 @@ static class TriggerOutputTests
         // Entity: refined entity_id and both states, attributes included.
         var current = State("sensor.test", "on"); current.OldState = State("sensor.test", "off");
         var entity = Wired(new() { ["type"] = "entity", ["entity"] = "sensor.test" },
-            [N("e", "set_value", new { type = "entity_id:sensor", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), Field("from"), Log("lf"), Field("unit", "attribute", "unit"), Log("lu")],
+            [N("e", "constant", new { type = "entity_id:sensor", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), Field("from"), Log("lf"), Field("unit", "attribute", "unit"), Log("lu")],
             ("entity_id", "e", "value"), ("to_state", "to", "entity"), ("from_state", "from", "entity"), ("to_state", "unit", "entity"));
         foreach (var (source, target) in new[] { ("e", "le"), ("to", "lt"), ("from", "lf"), ("unit", "lu") }) entity["edges"]!.AsArray().Add(D(source, target, "value"));
         Check((await Logged(entity, InvocationCause.Entity, TriggerPayload.Entity(current, current.OldState))).SequenceEqual(["sensor.test", "on", "off", "C"]), "entity payload reaches typed outputs: " + string.Join("|", messages));
 
         // A null from_state produces no output; its consumer's error names it.
         var absent = Wired(new() { ["type"] = "entity", ["entity"] = "sensor.test" },
-            [Field("from"), N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.from_state\"))throw lastError; Logger.Info(\"absent \"+lastError.Message);" })], ("from_state", "from", "entity"));
-        absent["edges"] = new JsonArray(E("t", "from"), E("from", "c", "error"), D("t", "from", "entity", "from_state"));
+            [Field("from"), Log("lf"), N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.from_state\"))throw lastError; Logger.Info(\"absent \"+lastError.Message);" })], ("from_state", "from", "entity"));
+        absent["edges"] = new JsonArray(E("t", "lf"), E("lf", "c", "error"), D("t", "from", "entity", "from_state"), D("from", "lf", "value"));
         var logged = await Logged(absent, InvocationCause.Entity, TriggerPayload.Entity(current, null));
         Check(logged.Length == 1 && logged[0].Contains("t.from_state") && logged[0].Contains("from.entity"), "absent from_state names the trigger output: " + string.Join("|", logged));
 
@@ -222,7 +222,7 @@ static class TriggerOutputTests
             (Ha(new { trigger = "numeric_state", entity_id = new[] { "sensor.test" }, above = 20 }), ["sensor.test", "21", "21", "C", "numeric_state", "20"]) })
         {
             var reads = Wired(trigger,
-                [N("e", "set_value", new { type = "entity_id:sensor", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), Field("from"), Log("lf"), Field("unit", "attribute", "unit"), Log("lu"),
+                [N("e", "constant", new { type = "entity_id:sensor", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), Field("from"), Log("lf"), Field("unit", "attribute", "unit"), Log("lu"),
                  N("p", "get_field", new { value = new { kind = "unset" }, pointer = "/platform", type = "string" }), Log("lp")],
                 ("entity_id", "e", "value"), ("to_state", "to", "entity"), ("from_state", "from", "entity"), ("to_state", "unit", "entity"), ("data", "p", "value"));
             foreach (var (source, target) in new[] { ("e", "le"), ("to", "lt"), ("from", "lf"), ("unit", "lu"), ("p", "lp") }) reads["edges"]!.AsArray().Add(D(source, target, "value"));
@@ -230,7 +230,7 @@ static class TriggerOutputTests
             {
                 reads["nodes"]!.AsArray().Add(N("a", "get_field", new { value = new { kind = "unset" }, pointer = "/above", type = "number" }));
                 reads["nodes"]!.AsArray().Add(Log("la"));
-                reads["edges"]!.AsArray().Add(E("lp", "a")); reads["edges"]!.AsArray().Add(E("a", "la"));
+                reads["edges"]!.AsArray().Add(E("lp", "la"));
                 reads["edges"]!.AsArray().Add(D("t", "a", "value", "data")); reads["edges"]!.AsArray().Add(D("a", "la", "value"));
             }
             var got = await Logged(reads, InvocationCause.Manual, ManualOf(trigger));
@@ -242,21 +242,21 @@ static class TriggerOutputTests
         var fallback = TriggerPayload.Manual("entity", gone, _ => null);
         Check(fallback.ToString() == """{"platform":"manual"}""", "unknown entity falls back");
         var missing = Wired(gone,
-            [Field("to"), N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.to_state\"))throw lastError; Logger.Info(\"missing \"+lastError.Message);" })]);
-        missing["edges"] = new JsonArray(E("t", "to"), E("to", "c", "error"), D("t", "to", "entity", "to_state"));
+            [Field("to"), Log("lt"), N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.to_state\"))throw lastError; Logger.Info(\"missing \"+lastError.Message);" })]);
+        missing["edges"] = new JsonArray(E("t", "lt"), E("lt", "c", "error"), D("t", "to", "entity", "to_state"), D("to", "lt", "value"));
         logged = await Logged(missing, InvocationCause.Manual, fallback);
         Check(logged.Length == 1 && logged[0].Contains("t.to_state") && logged[0].Contains("to.entity"), "unknown entity names the trigger output: " + string.Join("|", logged));
 
         // Without any payload even data is absent.
-        var none = Wired(new() { ["type"] = "manual" }, [N("p", "get_field", new { value = new { kind = "unset" }, pointer = "", type = "object" }), N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.data\"))throw lastError;" })], ("data", "p", "value"));
-        none["edges"] = new JsonArray(E("t", "p"), E("p", "c", "error"), D("t", "p", "value", "data"));
+        var none = Wired(new() { ["type"] = "manual" }, [N("p", "get_field", new { value = new { kind = "unset" }, pointer = "", type = "object" }), Log("lp"), N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.data\"))throw lastError;" })], ("data", "p", "value"));
+        none["edges"] = new JsonArray(E("t", "lp"), E("lp", "c", "error"), D("t", "p", "value", "data"), D("p", "lp", "value"));
         await Execute(none);
 
         // Native: a state trigger's as_dict states and context, and an event trigger's event fields.
         var state = new { entity_id = "light.kitchen", state = "on", attributes = new { brightness = 3 }, last_changed = "2026-11-13T10:00:00+00:00", last_updated = "2026-11-13T10:00:00+00:00" };
         var variables = JsonSerializer.SerializeToElement(new { trigger = new { platform = "state", entity_id = "light.kitchen", from_state = (object?)null, to_state = state }, context = new { id = "ctx" } });
         var native = Wired(Ha(new { trigger = "state", entity_id = "light.kitchen" }),
-            [N("e", "set_value", new { type = "entity_id:light", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), N("ctx", "get_field", new { value = new { kind = "unset" }, pointer = "/context/id", type = "string" }), Log("lc")],
+            [N("e", "constant", new { type = "entity_id:light", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), N("ctx", "get_field", new { value = new { kind = "unset" }, pointer = "/context/id", type = "string" }), Log("lc")],
             ("entity_id", "e", "value"), ("to_state", "to", "entity"), ("data", "ctx", "value"));
         foreach (var (source, target) in new[] { ("e", "le"), ("to", "lt"), ("ctx", "lc") }) native["edges"]!.AsArray().Add(D(source, target, "value"));
         Check((await Logged(native, InvocationCause.HomeAssistantTrigger, TriggerPayload.Native(variables))).SequenceEqual(["light.kitchen", "on", "ctx"]), "native state payload reaches typed outputs: " + string.Join("|", messages));
@@ -268,9 +268,9 @@ static class TriggerOutputTests
         // A value of another type fails only its consumer: a webhook body that is an array is not an object.
         var hook = JsonSerializer.SerializeToElement(new { trigger = new { platform = "webhook", json = new[] { 1, 2 }, query = new { a = "b" } } });
         var webhook = Wired(Ha(new { trigger = "webhook", webhook_id = "hook" }),
-            [N("q", "get_field", new { value = new { kind = "unset" }, pointer = "/a", type = "string" }), Log("lq"), N("j", "get_field", new { value = new { kind = "unset" }, pointer = "", type = "object" }),
+            [N("q", "get_field", new { value = new { kind = "unset" }, pointer = "/a", type = "string" }), Log("lq"), N("j", "get_field", new { value = new { kind = "unset" }, pointer = "", type = "object" }), Log("lj"),
              N("c", "custom", new { code = "if(!lastError!.Message.Contains(\"trigger output t.json cannot be read\"))throw lastError; Logger.Info(\"unreadable\");" })]);
-        webhook["edges"] = new JsonArray(E("t", "q"), E("q", "lq"), E("lq", "j"), E("j", "c", "error"), D("t", "q", "value", "query"), D("q", "lq", "value"), D("t", "j", "value", "json"));
+        webhook["edges"] = new JsonArray(E("t", "lq"), E("lq", "lj"), E("lj", "c", "error"), D("t", "q", "value", "query"), D("q", "lq", "value"), D("t", "j", "value", "json"), D("j", "lj", "value"));
         Check((await Logged(webhook, InvocationCause.HomeAssistantTrigger, TriggerPayload.Native(hook))).SequenceEqual(["b", "unreadable"]), "unreadable output fails only its consumer: " + string.Join("|", messages));
     }
 
@@ -284,7 +284,7 @@ static class TriggerOutputTests
             nodes.Add(N(id, "trigger", trigger)); nodes.Add(N(id + "_log", "log", new { value = new { kind = "unset" } }));
             if (pointer == null) { edges.Add(E(id, id + "_log")); edges.Add(D(id, id + "_log", "value", port)); return; }
             nodes.Add(N(id + "_get", "get_field", new { value = new { kind = "unset" }, pointer, type = "string" }));
-            edges.Add(E(id, id + "_get")); edges.Add(E(id + "_get", id + "_log")); edges.Add(D(id, id + "_get", "value", port)); edges.Add(D(id + "_get", id + "_log", "value"));
+            edges.Add(E(id, id + "_log")); edges.Add(D(id, id + "_get", "value", port)); edges.Add(D(id + "_get", id + "_log", "value"));
         }
         Root("s", new() { ["type"] = "startup" }, "data", "/platform");
         Root("m", new() { ["type"] = "manual" }, "data", "/platform");

@@ -1,4 +1,4 @@
-import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, type GraphEdge, type GraphNode, type VisualCatalogSnapshot } from '../contract'
+import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, isPure, type GraphEdge, type GraphNode, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, connectNodes, nodeInputs, outputPort, removeEdge, updateNode, type VisualGraph } from '../graph'
 import { createUuid } from '../id'
 import { dataPortOf, nodeTitle } from './flowModel'
@@ -56,6 +56,8 @@ function portFor(graph: VisualGraph, kind: string, pin: PinRef, catalog: VisualC
   const node = next.nodes.at(-1)!
   const data = dataPortOf(pin.handle)
   if (data === undefined) {
+    // A value node has no execution pins: it is never offered on an execution pin.
+    if (isPure(kind, catalog)) return
     if (pin.type === 'source') return canConnect(next, pin.nodeId, id, pin.handle, catalog) ? 'in' : undefined
     const port = defaultExec(node, catalog)
     return port && canConnect(next, id, pin.nodeId, port, catalog) ? port : undefined
@@ -111,8 +113,10 @@ function insertOn(graph: VisualGraph, edge: GraphEdge, id: string, catalog: Visu
 /**
  * Adds a `kind` step at `position` connected to the pin, as one graph change.
  *
- * An execution pin gets its wire. For a data pin the new step must run on the same path as the pin's step for the
- * value wire to be valid, so it is put into the flow where that changes nothing else:
+ * An execution pin gets its wire (a value node is never offered there). A new value node gets only its value wire:
+ * it is worked out wherever a step reads it, so it never joins the run order. For a data pin a new step must run on
+ * the same path as the pin's step for the value wire to be valid, so it is put into the flow where that changes
+ * nothing else:
  * - from a data output: into the free `next` (or `body`, for a value only a loop body sees) of the pin's step; or,
  *   when that port has exactly one wire, onto that wire (pin's step → new step → what ran next), if the new kind has
  *   a `next`;
@@ -139,6 +143,21 @@ export function addConnected(graph: VisualGraph, kind: string, position: Point, 
   }
   const pinNode = placed.nodes.find(n => n.id === pin.nodeId)!
   const added = placed.nodes.find(n => n.id === id)!
+  const wire: [string, string, string, string] = pin.type === 'source' ? [pin.nodeId, data, id, port] : [id, port, pin.nodeId, data]
+  const kindName = kindLabel(kind, catalog), pinName = pinLabel(graph, pin, catalog)
+  const tryValue = (value: VisualGraph) => {
+    try {
+      return connectData(value, ...wire, catalog)
+    } catch {
+      return undefined
+    }
+  }
+  // A value node is connected by its value wire only: it is worked out wherever a step reads it.
+  if (isPure(added, catalog)) {
+    const valued = tryValue(placed)
+    if (valued && !blocked(valued)) return { graph: valued, nodeId: id, notice: `Added ${kindName} and connected ${pinName}` }
+    return blocked(placed) ? undefined : { graph: placed, nodeId: id, refused: { nodeId: wire[2], handle: `data:${wire[3]}` }, error: `Added ${kindName}. Connect ${pinName} to it.` }
+  }
   const hasNext = executionPorts(added, catalog).includes('next')
   const runs = running(graph).has(pin.nodeId)
   const title = (nodeId: string) => nodeTitle(placed.nodes.find(n => n.id === nodeId), catalog, nodeId)
@@ -160,15 +179,6 @@ export function addConnected(graph: VisualGraph, kind: string, position: Point, 
     if (into.length === 1 && hasNext) {
       ordered = insertOn(placed, into[0], id, catalog)
       if (ordered) between = [into[0].source, pin.nodeId]
-    }
-  }
-  const wire: [string, string, string, string] = pin.type === 'source' ? [pin.nodeId, data, id, port] : [id, port, pin.nodeId, data]
-  const kindName = kindLabel(kind, catalog), pinName = pinLabel(graph, pin, catalog)
-  const tryValue = (value: VisualGraph) => {
-    try {
-      return connectData(value, ...wire, catalog)
-    } catch {
-      return undefined
     }
   }
   /**

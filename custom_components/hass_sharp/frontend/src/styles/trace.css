@@ -43,6 +43,10 @@
 .hs-app .hs-trace-step:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: -2px; }
 .hs-app .hs-trace-step--node { background: color-mix(in oklab, var(--hs-accent) 7%, var(--hs-surface)); }
 .hs-app .hs-trace-step--selected { background: color-mix(in oklab, var(--hs-accent) 15%, var(--hs-surface)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hs-accent) 45%, transparent); }
+/* A value node worked out for the step below it: a lesser, indented row. */
+.hs-app .hs-trace-step--value { min-height: 30px; padding-block: 2px; padding-left: 24px; border-left-style: dotted; font-size: 12px; }
+.hs-app .hs-trace-step--value .hs-trace-step__title { font-weight: 500; color: var(--hs-muted); }
+.hs-app .hs-trace-step--value .hs-trace-step__status { font-weight: 550; }
 .hs-app .hs-trace-step__status { display: inline-flex; align-items: center; gap: 6px; color: var(--hs-trace); font-size: 12px; font-weight: 650; white-space: nowrap; }
 .hs-app .hs-trace-step__status .hs-insp-glyph { width: 14px; height: 14px; }
 .hs-app .hs-trace-step__main { display: grid; min-width: 0; }

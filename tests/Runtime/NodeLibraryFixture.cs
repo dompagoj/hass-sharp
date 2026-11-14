@@ -75,8 +75,10 @@ public static class NodeLibraryFixture
         var missing = Graph(Node("Required", "required"));
         missing["nodes"]![1]!["config"]!["arguments"]!["reading"] = JsonNode.Parse("""{"kind":"literal","type":"global::NodeLib.Reading","value":{"State":"on"}}""");
         Case("arbitrary record is wire-only", missing, false, "reading");
-        var extraction = Graph(VisualGraphContract.CreateNode("read_entity", "r", snapshot), VisualGraphContract.CreateNode("entity_field", "field", snapshot));
-        Wire(extraction, "r", "value", "field", "entity"); Case("entity scalar extraction is separate", extraction, true);
+        // Entity field is a value node: it stays out of the run order, and a Log reads it.
+        var extraction = Graph(VisualGraphContract.CreateNode("read_entity", "r", snapshot), VisualGraphContract.CreateNode("log", "show", snapshot));
+        extraction["nodes"]!.AsArray().Add(VisualGraphContract.CreateNode("entity_field", "field", snapshot));
+        Wire(extraction, "r", "value", "field", "entity"); Wire(extraction, "field", "value", "show", "value"); Case("entity scalar extraction is separate", extraction, true);
         foreach (var consumer in new[] { "RequiredEnumerable", "RequiredReadOnlyList", "RequiredList" })
         {
             var arrayGraph = Graph(Node("NullableElements", "array"), Node(consumer, "consumer"));

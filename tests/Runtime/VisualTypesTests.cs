@@ -38,7 +38,7 @@ static class VisualTypesTests
         Check(library.Valid, string.Join("; ", library.Diagnostics.Select(d => d.Message)));
         var take = library.Snapshot.Methods.Values.Single(m => m.Method.Name == "Take").Kind;
         Check(library.Snapshot.IsAssignable("entity_id:light", "string") && !library.Snapshot.IsAssignable("string", "entity_id") && !library.Snapshot.IsAssignable("object", "target"), "refinement precedes Roslyn conversions");
-        var wired = G(N("s", "set_value", new { type = "entity_id:light", value = Lit("entity_id:light", "light.kitchen") }), VisualGraphContract.CreateNode(take, "take", library.Snapshot));
+        var wired = G(N("s", "constant", new { type = "entity_id:light", value = Lit("entity_id:light", "light.kitchen") }), VisualGraphContract.CreateNode(take, "take", library.Snapshot));
         wired["nodes"]![2]!["config"]!["arguments"] = new JsonObject { ["text"] = new JsonObject { ["kind"] = "unset" } };
         wired["edges"]!.AsArray().Add(D("s", "take", "text"));
         Check(VisualGraphValidator.Validate(wired, library.Snapshot).Count == 0, "library string parameter accepts an entity_id:light wire: " + JsonSerializer.Serialize(VisualGraphValidator.Validate(wired, library.Snapshot)));
@@ -56,7 +56,7 @@ static class VisualTypesTests
         {
             var consumer = VisualGraphContract.CreateNode(unwrap, "u", wrapping.Snapshot);
             consumer["config"]!["arguments"] = new JsonObject { ["value"] = new JsonObject { ["kind"] = "unset" }, ["expected"] = Lit("string", "light.kitchen") };
-            var converted = G(N("s", "set_value", new { type = source, value = Lit(source, "light.kitchen") }), N("c", "convert", new { type = "global::NodeLib.Wrapped", value = new { kind = "unset" } }), consumer);
+            var converted = G(N("s", "constant", new { type = source, value = Lit(source, "light.kitchen") }), N("c", "convert", new { type = "global::NodeLib.Wrapped", value = new { kind = "unset" } }), consumer);
             converted["edges"]!.AsArray().Add(D("s", "c", "value")); converted["edges"]!.AsArray().Add(D("c", "u", "value"));
             var preview = new VisualGenerator(Diagnostics).Preview(converted, wrapping.Snapshot);
             Check(preview.Valid && preview.Source.Contains("(global::NodeLib.Wrapped)__visual_engine.Input<global::System.String>("), $"user-defined conversion from {source} is compiled: " + JsonSerializer.Serialize(preview.Diagnostics));
@@ -65,17 +65,17 @@ static class VisualTypesTests
         }
         Check(!generated.Contains("var responses=") && !generated.Contains(".Responses"), "no legacy responses variable is generated");
 
-        // Convert narrows only a value that satisfies every pattern in the target chain.
-        JsonObject Narrow(string text) => G(N("s", "set_value", new { type = "string", value = Lit("string", text) }), N("c", "convert", new { type = "entity_id:light", value = new { kind = "unset" }, output = "light" }),
-            N("verify", "custom", new { code = "if(values.Get<string>(\"light\",\"verify\")!=\"light.kitchen\")throw new Exception(\"narrowed value changed\");" }));
-        var narrow = Narrow("light.kitchen"); narrow["edges"]!.AsArray().Add(D("s", "c", "value"));
+        // Convert narrows only a value that satisfies every pattern in the target chain; the Log that reads it works it out.
+        JsonObject Narrow(string text) => G(N("s", "constant", new { type = "string", value = Lit("string", text) }), N("c", "convert", new { type = "entity_id:light", value = new { kind = "unset" }, output = "light" }),
+            N("show", "log", new { value = new { kind = "unset" } }), N("verify", "custom", new { code = "if(values.Get<string>(\"light\",\"verify\")!=\"light.kitchen\")throw new Exception(\"narrowed value changed\");" }));
+        var narrow = Narrow("light.kitchen"); narrow["edges"]!.AsArray().Add(D("s", "c", "value")); narrow["edges"]!.AsArray().Add(D("c", "show", "value"));
         await Execute(narrow);
-        var mismatch = Narrow("switch.kitchen"); mismatch["edges"]!.AsArray().Add(D("s", "c", "value"));
+        var mismatch = Narrow("switch.kitchen"); mismatch["edges"]!.AsArray().Add(D("s", "c", "value")); mismatch["edges"]!.AsArray().Add(D("c", "show", "value"));
         try { await Execute(mismatch); throw new Exception("pattern mismatch narrowed"); }
         catch (InvalidOperationException error) when (error.Message.Contains("Cannot convert c.value to entity_id:light")) { }
         // Run time matches type patterns as the validators do (JavaScript dialect): $ ends the text, so a trailing
         // newline does not slip past it as it would with .NET's Regex.IsMatch.
-        var newline = Narrow("light.kitchen\n"); newline["edges"]!.AsArray().Add(D("s", "c", "value"));
+        var newline = Narrow("light.kitchen\n"); newline["edges"]!.AsArray().Add(D("s", "c", "value")); newline["edges"]!.AsArray().Add(D("c", "show", "value"));
         try { await Execute(newline); throw new Exception("a trailing newline narrowed to entity_id:light"); }
         catch (InvalidOperationException error) when (error.Message.Contains("Cannot convert c.value to entity_id:light")) { }
         Console.WriteLine("PASS visual types: parametric resolution, refinement before Roslyn, library root wires and runtime narrowing");

@@ -298,6 +298,11 @@ it('filters the step library by name, kind id or description, and a click adds t
   expect(labels().length).toBeGreaterThan(0)
   // "xor" is the kind id of Exclusive or.
   expect(labels()).toEqual(['Add Exclusive or'])
+  // Keywords: Constant is also found as "set value" and "literal", the names people may know it by.
+  for (const query of ['constant', 'set value', 'literal']) {
+    search.value = query; search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(labels(), query).toContain('Add Constant')
+  }
   search.value = 'no step is called this'; search.dispatchEvent(new Event('input', { bubbles: true }))
   expect(host.querySelector('.hs-lib')!.textContent).toContain('No step matches that search.')
   search.value = 'delay'; search.dispatchEvent(new Event('input', { bubbles: true }))

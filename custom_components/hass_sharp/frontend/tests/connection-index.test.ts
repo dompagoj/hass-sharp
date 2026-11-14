@@ -33,10 +33,14 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below.
-const GRAPHS = 226, PAIRS = 741, ACCEPTED = 308, BY_VALIDATION = 133, SERVICES_ACCEPTED = 255, SERVICES_BY_VALIDATION = 142
+const GRAPHS = 241, PAIRS = 940, ACCEPTED = 389, BY_VALIDATION = 174, SERVICES_ACCEPTED = 336, SERVICES_BY_VALIDATION = 183
+// The only pairs the index hands to connectData: each replaces the one wire reading a Constant that sets a variable
+// another step reads, which can hide that variable from it.
+const FALLBACKS = ['variable operands preserved', 'service variable target with an entity_id field rejected', 'value node: a variable it sets is read where a step reads the value node']
+  .flatMap(name => [`${name}: t.data -> l.value`, `${name}: ${name.startsWith('service') ? 'e' : name.startsWith('value') ? 'c' : 'a'}.value -> l.value`])
 // The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit).
 const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config']
-const RICH: Totals = { graphs: 21, pairs: 190, accepted: 38, rejected: 152, byValidation: 0, fallbacks: [], skipped: [] }
+const RICH: Totals = { graphs: 21, pairs: 193, accepted: 41, rejected: 152, byValidation: 0, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 
 interface Totals { graphs: number; pairs: number; accepted: number; rejected: number; byValidation: number; fallbacks: string[]; skipped: string[] }
@@ -79,10 +83,10 @@ describe('connection index agrees with connectData', () => {
       const base = fixture.catalogPatch ? patched(fixture.catalogPatch) : contract.nodeCatalog
       agree(fixture.name, fixture.graph, withServices ? { ...base, services } : base, sum)
     }
-    // Pinned: a fixture change that alters these is visible here. No fixture pair needs the full check.
+    // Pinned: a fixture change that alters these is visible here. Only FALLBACKS need the full check.
     expect(sum).toEqual(withServices
-      ? { graphs: GRAPHS, pairs: PAIRS, accepted: SERVICES_ACCEPTED, rejected: PAIRS - SERVICES_ACCEPTED, byValidation: SERVICES_BY_VALIDATION, fallbacks: [], skipped: SKIPPED }
-      : { graphs: GRAPHS, pairs: PAIRS, accepted: ACCEPTED, rejected: PAIRS - ACCEPTED, byValidation: BY_VALIDATION, fallbacks: [], skipped: SKIPPED })
+      ? { graphs: GRAPHS, pairs: PAIRS, accepted: SERVICES_ACCEPTED, rejected: PAIRS - SERVICES_ACCEPTED, byValidation: SERVICES_BY_VALIDATION, fallbacks: FALLBACKS, skipped: SKIPPED }
+      : { graphs: GRAPHS, pairs: PAIRS, accepted: ACCEPTED, rejected: PAIRS - ACCEPTED, byValidation: BY_VALIDATION, fallbacks: FALLBACKS, skipped: SKIPPED })
   })
   // A cycle or scope error a graph already has refuses no unrelated wire, in connectData and the index alike.
   it('for graphs that already contain a cycle or a scope error, accepting unrelated wires', () => {
@@ -150,12 +154,12 @@ describe('connection index', () => {
 })
 
 describe('connection index fallbacks', () => {
-  // trigger -> array -> foreach (body: delay), so the array value is visible to the loop's Items input.
+  // trigger -> foreach (body: delay), with a List value for the loop's Items input; a value has no place in the run order.
   const loop = () => {
     let graph = contract.addGraphNode(contract.addGraphNode({ version: 5, name: 'Loop', nodes: [], edges: [] }, 'trigger', 't'), 'array', 'list')
     graph = contract.addGraphNode(contract.addGraphNode(graph, 'foreach', 'each'), 'delay', 'wait')
     graph = updateNode(graph, 't', { config: { type: 'manual', manual: true, mode: 'Single' } })
-    return connectNodes(connectNodes(connectNodes(graph, 't', 'list'), 'list', 'each'), 'each', 'wait', 'body')
+    return connectNodes(connectNodes(graph, 't', 'each'), 'each', 'wait', 'body')
   }
   it('decides a ForEach Items input from the index, and memoises verdicts', () => {
     const graph = loop()
@@ -169,8 +173,8 @@ describe('connection index fallbacks', () => {
   it('falls back only for an input stored where configuration is read, and memoises that verdict too', () => {
     // A patched catalog whose 'and' node also declares 'left' as configuration: wiring it would change that config.
     const catalog = patched({ nodes: { and: { config: { left: { type: 'object' } } } } })
-    let graph = contract.addGraphNode(loop(), 'and', 'both', catalog)
-    graph = connectNodes(graph, 'each', 'both', 'next', catalog)
+    // An And value read by nothing yet: wiring into it is decided like a wire into a step.
+    const graph = contract.addGraphNode(loop(), 'and', 'both', catalog)
     const index = connectionIndex(graph, catalog)
     const verdict = index.verdict('each', 'index', 'both', 'left')
     expect(verdict.fallback).toBe(true)

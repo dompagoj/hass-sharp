@@ -75,7 +75,7 @@ export function NodeCard(props: NodeProps) {
     const value = node ? inputValue(node, port, flow.catalog()) : undefined
     return record(value) && typeof value.kind === 'string' ? (value as Operand) : undefined
   }
-  const statusText = () => (trace() ? traceText(reached()) : '')
+  const statusText = () => (trace() ? traceText(reached(), view()?.pure) : '')
 
   const InputCell = (cell: { input: InputView }) => {
     let root!: HTMLDivElement
@@ -290,6 +290,7 @@ export function NodeCard(props: NodeProps) {
             'hs-card--warning': current().errors === 0 && current().warnings > 0,
             'hs-card--trigger': current().kind === 'trigger',
             'hs-card--unknown': !current().known,
+            'hs-card--pure': current().pure,
             'hs-card--unreachable': current().unreachable && !trace(),
             'hs-card--readonly': flow.readOnly(),
             'hs-card--traced': !!trace(),
@@ -316,7 +317,7 @@ export function NodeCard(props: NodeProps) {
               {/* Status icon and word, never colour alone; the card's accessible name carries the same text. */}
               <span class="hs-card__trace" classList={{ [`hs-card__trace--${reached()?.status ?? 'unreached'}`]: true }} title={statusText()}>
                 <Icon paths={reached() ? statusIcon[reached()!.status] : icons.traceUnreached} class="hs-card__trace-icon" />
-                <span class="hs-card__trace-word">{reached() ? traceStatusLabel[reached()!.status] : 'Not reached'}</span>
+                <span class="hs-card__trace-word">{reached() ? traceStatusLabel[reached()!.status] : current().pure ? 'Not used' : 'Not reached'}</span>
                 <Show when={(reached()?.runs ?? 0) > 1}>
                   <span class="hs-card__runs">×{reached()!.runs}</span>
                 </Show>

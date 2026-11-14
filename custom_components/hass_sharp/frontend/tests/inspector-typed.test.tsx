@@ -15,7 +15,7 @@ const host = () => {
   return el
 }
 const fixture = () => {
-  let graph = addNode(createGraph('Typed'), 'set_value', 'temperature')
+  let graph = addNode(createGraph('Typed'), 'constant', 'temperature')
   graph = updateNode(graph, 'temperature', { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 20 } } })
   graph = addNode(graph, 'if', 'branch')
   graph = connectNodes(graph, 'service-1', 'temperature')

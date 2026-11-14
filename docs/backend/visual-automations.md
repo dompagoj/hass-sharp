@@ -82,7 +82,13 @@ list. It includes inputs/outputs, defaults, dynamic ports, scope rules, limits,
 CLR assignability, nullability, literal choices, labels and XML documentation.
 Library arguments live in `config.arguments`; built-in input values follow their
 catalog definitions. Data edges read previously produced values and do not execute
-a producer. Control edges schedule nodes. Multiple triggers, shared downstream
+a producing step. Control edges schedule steps. Value nodes (catalog `pure: true`:
+constant, object, array, object_create, array_create, get_field, entity_field,
+convert, and, or, xor, not, compare) take no execution edges; the runtime works out
+the value nodes a step reads, in post-order and in the step's scope, just before
+that step runs, counting each against the step limit and recording it in the trace
+with `src` set to the value node. A failure is the reading step's failure, named
+`<value node> (used by <step>): <message>`. Multiple triggers, shared downstream
 paths, structured branches/loops/error scopes and rich CLR values are supported
 under the shared validator's rules. Complete compile-checked examples are in
 [`authoring_examples.json`](../../custom_components/hass_sharp/authoring_examples.json);

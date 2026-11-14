@@ -58,6 +58,14 @@
 .hs-app .hs-card--trigger .hs-card__head { background: var(--hs-cat); color: var(--hs-surface); }
 .hs-app .hs-card--trigger .hs-card__icon { background: color-mix(in oklab, var(--hs-surface) 22%, transparent); }
 .hs-app .hs-card--trigger .hs-card__summary { color: color-mix(in oklab, var(--hs-surface) 82%, var(--hs-cat)); }
+/* Value nodes are worked out when a step reads them: no execution pins, a lighter and more compact header. */
+.hs-app .hs-card--pure { min-width: 180px; border-radius: 14px; }
+.hs-app .hs-card--pure .hs-card__head { min-height: 36px; padding-block: 5px; gap: 6px; border-radius: 13px 13px 0 0; background: color-mix(in oklab, var(--hs-cat) calc(var(--hs-card-header-tint) / 2), var(--hs-surface)); }
+.hs-app .hs-card--pure:not(:has(.hs-card__body)) .hs-card__head { border-radius: 13px; }
+.hs-app .hs-card--pure .hs-card__icon { width: 22px; height: 22px; border-radius: 11px; background: color-mix(in oklab, var(--hs-cat) 20%, var(--hs-surface)); color: var(--hs-cat); }
+.hs-app .hs-card--pure .hs-card__glyph { width: 14px; height: 14px; }
+.hs-app .hs-card--pure .hs-card__title { font-size: 12px; font-weight: 600; }
+.hs-app .hs-card--pure .hs-card__body { padding-top: 6px; padding-bottom: 8px; }
 .hs-app .hs-card--unknown .hs-card__head { background: repeating-linear-gradient(-45deg, var(--hs-soft) 0 6px, var(--hs-surface) 6px 12px); }
 
 .hs-app .hs-card__badge { flex: none; display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 8px; border: 0; border-radius: 12px; background: var(--hs-port-error); color: var(--hs-surface); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }

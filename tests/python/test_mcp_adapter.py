@@ -186,6 +186,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await self.call('get_node_schema',{'service':'light.turn_on'})).error)
         capabilities=(await self.call('get_capabilities',{})).data['result']
         self.assertEqual(set(capabilities['semantics']),{'execution','types','triggers','service','runs','csharp'})
+        self.assertIn('Value nodes (catalog pure: true',capabilities['semantics']['execution'])
 
     async def test_graph_schema_has_no_node_size(self):
         graph={'version':5,'name':'Sized','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'},'size':{'width':220,'height':112}}],'edges':[]}

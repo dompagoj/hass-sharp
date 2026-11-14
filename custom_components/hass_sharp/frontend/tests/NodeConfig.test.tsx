@@ -282,7 +282,7 @@ function expectNoWireControls(el: Element) {
   expect(inspector.textContent).not.toMatch(/Next destination|Execution|Connect /)
 }
 it('has no control that connects or disconnects, for a node with execution branches or with data inputs', () => {
-  let graph = addNode(createGraph('Wires'), 'set_value', 'temperature')
+  let graph = addNode(createGraph('Wires'), 'constant', 'temperature')
   graph = updateNode(graph, 'temperature', { config: { type: 'number', value: lit('number', 20) } })
   graph = addNode(graph, 'compare', 'compare')
   graph = connectData(graph, 'temperature', 'value', 'compare', 'left')
@@ -297,14 +297,14 @@ it('has no control that connects or disconnects, for a node with execution branc
 it('shows a connected input as a "From" pill without an editor, and brings the editor back with the stored value when the wire is deleted on the canvas', async () => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
-  let graph = addNode(createGraph('Pill'), 'set_value', 'temperature')
+  let graph = addNode(createGraph('Pill'), 'constant', 'temperature')
   graph = updateNode(graph, 'temperature', { config: { type: 'number', value: lit('number', 20) } })
   graph = addNode(graph, 'compare', 'compare')
   graph = connectData(graph, 'temperature', 'value', 'compare', 'left')
   const { el, history, selected } = mount(graph, 'compare', { canvas: true })
   const left = () => row(el, 'left')!
   const pill = left().querySelector<HTMLButtonElement>('.hs-insp-pill')!
-  expect(pill.textContent).toBe('From Set value · Value')
+  expect(pill.textContent).toBe('From Constant · Value')
   expect(left().querySelector('input,select,textarea')).toBeNull()
   // The pill selects its source.
   pill.click()
@@ -445,6 +445,12 @@ it('categorizes every catalog node and groups and filters the quick-add palette'
     const options = [...root.querySelectorAll('[role="option"]')]
     expect(options).toHaveLength(1)
     expect(options[0].textContent).toContain(label)
+  }
+  // And by the other names people know it by, the catalog's keywords.
+  for (const [query, label] of [['constant', 'Constant'], ['set value', 'Constant'], ['literal', 'Constant'], ['greater', 'Compare'], ['property', 'Get field']]) {
+    search.value = query
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect([...root.querySelectorAll('[role="option"]')].map(o => o.textContent).join(' | '), query).toContain(label)
   }
   search.value = 'Exclusive or'
   search.dispatchEvent(new Event('input', { bubbles: true }))
@@ -694,7 +700,7 @@ it('after Delete in the several-steps view, focuses the canvas', async () => {
 })
 
 it('a "From …" pill and a wire end select their step and focus its title', async () => {
-  let graph = addNode(createGraph('Pills'), 'set_value', 'temperature')
+  let graph = addNode(createGraph('Pills'), 'constant', 'temperature')
   graph = updateNode(graph, 'temperature', { config: { type: 'number', value: lit('number', 20) } })
   graph = addNode(graph, 'compare', 'compare')
   graph = connectData(graph, 'temperature', 'value', 'compare', 'left')

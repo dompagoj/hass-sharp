@@ -22,11 +22,11 @@ const host = () => {
   return el
 }
 const fixture = () => {
-  let graph = addNode(createGraph('Typed'), 'set_value', 'temperature')
+  let graph = addNode(createGraph('Typed'), 'constant', 'temperature')
   graph = updateNode(graph, 'temperature', { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 20 } } })
   graph = addNode(graph, 'if', 'branch')
-  graph = connectNodes(graph, 'service-1', 'temperature')
-  graph = connectNodes(graph, 'temperature', 'branch')
+  // The Constant is a value, outside the run order: the If runs after the service.
+  graph = connectNodes(graph, 'service-1', 'branch')
   return graph
 }
 it('creates only v5 graphs and derives custom palette entries from a document catalog', () => {
@@ -159,7 +159,7 @@ it('colours pins, data wires and inspector rows by type: the five primitive toke
   const el = host()
   let graph = createGraph('Colors')
   for (const type of ['boolean', 'number', 'string', 'object', 'array', 'entity_id']) {
-    graph = addNode(graph, 'set_value', `source-${type}`)
+    graph = addNode(graph, 'constant', `source-${type}`)
     graph = addNode(graph, 'log', `target-${type}`)
     graph = updateNode(graph, `source-${type}`, {
       config: {
@@ -186,8 +186,8 @@ it('colours pins, data wires and inspector rows by type: the five primitive toke
       type === 'boolean'
         ? 'service-1'
         : `target-${['boolean', 'number', 'string', 'object', 'array', 'entity_id'][['boolean', 'number', 'string', 'object', 'array', 'entity_id'].indexOf(type) - 1]}`
-    graph = connectNodes(graph, previous, `source-${type}`)
-    graph = connectNodes(graph, `source-${type}`, `target-${type}`)
+    // The Logs run in a row; each Constant is a value read by its Log.
+    graph = connectNodes(graph, previous, `target-${type}`)
     graph = connectData(graph, `source-${type}`, 'value', `target-${type}`, 'value')
   }
   graph = addNode(graph, 'stop', 'on-error')
@@ -515,7 +515,7 @@ it('connects an execution pin from the keyboard: Enter on the pin, Tab reaches o
 
 it('connects a data pin from the keyboard and says why a refused one cannot connect, next to the target pin', () => {
   const el = host()
-  let graph = addNode(addNode(createGraph('Data'), 'set_value', 'a'), 'set_value', 'b')
+  let graph = addNode(addNode(createGraph('Data'), 'constant', 'a'), 'constant', 'b')
   for (const id of ['a', 'b']) graph = updateNode(graph, id, { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 1 } } })
   graph = addNode(graph, 'if', 'branch')
   graph = connectNodes(connectNodes(connectNodes(graph, 'service-1', 'a'), 'a', 'b'), 'b', 'branch')

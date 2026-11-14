@@ -4,6 +4,7 @@ import { typeLabel } from './typeLabels'
 import {
   addGraphNode,
   executionPorts,
+  isPure,
   dataInputs,
   dataOutputs,
   inputValue,
@@ -31,6 +32,15 @@ export { effectiveTriggerMethod as triggerMethod } from './contract'
 import { effectiveTriggerMethod } from './contract'
 export const catalogPalette = (catalog: VisualCatalogSnapshot = nodeCatalog) =>
   Object.entries(catalog.nodes).map(([kind, spec]) => ({ kind, ...spec }))
+/**
+ * Whether a palette item matches a search: every word of it appears in the item's label, kind, description, its
+ * catalog keywords (other names people search by, "set value" for Constant) or the extra texts.
+ */
+export function paletteMatches(item: { label: string; kind: string; description: string; keywords?: string[] }, search: string, ...extra: string[]) {
+  const words = search.toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  const text = [item.label, item.kind, item.description, ...(item.keywords ?? []), ...extra].join(' ').toLocaleLowerCase()
+  return words.every(word => text.includes(word))
+}
 export const catalogCategories = (catalog: VisualCatalogSnapshot = nodeCatalog) => [
   ...new Set(catalogPalette(catalog).map(item => item.category)),
 ]
@@ -126,7 +136,8 @@ export function canConnect(
 ): boolean {
   const node = graph.nodes.find(n => n.id === source),
     destination = graph.nodes.find(n => n.id === target)
-  if (!node || !destination || source === target || destination.kind === 'trigger') return false
+  // A value node has no place in the run order: no step order wire goes into it (nor out of it: it has no execution output).
+  if (!node || !destination || source === target || destination.kind === 'trigger' || isPure(destination, catalog)) return false
   const resolved = port ?? executionPorts(node, catalog)[0]
   if (
     !executionPorts(node, catalog).includes(resolved) ||

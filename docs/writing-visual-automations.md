@@ -22,9 +22,16 @@ failure and disables running the newer saved revision.
 Control edges schedule execution. A control output has one destination; multiple
 paths may enter a non-trigger step. Triggers cannot receive control inputs.
 Connections cannot create cycles; use bounded Repeat, While or For each loops.
-Data edges supply typed values and **never execute their source nodes**. The
+Data edges supply typed values and **never execute their source steps**. The
 producer must have executed on the chosen path before the consumer reads it.
 Missing producer output is a mapped runtime error, not an implicit default.
+
+Value nodes (Constant, Object, List, Create object, Create list, Get field, Entity
+field, Convert, And, Or, Exclusive or, Not and Compare; `"pure": true` in the catalog) are
+not part of the run order: they have no control pins and no Error path. Each one is
+worked out again, in that step's scope, whenever a step reads it, so a step reads
+current values; when a value node fails, the step reading it fails (and takes its
+own Error path), and a value node that no step reads is a warning.
 
 Inputs can be literals, named variable references, explicit unset values, or
 connected data ports. A connection replaces the input's own value. Use Custom C#
@@ -73,8 +80,9 @@ exact type instead:
 ```
 
 For a wired value, add a **Convert** node whose type is `entity_id:light` between
-the producer and the service. Convert checks the value when it runs and follows
-its Error path when the value is not a light. The example "Light named in an
+the producer and the service. Convert checks the value each time the service
+reads it; when the value is not a light the service fails and follows its own
+Error path. The example "Light named in an
 event" in [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json)
 reads an entity ID from event data with Get field, converts it and turns that
 light on. A trigger's own entity output is usually narrow already (see below), so

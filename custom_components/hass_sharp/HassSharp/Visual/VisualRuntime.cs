@@ -101,7 +101,10 @@ public sealed class VisualScope
     }
 }
 
-/// <summary>One engine per invocation. Data reads never schedule producer execution.</summary>
+/// <summary>
+/// One engine per invocation. Data reads never schedule a step; the value nodes a step reads are worked out in its
+/// scope just before it runs, every time it runs.
+/// </summary>
 public sealed class VisualRuntime
 {
     readonly Dictionary<string,JsonObject> nodes;
@@ -114,6 +117,7 @@ public sealed class VisualRuntime
     readonly Dictionary<string,string> comparisonTypes;
     readonly JsonElement trigger;
     readonly Dictionary<string,string> variables=[];
+    readonly Dictionary<string,string[]> pureInputs=[];
     readonly Dictionary<(string,string),string?> absentTriggerOutputs=[];
     readonly CancellationToken external;
     readonly CancellationTokenSource lifetime;
@@ -130,11 +134,24 @@ public sealed class VisualRuntime
         var graph=JsonNode.Parse(graphJson)!.AsObject();catalog=JsonNode.Parse(catalogJson)!.AsObject();this.types=types;this.custom=custom;this.trigger=trigger;external=cancellation;lifetime=new CancellationTokenSource();externalRegistration=cancellation.Register(()=>{externalCleanup=lifetime.CancelAsync();});
         nodes=graph["nodes"]!.AsArray().OfType<JsonObject>().ToDictionary(n=>Text(n,"id"));
         foreach(var n in nodes.Values)if(Text(n["config"],"output") is var name && name!="")variables[name]=Text(n,"id");
+        var sources=new Dictionary<string,List<string>>();
         foreach(var e in graph["edges"]!.AsArray().OfType<JsonObject>()) {
-            if(Text(e,"kind")=="data")data[(Text(e,"target"),Text(e,"targetPort"))]=(Text(e,"source"),Text(e,"sourcePort"));
+            if(Text(e,"kind")=="data") {
+                data[(Text(e,"target"),Text(e,"targetPort"))]=(Text(e,"source"),Text(e,"sourcePort"));
+                if(!sources.TryGetValue(Text(e,"target"),out var list))sources[Text(e,"target")]=list=[];list.Add(Text(e,"source"));
+            }
             else {var port=Text(e,"port","next");if(Text(nodes[Text(e,"source")],"kind")=="condition" && port=="next")port="true";flow[(Text(e,"source"),port)]=Text(e,"target");}
         }
+        // Each step's value nodes, through chains of value nodes, each after the ones it reads.
+        foreach(var id in nodes.Keys.Where(id=>!Pure(id))) {
+            var order=new List<string>();var seen=new HashSet<string>(StringComparer.Ordinal);
+            void Visit(string node){foreach(var source in sources.GetValueOrDefault(node)??[])if(Pure(source)&&seen.Add(source)){Visit(source);order.Add(source);}}
+            Visit(id);if(order.Count>0)pureInputs[id]=order.ToArray();
+        }
     }
+    bool Pure(string id)=>VisualNodeCatalog.IsPure(catalog["nodes"]?[Text(nodes[id],"kind")]);
+    // The name people see on the canvas, for messages about a value node and the step that used it.
+    string Title(string id)=>VisualGraphValidator.Words.StepName(nodes[id],catalog["nodes"]?[Text(nodes[id],"kind")]);
     static string Text(JsonNode? node,string key,string fallback="")=>VisualNodeCatalog.Text(node,key,fallback);
     string? Next(string node,string port="next")=>flow.GetValueOrDefault((node,port));
     public async Task RunAsync(string root) {
@@ -266,31 +283,22 @@ public sealed class VisualRuntime
             external.ThrowIfCancellationRequested();
             if(Volatile.Read(ref stopped)!=0)throw new OperationCanceledException(lifetime.Token);
             scope.CancellationToken.ThrowIfCancellationRequested();var n=nodes[id];var kind=Text(n,"kind");var cfg=n["config"]!;string? next=Next(id);
-            var ev=trace==null?null:scope.Trace=trace.Start(scope.Frame,id);var port="next";
+            VisualTrace.Event? ev=null;var port="next";
+            // The step's event follows the events of its value nodes; it is started even when one of them failed.
+            VisualTrace.Event? Begin()=>trace==null?null:scope.Trace=trace.Start(scope.Frame,id);
             try {
                 if(Interlocked.Increment(ref steps)>100000)throw new InvalidOperationException($"Node {id}: graph execution limit 100000 steps exceeded.");
+                if(pureInputs.TryGetValue(id,out var pure))await Prepare(id,pure,scope);
+                ev=Begin();
                 object? Get(string p)=>Input(scope,id,p);
                 double Number(string p,double min,double max,bool integer=false) {var v=Input<double>(scope,id,p);if(!double.IsFinite(v)||v<min||v>max||integer&&Math.Truncate(v)!=v)throw new InvalidOperationException($"Input {id}.{p} must be {(integer?"an integer":"finite")} in [{min}, {max}].");return v;}
                 switch(kind) {
                     case "trigger":Trigger(id,scope,n);break;
                     case "if":port=Input<bool>(scope,id,"value")?"true":"false";next=Next(id,port);break;
                     case "condition":port=ReadEntity(Input<string>(scope,id,"entity")).State==Text(cfg,"state")?"true":"false";next=Next(id,port);break;
-                    case "and":case "or":case "xor":var left=Input<bool>(scope,id,"left");var right=Input<bool>(scope,id,"right");Output(scope,id,kind=="and"?left&&right:kind=="or"?left||right:left^right);break;
-                    case "not":Output(scope,id,!Input<bool>(scope,id,"value"));break;
-                    case "compare":
-                        if(!comparisonTypes.TryGetValue(id,out var common))throw new InvalidOperationException($"Node {id}: compiled comparison type is missing.");
-                        var clr=types[VisualTypes.RootId(catalog,common)];var a=Coerce(Read(scope,id,"left"),clr,id+".left",false);var b=Coerce(Read(scope,id,"right"),clr,id+".right",false);
-                        if(ev!=null){Traced(scope,id,"left",a);Traced(scope,id,"right",b);}
-                        Output(scope,id,Compare(a,b,Text(cfg,"operator","eq")));break;
-                    case "set_value":case "convert":if(compiledConversions.Contains(id))await custom(id,scope,this);else Output(scope,id,ConvertTo(Get("value"),Text(cfg,"type"),id+".value"));break;
                     case "read_entity":Output(scope,id,ReadEntity(Input<string>(scope,id,"entity")));break;
-                    case "entity_field":Output(scope,id,EntityField(Input<EntityStateSnapshot>(scope,id,"entity"),cfg,id));break;
                     case "delay":await Waiting(scope,Task.Delay(TimeSpan.FromSeconds(Number("seconds",0,4294967.294)),scope.CancellationToken));break;
                     case "wait_until":var entity=Input<string>(scope,id,"entity");var expected=Get("right");await Waiting(scope,VisualValues.WaitUntil(()=>Compare(EntityField(ReadEntity(entity,true),cfg,id),expected,Text(cfg,"operator","eq")),Number("timeout",.001,86400),Number("interval",.001,3600),scope.CancellationToken));break;
-                    case "object":case "array":Output(scope,id,ConvertTo(Get("value"),kind,id,false));break;
-                    case "object_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["fields"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get("field:"+p.Key))));break;
-                    case "array_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["items"] as JsonArray??[]).Select((_,i)=>Get("item:"+i)).ToArray()));break;
-                    case "get_field":var json=Input<JsonElement>(scope,id,"value");var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}Output(scope,id,ConvertTo(json,Text(cfg,"type"),id,false));break;
                     case "service":await Service(id,scope,cfg);break;
                     case "log":PyInterop.Log(Text(cfg,"level","Info") switch{"Debug"=>10,"Warn"=>30,"Error"=>40,_=>20},Convert.ToString(Get("value"),CultureInfo.InvariantCulture)??"null");break;
                     case "stop":Interlocked.Exchange(ref stopped,1);try{await lifetime.CancelAsync();}catch(Exception error){stopFailures.Enqueue(error);}throw new OperationCanceledException(lifetime.Token);
@@ -304,13 +312,56 @@ public sealed class VisualRuntime
                 if(Volatile.Read(ref stopped)!=0)throw new OperationCanceledException(lifetime.Token);
                 scope.CancellationToken.ThrowIfCancellationRequested();
                 if(ev!=null)trace!.End(ev,"ok",port,null);
-            } catch(OperationCanceledException) when(scope.CancellationToken.IsCancellationRequested || external.IsCancellationRequested || Volatile.Read(ref stopped)!=0){if(ev!=null)trace!.End(ev,kind=="stop"?"stopped":"cancelled",null,null);throw;}
+            } catch(OperationCanceledException) when(scope.CancellationToken.IsCancellationRequested || external.IsCancellationRequested || Volatile.Read(ref stopped)!=0){ev??=Begin();if(ev!=null)trace!.End(ev,kind=="stop"?"stopped":"cancelled",null,null);throw;}
             catch(Exception error) {
+                ev??=Begin();
                 if(Next(id,"error") is not {} recovery){if(ev!=null)trace!.End(ev,"failed",null,error);throw;}
                 scope.LastError=error;next=recovery;
                 if(ev!=null)trace!.End(ev,"error","error",error);
             }
             id=next;
+        }
+    }
+    /// <summary>
+    /// Works out the value nodes <paramref name="step"/> reads, in order, in its scope. Each counts as a step and honours
+    /// cancellation; a failure is the step's own, named after the value node and the step.
+    /// </summary>
+    async Task Prepare(string step,string[] pure,VisualScope scope) {
+        foreach(var id in pure) {
+            external.ThrowIfCancellationRequested();
+            if(Volatile.Read(ref stopped)!=0)throw new OperationCanceledException(lifetime.Token);
+            scope.CancellationToken.ThrowIfCancellationRequested();
+            var ev=trace==null?null:scope.Trace=trace.Start(scope.Frame,id);
+            try {
+                if(Interlocked.Increment(ref steps)>100000)throw new InvalidOperationException($"Node {id}: graph execution limit 100000 steps exceeded.");
+                await Evaluate(id,scope);
+                if(ev!=null)trace!.End(ev,"ok",null,null);
+            } catch(OperationCanceledException) when(scope.CancellationToken.IsCancellationRequested || external.IsCancellationRequested || Volatile.Read(ref stopped)!=0){if(ev!=null)trace!.End(ev,"cancelled",null,null);throw;}
+            catch(Exception error) {
+                if(ev!=null)trace!.End(ev,"failed",null,error);
+                throw new InvalidOperationException($"{Title(id)} (used by {Title(step)}): {error.Message}",error);
+            }
+        }
+    }
+    async Task Evaluate(string id,VisualScope scope) {
+        var n=nodes[id];var kind=Text(n,"kind");var cfg=n["config"]!;
+        object? Get(string p)=>Input(scope,id,p);
+        switch(kind) {
+            case "and":case "or":case "xor":var left=Input<bool>(scope,id,"left");var right=Input<bool>(scope,id,"right");Output(scope,id,kind=="and"?left&&right:kind=="or"?left||right:left^right);break;
+            case "not":Output(scope,id,!Input<bool>(scope,id,"value"));break;
+            case "compare":
+                if(!comparisonTypes.TryGetValue(id,out var common))throw new InvalidOperationException($"Node {id}: compiled comparison type is missing.");
+                var clr=types[VisualTypes.RootId(catalog,common)];var a=Coerce(Read(scope,id,"left"),clr,id+".left",false);var b=Coerce(Read(scope,id,"right"),clr,id+".right",false);
+                if(scope.Trace!=null){Traced(scope,id,"left",a);Traced(scope,id,"right",b);}
+                Output(scope,id,Compare(a,b,Text(cfg,"operator","eq")));break;
+            case "constant":case "convert":if(compiledConversions.Contains(id))await custom(id,scope,this);else Output(scope,id,ConvertTo(Get("value"),Text(cfg,"type"),id+".value"));break;
+            case "entity_field":Output(scope,id,EntityField(Input<EntityStateSnapshot>(scope,id,"entity"),cfg,id));break;
+            case "object":case "array":Output(scope,id,ConvertTo(Get("value"),kind,id,false));break;
+            case "object_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["fields"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get("field:"+p.Key))));break;
+            case "array_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["items"] as JsonArray??[]).Select((_,i)=>Get("item:"+i)).ToArray()));break;
+            case "get_field":var json=Input<JsonElement>(scope,id,"value");var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}Output(scope,id,ConvertTo(json,Text(cfg,"type"),id,false));break;
+            // A value node from a library (or any other kind) is compiled.
+            default:await custom(id,scope,this);break;
         }
     }
     static EntityStateSnapshot ReadEntity(string entity,bool fresh=false) {

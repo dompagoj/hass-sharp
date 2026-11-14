@@ -141,8 +141,9 @@ static class VisualTraceTests
                 Check(Events(doc).Select(e => S(e!["node"])).SequenceEqual(["t", "a", "b", "l"]), "event order: " + doc.ToJsonString());
                 Check(S(doc["runId"]) == run.Context!.RunId && S(doc["rootNodeId"]) == "t" && doc["complete"]!.GetValue<bool>() && !doc["truncated"]!.GetValue<bool>() && doc["dropped"]!.GetValue<int>() == 0, "header: " + doc.ToJsonString());
                 Check(Same(doc["trigger"], """{"platform":"manual"}"""), "trigger payload");
+                // The value nodes a and b are worked out just before the Log that reads them; they have no execution port.
                 foreach (var e in Events(doc).Select(e => e!.AsObject()))
-                    Check(S(e["status"]) == "ok" && S(e["port"]) == "next" && S(e["frame"]) == "" && e["t"]!.GetValue<double>() >= 0 && e["ms"]!.GetValue<double>() >= 0 && e["error"] == null, "event: " + e.ToJsonString());
+                    Check(S(e["status"]) == "ok" && S(e["port"]) == (S(e["node"]) is "a" or "b" ? "<absent>" : "next") && S(e["frame"]) == "" && e["t"]!.GetValue<double>() >= 0 && e["ms"]!.GetValue<double>() >= 0 && e["error"] == null, "event: " + e.ToJsonString());
                 var times = Events(doc).Select(e => e!["t"]!.GetValue<double>()).ToArray();
                 Check(times.SequenceEqual(times.Order()), "start times decrease");
                 Check(Same(One(doc, "t")["outputs"], """{"data":{"type":"object","v":{"platform":"manual"}}}""") && One(doc, "t")["inputs"] == null, "trigger outputs: " + One(doc, "t").ToJsonString());
@@ -212,8 +213,9 @@ static class VisualTraceTests
 
             await Test("a 1,000-iteration loop hits the event cap with summary and dropped still correct", async () =>
             {
-                var graph = G(N("loop", "repeat", new { count = Lit("number", 1000) }), N("n1", "not", new { value = Lit("boolean", true) }), N("n2", "not", new { value = Unset() }), N("n3", "not", new { value = Unset() }), Log("after", "done"));
-                graph["edges"] = new JsonArray(E("t", "loop"), E("loop", "n1", "body"), E("n1", "n2"), E("n2", "n3"), E("loop", "after"), D("n1", "n2", "value"), D("n2", "n3", "value"));
+                var graph = G(N("loop", "repeat", new { count = Lit("number", 1000) }), N("n1", "not", new { value = Lit("boolean", true) }), N("n2", "not", new { value = Unset() }), N("n3", "log", new { value = Unset() }), Log("after", "done"));
+                // n1 and n2 are value nodes, worked out before the Log n3 that reads them: three events an iteration.
+                graph["edges"] = new JsonArray(E("t", "loop"), E("loop", "n3", "body"), E("loop", "after"), D("n1", "n2", "value"), D("n2", "n3", "value"));
                 var (sink, doc, _) = await Trace(graph);
                 Shape(doc);
                 Check(Events(doc).Count == VisualTrace.MaxEvents && doc["dropped"]!.GetValue<int>() == 3003 - 2000 && doc["truncated"]!.GetValue<bool>() && sink.Writes[^1].Count == 2000, $"cap: {Events(doc).Count} events, dropped {doc["dropped"]}");
@@ -228,7 +230,7 @@ static class VisualTraceTests
                 Check(last["trunc"] == null && Same(last["inputs"], """{"value":{"type":"boolean","v":false,"src":{"node":"n1","port":"value"}}}"""), "newest values dropped: " + last.ToJsonString());
                 var kept = Events(doc).Select(e => e!["trunc"] == null).ToArray();
                 Check(kept.SkipWhile(k => !k).All(k => k) && kept.Count(k => !k) > 1000, "values not dropped oldest first");
-                Check(Events(doc).All(e => e!["status"] != null && e["t"] != null && e["ms"] != null && e["port"] != null), "dropped values kept status, timing and port");
+                Check(Events(doc).All(e => e!["status"] != null && e["t"] != null && e["ms"] != null && (e["port"] != null) == (S(e["node"]) is not ("n1" or "n2"))), "dropped values kept status, timing and port");
             });
 
             await Test("large values, events and triggers are truncated with trunc", async () =>
@@ -238,8 +240,8 @@ static class VisualTraceTests
                 var wide = new JsonObject(); for (var i = 0; i < 100; i++) wide["k" + i] = i;
                 var literal = new JsonObject { ["long"] = new string('x', 5000), ["wide"] = wide, ["deep"] = deep };
                 var fields = new JsonObject(); for (var i = 0; i < 16; i++) fields["f" + i] = Lit("string", new string((char)('a' + i), 3000));
-                var graph = G(N("big", "object", new { value = Lit("object", literal) }), N("l", "log", new { value = Unset() }), N("many", "object_create", new JsonObject { ["fields"] = fields }));
-                graph["edges"]!.AsArray().Add(D("big", "l", "value"));
+                var graph = G(N("big", "object", new { value = Lit("object", literal) }), N("l", "log", new { value = Unset() }), N("many", "object_create", new JsonObject { ["fields"] = fields }), N("lm", "log", new { value = Unset() }));
+                graph["edges"]!.AsArray().Add(D("big", "l", "value")); graph["edges"]!.AsArray().Add(D("many", "lm", "value"));
                 var huge = new JsonObject { ["platform"] = "manual" }; for (var i = 0; i < 100; i++) huge["p" + i] = new string('z', 900);
                 var (sink, doc, _) = await Trace(graph, payload: JsonSerializer.SerializeToElement(huge));
                 Shape(doc);
@@ -435,7 +437,9 @@ static class VisualTraceTests
 
             await Test("a recorder failure never fails the run and leaves a valid truncated trace", async () =>
             {
-                var graph = G(N("a", "not", new { value = Lit("boolean", true) }), N("b", "not", new { value = Lit("boolean", true) }), Log("c", "after the fault"));
+                // a and b are value nodes, worked out for the If x that reads b.
+                var graph = G(N("a", "not", new { value = Lit("boolean", true) }), N("b", "not", new { value = Unset() }), N("x", "if", new { value = Unset() }), Log("c", "after the fault"));
+                graph["edges"] = new JsonArray(E("t", "x"), E("x", "c", "true"), E("x", "c", "false"), D("a", "b", "value"), D("b", "x", "value"));
                 var logged = messages.Count(m => m.Contains("Stopped recording the trace"));
                 // A fault at each point the recorder can fail: starting an event, recording an input or output, building the document.
                 foreach (var (stage, nodes) in new (string, string[])[] { ("start:b", ["t", "a"]), ("input:b", ["t", "a", "b"]), ("output:b", ["t", "a", "b"]), ("build", []) })
@@ -472,7 +476,7 @@ static class VisualTraceTests
 
             await Test("no sink: no recorder and no recording path", async () =>
             {
-                var nodes = new List<JsonObject> { N("p", "parallel", new { branches = new[] { "a", "b" } }), N("r", "repeat", new { count = Lit("number", 50) }), N("n", "not", new { value = Lit("boolean", true) }), C("c", "await global::System.Threading.Tasks.Task.Yield();") };
+                var nodes = new List<JsonObject> { N("p", "parallel", new { branches = new[] { "a", "b" } }), N("r", "repeat", new { count = Lit("number", 50) }), Log("n", "iteration"), C("c", "await global::System.Threading.Tasks.Task.Yield();") };
                 var graph = G([.. nodes]); graph["edges"] = new JsonArray(E("t", "p"), E("p", "r", "branch:a"), E("r", "n", "body"), E("p", "c", "branch:b"));
                 using var loaded = await Load(graph);
                 var before = Volatile.Read(ref VisualTrace.Created);
@@ -528,11 +532,13 @@ static class VisualTraceTests
                 foreach (var kind in new[] { "while", "until" })
                 {
                     var cfg = new JsonObject { ["maxIterations"] = 5, ["carry"] = new JsonArray(new JsonObject { ["name"] = "n", ["type"] = "number", ["initial"] = Lit("number", 0) }) };
-                    var graph = G(N("loop", kind, cfg), N("body", "set_value", new { type = "number", value = Unset(), output = "next" }), C("inc", "values.Set(\"next\", values.Get<double>(\"next\",\"inc\")+1);"),
+                    var graph = G(N("loop", kind, cfg), N("body", "constant", new { type = "number", value = Unset(), output = "next" }), C("inc", "values.Set(\"next\", values.Get<double>(\"next\",\"inc\")+1);"),
                         N("result", "loop_result", new { values = new JsonObject { ["carry:n"] = V("next") } }),
                         N("compare", "compare", new { left = Unset(), right = Lit("number", 3), @operator = kind == "while" ? "lt" : "ge" }), N("condition", "condition_result", new { value = Unset() }));
-                    graph["edges"] = new JsonArray(E("t", "loop"), E("loop", "body", "body"), E("body", "inc"), E("inc", "result"), D("loop", "body", "value", "carry:n"),
-                        E("loop", "compare", "condition"), E("compare", "condition"), D("loop", "compare", "left", "carry:n"), D("compare", "condition", "value"));
+                    // The Constant body publishes next when the Log show that reads it runs; compare is worked out for condition.
+                    graph["nodes"]!.AsArray().Add(N("show", "log", new { value = Unset() }));
+                    graph["edges"] = new JsonArray(E("t", "loop"), E("loop", "show", "body"), E("show", "inc"), E("inc", "result"), D("loop", "body", "value", "carry:n"), D("body", "show", "value"),
+                        E("loop", "condition", "condition"), D("loop", "compare", "left", "carry:n"), D("compare", "condition", "value"));
                     var (_, doc, _) = await Trace(graph);
                     Shape(doc);
                     // while tests n = 0, 1, 2, 3 before each body; until tests n = 1, 2, 3 after it.
@@ -563,6 +569,54 @@ static class VisualTraceTests
                 }
             });
 
+            await Test("value nodes are recorded just before the step that reads them, in its frame, with src pointing at them", async () =>
+            {
+                // Inside a For each body: item → Compare ci → Not n → Log l. After the loop: Constant c → Compare cmp → If i.
+                var graph = G(N("c", "constant", new { type = "number", value = Lit("number", 3) }), N("cmp", "compare", new { left = Unset(), right = Lit("number", 5), @operator = "lt" }),
+                    N("f", "foreach", new { items = Lit("array", new[] { 1, 2 }), itemType = "number" }), N("ci", "compare", new { left = Unset(), right = Lit("number", 1), @operator = "eq" }),
+                    N("n", "not", new { value = Unset() }), N("i", "if", new { value = Unset() }), N("l", "log", new { value = Unset() }));
+                graph["edges"] = new JsonArray(E("t", "f"), E("f", "l", "body"), E("f", "i"), D("c", "cmp", "left"), D("cmp", "i", "value"),
+                    D("f", "ci", "left", "item"), D("ci", "n", "value"), D("n", "l", "value"));
+                var (_, doc, _) = await Trace(graph);
+                Shape(doc);
+                var order = Events(doc).Select(e => S(e!["node"]) + "@" + S(e!["frame"])).ToArray();
+                Check(order.SequenceEqual(["t@", "f@", "ci@f#0:body", "n@f#0:body", "l@f#0:body", "ci@f#1:body", "n@f#1:body", "l@f#1:body", "c@", "cmp@", "i@"]), "event order: " + string.Join(", ", order));
+                foreach (var e in Events(doc).Select(e => e!.AsObject()).Where(e => S(e["node"]) is "c" or "cmp" or "ci" or "n"))
+                    Check(S(e["status"]) == "ok" && e["port"] == null && e["outputs"]?["value"] != null, "a value node's event: " + e.ToJsonString());
+                Check(Same(Of(doc, "n")[0]["inputs"]!["value"]!["src"], """{"node":"ci","port":"value"}""") && Same(Of(doc, "l")[1]["inputs"]!["value"]!["src"], """{"node":"n","port":"value"}"""), "src of a value node's reading");
+                Check(Same(One(doc, "i")["inputs"]!["value"]!["src"], """{"node":"cmp","port":"value"}""") && Same(One(doc, "cmp")["inputs"]!["left"]!["src"], """{"node":"c","port":"value"}"""), "src through a chain");
+                Check(Of(doc, "n").Select(e => e["outputs"]!["value"]!["v"]!.GetValue<bool>()).SequenceEqual([false, true]), "each iteration's value");
+                // A value node that fails is recorded as failed, before the step whose failure it is.
+                var failing = G(N("o", "object", new { value = Lit("object", new { a = 1 }) }), N("g", "get_field", new { value = Unset(), pointer = "/missing", type = "number" }), N("l", "log", new { value = Unset() }), Log("r", "recovered"));
+                failing["edges"] = new JsonArray(E("t", "l"), E("l", "r", "error"), D("o", "g", "value"), D("g", "l", "value"));
+                var (_, failed, _) = await Trace(failing);
+                Shape(failed);
+                Check(Events(failed).Select(e => S(e!["node"]) + ":" + S(e!["status"])).SequenceEqual(["t:ok", "o:ok", "g:failed", "l:error", "r:ok"]), "failing value node: " + failed.ToJsonString());
+                Check(S(One(failed, "l")["error"]!["message"]).StartsWith("Get field (used by Log): ") && One(failed, "g")["error"] != null, "failure messages: " + failed.ToJsonString());
+            });
+
+            await Test("cancelling during a long chain of value nodes stops before the rest of the chain", async () =>
+            {
+                // n0 → n1 → … → n39 (each a Not of the one before), read by one Log.
+                var nodes = new List<JsonObject> { N("n0", "not", new { value = Lit("boolean", true) }) };
+                for (var i = 1; i < 40; i++) nodes.Add(N("n" + i, "not", new { value = Unset() }));
+                nodes.Add(N("l", "log", new { value = Unset() }));
+                var graph = G([.. nodes]);
+                graph["edges"] = new JsonArray([E("t", "l"), .. Enumerable.Range(1, 39).Select(i => (JsonNode)D("n" + (i - 1), "n" + i, "value")), D("n39", "l", "value")]);
+                using var loaded = await Load(graph);
+                using var cts = new CancellationTokenSource();
+                var sink = new Sink();
+                VisualTrace.Fault = at => { if (at == "start:n20") cts.Cancel(); };
+                try { await loaded.Start(sink, cts.Token).WaitAsync(TimeSpan.FromSeconds(10)); throw new Exception("the run was not cancelled"); }
+                catch (OperationCanceledException) { }
+                finally { VisualTrace.Fault = null; }
+                var doc = sink.Final;
+                Shape(doc);
+                var seen = Events(doc).Select(e => S(e!["node"])).ToArray();
+                Check(seen.SequenceEqual(["t", .. Enumerable.Range(0, 21).Select(i => "n" + i), "l"]), "events after cancelling at n20: " + string.Join(",", seen));
+                Check(S(One(doc, "l")["status"]) == "cancelled", "the reading step is cancelled: " + One(doc, "l").ToJsonString());
+            });
+
             await Test("secret-looking names and token= values are redacted everywhere", async () =>
             {
                 var previousCall = PyInterop.CallService;
@@ -571,9 +625,9 @@ static class VisualTraceTests
                 try
                 {
                     var literal = JsonNode.Parse("""{"user":"me","auth":{"Password":"s3cr3t-3","pin":1234,"deeper":[{"api_key":"s3cr3t-5"}]},"note":"see token=s3cr3t-4 here","Token":"s3cr3t-6"}""")!.AsObject();
-                    var graph = G(N("o", "object", new { value = Lit("object", literal) }), N("s", "service", new JsonObject { ["service"] = "lock.unlock", ["fields"] = new JsonObject { ["code"] = Lit("string", "4321") }, ["target"] = Unset() }));
+                    var graph = G(N("o", "object", new { value = Lit("object", literal) }), N("lo", "log", new { value = Unset() }), N("s", "service", new JsonObject { ["service"] = "lock.unlock", ["fields"] = new JsonObject { ["code"] = Lit("string", "4321") }, ["target"] = Unset() }));
                     graph["nodes"]![0]!["config"] = new JsonObject { ["type"] = "entity", ["entity"] = "sensor.test" };
-                    graph["edges"]!.AsArray().Add(D("t", "s", "target", "entity_id"));
+                    graph["edges"]!.AsArray().Add(D("t", "s", "target", "entity_id")); graph["edges"]!.AsArray().Add(D("o", "lo", "value"));
                     var attributes = new Dictionary<string, object> { ["access_token"] = "s3cr3t-1", ["entity_picture"] = "/api/camera_proxy/camera.door?token=s3cr3t-2&width=10", ["unit"] = "C" };
                     HasEntityState State(string state) => new() { EntityId = "sensor.test", State = state, Attributes = new(attributes), LastChanged = 1_700_000_000, LastReported = 1_700_000_000 };
                     var (_, doc, _) = await Trace(graph, payload: TriggerPayload.Entity(State("on"), State("off")));

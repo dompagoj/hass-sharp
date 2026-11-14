@@ -93,7 +93,9 @@ editor is removed from documents MCP returns, and the graph schema rejects it.
 Write entity IDs for domain-filtered inputs with their exact type: the target of
 `light.turn_on` takes `{"kind":"literal","type":"entity_id:light","value":"light.hall"}`,
 and a wired plain `entity_id` needs a Convert node with type `entity_id:light`
-first. See [visual authoring](writing-visual-automations.md#types-and-refinement).
+first. Convert and the other value nodes (catalog `pure: true`, such as `constant`
+and `compare`) take no execution edges: connect only their data ports, and the
+step that reads them works them out each time it runs. See [visual authoring](writing-visual-automations.md#types-and-refinement).
 
 Tool arguments are strict: unknown fields and wrong types are rejected. Revisions
 and pagination values must be integers (booleans are not accepted). Stable IDs

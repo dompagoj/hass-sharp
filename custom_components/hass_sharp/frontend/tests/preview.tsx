@@ -78,7 +78,8 @@ const runs: AutomationRun[] = [...Array.from({ length: 23 }, (_, i) => scriptRun
 const visualBackend = makeVisualFixture({catalog:rich.catalog as unknown as VisualCatalogSnapshot,libraries:[{id:rich.sourceId,name:'Typed sample.cs',revision:rich.revision,source:rich.source}, {id:'helper',name:'Helper.cs',revision:1,source:'public static class Factory { public static Reading Make(string? label, int count = 1) => new(label ?? ""); public static Reading Read(EntityStateSnapshot entity) => Samples.Describe(entity); }'}]})
 const typedFixture=new URLSearchParams(location.search).has('typed')
 // Node cards: a state trigger, light.turn_on with a target and two fields, a condition with both branches, a delay,
-// a connected and an unconnected input, and the rich library sample below them.
+// a connected and an unconnected input, value nodes (a Constant read by the service and a Compare read by a Log step)
+// and the rich library sample below them.
 const typedDemo = (): Graph => {
   const catalog = rich.catalog as unknown as VisualCatalogSnapshot, lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
   const config = (graph: Graph, id: string) => graph.nodes.find(n => n.id === id)!.config
@@ -92,6 +93,14 @@ const typedDemo = (): Graph => {
   g = updateNode(g, 'service-2', { label: 'Lights off', position: { x: 1240, y: 480 }, config: { ...config(g, 'service-2'), service: 'light.turn_off', target: lit('target', { entity_id: 'light.hall_1' }), fields: { transition: { kind: 'unset' } } } })
   g = connectNodes(connectNodes(g, 'condition-1', 'delay-1', 'false', catalog), 'delay-1', 'service-2', undefined, catalog)
   g = connectData(g, 'trigger-1', 'entity_id', 'condition-1', 'entity', catalog)
+  for (const [kind, id] of [['constant', 'level'], ['compare', 'bright'], ['log', 'note']] as const) g = addNode(g, kind, id, catalog)
+  g = updateNode(g, 'level', { label: 'Evening brightness', position: { x: 420, y: 400 }, config: { ...config(g, 'level'), type: 'number', value: lit('number', 80) } })
+  g = updateNode(g, 'bright', { label: 'Bright enough?', position: { x: 1240, y: 240 }, config: { ...config(g, 'bright'), operator: 'gt', right: lit('number', 50) } })
+  g = updateNode(g, 'note', { position: { x: 1640, y: 20 } })
+  g = connectNodes(g, 'service-1', 'note', undefined, catalog)
+  g = connectData(g, 'level', 'value', 'service-1', 'field:brightness_pct', catalog)
+  g = connectData(g, 'level', 'value', 'bright', 'left', catalog)
+  g = connectData(g, 'bright', 'value', 'note', 'value', catalog)
   const sample = fillGraphLayout(rich.cases[0].graph as Graph)
   return { ...g, nodes: [...g.nodes, ...sample.nodes.map((node, i) => ({ ...node, position: { x: 40 + i * 400, y: 820 } }))], edges: [...g.edges, ...sample.edges] }
 }
@@ -99,7 +108,8 @@ if(typedFixture)visualBackend.controls.services = services as unknown as Service
 if(typedFixture)visualBackend.documents.set('typed-demo',{version:1,id:'typed-demo',revision:1,graph:typedDemo(),source:'// Typed fixture generated on the server',sourceMap:[],automationId:'visual:typed-demo',currentRevisionActive:true,catalogGeneration:'saved-fixture'})
 // A run of "Motion lights v2": a branch (only its true side ran), a loop over four lights where the second one failed
 // and was recovered through its error output, a cut value (the weather's forecast), a hidden value (an API key) and
-// a long message that was cut. The automation has been saved again since, so the view says it used an earlier version.
+// a long message that was cut. Value nodes: a Constant worked out in every iteration, a chain (Entity field → Compare →
+// Create object) worked out just before the notification reads it, and a Constant only the step that did not run reads. The automation has been saved again since, so the view says it used an earlier version.
 const traceGraph = (): Graph => {
   const catalog = rich.catalog as unknown as VisualCatalogSnapshot, lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
   const config = (graph: Graph, id: string) => graph.nodes.find(n => n.id === id)!.config
@@ -109,24 +119,33 @@ const traceGraph = (): Graph => {
   g = { ...g, edges: g.edges.filter(e => e.source !== 'condition-1') }
   g = place(g, 'trigger-1', 40, 120, { label: 'Motion in the hall', config: { type: 'entity', entity: 'binary_sensor.hall_0', manual: true, mode: 'Restart' } })
   g = place(g, 'condition-1', 420, 120, { label: 'Is it dark?', config: { ...config(g, 'condition-1'), state: 'on' } })
-  g = place(g, 'service-1', 1960, 560, { label: 'Everything off', config: { ...config(g, 'service-1'), service: 'light.turn_off', target: lit('target', { entity_id: 'light.hall_1' }) } })
-  for (const [kind, id] of [['foreach', 'lights'], ['service', 'turn-on'], ['log', 'note'], ['read_entity', 'weather'], ['object_create', 'report'], ['service', 'notify']] as const) g = addNode(g, kind, id, catalog)
+  g = place(g, 'service-1', 1960, 640, { label: 'Everything off', config: { ...config(g, 'service-1'), service: 'light.turn_off', target: lit('target', { entity_id: 'light.hall_1' }), fields: { transition: { kind: 'unset' } } } })
+  for (const [kind, id] of [['foreach', 'lights'], ['service', 'turn-on'], ['log', 'note'], ['read_entity', 'weather'], ['object_create', 'report'], ['service', 'notify'],
+    ['constant', 'level'], ['constant', 'fade'], ['entity_field', 'temp'], ['compare', 'warm']] as const) g = addNode(g, kind, id, catalog)
   g = place(g, 'lights', 800, 60, { label: 'Each hall light', config: { ...config(g, 'lights'), itemType: 'entity_id', items: lit('array', ['light.hall_1', 'light.hall_3', 'light.hall_5', 'light.hall_7']) } })
-  g = place(g, 'turn-on', 1180, -60, { label: 'Turn on', config: { ...config(g, 'turn-on'), service: 'light.turn_on', fields: { brightness_pct: lit('number', 80) } } })
+  g = place(g, 'turn-on', 1180, -60, { label: 'Turn on', config: { ...config(g, 'turn-on'), service: 'light.turn_on', fields: { brightness_pct: { kind: 'unset' } } } })
+  g = place(g, 'level', 800, -160, { label: 'Brightness', config: { ...config(g, 'level'), type: 'number', value: lit('number', 80) } })
+  g = place(g, 'fade', 1560, 940, { label: 'Fade time', config: { ...config(g, 'fade'), type: 'number', value: lit('number', 2) } })
+  g = place(g, 'temp', 1180, 620, { label: 'Temperature', config: { ...config(g, 'temp'), field: 'attribute', attribute: 'temperature', type: 'number' } })
+  g = place(g, 'warm', 1560, 660, { label: 'Above 5 °C?', config: { ...config(g, 'warm'), operator: 'gt', right: lit('number', 5) } })
   g = place(g, 'note', 1560, 120, { label: 'Note the failure', config: { ...config(g, 'note'), level: 'Warn', value: lit('string', 'A hall light did not respond') } })
   g = place(g, 'weather', 1180, 360, { label: 'Read the weather', config: { ...config(g, 'weather'), entity: lit('entity_id', 'weather.home') } })
-  g = place(g, 'report', 1560, 360, { label: 'Build the report', config: { ...config(g, 'report'), fields: { lights: lit('number', 4), api_key: lit('string', 'not-shown') } } })
+  g = place(g, 'report', 1560, 360, { label: 'Build the report', config: { ...config(g, 'report'), fields: { lights: lit('number', 4), api_key: lit('string', 'not-shown'), warm: { kind: 'unset' } } } })
   g = place(g, 'notify', 1960, 300, { label: 'Tell my phone', config: { ...config(g, 'notify'), service: 'notify.notify', fields: { message: lit('string', 'Lights on. Weather: …'), data: { kind: 'unset' } } } })
   g = connectNodes(g, 'condition-1', 'lights', 'true', catalog)
   g = connectNodes(g, 'condition-1', 'service-1', 'false', catalog)
   g = connectNodes(g, 'lights', 'turn-on', 'body', catalog)
   g = connectNodes(g, 'turn-on', 'note', 'error', catalog)
   g = connectNodes(g, 'lights', 'weather', 'next', catalog)
-  g = connectNodes(g, 'weather', 'report', 'next', catalog)
-  g = connectNodes(g, 'report', 'notify', 'next', catalog)
+  g = connectNodes(g, 'weather', 'notify', 'next', catalog)
   g = connectData(g, 'trigger-1', 'entity_id', 'condition-1', 'entity', catalog)
   g = connectData(g, 'lights', 'item', 'turn-on', 'target', catalog)
   g = connectData(g, 'report', 'value', 'notify', 'field:data', catalog)
+  g = connectData(g, 'level', 'value', 'turn-on', 'field:brightness_pct', catalog)
+  g = connectData(g, 'fade', 'value', 'service-1', 'field:transition', catalog)
+  g = connectData(g, 'weather', 'value', 'temp', 'entity', catalog)
+  g = connectData(g, 'temp', 'value', 'warm', 'left', catalog)
+  g = connectData(g, 'warm', 'value', 'report', 'field:warm', catalog)
   return g
 }
 const traceCatalog = (): VisualCatalogSnapshot => ({ ...(rich.catalog as unknown as VisualCatalogSnapshot), services: services as unknown as ServicesSection })
@@ -145,19 +164,25 @@ const traceEvents = (): TraceEvent[] => {
     { node: 'lights', frame: '', t: 3.8, ms: 1712, status: 'ok', port: 'next', inputs: { items: { type: 'array', v: lights } } },
     ...lights.flatMap((light, i): Omit<TraceEvent, 'seq'>[] => {
       const frame = `lights#${i}:body`, t = 4 + i * 430
-      const inputs = { target: { type: 'entity_id', v: light, src: { node: 'lights', port: 'item' } }, 'field:brightness_pct': { type: 'number', v: 80 } }
-      if (i !== 1) return [{ node: 'turn-on', frame, t, ms: 412 + i * 7, status: 'ok', port: 'next', inputs }]
+      const inputs = { target: { type: 'entity_id', v: light, src: { node: 'lights', port: 'item' } }, 'field:brightness_pct': { type: 'number', v: 80, src: { node: 'level', port: 'value' } } }
+      const level: Omit<TraceEvent, 'seq'> = { node: 'level', frame, t, ms: 0.02, status: 'ok', inputs: { value: { type: 'number', v: 80 } }, outputs: { value: { type: 'number', v: 80 } } }
+      if (i !== 1) return [level, { node: 'turn-on', frame, t, ms: 412 + i * 7, status: 'ok', port: 'next', inputs }]
       return [
+        level,
         { node: 'turn-on', frame, t, ms: 403, status: 'error', port: 'error', inputs, error: { type: 'HomeAssistantException', message: 'light.hall_3 is unavailable: the Zigbee device did not answer within 10 seconds.' } },
         { node: 'note', frame, t: t + 404, ms: 0.6, status: 'ok', port: 'next', inputs: { value: { type: 'string', v: 'A hall light did not respond' } } },
       ]
     }),
     { node: 'weather', frame: '', t: 1716, ms: 3.2, status: 'ok', port: 'next', inputs: { entity: { type: 'entity_id', v: 'weather.home' } },
       outputs: { value: { type: 'global::HassSharp.EntityStateSnapshot', v: state('weather.home', 'cloudy', { temperature: 7, humidity: 88, friendly_name: 'Home', forecast }), trunc: true } } },
-    { node: 'report', frame: '', t: 1720, ms: 0.4, status: 'ok', port: 'next', inputs: { 'field:lights': { type: 'number', v: 4 }, 'field:api_key': { type: 'string', v: '***', redacted: true } },
-      outputs: { value: { type: 'object', v: { lights: 4, api_key: '***' } } } },
+    { node: 'temp', frame: '', t: 1720, ms: 0.05, status: 'ok', inputs: { entity: { type: 'global::HassSharp.EntityStateSnapshot', v: state('weather.home', 'cloudy', { temperature: 7, friendly_name: 'Home' }), src: { node: 'weather', port: 'value' }, trunc: true } },
+      outputs: { value: { type: 'number', v: 7 } } },
+    { node: 'warm', frame: '', t: 1720.1, ms: 0.02, status: 'ok', inputs: { left: { type: 'number', v: 7, src: { node: 'temp', port: 'value' } }, right: { type: 'number', v: 5 } },
+      outputs: { value: { type: 'boolean', v: true } } },
+    { node: 'report', frame: '', t: 1720.2, ms: 0.4, status: 'ok', inputs: { 'field:lights': { type: 'number', v: 4 }, 'field:api_key': { type: 'string', v: '***', redacted: true }, 'field:warm': { type: 'boolean', v: true, src: { node: 'warm', port: 'value' } } },
+      outputs: { value: { type: 'object', v: { lights: 4, api_key: '***', warm: true } } } },
     { node: 'notify', frame: '', t: 1721, ms: 288, status: 'ok', port: 'next', inputs: {
-      'field:message': { type: 'string', v: message, trunc: true }, 'field:data': { type: 'object', v: { lights: 4, api_key: '***' }, src: { node: 'report', port: 'value' } },
+      'field:message': { type: 'string', v: message, trunc: true }, 'field:data': { type: 'object', v: { lights: 4, api_key: '***', warm: true }, src: { node: 'report', port: 'value' } },
     } },
   ]
   return events.map((event, i) => ({ ...event, seq: i + 1 }))

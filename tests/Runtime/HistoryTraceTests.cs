@@ -450,7 +450,7 @@ static class HistoryTraceTests
                       {"id":"t","kind":"trigger","label":"Hallway motion","config":{"type":"entity","entity":"binary_sensor.motion"}},
                       {"id":"f","kind":"entity_field","config":{"entity":{"kind":"unset"},"field":"state","attribute":"","type":"string"}},
                       {"id":"l","kind":"log","config":{"value":{"kind":"unset"}}}
-                    ],"edges":[{"id":"tf","source":"t","target":"f"},{"id":"fl","source":"f","target":"l"},
+                    ],"edges":[{"id":"tl","source":"t","target":"l"},
                       {"id":"d1","kind":"data","source":"t","sourcePort":"to_state","target":"f","targetPort":"entity"},
                       {"id":"d2","kind":"data","source":"f","sourcePort":"value","target":"l","targetPort":"value"}]}
                     """)!;

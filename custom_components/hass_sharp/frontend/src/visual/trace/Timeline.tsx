@@ -1,6 +1,6 @@
 import { createEffect, Index, on, Show } from 'solid-js'
 import { Glyph } from '../Glyph'
-import type { Graph, VisualCatalogSnapshot } from '../contract'
+import { isPure, type Graph, type VisualCatalogSnapshot } from '../contract'
 import { durationLabel, nodeTitle, traceStatusLabel, type TraceStatus } from '../flow/flowModel'
 import { icons, nodeIdentity } from '../icons'
 import type { TraceEvent } from '../../types'
@@ -15,7 +15,7 @@ export const offsetLabel = (ms: number) => `+${durationLabel(ms) || '0 ms'}`
 
 /**
  * Every recorded run of a step, in the order they started: status, step, iteration or branch, when it started and
- * how long it took. Choosing one selects its step (and that run); the selected step's runs are marked. One row is in
+ * how long it took. A value node worked out for a step is a lesser row labelled "Value", just before that step's row. Choosing one selects its step (and that run); the selected step's runs are marked. One row is in
  * the Tab order; the arrow keys, Home and End move between rows.
  */
 export function Timeline(props: {
@@ -70,12 +70,13 @@ export function Timeline(props: {
               const frame = () => props.model.frameLabel(event().frame)
               const status = () => event().status
               const selected = () => event().seq === props.selectedSeq
+              const value = () => !!step() && isPure(step()!, props.catalog)
               return (
                 <li>
                   <button
                     type="button"
                     class="hs-trace-step"
-                    classList={{ 'hs-trace-step--selected': selected(), 'hs-trace-step--node': event().node === props.selectedNodeId, [`hs-trace-step--${status()}`]: true }}
+                    classList={{ 'hs-trace-step--selected': selected(), 'hs-trace-step--node': event().node === props.selectedNodeId, 'hs-trace-step--value': value(), [`hs-trace-step--${status()}`]: true }}
                     style={{ '--hs-cat': step() ? nodeIdentity(step()!.kind, props.catalog).color : undefined }}
                     data-seq={event().seq}
                     aria-current={selected() ? 'true' : undefined}
@@ -88,9 +89,9 @@ export function Timeline(props: {
                     </span>
                     <span class="hs-trace-step__main">
                       <span class="hs-trace-step__title">{nodeTitle(step(), props.catalog, 'A removed step')}</span>
-                      <Show when={frame() || event().trunc}>
+                      <Show when={value() || frame() || event().trunc}>
                         <span class="hs-trace-step__detail">
-                          {[frame(), event().trunc && 'Some values were too large to record'].filter(Boolean).join(' · ')}
+                          {[value() && 'Value', frame(), event().trunc && 'Some values were too large to record'].filter(Boolean).join(' · ')}
                         </span>
                       </Show>
                     </span>

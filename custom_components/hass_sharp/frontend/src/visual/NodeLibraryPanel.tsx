@@ -1,6 +1,6 @@
 import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js'
 import { Glyph } from './Glyph'
-import { catalogPalette, type NodeKind } from './graph'
+import { catalogPalette, paletteMatches, type NodeKind } from './graph'
 import { nodeIdentity } from './icons'
 import { nodeCatalog, type VisualCatalogSnapshot } from './contract'
 import { NODE_DRAG_TYPE } from './nodeDrag'
@@ -33,11 +33,7 @@ export function NodeLibraryPanel(props: NodeLibraryPanelProps) {
   let expandButton: HTMLButtonElement | undefined
   const catalog = () => props.catalog ?? nodeCatalog
   const items = createMemo(() => {
-    const words = search().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-    return catalogPalette(catalog()).filter(item => {
-      const text = `${item.label} ${item.kind} ${item.description} ${nodeIdentity(item.kind, catalog()).label}`.toLocaleLowerCase()
-      return words.every(word => text.includes(word))
-    })
+    return catalogPalette(catalog()).filter(item => paletteMatches(item, search(), nodeIdentity(item.kind, catalog()).label))
   })
   // Categories in catalog order; the heading shows the category's look, not the trigger's own, when it has others.
   const groups = createMemo(() => {
