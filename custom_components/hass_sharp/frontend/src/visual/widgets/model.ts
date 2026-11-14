@@ -8,6 +8,10 @@ import { displayValue, jsonEqual, optionWords, record, strings } from './json'
 export type WidgetKind =
   | 'toggle' | 'number' | 'text' | 'select' | 'constant' | 'entity' | 'state' | 'device' | 'area' | 'floor' | 'label'
   | 'target' | 'duration' | 'time' | 'date' | 'datetime' | 'color' | 'mixed' | 'json' | 'none'
+  | 'media' | LookupKind
+/** Home Assistant selectors whose value is an id from a list Home Assistant keeps (see `lookups.tsx`). */
+export type LookupKind = 'config_entry' | 'theme' | 'conversation_agent' | 'language'
+export const lookupKinds: readonly LookupKind[] = ['config_entry', 'theme', 'conversation_agent', 'language']
 /** The kinds a `mixed` widget switches between: Text, Number, True/False, List or object. */
 export type ValueKind = 'text' | 'number' | 'boolean' | 'json'
 export interface WidgetOption { value: JsonValue; label: string }
@@ -46,6 +50,18 @@ export interface Widget {
   defaultKind?: ValueKind
   /** json: only a list or an object is accepted (the "List or object" kind of a mixed value). */
   structured?: boolean
+  /** config_entry: only the entries of this integration. */
+  integration?: string
+  /** theme: Home Assistant's own theme (`default`) is offered too. */
+  includeDefault?: boolean
+  /** conversation_agent: only agents supporting this language. */
+  agentLanguage?: string
+  /** language: the languages offered (else Home Assistant's); named in their own language; kept in the given order. */
+  languages?: string[]
+  nativeName?: boolean
+  noSort?: boolean
+  /** media: the MIME types offered, such as `audio/*`; media is then browsed in Home Assistant's media sources. */
+  accept?: string[]
 }
 
 const num = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : undefined
@@ -145,6 +161,12 @@ export function widgetFor(input: InputSpec, catalog: VisualCatalogSnapshot = nod
       case 'time': case 'date': case 'datetime': return { kind: name, multiple: false }
       case 'color_rgb': return { kind: 'color', multiple: false }
       case 'constant': return { kind: 'constant', multiple: false, options: options(input, { options: [{ value: config.value, label: config.label }] }).slice(0, 1) }
+      case 'media': return Object.assign({ kind: 'media', multiple } as Widget, strings(config.accept).length && { accept: strings(config.accept) })
+      case 'config_entry': return Object.assign({ kind: 'config_entry', multiple: false } as Widget, str(config.integration) && { integration: str(config.integration) })
+      case 'theme': return { kind: 'theme', multiple: false, includeDefault: config.include_default === true }
+      case 'conversation_agent': return Object.assign({ kind: 'conversation_agent', multiple: false } as Widget, str(config.language) && { agentLanguage: str(config.language) })
+      case 'language': return Object.assign({ kind: 'language', multiple, nativeName: config.native_name === true, noSort: config.no_sort === true } as Widget,
+        strings(config.languages).length && { languages: strings(config.languages) })
       default: return mixed(input, catalog, 'json')
     }
   }
@@ -178,7 +200,8 @@ export function inlineWidget(widget: Widget): boolean {
   switch (widget.kind) {
     case 'toggle': case 'constant': case 'number': case 'time': case 'date': case 'datetime': case 'mixed': case 'none': return true
     case 'text': return !widget.multiline && !widget.multiple
-    case 'select': case 'state': case 'entity': case 'device': case 'area': case 'floor': case 'label': return !widget.multiple
+    case 'select': case 'state': case 'entity': case 'device': case 'area': case 'floor': case 'label':
+    case 'config_entry': case 'theme': case 'conversation_agent': case 'language': return !widget.multiple
     case 'duration': return !widget.days
     default: return false
   }
@@ -264,6 +287,7 @@ export function fitsWidget(widget: Widget, value: JsonValue | undefined): boolea
       case 'duration': return typeof v === 'number' || record(v)
       case 'target': return typeof v === 'string' || record(v)
       case 'color': return Array.isArray(v) && v.length === 3 && v.every(c => typeof c === 'number')
+      case 'media': return record(v) && typeof v.media_content_id === 'string'
       default: return typeof v === 'string'
     }
   }

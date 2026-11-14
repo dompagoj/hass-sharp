@@ -1,5 +1,7 @@
 import type { JsonValue } from '../contract'
 import { displayValue, jsonEqual, optionWords, record, strings } from './json'
+import { languageName } from './lookups'
+import { mediaTitle } from './media'
 import { durationParts, durationSeconds, type Widget } from './model'
 import { targetIds } from './pickers'
 import { stateWords, widgetStates, type StateEntity } from './states'
@@ -84,6 +86,13 @@ export function valueSummary(widget: Widget, value: JsonValue | null | undefined
       return text || '0 s'
     }
     case 'color': return Array.isArray(value) ? `RGB ${value.join(', ')}` : clip(plain(value))
+    case 'media': {
+      const titles = (Array.isArray(value) ? value : [value]).map(item => mediaTitle(item))
+      return titles.every(Boolean) ? clip(titles.join(', ')) : clip(plain(value))
+    }
+    case 'language': return clip(strings(value).length ? strings(value).map(code => languageName(code, widget.nativeName ? code : undefined)).join(', ') : plain(value))
+    // An entry id is opaque (design principle 2): its title comes from Home Assistant, which a summary does not ask.
+    case 'config_entry': return typeof value === 'string' ? 'Config entry chosen' : clip(plain(value))
     case 'text': {
       if (Array.isArray(value)) return clip(plain(value))
       const text = displayValue(value)

@@ -134,7 +134,7 @@ describe('widgetFor', () => {
     const any = ['object', 'array', 'string', 'number', 'boolean']
     expect(widgetFor(selector(any, { template: {} }))).toEqual({ kind: 'text', multiple: false, multiline: true })
     expect(literalFor(selector(any, { template: {} }), '{{ states("sun.sun") }}').type).toBe('string')
-    for (const name of ['object', 'media', 'action', 'unknown_thing']) expect(widgetFor(selector(any, { [name]: {} }))).toMatchObject({ kind: 'mixed', defaultKind: 'json' })
+    for (const name of ['object', 'action', 'unknown_thing']) expect(widgetFor(selector(any, { [name]: {} }))).toMatchObject({ kind: 'mixed', defaultKind: 'json' })
   })
   it('defaults a colour temperature to mired, as Home Assistant does', () => {
     expect(widgetFor(selector(['number'], { color_temp: {} }))).toMatchObject({ kind: 'number', slider: true, min: 153, max: 500, unit: 'mired' })
