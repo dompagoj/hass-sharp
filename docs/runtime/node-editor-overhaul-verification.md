@@ -476,3 +476,63 @@ reload adds nothing.
   anonymous reservation, mappings of 8 MiB or more, smaller ones, and the double-mapped JIT code).
 - **Bounded, with one exception.** The only steady growth is about 10 Python `dict`s per reload,
   a few KB, whose owner the line cannot tell.
+
+## Select property and type links (2026-11-14)
+
+Checked on the local Docker Home Assistant, first at `e8fabca`, then again at `9489e15`
+after the fixes below. Each time: publish, frontend build, `docker compose restart hass`.
+
+**Start-up.** Setup took 1.41 s. The log had no traceback, no load error and no
+"AssemblyLoadContext is unloading". `HassSharp.xml` is in `out/` (149,033 bytes). The
+SQLite smoke passed. Every saved automation loaded and was active.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| True/False words on Compare and If; friendly name and C# type on panel rows | pass |
+| One focus ring on a card's input and in the panel | pass |
+| Select property over a library record: the select lists the type's properties with their types; the output takes the chosen property's type | pass |
+| A chain (Home, then City), and an `EntityStateSnapshot` source | pass |
+| Nothing can be typed into Value; no select before a value is connected | pass |
+| Quick-add offers Select property from a typed C# output only | pass |
+| Save, Run now: the log shows the user name and the city; the trace shows both nodes with input and output | pass |
+| Renaming a property a Select property reads: the library save is refused and names the automation | pass |
+| Type links: a library record (source as written, origin, "Open in library" lands on the file and line), `EntityStateSnapshot` ("From HassSharp", doc summaries), a Custom C# record from a run's trace (read-only) | pass |
+| Built-in C# types are not links; Escape closes only the dialog and focus returns | pass |
+| The code viewer is requested only on the first click of a type link (editor and trace page) | pass |
+| An existing automation: edit, save, Run now, run history, trace; the on/off switch | pass |
+| Browser console during the re-check | no errors |
+
+### Defects found and fixed
+
+1. **A wire could not be dragged from a Select property's output.** The drag check ran
+   its own type test against the catalog without the graph's types, where that output
+   has no type. It also refused other wires the validator accepts, such as a nullable C#
+   `int` into Compare. The refusal was about 1,940 characters long. Fixed in `2f11cde`:
+   the connection index decides, a refusal lists four types and then "and N more", and
+   a card clamps a long message.
+2. **Library page after a refused save.** The cause was counted as neither error nor
+   warning, came last and named the step by its id. Fixed in `9489e15`: counted as an
+   error, listed first, named by the step's title. A missing doc comment is now
+   reported only on a library's `[Node]` methods.
+3. **Lowercase "true"/"false"** in a Compare card's summary. Fixed in `2f11cde`.
+4. **"Last run: Running" stayed** after a run had ended, until the Runs drawer was
+   opened. Fixed in `64b9bbe`, by unit test only: not re-checked on the instance.
+
+### Not checked
+
+- Pin highlighting while a wire is dragged (the browser tool performs a drag in one step).
+- The "and N more" refusal: no input on the instance names more than four types.
+- Window resize to 360 px (checked in a 360 px frame), light theme, touch input.
+
+### Memory
+
+707 MiB after the first restart and about 980 MiB after an editing session with a library
+save, several automation saves and two code-editor sessions, then stable. In the re-check:
+718 MiB at the start, 828 MiB at the end. No earlier editing session was measured.
+
+### Left on the instance
+
+Library file `Users.cs` (records `Address` and `User`, a pure "Make user" node) and the
+automation "Smoke Select property" (on, manual trigger).
