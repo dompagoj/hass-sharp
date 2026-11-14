@@ -308,9 +308,15 @@ export function CustomCodeHelp(props: { open: boolean; onClose(): void }) {
         <li><code>Trigger</code>: the trigger's Data output;</li>
         <li><code>Error</code>: the most recent failure on this path, or null;</li>
         <li><code>State(entityId)</code>: reads an entity as Read entity does;</li>
-        <li><code>CallService(service, target, data, returnResponse)</code>: calls a service as Call service does, and waits for it;</li>
+        <li><code>Services</code>: this Home Assistant's services as typed methods, such as <code>context.Services.Light.TurnOn(...)</code>;</li>
+        <li><code>CallService(service, target, data, returnResponse)</code>: calls a service by its id, as Call service does, and waits for it;</li>
         <li><code>Log(message, level)</code>: writes to the Home Assistant log.</li>
       </ul>
+      <h3>States and services</h3>
+      <p>Read a state with <code>context.State("sensor.x")</code>.</p>
+      <p>Call a service with <code>await context.Services.Light.TurnOn(light, brightnessPct: 30)</code>; the methods follow this Home Assistant's own services. Domains and services are in PascalCase and fields in camelCase (<code>brightness_pct</code> is <code>brightnessPct</code>); the call sends the original ids. The target comes first: an entity ID, a list such as <code>["light.a", "light.b"]</code>, or a <code>ServiceTarget</code> such as <code>ServiceTarget.Areas("kitchen")</code>. Only the fields you give are sent.</p>
+      <p>For a service id known only at run time, use <code>context.CallService("domain.service", target, data)</code>.</p>
+      <p>If a service goes away, code that calls it stops compiling at its next compile; running automations keep running.</p>
       <h3>Descriptions</h3>
       <p>The XML <code>&lt;summary&gt;</code> is the node's description, each <code>&lt;param&gt;</code> describes an input and <code>&lt;returns&gt;</code> describes the output.</p>
     </Dialog>

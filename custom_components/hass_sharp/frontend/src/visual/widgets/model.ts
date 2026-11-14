@@ -1,5 +1,5 @@
 import { nodeCatalog, refinesType, resolveTypeSpec, rootType, validLiteral, type InputSpec, type JsonValue, type Operand, type VisualCatalogSnapshot } from '../contract'
-import { displayValue, jsonEqual, record, strings } from './json'
+import { displayValue, jsonEqual, optionWords, record, strings } from './json'
 
 /**
  * Contract C3: the control an input's value is edited with. `mixed` is a value of one of several simple kinds
@@ -62,11 +62,19 @@ export function entityDomains(types: string[], catalog: VisualCatalogSnapshot = 
   if (!entity.length || entity.includes('entity_id')) return []
   return [...new Set(entity.map(t => t.slice(t.indexOf(':') + 1)))]
 }
+/**
+ * An option's label: the schema's, else the value in words. A label that only repeats the value (Home Assistant
+ * without translations, or an option given as a bare value) counts as none. The value itself is what is stored.
+ */
+const optionText = (value: JsonValue, label: unknown) => {
+  const own = str(label)
+  return own !== undefined && own !== displayValue(value) ? own : optionWords(value)
+}
 function options(input: InputSpec, config: Record<string, unknown> | undefined): WidgetOption[] {
-  if (Array.isArray(input.enum)) return input.enum.map((value, i) => ({ value, label: input.enumLabels?.[i] ?? displayValue(value) }))
+  if (Array.isArray(input.enum)) return input.enum.map((value, i) => ({ value, label: optionText(value, input.enumLabels?.[i]) }))
   return (Array.isArray(config?.options) ? config.options : []).flatMap((option): WidgetOption[] => {
-    if (record(option)) return option.value === undefined ? [] : [{ value: option.value as JsonValue, label: str(option.label) ?? displayValue(option.value as JsonValue) }]
-    return [{ value: option as JsonValue, label: displayValue(option as JsonValue) }]
+    if (record(option)) return option.value === undefined ? [] : [{ value: option.value as JsonValue, label: optionText(option.value as JsonValue, option.label) }]
+    return [{ value: option as JsonValue, label: optionWords(option as JsonValue) }]
   })
 }
 function numberWidget(input: InputSpec, config: Record<string, unknown> | undefined, slider: boolean): Widget {
@@ -155,7 +163,7 @@ export function widgetFor(input: InputSpec, catalog: VisualCatalogSnapshot = nod
       const type = literal.length === 1 ? resolveTypeSpec(literal[0], catalog)! : undefined
       const values = type?.enumValues ?? [], labels = type?.enumLabels
       const named = Array.isArray(labels) && labels.length === values.length && labels.every(label => typeof label === 'string' && label !== '')
-      return values.length ? { kind: 'select', multiple: false, options: values.map((value, i) => ({ value, label: named ? labels[i] : displayValue(value) })) } : { kind: 'json', multiple: false }
+      return values.length ? { kind: 'select', multiple: false, options: values.map((value, i) => ({ value, label: named ? labels[i] : optionWords(value) })) } : { kind: 'json', multiple: false }
     }
     default: return { kind: 'json', multiple: false }
   }

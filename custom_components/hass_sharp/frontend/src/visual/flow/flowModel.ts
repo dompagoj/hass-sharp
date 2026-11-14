@@ -23,7 +23,8 @@ import type { TraceEventStatus, TraceValue } from '../../types'
 
 /** C11 trace statuses and traced values (the C10 event status and value shapes). */
 export type TraceStatus = TraceEventStatus
-export type TracedValue = TraceValue
+/** A traced value as a card's chip shows it; `muted` when its words stand for a missing value ("Not set"). */
+export type TracedValue = TraceValue & { muted?: boolean }
 /** C11 `trace` prop: a node absent from `nodes` was not reached. */
 export interface FlowTrace {
   nodes: Record<string, { status: TraceStatus; runs: number; ms?: number }>

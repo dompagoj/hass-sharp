@@ -8,6 +8,7 @@ import { QuickAdd } from '../src/visual/QuickAdd'
 import { addNode, catalogCategories, catalogPalette, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { connectData, nodeCatalog, validateGraph, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import type { VisualDiagnostic } from '../src/visual/api'
+import { fieldOffered, targetEntities } from '../src/visual/ServiceFields'
 import { HassCtx } from '../src/context'
 import services from '../../../../tests/fixtures/visual-services.json'
 
@@ -147,8 +148,9 @@ it('shows climate.set_hvac_mode\'s hvac_mode as a select of the chosen entity\'s
     return found!
   })
   const values = [...select.options].map(o => o.textContent).filter(text => text && !text.endsWith('…') && text !== 'Not set')
-  expect(values).toEqual(['off', 'heat', 'cool'])
-  select.value = [...select.options].find(o => o.textContent === 'heat')!.value
+  // State options read in words; the raw value is what is stored.
+  expect(values).toEqual(['Off', 'Heat', 'Cool'])
+  select.value = [...select.options].find(o => o.textContent === 'Heat')!.value
   select.dispatchEvent(new Event('change', { bubbles: true }))
   expect((node().config.fields as any).hvac_mode).toMatchObject({ kind: 'literal', value: 'heat' })
 })
@@ -168,6 +170,70 @@ it('adds required fields automatically and prunes fields the new service does no
   expect(button(message, 'Remove Message')).toBeUndefined()
   // A required field has no "Not set" placeholder: its editor is there.
   expect(message.querySelector('input,textarea')).not.toBeNull()
+})
+
+it('keeps typing in a required field the step does not store yet: its first edit keeps the same control and focus', async () => {
+  // Saved before message became required: the row is there, not stored.
+  const graph = updateNode(createGraph('Late required'), 'service-1', { config: { service: 'persistent_notification.create', fields: {} } })
+  const { el, node } = mount(graph, 'service-1')
+  const input = row(el, 'field:message')!.querySelector<HTMLInputElement>('input')!
+  expect(node().config.fields).toEqual({})
+  input.focus()
+  input.value = 'Hello'
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  expect((node().config.fields as any).message).toEqual(lit('string', 'Hello'))
+  await Promise.resolve()
+  // The same control, still focused: typing goes on without another click.
+  expect(row(el, 'field:message')!.querySelector('input')).toBe(input)
+  expect(input.isConnected).toBe(true)
+  expect(document.activeElement).toBe(input)
+  input.value = 'Hello there'
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  expect((node().config.fields as any).message).toEqual(lit('string', 'Hello there'))
+  expect(el.querySelectorAll('.hs-inspector [data-input-id="field:message"]')).toHaveLength(1)
+})
+
+it('offers in "+ Add field" only the fields whose filter the chosen entities meet, as Home Assistant does', async () => {
+  const fields = Object.keys((services as any).items['light.turn_on'].fields)
+  const offered = (el: Element) => addFieldOptions(el).map(text => fields.find(f => text.endsWith(f))!).sort()
+  // An on/off light without transitions: only the fields with no filter (and a stored one stays, whatever its filter).
+  const states = { 'light.hall': { attributes: { supported_color_modes: ['onoff'], supported_features: 0 } }, 'light.desk': { attributes: { supported_color_modes: ['brightness'], supported_features: 32 } } }
+  const lightOn = (target: unknown, stored: Record<string, unknown> = {}) => updateNode(createGraph('Filters'), 'service-1', { config: { service: 'light.turn_on', target, fields: stored } })
+  let { el, node } = mount(lightOn(lit('target', { entity_id: ['light.hall'] }), { color_name: lit('string', 'red') }), 'service-1', { hass: { states } })
+  expect(offered(el)).toEqual(['profile'])
+  expect(row(el, 'field:color_name')).toBeDefined()
+  expect(Object.keys(node().config.fields as object)).toEqual(['color_name'])
+  dispose!(); document.body.innerHTML = ''
+  // A dimmable light with transitions as well: any target entity meeting a filter is enough.
+  ;({ el } = mount(lightOn(lit('target', { entity_id: ['light.hall', 'light.desk'] })), 'service-1', { hass: { states } }))
+  expect(offered(el)).toEqual(['brightness', 'brightness_pct', 'brightness_step', 'brightness_step_pct', 'profile', 'transition'])
+  dispose!(); document.body.innerHTML = ''
+  // No target yet, or one given by area: every field.
+  for (const target of [{ kind: 'unset' }, lit('target', { area_id: 'hall' })]) {
+    ;({ el } = mount(lightOn(target), 'service-1', { hass: { states } }))
+    expect(offered(el)).toHaveLength(fields.length)
+    dispose!(); document.body.innerHTML = ''
+  }
+})
+
+it('decides a field filter from supported features and attributes, and offers a field when it cannot tell', () => {
+  const facts = (id: string) => ({ 'fan.a': { features: 16 }, 'fan.b': { features: 1, attributes: { preset_modes: ['auto'] } }, 'fan.c': { features: 1, attributes: { preset_modes: ['eco'] } } } as Record<string, any>)[id]
+  const filter = { supportedFeatures: [16], attribute: { preset_modes: ['auto', 'sleep'] } }
+  expect(fieldOffered(filter, ['fan.a'], facts)).toBe(true)
+  expect(fieldOffered(filter, ['fan.b'], facts)).toBe(true)
+  expect(fieldOffered(filter, ['fan.c'], facts)).toBe(false)
+  expect(fieldOffered({ supportedFeatures: [16] }, ['fan.c'], facts)).toBe(false)
+  // Nothing known of the entity, no entities known, or no filter: offered.
+  expect(fieldOffered(filter, ['fan.unknown'], facts)).toBe(true)
+  expect(fieldOffered(filter, undefined, facts)).toBe(true)
+  expect(fieldOffered(null, ['fan.c'], facts)).toBe(true)
+  expect(targetEntities(lit('target', 'fan.a'), false)).toEqual(['fan.a'])
+  expect(targetEntities(lit('target', { entity_id: ['fan.a'], area_id: [] }), false)).toEqual(['fan.a'])
+  expect(targetEntities(lit('target', { entity_id: ['fan.a'], device_id: 'd1' }), false)).toBeUndefined()
+  expect(targetEntities(lit('target', { entity_id: ['fan.a'] }), true)).toBeUndefined()
+  expect(targetEntities({ kind: 'unset' }, false)).toBeUndefined()
 })
 
 it('keeps an unknown service\'s stored fields editable as plain values and says the service is not available', () => {

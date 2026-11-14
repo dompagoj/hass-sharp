@@ -5,6 +5,8 @@ import type { VisualGraph } from './graph'
 import { Errors, type FieldRow } from './InputRow'
 import { useServiceText } from './serviceText'
 import { SearchSelect } from './widgets/SearchSelect'
+import { useHass } from '../context'
+import { useRegistry } from '../registry'
 
 export type { FieldRow } from './InputRow'
 
@@ -17,6 +19,52 @@ export function orderedFields(schema: ServiceSchema): [string, ServiceFieldSchem
 }
 
 const unset: Operand = { kind: 'unset' }
+const strings = (value: unknown) => (Array.isArray(value) ? value : [value]).filter((v): v is string => typeof v === 'string' && v !== '')
+
+/** What is known of an entity for a field filter: its supported features and its attributes, each when known. */
+export interface FilterFacts { features?: number | null; attributes?: Record<string, unknown> }
+/**
+ * The entity ids a Call service step acts on, when they are known: a target written as entity ids only. Undefined
+ * when the target is connected, not chosen yet, or names areas, devices, floors or labels.
+ */
+export function targetEntities(target: unknown, connected: boolean): string[] | undefined {
+  if (connected || !record(target) || target.kind !== 'literal') return
+  const value = target.value
+  if (typeof value === 'string') return value ? [value] : undefined
+  if (!record(value)) return
+  if (Object.entries(value).some(([key, v]) => key !== 'entity_id' && strings(v).length)) return
+  const ids = strings(value.entity_id)
+  return ids.length ? ids : undefined
+}
+/**
+ * Whether "Add field" offers a field, as Home Assistant's own editor decides (C4 `filter`): with no filter, or when
+ * the target entities are not known, always; otherwise when any target entity has one of the listed supported
+ * features, or an attribute holding one of the listed values. An entity it knows nothing about counts as a match, so
+ * a field is only left out on evidence.
+ */
+export function fieldOffered(filter: unknown, entities: string[] | undefined, facts: (entityId: string) => FilterFacts | undefined): boolean {
+  if (!record(filter) || !entities?.length) return true
+  const raw = filter.supportedFeatures ?? filter.supported_features
+  const features = (Array.isArray(raw) ? raw : []).filter((f): f is number => typeof f === 'number')
+  const attributes = record(filter.attribute) ? Object.entries(filter.attribute).filter(([, values]) => Array.isArray(values)) as [string, unknown[]][] : []
+  if (!features.length && !attributes.length) return true
+  return entities.some(id => {
+    const known = facts(id)
+    let unknown = !known
+    if (features.length) {
+      if (typeof known?.features !== 'number') unknown = true
+      else if (features.some(feature => (known.features! & feature) !== 0)) return true
+    }
+    if (attributes.length) {
+      if (!known?.attributes) unknown = true
+      else if (attributes.some(([name, values]) => {
+        const value = known.attributes![name]
+        return Array.isArray(value) ? value.some(v => values.includes(v)) : values.includes(value)
+      })) return true
+    }
+    return unknown
+  })
+}
 
 /**
  * The main section of a Call service node: the service, its target (filtered to what the service accepts), its
@@ -37,6 +85,15 @@ export function ServiceFields(props: {
   messages?(key: 'service' | 'returnResponse' | 'fields'): string[]
 }) {
   const text = useServiceText()
+  const hass = useHass() as unknown as { states?: Record<string, { attributes?: Record<string, unknown> } | undefined> } | undefined
+  const registry = useRegistry()
+  /** Home Assistant's own states when the page has them (in Home Assistant), else the registry's supported features. */
+  const facts = (id: string): FilterFacts | undefined => {
+    const state = hass?.states?.[id]
+    if (state?.attributes) return { features: typeof state.attributes.supported_features === 'number' ? state.attributes.supported_features : null, attributes: state.attributes }
+    const entity = registry.data?.entities.find(e => e.entity_id === id)
+    return entity ? { features: entity.supported_features } : undefined
+  }
   const pickerId = createUniqueId()
   const messages = (key: 'service' | 'returnResponse' | 'fields') => props.messages?.(key) ?? []
   const serviceId = () => (typeof props.node.config.service === 'string' ? props.node.config.service : '')
@@ -74,19 +131,24 @@ export function ServiceFields(props: {
 
   const known = () => schema()
   const label = (key: string) => text.fieldLabel(serviceId(), key, schema())
-  const stored = createMemo(() => {
+  /**
+   * The field rows: stored fields, and the required fields of a known service that are not stored yet (a graph saved
+   * before the field became required), in Home Assistant's order. A required field keeps its place and its row when
+   * its first edit stores it, so typing goes on in the same control.
+   */
+  const rows = createMemo(() => {
     const keys = Object.keys(fields()), s = schema()
     if (!s) return keys
-    const order = orderedFields(s).map(([key]) => key)
-    return [...order.filter(key => keys.includes(key)), ...keys.filter(key => !order.includes(key))]
+    const ordered = orderedFields(s)
+    const order = ordered.map(([key]) => key)
+    return [...ordered.filter(([key, f]) => keys.includes(key) || f.required).map(([key]) => key), ...keys.filter(key => !order.includes(key))]
   }, undefined, { equals: (a, b) => a.length === b.length && a.every((v, i) => v === b[i]) })
-  // Required fields of a known service that are not stored yet (a graph saved before the field became required).
-  const missing = createMemo(() => { const s = schema(); return s ? orderedFields(s).filter(([key, f]) => f.required && !Object.hasOwn(fields(), key)).map(([key]) => key) : [] },
-    undefined, { equals: (a, b) => a.length === b.length && a.every((v, i) => v === b[i]) })
   const addable = () => {
     const s = schema()
     if (!s) return []
-    return orderedFields(s).filter(([key]) => !Object.hasOwn(fields(), key)).map(([key, field]) => ({
+    // A field whose filter the chosen entities do not meet is not offered (a stored one stays, whatever the filter).
+    const entities = targetEntities(props.node.config.target, connected('target'))
+    return orderedFields(s).filter(([key, field]) => !Object.hasOwn(fields(), key) && fieldOffered(field.filter, entities, facts)).map(([key, field]) => ({
       value: key,
       label: label(key),
       detail: key,
@@ -144,16 +206,7 @@ export function ServiceFields(props: {
         </p>
       </Show>
       <Show when={showTarget()}>{props.row('target', { get spec() { return targetSpec() } })}</Show>
-      <For each={stored()}>{key => fieldRow(key)}</For>
-      <For each={missing()}>
-        {key => props.row(`field:${key}`, {
-          get label() { return label(key) },
-          get description() { return text.fieldDescription(serviceId(), key, schema()) },
-          get spec() { return localized(key) },
-          value: unset,
-          onChange: (operand, options) => write({ ...fields(), [key]: operand }, options),
-        })}
-      </For>
+      <For each={rows()}>{key => fieldRow(key)}</For>
       <Show when={addable().length || messages('fields').length}>
         <div class="hs-insp-add" data-input-id="fields" aria-invalid={messages('fields').length > 0 || undefined}>
           <Show when={addable().length}>

@@ -3,7 +3,7 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
-import { TriggerAdvanced, TriggerConfig, triggerChoices } from '../src/visual/TriggerConfig'
+import { retypedLabel, retypeTrigger, TriggerAdvanced, TriggerConfig, triggerChoices } from '../src/visual/TriggerConfig'
 
 let dispose: (() => void) | undefined
 let client: QueryClient | undefined
@@ -66,7 +66,8 @@ it('shows "When" as a visible choice of trigger types, each with an icon and a o
   }
   expect(host.querySelector<HTMLInputElement>('[aria-label="Trigger type"] input[value="entity"]')!.checked).toBe(true)
   choose(host, 'manual')
-  expect(config()).toMatchObject({ type: 'manual', entity: 'binary_sensor.motion' })
+  // The entity belongs to the old type: it goes, the run mode stays.
+  expect(config()).toEqual({ type: 'manual', mode: 'Single' })
   expect(host.querySelector('[role="radiogroup"][aria-label="Trigger type"]')).toBeNull()
   expect(host.querySelector('.hs-when__current')!.textContent).toContain('Only manually')
 })
@@ -102,7 +103,8 @@ it('subscribes to HA trigger metadata, merges additions, preserves unknown platf
   const suggestions = [...host.querySelectorAll('datalist option, [role="option"]')].map(o => o.getAttribute('value') ?? o.textContent)
   expect(suggestions).toEqual(expect.arrayContaining(['update.became_available', 'battery.started_charging', 'temperature.changed']))
   choose(host, 'state')
-  expect(config().trigger).toMatchObject({ trigger: 'state', unknown: { keep: true } })
+  // The unlisted platform's own keys do not belong to a state trigger.
+  expect(config().trigger).toEqual({ trigger: 'state' })
   expect(host.querySelector('[data-input-id="trigger"]')).not.toBeNull()
   dispose!()
   dispose = undefined
@@ -122,17 +124,48 @@ it('preserves entity-based numeric thresholds and structured unknown trigger fie
   expect((config().trigger as any).below).toBe(30)
 })
 
-it('keeps a scheduled trigger\'s settings when switching to a Home Assistant trigger, and gives sun a default event', () => {
-  const { host, config } = mount({ type: 'daily', time: '07:30', timeZone: 'Europe/Zagreb' })
+it('starts a new trigger type from its defaults, keeping only the settings both types have', () => {
+  const { host, config } = mount({ type: 'daily', time: '07:30', timeZone: 'Europe/Zagreb', mode: 'Restart', manual: false, startup: true })
   expect(field(host, 'Time of day').value).toBe('07:30')
+  // A state trigger has no time zone and no time of day: both go; the trigger's own settings stay.
   choose(host, 'state')
-  expect(config()).toMatchObject({ type: 'ha', trigger: { trigger: 'state' }, time: '07:30', timeZone: 'Europe/Zagreb' })
+  expect(config()).toEqual({ type: 'ha', trigger: { trigger: 'state' }, mode: 'Restart', manual: false, startup: true })
   type(field(host, 'Attribute'), 'brightness')
-  expect(config().trigger).toEqual({ trigger: 'state', attribute: 'brightness' })
+  type(field(host, 'To'), 'on')
+  // Numeric state shares the attribute (and the entity), not "To".
+  choose(host, 'numeric_state')
+  expect(config().trigger).toEqual({ trigger: 'numeric_state', attribute: 'brightness' })
+  // Sun gets its default event; zone does not take sun's "event" (sunrise is not enter or leave).
   choose(host, 'sun')
-  expect(config().trigger).toMatchObject({ trigger: 'sun', event: 'sunrise' })
+  expect(config().trigger).toEqual({ trigger: 'sun', event: 'sunrise' })
+  choose(host, 'zone')
+  expect(config().trigger).toEqual({ trigger: 'zone', event: 'enter' })
+  // Back to a HassSharp type: the declaration goes.
   choose(host, 'daily')
-  expect(config()).toMatchObject({ type: 'daily', time: '07:30' })
+  expect(config()).toEqual({ type: 'daily', mode: 'Restart', manual: false, startup: true })
+  expect(field(host, 'Time of day').value).toBe('')
+})
+
+it('carries the entity and a time of day between types that both have one, and changes nothing for the same type', () => {
+  expect(retypeTrigger({ type: 'entity', entity: 'binary_sensor.motion', mode: 'Single' }, 'state'))
+    .toEqual({ type: 'ha', trigger: { trigger: 'state', entity_id: 'binary_sensor.motion' }, mode: 'Single' })
+  expect(retypeTrigger({ type: 'ha', trigger: { trigger: 'state', entity_id: ['light.a'], to: 'on', id: 'evening' } }, 'entity'))
+    .toEqual({ type: 'entity', entity: 'light.a' })
+  // Several entities do not fit the single entity of "Entity changes"; Home Assistant's own options stay between platforms.
+  expect(retypeTrigger({ type: 'ha', trigger: { trigger: 'state', entity_id: ['light.a', 'light.b'], id: 'evening' } }, 'entity')).toEqual({ type: 'entity' })
+  expect(retypeTrigger({ type: 'ha', trigger: { trigger: 'state', entity_id: 'light.a', id: 'evening', enabled: false } }, 'zone'))
+    .toEqual({ type: 'ha', trigger: { trigger: 'zone', event: 'enter', id: 'evening', enabled: false } })
+  expect(retypeTrigger({ type: 'daily', time: '07:30', timeZone: 'UTC' }, 'time')).toEqual({ type: 'ha', trigger: { trigger: 'time', at: '07:30' } })
+  expect(retypeTrigger({ type: 'ha', trigger: { trigger: 'time', at: 'input_datetime.wake' } }, 'daily')).toEqual({ type: 'daily' })
+  // A declaration written with the older "platform" key keeps that key.
+  expect(retypeTrigger({ type: 'ha', trigger: { platform: 'state', entity_id: 'light.a' } }, 'numeric_state'))
+    .toEqual({ type: 'ha', trigger: { platform: 'numeric_state', entity_id: 'light.a' } })
+  const same = { type: 'ha', trigger: { trigger: 'state', entity_id: 'light.a', to: 'on' } }
+  expect(retypeTrigger(same, 'state')).toBe(same)
+  // A label the editor wrote follows the type; a typed label, or none, stays.
+  expect(retypedLabel('Entity changes', 'entity', 'state')).toBe('State')
+  expect(retypedLabel('Motion in the hall', 'entity', 'state')).toBe('Motion in the hall')
+  expect(retypedLabel(undefined, 'entity', 'state')).toBeUndefined()
 })
 
 it('keeps trigger subscriptions required', () => {

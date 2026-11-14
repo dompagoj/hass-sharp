@@ -421,7 +421,11 @@ it('opens the help with the facts of writing a node', async () => {
   await open()
   button(dialog()!, 'How to write a node')!.click()
   const help = [...dialog()!.querySelectorAll('dialog')].find(d => d.open)!
-  for (const fact of ['[Port("Label")]', 'Pure = true', 'CancellationToken', 'NodeContext', 'State(entityId)', 'CallService(service, target, data, returnResponse)', 'Log(message, level)', '<summary>', '(double Average, double Max)'])
+  for (const fact of ['[Port("Label")]', 'Pure = true', 'CancellationToken', 'NodeContext', 'State(entityId)', 'CallService(service, target, data, returnResponse)', 'Log(message, level)', '<summary>', '(double Average, double Max)',
+    // The typed services (Task 25b), as docs/node-libraries.md describes them.
+    'Read a state with context.State("sensor.x").', 'await context.Services.Light.TurnOn(light, brightnessPct: 30)', 'the methods follow this Home Assistant\'s own services',
+    '["light.a", "light.b"]', 'ServiceTarget.Areas("kitchen")', 'For a service id known only at run time, use context.CallService("domain.service", target, data).',
+    'If a service goes away, code that calls it stops compiling at its next compile; running automations keep running.'])
     expect(help.textContent, fact).toContain(fact)
 })
 

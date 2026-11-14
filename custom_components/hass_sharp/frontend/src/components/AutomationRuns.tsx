@@ -7,6 +7,7 @@ import { acceptedRun, forgetAcceptedRun, runErrorMessage as errorMessage } from 
 import { Button, Icon } from './Controls'
 import { JsonTree } from './JsonTree'
 import { summarizeTrigger, TriggerSummary } from './TriggerSummary'
+import { relativeTime } from '../automations/model'
 
 const PAGE_SIZE = 20
 const STATUSES: RunStatus[] = ['Failed', 'Cancelled', 'Interrupted', 'Stopped', 'Skipped', 'Succeeded', 'Running', 'Pending']
@@ -19,15 +20,6 @@ const duration = (ms: number | null) => ms === null ? '—' : ms < 1000 ? `${Mat
 const runLabel = (run: AutomationRun) => run.actionLabel ?? run.action
 const causeLabel = (run: AutomationRun) => CAUSES[run.cause] ?? run.cause
 const reason = (run: AutomationRun) => run.status !== 'Succeeded' && run.error ? run.error.split('\n', 1)[0] : undefined
-const relativeFormat = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
-const relative = (iso: string, now: number) => {
-  const seconds = (Date.parse(iso) - now) / 1000
-  if (Number.isNaN(seconds)) return iso
-  if (seconds > -45) return 'just now'
-  for (const [unit, size, limit] of [['minute', 60, 45], ['hour', 3600, 22], ['day', 86400, 26]] as const)
-    if (-seconds < size * limit) return relativeFormat.format(Math.round(seconds / size), unit)
-  return new Date(iso).toLocaleDateString()
-}
 const Timestamp = (props: { value: string | null }) => <Show when={props.value} fallback="—">{value =>
   <time dateTime={value()} title={value()}>{new Date(value()).toLocaleString()}</time>
 }</Show>
@@ -134,7 +126,7 @@ const RunRow = (props: { run: AutomationRun; now: number; open: boolean; onToggl
           <Show when={reason(props.run)}><span class="hs-run-reason">{reason(props.run)}</span></Show>
         </span>
         <span class="hs-run-when">
-          <time dateTime={props.run.receivedUtc} title={new Date(props.run.receivedUtc).toLocaleString()}>{relative(props.run.receivedUtc, props.now)}</time>
+          <time dateTime={props.run.receivedUtc} title={new Date(props.run.receivedUtc).toLocaleString()}>{relativeTime(props.run.receivedUtc, props.now)}</time>
           <span class="hs-run-duration">{duration(props.run.durationMs)}</span>
         </span>
         <Icon name="chevron" />

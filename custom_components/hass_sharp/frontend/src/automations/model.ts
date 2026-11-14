@@ -43,13 +43,19 @@ export function runsAlternative(runs: readonly RecentRun[]): string {
 }
 
 const relativeFormat = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
-/** "just now", "5 minutes ago", "yesterday", then a date. */
+const localDay = (time: number) => { const day = new Date(time); day.setHours(0, 0, 0, 0); return day.getTime() }
+/** "just now", "5 minutes ago", "3 hours ago", "yesterday", "4 days ago", then a date. Days are calendar days here,
+ * so "yesterday" means the day before today, however many hours ago that was. */
 export function relativeTime(iso: string, now: number): string {
-  const seconds = (Date.parse(iso) - now) / 1000
+  const then = Date.parse(iso)
+  const seconds = (then - now) / 1000
   if (Number.isNaN(seconds)) return iso
   if (seconds > -45) return 'just now'
-  for (const [unit, size, limit] of [['minute', 60, 45], ['hour', 3600, 22], ['day', 86400, 26]] as const)
-    if (-seconds < size * limit) return relativeFormat.format(Math.round(seconds / size), unit)
+  if (-seconds < 60 * 45) return relativeFormat.format(Math.round(seconds / 60), 'minute')
+  // Rounded, so a day with a daylight saving change still counts as one.
+  const days = Math.round((localDay(now) - localDay(then)) / 86_400_000)
+  if (-seconds < 3600 * 22 || days <= 0) return relativeFormat.format(Math.round(seconds / 3600), 'hour')
+  if (days < 26) return relativeFormat.format(-days, 'day')
   return new Date(iso).toLocaleDateString()
 }
 export const durationText = (ms: number) =>

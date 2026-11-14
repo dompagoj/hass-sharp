@@ -244,6 +244,7 @@
   .hs-app .hs-visual--fullscreen .hs-topbar__exit { padding: 6px 8px; margin-left: 0; }
   .hs-app .hs-visual--fullscreen .hs-topbar__exit-text { display: none; }
   .hs-app .hs-visual--fullscreen .hs-topbar .hs-tool { width: 32px; height: 36px; }
-  /* The "Add step" button sits below the compact bar. */
-  .hs-app .hs-visual--fullscreen .hs-visual-workspace > .hs-lib { top: 64px; }
+  /* The floating "Add step" button gives way to the canvas toolbar's own "Add a step" (the same quick add): below the
+     compact bar it covered the canvas and the messages shown at its top. */
+  .hs-app .hs-visual--fullscreen .hs-visual-workspace > .hs-lib { display: none; }
 }

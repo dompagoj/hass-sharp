@@ -13,7 +13,7 @@ import { dataInputs, nodeCatalog, validateGraph, validLiteral, type GraphNode, t
 import { InputEditor } from '../src/visual/InputEditor'
 import { typeLabel } from '../src/visual/typeLabels'
 import {
-  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, registryNames, targetValue, valueSummary, widgetFor,
+  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, optionLabel, optionWords, registryNames, targetValue, valueSummary, widgetFor,
   type ValueKind, type Widget,
 } from '../src/visual/widgets'
 
@@ -67,7 +67,7 @@ describe('widgetFor', () => {
     expect(widgetFor(field('hass_sharp_test.sectioned', 'level'), catalog)).toMatchObject({ kind: 'number', slider: false, min: 1, max: 10, step: 1 })
     expect(widgetFor(field('hass_sharp_test.sectioned', 'note'), catalog)).toMatchObject({ kind: 'text', multiline: true })
     expect(widgetFor(field('notify.notify', 'message'), catalog)).toMatchObject({ kind: 'text', multiline: false })
-    expect(widgetFor(field('hass_sharp_test.sectioned', 'speed'), catalog)).toMatchObject({ kind: 'select', options: [{ value: 'slow', label: 'Slow' }, { value: 'fast', label: 'fast' }] })
+    expect(widgetFor(field('hass_sharp_test.sectioned', 'speed'), catalog)).toMatchObject({ kind: 'select', options: [{ value: 'slow', label: 'Slow' }, { value: 'fast', label: 'Fast' }] })
     expect(widgetFor(field('climate.set_hvac_mode', 'hvac_mode'), catalog)).toMatchObject({ kind: 'state', hideStates: ['unavailable', 'unknown'] })
     expect(widgetFor(field('light.turn_on', 'effect'), catalog)).toMatchObject({ kind: 'state', stateAttribute: 'effect' })
     expect(widgetFor(field('light.turn_on', 'rgb_color'), catalog)).toMatchObject({ kind: 'color' })
@@ -76,6 +76,25 @@ describe('widgetFor', () => {
     // An object selector accepts every simple kind: a kind switch that starts at "List or object".
     expect(widgetFor(field('light.turn_on', 'hs_color'), catalog)).toEqual({ kind: 'mixed', multiple: false, kinds: ['text', 'number', 'boolean', 'json'], defaultKind: 'json' })
     expect(widgetFor(serviceInputs('light.turn_on', []).target, catalog)).toMatchObject({ kind: 'target', domains: ['light'], entityString: true })
+  })
+  it('labels options with the schema\'s label, else the value in words, and keeps the raw value (one helper everywhere)', () => {
+    // No labels in the schema: the values in words.
+    const flash = widgetFor(field('light.turn_on', 'flash'), catalog)
+    expect(flash.options).toEqual([{ value: 'long', label: 'Long' }, { value: 'short', label: 'Short' }])
+    const modes = widgetFor(spec(['string'], { enum: ['heat_cool', 'off', 'fan_only'], enumLabels: ['Heat and cool', 'off'] }))
+    expect(modes.options).toEqual([{ value: 'heat_cool', label: 'Heat and cool' }, { value: 'off', label: 'Off' }, { value: 'fan_only', label: 'Fan only' }])
+    expect(widgetFor(selector(['string'], { select: { options: ['brightness_pct', { value: 'x_y', label: 'XY colour' }] } })).options)
+      .toEqual([{ value: 'brightness_pct', label: 'Brightness pct' }, { value: 'x_y', label: 'XY colour' }])
+    // The card's summary, the panel's options and the trace's text all go through optionLabel.
+    expect(optionLabel(modes, 'heat_cool')).toBe('Heat and cool')
+    expect(optionLabel(modes, 'auto')).toBe('Auto')
+    expect(optionLabel({ kind: 'state', multiple: false }, 'heat_cool')).toBe('Heat cool')
+    expect(valueSummary(modes, 'fan_only')).toBe('Fan only')
+    expect(valueSummary({ kind: 'state', multiple: false }, 'heat_cool')).toBe('Heat cool')
+    expect(optionWords(3)).toBe('3')
+    expect(optionWords('')).toBe('')
+    // What is sent stays the raw value.
+    expect(commitLiteral(spec(['string'], { enum: ['heat_cool'] }), 'heat_cool')).toEqual({ kind: 'literal', type: 'string', value: 'heat_cool' })
   })
   it('maps the C3 rows the fixture has no field for', () => {
     expect(widgetFor(selector(['entity_id:light'], { entity: { domain: 'light' } }))).toMatchObject({ kind: 'entity', multiple: false, domains: ['light'] })
@@ -187,6 +206,8 @@ describe('values', () => {
     expect(valueSummary(widgetFor(selector(['string'], { text: { multiline: true } })), 'first\nsecond')).toBe('first …')
     expect(valueSummary({ kind: 'color', multiple: false }, [255, 0, 0])).toBe('RGB 255, 0, 0')
     expect(valueSummary({ kind: 'json', multiple: false }, undefined)).toBe('Not set')
+    // An empty value stored as null is not set too, whatever the widget: never the text "null".
+    for (const kind of ['json', 'text', 'select', 'target', 'entity'] as const) expect(valueSummary({ kind, multiple: false }, null)).toBe('Not set')
     expect(valueSummary({ kind: 'json', multiple: false }, [30, 60])).toBe('30, 60')
     expect(valueSummary({ kind: 'json', multiple: false }, { a: 1, b: 2 })).toBe('Object, 2 fields')
     expect(valueSummary({ kind: 'json', multiple: false }, { a: 1 })).toBe('Object, 1 field')
@@ -362,7 +383,7 @@ describe('pickers', () => {
       catalog={catalog} context={{ targetEntityIds: ['climate.outside_bathroom_vtrv'] }} />)
     await vi.waitFor(() => expect(host.querySelector('select[aria-label="HVAC mode"]')).not.toBeNull())
     const select = host.querySelector<HTMLSelectElement>('select[aria-label="HVAC mode"]')!
-    expect([...select.options].filter(o => !o.disabled).map(o => o.textContent)).toEqual(['off', 'heat', 'auto'])
+    expect([...select.options].filter(o => !o.disabled).map(o => o.textContent)).toEqual(['Off', 'Heat', 'Auto'])
     select.value = '1'; select.dispatchEvent(new Event('change', { bubbles: true }))
     expect(changes).toEqual([{ kind: 'literal', type: 'string', value: 'heat' }])
   })

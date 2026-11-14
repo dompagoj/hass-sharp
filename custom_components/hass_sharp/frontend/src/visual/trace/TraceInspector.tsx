@@ -10,8 +10,8 @@ import { icons, nodeIdentity } from '../icons'
 import { focusSoon } from '../soon'
 import { typeColor, typeIsList, typeLabel } from '../typeLabels'
 import type { AutomationRun, TraceEvent, TraceValue } from '../../types'
-import { isCut, isPlaceholder, isTree, opaque, valueText, type TraceModel } from './traceModel'
-import { inputLabel, inputOrder, inputSource, outputLabel, secretName } from './traceWords'
+import { isCut, isPlaceholder, isTree, opaque, valueText, type OptionText, type TraceModel } from './traceModel'
+import { inputLabel, inputOption, inputOrder, inputSource, outputLabel, secretName } from './traceWords'
 import { statusIcon } from './Timeline'
 
 export const runTime = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—')
@@ -232,6 +232,7 @@ function StepValues(props: {
                 ports={inputOrder(props.graph, props.node, inputs(), props.catalog)}
                 value={port => inputs()[port]}
                 label={port => inputLabel(props.graph, props.node, port, props.catalog)}
+                option={port => inputOption(props.graph, props.node, port, props.catalog)}
                 source={(_port, value) => (
                   <Show when={value.src} fallback={<span class="hs-trace-port__source">{inputSource(props.graph, value, props.catalog)}</span>}>
                     {src => (
@@ -266,6 +267,8 @@ function PortList(props: {
   ports: string[]
   value(port: string): TraceValue
   label(port: string): string
+  /** A choice's option labels, for an input that offers options. */
+  option?(port: string): OptionText | undefined
   source?(port: string, value: TraceValue): JSX.Element
   catalog: VisualCatalogSnapshot
 }) {
@@ -284,7 +287,7 @@ function PortList(props: {
                     <TypeChip text={typeLabel(value().type, props.catalog)} color={typeColor(value().type, props.catalog)} list={typeIsList(value().type, props.catalog)} />
                   </div>
                   {props.source?.(port, value())}
-                  <ValueView value={value()} label={props.label(port)} />
+                  <ValueView value={value()} label={props.label(port)} option={props.option?.(port)} />
                 </li>
               )
             }}
@@ -299,21 +302,23 @@ function PortList(props: {
  * Every value tree on the trace page (step values, the trigger data). What the recorder writes inside a value in
  * place of one it did not keep, shown in words: `"***"` under a name the
  * secret rule matches (the same text under any other name is real), and, in a value marked cut, a C# type name for
- * one it could not read. A depth-capped `null` cannot be told from a real one and stays as it is.
+ * one it could not read. A `null` member is an empty value ("Not set"); in a value marked cut it may also be one the
+ * recorder stopped at, which it cannot tell apart, so it says both.
  */
 const traceLeaf = (cut: boolean | undefined): JsonLeaf => (name, v) => {
+  if (v === null) return <span class="hs-trace-value--muted hs-trace-leaf">{cut ? 'Not set, or not recorded' : 'Not set'}</span>
   if (v === '***' && secretName(name)) return <span class="hs-trace-value--muted hs-trace-leaf" title="Not recorded because its name looks like a secret.">Hidden</span>
   if (cut && opaque(v)) return <span class="hs-trace-value--muted hs-trace-leaf">Could not be recorded</span>
   return undefined
 }
 
 /** A recorded value: a tree for objects and lists, words for anything else; never a placeholder as if it were data. */
-function ValueView(props: { value: TraceValue; label: string }) {
+function ValueView(props: { value: TraceValue; label: string; option?: OptionText }) {
   return (
     <div class="hs-trace-port__value">
       <Show when={isTree(props.value)} fallback={
         <span class="hs-trace-value" classList={{ 'hs-trace-value--muted': isPlaceholder(props.value) }}>
-          {valueText(props.value)}
+          {valueText(props.value, props.option)}
         </span>
       }>
         <span class="hs-trace-value hs-trace-value--muted">{valueText(props.value)}</span>

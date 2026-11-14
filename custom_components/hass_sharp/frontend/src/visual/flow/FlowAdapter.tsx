@@ -89,6 +89,12 @@ type Flow = ReturnType<typeof useSolidFlow>
 const GRID = 20
 const LONG_PRESS_MS = 550
 const fitOptions = { padding: 0.15, maxZoom: 1, minZoom: 0.5 }
+/**
+ * A run's path as it opens, all of it, however far out a 360 px screen needs: the trace canvas zooms out further than
+ * the editor's (a map of the path, to tap a step on), and the person zooms in from there.
+ */
+const TRACE_MIN_ZOOM = 0.1
+const pathFitOptions = { padding: 0.1, maxZoom: 1, minZoom: TRACE_MIN_ZOOM }
 const sameSelection = (a: Selection, b: Selection) => a.edge === b.edge && a.nodes.length === b.nodes.length && a.nodes.every((id, i) => id === b.nodes[i])
 const samePin = (a: PinRef | undefined, b: PinRef | undefined) => a === b || (!!a && !!b && a.nodeId === b.nodeId && a.handle === b.handle && a.type === b.type)
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(value, high))
@@ -537,6 +543,21 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
         () => props.fitViewKey,
         key => {
           if (key !== undefined) whenMeasured(() => void api.fitView(fitOptions))
+        },
+      ),
+    )
+    // A run opens fitted to its path (the steps it reached), once: a live run reaching more steps leaves the view to
+    // the person. A run with a focus step (one that failed) opens centred on that step instead (below).
+    let pathFitted = false
+    createEffect(
+      on(
+        () => props.trace,
+        trace => {
+          if (pathFitted || !trace) return
+          const reached = Object.keys(trace.nodes).filter(id => graph().nodes.some(n => n.id === id))
+          if (!reached.length) return
+          pathFitted = true
+          if (!trace.focusNodeId) whenMeasured(() => void api.fitView({ ...pathFitOptions, nodes: reached.map(id => ({ id })) }))
         },
       ),
     )
@@ -1147,7 +1168,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
           initialViewport={{ x: 10, y: 20, zoom: 0.75 }}
           fitView
           fitViewOptions={fitOptions}
-          minZoom={0.25}
+          minZoom={props.trace ? TRACE_MIN_ZOOM : 0.25}
           maxZoom={1.5}
           snapGrid={snap() ? [GRID, GRID] : undefined}
           nodesDraggable={!readOnly()}
@@ -1175,7 +1196,9 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
             openQuickAdd({ x: event.clientX, y: event.clientY })
           }}
           onMoveStart={() => closeQuickAdd()}
-          onMove={() => setGestureMoved(true)}
+          // Only a person's pan or zoom (it has a source event): a view the canvas moves itself (a run's path fitted on
+          // open, a step centred) must not swallow the next click.
+          onMove={event => { if (event) setGestureMoved(true) }}
           onConnectStart={(_event, params) => {
             closeQuickAdd()
             setRejected(undefined)

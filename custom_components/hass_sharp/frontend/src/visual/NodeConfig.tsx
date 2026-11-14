@@ -217,7 +217,8 @@ export function NodeConfig(props: NodeConfigProps) {
             row={(port, extra) => <InputRow port={port} ctx={rows} {...extra} />} />
         </Show>
         <Show when={kind() === 'trigger'}>
-          <TriggerConfig node={props.node} onChange={props.onChange} diagnostics={props.diagnostics} />
+          <TriggerConfig node={props.node} onChange={props.onChange} diagnostics={props.diagnostics}
+            onRetype={(config, label) => props.onGraphChange(updateNode(props.graph, props.node.id, label === props.node.label ? { config } : { config, label }))} />
         </Show>
         <Show when={kind() === 'custom'}>
           <div class="hs-insp-field hs-insp-code" data-input-id="source" aria-invalid={errorsFor('source').length > 0 || undefined}>

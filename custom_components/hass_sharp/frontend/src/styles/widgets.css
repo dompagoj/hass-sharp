@@ -49,6 +49,7 @@
 .hs-app .hs-search-group { padding: 6px 10px 2px; font-size: 11px; font-weight: 650; color: var(--hs-muted); }
 .hs-app .hs-search-current { font-weight: 650; }
 .hs-app .hs-input-editor__summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hs-text); }
+.hs-app .hs-input-editor__summary--empty { color: var(--hs-muted); }
 .hs-app .hs-input-editor--inline .hs-search-select .hs-suggestions { min-width: 200px; }
 .hs-app .hs-mixed--block .hs-mixed-value { flex-basis: 100%; }
 .hs-app .hs-picker-rejected:empty { margin: 0; }

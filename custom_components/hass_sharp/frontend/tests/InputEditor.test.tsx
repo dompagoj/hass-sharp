@@ -428,7 +428,7 @@ it('keeps a stored date-time offset and separator, and writes new values without
 it('reports toggles and selects immediately', () => {
   const { host, changes } = mount({ input: field('hass_sharp_test.sectioned', 'speed'), label: 'Speed' })
   const select = q<HTMLSelectElement>(host, 'select[aria-label="Speed"]')
-  expect([...select.options].map(o => o.textContent)).toEqual(['Choose…', 'Slow', 'fast'])
+  expect([...select.options].map(o => o.textContent)).toEqual(['Choose…', 'Slow', 'Fast'])
   chose(select, '1')
   expect(changes).toEqual([{ operand: { kind: 'literal', type: 'string', value: 'fast' } }])
 })
@@ -476,4 +476,17 @@ it('shows an input that can only be connected without a value mode', () => {
   expect(q(host, '.hs-input-editor__state').textContent).toBe('Connect an output of type Entity state.')
   openMenu(host, 'State mode')
   expect([...host.querySelectorAll('[role="menuitem"]')].map(b => b.textContent)).toEqual(['Clear'])
+})
+
+it('edits and summarises a value stored as null as not set, never as the text null', () => {
+  // A target on a card is summarised: "Not set", muted.
+  const target = mount({ input: { types: ['target', 'entity_id'], required: false, description: '' }, variant: 'inline', label: 'Target' }, { kind: 'literal', type: 'target', value: null } as any)
+  const summary = target.host.querySelector('.hs-input-editor__summary')!
+  expect(summary.textContent).toBe('Not set')
+  expect(summary.classList).toContain('hs-input-editor__summary--empty')
+  expect(target.host.textContent).not.toContain('null')
+  // In the panel a text value is an empty box, not a JSON editor holding "null".
+  const text = remount({ input: { types: ['string'], required: false, description: '' }, label: 'Note' }, { kind: 'literal', type: 'string', value: null } as any)
+  expect(text.host.querySelector('textarea.hs-code-input')).toBeNull()
+  expect(q<HTMLInputElement>(text.host, 'input[aria-label="Note"]').value).toBe('')
 })

@@ -1,5 +1,5 @@
 import type { Graph, VisualCatalogSnapshot } from '../contract'
-import { execLabel, type FlowTrace, type TraceStatus } from '../flow/flowModel'
+import { execLabel, type FlowTrace, type TracedValue, type TraceStatus } from '../flow/flowModel'
 import { outputPort } from '../graph'
 import type { RunTrace, TraceEvent, TraceValue } from '../../types'
 
@@ -70,16 +70,23 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 /** A value the recorder could not read is written as its C# type name. */
 export const opaque = (v: unknown) => typeof v === 'string' && v.startsWith('global::')
 
-/** A recorded value in words: what a card's chip says and what the panel shows for anything that is not a tree. */
-export function valueText(value: TraceValue): string {
+/** The label of a recorded choice (an option of a select or a state), when the input offers options; see `optionText`. */
+export type OptionText = (value: string | number) => string | undefined
+/**
+ * A recorded value in words: what a card's chip says and what the panel shows for anything that is not a tree. A
+ * choice reads as its option's label when `option` knows one.
+ */
+export function valueText(value: TraceValue, option?: OptionText): string {
   if (value.redacted) return 'Hidden'
   if (!('v' in value) || value.v === undefined) return 'Too large to record'
   const v = value.v
   // The recorder caps depth only below the top level: a whole value cut to nothing could not be read.
-  if (v === null) return value.trunc ? 'Could not be recorded' : 'No value'
+  // An empty optional value is recorded as null: never shown as the text "null".
+  if (v === null) return value.trunc ? 'Could not be recorded' : 'Not set'
   if (value.trunc && opaque(v)) return 'Could not be recorded'
   if (Array.isArray(v)) return `List · ${plural(v.length, 'item')}`
   if (typeof v === 'object') return `Object · ${plural(Object.keys(v).length, 'field')}`
+  if ((typeof v === 'string' && v !== '') || typeof v === 'number') { const label = option?.(v); if (label !== undefined) return label }
   if (typeof v === 'string') return v === '' ? 'Empty text' : v
   if (typeof v === 'boolean') return v ? 'Yes' : 'No'
   return String(v)
@@ -91,8 +98,12 @@ export const isCut = (value: TraceValue) => !!value.trunc && !value.redacted && 
 /** {@link valueText} says the value is missing rather than showing it. */
 export const isPlaceholder = (value: TraceValue) => !!value.redacted || value.v === undefined || value.v === null || (!!value.trunc && opaque(value.v))
 
-/** What a card's chip receives: the words of {@link valueText}, with `trunc` only where part of a value is shown. */
-export const chipValue = (value: TraceValue): TraceValue => ({ type: value.type, v: valueText(value), trunc: isCut(value) || undefined, src: value.src })
+/**
+ * What a card's chip receives: the words of {@link valueText}, with `trunc` only where part of a value is shown, and
+ * `muted` where the words stand for a missing value (as the panel shows them).
+ */
+export const chipValue = (value: TraceValue, option?: OptionText): TracedValue =>
+  ({ type: value.type, v: valueText(value, option), trunc: isCut(value) || undefined, src: value.src, ...(isPlaceholder(value) ? { muted: true } : {}) })
 
 /** The run as the canvas shows it for one frame. */
 interface Picture {
@@ -242,7 +253,7 @@ export function traceModel(trace: RunTrace, graph: Graph, catalog: VisualCatalog
  * The canvas's `trace` prop for a picture (`frame` `""`: the whole run): statuses and durations of the runs shown, the
  * wires travelled, chips in words. A step that did not run in a chosen iteration or branch is left out (dimmed).
  */
-export function flowTrace(model: TraceModel, graph: Graph, frame: string, focusNodeId?: string): FlowTrace {
+export function flowTrace(model: TraceModel, graph: Graph, frame: string, focusNodeId?: string, option?: (nodeId: string, port: string) => OptionText | undefined): FlowTrace {
   const nodes: FlowTrace['nodes'] = {}
   for (const node of graph.nodes) {
     if (!model.reachedIn(node.id, frame)) continue
@@ -258,7 +269,7 @@ export function flowTrace(model: TraceModel, graph: Graph, frame: string, focusN
     focusNodeId,
     value: (nodeId, port, side) => {
       const value = model.value(nodeId, port, side, frame)
-      return value ? chipValue(value) : undefined
+      return value ? chipValue(value, side === 'in' ? option?.(nodeId, port) : undefined) : undefined
     },
   }
 }

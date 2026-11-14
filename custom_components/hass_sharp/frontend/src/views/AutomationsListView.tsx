@@ -1,13 +1,10 @@
-import { librariesChanged } from '../visual/library-api'
 import { useNavigate, type RouteSectionProps } from '@solidjs/router'
 import { HassCtx } from '../context'
 import { useContext, For, Show, createEffect, createSignal, createMemo, onCleanup, Index } from 'solid-js'
 import { useQuery, useQueryClient } from '@tanstack/solid-query'
 import { Dialog } from '../components/Dialog'
 import { Button, Field, Icon } from '../components/Controls'
-import { Menu } from '../components/Menu'
 import { visualApi, visualError, type HomeAutomation } from '../visual/api'
-import { entityQueryKey } from '../entities'
 import { useRegistry } from '../registry'
 import { createUuid } from '../visual/id'
 import { focusSoon } from '../visual/soon'
@@ -35,24 +32,6 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
   const admin = () => !!hass.user?.is_admin
   let page!: HTMLElement
   const [notice, showNotice] = createNotice()
-
-  // ---- Refresh entity IDs (another task removes it): kept, but in the header's overflow menu.
-  const [refreshing, setRefreshing] = createSignal(false)
-  const [refreshMessage, setRefreshMessage] = createSignal('')
-  const [refreshFailed, setRefreshFailed] = createSignal(false)
-  const refreshEntities = async () => {
-    if (refreshing() || !admin()) return
-    setRefreshing(true); setRefreshFailed(false); setRefreshMessage('Refreshing entity IDs…')
-    try {
-      const result = await hass.callWS<{ success: boolean }>({ type: 'hass_sharp/reload_entities' })
-      if (!result.success) throw new Error('Refresh failed')
-      librariesChanged()
-      await queryClient.invalidateQueries({ queryKey: entityQueryKey })
-      setRefreshMessage('Entity IDs refreshed. New completions, diagnostics and compilations use the updated IDs. Running automations are unchanged.')
-    } catch {
-      setRefreshFailed(true); setRefreshMessage('Could not refresh entity IDs. Try again.')
-    } finally { setRefreshing(false) }
-  }
 
   // ---- The list: one request for every card (outlines, health and recent runs). While a run is going it is read
   // again (see pollInterval), only while the page is visible: the query pauses its interval in a background tab.
@@ -208,12 +187,8 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
         </div>
         <div class="hs-home-heading__actions">
           <Button variant="primary" class="hs-home-new" onClick={() => openNameDialog()}><Icon name="plus" />New automation</Button>
-          <Show when={admin()}>
-            <Menu label="More actions" items={[{ label: refreshing() ? 'Refreshing entity IDs…' : 'Refresh entity IDs', onSelect: () => void refreshEntities() }]} />
-          </Show>
         </div>
       </header>
-      <Show when={refreshMessage()}><p role={refreshFailed() ? 'alert' : 'status'} class="hs-notice hs-home-notice">{refreshMessage()}</p></Show>
       <Show when={notice()}>{current => <p role={current().error ? 'alert' : 'status'} class="hs-notice hs-home-notice" classList={{ 'hs-notice--danger': !!current().error }}>{current().text}</p>}</Show>
 
       <Show when={!home.isSuccess || items().length}>

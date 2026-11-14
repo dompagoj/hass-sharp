@@ -3,13 +3,14 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { FlowAdapter, type FlowTrace } from '../src/visual/FlowAdapter'
+import { tipSide } from '../src/visual/flow/NodeCard'
 import { VisualEditor } from '../src/visual/VisualEditor'
 import { HassCtx } from '../src/context'
 import * as contract from '../src/visual/contract'
 import { addNode, connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { visualFixture } from './visual-fixture'
 import { Timeline } from '../src/visual/trace/Timeline'
-import { flowTrace, traceModel } from '../src/visual/trace/traceModel'
+import { chipValue, flowTrace, traceModel } from '../src/visual/trace/traceModel'
 import type { RunTrace, TraceEvent } from '../src/types'
 import services from '../../../../tests/fixtures/visual-services.json'
 
@@ -19,8 +20,8 @@ vi.mock('../src/visual/contract', async original => {
   return { ...actual, connectData: vi.fn(actual.connectData) }
 })
 
-// Records where the canvas centres the view (a run's focus node).
-const centred = vi.hoisted(() => ({ calls: [] as unknown[][] }))
+// Records where the canvas centres the view (a run's focus node), and what it fits (a run's path).
+const centred = vi.hoisted(() => ({ calls: [] as unknown[][], fits: [] as unknown[][] }))
 vi.mock('@dschz/solid-flow', async original => {
   const actual = await original<typeof import('@dschz/solid-flow')>()
   return {
@@ -34,7 +35,12 @@ vi.mock('@dschz/solid-flow', async original => {
                 centred.calls.push(args)
                 return target.setCenter(...args)
               }
-            : Reflect.get(target, key),
+            : key === 'fitView'
+              ? (...args: Parameters<typeof api.fitView>) => {
+                  centred.fits.push(args)
+                  return target.fitView(...args)
+                }
+              : Reflect.get(target, key),
       })
     },
   }
@@ -880,6 +886,35 @@ it('centres a run on its focus node once: a new trace object for the same node l
   await vi.waitFor(() => expect(centred.calls).toHaveLength(2))
 })
 
+it('opens a run fitted to its path, at whatever zoom a narrow screen needs, once; a run with a focus step opens on it', async () => {
+  layout()
+  const el = host()
+  const trace = (ids: string[], focusNodeId?: string): FlowTrace =>
+    ({ nodes: Object.fromEntries(ids.map(id => [id, { status: 'ok' as const, runs: 1 }])), edges: new Set(), focusNodeId })
+  const [current, setCurrent] = createSignal(trace(['trigger-1', 'condition-1']))
+  centred.calls = []
+  centred.fits = []
+  const paths = () => centred.fits.filter(([options]) => (options as { nodes?: unknown })?.nodes)
+  dispose = render(() => <FlowAdapter graph={createGraph('Run')} readOnly trace={current()} onSelect={() => {}} />, el)
+  await vi.waitFor(() => expect(paths()).toHaveLength(1))
+  const [options] = paths()[0] as [{ nodes: { id: string }[]; minZoom: number }]
+  expect(options.nodes).toEqual([{ id: 'trigger-1' }, { id: 'condition-1' }])
+  // A trace zooms out further than the editor (0.5 to fit, 0.25 by hand): a 360 px screen fits a long path.
+  expect(options.minZoom).toBe(0.1)
+  // A live run reaching more steps leaves the view where the person put it.
+  setCurrent(trace(['trigger-1', 'condition-1', 'service-1']))
+  await new Promise(resolve => setTimeout(resolve, 100))
+  expect(paths()).toHaveLength(1)
+  expect(centred.calls).toHaveLength(0)
+  dispose()
+
+  centred.fits = []
+  dispose = render(() => <FlowAdapter graph={createGraph('Run')} readOnly trace={trace(['trigger-1', 'service-1'], 'service-1')} onSelect={() => {}} />, host())
+  await vi.waitFor(() => expect(centred.calls).toHaveLength(1))
+  await new Promise(resolve => setTimeout(resolve, 100))
+  expect(paths()).toHaveLength(0)
+})
+
 it('rebuilds a card whose wired input shows its source when only the source output changes: its type or its label', async () => {
   const el = host()
   let start = addNode(addNode(createGraph('Outputs'), 'constant', 'source'), 'get_field', 'pick')
@@ -917,4 +952,59 @@ it('names a data wire into a service field by the field label, as the card row d
   dispose = render(() => <FlowAdapter graph={graph} catalog={catalog} onSelect={() => {}} onChange={() => {}} />, el)
   await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge[aria-label^="Data wire"]')).not.toBeNull())
   expect(el.querySelector('.solid-flow__edge[aria-label^="Data wire"]')!.getAttribute('aria-label')).toBe('Data wire from Constant · Value to Call service · Brightness')
+})
+
+it('shows an empty value stored as null as "Not set" in the muted style, never as the text null', async () => {
+  layout()
+  const el = host()
+  // profile is text, hs_color a mixed value: both edited inline, empty, with nothing reading "null".
+  const graph = lightOn({ profile: lit('string', null), hs_color: lit('object', null), transition: lit('number', null) })
+  dispose = render(() => providers(() => <FlowAdapter graph={graph} catalog={withServices()} onSelect={() => {}} onChange={() => {}} />), el)
+  const cell = (field: string) => el.querySelector<HTMLElement>(`[data-id="service-1"] [data-input-id="field:${field}"]`)!
+  await vi.waitFor(() => expect(cell('hs_color')).not.toBeNull())
+  expect(el.querySelector('[data-id="service-1"]')!.textContent).not.toContain('null')
+  const mixed = cell('hs_color').querySelector<HTMLTextAreaElement>('textarea')!
+  expect(mixed.value).toBe('')
+  expect(mixed.placeholder).toBe('Not set')
+  expect(cell('profile').querySelector<HTMLInputElement>('input')!.value).toBe('')
+  dispose(); dispose = undefined; el.innerHTML = ''
+  // Read-only, and in a run whose recorder wrote null: the muted "Not set" chip.
+  const trace: FlowTrace = {
+    nodes: { 'trigger-1': { status: 'ok', runs: 1 }, 'condition-1': { status: 'ok', runs: 1 }, 'service-1': { status: 'ok', runs: 1 } },
+    edges: new Set(),
+    value: (nodeId, port, side) => (nodeId === 'service-1' && port === 'field:transition' && side === 'in' ? chipValue({ type: 'number', v: null }) : undefined),
+  }
+  dispose = render(() => providers(() => <FlowAdapter graph={graph} catalog={withServices()} readOnly trace={trace} onSelect={() => {}} />), el)
+  await vi.waitFor(() => expect(cell('transition')?.querySelector('.hs-value-chip')).not.toBeNull())
+  const chip = cell('transition').querySelector('.hs-value-chip')!
+  expect(chip.textContent).toBe('Not set')
+  expect(chip.classList).toContain('hs-value-chip--muted')
+  expect(el.querySelector('[data-id="service-1"]')!.textContent).not.toContain('null')
+})
+
+it('keeps a card\'s problem tag inside the canvas: beside it on the right, else on the left, else below it', async () => {
+  expect(tipSide({ left: 100, right: 300 }, 200, 12, { left: 0, right: 1000 })).toBe('right')
+  // Near the side panel's edge: on the left.
+  expect(tipSide({ left: 700, right: 900 }, 200, 12, { left: 0, right: 1000 })).toBe('left')
+  // A 360px canvas has room on neither side: below.
+  expect(tipSide({ left: 40, right: 300 }, 200, 12, { left: 0, right: 360 })).toBe('below')
+  layout()
+  const el = host()
+  dispose = render(() => <FlowAdapter graph={typed()} onSelect={() => {}} onChange={() => {}}
+    diagnostics={[{ severity: 3, message: 'Count is required', nodeId: 'service-1', startLine: null, startColumn: null }]} />, el)
+  const card = await vi.waitFor(() => { const found = el.querySelector<HTMLElement>('[data-id="service-1"] .hs-card'); expect(found).not.toBeNull(); return found! })
+  const tip = card.querySelector<HTMLElement>('.hs-node-errors')!
+  expect(tip.classList).toContain('hs-node-errors--right')
+  const rect = (left: number, right: number) => ({ left, right, width: right - left, top: 0, bottom: 100, height: 100, x: left, y: 0, toJSON() {} }) as DOMRect
+  vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(rect(700, 900))
+  vi.spyOn(el.querySelector<HTMLElement>('.solid-flow')!, 'getBoundingClientRect').mockReturnValue(rect(0, 1000))
+  vi.spyOn(tip, 'scrollWidth', 'get').mockReturnValue(220)
+  // Drawn at zoom 1.
+  vi.spyOn(card, 'offsetWidth', 'get').mockReturnValue(200)
+  card.dispatchEvent(new PointerEvent('pointerenter'))
+  await vi.waitFor(() => expect(tip.classList).toContain('hs-node-errors--left'))
+  // Focus from the keyboard places it too.
+  vi.spyOn(el.querySelector<HTMLElement>('.solid-flow')!, 'getBoundingClientRect').mockReturnValue(rect(600, 960))
+  card.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+  await vi.waitFor(() => expect(tip.classList).toContain('hs-node-errors--below'))
 })

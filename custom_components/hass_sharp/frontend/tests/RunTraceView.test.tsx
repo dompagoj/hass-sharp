@@ -80,7 +80,7 @@ const layout = () => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
 }
-function mount(trace: (message: any) => Promise<unknown>, options: { admin?: boolean; revision?: number; path?: string } = {}) {
+function mount(trace: (message: any) => Promise<unknown>, options: { admin?: boolean; revision?: number; path?: string; services?: unknown } = {}) {
   layout()
   const root = document.createElement('div'); root.className = 'hs-app'; document.body.append(root)
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -90,6 +90,8 @@ function mount(trace: (message: any) => Promise<unknown>, options: { admin?: boo
     if (message.type === 'hass_sharp/run_trace') return trace(message)
     if (message.type === 'hass_sharp/visual' && message.request.operation === 'read')
       return { version: 1, ok: true, result: { id: message.request.id, revision: options.revision ?? 4, graph: graph() } }
+    if (message.type === 'hass_sharp/node_library' && message.request.operation === 'services' && options.services)
+      return { version: 1, ok: true, result: options.services }
     return []
   })
   dispose = render(() => (
@@ -485,4 +487,52 @@ it('goes back to the automation\'s Runs tab, and reads the automation the run be
   root.querySelector<HTMLButtonElement>('[aria-label="Back to the automation’s runs"]')!.click()
   await vi.waitFor(() => expect(root.querySelector('.editor-page')).not.toBeNull())
   expect(history.get()).toBe('/visual/heating?drawer=runs')
+})
+
+it('names service fields and their options from the live services when the run\'s snapshot has no schema', async () => {
+  const flash = (i: number) => ({ type: 'string', v: i === 1 ? 'short' : 'long' })
+  const reply = response({ snapshot: { revision: 'rev', visualId: 'heating', visualRevision: 4, graph: (() => {
+    const g = graph()
+    const service = g.nodes.find(n => n.id === 'service-1')!
+    service.config = { ...service.config, fields: { ...(service.config.fields as object), flash: lit('string', 'long') } }
+    return g
+  })(), catalog: nodeCatalog } }, { events: events().map(e => e.node === 'service-1' ? { ...e, inputs: { ...e.inputs, 'field:flash': flash(Number(e.frame.at(6))) } } : e) })
+  const { root, callWS } = mount(async () => reply, { services })
+  await vi.waitFor(() => expect(callWS).toHaveBeenCalledWith({ type: 'hass_sharp/node_library', request: { operation: 'services' } }))
+  // The schema's label ("Brightness", not the key in words) and the option in words ("Long", not "long"), on the card and in the panel.
+  await vi.waitFor(() => expect(card(root, 'service-1').querySelector('[data-input-id="field:brightness_pct"] .hs-pin-label')?.textContent).toBe('Brightness'))
+  expect(card(root, 'service-1').querySelector('[data-input-id="field:flash"] .hs-value-chip')?.textContent).toBe('Long')
+  card(root, 'service-1').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe('Turn on'))
+  expect(port(root, 'field:brightness_pct').querySelector('.hs-trace-port__name')!.textContent).toBe('Brightness')
+  expect(port(root, 'field:flash').querySelector('.hs-trace-value')!.textContent).toBe('Long')
+})
+
+it('names service fields by their key in words when the service is not known', async () => {
+  const reply = response({ snapshot: { revision: 'rev', visualId: 'heating', visualRevision: 4, graph: graph(), catalog: nodeCatalog } })
+  const { root } = mount(async () => reply)
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(7))
+  card(root, 'service-1').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe('Turn on'))
+  expect(port(root, 'field:brightness_pct').querySelector('.hs-trace-port__name')!.textContent).toBe('Brightness pct')
+  expect(card(root, 'service-1').querySelector('[data-input-id="field:brightness_pct"] .hs-pin-label')?.textContent).toBe('Brightness pct')
+})
+
+it('reads an empty value (null) as "Not set" in the muted style in the trigger data, a step\'s values and its card', async () => {
+  const list = events().map(e => e.node === 'service-1' && e.frame === 'lights#2:body' ? { ...e, inputs: { ...e.inputs, 'field:brightness_pct': { type: 'number', v: null } } } : e)
+  const { root } = mount(async () => response({}, { trigger: { platform: 'state', from_state: null, entity_id: 'light.hall' }, events: list }))
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(7))
+  const tree = panel(root).querySelector<HTMLElement>('[aria-label="Trigger data"]')!
+  const leaf = [...tree.querySelectorAll('.hs-json-leaf')].find(l => l.textContent?.startsWith('from_state'))!
+  expect(leaf.textContent).toBe('from_state Not set')
+  expect(leaf.querySelector('.hs-trace-value--muted')).not.toBeNull()
+  const chip = await vi.waitFor(() => { const found = card(root, 'service-1').querySelector('[data-input-id="field:brightness_pct"] .hs-value-chip'); expect(found).not.toBeNull(); return found! })
+  expect(chip.textContent).toBe('Not set')
+  expect(chip.classList).toContain('hs-value-chip--muted')
+  card(root, 'service-1').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe('Turn on'))
+  const value = port(root, 'field:brightness_pct').querySelector('.hs-trace-value')!
+  expect(value.textContent).toBe('Not set')
+  expect(value.classList).toContain('hs-trace-value--muted')
+  expect(root.querySelector('.hs-trace-page, .hs-visual')?.textContent ?? root.textContent).not.toMatch(/\bnull\b/)
 })

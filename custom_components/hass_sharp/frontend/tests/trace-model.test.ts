@@ -181,7 +181,12 @@ it('says what a value is in plain words, and never shows a placeholder as data',
   expect(valueText({ type: 'string', v: '***', redacted: true })).toBe('Hidden')
   // A whole value is never cut for depth (only what is inside it): a cut null could not be read.
   expect(valueText({ type: 'object', v: null, trunc: true })).toBe('Could not be recorded')
-  expect(valueText({ type: 'object', v: null })).toBe('No value')
+  // An empty optional value is recorded as null: "Not set", muted on a card's chip, never the text "null".
+  expect(valueText({ type: 'object', v: null })).toBe('Not set')
+  expect(chipValue({ type: 'string', v: null })).toEqual({ type: 'string', v: 'Not set', muted: true })
+  expect(chipValue({ type: 'string', v: 'on' })).toEqual({ type: 'string', v: 'on' })
+  // A choice reads as its option's label when the input offers one.
+  expect(valueText({ type: 'string', v: 'heat_cool' }, v => (v === 'heat_cool' ? 'Heat cool' : undefined))).toBe('Heat cool')
   expect(valueText({ type: 'object', trunc: true })).toBe('Too large to record')
   expect(valueText({ type: 'global::System.Linq.Enumerable', v: 'global::System.Linq.Enumerable.SelectIterator', trunc: true })).toBe('Could not be recorded')
   expect(valueText({ type: 'object', v: { a: 1, b: 2, c: 3, d: 4 } })).toBe('Object · 4 fields')

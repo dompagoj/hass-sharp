@@ -125,3 +125,24 @@ it('entity picker keyboard selection works inside the editor shortcut boundary',
   field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
   expect(json(host).nodes[0].config.entity).toBe('sensor.fresh')
 })
+
+it('changes a trigger type and its written label in one undo step; a typed label stays', () => {
+  const host = root()
+  dispose = render(() => <VisualEditor name="Heating" />, host)
+  focusNode(host, 'trigger-1')
+  const choose = (id: string) => {
+    button(host.querySelector('.hs-inspector')!, 'Change trigger type').click()
+    host.querySelector<HTMLInputElement>(`.hs-inspector [aria-label="Trigger type"] input[value="${id}"]`)!.click()
+  }
+  const trigger = () => json(host).nodes.find((n: any) => n.id === 'trigger-1')
+  expect(trigger()).toMatchObject({ label: 'Entity changes', config: { type: 'entity', entity: 'binary_sensor.motion' } })
+  choose('daily')
+  expect(trigger().label).toBe('Every day')
+  expect(trigger().config).toEqual({ type: 'daily', manual: true, mode: 'Single' })
+  button(host, 'Undo').click()
+  expect(trigger()).toMatchObject({ label: 'Entity changes', config: { type: 'entity', entity: 'binary_sensor.motion' } })
+  input(host, 'Node label', 'Hall motion')
+  choose('state')
+  expect(trigger().label).toBe('Hall motion')
+  expect(trigger().config).toEqual({ type: 'ha', trigger: { trigger: 'state', entity_id: 'binary_sensor.motion' }, manual: true, mode: 'Single' })
+})

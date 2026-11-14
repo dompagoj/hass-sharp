@@ -8,6 +8,7 @@ import { AutomationRuns } from '../src/components/AutomationRuns'
 import { dispatchRun } from '../src/components/runDispatch'
 import { summarizeTrigger } from '../src/components/TriggerSummary'
 import { page, run as record, triggers, v1Run } from './run-fixture'
+import { relativeTime } from '../src/automations/model'
 
 let dispose: () => void
 let client: QueryClient
@@ -89,6 +90,27 @@ it('renders one compact row per run with label, cause, trigger, relative time an
     // Details are on demand: no raw JSON or metadata until the row is expanded.
     expect(row.querySelector('.hs-run-body')).toBeNull()
     expect(row.textContent).not.toContain('run-1')
+  } finally { vi.useRealTimers() }
+})
+
+it('says yesterday only for the calendar day before today, in the run list too', async () => {
+  // Local times, so the test holds in any time zone.
+  const now = new Date(2026, 10, 12, 9, 0).getTime()
+  const at = (day: number, hour: number, minute = 0) => new Date(2026, 10, day, hour, minute).toISOString()
+  expect(relativeTime(at(12, 8, 30), now)).toBe('30 minutes ago')
+  expect(relativeTime(at(12, 1), now)).toBe('8 hours ago')
+  expect(relativeTime(at(11, 20), now)).toBe('13 hours ago')
+  // 23 hours ago is yesterday morning; 30 hours ago (03:00 two days back) is not yesterday.
+  expect(relativeTime(at(11, 10), now)).toBe('yesterday')
+  expect(relativeTime(at(11, 0, 30), now)).toBe('yesterday')
+  expect(relativeTime(at(10, 3), now)).toBe('2 days ago')
+  // Late in the evening, 23 hours ago is still today.
+  expect(relativeTime(new Date(2026, 10, 12, 0, 30).toISOString(), new Date(2026, 10, 12, 23, 30).getTime())).toBe('23 hours ago')
+  vi.useFakeTimers({ now, toFake: ['Date'] })
+  try {
+    const { root } = setup(async () => page([record({ receivedUtc: at(10, 3) })]))
+    await vi.waitFor(() => expect(rows(root)).toHaveLength(1))
+    expect(rows(root)[0].querySelector('time')!.textContent).toBe('2 days ago')
   } finally { vi.useRealTimers() }
 })
 

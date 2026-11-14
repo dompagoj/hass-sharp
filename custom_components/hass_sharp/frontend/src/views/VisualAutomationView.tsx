@@ -1,11 +1,11 @@
-import { createSignal } from 'solid-js'
+import { createSignal, onMount } from 'solid-js'
 import { useBeforeLeave, useSearchParams, useParams, useNavigate } from '@solidjs/router'
 import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
 import { VisualEditor } from '../visual/VisualEditor'
 
 export function VisualAutomationView() {
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   const route = useParams()
   const navigate = useNavigate()
   const [dirty, setDirty] = createSignal(false)
@@ -16,6 +16,9 @@ export function VisualAutomationView() {
     event.preventDefault()
     setLeave(() => () => event.retry(true))
   })
+  // `?drawer=runs` only says which tab to open with: the editor has read it by now, so it leaves the address and a
+  // reload opens the editor as usual.
+  onMount(() => { if (params.drawer !== undefined) setParams({ drawer: undefined }, { replace: true }) })
   return <>
     <VisualEditor documentId={route.id && route.id !== 'new' ? route.id : undefined} onDirtyChange={setDirty}
       onSaved={doc => { if (route.id === 'new') navigate(`/visual/${doc.id}`, { replace: true }) }}

@@ -198,7 +198,11 @@
 
 /* Problems and trace status, shown beside the hovered or focused card. */
 .hs-app .hs-node-errors { display: none; position: absolute; z-index: 20; left: calc(100% + 12px); top: 0; min-width: 200px; max-width: 320px; width: max-content; padding: 8px 12px; border: 1px solid var(--hs-port-error); border-radius: 8px; background: var(--hs-surface); box-shadow: var(--hs-card-shadow-raised); color: var(--hs-text); font-size: 12px; pointer-events: none; }
+.hs-app .hs-card--warning .hs-node-errors { border-color: var(--hs-warning); }
 .hs-app .hs-card--traced .hs-node-errors { border-color: var(--hs-trace); }
+/* Beside the card on its left, or under it, when the right side would leave the canvas (the side panel's edge). */
+.hs-app .hs-node-errors--left { left: auto; right: calc(100% + 12px); }
+.hs-app .hs-node-errors--below { left: 0; top: calc(100% + 8px); min-width: 0; width: max-content; max-width: max(100%, 200px); }
 .hs-app .hs-node-errors p { margin: 0 0 4px; }
 .hs-app .hs-node-errors p:last-child { margin: 0; }
 .hs-app .solid-flow__node:hover .hs-node-errors, .hs-app .solid-flow__node:focus-within .hs-node-errors { display: block; }
@@ -207,6 +211,14 @@
 .hs-app .hs-connection-prompt, .hs-app .hs-canvas-notice { position: absolute; z-index: 10; top: 8px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 16px); margin: 0; border: 1px solid var(--hs-line); background: var(--hs-surface); color: var(--hs-text); border-radius: 6px; padding: 8px 12px; font-size: 12px; box-shadow: var(--hs-card-shadow); pointer-events: none; }
 .hs-app .hs-connection-prompt { border-color: var(--hs-accent); }
 .hs-app .hs-connection-prompt ~ .hs-canvas-notice { top: 48px; }
+@media (max-width: 699px) {
+  /* Below the floating "Add step" button, which takes the canvas's top-left corner on a phone. */
+  .hs-app .hs-connection-prompt, .hs-app .hs-canvas-notice { top: 60px; }
+  .hs-app .hs-connection-prompt ~ .hs-canvas-notice { top: 100px; }
+}
+/* Full screen: below the compact bar, which is raised over the canvas. */
+.hs-app .hs-visual--fullscreen .hs-flow .hs-connection-prompt, .hs-app .hs-visual--fullscreen .hs-flow .hs-canvas-notice { top: 72px; }
+.hs-app .hs-visual--fullscreen .hs-flow .hs-connection-prompt ~ .hs-canvas-notice { top: 112px; }
 .hs-app .hs-canvas-notice--kept { display: flex; align-items: center; gap: 8px; padding-right: 4px; pointer-events: auto; }
 .hs-app .hs-canvas-notice__close { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--hs-muted); cursor: pointer; }
 .hs-app .hs-canvas-notice__close:hover { background: var(--hs-hover, color-mix(in srgb, var(--hs-text) 8%, transparent)); color: var(--hs-text); }

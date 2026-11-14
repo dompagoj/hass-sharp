@@ -3,6 +3,7 @@ import { useHass } from '../context'
 import type { InputSpec, ServiceSchema } from './contract'
 import { serviceFieldLabel } from './nodeSummary'
 import { domainWords } from './typeLabels'
+import { optionWords } from './widgets/json'
 
 type Localize = (key: string, ...args: unknown[]) => string
 type Translating = { localize?: Localize; loadBackendTranslation?: (category: string, integrations?: string | string[]) => Promise<unknown> }
@@ -67,7 +68,7 @@ export function useServiceText(): ServiceText {
       const key = typeof select?.translation_key === 'string' ? select.translation_key : ''
       if (!key || !Array.isArray(spec.enum)) return spec
       const [d] = split(serviceId)
-      const labels = spec.enum.map((value, i) => t(`component.${d}.selector.${key}.options.${String(value)}`) || spec.enumLabels?.[i] || String(value))
+      const labels = spec.enum.map((value, i) => t(`component.${d}.selector.${key}.options.${String(value)}`) || spec.enumLabels?.[i] || optionWords(value))
       return { ...spec, enumLabels: labels }
     },
   }

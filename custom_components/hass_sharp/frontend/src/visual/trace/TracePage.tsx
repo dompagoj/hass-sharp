@@ -9,13 +9,14 @@ import { createFullscreen, createFullscreenPage, FullscreenButton } from '../ful
 import { Glyph } from '../Glyph'
 import { icons } from '../icons'
 import { media } from '../media'
-import { nodeCatalog } from '../contract'
+import { nodeCatalog, type ServicesSection } from '../contract'
 import { TopBar } from '../TopBar'
 import { CustomCodeEditor } from '../CustomCodeEditor'
 import type { RunStatus, RunTraceResponse, TraceEvent } from '../../types'
 import { Timeline } from './Timeline'
 import { runDuration, runTime, TraceInspector } from './TraceInspector'
 import { flowTrace, inChosenFrame, traceModel } from './traceModel'
+import { inputOption } from './traceWords'
 
 /** Focus is where keys mean text or a choice in a list: the page's shortcuts leave those keys alone. */
 const typing = (target: Element) =>
@@ -45,16 +46,26 @@ export function TracePage(props: {
   /** A read after the failed one is under way. */
   retrying?: boolean
   onRetry?(): void
+  /** The live services section (C4): names service fields and their options when the stored snapshot has no schema. */
+  services?: ServicesSection
 }) {
   let root!: HTMLElement
   let flow: FlowControls | undefined
   const run = () => props.response.run
   const snapshot = () => props.response.snapshot ?? undefined
   const graph = () => snapshot()?.graph
-  const catalog = () => snapshot()?.catalog ?? nodeCatalog
+  const stored = () => snapshot()?.catalog ?? nodeCatalog
+  /**
+   * What the page shows the run with: the stored catalog, plus the live services when the snapshot has none, only for
+   * words (field labels, option labels, field types). The run itself is read with the stored catalog.
+   */
+  const catalog = createMemo(() => {
+    const base = stored()
+    return base.services || !props.services ? base : { ...base, services: props.services }
+  })
   const model = createMemo(() => {
     const trace = props.response.trace, current = graph()
-    return trace && current ? traceModel(trace, current, catalog()) : undefined
+    return trace && current ? traceModel(trace, current, stored()) : undefined
   })
   const name = () => graph()?.name || run().actionLabel || 'Automation run'
 
@@ -119,7 +130,10 @@ export function TracePage(props: {
   )
   const trace = createMemo(() => {
     const current = model(), shown = graph()
-    return current && shown ? flowTrace(current, shown, frame(), focusId()) : undefined
+    const words = catalog()
+    return current && shown
+      ? flowTrace(current, shown, frame(), focusId(), (id, port) => inputOption(shown, shown.nodes.find(n => n.id === id), port, words))
+      : undefined
   })
 
   // ---- The value panel: docked beside the canvas, or a sheet (below 900px) / floating panel (full screen).

@@ -3,6 +3,8 @@ import { nodeTitle } from '../flow/flowModel'
 import { nodeInputs, portLabel } from '../graph'
 import { serviceFieldLabel } from '../nodeSummary'
 import type { TraceValue } from '../../types'
+import { optionLabel, widgetFor } from '../widgets'
+import type { OptionText } from './traceModel'
 
 /** Words for the trace view's value panel: port names, where an input came from, and the order inputs are listed in. */
 
@@ -15,6 +17,17 @@ export function inputLabel(graph: Graph, node: GraphNode, port: string, catalog:
 }
 export const outputLabel = (node: GraphNode | undefined, port: string, catalog: VisualCatalogSnapshot) =>
   (node ? own(dataOutputs(node, catalog), port)?.label : undefined) ?? portLabel(port)
+
+/**
+ * How a recorded value of a step's input reads when the input is a choice (a select or a state): the same option
+ * label the card and the panel show (`optionLabel`); undefined for any other input.
+ */
+export function inputOption(graph: Graph, node: GraphNode | undefined, port: string, catalog: VisualCatalogSnapshot): OptionText | undefined {
+  const spec = node ? own(nodeInputs(graph, node, catalog), port) : undefined
+  if (!spec) return
+  const widget = widgetFor(spec, catalog)
+  return widget.kind === 'select' || widget.kind === 'state' ? value => optionLabel(widget, value) : undefined
+}
 
 /** Where an input's value came from: "From Motion · Entity" or "Value". */
 export function inputSource(graph: Graph, value: TraceValue, catalog: VisualCatalogSnapshot): string {

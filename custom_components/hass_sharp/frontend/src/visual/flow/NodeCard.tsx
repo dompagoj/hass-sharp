@@ -42,6 +42,18 @@ function EditorBoundary(props: { children: JSX.Element }) {
   )
 }
 
+type Box = { left: number; right: number }
+/**
+ * Where a card's problem tag goes so it stays readable inside the canvas: beside the card on the right, else on the
+ * left, else (a narrow canvas, or a card wider than the room left) below the card. `gap` and `width` are in screen
+ * pixels, so a zoomed canvas is measured as drawn.
+ */
+export function tipSide(card: Box, width: number, gap: number, bounds: Box): 'right' | 'left' | 'below' {
+  if (card.right + gap + width <= bounds.right) return 'right'
+  if (card.left - gap - width >= bounds.left) return 'left'
+  return 'below'
+}
+
 /** A traced or configured value, read-only. */
 const ValueChip = (props: { text: string; title?: string; muted?: boolean }) => (
   <span class="hs-value-chip" classList={{ 'hs-value-chip--muted': props.muted }} title={props.title ?? props.text}>
@@ -80,9 +92,10 @@ export function NodeCard(props: NodeProps) {
   const InputCell = (cell: { input: InputView }) => {
     let root!: HTMLDivElement
     const input = () => cell.input
+    // An empty value stored as null is shown as not set, never as the text "null".
     const literal = () => {
       const value = operand(input().port)
-      return value?.kind === 'literal' ? value.value : undefined
+      return value?.kind === 'literal' && value.value !== null ? value.value : undefined
     }
     const configured = () => {
       return literal() === undefined ? '' : valueSummary(widgetFor(input().spec, flow.catalog()), literal(), flow.names())
@@ -179,7 +192,7 @@ export function NodeCard(props: NodeProps) {
     const shown = (): { text: string; title?: string; muted?: boolean } | undefined => {
       if (showEditor()) return undefined
       const value = traced()
-      if (value) return { text: `${clip(displayValue(value.v as never) || '—')}${value.trunc ? ' …' : ''}`, title: input().source }
+      if (value) return { text: `${clip(displayValue(value.v as never) || '—')}${value.trunc ? ' …' : ''}`, title: input().source, muted: value.muted }
       if (input().mode === 'connected' || input().mode === 'wire') return undefined
       if (configured()) return { text: clip(configured()) }
       // A required input without a value says so (outside a run); an optional one shows its label only.
@@ -265,12 +278,29 @@ export function NodeCard(props: NodeProps) {
         <Show when={traced()}>
           {value => (
             <div class="hs-pin-value">
-              <ValueChip text={`${clip(displayValue(value().v as never) || '—', 32)}${value().trunc ? ' …' : ''}`} />
+              <ValueChip text={`${clip(displayValue(value().v as never) || '—', 32)}${value().trunc ? ' …' : ''}`} muted={value().muted} />
             </div>
           )}
         </Show>
       </div>
     )
+  }
+  // The problem tag shows on hover and focus; it is placed then, against the canvas edges (the side panel's included).
+  let tip: HTMLDivElement | undefined
+  const [side, setSide] = createSignal<'right' | 'left' | 'below'>('right')
+  const placeTip = (event: Event) => {
+    const card = event.currentTarget as HTMLElement
+    requestAnimationFrame(() => {
+      const canvas = card.closest('.solid-flow') ?? card.closest('.hs-flow')
+      if (!tip || !canvas || !tip.isConnected) return
+      // Measured as drawn on the right (the widest it gets), at the canvas zoom; nothing is painted in between.
+      setSide('right')
+      const box = card.getBoundingClientRect(), bounds = canvas.getBoundingClientRect()
+      const zoom = card.offsetWidth ? box.width / card.offsetWidth : 1
+      const width = Math.min(tip.scrollWidth || 0, 320) * zoom
+      if (!width) return
+      setSide(tipSide(box, width, 12 * zoom, bounds))
+    })
   }
   const rowIds = createMemo(() => view()?.rows.map(row => row.id) ?? [], undefined, {
     equals: (a, b) => a.length === b.length && a.every((value, i) => value === b[i]),
@@ -298,6 +328,8 @@ export function NodeCard(props: NodeProps) {
           style={{ '--hs-cat': current().identity.color }}
           data-category={current().identity.key}
           aria-describedby={current().problems.length || trace() ? errorsId : undefined}
+          on:pointerenter={placeTip}
+          on:focusin={placeTip}
         >
           <header class="hs-card__head">
             <Show when={current().execIn}>{pin => <Pin nodeId={id} pin={pin()} errors={pinErrors(pin(), 'in')} describedBy={errorsId} />}</Show>
@@ -386,7 +418,7 @@ export function NodeCard(props: NodeProps) {
             </div>
           </Show>
           <Show when={current().problems.length || trace()}>
-            <div role="tooltip" id={errorsId} class="hs-node-errors">
+            <div role="tooltip" id={errorsId} ref={tip} class={`hs-node-errors hs-node-errors--${side()}`}>
               <Show when={trace()}>
                 <p>{statusText()}</p>
               </Show>

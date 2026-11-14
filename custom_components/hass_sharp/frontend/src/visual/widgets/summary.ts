@@ -1,5 +1,5 @@
 import type { JsonValue } from '../contract'
-import { displayValue, jsonEqual, record, strings } from './json'
+import { displayValue, jsonEqual, optionWords, record, strings } from './json'
 import { durationParts, durationSeconds, type Widget } from './model'
 import { targetIds } from './pickers'
 
@@ -17,6 +17,13 @@ function plain(value: JsonValue): string {
   if (record(value)) return `Object, ${count(Object.keys(value).length, 'field')}`
   return displayValue(value)
 }
+/**
+ * How a chosen option reads, wherever it is shown (the card, the panel, the trace view): the widget's own option label
+ * (the schema's label), else the value in words. One helper, so the three always agree.
+ */
+export function optionLabel(widget: Widget, value: JsonValue): string {
+  return widget.options?.find(o => jsonEqual(o.value, value))?.label ?? optionWords(value)
+}
 /** Whether a summary of this widget names registry items (and so wants a `NameResolver`). */
 export const namesRegistryItems = (widget: Widget) => ['target', 'entity', 'device', 'area', 'floor', 'label'].includes(widget.kind)
 
@@ -24,8 +31,9 @@ export const namesRegistryItems = (widget: Widget) => ['target', 'entity', 'devi
  * A one-line description of a value, shown on a node card for a widget that is too large to edit there.
  * Registry ids are named through `names` (entity friendly names, device, area, floor and label names), else shown as ids.
  */
-export function valueSummary(widget: Widget, value: JsonValue | undefined, names?: NameResolver): string {
-  if (value === undefined) return 'Not set'
+export function valueSummary(widget: Widget, value: JsonValue | null | undefined, names?: NameResolver): string {
+  // null is how an empty optional value is often stored: it reads as not set, never as "null".
+  if (value === undefined || value === null) return 'Not set'
   if (value === '') return 'Empty text'
   // Entity ids read well enough without a name; device, area, floor and label ids may be GUIDs, so an unnamed one is
   // only counted ("1 device"), never shown (design principle 2).
@@ -50,7 +58,7 @@ export function valueSummary(widget: Widget, value: JsonValue | undefined, names
       return clip(ids.length ? named(widget.kind as NamedKind, ids).join(', ') : plain(value))
     }
     case 'select': case 'state': {
-      const label = (item: JsonValue) => widget.options?.find(o => jsonEqual(o.value, item))?.label ?? displayValue(item)
+      const label = (item: JsonValue) => optionLabel(widget, item)
       return clip(Array.isArray(value) ? value.map(label).join(', ') : label(value))
     }
     case 'duration': {

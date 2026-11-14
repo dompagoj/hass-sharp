@@ -31,6 +31,90 @@ export const triggerChoices: Choice[] = [
 ]
 const native = ['entity', 'daily', 'once', 'manual', 'startup']
 const platforms = ['state', 'numeric_state', 'time', 'time_pattern', 'sun', 'zone', 'event']
+
+/**
+ * Where each trigger type keeps its settings, by what they mean: `config:<key>` in the node's config,
+ * `trigger:<key>` in the Home Assistant declaration. Two types share a setting only under the same meaning, so a
+ * sun trigger's `event` (sunrise) never becomes a zone trigger's `event` (enter).
+ */
+const typeFields: Record<string, Record<string, string>> = {
+  entity: { entity: 'config:entity' },
+  daily: { timeOfDay: 'config:time', timeZone: 'config:timeZone' },
+  once: { dateTime: 'config:at' },
+  manual: {},
+  startup: {},
+  state: { entity: 'trigger:entity_id', attribute: 'trigger:attribute', from: 'trigger:from', to: 'trigger:to', for: 'trigger:for' },
+  numeric_state: { entity: 'trigger:entity_id', attribute: 'trigger:attribute', above: 'trigger:above', below: 'trigger:below', for: 'trigger:for' },
+  time: { timeOfDay: 'trigger:at' },
+  time_pattern: { hours: 'trigger:hours', minutes: 'trigger:minutes', seconds: 'trigger:seconds' },
+  sun: { sunEvent: 'trigger:event', offset: 'trigger:offset' },
+  zone: { who: 'trigger:entity_id', zone: 'trigger:zone', zoneEvent: 'trigger:event' },
+  event: { eventType: 'trigger:event_type', eventData: 'trigger:event_data' },
+  other: {},
+}
+/** The config keys that belong to one type or another; every other key (mode, manual, startup, …) is the trigger's own. */
+const typeKeys = ['type', 'entity', 'time', 'timeZone', 'at', 'trigger']
+/** Options every Home Assistant trigger has, whatever its platform. */
+const commonOptions = ['id', 'enabled', 'variables']
+/** A setting that may only move to a type that can hold its value. */
+const fitsField = (meaning: string, location: string, value: unknown) => {
+  if (meaning === 'entity' && location === 'config:entity') return typeof value === 'string' || (Array.isArray(value) && value.length === 1 && typeof value[0] === 'string')
+  if (meaning === 'timeOfDay') return typeof value === 'string' && /^\d{1,2}:\d\d/.test(value)
+  return true
+}
+
+/** The choice a trigger config stands for: a HassSharp type, a known Home Assistant platform, or "other". */
+export function triggerChoice(config: Config): string {
+  const type = typeof config.type === 'string' ? config.type : 'entity'
+  if (type !== 'ha') return type
+  const declaration = record(config.trigger) ? config.trigger : {}
+  const platform = String(declaration.trigger ?? declaration.platform ?? 'state')
+  return platforms.includes(platform) ? platform : 'other'
+}
+
+/**
+ * The config of a trigger changed to another type: the new type's defaults, the trigger's own settings (run mode,
+ * Run now, startup), and only the settings both types have. Choosing the current type changes nothing.
+ */
+export function retypeTrigger(config: Config, id: string): Config {
+  const from = triggerChoice(config)
+  if (from === id) return config
+  const declaration = record(config.trigger) ? config.trigger : {}
+  const read = (location: string) => {
+    const [where, key] = location.split(':')
+    return where === 'config' ? config[key] : declaration[key]
+  }
+  const next: Config = Object.fromEntries(Object.entries(config).filter(([key]) => !typeKeys.includes(key)))
+  const trigger: Record<string, unknown> = {}
+  if (native.includes(id)) next.type = id
+  else {
+    next.type = 'ha'
+    const platformKey = Object.hasOwn(declaration, 'platform') && !Object.hasOwn(declaration, 'trigger') ? 'platform' : 'trigger'
+    trigger[platformKey] = id === 'other' ? '' : id
+    for (const key of commonOptions) if (Object.hasOwn(declaration, key)) trigger[key] = declaration[key]
+    if (id === 'sun') trigger.event = 'sunrise'
+    if (id === 'zone') trigger.event = 'enter'
+  }
+  const target = typeFields[id] ?? {}
+  for (const [meaning, location] of Object.entries(typeFields[from] ?? {})) {
+    const value = read(location)
+    const to = target[meaning]
+    if (value === undefined || value === null || value === '' || !to || !fitsField(meaning, to, value)) continue
+    const [where, key] = to.split(':')
+    if (where === 'config') next[key] = Array.isArray(value) && value.length === 1 ? value[0] : value
+    else trigger[key] = value
+  }
+  if (next.type === 'ha') next.trigger = trigger
+  return next
+}
+/**
+ * The label after a type change: a label the editor wrote (the old type's name) becomes the new type's name; a label
+ * the person typed, or no label, stays.
+ */
+export function retypedLabel(label: string | undefined, from: string, to: string): string | undefined {
+  const old = triggerChoices.find(c => c.id === from)?.name
+  return label !== undefined && label === old ? triggerChoices.find(c => c.id === to)?.name ?? label : label
+}
 const runModes = [
   ['Single', 'Ignore it', 'Keep the current run; the new trigger is skipped.'],
   ['Restart', 'Start over', 'Stop the current run and start a new one.'],
@@ -86,9 +170,15 @@ const timeZones = (() => {
 /**
  * The main section of a trigger: "When" (a visible choice of trigger types, each with an icon and a one-line
  * explanation), the form of the chosen type built on the shared widgets, and what happens when it triggers again
- * while running. Changing the type keeps the other types' settings, so switching back loses nothing.
+ * while running. Changing the type starts the new type from its defaults (see `retypeTrigger`).
  */
-export function TriggerConfig(props: { node: GraphNode; onChange: Change; diagnostics?: VisualDiagnostic[] }) {
+export function TriggerConfig(props: {
+  node: GraphNode
+  onChange: Change
+  /** A new type: its config and the node's label, as one change. */
+  onRetype?(config: Config, label: string | undefined): void
+  diagnostics?: VisualDiagnostic[]
+}) {
   const hass = useHass()
   const [discovered, setDiscovered] = createSignal<Record<string, unknown>>({})
   const [discoveryError, setDiscoveryError] = createSignal('')
@@ -178,12 +268,12 @@ export function TriggerConfig(props: { node: GraphNode; onChange: Change; diagno
   }
   const choose = (id: string) => {
     setChoosing(false)
-    if (native.includes(id)) return props.onChange({ ...config(), type: id })
-    const next: Record<string, unknown> = { ...declaration() }
-    const key = platformKey()
-    next[key] = id === 'other' ? (choice() === 'other' ? platform() : '') : id
-    if (next.event === undefined && (id === 'sun' || id === 'zone')) next.event = id === 'sun' ? 'sunrise' : 'enter'
-    props.onChange({ ...config(), type: 'ha', trigger: next })
+    if (id === choice()) return
+    const next = retypeTrigger(config(), id)
+    const label = retypedLabel(props.node.label, choice(), id)
+    // The config and the label change in one step, so one Undo restores both.
+    if (props.onRetype) props.onRetype(next, label)
+    else props.onChange(next)
   }
   const value = (key: string) => declaration()[key]
   const field = (key: string, label: string, widget: Widget, extra: { hint?: string; required?: boolean; map?: (v: JsonValue | undefined) => unknown; context?: { targetEntityIds?: string[] } } = {}) => (

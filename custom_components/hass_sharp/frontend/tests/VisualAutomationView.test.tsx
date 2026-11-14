@@ -22,7 +22,7 @@ function setup(saved = false, minimal = false, path?: string) {
       <Route path="/elsewhere" component={() => <h1>Elsewhere</h1>} />
       <Route path="/automations" component={() => <h1>Automations</h1>} />
     </MemoryRouter></HassCtx.Provider></QueryClientProvider>, root)
-  return { root, fixture }
+  return { root, fixture, history }
 }
 const button = (root: Element, text: string) => [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === text || b.getAttribute('aria-label') === text)!
 const edit = (root: Element, text: string) => { const input = root.querySelector<HTMLInputElement>('[aria-label="Node label"]')!; input.value = text; input.dispatchEvent(new Event('input', { bubbles: true })) }
@@ -272,12 +272,13 @@ it('authors two triggers, saves/reloads them, then dispatches either saved actio
   const items = () => [...root.querySelectorAll<HTMLButtonElement>('[role="menu"][aria-label="Run which trigger"] [role="menuitem"]')]
   for (const index of [0, 1]) {
     runNow.click()
-    expect(items().map(item => item.querySelector('strong')!.textContent)).toEqual(['Entity changes', 'Manual evening'])
+    // The first trigger's written label followed its new type.
+    expect(items().map(item => item.querySelector('strong')!.textContent)).toEqual(['Every day', 'Manual evening'])
     expect(items()[0].querySelector('small')!.textContent).toContain('07:30')
     expect(document.activeElement).toBe(items()[0])
     items()[index].click()
     expect(items()).toHaveLength(0)
-    await vi.waitFor(() => expect(root.querySelector('.hs-topbar__notice')?.textContent).toMatch(/^Run of (Entity changes|Manual evening) started/))
+    await vi.waitFor(() => expect(root.querySelector('.hs-topbar__notice')?.textContent).toMatch(/^Run of (Every day|Manual evening) started/))
     await vi.waitFor(() => expect(runNow.disabled).toBe(false))
   }
   // The Runs tab shows history only.
@@ -316,9 +317,9 @@ it('edits all trigger kinds and boolean overrides without changing its ID, and o
   const manualRuns = [...root.querySelectorAll('.hs-inspector label')].find(l => l.textContent?.includes('Can be started with Run now'))!
   manualRuns.querySelector('input')!.click()
   expect(root.querySelector('.hs-inspector [aria-label="Entities expression"], .hs-inspector [aria-label="Schedules expression"]')).toBeNull()
-  expect(json(root).nodes[0]).toMatchObject({ id: 'trigger-1', config: {
-    type: 'daily', startup: true, manual: false, at: '2026-12-01T07:30:00+01:00', entity: 'sensor.temperature',
-  } })
+  // Each type change started from the new type's defaults: the earlier types' settings are gone.
+  expect(json(root).nodes[0]).toMatchObject({ id: 'trigger-1', config: { type: 'daily', startup: true, manual: false, mode: 'Parallel' } })
+  expect(Object.keys(json(root).nodes[0].config).sort()).toEqual(['manual', 'mode', 'startup', 'type'])
   expect('entitiesExpression' in json(root).nodes[0].config).toBe(false)
 })
 
@@ -373,8 +374,10 @@ it('renders a save-time validation rejection and a structural diagnostic without
 })
 
 it('opens on the Runs tab when it is reached from a run (?drawer=runs), and stays closed once closed', async () => {
-  const { root } = setup(true, false, '/visual/motion?drawer=runs')
+  const { root, history } = setup(true, false, '/visual/motion?drawer=runs')
   await saved(root, 4)
+  // The address loses the parameter once the tab is open, so a reload does not reopen it.
+  expect(history.get()).toBe('/visual/motion')
   const runs = () => [...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith('Runs'))!
   expect(root.querySelector('.hs-drawer')!.classList).toContain('hs-drawer--open')
   expect(runs().getAttribute('aria-selected')).toBe('true')
@@ -434,4 +437,34 @@ it('turns a saved automation off and on from the top bar without a change to sav
   expect(toggle().checked).toBe(true)
   await vi.waitFor(() => expect(overview()).not.toContain('Off:'))
   expect(chip(root).textContent).toBe('Saved')
+})
+
+it('shows a backend warning (an unknown entity) as a warning on the card, in the panel and in Problems, and still saves', async () => {
+  const { root, fixture } = setup(true)
+  await saved(root, 4)
+  fixture.controls.preview = {
+    valid: true, source: 'class A {}', sourceMap: [],
+    diagnostics: [{ nodeId: 'trigger-1', inputId: 'entity', code: 'entity.unknown', message: 'Home Assistant has no entity binary_sensor.motion', severity: 2, startLine: null, startColumn: null }],
+  } as any
+  edit(root, 'Motion')
+  await vi.waitFor(() => expect(root.querySelector('.hs-problems')?.textContent).toContain('Home Assistant has no entity binary_sensor.motion'))
+  // Problems: a warning, not an error.
+  const problem = root.querySelector('.hs-problems .hs-problem')!
+  expect(problem.classList).toContain('hs-problem--warning')
+  expect(problem.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('Warning')
+  // The card: the amber badge, no red outline, the pin not marked invalid.
+  const card = root.querySelector('.solid-flow__node[data-id="trigger-1"] .hs-card')!
+  expect(card.classList).toContain('hs-card--warning')
+  expect(card.classList).not.toContain('hs-flow-card--error')
+  expect(card.querySelector('.hs-card__badge')!.classList).toContain('hs-card__badge--warning')
+  // The panel: a warning callout; the entity field is not invalid.
+  const callout = root.querySelector('.hs-inspector .hs-insp-problem')!
+  expect(callout.classList).toContain('hs-insp-problem--warning')
+  expect(root.querySelector('.hs-inspector [data-input-id="entity"]')!.getAttribute('aria-invalid')).toBeNull()
+  // Save is not blocked; the save chip names no problem.
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  expect(chip(root).textContent).toBe('Unsaved changes')
+  button(root, 'Save').click()
+  await saved(root, 5)
+  expect(root.querySelector('.hs-problems')?.textContent).toContain('Home Assistant has no entity binary_sensor.motion')
 })

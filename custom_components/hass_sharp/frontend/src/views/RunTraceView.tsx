@@ -57,6 +57,13 @@ export function RunTraceView() {
     enabled: admin() && !!data() && !!visualId(),
     staleTime: 30_000,
   }))
+  // The services as they are now, only for words: a run's stored snapshot has no service schema (C4).
+  const services = useQuery(() => ({
+    queryKey: ['visual-services'],
+    queryFn: () => api.services(),
+    enabled: admin() && !!data(),
+    staleTime: 60_000,
+  }))
   const editorHref = () => `/visual/${encodeURIComponent(visualId())}`
   // Back is always the automation's Runs tab: the history could lead out of the panel.
   const back = () => navigate(`${editorHref()}?drawer=runs`)
@@ -76,6 +83,7 @@ export function RunTraceView() {
             paused={trace.isError && response().live ? (unanswered(trace.error) ? 'could not reach Home Assistant' : visualError(trace.error)) : undefined}
             retrying={trace.isError && trace.isFetching}
             onRetry={() => void trace.refetch()}
+            services={services.data ? unwrap(services.data) : undefined}
           />
         )}
       </Match>

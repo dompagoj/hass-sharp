@@ -5,5 +5,5 @@ export {
 export { WidgetControl } from './Widget'
 export type { WidgetProps, CommitOptions } from './common'
 export { entityPredicate, manualEntityError, registryNames, targetIds, targetValue } from './pickers'
-export { namesRegistryItems, valueSummary, type NameResolver, type NamedKind } from './summary'
-export { record, strings, jsonEqual, displayValue } from './json'
+export { namesRegistryItems, optionLabel, valueSummary, type NameResolver, type NamedKind } from './summary'
+export { record, strings, jsonEqual, displayValue, optionWords } from './json'

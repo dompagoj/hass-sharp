@@ -35,6 +35,8 @@ it('shows source-derived cards, XML docs, actual CLR ports and explicit executio
   expect(host.querySelector('[aria-label="Node previews"]')?.textContent).toContain('Execution')
   expect(host.textContent).toContain('factory node'); expect(host.textContent).not.toContain('Pure')
   expect(requests.every(r => !['run', 'execute'].includes(r.operation))).toBe(true)
+  // The entity refresh command was removed with typed entities: no button, no request.
+  expect(host.textContent).not.toContain('Refresh entity IDs')
   const current = editors[0]; button('Full screen').click(); expect(editors[0]).toBe(current); button('Exit full screen').click(); expect(editors[0]).toBe(current)
 })
 it('preserves all drafts during file switching and definition navigation, focusing the target range', async () => {

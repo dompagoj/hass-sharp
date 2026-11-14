@@ -6,7 +6,7 @@ import type { JsonValue } from '../contract'
 import { domainWords } from '../typeLabels'
 import { Chips, type WidgetProps } from './common'
 import { ListWidget, SelectWidget, TextWidget } from './basic'
-import { record, strings } from './json'
+import { optionWords, record, strings } from './json'
 import type { Widget, WidgetOption } from './model'
 import { SearchSelect, type SearchOption } from './SearchSelect'
 import type { NameResolver } from './summary'
@@ -79,7 +79,7 @@ export function StateWidget(props: WidgetProps) {
     const hidden = new Set(props.widget.hideStates ?? []), found: string[] = []
     for (const entity of entities.data ?? []) if (ids.has(entity.entity_id))
       for (const state of entity.state_options ?? []) if (!hidden.has(state) && !found.includes(state)) found.push(state)
-    return found.map(value => ({ value, label: value }))
+    return found.map(value => ({ value, label: optionWords(value) }))
   })
   return <Show when={options().length} fallback={<TextWidget {...props} widget={{ ...props.widget, kind: 'text' }} />}>
     <SelectWidget {...props} widget={{ ...props.widget, kind: 'select', options: options() }} />

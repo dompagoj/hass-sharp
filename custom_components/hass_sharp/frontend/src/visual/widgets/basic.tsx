@@ -1,7 +1,7 @@
 import { createEffect, createSignal, createUniqueId, For, Index, on, Show, type JSX } from 'solid-js'
 import type { JsonValue } from '../contract'
 import { Chips, DraftField, dragSession, textPlaceholder, type WidgetProps } from './common'
-import { displayValue, jsonEqual } from './json'
+import { displayValue, jsonEqual, optionWords } from './json'
 import { durationParts, durationSeconds, durationValue, valueKind, type ValueKind, type Widget, type WidgetKind, type WidgetOption } from './model'
 
 const numberText = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/
@@ -99,7 +99,7 @@ export function OptionSelect(props: {
       if (v !== '' && v !== 'current') props.onSelect(props.options[Number(v)].value)
     }}>
     <Show when={props.value === undefined}><option value="" selected disabled>{props.placeholder ?? 'Choose…'}</option></Show>
-    <Show when={props.value !== undefined && index() < 0}><option value="current" selected>{displayValue(props.value)}</option></Show>
+    <Show when={props.value !== undefined && index() < 0}><option value="current" selected>{optionWords(props.value!)}</option></Show>
     <Index each={props.options}>{(option, i) => <option value={String(i)} selected={i === index()}>{option().label}</option>}</Index>
   </select>
 }
@@ -108,7 +108,7 @@ export function SelectWidget(props: WidgetProps) {
   const options = () => props.widget.options ?? []
   return <Show when={props.widget.multiple} fallback={<OptionSelect id={props.id} label={props.label} options={options()} value={props.value}
     onSelect={v => props.commit(v)} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled} />}>
-    <ListWidget {...props} labelFor={item => options().find(o => jsonEqual(o.value, item))?.label ?? displayValue(item)}
+    <ListWidget {...props} labelFor={item => options().find(o => jsonEqual(o.value, item))?.label ?? optionWords(item)}
       add={add => <OptionSelect id={props.id} label={`Add to ${props.label}`} placeholder="Add…" value={undefined} describedBy={props.describedBy}
         options={options().filter(o => !items(props.value).some(v => jsonEqual(v, o.value)))} onSelect={add} invalid={props.invalid} disabled={props.disabled} />} />
   </Show>

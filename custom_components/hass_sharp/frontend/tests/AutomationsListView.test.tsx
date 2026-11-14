@@ -18,7 +18,7 @@ afterEach(() => { dispose?.(); client.clear(); document.body.innerHTML = ''; vi.
 
 type Fixture = ReturnType<typeof visualFixture>
 /** The list page over the in-memory API; `hold` delays the replies to the given operations until released. */
-function setup(options: { admin?: boolean; refresh?: () => Promise<unknown>; prepare?: (fixture: Fixture) => void; hold?: string[] } = {}) {
+function setup(options: { admin?: boolean; prepare?: (fixture: Fixture) => void; hold?: string[] } = {}) {
   const root = document.createElement('div'); document.body.append(root)
   const fixture = visualFixture()
   options.prepare?.(fixture)
@@ -27,7 +27,6 @@ function setup(options: { admin?: boolean; refresh?: () => Promise<unknown>; pre
   // The list reads saved visual documents only; any REST call would be a leftover of hand-written automations.
   const callApi = vi.fn(async () => { throw new Error('unexpected REST call') })
   const callWS = async (message: any) => {
-    if (message.type === 'hass_sharp/reload_entities' && options.refresh) return options.refresh()
     if (message.type === 'hass_sharp/get_entities') return { entities: [{ entity_id: 'binary_sensor.motion', name: 'Hallway motion' }, { entity_id: 'binary_sensor.door', name: 'Front door' }] }
     if (options.hold?.includes(message.request?.operation)) await new Promise<void>(go => held.push(go))
     return fixture.callWS(message)
@@ -358,29 +357,17 @@ it('turns an automation off and on from its card at once, rolls back with a mess
   expect(cards(root)).toEqual(['hall'])
 })
 
-it('keeps Refresh entity IDs in the header’s overflow menu, reporting progress and failure', async () => {
-  let finish!: (value: unknown) => void
-  const refresh = vi.fn().mockImplementationOnce(() => new Promise(resolve => { finish = resolve })).mockRejectedValueOnce(new Error('offline'))
-  const { root } = setup({ refresh })
+it('offers no Refresh entity IDs and sends no reload_entities (the command was removed)', async () => {
+  const { root, fixture } = setup()
   await loaded(root)
-  client.setQueryData(['hass-entities'], { entities: [{ entity_id: 'light.old' }], areas: [], devices: [], floors: [], labels: [] })
-  expect([...root.querySelectorAll('button')].some(b => b.textContent === 'Refresh entity IDs')).toBe(false)
-  const pick = () => { button(root, 'More actions').click(); [...root.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b => b.textContent?.startsWith('Refresh'))!.click() }
-  pick(); pick()
-  expect(refresh).toHaveBeenCalledTimes(1)
-  expect(root.textContent).toContain('Refreshing entity IDs')
-  finish({ success: true })
-  await vi.waitFor(() => expect(root.textContent).toContain('Entity IDs refreshed'))
-  // The registry is read again (the page's summaries use it), so new names appear.
-  await vi.waitFor(() => expect((client.getQueryData(['hass-entities']) as any)?.entities[0].entity_id).toBe('binary_sensor.motion'))
-  pick()
-  await vi.waitFor(() => expect(root.textContent).toContain('Could not refresh entity IDs'))
+  expect(root.textContent).not.toContain('Refresh entity IDs')
+  expect(root.querySelector('[aria-label="More actions"]')).toBeNull()
+  expect(fixture.calls.some((c: any) => c.type === 'hass_sharp/reload_entities')).toBe(false)
 })
 
-it('hides the overflow menu and the card actions from non-administrators', async () => {
+it('hides the card actions from non-administrators', async () => {
   const { root } = setup({ admin: false, prepare: f => saved(f, 'hall', 'Hall lights') })
   await loaded(root)
-  expect(root.querySelector('[aria-label="More actions"]')).toBeNull()
   expect(card(root, 'hall').querySelector('.hs-home-card__actions')).toBeNull()
 })
 

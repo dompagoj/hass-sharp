@@ -4,7 +4,7 @@ import { useHass } from '../context'
 import { Button, Icon } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
 import { Editor } from '../components/Editor/Editor'
-import { librariesChanged, libraryApi, type LibraryDefinition, type LibraryRange } from '../visual/library-api'
+import { libraryApi, type LibraryDefinition, type LibraryRange } from '../visual/library-api'
 import { createLibrarySession } from '../visual/library-session'
 import { LibraryPreview } from '../visual/LibraryPreview'
 
@@ -29,8 +29,6 @@ const LibraryWorkspace = (props: { onDirtyChange?: (dirty: boolean) => void }) =
   const [newFile, setNewFile] = createSignal(false)
   const [newName, setNewName] = createSignal('Nodes.cs')
   const [confirm, setConfirm] = createSignal<'delete' | 'reload'>()
-  const [refreshing, setRefreshing] = createSignal(false)
-  const [refreshMessage, setRefreshMessage] = createSignal('')
   let navigateRange: ((range: LibraryRange) => void) | undefined
   const locate = (definition: LibraryDefinition) => {
     if (!session.files().some(file => file.id === definition.id)) return
@@ -42,27 +40,15 @@ const LibraryWorkspace = (props: { onDirtyChange?: (dirty: boolean) => void }) =
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
     const a = document.createElement('a'); a.href = url; a.download = 'hass-sharp-library-drafts.json'; a.click(); URL.revokeObjectURL(url)
   }
-  const refreshEntities = async () => {
-    if (refreshing()) return
-    setRefreshing(true); setRefreshMessage('Refreshing entity IDs…')
-    try {
-      const result = await hass.callWS<{ success: boolean }>({ type: 'hass_sharp/reload_entities' })
-      if (!result.success) throw new Error('Refresh failed')
-      librariesChanged()
-      setRefreshMessage('Entity IDs refreshed. Language services now use the updated symbols.')
-    } catch { setRefreshMessage('Entity refresh failed. Try again.') }
-    finally { setRefreshing(false) }
-  }
   const beforeUnload = (event: BeforeUnloadEvent) => { if (session.dirty()) { event.preventDefault(); event.returnValue = '' } }
   window.addEventListener('beforeunload', beforeUnload)
   onCleanup(() => window.removeEventListener('beforeunload', beforeUnload))
   createEffect(() => props.onDirtyChange?.(session.dirty()))
   return <section class="hs-node-library" classList={{ 'hs-node-library--fullscreen': fullScreen() }} aria-label="Node library">
     <header class="hs-library-heading"><div><p class="hs-eyebrow">REUSABLE C#</p><h1>Node library</h1></div>
-      <div class="hs-library-tools"><Button busy={refreshing()} onClick={() => void refreshEntities()}>Refresh entity IDs</Button><Button onClick={() => setFullScreen(!fullScreen())}>{fullScreen() ? 'Exit full screen' : 'Full screen'}</Button></div>
+      <div class="hs-library-tools"><Button onClick={() => setFullScreen(!fullScreen())}>{fullScreen() ? 'Exit full screen' : 'Full screen'}</Button></div>
     </header>
     <p class="hs-library-intro">A node is a public static method of a public class marked <code>[Node("Title")]</code>. Parameters are inputs and the return value is the result. Write namespace contents here: all files share <code>NodeLib</code>. XML summary, param and returns comments describe your nodes.</p>
-    <Show when={refreshMessage()}><p role="status">{refreshMessage()}</p></Show>
     <Show when={session.conflict() && !session.error()}><div class="hs-notice hs-notice--danger" role="alert">This saved file changed elsewhere. Your draft and original revision are preserved. Download your drafts, then reload to resolve the conflict. <Button onClick={() => setConfirm('reload')}>Reload selected file</Button></div></Show>
     <Show when={session.error()}><div class="hs-notice hs-notice--danger" role="alert">{session.error()} <Show when={session.conflict()}>Your draft is preserved. Download it before reloading.</Show><Button onClick={() => setConfirm('reload')}>Reload selected file</Button><Button onClick={() => void session.refresh()}>Refresh file list</Button></div></Show>
     <Show when={session.activations().length}><section class="hs-library-activations" aria-label="Dependent automations"><For each={session.activations()}>{activation => <p class={activation.active ? 'hs-notice' : 'hs-notice hs-notice--danger'} role={activation.active ? 'status' : 'alert'}>{activation.id}: {activation.active ? 'Saved and active' : `Saved; activation failed: ${activation.activationError ?? 'current revision is not active'}`}</p>}</For></section></Show>

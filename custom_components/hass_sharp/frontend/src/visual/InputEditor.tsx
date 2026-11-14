@@ -37,7 +37,7 @@ const same = (a: Operand, b: Operand) => a.kind === b.kind && (a.kind !== 'liter
 
 /** The inline summary of a value; registry ids are named once the registry has loaded. */
 function Summary(props: { widget: Widget; value: JsonValue | undefined }) {
-  const Line = (p: { text: string }) => <span class="hs-input-editor__summary" title={p.text}>{p.text}</span>
+  const Line = (p: { text: string }) => <span class="hs-input-editor__summary" classList={{ 'hs-input-editor__summary--empty': props.value === undefined }} title={p.text}>{p.text}</span>
   const Named = () => { const registry = useRegistry(); return <Line text={valueSummary(props.widget, props.value, registryNames(registry.data))} /> }
   return <Show when={namesRegistryItems(props.widget)} fallback={<Line text={valueSummary(props.widget, props.value)} />}><Named /></Show>
 }
@@ -48,7 +48,8 @@ export function InputEditor(props: InputEditorProps) {
   let root!: HTMLDivElement
   const catalog = () => props.catalog ?? nodeCatalog
   const operand = (): Operand => props.value ?? { kind: 'unset' }
-  const literal = () => { const o = operand(); return o.kind === 'literal' ? o.value : undefined }
+  // A literal null (how an empty optional value is often stored) is edited and summarised as not set, never as "null".
+  const literal = () => { const o = operand(); return o.kind === 'literal' && o.value !== null ? o.value : undefined }
   const widget = createMemo(() => widgetFor(props.input, catalog()))
   // A stored value of another shape stays editable as JSON instead of being misread by the widget.
   const shown = () => fitsWidget(widget(), literal()) ? widget() : jsonWidget
