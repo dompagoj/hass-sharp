@@ -569,7 +569,7 @@ it('runs the one trigger that allows manual runs from the top bar, and the Runs 
   expect(runNow.title).toBe('Run the saved automation now')
   expect(runNow.getAttribute('aria-haspopup')).toBeNull()
   drawerTab(host, 'Runs').click()
-  expect(host.querySelector('.hs-drawer [aria-label="Run automation"], .hs-run-action')).toBeNull()
+  expect(host.querySelector('.hs-drawer [aria-label="Run automation"]')).toBeNull()
   runNow.click()
   await vi.waitFor(() => expect(host.querySelector('.hs-topbar__notice')?.textContent).toBe('Run started. Its result is under Runs.'))
   await vi.waitFor(() => expect(host.querySelector('.hs-run-list')?.textContent).toContain('Running'), { timeout: 5000 })

@@ -18,4 +18,4 @@ hide their internal path and are outside this workaround's scope. Revisit when
 upgrading Monaco; remove once its global mouseleave recovery handles shadow DOM.
 `tests/monaco-shadow-hover.test.ts` extracts and executes the installed package's
 actual listener with nested open-shadow event paths, so an unapplied patch fails.
-For native preview use `tests/preview.html?diagnostics=1&shadow=1`.
+For native preview use `tests/preview.html?view=library&shadow=1`.

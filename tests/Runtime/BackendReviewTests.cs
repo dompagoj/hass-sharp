@@ -121,6 +121,20 @@ static class BackendReviewTests
                 Check(first != await Identity(), "recreated inactive visual reused identity");
                 store.Delete("orphan",1); api.Unload();
             });
+            await Test("run now of an unknown or unloaded automation is refused as not active", async () => {
+                var api = new HassSharpManager(root); api.GenerateHassEntities(["binary_sensor.motion", "light.hall"]);
+                var store = new VisualStore(Path.Combine(root,".storage","hass_sharp","visual"), generator);
+                store.Save("unloaded", VisualTests.Graph(), 0);
+                try {
+                    // Saved but never loaded (no Init): it has an identity and no running script.
+                    var unloaded = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"unloaded\"}"))!["result"]!["automationId"]!.GetValue<string>();
+                    foreach (var automation in new[] { "no-such-automation", unloaded })
+                    {
+                        try { api.RunNow(automation, "VisualAutomation", "Run_74"); throw new Exception("run accepted for " + automation); }
+                        catch (InvalidOperationException error) when (error.Message == "Automation is not active") { }
+                    }
+                } finally { api.Unload(); store.Delete("unloaded", 1); }
+            });
             await Test("retention uses a global completed-run index", () => {
                 var path = Path.Combine(root,"indexed.db");
                 _ = new RunHistoryStore(path);

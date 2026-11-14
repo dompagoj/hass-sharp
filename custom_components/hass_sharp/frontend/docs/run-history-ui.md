@@ -4,18 +4,19 @@ Based on integrated commit `398905a` and `docs/backend/run-history.md` contract 
 This change touches only the frontend; scheduler, graph backend, and C# runtime
 are unchanged. No live automation or device was dispatched during verification.
 
-The code editor has a Run history tab and a Run now shortcut. The panel discovers
-the file's stable automation ID and declared classes/actions from the existing
-script-list API. Saving refreshes these declarations without replacing the Monaco
-model. History is keyed by automation identity, not filename or source revision;
-changing identity resets pagination and request feedback. Missing identity and
-non-administrator access are shown explicitly.
+Automations are visual only (hand-written C# automations were removed in the node
+editor overhaul, Task 24). Each saved automation's run history is the Runs tab of
+the visual editor's bottom drawer (`components/AutomationRuns.tsx`), keyed by the
+automation's stable identity, not its name or source revision; changing identity
+resets pagination and request feedback. Non-administrator access is shown
+explicitly.
 
-Manual dispatch uses `hass_sharp/run_now` with automationId/className/method. An
-accepted response displays its run ID and explicitly asks the reader to check the
-record's status. It never substitutes acceptance for Succeeded. Runs use the last
-saved code; unsaved edits stay in Monaco. The backend remains authoritative about
-whether an action allows manual calls. A C# action completing does not prove a
+Runs are started from the editor's top bar (`visual/RunNow.tsx`) and the automations
+page, both through `components/runDispatch.ts`, which calls `hass_sharp/run_now` with
+automationId/className/method. An accepted run is remembered so the Runs tab polls
+until it has finished; acceptance is never shown as Succeeded. Runs use the last
+saved version; unsaved edits are not included. The backend remains authoritative
+about whether a trigger allows manual runs. A run completing does not prove a
 physical device effect.
 
 History uses 20-record offset pages without inventing a total. Newest/newer/older
@@ -81,9 +82,8 @@ and file presence were checked. The browser fixture fetched its nested worker an
 captured zero errors/rejected promises afterward, including opening and typing in
 a code editor and creating another C# automation.
 
-The optional Monaco fallback source and the mock fixture source now use the
-current declarative Configure/AutomationAction API with a Task-returning action.
-The backend's empty new-file template is unchanged to keep this task frontend-only.
+The Monaco editor is now used only by the node library editor; the hand-written
+automation editor these notes once described is gone.
 
 ## Verification (2026-11-12)
 

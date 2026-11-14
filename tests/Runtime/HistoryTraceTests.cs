@@ -511,6 +511,21 @@ static class HistoryTraceTests
                 Check(TriggerSummary.Summarize(InvocationCause.Entity, real) == """{"kind":"entity","entityId":"binary_sensor.motion","from":"off","to":"on"}""", "real entity summary: " + TriggerSummary.Summarize(InvocationCause.Entity, real));
                 return Task.CompletedTask;
             });
+
+            // Rows recorded by hand-written automations (before they were removed) have no visual id: they stay readable.
+            await Test("a run row without a visual id has no trace and no snapshot in run_trace, and its method name as label", () =>
+            {
+                var root = Path.Combine(folder, "code");
+                var api = new HassSharpManager(root);
+                var history = (RunHistoryStore)typeof(HassSharpManager).GetField("_history", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(api)!;
+                var run = new InvocationRecord { AutomationId = "plain", Revision = "code-revision", Action = "Plain::Go", Cause = "Manual",
+                    Trigger = TriggerSummary.Summarize(InvocationCause.Manual, TriggerPayload.Manual()), Status = "Succeeded", StartUtc = DateTime.UtcNow, EndUtc = DateTime.UtcNow, DurationMs = 3 };
+                history.Save(run);
+                var trace = JsonNode.Parse(api.GetRunTrace(run.RunId))!;
+                Check(trace["snapshot"] == null && trace["trace"] == null && !trace["live"]!.GetValue<bool>() && !trace["run"]!["hasTrace"]!.GetValue<bool>() && trace["run"]!["visualId"] == null
+                    && trace["run"]!["actionLabel"]!.GetValue<string>() == "Go" && trace["run"]!["trigger"]!.ToJsonString() == """{"kind":"manual"}""", "code run: " + trace.ToJsonString());
+                return Task.CompletedTask;
+            });
         }
         finally { Directory.Delete(folder, true); }
         if (failures.Count != 0) throw new Exception(string.Join("\n", failures));

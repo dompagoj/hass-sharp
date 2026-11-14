@@ -129,7 +129,7 @@ PyInterop.Entity = Func[String, HasEntityState](lambda _: state)
 PyInterop.Log = Action[Int32, String](lambda *_: None)
 with tempfile.TemporaryDirectory(prefix="visual-pythonnet-") as temporary:
     HassPath.HassConfiguration = temporary
-    compiled = finish(CodeCompiler(diagnostics).CompileSingleFile(str(Path(temporary) / "smoke.cs"), preview.Source, True))
+    compiled = finish(CodeCompiler(diagnostics).CompileSingleFile(str(Path(temporary) / "smoke.cs"), preview.Source))
     try:
         from System import Activator
         automation_type = compiled.Assembly.GetType("VisualAutomation")
