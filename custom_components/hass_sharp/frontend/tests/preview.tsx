@@ -77,6 +77,10 @@ const typedDemo = (): Graph => {
   g = updateNode(g, 'greeting', { position: { x: 2040, y: 20 } })
   g = connectNodes(g, 'note', 'greeting', undefined, catalog)
   g = connectData(g, 'trigger-1', 'entity_id', 'greeting', 'text', catalog)
+  // A step after it: making the code a value node joins Log to it.
+  g = addNode(g, 'log', 'after', catalog)
+  g = updateNode(g, 'after', { label: 'Log done', position: { x: 2440, y: 20 } })
+  g = connectNodes(g, 'greeting', 'after', undefined, catalog)
   const sample = fillGraphLayout(rich.cases[0].graph as Graph)
   return { ...g, nodes: [...g.nodes, ...sample.nodes.map((node, i) => ({ ...node, position: { x: 40 + i * 400, y: 820 } }))], edges: [...g.edges, ...sample.edges] }
 }

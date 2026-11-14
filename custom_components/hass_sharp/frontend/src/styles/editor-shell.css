@@ -64,6 +64,9 @@
 .hs-app .hs-code-monaco { min-height: 200px; }
 .hs-app .hs-code-loading { flex: 1; margin: 0; padding: 24px; color: var(--hs-muted); background: var(--hs-bg); }
 .hs-app .hs-code-failed { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 8px 12px 8px 20px; border-top: 1px solid var(--hs-line); color: var(--hs-danger); background: color-mix(in srgb, var(--hs-danger) 6%, var(--hs-surface)); font-size: 13px; }
+.hs-app .hs-code-main > .hs-code-failed:first-child { border-top: 0; }
+.hs-app .hs-code-left { box-sizing: border-box; width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--hs-line); border-radius: 6px; background: var(--hs-bg); color: var(--hs-text); font: 12px/1.5 var(--hs-mono, ui-monospace, SFMono-Regular, Menlo, monospace); resize: vertical; }
+.hs-app .hs-load-failed--view { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 24px; padding: 12px 16px; border: 1px solid color-mix(in srgb, var(--hs-danger) 40%, var(--hs-line)); border-radius: 8px; color: var(--hs-danger); background: color-mix(in srgb, var(--hs-danger) 6%, var(--hs-surface)); font-size: 13px; }
 .hs-app .hs-code-problems { flex: none; max-height: 30%; overflow: auto; border-top: 1px solid var(--hs-line); }
 .hs-app .hs-code-problems ul { list-style: none; margin: 0; padding: 4px 0; }
 .hs-app .hs-code-problem { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 6px 20px; border: 0; background: transparent; color: var(--hs-text); font: inherit; font-size: 13px; text-align: left; }

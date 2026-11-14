@@ -66,6 +66,7 @@ export function TracePage(props: {
   /** A Custom C# node whose code is on view (read only). */
   const [codeNodeId, setCodeNodeId] = createSignal<string>()
   const codeNode = () => graph()?.nodes.find(n => n.id === codeNodeId())
+  createEffect(() => { if (codeNodeId() && !codeNode()) setCodeNodeId(undefined) })
   const event = () => {
     const current = model()?.event(seq())
     return current && current.node === nodeId() ? current : undefined

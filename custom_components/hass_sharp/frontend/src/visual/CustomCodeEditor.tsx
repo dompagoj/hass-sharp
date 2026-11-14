@@ -1,7 +1,8 @@
-import { createEffect, createMemo, createSignal, createUniqueId, For, lazy, onCleanup, onMount, Show, Suspense } from 'solid-js'
-import { delegateEvents } from 'solid-js/web'
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
+import { delegateEvents, Dynamic } from 'solid-js/web'
 import { Button } from '../components/Controls'
-import { Dialog } from '../components/Dialog'
+import { Dialog, openModal, trapTab } from '../components/Dialog'
+import { createLoader, LoadFailed } from '../components/LazyLoad'
 import { Menu, type MenuItem } from '../components/Menu'
 import type { CustomCodeHandle } from '../components/Editor/CustomCode'
 import { customSignature, wellFormedSignature, type CustomSignature, type GraphNode, type InputSpec, type VisualCatalogSnapshot } from './contract'
@@ -13,11 +14,11 @@ import { icons } from './icons'
 import { typeColor, typeIsList, typeLabel } from './typeLabels'
 import { displayValue } from './widgets/json'
 
-// Monaco and the language services load only when the code editor opens: never in the editor page's first paint.
-const CustomCodeSurface = lazy(() => import('../components/Editor/CustomCode').then(module => ({ default: module.CustomCodeSurface })))
+// Monaco and the language services load only when the code editor opens: never in the editor page's first paint. A
+// failed load says so, with Try again.
+const loadSurface = createLoader(() => import('../components/Editor/CustomCode').then(module => module.CustomCodeSurface))
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
-const focusable = 'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]'
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 /** Code that compiles neither with an error of its own: the libraries beside it do not. */
 const librariesBroken = 'The node libraries have errors, so this code cannot be used until they are fixed in Node libraries'
@@ -30,8 +31,11 @@ export interface CustomCodeEditorProps {
   /** The code and the pins its latest check gave; the dialog closes after it. */
   onApply?(source: string, signature: CustomSignature): void
   onClose(): void
-  /** Whether the text differs from the node's code (the page counts it as unsaved). */
-  onDirtyChange?(dirty: boolean): void
+  /**
+   * Whether the text differs from the node's code (the page counts it as unsaved), with the text while it is open;
+   * on close, without it.
+   */
+  onDirtyChange?(dirty: boolean, source?: string): void
 }
 
 /**
@@ -41,19 +45,19 @@ export interface CustomCodeEditorProps {
  */
 export function CustomCodeEditor(props: CustomCodeEditorProps) {
   let dialog!: HTMLDialogElement
-  const titleId = createUniqueId()
+  const surface = loadSurface()
   const initial = typeof props.node.config.source === 'string' ? props.node.config.source : ''
   const [handle, setHandle] = createSignal<CustomCodeHandle>()
   const [confirm, setConfirm] = createSignal(false)
   const [help, setHelp] = createSignal(false)
   const source = () => handle()?.source() ?? initial
   const dirty = () => !props.readOnly && source() !== initial
-  createEffect(() => props.onDirtyChange?.(dirty()))
+  createEffect(() => props.onDirtyChange?.(dirty(), source()))
   onCleanup(() => props.onDirtyChange?.(false))
 
   const check = () => handle()?.check()
   const error = () => handle()?.error() ?? null
-  const checking = () => !props.readOnly && (!handle() || handle()!.checking())
+  const checking = () => !props.readOnly && !surface.failed() && (!handle() || handle()!.checking())
   /** The latest check is of the text as it is now (not one from before an edit). */
   const current = () => { const c = check(); return c && c.source === source() ? c : undefined }
   const checkedSignature = () => { const c = check(); return c && wellFormedSignature(c.signature) ? c.signature : undefined }
@@ -64,32 +68,38 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
   const problemCount = () => problems().length + (unexplained() ? 1 : 0)
   const status = () => {
     if (props.readOnly) return 'Read only'
-    if (error()) return 'Not checked'
+    if (error() || surface.failed()) return 'Not checked'
     if (checking()) return 'Checking…'
     return problemCount() ? plural(problemCount(), 'problem') : 'No problems'
   }
-  const tone = () => (props.readOnly ? 'quiet' : error() || problems().some(d => d.severity === 3) || unexplained() ? 'error' : checking() ? 'busy' : problemCount() ? 'warning' : 'ok')
+  const tone = () => (props.readOnly ? 'quiet' : error() || surface.failed() || problems().some(d => d.severity === 3) || unexplained() ? 'error' : checking() ? 'busy' : problemCount() ? 'warning' : 'ok')
   // The pins of the latest code that compiled, else the node's own.
   const shown = () => (checkedSignature() ?? customSignature(props.node, props.catalog))
   const outdated = () => !props.readOnly && !checking() && !!check() && !current()?.valid
   const title = () => nodeTitle(props.node, props.catalog, 'Custom C#')
+  // Screen readers hear a change of result (the number of problems, or none), not every "Checking…" in between.
+  const announced = createMemo<string>(previous => (props.readOnly || checking() ? previous : status()), '')
 
   const close = () => props.onClose()
   const cancel = () => (dirty() ? setConfirm(true) : close())
+  let applied = false
   const apply = () => {
     const signature = checkedSignature()
-    if (!canApply() || !signature) return
+    if (applied || !canApply() || !signature) return
+    applied = true
     props.onApply?.(source(), structuredClone(signature))
     close()
   }
+  /** Ctrl/⌘+S anywhere in the dialog is Apply (in Monaco, its own key binding is), never the browser's Save page. */
+  const saveKey = (event: KeyboardEvent) => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 's') return
+    if ((event.target as Element).closest?.('.monaco-editor')) return
+    event.preventDefault()
+    apply()
+  }
 
-  onMount(() => {
-    const root = dialog.getRootNode() as Document | ShadowRoot
-    const previous = root.activeElement as HTMLElement | null
-    // Native modality keeps the rest of the page (and Home Assistant) inert, also over a full-screen editor.
-    dialog.showModal?.()
-    onCleanup(() => { dialog.close?.(); previous?.focus?.() })
-  })
+  // Native modality keeps the rest of the page (and Home Assistant) inert, also over a full-screen editor.
+  onMount(() => onCleanup(openModal(dialog)))
   createEffect(() => handle()?.focus())
 
   const keys = (event: KeyboardEvent) => {
@@ -104,13 +114,7 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
       cancel()
       return
     }
-    if (event.key !== 'Tab') return
-    const items = [...dialog.querySelectorAll<HTMLElement>(focusable)].filter(el => !el.closest('dialog:not(.hs-code-dialog)'))
-    const first = items[0], last = items.at(-1)
-    const active = (dialog.getRootNode() as Document | ShadowRoot).activeElement
-    if (!first) { event.preventDefault(); dialog.focus() }
-    else if (event.shiftKey && (active === first || active === dialog)) { event.preventDefault(); last?.focus() }
-    else if (!event.shiftKey && active === last) { event.preventDefault(); first.focus() }
+    trapTab(dialog, event)
   }
 
   const menu = (): MenuItem[] => [
@@ -120,9 +124,14 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
 
   return (
     <dialog
-      ref={element => { dialog = element; delegateEvents(['keydown', 'keyup'], element as unknown as Document) }}
+      ref={element => {
+        dialog = element
+        delegateEvents(['keydown', 'keyup'], element as unknown as Document)
+        // Before the nested dialogs (help, the confirmation) stop the key.
+        element.addEventListener('keydown', saveKey, true)
+      }}
       class="hs-dialog hs-code-dialog"
-      aria-labelledby={titleId}
+      aria-label={`Code of ${title()}${props.readOnly ? ', read only' : ''}`}
       aria-modal="true"
       onCancel={event => { event.preventDefault(); cancel() }}
       on:keydown={keys}
@@ -133,9 +142,10 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
         <span class="hs-code-bar__icon" aria-hidden="true"><Glyph paths={icons.code} /></span>
         <div class="hs-code-bar__titles">
           <span class="hs-code-bar__kind">{props.readOnly ? 'Custom C# code, read only' : 'Custom C# code'}</span>
-          <h2 id={titleId} class="hs-code-bar__title">{title()}</h2>
+          <h2 class="hs-code-bar__title">{title()}</h2>
         </div>
-        <span class={`hs-code-state hs-code-state--${tone()}`} role="status" aria-live="polite">{status()}</span>
+        <span class={`hs-code-state hs-code-state--${tone()}`}>{status()}</span>
+        <span class="hs-visually-hidden" role="status">{announced()}</span>
         <div class="hs-code-bar__actions">
           <Button variant="ghost" class="hs-icon-button hs-code-help" aria-label="How to write a node" title="How to write a node" onClick={() => setHelp(true)}>?</Button>
           <Show when={menu().length}><Menu label="Code actions" items={menu()} /></Show>
@@ -147,9 +157,13 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
       </header>
       <div class="hs-code-body">
         <div class="hs-code-main">
-          <Suspense fallback={<p class="hs-code-loading" role="status">Loading the code editor…</p>}>
-            <CustomCodeSurface nodeId={props.node.id} initial={initial} readOnly={props.readOnly} label={`Code of ${title()}`} onReady={setHandle} onApply={apply} />
-          </Suspense>
+          <Show when={surface.component()} fallback={
+            <Show when={surface.failed()} fallback={<p class="hs-code-loading">Loading the code editor…</p>}>
+              <LoadFailed class="hs-code-failed" what="code editor" error={surface.error()} onRetry={surface.retry} />
+            </Show>
+          }>
+            {component => <Dynamic component={component()} nodeId={props.node.id} initial={initial} readOnly={props.readOnly} label={`Code of ${title()}`} onReady={setHandle} onApply={apply} />}
+          </Show>
           <Show when={error()}>
             {reason => (
               <div class="hs-code-failed" role="alert">
@@ -245,6 +259,33 @@ function Pins(props: { signature?: CustomSignature; catalog: VisualCatalogSnapsh
         )}
       </Show>
     </aside>
+  )
+}
+
+/**
+ * The step whose code was open went away under the editor (a reload of the automation, say) while its code had
+ * unapplied changes: says so, and offers the code to copy.
+ */
+export function CodeLeftBehind(props: { source?: string; onClose(): void }) {
+  const [copied, setCopied] = createSignal<'idle' | 'copied' | 'failed'>('idle')
+  let text: HTMLTextAreaElement | undefined
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(props.source ?? ''); setCopied('copied') }
+    catch { setCopied('failed'); text?.focus(); text?.select() }
+  }
+  const close = () => { setCopied('idle'); props.onClose() }
+  return (
+    <Dialog open={props.source !== undefined} title="This step no longer exists" width="medium" onClose={close}
+      footer={<>
+        <Button onClick={close}>Close</Button>
+        <Show when={typeof navigator.clipboard?.writeText === 'function'}>
+          <Button variant="primary" onClick={() => void copy()}>{copied() === 'copied' ? 'Copied' : 'Copy the code'}</Button>
+        </Show>
+      </>}>
+      <p>The Custom C# step whose code you were editing was removed, so your changes to its code were not applied. Copy the code to keep it.</p>
+      <Show when={copied() === 'failed'}><p class="hs-muted" role="alert">Could not copy: select the code below and copy it.</p></Show>
+      <textarea ref={text} class="hs-code-left" readOnly aria-label="The code that was not applied" rows={10} value={props.source ?? ''} />
+    </Dialog>
   )
 }
 

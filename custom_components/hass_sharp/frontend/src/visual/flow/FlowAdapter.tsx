@@ -3,6 +3,7 @@ import { createStore, produce, reconcile } from 'solid-js/store'
 import { QueryClientContext } from '@tanstack/solid-query'
 import { Background, MiniMap, SolidFlow, useSolidFlow, type Edge, type Node } from '@dschz/solid-flow'
 import flowStyles from '@dschz/solid-flow/styles?inline'
+import { Icon } from '../../components/Controls'
 import { QuickAdd } from '../QuickAdd'
 import type { VisualDiagnostic } from '../api'
 import { HassCtx } from '../../context'
@@ -73,8 +74,11 @@ export interface FlowControls {
   placeAtCentre(): { x: number; y: number }
   /** Pans, if needed, so the step's card is visible above `bottom` (a client y, such as the top of a bottom sheet). */
   reveal(id: string, bottom: number): void
-  /** Shows a message in the canvas's notice (why a step could not be added, for example). */
-  notify(text: string): void
+  /**
+   * Shows a message in the canvas's notice (why a step could not be added, for example) for a few seconds. One to
+   * `keep` (what a change removed) stays until it is dismissed or the graph changes again.
+   */
+  notify(text: string, options?: { keep?: boolean }): void
 }
 
 type Point = { x: number; y: number }
@@ -138,13 +142,19 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       { defer: true },
     ),
   )
-  const [notice, setNotice] = createSignal<string>()
+  const [notice, setNotice] = createSignal<{ text: string; keep: boolean }>()
   let noticeTimer: ReturnType<typeof setTimeout> | undefined
-  const notify = (text: string) => {
+  /** The graph a kept notice is about: the next change ends it. */
+  let keptFor: VisualGraph | undefined
+  const notify = (text: string, options: { keep?: boolean } = {}) => {
     clearTimeout(noticeTimer)
-    setNotice(text)
-    noticeTimer = setTimeout(() => setNotice(undefined), 5000)
+    const keep = options.keep === true
+    setNotice({ text, keep })
+    keptFor = keep ? untrack(() => props.graph) : undefined
+    if (!keep) noticeTimer = setTimeout(() => setNotice(undefined), 5000)
   }
+  const dismissNotice = () => { clearTimeout(noticeTimer); keptFor = undefined; setNotice(undefined) }
+  createEffect(on(() => props.graph, current => { if (keptFor && current !== keptFor) dismissNotice() }, { defer: true }))
   onCleanup(() => clearTimeout(noticeTimer))
 
   // Per-node views, rebuilt only for nodes whose content, wires, resolved types or diagnostics changed.
@@ -1255,9 +1265,16 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
           </p>
         </Show>
         <Show when={notice()}>
-          <p class="hs-canvas-notice" role="status">
-            {notice()}
-          </p>
+          {current => (
+            <p class="hs-canvas-notice" classList={{ 'hs-canvas-notice--kept': current().keep }} role="status">
+              <span>{current().text}</span>
+              <Show when={current().keep}>
+                <button type="button" class="hs-canvas-notice__close" aria-label="Dismiss" title="Dismiss" onClick={dismissNotice}>
+                  <Icon name="close" />
+                </button>
+              </Show>
+            </p>
+          )}
         </Show>
         <Show when={!readOnly() && quickAdd()} keyed>
           {request => {

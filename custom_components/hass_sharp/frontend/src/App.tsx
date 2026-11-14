@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { Route, Navigate, Router } from '@solidjs/router'
-import { lazy } from 'solid-js'
 
 import type { HomeAssistant } from './types'
 import { TODOView } from './views/TODOView'
@@ -10,9 +9,11 @@ import { AutomationsListView } from './views/AutomationsListView'
 import { VisualAutomationView } from './views/VisualAutomationView'
 import { RunTraceView } from './views/RunTraceView'
 import { findCustomComponent } from './utils'
+import { lazyView } from './components/LazyLoad'
 
-// Monaco comes with the node library editor (and a Custom C# node's code editor): never in the first paint.
-const NodeLibraryView = lazy(() => import('./views/NodeLibraryView').then(module => ({ default: module.NodeLibraryView })))
+// Monaco comes with the node library editor (and a Custom C# node's code editor): never in the first paint. A failed
+// load says so, with Try again.
+export const NodeLibraryView = lazyView(() => import('./views/NodeLibraryView').then(module => module.NodeLibraryView), 'node libraries')
 
 const client = new QueryClient({
   defaultOptions: {

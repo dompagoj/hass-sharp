@@ -25,7 +25,7 @@ import { EnabledSwitch } from '../automations/EnabledSwitch'
 import { setAutomationEnabled } from '../automations/enabled'
 import { soon } from './soon'
 import { createNotice, TopBar } from './TopBar'
-import { CustomCodeEditor } from './CustomCodeEditor'
+import { CodeLeftBehind, CustomCodeEditor } from './CustomCodeEditor'
 import { applyCustomCode } from './customCode'
 
 export type DrawerTab = 'problems' | 'code' | 'runs'
@@ -71,6 +71,16 @@ export function VisualEditor(props: {
   const [codeNodeId, setCodeNodeId] = createSignal<string>()
   const [codeDirty, setCodeDirty] = createSignal(false)
   const codeNode = createMemo(() => graph().nodes.find(node => node.id === codeNodeId()))
+  /** The open editor's unapplied text, if any: kept for when its step disappears under it (a reload). */
+  let codeDraft: string | undefined
+  const [orphanCode, setOrphanCode] = createSignal<string>()
+  const closeCode = () => { setCodeNodeId(undefined); setCodeDirty(false); codeDraft = undefined }
+  createEffect(() => {
+    if (!codeNodeId() || codeNode()) return
+    const draft = codeDraft
+    closeCode()
+    if (draft !== undefined) setOrphanCode(draft)
+  })
   const dirty = () => session.dirty() || codeDirty()
   createEffect(() => props.onDirtyChange?.(dirty()))
   createEffect(
@@ -236,7 +246,8 @@ export function VisualEditor(props: {
   const applyCode = (id: string, source: string, signature: Parameters<typeof applyCustomCode>[3]) => {
     const result = applyCustomCode(graph(), id, source, signature, session.catalog())
     commit(result.graph)
-    if (result.notice) flow?.notify(result.notice)
+    // What Apply removed stays on view until dismissed or the next change: the dialog closing moves focus away.
+    if (result.notice) flow?.notify(result.notice, { keep: true })
   }
 
   // ---- Runs: Run now in the top bar (RunNow.tsx), the last run in the overview.
@@ -531,11 +542,17 @@ export function VisualEditor(props: {
       {/* Inside the page root, so it also covers the full-screen editor. */}
       <Show when={codeNode() && codeNodeId()} keyed>
         {id => (
-          <CustomCodeEditor node={codeNode()!} catalog={session.catalog()} onDirtyChange={setCodeDirty}
+          <CustomCodeEditor node={codeNode()!} catalog={session.catalog()}
+            onDirtyChange={(changed, source) => {
+              setCodeDirty(changed)
+              // Closing reports no text: the draft is kept until it is known whether the step is still there.
+              if (source !== undefined) codeDraft = changed ? source : undefined
+            }}
             onApply={(source, signature) => applyCode(id, source, signature)}
-            onClose={() => { setCodeNodeId(undefined); setCodeDirty(false) }} />
+            onClose={closeCode} />
         )}
       </Show>
+      <CodeLeftBehind source={orphanCode()} onClose={() => setOrphanCode(undefined)} />
     </section>
   )
 }

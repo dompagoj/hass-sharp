@@ -207,6 +207,11 @@
 .hs-app .hs-connection-prompt, .hs-app .hs-canvas-notice { position: absolute; z-index: 10; top: 8px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 16px); margin: 0; border: 1px solid var(--hs-line); background: var(--hs-surface); color: var(--hs-text); border-radius: 6px; padding: 8px 12px; font-size: 12px; box-shadow: var(--hs-card-shadow); pointer-events: none; }
 .hs-app .hs-connection-prompt { border-color: var(--hs-accent); }
 .hs-app .hs-connection-prompt ~ .hs-canvas-notice { top: 48px; }
+.hs-app .hs-canvas-notice--kept { display: flex; align-items: center; gap: 8px; padding-right: 4px; pointer-events: auto; }
+.hs-app .hs-canvas-notice__close { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--hs-muted); cursor: pointer; }
+.hs-app .hs-canvas-notice__close:hover { background: var(--hs-hover, color-mix(in srgb, var(--hs-text) 8%, transparent)); color: var(--hs-text); }
+.hs-app .hs-canvas-notice__close:focus-visible { outline: 2px solid var(--hs-accent); outline-offset: 1px; }
+.hs-app .hs-canvas-notice__close svg { width: 14px; height: 14px; }
 
 /* Why a connection was refused, beside the pin that refused it. */
 .hs-app .hs-flow .hs-pin-refusal { position: absolute; z-index: 30; bottom: calc(100% + 6px); left: calc(-1 * var(--hs-card-pad)); width: max-content; max-width: 260px; padding: 6px 10px; border: 1px solid var(--hs-port-error); border-radius: 6px; background: var(--hs-surface); color: var(--hs-text); box-shadow: var(--hs-card-shadow-raised); font-size: 12px; font-weight: 400; line-height: 1.35; white-space: normal; pointer-events: none; }
