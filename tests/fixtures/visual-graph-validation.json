@@ -23801,7 +23801,7 @@
     "nodeId": "s",
     "inputId": "value",
     "messages": [
-      "Value accepts Entity state, not Text"
+      "Connect a value to Select property; nothing can be typed in here"
     ]
   },
   {
@@ -26589,6 +26589,4725 @@
     "contains": "Respond (optionally) (hass_sharp_test.respond_optionally) has no field glow",
     "messages": [
       "Respond (optionally) (hass_sharp_test.respond_optionally) has no field glow"
+    ]
+  },
+  {
+    "name": "select property: a chain past the graph limit answers the limit alone",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.Link",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.Link": {
+                  "label": "Link",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "Next",
+                      "type": "global::NodeLib.Link",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s254",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s253",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s252",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s251",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s250",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s249",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s248",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s247",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s246",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s245",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s244",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s243",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s242",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s241",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s240",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s239",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s238",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s237",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s236",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s235",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s234",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s233",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s232",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s231",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s230",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s229",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s228",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s227",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s226",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s225",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s224",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s223",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s222",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s221",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s220",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s219",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s218",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s217",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s216",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s215",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s214",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s213",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s212",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s211",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s210",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s209",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s208",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s207",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s206",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s205",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s204",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s203",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s202",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s201",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s200",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s199",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s198",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s197",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s196",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s195",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s194",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s193",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s192",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s191",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s190",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s189",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s188",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s187",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s186",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s185",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s184",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s183",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s182",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s181",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s180",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s179",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s178",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s177",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s176",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s175",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s174",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s173",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s172",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s171",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s170",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s169",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s168",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s167",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s166",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s165",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s164",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s163",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s162",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s161",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s160",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s159",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s158",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s157",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s156",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s155",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s154",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s153",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s152",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s151",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s150",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s149",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s148",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s147",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s146",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s145",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s144",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s143",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s142",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s141",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s140",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s139",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s138",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s137",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s136",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s135",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s134",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s133",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s132",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s131",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s130",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s129",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s128",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s127",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s126",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s125",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s124",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s123",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s122",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s121",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s120",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s119",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s118",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s117",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s116",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s115",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s114",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s113",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s112",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s111",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s110",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s109",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s108",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s107",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s106",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s105",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s104",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s103",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s102",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s101",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s100",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s99",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s98",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s97",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s96",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s95",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s94",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s93",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s92",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s91",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s90",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s89",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s88",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s87",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s86",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s85",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s84",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s83",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s82",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s81",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s80",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s79",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s78",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s77",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s76",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s75",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s74",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s73",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s72",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s71",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s70",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s69",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s68",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s67",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s66",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s65",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s64",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s63",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s62",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s61",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s60",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s59",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s58",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s57",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s56",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s55",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s54",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s53",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s52",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s51",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s50",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s49",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s48",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s47",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s46",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s45",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s44",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s43",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s42",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s41",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s40",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s39",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s38",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s37",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s36",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s35",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s34",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s33",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s32",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s31",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s30",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s29",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s28",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s27",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s26",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s25",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s24",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s23",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s22",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s21",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s20",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s19",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s18",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s17",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s16",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s15",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s14",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s13",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s12",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s11",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s10",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s9",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s8",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s7",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s6",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s5",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s4",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s3",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s2",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s1",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "s0",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "s253.value:s254.value",
+          "kind": "data",
+          "source": "s253",
+          "target": "s254",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s252.value:s253.value",
+          "kind": "data",
+          "source": "s252",
+          "target": "s253",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s251.value:s252.value",
+          "kind": "data",
+          "source": "s251",
+          "target": "s252",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s250.value:s251.value",
+          "kind": "data",
+          "source": "s250",
+          "target": "s251",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s249.value:s250.value",
+          "kind": "data",
+          "source": "s249",
+          "target": "s250",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s248.value:s249.value",
+          "kind": "data",
+          "source": "s248",
+          "target": "s249",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s247.value:s248.value",
+          "kind": "data",
+          "source": "s247",
+          "target": "s248",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s246.value:s247.value",
+          "kind": "data",
+          "source": "s246",
+          "target": "s247",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s245.value:s246.value",
+          "kind": "data",
+          "source": "s245",
+          "target": "s246",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s244.value:s245.value",
+          "kind": "data",
+          "source": "s244",
+          "target": "s245",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s243.value:s244.value",
+          "kind": "data",
+          "source": "s243",
+          "target": "s244",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s242.value:s243.value",
+          "kind": "data",
+          "source": "s242",
+          "target": "s243",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s241.value:s242.value",
+          "kind": "data",
+          "source": "s241",
+          "target": "s242",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s240.value:s241.value",
+          "kind": "data",
+          "source": "s240",
+          "target": "s241",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s239.value:s240.value",
+          "kind": "data",
+          "source": "s239",
+          "target": "s240",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s238.value:s239.value",
+          "kind": "data",
+          "source": "s238",
+          "target": "s239",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s237.value:s238.value",
+          "kind": "data",
+          "source": "s237",
+          "target": "s238",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s236.value:s237.value",
+          "kind": "data",
+          "source": "s236",
+          "target": "s237",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s235.value:s236.value",
+          "kind": "data",
+          "source": "s235",
+          "target": "s236",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s234.value:s235.value",
+          "kind": "data",
+          "source": "s234",
+          "target": "s235",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s233.value:s234.value",
+          "kind": "data",
+          "source": "s233",
+          "target": "s234",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s232.value:s233.value",
+          "kind": "data",
+          "source": "s232",
+          "target": "s233",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s231.value:s232.value",
+          "kind": "data",
+          "source": "s231",
+          "target": "s232",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s230.value:s231.value",
+          "kind": "data",
+          "source": "s230",
+          "target": "s231",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s229.value:s230.value",
+          "kind": "data",
+          "source": "s229",
+          "target": "s230",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s228.value:s229.value",
+          "kind": "data",
+          "source": "s228",
+          "target": "s229",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s227.value:s228.value",
+          "kind": "data",
+          "source": "s227",
+          "target": "s228",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s226.value:s227.value",
+          "kind": "data",
+          "source": "s226",
+          "target": "s227",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s225.value:s226.value",
+          "kind": "data",
+          "source": "s225",
+          "target": "s226",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s224.value:s225.value",
+          "kind": "data",
+          "source": "s224",
+          "target": "s225",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s223.value:s224.value",
+          "kind": "data",
+          "source": "s223",
+          "target": "s224",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s222.value:s223.value",
+          "kind": "data",
+          "source": "s222",
+          "target": "s223",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s221.value:s222.value",
+          "kind": "data",
+          "source": "s221",
+          "target": "s222",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s220.value:s221.value",
+          "kind": "data",
+          "source": "s220",
+          "target": "s221",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s219.value:s220.value",
+          "kind": "data",
+          "source": "s219",
+          "target": "s220",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s218.value:s219.value",
+          "kind": "data",
+          "source": "s218",
+          "target": "s219",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s217.value:s218.value",
+          "kind": "data",
+          "source": "s217",
+          "target": "s218",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s216.value:s217.value",
+          "kind": "data",
+          "source": "s216",
+          "target": "s217",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s215.value:s216.value",
+          "kind": "data",
+          "source": "s215",
+          "target": "s216",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s214.value:s215.value",
+          "kind": "data",
+          "source": "s214",
+          "target": "s215",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s213.value:s214.value",
+          "kind": "data",
+          "source": "s213",
+          "target": "s214",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s212.value:s213.value",
+          "kind": "data",
+          "source": "s212",
+          "target": "s213",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s211.value:s212.value",
+          "kind": "data",
+          "source": "s211",
+          "target": "s212",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s210.value:s211.value",
+          "kind": "data",
+          "source": "s210",
+          "target": "s211",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s209.value:s210.value",
+          "kind": "data",
+          "source": "s209",
+          "target": "s210",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s208.value:s209.value",
+          "kind": "data",
+          "source": "s208",
+          "target": "s209",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s207.value:s208.value",
+          "kind": "data",
+          "source": "s207",
+          "target": "s208",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s206.value:s207.value",
+          "kind": "data",
+          "source": "s206",
+          "target": "s207",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s205.value:s206.value",
+          "kind": "data",
+          "source": "s205",
+          "target": "s206",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s204.value:s205.value",
+          "kind": "data",
+          "source": "s204",
+          "target": "s205",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s203.value:s204.value",
+          "kind": "data",
+          "source": "s203",
+          "target": "s204",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s202.value:s203.value",
+          "kind": "data",
+          "source": "s202",
+          "target": "s203",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s201.value:s202.value",
+          "kind": "data",
+          "source": "s201",
+          "target": "s202",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s200.value:s201.value",
+          "kind": "data",
+          "source": "s200",
+          "target": "s201",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s199.value:s200.value",
+          "kind": "data",
+          "source": "s199",
+          "target": "s200",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s198.value:s199.value",
+          "kind": "data",
+          "source": "s198",
+          "target": "s199",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s197.value:s198.value",
+          "kind": "data",
+          "source": "s197",
+          "target": "s198",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s196.value:s197.value",
+          "kind": "data",
+          "source": "s196",
+          "target": "s197",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s195.value:s196.value",
+          "kind": "data",
+          "source": "s195",
+          "target": "s196",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s194.value:s195.value",
+          "kind": "data",
+          "source": "s194",
+          "target": "s195",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s193.value:s194.value",
+          "kind": "data",
+          "source": "s193",
+          "target": "s194",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s192.value:s193.value",
+          "kind": "data",
+          "source": "s192",
+          "target": "s193",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s191.value:s192.value",
+          "kind": "data",
+          "source": "s191",
+          "target": "s192",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s190.value:s191.value",
+          "kind": "data",
+          "source": "s190",
+          "target": "s191",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s189.value:s190.value",
+          "kind": "data",
+          "source": "s189",
+          "target": "s190",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s188.value:s189.value",
+          "kind": "data",
+          "source": "s188",
+          "target": "s189",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s187.value:s188.value",
+          "kind": "data",
+          "source": "s187",
+          "target": "s188",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s186.value:s187.value",
+          "kind": "data",
+          "source": "s186",
+          "target": "s187",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s185.value:s186.value",
+          "kind": "data",
+          "source": "s185",
+          "target": "s186",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s184.value:s185.value",
+          "kind": "data",
+          "source": "s184",
+          "target": "s185",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s183.value:s184.value",
+          "kind": "data",
+          "source": "s183",
+          "target": "s184",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s182.value:s183.value",
+          "kind": "data",
+          "source": "s182",
+          "target": "s183",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s181.value:s182.value",
+          "kind": "data",
+          "source": "s181",
+          "target": "s182",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s180.value:s181.value",
+          "kind": "data",
+          "source": "s180",
+          "target": "s181",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s179.value:s180.value",
+          "kind": "data",
+          "source": "s179",
+          "target": "s180",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s178.value:s179.value",
+          "kind": "data",
+          "source": "s178",
+          "target": "s179",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s177.value:s178.value",
+          "kind": "data",
+          "source": "s177",
+          "target": "s178",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s176.value:s177.value",
+          "kind": "data",
+          "source": "s176",
+          "target": "s177",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s175.value:s176.value",
+          "kind": "data",
+          "source": "s175",
+          "target": "s176",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s174.value:s175.value",
+          "kind": "data",
+          "source": "s174",
+          "target": "s175",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s173.value:s174.value",
+          "kind": "data",
+          "source": "s173",
+          "target": "s174",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s172.value:s173.value",
+          "kind": "data",
+          "source": "s172",
+          "target": "s173",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s171.value:s172.value",
+          "kind": "data",
+          "source": "s171",
+          "target": "s172",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s170.value:s171.value",
+          "kind": "data",
+          "source": "s170",
+          "target": "s171",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s169.value:s170.value",
+          "kind": "data",
+          "source": "s169",
+          "target": "s170",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s168.value:s169.value",
+          "kind": "data",
+          "source": "s168",
+          "target": "s169",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s167.value:s168.value",
+          "kind": "data",
+          "source": "s167",
+          "target": "s168",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s166.value:s167.value",
+          "kind": "data",
+          "source": "s166",
+          "target": "s167",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s165.value:s166.value",
+          "kind": "data",
+          "source": "s165",
+          "target": "s166",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s164.value:s165.value",
+          "kind": "data",
+          "source": "s164",
+          "target": "s165",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s163.value:s164.value",
+          "kind": "data",
+          "source": "s163",
+          "target": "s164",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s162.value:s163.value",
+          "kind": "data",
+          "source": "s162",
+          "target": "s163",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s161.value:s162.value",
+          "kind": "data",
+          "source": "s161",
+          "target": "s162",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s160.value:s161.value",
+          "kind": "data",
+          "source": "s160",
+          "target": "s161",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s159.value:s160.value",
+          "kind": "data",
+          "source": "s159",
+          "target": "s160",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s158.value:s159.value",
+          "kind": "data",
+          "source": "s158",
+          "target": "s159",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s157.value:s158.value",
+          "kind": "data",
+          "source": "s157",
+          "target": "s158",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s156.value:s157.value",
+          "kind": "data",
+          "source": "s156",
+          "target": "s157",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s155.value:s156.value",
+          "kind": "data",
+          "source": "s155",
+          "target": "s156",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s154.value:s155.value",
+          "kind": "data",
+          "source": "s154",
+          "target": "s155",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s153.value:s154.value",
+          "kind": "data",
+          "source": "s153",
+          "target": "s154",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s152.value:s153.value",
+          "kind": "data",
+          "source": "s152",
+          "target": "s153",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s151.value:s152.value",
+          "kind": "data",
+          "source": "s151",
+          "target": "s152",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s150.value:s151.value",
+          "kind": "data",
+          "source": "s150",
+          "target": "s151",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s149.value:s150.value",
+          "kind": "data",
+          "source": "s149",
+          "target": "s150",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s148.value:s149.value",
+          "kind": "data",
+          "source": "s148",
+          "target": "s149",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s147.value:s148.value",
+          "kind": "data",
+          "source": "s147",
+          "target": "s148",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s146.value:s147.value",
+          "kind": "data",
+          "source": "s146",
+          "target": "s147",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s145.value:s146.value",
+          "kind": "data",
+          "source": "s145",
+          "target": "s146",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s144.value:s145.value",
+          "kind": "data",
+          "source": "s144",
+          "target": "s145",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s143.value:s144.value",
+          "kind": "data",
+          "source": "s143",
+          "target": "s144",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s142.value:s143.value",
+          "kind": "data",
+          "source": "s142",
+          "target": "s143",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s141.value:s142.value",
+          "kind": "data",
+          "source": "s141",
+          "target": "s142",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s140.value:s141.value",
+          "kind": "data",
+          "source": "s140",
+          "target": "s141",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s139.value:s140.value",
+          "kind": "data",
+          "source": "s139",
+          "target": "s140",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s138.value:s139.value",
+          "kind": "data",
+          "source": "s138",
+          "target": "s139",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s137.value:s138.value",
+          "kind": "data",
+          "source": "s137",
+          "target": "s138",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s136.value:s137.value",
+          "kind": "data",
+          "source": "s136",
+          "target": "s137",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s135.value:s136.value",
+          "kind": "data",
+          "source": "s135",
+          "target": "s136",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s134.value:s135.value",
+          "kind": "data",
+          "source": "s134",
+          "target": "s135",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s133.value:s134.value",
+          "kind": "data",
+          "source": "s133",
+          "target": "s134",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s132.value:s133.value",
+          "kind": "data",
+          "source": "s132",
+          "target": "s133",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s131.value:s132.value",
+          "kind": "data",
+          "source": "s131",
+          "target": "s132",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s130.value:s131.value",
+          "kind": "data",
+          "source": "s130",
+          "target": "s131",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s129.value:s130.value",
+          "kind": "data",
+          "source": "s129",
+          "target": "s130",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s128.value:s129.value",
+          "kind": "data",
+          "source": "s128",
+          "target": "s129",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s127.value:s128.value",
+          "kind": "data",
+          "source": "s127",
+          "target": "s128",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s126.value:s127.value",
+          "kind": "data",
+          "source": "s126",
+          "target": "s127",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s125.value:s126.value",
+          "kind": "data",
+          "source": "s125",
+          "target": "s126",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s124.value:s125.value",
+          "kind": "data",
+          "source": "s124",
+          "target": "s125",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s123.value:s124.value",
+          "kind": "data",
+          "source": "s123",
+          "target": "s124",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s122.value:s123.value",
+          "kind": "data",
+          "source": "s122",
+          "target": "s123",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s121.value:s122.value",
+          "kind": "data",
+          "source": "s121",
+          "target": "s122",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s120.value:s121.value",
+          "kind": "data",
+          "source": "s120",
+          "target": "s121",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s119.value:s120.value",
+          "kind": "data",
+          "source": "s119",
+          "target": "s120",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s118.value:s119.value",
+          "kind": "data",
+          "source": "s118",
+          "target": "s119",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s117.value:s118.value",
+          "kind": "data",
+          "source": "s117",
+          "target": "s118",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s116.value:s117.value",
+          "kind": "data",
+          "source": "s116",
+          "target": "s117",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s115.value:s116.value",
+          "kind": "data",
+          "source": "s115",
+          "target": "s116",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s114.value:s115.value",
+          "kind": "data",
+          "source": "s114",
+          "target": "s115",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s113.value:s114.value",
+          "kind": "data",
+          "source": "s113",
+          "target": "s114",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s112.value:s113.value",
+          "kind": "data",
+          "source": "s112",
+          "target": "s113",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s111.value:s112.value",
+          "kind": "data",
+          "source": "s111",
+          "target": "s112",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s110.value:s111.value",
+          "kind": "data",
+          "source": "s110",
+          "target": "s111",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s109.value:s110.value",
+          "kind": "data",
+          "source": "s109",
+          "target": "s110",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s108.value:s109.value",
+          "kind": "data",
+          "source": "s108",
+          "target": "s109",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s107.value:s108.value",
+          "kind": "data",
+          "source": "s107",
+          "target": "s108",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s106.value:s107.value",
+          "kind": "data",
+          "source": "s106",
+          "target": "s107",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s105.value:s106.value",
+          "kind": "data",
+          "source": "s105",
+          "target": "s106",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s104.value:s105.value",
+          "kind": "data",
+          "source": "s104",
+          "target": "s105",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s103.value:s104.value",
+          "kind": "data",
+          "source": "s103",
+          "target": "s104",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s102.value:s103.value",
+          "kind": "data",
+          "source": "s102",
+          "target": "s103",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s101.value:s102.value",
+          "kind": "data",
+          "source": "s101",
+          "target": "s102",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s100.value:s101.value",
+          "kind": "data",
+          "source": "s100",
+          "target": "s101",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s99.value:s100.value",
+          "kind": "data",
+          "source": "s99",
+          "target": "s100",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s98.value:s99.value",
+          "kind": "data",
+          "source": "s98",
+          "target": "s99",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s97.value:s98.value",
+          "kind": "data",
+          "source": "s97",
+          "target": "s98",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s96.value:s97.value",
+          "kind": "data",
+          "source": "s96",
+          "target": "s97",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s95.value:s96.value",
+          "kind": "data",
+          "source": "s95",
+          "target": "s96",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s94.value:s95.value",
+          "kind": "data",
+          "source": "s94",
+          "target": "s95",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s93.value:s94.value",
+          "kind": "data",
+          "source": "s93",
+          "target": "s94",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s92.value:s93.value",
+          "kind": "data",
+          "source": "s92",
+          "target": "s93",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s91.value:s92.value",
+          "kind": "data",
+          "source": "s91",
+          "target": "s92",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s90.value:s91.value",
+          "kind": "data",
+          "source": "s90",
+          "target": "s91",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s89.value:s90.value",
+          "kind": "data",
+          "source": "s89",
+          "target": "s90",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s88.value:s89.value",
+          "kind": "data",
+          "source": "s88",
+          "target": "s89",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s87.value:s88.value",
+          "kind": "data",
+          "source": "s87",
+          "target": "s88",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s86.value:s87.value",
+          "kind": "data",
+          "source": "s86",
+          "target": "s87",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s85.value:s86.value",
+          "kind": "data",
+          "source": "s85",
+          "target": "s86",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s84.value:s85.value",
+          "kind": "data",
+          "source": "s84",
+          "target": "s85",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s83.value:s84.value",
+          "kind": "data",
+          "source": "s83",
+          "target": "s84",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s82.value:s83.value",
+          "kind": "data",
+          "source": "s82",
+          "target": "s83",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s81.value:s82.value",
+          "kind": "data",
+          "source": "s81",
+          "target": "s82",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s80.value:s81.value",
+          "kind": "data",
+          "source": "s80",
+          "target": "s81",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s79.value:s80.value",
+          "kind": "data",
+          "source": "s79",
+          "target": "s80",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s78.value:s79.value",
+          "kind": "data",
+          "source": "s78",
+          "target": "s79",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s77.value:s78.value",
+          "kind": "data",
+          "source": "s77",
+          "target": "s78",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s76.value:s77.value",
+          "kind": "data",
+          "source": "s76",
+          "target": "s77",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s75.value:s76.value",
+          "kind": "data",
+          "source": "s75",
+          "target": "s76",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s74.value:s75.value",
+          "kind": "data",
+          "source": "s74",
+          "target": "s75",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s73.value:s74.value",
+          "kind": "data",
+          "source": "s73",
+          "target": "s74",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s72.value:s73.value",
+          "kind": "data",
+          "source": "s72",
+          "target": "s73",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s71.value:s72.value",
+          "kind": "data",
+          "source": "s71",
+          "target": "s72",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s70.value:s71.value",
+          "kind": "data",
+          "source": "s70",
+          "target": "s71",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s69.value:s70.value",
+          "kind": "data",
+          "source": "s69",
+          "target": "s70",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s68.value:s69.value",
+          "kind": "data",
+          "source": "s68",
+          "target": "s69",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s67.value:s68.value",
+          "kind": "data",
+          "source": "s67",
+          "target": "s68",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s66.value:s67.value",
+          "kind": "data",
+          "source": "s66",
+          "target": "s67",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s65.value:s66.value",
+          "kind": "data",
+          "source": "s65",
+          "target": "s66",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s64.value:s65.value",
+          "kind": "data",
+          "source": "s64",
+          "target": "s65",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s63.value:s64.value",
+          "kind": "data",
+          "source": "s63",
+          "target": "s64",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s62.value:s63.value",
+          "kind": "data",
+          "source": "s62",
+          "target": "s63",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s61.value:s62.value",
+          "kind": "data",
+          "source": "s61",
+          "target": "s62",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s60.value:s61.value",
+          "kind": "data",
+          "source": "s60",
+          "target": "s61",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s59.value:s60.value",
+          "kind": "data",
+          "source": "s59",
+          "target": "s60",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s58.value:s59.value",
+          "kind": "data",
+          "source": "s58",
+          "target": "s59",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s57.value:s58.value",
+          "kind": "data",
+          "source": "s57",
+          "target": "s58",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s56.value:s57.value",
+          "kind": "data",
+          "source": "s56",
+          "target": "s57",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s55.value:s56.value",
+          "kind": "data",
+          "source": "s55",
+          "target": "s56",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s54.value:s55.value",
+          "kind": "data",
+          "source": "s54",
+          "target": "s55",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s53.value:s54.value",
+          "kind": "data",
+          "source": "s53",
+          "target": "s54",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s52.value:s53.value",
+          "kind": "data",
+          "source": "s52",
+          "target": "s53",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s51.value:s52.value",
+          "kind": "data",
+          "source": "s51",
+          "target": "s52",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s50.value:s51.value",
+          "kind": "data",
+          "source": "s50",
+          "target": "s51",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s49.value:s50.value",
+          "kind": "data",
+          "source": "s49",
+          "target": "s50",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s48.value:s49.value",
+          "kind": "data",
+          "source": "s48",
+          "target": "s49",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s47.value:s48.value",
+          "kind": "data",
+          "source": "s47",
+          "target": "s48",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s46.value:s47.value",
+          "kind": "data",
+          "source": "s46",
+          "target": "s47",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s45.value:s46.value",
+          "kind": "data",
+          "source": "s45",
+          "target": "s46",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s44.value:s45.value",
+          "kind": "data",
+          "source": "s44",
+          "target": "s45",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s43.value:s44.value",
+          "kind": "data",
+          "source": "s43",
+          "target": "s44",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s42.value:s43.value",
+          "kind": "data",
+          "source": "s42",
+          "target": "s43",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s41.value:s42.value",
+          "kind": "data",
+          "source": "s41",
+          "target": "s42",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s40.value:s41.value",
+          "kind": "data",
+          "source": "s40",
+          "target": "s41",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s39.value:s40.value",
+          "kind": "data",
+          "source": "s39",
+          "target": "s40",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s38.value:s39.value",
+          "kind": "data",
+          "source": "s38",
+          "target": "s39",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s37.value:s38.value",
+          "kind": "data",
+          "source": "s37",
+          "target": "s38",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s36.value:s37.value",
+          "kind": "data",
+          "source": "s36",
+          "target": "s37",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s35.value:s36.value",
+          "kind": "data",
+          "source": "s35",
+          "target": "s36",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s34.value:s35.value",
+          "kind": "data",
+          "source": "s34",
+          "target": "s35",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s33.value:s34.value",
+          "kind": "data",
+          "source": "s33",
+          "target": "s34",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s32.value:s33.value",
+          "kind": "data",
+          "source": "s32",
+          "target": "s33",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s31.value:s32.value",
+          "kind": "data",
+          "source": "s31",
+          "target": "s32",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s30.value:s31.value",
+          "kind": "data",
+          "source": "s30",
+          "target": "s31",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s29.value:s30.value",
+          "kind": "data",
+          "source": "s29",
+          "target": "s30",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s28.value:s29.value",
+          "kind": "data",
+          "source": "s28",
+          "target": "s29",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s27.value:s28.value",
+          "kind": "data",
+          "source": "s27",
+          "target": "s28",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s26.value:s27.value",
+          "kind": "data",
+          "source": "s26",
+          "target": "s27",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s25.value:s26.value",
+          "kind": "data",
+          "source": "s25",
+          "target": "s26",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s24.value:s25.value",
+          "kind": "data",
+          "source": "s24",
+          "target": "s25",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s23.value:s24.value",
+          "kind": "data",
+          "source": "s23",
+          "target": "s24",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s22.value:s23.value",
+          "kind": "data",
+          "source": "s22",
+          "target": "s23",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s21.value:s22.value",
+          "kind": "data",
+          "source": "s21",
+          "target": "s22",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s20.value:s21.value",
+          "kind": "data",
+          "source": "s20",
+          "target": "s21",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s19.value:s20.value",
+          "kind": "data",
+          "source": "s19",
+          "target": "s20",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s18.value:s19.value",
+          "kind": "data",
+          "source": "s18",
+          "target": "s19",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s17.value:s18.value",
+          "kind": "data",
+          "source": "s17",
+          "target": "s18",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s16.value:s17.value",
+          "kind": "data",
+          "source": "s16",
+          "target": "s17",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s15.value:s16.value",
+          "kind": "data",
+          "source": "s15",
+          "target": "s16",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s14.value:s15.value",
+          "kind": "data",
+          "source": "s14",
+          "target": "s15",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s13.value:s14.value",
+          "kind": "data",
+          "source": "s13",
+          "target": "s14",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s12.value:s13.value",
+          "kind": "data",
+          "source": "s12",
+          "target": "s13",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s11.value:s12.value",
+          "kind": "data",
+          "source": "s11",
+          "target": "s12",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s10.value:s11.value",
+          "kind": "data",
+          "source": "s10",
+          "target": "s11",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s9.value:s10.value",
+          "kind": "data",
+          "source": "s9",
+          "target": "s10",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s8.value:s9.value",
+          "kind": "data",
+          "source": "s8",
+          "target": "s9",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s7.value:s8.value",
+          "kind": "data",
+          "source": "s7",
+          "target": "s8",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s6.value:s7.value",
+          "kind": "data",
+          "source": "s6",
+          "target": "s7",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s5.value:s6.value",
+          "kind": "data",
+          "source": "s5",
+          "target": "s6",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s4.value:s5.value",
+          "kind": "data",
+          "source": "s4",
+          "target": "s5",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s3.value:s4.value",
+          "kind": "data",
+          "source": "s3",
+          "target": "s4",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s2.value:s3.value",
+          "kind": "data",
+          "source": "s2",
+          "target": "s3",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s1.value:s2.value",
+          "kind": "data",
+          "source": "s1",
+          "target": "s2",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "s0.value:s1.value",
+          "kind": "data",
+          "source": "s0",
+          "target": "s1",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "make.result:s0.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s0",
+          "sourcePort": "result",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "Graph limit",
+    "messages": [
+      "Graph limit: 1–256 nodes and at most 512 edges"
+    ],
+    "codes": [
+      "graph.limit"
+    ]
+  },
+  {
+    "name": "select property: a cycle of two stays unresolved, so its reader gets no type error",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "select_property",
+          "config": {
+            "property": "Next"
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:d",
+          "source": "t",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "a.value:b.value",
+          "kind": "data",
+          "source": "a",
+          "target": "b",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "b.value:a.value",
+          "kind": "data",
+          "source": "b",
+          "target": "a",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "b.value:d.seconds",
+          "kind": "data",
+          "source": "b",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "contains": "would depend on its own result",
+    "messages": [
+      "Select property would depend on its own result"
+    ],
+    "codes": [
+      "cycle.data"
+    ]
+  },
+  {
+    "name": "select property: a null typed into Value is refused",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                },
+                "global::NodeLib.User?": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": true,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName",
+            "value": {
+              "kind": "literal",
+              "type": "global::NodeLib.User?",
+              "value": null
+            }
+          }
+        },
+        {
+          "id": "d",
+          "kind": "delay",
+          "config": {
+            "seconds": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:d",
+          "source": "make",
+          "target": "d",
+          "port": "next"
+        },
+        {
+          "id": "s.value:d.seconds",
+          "kind": "data",
+          "source": "s",
+          "target": "d",
+          "sourcePort": "value",
+          "targetPort": "seconds"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "value",
+    "contains": "Connect a value to Select property; nothing can be typed in here",
+    "messages": [
+      "Connect a value to Select property; nothing can be typed in here"
+    ]
+  },
+  {
+    "name": "select property: an entity property into a service target of its domain",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                },
+                "global::NodeLib.User?": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": true,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "Lamp"
+          }
+        },
+        {
+          "id": "svc",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on",
+            "fields": {},
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:svc",
+          "source": "make",
+          "target": "svc",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:svc.target",
+          "kind": "data",
+          "source": "s",
+          "target": "svc",
+          "sourcePort": "value",
+          "targetPort": "target"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "select property: an entity property into a service target of another domain",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                },
+                "global::NodeLib.User?": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": true,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "Plug"
+          }
+        },
+        {
+          "id": "svc",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on",
+            "fields": {},
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:svc",
+          "source": "make",
+          "target": "svc",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:svc.target",
+          "kind": "data",
+          "source": "s",
+          "target": "svc",
+          "sourcePort": "value",
+          "targetPort": "target"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "svc",
+    "inputId": "target",
+    "messages": [
+      "Turn on (light.turn_on) only accepts light entities; the connected value is a switch entity"
+    ]
+  },
+  {
+    "name": "select property: a number property into a service field",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                },
+                "global::NodeLib.User?": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": true,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "Level"
+          }
+        },
+        {
+          "id": "svc",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on",
+            "fields": {
+              "brightness_pct": {
+                "kind": "unset"
+              }
+            },
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:svc",
+          "source": "make",
+          "target": "svc",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:svc.field:brightness_pct",
+          "kind": "data",
+          "source": "s",
+          "target": "svc",
+          "sourcePort": "value",
+          "targetPort": "field:brightness_pct"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "select property: a text property into a number service field",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                },
+                "global::NodeLib.User?": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": true,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "select_property",
+          "config": {
+            "property": "UserName"
+          }
+        },
+        {
+          "id": "svc",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on",
+            "fields": {
+              "brightness_pct": {
+                "kind": "unset"
+              }
+            },
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:svc",
+          "source": "make",
+          "target": "svc",
+          "port": "next"
+        },
+        {
+          "id": "make.result:s.value",
+          "kind": "data",
+          "source": "make",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "value"
+        },
+        {
+          "id": "s.value:svc.field:brightness_pct",
+          "kind": "data",
+          "source": "s",
+          "target": "svc",
+          "sourcePort": "value",
+          "targetPort": "field:brightness_pct"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "svc",
+    "inputId": "field:brightness_pct",
+    "contains": "accepts Number, not Text",
+    "messages": [
+      "Turn on (light.turn_on): Brightness accepts Number, not Text"
     ]
   }
 ]

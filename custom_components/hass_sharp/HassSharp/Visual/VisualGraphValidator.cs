@@ -26,7 +26,8 @@ public static class VisualGraphValidator
     /// The codes of structural diagnostics, identical in <c>contract.ts</c>. The editor's connection check lives in
     /// <c>contract.ts</c> only (<c>connectData</c>) and does not read codes: it refuses a wire for any diagnostic the wire
     /// adds (compared by full content), any diagnostic on the input it fills or about the output it reads, and a data
-    /// cycle the wire itself lies on.
+    /// cycle the wire itself lies on. A <c>property.*</c> diagnostic (a Select property node's property to choose) refuses
+    /// the wire only when it is on the input the wire fills: a value is connected before its property is chosen.
     /// </summary>
     public static readonly string[] Codes =
     [
@@ -333,13 +334,16 @@ public static class VisualGraphValidator
         }
         /// <summary>A wire from a Select property node whose property is not chosen yet: its value has no type.</summary>
         internal static string ChooseProperty(string step) => $"Choose a property in {step} to use its value";
+        /// <summary>A value typed into an input that takes a wire only (a Select property node's value): a record, class or struct comes from a step.</summary>
+        internal static string WireOnly(string step) => $"Connect a value to {step}; nothing can be typed in here";
         /// <summary>A Select property node with a value connected and no property chosen.</summary>
         internal static string PropertyUnset(string type) => $"Choose a property of {type}";
         /// <summary>A Select property node whose chosen property the connected value's type does not have (the wire or the library changed).</summary>
         internal static string PropertyUnknown(string type, string name) => $"{type} has no property {Name(name)}; choose another";
         /// <summary>
         /// A value whose type has no properties, wired into a Select property node, and what reads such a value instead:
-        /// Read entity for an entity, Get field for an object or a JSON list, For each for any other list.
+        /// Read entity for an entity, Get field for an object or a JSON list, For each for a type with an element type (what
+        /// For each goes through).
         /// </summary>
         internal static string NoProperties(JsonObject catalog, string type)
         {
@@ -347,7 +351,7 @@ public static class VisualGraphValidator
             var instead = VisualTypes.Refines(catalog, type, "entity_id") ? "use Read entity to get its state"
                 : root == "object" ? "use Get field to take a value out of an object"
                 : root == "array" ? "use Get field to take a value out of a list"
-                : label == "List" || label.StartsWith("List of ", StringComparison.Ordinal) ? "use For each to go through its items"
+                : Text(VisualTypes.Resolve(catalog, type), "elementType") != "" ? "use For each to go through its items"
                 : "connect a value that has some, such as a record from a node library";
             return $"{label} has no properties to select; {instead}";
         }
@@ -459,10 +463,11 @@ public static class VisualGraphValidator
             if (string.IsNullOrWhiteSpace(Text(graph, "name"))) Error(null, "Graph name is required", code: "graph.name");
             if (graph.ContainsKey("imports")) Error(null, Words.Imports);
             if (graph.ContainsKey("members")) Error(null, Words.Members);
-            // The types of the graph's Custom C# nodes join the catalog's; they are compared by their entries alone.
-            if (WithGraphTypes(Root, graph) is var merged && !ReferenceEquals(merged, Root)) snapshot = snapshot.WithRoot(merged);
             if (graph["nodes"] is not JsonArray ns || graph["edges"] is not JsonArray es) { Error(null, "Nodes and edges arrays are required", code: "graph.shape"); return errors; }
-            if (ns.Count is < 1 or > 256 || es.Count > 512) { Error(null, "Graph limit: 1–256 nodes and at most 512 edges", code: "graph.limit"); return errors; }
+            if (ns.Count < 1 || OverLimit(Root, graph)) { Error(null, "Graph limit: 1–256 nodes and at most 512 edges", code: "graph.limit"); return errors; }
+            // The types of the graph's Custom C# nodes join the catalog's; they are compared by their entries alone. Only
+            // once the graph's shape and size are known: nothing is resolved for a graph answered with graph.limit.
+            if (WithGraphTypes(Root, graph) is var merged && !ReferenceEquals(merged, Root)) snapshot = snapshot.WithRoot(merged);
             foreach (var raw in ns)
             {
                 if (raw is not JsonObject node || Id(node) == "" || node["config"] is not JsonObject) { Error(null, "Each node requires id and config", code: "node.invalid"); continue; }
@@ -578,6 +583,8 @@ public static class VisualGraphValidator
             }
             string? type = null;
             if (Text(operand, "kind") == "variable") { Error(Id(node), Words.Variable(subject), port, port); return null; }
+            // A value with properties (a record, class or struct) comes from a step: nothing can be typed in, null included.
+            if (SelectsProperties(Spec(node), port)) { Error(Id(node), Words.WireOnly(Words.StepName(node, Spec(node))), port, port); return null; }
             if (Text(operand, "kind") == "literal")
             {
                 type = Text(operand, "type", "unknown"); var value = operand["value"];

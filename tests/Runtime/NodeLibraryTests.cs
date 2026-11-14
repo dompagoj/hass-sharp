@@ -182,7 +182,45 @@ public static class NodeLibraryTests
         Check(entity.Attributes.GetProperty("nested")[0].GetString() == "original" && entity.LastChanged == DateTimeOffset.FromUnixTimeSeconds(10), "detached immutable attributes/timestamp conversion");
         NodeLibraryFixture.Verify();
         Console.WriteLine("PASS rich node libraries: Roslyn discovery, docs, signatures, conversion, snapshots and graph validation");
+        PinDepth(compiler);
+        Console.WriteLine("PASS rich node libraries: a pin whose type nests more than 8 levels is refused before any conversion is classified");
         await RunReview(null);
+    }
+    /// <summary>
+    /// A pin type nested <paramref name="levels"/> levels deep: <c>int</c> is one level, and each list, array, tuple or
+    /// nullable wrapper around it one more.
+    /// </summary>
+    static string Nested(int levels, string wrap = "List<{0}>", string inner = "int") { var type = inner; for (var i = 1; i < levels; i++) type = string.Format(wrap, type); return type; }
+    // Fix 11: the time to compare deeply nested types doubles per level, and nothing can cancel it; such a pin is refused first.
+    static void PinDepth(NodeLibraryCompiler compiler)
+    {
+        const string TooDeep = "This type is nested too deeply to be a pin; use a simpler type";
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var fits = compiler.Preview([new("depth", $"public static class Deep {{ [Node(\"Eight\")] public static int Eight({Nested(8)} items) => 1; [Node(\"Out\")] public static {Nested(8, "{0}[]")} Out() => null!; }}", 1)]);
+        Check(fits.Valid, "a pin nested 8 levels compiles: " + string.Join("; ", fits.Diagnostics.Select(d => d.Message)));
+        void Refused(string name, string code, string where)
+        {
+            var preview = compiler.Preview([new("depth", code, 1)]);
+            var found = preview.Diagnostics.Where(d => d.Message == TooDeep).ToArray();
+            Check(!preview.Valid && found.Length == 1 && preview.Snapshot.Methods.Count == 0, name + ": " + string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
+            var line = code.Split('\n')[found[0].StartLine - 1];
+            Check(line.Substring(found[0].StartColumn - 1).StartsWith(where, StringComparison.Ordinal), $"{name}: reported at {where}, not at {line.Substring(found[0].StartColumn - 1)}");
+        }
+        Refused("a parameter nested 9 levels", $"public static class Deep {{ [Node(\"Nine\")] public static int Nine({Nested(9)} items) => 1; }}", "items");
+        Refused("a result nested 9 levels", $"public static class Deep {{ [Node(\"Nine\")] public static {Nested(9, "{0}[]")} Nine() => null!; }}", Nested(9, "{0}[]"));
+        Refused("a tuple element nested 9 levels", $"public static class Deep {{ [Node(\"Nine\")] public static (int Count, {Nested(9, "Dictionary<string, {0}>")} Deep) Nine() => default; }}", "Deep");
+        // int, then four times a one-element tuple that may be empty (a nullable wrapper around a tuple): 9 levels.
+        Refused("nullable wrappers counted", $"public static class Deep {{ [Node(\"Nine\")] public static int Nine({Nested(5, "System.ValueTuple<{0}>?")} value) => 1; }}", "value");
+        // Far deeper: refused as quickly (comparing such types would take minutes).
+        Refused("a parameter nested 30 levels", $"public static class Deep {{ [Node(\"Thirty\")] public static int Thirty({Nested(30)} items) => 1; }}", "items");
+        // A Custom C# node's pins are held to the same bound.
+        var custom = compiler.Preview([], [new CustomNodeSource("deep", $"public static class CustomNode {{ [Node(\"Deep\")] public static int Run({Nested(9)} items) => 1; }}")]).Snapshot.Custom["deep"];
+        Check(custom.Signature == null && custom.Diagnostics.Any(d => d.Message == TooDeep), "a Custom C# pin nested 9 levels: " + string.Join("; ", custom.Diagnostics.Select(d => d.Message)));
+        // A property nested deeper than a pin may be is skipped, as an unsupported member is; the others stay listed.
+        var record = compiler.Preview([new("depth", $"public record Holder(string Name, {Nested(9)} Deep, {Nested(8)} Fits); public static class Deep {{ [Node(\"Holder\", Pure = true)] public static Holder Make() => null!; }}", 1)]);
+        Check(record.Valid && string.Join(",", record.Snapshot.Catalog["types"]!["global::NodeLib.Holder"]!["properties"]!.AsArray().Select(p => p!["name"]!.GetValue<string>())) == "Name,Fits",
+            "a property nested 9 levels is not listed: " + record.Snapshot.Catalog["types"]!["global::NodeLib.Holder"]?["properties"]?.ToJsonString() + string.Join("; ", record.Diagnostics.Select(d => d.Message)));
+        Check(watch.Elapsed < TimeSpan.FromSeconds(15), "the pin depth checks took " + watch.Elapsed);
     }
     [RuntimeSuite("--node-library-review", RunByDefault = false)]
     public static async Task RunReview(string? scenario)

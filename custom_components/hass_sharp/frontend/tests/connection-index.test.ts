@@ -33,10 +33,11 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below. No pair needs the full check: the index decides every one itself.
-const GRAPHS = 354, PAIRS = 1529, ACCEPTED = 471, BY_VALIDATION = 252, SERVICES_ACCEPTED = 415, SERVICES_BY_VALIDATION = 262
+const GRAPHS = 360, PAIRS = 1574, ACCEPTED = 473, BY_VALIDATION = 252, SERVICES_ACCEPTED = 415, SERVICES_BY_VALIDATION = 262
 const FALLBACKS: string[] = []
-// The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit).
-const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config']
+// The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit), and the one past the limit.
+const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config',
+  'select property: a chain past the graph limit answers the limit alone: past the graph limit']
 const RICH: Totals = { graphs: 32, pairs: 244, accepted: 54, rejected: 190, byValidation: 0, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 
@@ -49,6 +50,8 @@ function agree(name: string, value: unknown, catalog: VisualCatalogSnapshot, tot
   if (!nodes || !Array.isArray(graph.edges)) { totals.skipped.push(`${name}: nodes or edges are not arrays`); return }
   const wellFormed = nodes.filter(n => n && typeof n === 'object' && typeof n.id === 'string' && n.config && typeof n.config === 'object')
   if (!wellFormed.length) { totals.skipped.push(`${name}: no node has an id and config`); return }
+  // A graph past the limit is answered with graph.limit alone, whatever is wired; its tens of thousands of pairs say nothing more.
+  if (contract.overLimit(catalog, graph)) { totals.skipped.push(`${name}: past the graph limit`); return }
   totals.graphs++
   for (const source of wellFormed) for (const sourcePort of Object.keys(contract.dataOutputs(source, catalog)))
     for (const target of wellFormed) for (const targetPort of Object.keys(nodeInputs(graph, target, catalog))) {

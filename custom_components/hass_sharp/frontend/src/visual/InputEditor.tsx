@@ -114,7 +114,8 @@ export function InputEditor(props: InputEditorProps) {
   const content = () => <>
     <Show when={view() === 'value'}>
       <Show when={widget().kind !== 'none'} fallback={<span class="hs-input-editor__state hs-muted">
-        {props.retype ? (props.variant === 'inline' ? 'Choose another Type' : 'No value can be typed in for this Type: choose another.') : props.variant === 'inline' ? 'Connect an output' : `Connect an output of type ${typeNames()}.`}
+        {props.retype ? (props.variant === 'inline' ? 'Choose another Type' : 'No value can be typed in for this Type: choose another.') : props.variant === 'inline' ? 'Connect an output'
+          : props.input.wireOnly ? 'Connect an output whose value has properties, such as a record from a node library.' : `Connect an output of type ${typeNames()}.`}
       </span>}>
         <Show when={!summary()} fallback={<Summary widget={shown()} value={literal()} />}>
           <WidgetControl widget={shown()} value={literal()} commit={commit} id={id} label={props.label} describedBy={describedBy()} required={props.input.required}

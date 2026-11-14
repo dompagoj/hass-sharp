@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { render } from 'solid-js/web'
-import { analyzeGraph, connectData, dataOutputs, nodeCatalog, withGraphTypes, type Graph, type GraphNode, type TypeSpec } from '../src/visual/contract'
+import { analyzeGraph, connectData, dataOutputs, nodeCatalog, resolveOutputs, withGraphTypes, type Graph, type GraphNode, type TypeSpec, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { connectionIndex, graphTypes } from '../src/visual/connectionIndex'
 import { canAddFor } from '../src/visual/flow/autoConnect'
 import { buildNodeView } from '../src/visual/flow/flowModel'
@@ -16,10 +16,10 @@ const types: Record<string, TypeSpec> = {
   [USER]: entry('User', [{ name: 'UserName', type: 'string', nullable: false, description: 'What the person is called.' }, { name: 'Age', type: 'number', nullable: false }]),
   [ROOM]: entry('Room', [{ name: 'Age', type: 'string', nullable: false }]),
 }
-const make = (id: string, type: string): GraphNode => ({
+const make = (id: string, type: string, own: Record<string, TypeSpec> = types): GraphNode => ({
   id, kind: 'custom', config: {
     source: 'public static class CustomNode { }', arguments: {},
-    signature: { title: id, description: '', pure: false, inputs: {}, outputs: { result: { type, label: 'Result', description: '' } }, types },
+    signature: { title: id, description: '', pure: false, inputs: {}, outputs: { result: { type, label: 'Result', description: '' } }, types: own },
   },
 })
 const select = (id: string, property: unknown = ''): GraphNode => ({ id, kind: 'select_property', config: { property } })
@@ -60,6 +60,37 @@ describe('the type of a Select property node', () => {
     expect(view(graph('Age')).typeName).toBe('Number')
     expect(view(graph('')).typeName).toBe('No property chosen')
     expect(view(graph('Level')).typeName).toBe('Unknown type')
+  })
+})
+
+describe('resolving the types of a chain of Select property nodes', () => {
+  // Fix 1: each output's type follows the node before it, resolved in dependency order, never one call deeper per node.
+  const LINK = 'global::NodeLib.Link'
+  const links = { [LINK]: entry('Link', [{ name: 'Next', type: LINK, nullable: false }]) }
+  const withLinks: VisualCatalogSnapshot = { ...nodeCatalog, types: { ...nodeCatalog.types, ...links } }
+  /** v (a Link) -> s0 (Next) -> s1 (Next) -> …, listed last first, so a resolver that goes to each source first goes the whole way down. */
+  function chain(count: number): Graph {
+    const nodes: GraphNode[] = [{ id: 't', kind: 'trigger', config: { type: 'manual' } }, make('v', LINK, links)]
+    const edges: Graph['edges'] = []
+    for (let i = count - 1; i >= 0; i--) { nodes.push(select(`s${i}`, 'Next')); edges.push(wire(i ? `s${i - 1}` : 'v', i ? 'value' : 'result', `s${i}`, 'value')) }
+    return { version: 5, name: 'Chain', nodes, edges }
+  }
+  const COUNT = 50_000
+  it('resolves a chain of any length to its last node', () => {
+    const catalog = { ...withLinks }
+    resolveOutputs(catalog, chain(COUNT))
+    expect(catalog.resolvedOutputs?.[`s${COUNT - 1}`]?.value).toBe(LINK)
+  })
+  it('leaves a cycle, what reads it and a node reading itself unresolved', () => {
+    const catalog = { ...withLinks }
+    resolveOutputs(catalog, { version: 5, name: 'Cycle', nodes: [make('v', LINK, links), select('a', 'Next'), select('b', 'Next'), select('c', 'Next'), select('me', 'Next')],
+      edges: [wire('b', 'value', 'a', 'value'), wire('a', 'value', 'b', 'value'), wire('a', 'value', 'c', 'value'), wire('me', 'value', 'me', 'value')] })
+    expect(catalog.resolvedOutputs).toEqual({})
+  })
+  it('resolves nothing past the graph limit, and the validator answers the limit only', () => {
+    const long = chain(COUNT)
+    expect(withGraphTypes(nodeCatalog, long)).toBe(nodeCatalog)
+    expect(analyzeGraph(long).diagnostics.map(d => d.code)).toEqual(['graph.limit'])
   })
 })
 
@@ -110,6 +141,20 @@ describe('choosing a property', () => {
     expect(fits.notice).toBeUndefined()
     expect(chooseProperty(g, 's', 'Age', nodeCatalog).graph).toBe(g)
   })
+  it('judges a wire into a Loop result by the loop it is in', () => {
+    const loop: Graph = {
+      version: 5, name: 'Carry',
+      nodes: [{ id: 't', kind: 'trigger', config: { type: 'manual' } },
+        { id: 'loop', kind: 'repeat', config: { count: { kind: 'literal', type: 'number', value: 3 }, carry: [{ name: 'total', type: 'number', initial: { kind: 'literal', type: 'number', value: 0 } }], exports: [] } },
+        make('user', USER), { id: 'r', kind: 'loop_result', config: { values: {} } }, select('s', 'Age')],
+      edges: [step('t', 'loop'), step('loop', 'user', 'body'), step('user', 'r'), wire('user', 'result', 's', 'value'), wire('s', 'value', 'r', 'carry:total')],
+    }
+    expect(analyzeGraph(loop).diagnostics.filter(d => d.severity === 3)).toEqual([])
+    const chosen = chooseProperty(loop, 's', 'UserName', nodeCatalog)
+    expect(chosen.graph.edges.some(e => e.kind === 'data' && e.target === 'r')).toBe(false)
+    expect(chosen.notice).toBe('Removed 1 connection that no longer fits: Loop result · Total.')
+    expect(analyzeGraph(chosen.graph).diagnostics.filter(d => d.severity === 3)).toEqual([])
+  })
 })
 
 describe('the property choice in the panel', () => {
@@ -146,6 +191,19 @@ describe('the property choice in the panel', () => {
     expect(choice.selectedOptions[0].textContent).toBe('Level · missing')
     expect(choice.getAttribute('aria-invalid')).toBe('true')
     expect(missing.textContent).toContain('User has no property Level; choose another')
+  })
+  it('offers no value to type into Value, and refuses one stored there', () => {
+    const open = graph('', null, false)
+    const el = document.createElement('div')
+    document.body.append(el)
+    dispose = render(() => <NodeConfig graph={open} node={node(open, 's')} catalog={nodeCatalog} diagnostics={analyzeGraph(open).diagnostics} onChange={() => {}} />, el)
+    const value = el.querySelector<HTMLElement>('[data-input-id="value"]')!
+    expect(value.textContent).toContain('Connect an output whose value has properties, such as a record from a node library.')
+    expect(value.querySelector('input, textarea, select')).toBeNull()
+    for (const typed of [{ kind: 'literal', type: `${USER}?`, value: null }, { kind: 'literal', type: 'string', value: 'x' }]) {
+      const stored = { ...open, nodes: open.nodes.map(n => n.id === 's' ? { ...n, config: { property: 'UserName', value: typed } } : n) }
+      expect(analyzeGraph(stored).diagnostics.filter(d => d.nodeId === 's' && d.inputId).map(d => [d.inputId, d.message])).toEqual([['value', 'Connect a value to Select property; nothing can be typed in here']])
+    }
   })
   it('is searched when there are more than 12 properties', () => {
     const many = Array.from({ length: 13 }, (_, i) => ({ name: `P${i}`, type: 'string', nullable: false }))

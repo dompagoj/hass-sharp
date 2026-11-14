@@ -188,9 +188,11 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     /// <summary>
     /// Whether each property a Select property node of the graph reads, of a type the stored signature lists, has the
     /// type and nullability the code gives it: the node's value has that type, so a change is a change of pins. The
-    /// properties of a type no node reads, and every description, are not compared.
+    /// properties of a type no node reads, and every description, are not compared. A graph past the catalog's limits is
+    /// not looked at (the validator answers it with <c>graph.limit</c>): this runs before validation.
     /// </summary>
     internal static bool SameSelected(JsonObject graph,JsonObject root,JsonObject stored,JsonObject compiled) {
+        if(VisualNodeCatalog.OverLimit(root,graph))return true;
         var nodes=VisualNodeCatalog.GraphNodes(graph);
         if(!nodes.Values.Any(n=>Text(n,"kind")=="select_property")||stored["types"] is not JsonObject types)return true;
         var catalog=VisualNodeCatalog.WithGraphTypes(root,graph);

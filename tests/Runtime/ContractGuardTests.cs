@@ -48,16 +48,16 @@ static class ContractGuardTests
         graph["edges"]!.AsArray().Add(D("make", "d", "seconds", "result"));
         var preview = new VisualGenerator(Diagnostics).Preview(graph);
         Check(!preview.Valid && preview.Diagnostics.Any(d => d.Message == "Seconds accepts Number, not List of Object"), "a preview with a self-referencing type is answered: " + string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
-        // Code whose pin types nest deeply is answered too (the compiler and the pin description walk type trees). The
-        // depths are kept small because Roslyn's own checks grow fast with depth (2,000 array ranks take minutes, 30
-        // generic levels too): a slow answer, not a crash.
+        // Code whose pin types nest deeply is answered too: refused (more than 8 levels), before any conversion is
+        // classified. The depths are kept small because Roslyn's own binding grows fast with depth (2,000 array ranks
+        // take minutes): a slow answer, not a crash.
         foreach (var type in new[] { "int" + string.Concat(Enumerable.Repeat("[]", 64)), string.Concat(Enumerable.Repeat("System.Collections.Generic.List<", 12)) + "int" + new string('>', 12) })
         {
             var code = G(N("deep", "custom", new JsonObject { ["source"] = "public static class CustomNode { [Node(\"Deep\")] public static void Run(" + type + " value) { } }", ["arguments"] = new JsonObject() }));
             var compiled = new VisualGenerator(Diagnostics).Preview(Derived(code));
-            Check(compiled.Diagnostics.Any(d => d.Message == "Value is required"), "a deeply nested pin type is described: " + string.Join("; ", compiled.Diagnostics.Select(d => d.Message).Take(3)));
+            Check(compiled.Diagnostics.Any(d => d.Message == NodeLibraryCompiler.TooDeepMessage), "a deeply nested pin type is refused: " + string.Join("; ", compiled.Diagnostics.Select(d => d.Message).Take(3)));
         }
-        Console.WriteLine("PASS contract guards: type labels end on cycles, long element chains and very long ids; tuples and multi-dimensional arrays are worded as typeLabels.ts words them; a service name that is only its id is not written twice; a preview naming a self-referencing type, or code with very deeply nested pin types, is answered");
+        Console.WriteLine("PASS contract guards: type labels end on cycles, long element chains and very long ids; tuples and multi-dimensional arrays are worded as typeLabels.ts words them; a service name that is only its id is not written twice; a preview naming a self-referencing type is answered, and code with very deeply nested pin types is refused");
         return Task.CompletedTask;
     }
 }

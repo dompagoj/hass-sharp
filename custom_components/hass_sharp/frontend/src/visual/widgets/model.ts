@@ -115,6 +115,8 @@ const acceptsKind = (input: InputSpec, kind: ValueKind, catalog: VisualCatalogSn
  * (`enum`), then the literal kinds of its accepted types. Types are resolved through `catalog` (C1).
  */
 export function widgetFor(input: InputSpec, catalog: VisualCatalogSnapshot = nodeCatalog): Widget {
+  // A Select property node's value comes from a wire: nothing can be typed in.
+  if (input.wireOnly) return { kind: 'none', multiple: false }
   const selector = selectorOf(input)
   if (selector) {
     const [name, config] = selector, multiple = config.multiple === true

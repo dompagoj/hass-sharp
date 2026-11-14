@@ -448,7 +448,8 @@ public sealed class VisualRuntime
             case "array_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["items"] as JsonArray??[]).Select((_,i)=>Get("item:"+i)).ToArray(),serializer));break;
             case "last_error":Output(scope,id,scope.LastError?.Message??"","message");Output(scope,id,scope.LastErrorStep??"","step");break;
             case "get_field":var json=Input<JsonElement>(scope,id,"value");var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}Output(scope,id,ConvertTo(json,Text(cfg,"type"),id,false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(OutputSpecs(id)?["value"],"value")));break;
-            case "select_property":var property=Text(cfg,"property");Output(scope,id,SelectProperty(Get("value")??throw new InvalidOperationException($"{Title(id)} · {property}: the value is empty"),property,id));break;
+            // A failure is worded by Prepare, which names the node and the step reading it: the message says only what went wrong.
+            case "select_property":var property=Text(cfg,"property");Output(scope,id,SelectProperty(Get("value")??throw new InvalidOperationException($"{property} cannot be read because the value is empty"),property,id));break;
             // A value node from a library (or any other kind) is compiled.
             default:await custom(id,scope,this);break;
         }
@@ -456,16 +457,17 @@ public sealed class VisualRuntime
     /// <summary>
     /// The member a Select property node reads, as the compiler listed it for the wired value's declared type: a public
     /// instance property or field, the most derived one of that name, found from that type down to its bases. Looked up
-    /// on each read, never cached by type: a type held across runs would keep its library's load context alive.
+    /// on each read, never cached by type: a type held across runs would keep its library's load context alive. A getter
+    /// that throws fails the reading step with its own exception, not one wrapping it.
     /// </summary>
     object? SelectProperty(object value,string name,string node) {
         var declared=TraceInputType(node,"value") is {} id&&types.TryGetValue(VisualTypes.RootId(catalog,id),out var clr)?Nullable.GetUnderlyingType(clr)??clr:null;
         const BindingFlags Own=BindingFlags.Public|BindingFlags.Instance|BindingFlags.DeclaredOnly;
         for(var type=declared!=null&&declared.IsInstanceOfType(value)?declared:value.GetType();type!=null;type=type.BaseType) {
-            if(type.GetProperty(name,Own) is {} member&&member.GetIndexParameters().Length==0&&member.GetMethod is {IsPublic:true} getter)return getter.Invoke(value,null);
+            if(type.GetProperty(name,Own) is {} member&&member.GetIndexParameters().Length==0&&member.GetMethod is {IsPublic:true} getter)return getter.Invoke(value,BindingFlags.DoNotWrapExceptions,null,null,null);
             if(type.GetField(name,Own) is {} field)return field.GetValue(value);
         }
-        throw new InvalidOperationException($"{Title(node)}: {VisualGraphValidator.Words.TypeLabel(catalog,TraceInputType(node,"value")??"")} has no property {VisualGraphValidator.Words.Name(name)}");
+        throw new InvalidOperationException($"{VisualGraphValidator.Words.TypeLabel(catalog,TraceInputType(node,"value")??"")} has no property {VisualGraphValidator.Words.Name(name)}");
     }
     internal static EntityStateSnapshot ReadEntity(string entity,bool fresh=false) {
         var triggerState=UserScriptManager.CurrentTrigger.Value?.State;

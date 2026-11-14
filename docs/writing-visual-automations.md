@@ -100,7 +100,8 @@ The properties of a type are its public instance properties you can read and its
 public instance fields, inherited ones included; static members, indexers and members
 the compiler writes for itself are not listed. Object, List, Text, numbers, entity IDs
 and enums have none: connecting one is refused with what to use instead (Get field
-for an object or a JSON list, For each for a C# list, Read entity for an entity).
+for an object or a JSON list, For each for a C# list or array it can go through, Read
+entity for an entity).
 
 - Until a value is connected the select is off and says "Connect a value to choose a
   property". Until a property is chosen the output has no type, and a wire from it is
@@ -112,8 +113,12 @@ for an object or a JSON list, For each for a C# list, Read entity for an entity)
   error, "User has no property Level; choose another".
 - Dropping a wire from an output whose type has properties on empty canvas offers
   Select property in the quick-add list.
+- Nothing can be typed into Value: it takes a wire only. A value stored there (by
+  hand or by an older editor) is refused: "Connect a value to Select property; nothing
+  can be typed in here".
 - When the value is empty (null) at run time, the step that reads the node fails:
-  "Select property · UserName: the value is empty".
+  "Select property (used by Log): UserName cannot be read because the value is empty".
+  A property whose getter throws fails the step with the getter's own message.
 
 If and State condition choose True/False paths; most actions also offer an Error path,
 which receives the failure instead of ending the run. Parallel branches and bounded

@@ -89,7 +89,8 @@ tool descriptions summarise the workflow below and the entity typing rule.
    types (for example `["target","entity_id:light"]`), `hasTarget`, the response
    mode and the outputs. A graph's node has only the field ports whose keys are in
    its `config.fields`. In port types, `$any` stands for every type, `$properties`
-   for every type whose entry lists `properties`, and `$type` (generally `$<name>`)
+   for every type whose entry lists `properties` (such an input takes a wire only:
+   a value typed in, null included, is refused), and `$type` (generally `$<name>`)
    for the type set in the node's `config.<name>`. An output with
    `propertyOf: <input>` (Select property's) has an empty `type`: it takes the type
    of the property `config.property` names, of the value wired into that input. A

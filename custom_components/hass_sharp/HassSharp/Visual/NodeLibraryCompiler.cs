@@ -183,6 +183,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 var ids = elements.Select(e => LowerFirst(e.Name)).ToArray();
                 if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Length) { Report(declaration.ReturnType.GetLocation(), "Give each value the method returns its own name"); return null; }
                 if (elements.FirstOrDefault(e => !PinId(LowerFirst(e.Name))) is { } unnamed) { Report(unnamed.Locations.FirstOrDefault() ?? declaration.ReturnType.GetLocation(), PinNameMessage("value", unnamed.Name)); return null; }
+                if (elements.FirstOrDefault(e => TooDeep(e.Type)) is { } deep) { Report(deep.Locations.FirstOrDefault() ?? declaration.ReturnType.GetLocation(), TooDeepMessage); return null; }
                 for (var i = 0; i < elements.Length; i++)
                 {
                     register(elements[i].Type);
@@ -192,6 +193,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             }
             else if (result != null)
             {
+                if (TooDeep(result)) { Report(declaration.ReturnType.GetLocation(), TooDeepMessage); return null; }
                 register(result);
                 outputs["result"] = new JsonObject { ["type"] = TypeIdentity(result), ["label"] = PortLabel(method.GetReturnTypeAttributes()) ?? "Result", ["description"] = DocText(doc?.Element("returns")) };
                 outputPorts = [new("result", null)];
@@ -201,6 +203,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 SymbolEqualityComparer.Default.Equals(p.Type, nodeContext))).ToImmutableArray();
             // A pin is named by its parameter: C# takes letters of any language, a pin id only English ones.
             if (parameters.FirstOrDefault(p => !p.Injected && !PinId(p.Name)) is { } foreign) { Report(foreign.Symbol.Locations.FirstOrDefault() ?? declaration.Identifier.GetLocation(), PinNameMessage("input", foreign.Name)); return null; }
+            if (parameters.FirstOrDefault(p => !p.Injected && TooDeep(p.Symbol.Type)) is { } nested) { Report(nested.Symbol.Locations.FirstOrDefault() ?? declaration.Identifier.GetLocation(), TooDeepMessage); return null; }
             var input = new JsonObject();
             foreach (var parameter in parameters.Where(p => !p.Injected))
             {
@@ -350,6 +353,38 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         return new(!errors.Any(e => e.Severity == 3), errors.ToImmutableArray(), snapshot);
     }
 
+    /// <summary>
+    /// How many levels a pin's type may nest: the type itself, then each type argument, array element, tuple element and
+    /// nullable wrapper inside it is one more (<c>int</c> is 1, <c>List&lt;int?&gt;</c> 3). Comparing types for what converts
+    /// to what takes twice as long per level past this, and cannot be cancelled, so a deeper pin is refused first.
+    /// </summary>
+    internal const int PinDepth = 8;
+    internal const string TooDeepMessage = "This type is nested too deeply to be a pin; use a simpler type";
+    static bool TooDeep(ITypeSymbol type) => Nesting(type, new Dictionary<ITypeSymbol, int>(SymbolEqualityComparer.Default)) > PinDepth;
+    /// <summary>
+    /// The levels <paramref name="type"/> nests, or <see cref="PinDepth"/> + 1 once it is known to nest deeper: no call goes
+    /// more than that many levels down, and each type met is measured once.
+    /// </summary>
+    static int Nesting(ITypeSymbol type, Dictionary<ITypeSymbol, int> known, int level = 1)
+    {
+        if (known.TryGetValue(type, out var height)) return height;
+        if (level > PinDepth) return PinDepth + 1;
+        var deepest = 0;
+        foreach (var inner in Inner(type))
+        {
+            deepest = Math.Max(deepest, Nesting(inner, known, level + 1));
+            if (level + deepest > PinDepth) return PinDepth + 1;
+        }
+        return known[type] = 1 + deepest;
+    }
+    /// <summary>The types one level inside <paramref name="type"/>: an array's element, a tuple's elements, and the type arguments of it and the types it is nested in.</summary>
+    static IEnumerable<ITypeSymbol> Inner(ITypeSymbol type)
+    {
+        if (type is IArrayTypeSymbol array) { yield return array.ElementType; yield break; }
+        if (type is INamedTypeSymbol { IsTupleType: true } tuple) { foreach (var element in tuple.TupleElements) yield return element.Type; yield break; }
+        for (var named = type as INamedTypeSymbol; named != null; named = named.ContainingType)
+            foreach (var argument in named.TypeArguments) yield return argument;
+    }
     static IEnumerable<ITypeSymbol> BaseTypes(ITypeSymbol type) { for (var b = type.BaseType; b != null; b = b.BaseType) yield return b; }
 
     /// <summary>
@@ -387,7 +422,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                     IFieldSymbol { IsStatic: false, IsConst: false, DeclaredAccessibility: Accessibility.Public, IsFixedSizeBuffer: false } field => field.Type,
                     _ => null,
                 };
-                if (memberType == null || member.Name == "EqualityContract" && member.IsImplicitlyDeclared || Unsupported(memberType) || !compilation.IsSymbolAccessibleWithin(memberType, compilation.Assembly)) continue;
+                if (memberType == null || member.Name == "EqualityContract" && member.IsImplicitlyDeclared || Unsupported(memberType) || TooDeep(memberType) || !compilation.IsSymbolAccessibleWithin(memberType, compilation.Assembly)) continue;
                 var index = members.FindIndex(m => m.Name == member.Name);
                 if (index >= 0) members[index] = (member.Name, memberType, member); else members.Add((member.Name, memberType, member));
             }

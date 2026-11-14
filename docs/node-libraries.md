@@ -73,6 +73,13 @@ public static class CustomNode
   containers, `ref`/`in`/`out` parameters, `ref` returns, pointer and ref-like
   types, static abstract interface methods and `async void`. Two node methods of the
   same name in one type are refused with "Give each node method its own name".
+- **Nesting.** A pin's type nests at most 8 levels: the type itself is one, and each
+  type argument, array element, tuple element and nullable wrapper inside it one more
+  (`int` is 1, `List<int?>` is 3, `Dictionary<string, List<int>[]>` is 4). A deeper
+  parameter, result or named tuple value is refused, at that parameter or value, with
+  "This type is nested too deeply to be a pin; use a simpler type". This holds for
+  node libraries and Custom C# nodes alike: working out what such a type converts to
+  takes twice as long per level and cannot be stopped.
 
 Pins carry the CLR type, never a refined catalog type. A `string` parameter accepts an
 `entity_id` or `entity_id:light` value, because those refine `string`. A `string`
@@ -91,12 +98,15 @@ say what fits where. An arbitrary object type does not get a value editor.
 `{name, type, nullable, description?}` for each public instance property that can be
 read and each public instance field, inherited ones first, in declaration order.
 Static members, constants, indexers, write-only, `protected` and `internal` members
-and the record's `EqualityContract` are left out. A property's description is its
-`<summary>`, or the record's `<param>` for a positional property. A property's type
-joins the catalog as a pin's type does, with its own properties. A generic type is
-read only when a pin names it; one first met as a property's type (such as
-`Box<Box<T>>` inside `Box<T>`) is listed without properties, which ends the walk.
-Enums, built-in types and JSON values have none.
+and the record's `EqualityContract` are left out, and so is a member whose type a
+pin could not have (a pointer, a ref-like type, a type your code cannot reach, or one
+nested more than 8 levels). A property's description is its `<summary>`, or the
+record's `<param>` for a positional property. A property's type joins the catalog as a
+pin's type does, with its own properties. A generic type is read when a pin names it
+or a pin's type relates to it (as a base type or interface); one first met as a
+property's type (such as `Box<Box<T>>` inside `Box<T>`) is listed without properties,
+which ends the walk. Enums, built-in types, JSON values, interfaces and the base
+library's own types (such as `DateTimeOffset`, `List<T>` and `JsonElement`) have none.
 
 So a property of your record can be read without writing a node for it: wire the
 record into a **Select property** node and choose the property (see

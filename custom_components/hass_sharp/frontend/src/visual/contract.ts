@@ -16,10 +16,11 @@ export interface ConfigSpec { label?: string; description?: string; type: string
 /**
  * Constraints (enum, pattern, minItems, maxItems, min, max, integer) apply to literal operands only; wires are constrained by type.
  * `connectable: false` marks an input that takes a value only (a Constant's value): it has no pin, and a wire into it is
- * refused as into an input the step does not have.
+ * refused as into an input the step does not have. `wireOnly` is set by `dataInputs` (never in the catalog) on an input
+ * whose catalog types are `$properties`: it takes a wire only, and the editor offers no value to type in.
  */
 export interface InputSpec {
-  connectable?: boolean; nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description?: string; default?: unknown; min?: number; max?: number; integer?: boolean
+  connectable?: boolean; wireOnly?: boolean; nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description?: string; default?: unknown; min?: number; max?: number; integer?: boolean
   enum?: JsonValue[]; enumLabels?: string[]; pattern?: string; minItems?: number; maxItems?: number; step?: number; unit?: string
   selector?: Record<string, unknown>; advanced?: boolean; section?: string | null; example?: JsonValue
 }
@@ -149,10 +150,13 @@ export function customSignature(node: GraphNode, catalog: VisualCatalogSnapshot 
  * The catalog with the types of the graph's Custom C# nodes added: each well-formed signature's `types` whose id the
  * catalog does not have. Each node lists what its own compile knows a type converts to and from, so the entries of one
  * id are merged: the first node's entry, with `assignableTo` and `assignableFrom` the union of every node's (in node
- * order). The order of the nodes never changes what is accepted. The catalog itself when there are none. Mirrors
- * `VisualNodeCatalog.WithGraphTypes`; both validators compare these types by their entries alone.
+ * order). The order of the nodes never changes what is accepted. The catalog itself when there are none, and for a
+ * graph past the catalog's limits: the validator answers that graph with `graph.limit` alone, and nothing is merged or
+ * resolved for it, whoever asks. Mirrors `VisualNodeCatalog.WithGraphTypes`; both validators compare these types by
+ * their entries alone.
  */
 export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): VisualCatalogSnapshot {
+  if (overLimit(catalog, graph)) return catalog
   const added: Record<string, TypeSpec> = Object.create(null)
   const union = (list: string[] | undefined, more: string[]) => {
     const merged = Array.isArray(list) ? [...list] : []
@@ -175,6 +179,12 @@ export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): 
   if (selecting.length) resolveOutputs(merged, graph)
   return merged
 }
+/**
+ * Whether the graph has more nodes or more value and step order wires than the catalog's `limits` allow (the
+ * validator's `graph.limit`). Mirrors `VisualNodeCatalog.OverLimit`.
+ */
+export const overLimit = (catalog: VisualCatalogSnapshot, graph: unknown) =>
+  record(graph) && (Array.isArray(graph.nodes) && graph.nodes.length > catalog.limits.nodes || Array.isArray(graph.edges) && graph.edges.length > catalog.limits.edges)
 /** The well-formed nodes of a graph by id (the first of an id), as both validators read them. */
 function graphNodes(graph: unknown): Map<string, GraphNode> {
   const nodes = new Map<string, GraphNode>()
@@ -195,11 +205,13 @@ export function typeProperties(catalog: VisualCatalogSnapshot, type: string): Pr
 }
 /**
  * The type of each `propertyOf` output of the graph, under `resolvedOutputs` (node id, then port): the type of the
- * chosen property of the type the first value wire into its input brings. Chains are resolved source first; an output
- * on a cycle of such nodes, or whose input, property or source type is missing, has none. Mirrors
+ * chosen property of the type the first value wire into its input brings. A node reading another such node is resolved
+ * after it: each waits for the ones it reads, and is resolved once none is left (in the order the graph lists the ready
+ * ones), so no call goes one level deeper per node, however long the chain. A node on a cycle of such nodes, or reading
+ * one, is never ready and has none; so has an output whose input, property or source type is missing. Mirrors
  * `VisualNodeCatalog.ResolveOutputs`.
  */
-function resolveOutputs(catalog: VisualCatalogSnapshot, graph: unknown) {
+export function resolveOutputs(catalog: VisualCatalogSnapshot, graph: unknown) {
   const resolved: Record<string, Record<string, string>> = Object.create(null)
   catalog.resolvedOutputs = resolved
   const nodes = graphNodes(graph)
@@ -210,24 +222,38 @@ function resolveOutputs(catalog: VisualCatalogSnapshot, graph: unknown) {
       const key = JSON.stringify([edge.target, edge.targetPort])
       if (!incoming.has(key)) incoming.set(key, edge)
     }
-  // false while being resolved, true once done
-  const state = new Map<string, boolean>()
-  const resolve = (node: GraphNode) => {
-    if (state.has(node.id)) return
-    state.set(node.id, false)
+  // Each propertyOf output and the wire into its input.
+  const wires = (node: GraphNode) => {
+    const found: { port: string; edge: Record<string, unknown> }[] = []
     for (const [port, output] of Object.entries(nodeSpec(node.kind, catalog)?.outputs ?? {})) {
       const input = propertyOf(output), edge = input ? incoming.get(JSON.stringify([node.id, input])) : undefined
-      if (!edge) continue
-      const source = nodes.get(edge.source as string)!
-      resolve(source)
-      const outputs = dataOutputs(source, catalog), sourcePort = edge.sourcePort as string
+      if (edge) found.push({ port, edge })
+    }
+    return found
+  }
+  const selecting = selectingNodes(catalog, graph)
+  const ids = new Set(selecting.map(node => node.id))
+  const waiting = new Map<string, number>(), readers = new Map<string, GraphNode[]>()
+  for (const node of selecting) {
+    const sources = new Set(wires(node).map(w => w.edge.source as string).filter(id => ids.has(id)))
+    waiting.set(node.id, sources.size)
+    for (const source of sources) { const list = readers.get(source); if (list) list.push(node); else readers.set(source, [node]) }
+  }
+  const ready = selecting.filter(node => waiting.get(node.id) === 0)
+  for (let next = 0; next < ready.length; next++) {
+    const node = ready[next]
+    for (const { port, edge } of wires(node)) {
+      const outputs = dataOutputs(nodes.get(edge.source as string)!, catalog), sourcePort = edge.sourcePort as string
       const type = Object.hasOwn(outputs, sourcePort) ? text(outputs[sourcePort].type) : ''
       const found = text(typeProperties(catalog, type).find(p => text(p.name) === text(node.config.property))?.type)
       if (found) (resolved[node.id] ??= Object.create(null) as Record<string, string>)[port] = found
     }
-    state.set(node.id, true)
+    for (const reader of readers.get(node.id) ?? []) {
+      const left = waiting.get(reader.id)! - 1
+      waiting.set(reader.id, left)
+      if (left === 0) ready.push(reader)
+    }
   }
-  for (const node of selectingNodes(catalog, graph)) resolve(node)
 }
 export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, OutputSpec> {
   const spec = nodeSpec(node.kind, catalog)
@@ -305,7 +331,7 @@ function refinedType(type: string, value: unknown, catalog: VisualCatalogSnapsho
 const withProperties = (catalog: VisualCatalogSnapshot) => Object.entries(catalog.types).filter(([, type]) => record(type) && Array.isArray(type.properties) && type.properties.length > 0).map(([id]) => id)
 export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, InputSpec> {
   const spec = nodeSpec(node.kind, catalog)
-  const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.inputs ?? {}).map(([key, value]) => [key, { ...value, types: value.types.flatMap(t => t === '$any' ? Object.keys(catalog.types) : t === '$properties' ? withProperties(catalog) : [configuredType(t, node)]) }]))) as Record<string, InputSpec>
+  const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.inputs ?? {}).map(([key, value]) => [key, { ...value, ...(value.types.includes('$properties') ? { wireOnly: true } : {}), types: value.types.flatMap(t => t === '$any' ? Object.keys(catalog.types) : t === '$properties' ? withProperties(catalog) : [configuredType(t, node)]) }]))) as Record<string, InputSpec>
   if (node.kind === 'foreach' && ports.items) ports.items.types = ['array', ...Object.entries(catalog.types).filter(([, type]) => !type.nullable && type.elementType && isAssignable(type.elementType, text(node.config.itemType), catalog)).map(([id]) => id)]
   const types = Object.keys(catalog.types)
   const dynamic = spec?.dynamicInputs
@@ -498,6 +524,8 @@ export const words = {
     return names.length > 0 && names.length <= 4 ? `${subject} accepts ${words.or(names)}, not ${given}` : `${subject} does not accept ${given}`
   },
   /** A wire from a Select property node whose property is not chosen yet: its value has no type. */
+  /** A value typed into an input that takes a wire only (a Select property node's value): a record, class or struct comes from a step. */
+  wireOnly: (step: string) => `Connect a value to ${step}; nothing can be typed in here`,
   chooseProperty: (step: string) => `Choose a property in ${step} to use its value`,
   /** A Select property node with a value connected and no property chosen. */
   propertyUnset: (type: string) => `Choose a property of ${type}`,
@@ -505,14 +533,15 @@ export const words = {
   propertyUnknown: (type: string, name: string) => `${type} has no property ${words.name(name)}; choose another`,
   /**
    * A value whose type has no properties, wired into a Select property node, and what reads such a value instead:
-   * Read entity for an entity, Get field for an object or a JSON list, For each for any other list.
+   * Read entity for an entity, Get field for an object or a JSON list, For each for a type with an element type (what
+   * For each goes through).
    */
   noProperties: (type: string, catalog: VisualCatalogSnapshot = nodeCatalog) => {
     const label = typeLabel(type, catalog), root = rootType(type, catalog)
     const instead = refinesType(type, 'entity_id', catalog) ? 'use Read entity to get its state'
       : root === 'object' ? 'use Get field to take a value out of an object'
         : root === 'array' ? 'use Get field to take a value out of a list'
-          : label === 'List' || label.startsWith('List of ') ? 'use For each to go through its items'
+          : text(resolveTypeSpec(type, catalog)?.elementType) ? 'use For each to go through its items'
             : 'connect a value that has some, such as a record from a node library'
     return `${label} has no properties to select; ${instead}`
   },
@@ -695,8 +724,6 @@ export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = n
 export const analyzeScopes = (value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog) => analyzeGraph(value, catalog).scopes
 /** Runs the validator once and keeps what it learned: diagnostics with origins, scopes and resolved input types. */
 export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): GraphAnalysis {
-  // The types of the graph's Custom C# nodes join the catalog's; they are compared by their entries alone.
-  catalog = withGraphTypes(catalog, value)
   const nodeSpec = (kind: unknown) => typeof kind === 'string' && Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined
   const knownType = (type: string) => typeChain(type, catalog).length > 0
   const executionPorts = (node: GraphNode) => catalogExecutionPorts(node, catalog)
@@ -759,7 +786,10 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   if (Object.hasOwn(value, 'members')) error(null, words.members)
   if (!Array.isArray(value.nodes) || !Array.isArray(value.edges)) { error(null, 'Nodes and edges arrays are required', undefined, undefined, 'graph.shape'); return analysis(false) }
   const graph = value as unknown as Graph
-  if (!graph.nodes.length || graph.nodes.length > catalog.limits.nodes || graph.edges.length > catalog.limits.edges) { error(null, 'Graph limit: 1–256 nodes and at most 512 edges', undefined, undefined, 'graph.limit'); return analysis(false) }
+  if (!graph.nodes.length || overLimit(catalog, graph)) { error(null, 'Graph limit: 1–256 nodes and at most 512 edges', undefined, undefined, 'graph.limit'); return analysis(false) }
+  // The types of the graph's Custom C# nodes join the catalog's; they are compared by their entries alone. Only once
+  // the graph's shape and size are known: nothing is resolved for a graph answered with graph.limit.
+  catalog = withGraphTypes(catalog, value)
   for (const node of graph.nodes) {
     if (!record(node) || typeof node.id !== 'string' || !node.id || !record(node.config)) { error(null, 'Each node requires id and config', undefined, undefined, 'node.invalid'); continue }
     if (nodes.has(node.id)) error(node.id, 'Duplicate node id', undefined, undefined, 'node.duplicate')
@@ -864,6 +894,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (!record(raw) || raw.kind === 'unset') { if (spec.required) error(node.id, service ? `${serviceTitle(node, catalog)} needs ${label}` : `${label} is required`, port, port); else if (raw !== undefined && !record(raw)) error(node.id, `${subject} has an invalid value`, port, port); return }
     let type: string | undefined
     if (raw.kind === 'variable') { error(node.id, words.variable(subject), port, port); return }
+    // A value with properties (a record, class or struct) comes from a step: nothing can be typed in, null included.
+    if (selectsProperties(nodeSpec(node.kind), port)) { error(node.id, words.wireOnly(words.stepName(node, catalog)), port, port); return }
     if (raw.kind === 'literal') {
       type = text(raw.type, 'unknown')
       const v = raw.value

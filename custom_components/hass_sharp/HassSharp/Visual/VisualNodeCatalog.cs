@@ -60,10 +60,12 @@ public static class VisualNodeCatalog
     /// <c>types</c> whose id the catalog does not have. Each node lists what its own compile knows a type converts to and
     /// from, so the entries of one id are merged: the first node's entry, with <c>assignableTo</c> and
     /// <c>assignableFrom</c> the union of every node's (in node order). The order of the nodes never changes what is
-    /// accepted. The catalog itself when there are none.
+    /// accepted. The catalog itself when there are none, and for a graph past the catalog's limits: the validator answers
+    /// that graph with <c>graph.limit</c> alone, and nothing is merged or resolved for it, whoever asks.
     /// </summary>
     internal static JsonObject WithGraphTypes(JsonObject catalog, JsonObject graph)
     {
+        if (OverLimit(catalog, graph)) return catalog;
         var known = catalog["types"] as JsonObject ?? [];
         var added = new JsonObject();
         foreach (var node in graph["nodes"] as JsonArray ?? [])
@@ -90,6 +92,14 @@ public static class VisualNodeCatalog
     }
 
     /// <summary>
+    /// Whether the graph has more nodes or more value and step order wires than the catalog's <c>limits</c> allow (the
+    /// validator's <c>graph.limit</c>). Mirrored by <c>overLimit</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static bool OverLimit(JsonObject catalog, JsonObject graph) =>
+        graph["nodes"] is JsonArray nodes && nodes.Count > Limit(catalog, "nodes", 256) || graph["edges"] is JsonArray edges && edges.Count > Limit(catalog, "edges", 512);
+    static int Limit(JsonObject catalog, string key, int fallback) =>
+        catalog["limits"]?[key] is JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.Number && int.TryParse(v.ToJsonString(), out var limit) ? limit : fallback;
+    /// <summary>
     /// An output whose type is that of a property of the value at one of the node's inputs (<c>"propertyOf": "&lt;input&gt;"</c>):
     /// the property named by the node's <c>config.property</c>, of the type the wire into that input brings.
     /// </summary>
@@ -110,11 +120,13 @@ public static class VisualNodeCatalog
     internal static JsonObject[] TypeProperties(JsonObject catalog, string type) => (((catalog["types"] as JsonObject)?[type] as JsonObject)?["properties"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
     /// <summary>
     /// The type of each <c>propertyOf</c> output of the graph, under <c>resolvedOutputs</c> (node id, then port): the
-    /// type of the chosen property of the type the first value wire into its input brings. Chains are resolved source
-    /// first; an output on a cycle of such nodes, or whose input, property or source type is missing, has none. Mirrored
-    /// by <c>resolveOutputs</c> in <c>contract.ts</c>.
+    /// type of the chosen property of the type the first value wire into its input brings. A node reading another such
+    /// node is resolved after it: each waits for the ones it reads, and is resolved once none is left (in the order the
+    /// graph lists the ready ones), so no call goes one level deeper per node, however long the chain. A node on a cycle
+    /// of such nodes, or reading one, is never ready and has none; so has an output whose input, property or source type
+    /// is missing. Mirrored by <c>resolveOutputs</c> in <c>contract.ts</c>.
     /// </summary>
-    static void ResolveOutputs(JsonObject catalog, JsonObject graph)
+    internal static void ResolveOutputs(JsonObject catalog, JsonObject graph)
     {
         var resolved = new JsonObject(); catalog["resolvedOutputs"] = resolved;
         var nodes = GraphNodes(graph);
@@ -123,24 +135,36 @@ public static class VisualNodeCatalog
             if (raw is JsonObject edge && Text(edge, "id") != "" && Text(edge, "kind") == "data" && !edge.ContainsKey("port") && Text(edge, "sourcePort") != "" && Text(edge, "targetPort") != "" &&
                 nodes.ContainsKey(Text(edge, "source")) && nodes.ContainsKey(Text(edge, "target")))
                 incoming.TryAdd((Text(edge, "target"), Text(edge, "targetPort")), edge);
-        var state = new Dictionary<string, bool>(StringComparer.Ordinal); // false while being resolved, true once done
-        void Resolve(JsonObject node)
+        // Each propertyOf output and the wire into its input.
+        List<(string Port, JsonObject Edge)> Wires(JsonObject node)
+        {
+            var wires = new List<(string, JsonObject)>();
+            foreach (var (port, output) in catalog["nodes"]?[Text(node, "kind")]?["outputs"] as JsonObject ?? [])
+                if (PropertyOf(output) is { Length: > 0 } input && incoming.TryGetValue((Text(node, "id"), input), out var edge)) wires.Add((port, edge));
+            return wires;
+        }
+        var selecting = SelectingNodes(catalog, graph);
+        var ids = selecting.Select(n => Text(n, "id")).ToHashSet(StringComparer.Ordinal);
+        var waiting = new Dictionary<string, int>(StringComparer.Ordinal);
+        var readers = new Dictionary<string, List<JsonObject>>(StringComparer.Ordinal);
+        foreach (var node in selecting)
+        {
+            var sources = Wires(node).Select(w => Text(w.Edge, "source")).Where(ids.Contains).ToHashSet(StringComparer.Ordinal);
+            waiting[Text(node, "id")] = sources.Count;
+            foreach (var source in sources) { if (!readers.TryGetValue(source, out var list)) readers[source] = list = []; list.Add(node); }
+        }
+        var ready = new Queue<JsonObject>(selecting.Where(n => waiting[Text(n, "id")] == 0));
+        while (ready.TryDequeue(out var node))
         {
             var id = Text(node, "id");
-            if (state.ContainsKey(id)) return;
-            state[id] = false;
-            foreach (var (port, output) in catalog["nodes"]?[Text(node, "kind")]?["outputs"] as JsonObject ?? [])
+            foreach (var (port, edge) in Wires(node))
             {
-                if (PropertyOf(output) is not { Length: > 0 } input || !incoming.TryGetValue((id, input), out var edge)) continue;
-                var source = nodes[Text(edge, "source")];
-                Resolve(source);
-                var type = Text(DataOutputs(source, catalog)[Text(edge, "sourcePort")], "type");
+                var type = Text(DataOutputs(nodes[Text(edge, "source")], catalog)[Text(edge, "sourcePort")], "type");
                 if (TypeProperties(catalog, type).FirstOrDefault(p => Text(p, "name") == Text(node["config"], "property")) is { } property && Text(property, "type") is { Length: > 0 } found)
                     ((resolved[id] ??= new JsonObject()) as JsonObject)![port] = found;
             }
-            state[id] = true;
+            foreach (var reader in readers.GetValueOrDefault(id) ?? []) if (--waiting[Text(reader, "id")] == 0) ready.Enqueue(reader);
         }
-        foreach (var node in SelectingNodes(catalog, graph)) Resolve(node);
     }
     internal static IEnumerable<JsonObject> Declarations(JsonObject node, string key) => (node["config"]?[key] as JsonArray ?? []).OfType<JsonObject>();
     internal static string ResolveType(string type, JsonObject node) => type.StartsWith('$') ? Text(node["config"], type[1..]) : type;

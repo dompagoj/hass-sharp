@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createUniqueId, For, Show } from 'solid-js'
-import { connectable, dataInputs, dataOutputs, typeProperties, wireTypeError, words, type GraphNode, type PropertySpec, type VisualCatalogSnapshot } from './contract'
+import { analyzeGraph, connectable, dataInputs, dataOutputs, typeProperties, wireTypeError, words, type GraphNode, type PropertySpec, type VisualCatalogSnapshot } from './contract'
 import { graphTypes } from './connectionIndex'
 import { csharpType } from './csharpType'
 import { removeEdge, updateNode, type VisualGraph } from './graph'
@@ -41,12 +41,20 @@ export function chooseProperty(graph: VisualGraph, nodeId: string, name: string,
   if (!node || node.config.property === name) return { graph }
   let next = updateNode(graph, nodeId, { config: { ...node.config, property: name } })
   const removed: string[] = []
+  // A Loop result's carry and export inputs come from the loop it is in: each graph's owners, from one analysis of it.
+  const analyses = new Map<VisualGraph, ReturnType<typeof analyzeGraph>>()
+  const owner = (value: VisualGraph, node: GraphNode) => {
+    let analysis = analyses.get(value)
+    if (!analysis) analyses.set(value, (analysis = analyzeGraph(value, catalog)))
+    return analysis.ownerOf(node)
+  }
+  const inputs = (value: VisualGraph, node: GraphNode) => dataInputs(node, owner(value, node), graphTypes(value, catalog))
   const misfit = (value: VisualGraph, edge: VisualGraph['edges'][number]) => {
     if (edge.kind !== 'data') return
     const types = graphTypes(value, catalog)
     const from = value.nodes.find(n => n.id === edge.source), to = value.nodes.find(n => n.id === edge.target)
     const output = from ? dataOutputs(from, types)[edge.sourcePort] : undefined
-    const input = to ? connectable(dataInputs(to, undefined, types)[edge.targetPort]) : undefined
+    const input = to ? connectable(inputs(value, to)[edge.targetPort]) : undefined
     const wrong = from && to && output && input ? wireTypeError(from, output, to, input, edge.targetPort, types) : undefined
     return wrong && !wrong.code?.startsWith('property.') ? to : undefined
   }
@@ -64,8 +72,7 @@ export function chooseProperty(graph: VisualGraph, nodeId: string, name: string,
       if (edge.kind !== 'data' || !retyped.has(edge.source) || before.has(edge.id)) continue
       const to = misfit(next, edge)
       if (!to) continue
-      const types = graphTypes(next, catalog)
-      removed.push(`${words.stepName(to, types)} · ${words.portLabel(dataInputs(to, undefined, types)[edge.targetPort], edge.targetPort)}`)
+      removed.push(`${words.stepName(to, graphTypes(next, catalog))} · ${words.portLabel(inputs(next, to)[edge.targetPort], edge.targetPort)}`)
       next = removeEdge(next, edge.id, catalog)
       found = true
       break
