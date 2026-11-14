@@ -1,16 +1,17 @@
 import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, untrack, useContext, type Component, type JSX } from 'solid-js'
 import { createStore, produce, reconcile } from 'solid-js/store'
 import { QueryClientContext } from '@tanstack/solid-query'
-import { Background, MiniMap, SolidFlow, useSolidFlow, type Edge, type Node } from '@dschz/solid-flow'
+import { Background, getViewportForBounds, MiniMap, SolidFlow, useSolidFlow, type Edge, type Node } from '@dschz/solid-flow'
 import flowStyles from '@dschz/solid-flow/styles?inline'
 import { Icon } from '../../components/Controls'
 import { QuickAdd } from '../QuickAdd'
 import type { VisualDiagnostic } from '../api'
 import { HassCtx } from '../../context'
 import { useRegistry } from '../../registry'
-import { connectData, nodeCatalog, setInput as writeInput, withGraphTypes, type Operand, type VisualCatalogSnapshot } from '../contract'
+import { connectData, nodeCatalog, setInput as writeInput, type Operand, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeEdge, removeNode, updateNode, type NodeKind, type VisualGraph } from '../graph'
-import { connectionIndex } from '../connectionIndex'
+import { connectionIndex, graphTypes } from '../connectionIndex'
+import { media } from '../media'
 import { NODE_DRAG_TYPE } from '../nodeDrag'
 import { copySteps, pasteSteps, readSteps, writeSteps, type StepClipboard } from '../clipboard'
 import { applyLayout, tidyLayout } from '../layout'
@@ -95,6 +96,8 @@ const fitOptions = { padding: 0.15, maxZoom: 1, minZoom: 0.5 }
  */
 const TRACE_MIN_ZOOM = 0.1
 const pathFitOptions = { padding: 0.1, maxZoom: 1, minZoom: TRACE_MIN_ZOOM }
+/** The zoom below which cards are hard to read: on a wide screen a run never opens further out than this. */
+const READABLE_ZOOM = 0.5
 const sameSelection = (a: Selection, b: Selection) => a.edge === b.edge && a.nodes.length === b.nodes.length && a.nodes.every((id, i) => id === b.nodes[i])
 const samePin = (a: PinRef | undefined, b: PinRef | undefined) => a === b || (!!a && !!b && a.nodeId === b.nodeId && a.handle === b.handle && a.type === b.type)
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(value, high))
@@ -546,34 +549,49 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
         },
       ),
     )
-    // A run opens fitted to its path (the steps it reached), once: a live run reaching more steps leaves the view to
-    // the person. A run with a focus step (one that failed) opens centred on that step instead (below).
-    let pathFitted = false
+    const wide = media('(min-width: 900px)')
+    const centreOn = (id: string, zoom: (current: number) => number, duration?: number) => {
+      const node = api.getInternalNode(id)
+      const width = node?.measured.width, height = node?.measured.height
+      if (!node || !width || !height) return
+      const { x, y } = node.internals.positionAbsolute
+      void api.setCenter(x + width / 2, y + height / 2, { zoom: zoom(api.getZoom()), duration })
+    }
+    // A run opens on its path (the steps it reached), once: a live run reaching more steps leaves the view to the
+    // person. The whole path when that keeps the cards readable (zoom 0.5 or more). Otherwise, on a screen 900 px or
+    // wider, at zoom 0.5 centred on the step that failed, or on the path's first step (its trigger); narrower, the
+    // whole path however far out, except that a run with a failed step opens centred on it (the focus, below).
+    let opening: 'pending' | 'done' | undefined
     createEffect(
       on(
         () => props.trace,
         trace => {
-          if (pathFitted || !trace) return
+          if (opening || !trace) return
           const reached = Object.keys(trace.nodes).filter(id => graph().nodes.some(n => n.id === id))
           if (!reached.length) return
-          pathFitted = true
-          if (!trace.focusNodeId) whenMeasured(() => void api.fitView({ ...pathFitOptions, nodes: reached.map(id => ({ id })) }))
+          opening = 'done'
+          if (!wide() && trace.focusNodeId) return
+          opening = 'pending'
+          whenMeasured(() => {
+            opening = 'done'
+            const focus = untrack(() => props.trace?.focusNodeId)
+            // The zoom the whole path needs in this canvas, as fitView works it out.
+            const { zoom } = getViewportForBounds(api.getNodesBounds(reached), canvas.clientWidth, canvas.clientHeight, pathFitOptions.minZoom, pathFitOptions.maxZoom, pathFitOptions.padding)
+            if (zoom >= READABLE_ZOOM || !wide()) return void api.fitView({ ...pathFitOptions, nodes: reached.map(id => ({ id })) })
+            const first = reached.find(id => graph().nodes.find(n => n.id === id)?.kind === 'trigger') ?? reached[0]
+            centreOn(focus ?? first, () => READABLE_ZOOM)
+          })
         },
       ),
     )
     // Centre the run's focus node once it is measured, then leave the viewport to the user: a new trace object for
-    // the same node (a live run polling) does not move the view again.
+    // the same node (a live run polling) does not move the view again. On a wide screen the opening view (above) takes
+    // in the focus a run opens with.
     const focusNode = createMemo(() => props.trace?.focusNodeId)
     createEffect(
       on(focusNode, id => {
-        if (!id) return
-        whenMeasured(() => {
-          const node = api.getInternalNode(id)
-          const width = node?.measured.width, height = node?.measured.height
-          if (!node || !width || !height) return
-          const { x, y } = node.internals.positionAbsolute
-          void api.setCenter(x + width / 2, y + height / 2, { zoom: Math.max(api.getZoom(), 0.8), duration: 200 })
-        })
+        if (!id || (opening === 'pending' && wide())) return
+        whenMeasured(() => centreOn(id, zoom => Math.max(zoom, 0.8), 200))
       }),
     )
     return null
@@ -1005,7 +1023,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     })
   })
 
-  const types = createMemo(() => withGraphTypes(catalog(), graph()))
+  const types = createMemo(() => graphTypes(graph(), catalog()))
   const context: FlowContextValue = {
     readOnly,
     catalog,

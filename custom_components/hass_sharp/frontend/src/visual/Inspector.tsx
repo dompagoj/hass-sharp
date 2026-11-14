@@ -4,7 +4,8 @@ import { TypeChip } from './InputRow'
 import { Glyph } from './Glyph'
 import type { VisualDiagnostic } from './api'
 import { copySteps, pasteSteps } from './clipboard'
-import { dataOutputs, withGraphTypes, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { graphTypes } from './connectionIndex'
+import { dataOutputs, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { execLabel, nodeTitle } from './flow/flowModel'
 import { nodeInputs, outputPort, removeNode, updateNode, type VisualGraph } from './graph'
 import { focusSoon as focusWhenShown } from './soon'
@@ -294,7 +295,7 @@ export function Inspector(props: InspectorProps) {
         </div>
         <Show when={type()}>
           {id => {
-            const types = () => withGraphTypes(props.catalog, props.graph)
+            const types = () => graphTypes(props.graph, props.catalog)
             return <p class="hs-insp-meta">Carries <TypeChip text={typeLabel(id(), types())} color={typeColor(id(), types())} list={typeIsList(id(), types())} /></p>
           }}
         </Show>

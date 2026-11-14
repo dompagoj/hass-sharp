@@ -55,6 +55,7 @@ static class NumberWiringTests
                     [Node("Minus", Pure = true)] public static int Minus() => -1;
                     [Node("Huge", Pure = true)] public static ulong Huge() => ulong.MaxValue;
                     [Node("Maybe", Pure = true)] public static int? Maybe() => 3;
+                    [Node("Nothing", Pure = true)] public static int? Nothing() => null;
                     [Node("Fractions", Pure = true)] public static double[] Fractions() => [1, 2.5];
                     [Node("Wholes", Pure = true)] public static double[] Wholes() => [1, 2];
                     [Node("Count")] public static void Count(int value) => Logger.Info("count " + value);
@@ -84,7 +85,25 @@ static class NumberWiringTests
             }
             static string Port(JsonObject node) => node["kind"]!.GetValue<string>() == "constant" ? "value" : "result";
             JsonObject Number(string id, double value) => N(id, "constant", new { type = "number", value = Lit("number", value) });
-            // Less than and greater than take a Number on the left (both validators), so those orders are Number first.
+            // Ordering takes any number type on either side: a CLR number on the left, on the right and on both.
+            await Compares(Value("a", "Half"), Number("b", 2), "gt", true, "double 2.5 > number 2");
+            await Compares(Value("a", "Two"), Number("b", 2.5), "lt", true, "int 2 < number 2.5 (not rounded)");
+            await Compares(Value("a", "Two"), Number("b", 2), "le", true, "int 2 <= number 2");
+            await Compares(Value("a", "Two"), Number("b", 2.5), "ge", false, "int 2 >= number 2.5 is false");
+            await Compares(Number("a", 2), Value("b", "Half"), "lt", true, "number 2 < double 2.5");
+            await Compares(Number("a", 2), Value("b", "Two"), "ge", true, "number 2 >= int 2");
+            await Compares(Number("a", 2.5), Value("b", "Two"), "le", false, "number 2.5 <= int 2 is false");
+            await Compares(Value("a", "Half"), Value("b", "Two"), "gt", true, "double 2.5 > int 2");
+            await Compares(Value("a", "Two"), Value("b", "Half"), "lt", true, "int 2 < double 2.5");
+            await Compares(Value("a", "Big"), Value("b", "Two"), "ge", true, "long 5e9 >= int 2 (no overflow)");
+            await Compares(Value("a", "Two"), Value("b", "Big"), "le", true, "int 2 <= long 5e9 (no overflow)");
+            await Compares(Value("a", "Minus"), Value("b", "Large"), "lt", true, "int -1 < uint 4e9");
+            await Compares(Value("a", "Huge"), Value("b", "Minus"), "gt", true, "ulong max > int -1");
+            await Compares(Value("a", "Exact"), Value("b", "Near"), "gt", true, "long 2^53+1 > long 2^53, exactly");
+            await Compares(Value("a", "Money"), Value("b", "Half"), "ge", true, "decimal 2.5 >= double 2.5");
+            await Compares(Value("a", "Maybe"), Value("b", "Two"), "gt", true, "int? 3 > int 2");
+            await Compares(Value("a", "Nothing"), Number("b", 2), "lt", false, "a missing int? < number 2 is false");
+            await Compares(Number("a", 2), Value("b", "Nothing"), "ge", false, "number 2 >= a missing int? is false");
             await Compares(Number("a", 2.5), Value("b", "Two"), "gt", true, "number 2.5 > int 2");
             await Compares(Number("a", 2.5), Value("b", "Two"), "lt", false, "number 2.5 < int 2 is false");
             await Compares(Number("a", 1.5), Value("b", "Two"), "lt", true, "number 1.5 < int 2");

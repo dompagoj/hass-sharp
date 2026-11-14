@@ -11,7 +11,6 @@ import {
   setInput,
   connectData,
   resolveTypeSpec,
-  withGraphTypes,
   nodeCatalog,
   type Graph,
   type GraphNode,
@@ -258,7 +257,7 @@ export function dataConnectionError(
   if (!output || !input) return 'Unknown data port'
   if (!input.types.some(t => index.assignable(output.type, t))) {
     // A Custom C# node's own types are named from its signature.
-    const types = withGraphTypes(catalog, graph)
+    const types = index.catalog
     return `${input.label ?? targetPort} requires ${input.types.map(t => typeLabel(t, types)).join(' / ')}; ${output.label ?? sourcePort} outputs ${typeLabel(output.type, types)}`
   }
   const quick = index.verdict(sourceId, sourcePort, targetId, targetPort)

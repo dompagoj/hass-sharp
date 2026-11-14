@@ -570,9 +570,11 @@ public static class VisualGraphValidator
                 var left = leftInput != "" ? resolved.GetValueOrDefault(leftInput) : Text(cfg, typeConfig);
                 var rightInput = Text(comparison, "rightInput"); var right = resolved.GetValueOrDefault(rightInput);
                 if (!string.IsNullOrEmpty(left) && !string.IsNullOrEmpty(right) && !CompatibleTypes(left, right) && !CompatibleTypes(right, left)) Error(id, "Both sides of the comparison must have the same type", rightInput);
+                // Ordering takes any number type on either side (number and every CLR number type); the run time widens both.
                 var orderingType = Text(comparison, "orderingType");
-                if (Strings(comparison["orderingOperators"]).Contains(Text(cfg, Text(comparison, "operatorConfig"))) && left != orderingType)
-                    Error(id, $"Less-than and greater-than comparisons need {Words.TypeLabel(Root, orderingType)} values", leftInput != "" ? leftInput : typeConfig);
+                bool Ordered(string? type) => type == orderingType || !string.IsNullOrEmpty(type) && VisualTypes.Numeric(Root, VisualTypes.RootId(Root, type));
+                if (Strings(comparison["orderingOperators"]).Contains(Text(cfg, Text(comparison, "operatorConfig"))) && (!Ordered(left) || !string.IsNullOrEmpty(right) && !Ordered(right)))
+                    Error(id, $"Less-than and greater-than comparisons need {Words.TypeLabel(Root, orderingType)} values", !Ordered(left) ? leftInput != "" ? leftInput : typeConfig : rightInput);
             }
             if (Text(spec, "dynamicInputs") == "service") { Service(node, spec, cfg, id); TargetRules(node, spec, cfg, id); }
             if (cfg.ContainsKey("output")) Error(id, Words.ExposedValue, "output");

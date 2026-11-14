@@ -57,8 +57,10 @@ public static class VisualNodeCatalog
     }
     /// <summary>
     /// The catalog with the types of the graph's Custom C# nodes added (C# and TS alike): each well-formed signature's
-    /// <c>types</c>, in node order, where neither the catalog nor an earlier node has that id. The catalog itself when
-    /// there are none.
+    /// <c>types</c> whose id the catalog does not have. Each node lists what its own compile knows a type converts to and
+    /// from, so the entries of one id are merged: the first node's entry, with <c>assignableTo</c> and
+    /// <c>assignableFrom</c> the union of every node's (in node order). The order of the nodes never changes what is
+    /// accepted. The catalog itself when there are none.
     /// </summary>
     internal static JsonObject WithGraphTypes(JsonObject catalog, JsonObject graph)
     {
@@ -66,7 +68,19 @@ public static class VisualNodeCatalog
         var added = new JsonObject();
         foreach (var node in graph["nodes"] as JsonArray ?? [])
             if (node is JsonObject n && CustomSignature(n, catalog["nodes"]?[Text(n, "kind")])?["types"] is JsonObject types)
-                foreach (var (id, entry) in types) if (!known.ContainsKey(id) && !added.ContainsKey(id)) added[id] = entry?.DeepClone();
+                foreach (var (id, entry) in types)
+                {
+                    if (known.ContainsKey(id) || entry is not JsonObject next) continue;
+                    if (added[id] is not JsonObject first) { added[id] = next.DeepClone(); continue; }
+                    foreach (var key in (string[])["assignableTo", "assignableFrom"])
+                        if (next[key] is JsonArray more)
+                        {
+                            if (first[key] is not JsonArray list) first[key] = list = [];
+                            foreach (var item in more)
+                                if (item is JsonValue v && v.TryGetValue<string>(out var target) && !list.Any(t => t is JsonValue e && e.TryGetValue<string>(out var have) && have == target))
+                                    list.Add(target);
+                        }
+                }
         if (added.Count == 0) return catalog;
         var merged = (JsonObject)catalog.DeepClone();
         foreach (var (id, entry) in added.ToArray()) { added.Remove(id); merged["types"]![id] = entry; }

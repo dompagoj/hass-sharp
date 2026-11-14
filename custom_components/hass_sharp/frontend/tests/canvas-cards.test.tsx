@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, expect, it, onTestFinished, vi } from 'vitest'
 import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
@@ -886,8 +886,14 @@ it('centres a run on its focus node once: a new trace object for the same node l
   await vi.waitFor(() => expect(centred.calls).toHaveLength(2))
 })
 
+// A window below 900 px (happy-dom's own is 1024 px wide).
+const narrowScreen = () => vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('max-width: 899px'), media: query, addEventListener() {}, removeEventListener() {} }))
+const wideScreen = () => vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(min-width: 900px)', media: query, addEventListener() {}, removeEventListener() {} }))
+
 it('opens a run fitted to its path, at whatever zoom a narrow screen needs, once; a run with a focus step opens on it', async () => {
   layout()
+  narrowScreen()
+  onTestFinished(() => vi.unstubAllGlobals())
   const el = host()
   const trace = (ids: string[], focusNodeId?: string): FlowTrace =>
     ({ nodes: Object.fromEntries(ids.map(id => [id, { status: 'ok' as const, runs: 1 }])), edges: new Set(), focusNodeId })
@@ -913,6 +919,54 @@ it('opens a run fitted to its path, at whatever zoom a narrow screen needs, once
   await vi.waitFor(() => expect(centred.calls).toHaveLength(1))
   await new Promise(resolve => setTimeout(resolve, 100))
   expect(paths()).toHaveLength(0)
+})
+
+it('on a screen 900 px or wider, a run whose path needs more than halfway out opens at 0.5 on its failed or first step', async () => {
+  // A 1200 x 800 canvas with 200 x 100 cards.
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('solid-flow__node') ? 200 : 1200 })
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('solid-flow__node') ? 100 : 800 })
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+  wideScreen()
+  try {
+    const trace = (ids: string[], focusNodeId?: string): FlowTrace =>
+      ({ nodes: Object.fromEntries(ids.map(id => [id, { status: 'ok' as const, runs: 1 }])), edges: new Set(), focusNodeId })
+    const paths = () => centred.fits.filter(([options]) => (options as { nodes?: unknown })?.nodes)
+    // The service far to the right: the whole path fits only well below zoom 0.5.
+    const far = updateNode(createGraph('Run'), 'service-1', { position: { x: 20000, y: 100 } })
+    const open = async (graph: VisualGraph, value: FlowTrace) => {
+      centred.calls = []
+      centred.fits = []
+      dispose = render(() => <FlowAdapter graph={graph} readOnly trace={value} onSelect={() => {}} />, host())
+      // It either fits the path or centres on one step.
+      await vi.waitFor(() => expect(paths().length + centred.calls.length).toBeGreaterThan(0))
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    const centre = () => centred.calls as [number, number, { zoom: number }][]
+
+    // A short path fits at a readable zoom: fitted, not moved again.
+    await open(createGraph('Run'), trace(['trigger-1']))
+    expect(paths()).toHaveLength(1)
+    expect(centre()).toHaveLength(0)
+    dispose!()
+
+    // Nothing failed: half size, on the path's first step (its trigger, at x 60), not the far service.
+    await open(far, trace(['trigger-1', 'condition-1', 'service-1']))
+    expect(paths()).toHaveLength(0)
+    expect(centre()).toHaveLength(1)
+    expect(centre()[0][2].zoom).toBe(0.5)
+    expect(centre()[0][0]).toBeLessThan(5000)
+    dispose!()
+
+    // A failed step: half size, on that step, once (the focus does not move the view again).
+    await open(far, trace(['trigger-1', 'condition-1', 'service-1'], 'service-1'))
+    expect(paths()).toHaveLength(0)
+    expect(centre()).toHaveLength(1)
+    expect(centre()[0][2].zoom).toBe(0.5)
+    expect(centre()[0][0]).toBeGreaterThan(20000)
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })
 
 it('rebuilds a card whose wired input shows its source when only the source output changes: its type or its label', async () => {

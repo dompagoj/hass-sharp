@@ -383,7 +383,8 @@ public sealed class VisualRuntime
                 var b=Coerce(givenRight,clr,id+".right",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["right"],"right"));
                 // The trace shows the values as they came, not as they were widened.
                 if(scope.Trace!=null){Traced(scope,id,"left",givenLeft);Traced(scope,id,"right",givenRight);}
-                Output(scope,id,Compare(a,b,Text(cfg,"operator","eq")));break;
+                // As in C#, an ordering with a missing number (a nullable side that is null) is false.
+                var op=Text(cfg,"operator","eq");Output(scope,id,op is not ("eq" or "ne")&&(a==null||b==null)?false:Compare(a,b,op));break;
             case "constant":case "convert":if(compiledConversions.Contains(id))await custom(id,scope,this);else Output(scope,id,ConvertTo(Get("value"),Text(cfg,"type"),id+".value",pin:()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["value"],"value")));break;
             case "entity_field":Output(scope,id,EntityField(Input<EntityStateSnapshot>(scope,id,"entity"),cfg,id));break;
             case "object":case "array":Output(scope,id,ConvertTo(Get("value"),kind,id,false));break;

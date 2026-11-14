@@ -26,6 +26,8 @@ export interface ConnectionVerdict {
   fallback: boolean
 }
 export interface ConnectionIndex {
+  /** The catalog with the graph's Custom C# node types (`graphTypes`); every answer of the index reads it. */
+  readonly catalog: VisualCatalogSnapshot
   readonly analysis: GraphAnalysis
   /** Memoised C1 assignability for this catalog. */
   assignable(source: string, target: string): boolean
@@ -47,9 +49,31 @@ const record = (value: unknown): value is Record<string, unknown> => value !== n
 const pairKey = (a: string | null, b: string) => JSON.stringify([a, b])
 
 const cache = new WeakMap<Graph, WeakMap<VisualCatalogSnapshot, ConnectionIndex>>()
+const merged = new WeakMap<Graph, WeakMap<VisualCatalogSnapshot, VisualCatalogSnapshot>>()
 
-/** The index of one immutable graph snapshot under one catalog object; a new graph or catalog object builds a new index. */
+/**
+ * The catalog with the types of the graph's Custom C# nodes (`withGraphTypes`), merged once per immutable graph
+ * snapshot and catalog object. The result maps to itself, so passing it on (to cards, wires, `connectionIndex`)
+ * neither merges nor analyses the graph again.
+ */
+export function graphTypes(graph: Graph, catalog: VisualCatalogSnapshot = nodeCatalog): VisualCatalogSnapshot {
+  let byCatalog = merged.get(graph)
+  if (!byCatalog) merged.set(graph, (byCatalog = new WeakMap()))
+  let types = byCatalog.get(catalog)
+  if (!types) {
+    byCatalog.set(catalog, (types = withGraphTypes(catalog, graph)))
+    byCatalog.set(types, types)
+  }
+  return types
+}
+
+/**
+ * The index of one immutable graph snapshot under one catalog object; a new graph or catalog object builds a new
+ * index. A catalog and its `graphTypes` share one index.
+ */
 export function connectionIndex(graph: Graph, catalog: VisualCatalogSnapshot = nodeCatalog): ConnectionIndex {
+  // The types of the graph's Custom C# nodes, as the validator reads them.
+  catalog = graphTypes(graph, catalog)
   let byCatalog = cache.get(graph)
   if (!byCatalog) cache.set(graph, (byCatalog = new WeakMap()))
   let index = byCatalog.get(catalog)
@@ -58,8 +82,6 @@ export function connectionIndex(graph: Graph, catalog: VisualCatalogSnapshot = n
 }
 
 function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionIndex {
-  // The types of the graph's Custom C# nodes, as the validator reads them.
-  catalog = withGraphTypes(catalog, graph)
   const analysis = analyzeGraph(graph, catalog)
   const { diagnostics, origins } = analysis
   const old = new Set(diagnostics.map(d => JSON.stringify(d)))
@@ -88,6 +110,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
   const memo = new Map<string, unknown>()
   const verdicts = new Map<string, ConnectionVerdict>()
   const index: ConnectionIndex = {
+    catalog,
     analysis,
     assignable(source, target) {
       const key = JSON.stringify([source, target])

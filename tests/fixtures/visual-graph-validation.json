@@ -17443,5 +17443,1801 @@
     "codes": [
       "node.unknownKind"
     ]
+  },
+  {
+    "name": "custom node: a CLR list goes into another custom node's IEnumerable<object> pin when a third node names both (listed first)",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "bridge",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Bridge\")]\n    public static IEnumerable<object> Run(List<string> items) => items;\n}",
+            "arguments": {
+              "items": {
+                "kind": "unset"
+              }
+            },
+            "signature": {
+              "title": "Bridge",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "items": {
+                  "types": [
+                    "global::System.Collections.Generic.List<global::System.String>"
+                  ],
+                  "required": true,
+                  "label": "Items",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {
+                "result": {
+                  "type": "global::System.Collections.Generic.IEnumerable<global::System.Object>",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::System.Collections.Generic.IEnumerable<global::System.Object>": {
+                  "label": "System.Collections.Generic.IEnumerable<object>",
+                  "description": "System.Collections.Generic.IEnumerable<object>",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>"
+                  ],
+                  "assignableFrom": [
+                    "global::System.Collections.Generic.List<global::System.String>"
+                  ]
+                },
+                "global::System.Object": {
+                  "label": "object",
+                  "description": "object",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object"
+                  ],
+                  "assignableFrom": [
+                    "global::System.Boolean",
+                    "boolean",
+                    "global::System.Double",
+                    "number",
+                    "global::System.String",
+                    "string",
+                    "global::System.Text.Json.Nodes.JsonObject",
+                    "object",
+                    "global::System.Text.Json.Nodes.JsonArray",
+                    "array",
+                    "global::HassSharp.EntityStateSnapshot",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.IComparable<global::System.Boolean>",
+                    "global::System.IEquatable<global::System.Boolean>",
+                    "global::System.ISpanParsable<global::System.Boolean>",
+                    "global::System.IParsable<global::System.Boolean>",
+                    "global::System.ValueType",
+                    "global::System.Numerics.IBinaryFloatingPointIeee754<global::System.Double>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Double>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IFloatingPointIeee754<global::System.Double>",
+                    "global::System.Numerics.IExponentialFunctions<global::System.Double>",
+                    "global::System.Numerics.IFloatingPoint<global::System.Double>",
+                    "global::System.Numerics.INumber<global::System.Double>",
+                    "global::System.IComparable<global::System.Double>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Double, global::System.Double, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.ISignedNumber<global::System.Double>",
+                    "global::System.Numerics.IHyperbolicFunctions<global::System.Double>",
+                    "global::System.Numerics.ILogarithmicFunctions<global::System.Double>",
+                    "global::System.Numerics.IPowerFunctions<global::System.Double>",
+                    "global::System.Numerics.IRootFunctions<global::System.Double>",
+                    "global::System.Numerics.ITrigonometricFunctions<global::System.Double>",
+                    "global::System.Numerics.IFloatingPointConstants<global::System.Double>",
+                    "global::System.Numerics.INumberBase<global::System.Double>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Double>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.IEquatable<global::System.Double>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Double, global::System.Double, global::System.Boolean>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Double>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.ISpanParsable<global::System.Double>",
+                    "global::System.IParsable<global::System.Double>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Double, global::System.Double>",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.IUtf8SpanParsable<global::System.Double>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Double>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Char>",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.IComparable<global::System.String?>",
+                    "global::System.IEquatable<global::System.String?>",
+                    "global::System.ICloneable",
+                    "global::System.ISpanParsable<global::System.String>",
+                    "global::System.IParsable<global::System.String>",
+                    "global::System.Collections.Generic.IDictionary<global::System.String, global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IList<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Text.Json.Nodes.JsonNode",
+                    "global::System.Collections.Generic.IList<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.ICollection<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>",
+                    "global::System.Collections.Generic.List<global::System.String>"
+                  ]
+                },
+                "global::System.Collections.Generic.List<global::System.String>": {
+                  "label": "System.Collections.Generic.List<string>",
+                  "description": "System.Collections.Generic.List<string>",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>",
+                    "global::System.Collections.Generic.List<global::System.String>",
+                    "global::System.Collections.Generic.IList<global::System.String>",
+                    "global::System.Collections.Generic.ICollection<global::System.String>",
+                    "global::System.Collections.IList",
+                    "global::System.Collections.ICollection",
+                    "global::System.Collections.Generic.IReadOnlyList<global::System.String>",
+                    "global::System.Collections.Generic.IReadOnlyCollection<global::System.String>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.String>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Make\")]\n    public static List<string> Run() => [\"a\"];\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::System.Collections.Generic.List<global::System.String>",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::System.Collections.Generic.List<global::System.String>": {
+                  "label": "System.Collections.Generic.List<string>",
+                  "description": "System.Collections.Generic.List<string>",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.Collections.Generic.List<global::System.String>",
+                    "global::System.Collections.Generic.IList<global::System.String>",
+                    "global::System.Collections.Generic.ICollection<global::System.String>",
+                    "global::System.Collections.IList",
+                    "global::System.Collections.ICollection",
+                    "global::System.Collections.Generic.IReadOnlyList<global::System.String>",
+                    "global::System.Collections.Generic.IReadOnlyCollection<global::System.String>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.String>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Take\")]\n    public static void Run(IEnumerable<object> value) => Logger.Info(value!.ToString()!);\n}",
+            "arguments": {
+              "value": {
+                "kind": "unset"
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "value": {
+                  "types": [
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>"
+                  ],
+                  "required": true,
+                  "label": "Value",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::System.Collections.Generic.IEnumerable<global::System.Object>": {
+                  "label": "System.Collections.Generic.IEnumerable<object>",
+                  "description": "System.Collections.Generic.IEnumerable<object>",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>"
+                  ],
+                  "assignableFrom": []
+                },
+                "global::System.Object": {
+                  "label": "object",
+                  "description": "object",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object"
+                  ],
+                  "assignableFrom": [
+                    "global::System.Boolean",
+                    "boolean",
+                    "global::System.Double",
+                    "number",
+                    "global::System.String",
+                    "string",
+                    "global::System.Text.Json.Nodes.JsonObject",
+                    "object",
+                    "global::System.Text.Json.Nodes.JsonArray",
+                    "array",
+                    "global::HassSharp.EntityStateSnapshot",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.IComparable<global::System.Boolean>",
+                    "global::System.IEquatable<global::System.Boolean>",
+                    "global::System.ISpanParsable<global::System.Boolean>",
+                    "global::System.IParsable<global::System.Boolean>",
+                    "global::System.ValueType",
+                    "global::System.Numerics.IBinaryFloatingPointIeee754<global::System.Double>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Double>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IFloatingPointIeee754<global::System.Double>",
+                    "global::System.Numerics.IExponentialFunctions<global::System.Double>",
+                    "global::System.Numerics.IFloatingPoint<global::System.Double>",
+                    "global::System.Numerics.INumber<global::System.Double>",
+                    "global::System.IComparable<global::System.Double>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Double, global::System.Double, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.ISignedNumber<global::System.Double>",
+                    "global::System.Numerics.IHyperbolicFunctions<global::System.Double>",
+                    "global::System.Numerics.ILogarithmicFunctions<global::System.Double>",
+                    "global::System.Numerics.IPowerFunctions<global::System.Double>",
+                    "global::System.Numerics.IRootFunctions<global::System.Double>",
+                    "global::System.Numerics.ITrigonometricFunctions<global::System.Double>",
+                    "global::System.Numerics.IFloatingPointConstants<global::System.Double>",
+                    "global::System.Numerics.INumberBase<global::System.Double>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Double>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.IEquatable<global::System.Double>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Double, global::System.Double, global::System.Boolean>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Double>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.ISpanParsable<global::System.Double>",
+                    "global::System.IParsable<global::System.Double>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Double, global::System.Double>",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.IUtf8SpanParsable<global::System.Double>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Double>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Char>",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.IComparable<global::System.String?>",
+                    "global::System.IEquatable<global::System.String?>",
+                    "global::System.ICloneable",
+                    "global::System.ISpanParsable<global::System.String>",
+                    "global::System.IParsable<global::System.String>",
+                    "global::System.Collections.Generic.IDictionary<global::System.String, global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IList<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Text.Json.Nodes.JsonNode",
+                    "global::System.Collections.Generic.IList<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.ICollection<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:bridge",
+          "source": "make",
+          "target": "bridge",
+          "port": "next"
+        },
+        {
+          "id": "bridge:next:take",
+          "source": "bridge",
+          "target": "take",
+          "port": "next"
+        },
+        {
+          "id": "make.result:bridge.items",
+          "kind": "data",
+          "source": "make",
+          "target": "bridge",
+          "sourcePort": "result",
+          "targetPort": "items"
+        },
+        {
+          "id": "make.result:take.value",
+          "kind": "data",
+          "source": "make",
+          "target": "take",
+          "sourcePort": "result",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "custom node: a CLR list goes into another custom node's IEnumerable<object> pin when a third node names both (listed last)",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Make\")]\n    public static List<string> Run() => [\"a\"];\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::System.Collections.Generic.List<global::System.String>",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::System.Collections.Generic.List<global::System.String>": {
+                  "label": "System.Collections.Generic.List<string>",
+                  "description": "System.Collections.Generic.List<string>",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.Collections.Generic.List<global::System.String>",
+                    "global::System.Collections.Generic.IList<global::System.String>",
+                    "global::System.Collections.Generic.ICollection<global::System.String>",
+                    "global::System.Collections.IList",
+                    "global::System.Collections.ICollection",
+                    "global::System.Collections.Generic.IReadOnlyList<global::System.String>",
+                    "global::System.Collections.Generic.IReadOnlyCollection<global::System.String>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.String>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Take\")]\n    public static void Run(IEnumerable<object> value) => Logger.Info(value!.ToString()!);\n}",
+            "arguments": {
+              "value": {
+                "kind": "unset"
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "value": {
+                  "types": [
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>"
+                  ],
+                  "required": true,
+                  "label": "Value",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::System.Collections.Generic.IEnumerable<global::System.Object>": {
+                  "label": "System.Collections.Generic.IEnumerable<object>",
+                  "description": "System.Collections.Generic.IEnumerable<object>",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>"
+                  ],
+                  "assignableFrom": []
+                },
+                "global::System.Object": {
+                  "label": "object",
+                  "description": "object",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object"
+                  ],
+                  "assignableFrom": [
+                    "global::System.Boolean",
+                    "boolean",
+                    "global::System.Double",
+                    "number",
+                    "global::System.String",
+                    "string",
+                    "global::System.Text.Json.Nodes.JsonObject",
+                    "object",
+                    "global::System.Text.Json.Nodes.JsonArray",
+                    "array",
+                    "global::HassSharp.EntityStateSnapshot",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.IComparable<global::System.Boolean>",
+                    "global::System.IEquatable<global::System.Boolean>",
+                    "global::System.ISpanParsable<global::System.Boolean>",
+                    "global::System.IParsable<global::System.Boolean>",
+                    "global::System.ValueType",
+                    "global::System.Numerics.IBinaryFloatingPointIeee754<global::System.Double>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Double>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IFloatingPointIeee754<global::System.Double>",
+                    "global::System.Numerics.IExponentialFunctions<global::System.Double>",
+                    "global::System.Numerics.IFloatingPoint<global::System.Double>",
+                    "global::System.Numerics.INumber<global::System.Double>",
+                    "global::System.IComparable<global::System.Double>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Double, global::System.Double, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.ISignedNumber<global::System.Double>",
+                    "global::System.Numerics.IHyperbolicFunctions<global::System.Double>",
+                    "global::System.Numerics.ILogarithmicFunctions<global::System.Double>",
+                    "global::System.Numerics.IPowerFunctions<global::System.Double>",
+                    "global::System.Numerics.IRootFunctions<global::System.Double>",
+                    "global::System.Numerics.ITrigonometricFunctions<global::System.Double>",
+                    "global::System.Numerics.IFloatingPointConstants<global::System.Double>",
+                    "global::System.Numerics.INumberBase<global::System.Double>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Double>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.IEquatable<global::System.Double>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Double, global::System.Double, global::System.Boolean>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Double>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.ISpanParsable<global::System.Double>",
+                    "global::System.IParsable<global::System.Double>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Double, global::System.Double>",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.IUtf8SpanParsable<global::System.Double>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Double>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Char>",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.IComparable<global::System.String?>",
+                    "global::System.IEquatable<global::System.String?>",
+                    "global::System.ICloneable",
+                    "global::System.ISpanParsable<global::System.String>",
+                    "global::System.IParsable<global::System.String>",
+                    "global::System.Collections.Generic.IDictionary<global::System.String, global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IList<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Text.Json.Nodes.JsonNode",
+                    "global::System.Collections.Generic.IList<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.ICollection<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "bridge",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Bridge\")]\n    public static IEnumerable<object> Run(List<string> items) => items;\n}",
+            "arguments": {
+              "items": {
+                "kind": "unset"
+              }
+            },
+            "signature": {
+              "title": "Bridge",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "items": {
+                  "types": [
+                    "global::System.Collections.Generic.List<global::System.String>"
+                  ],
+                  "required": true,
+                  "label": "Items",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {
+                "result": {
+                  "type": "global::System.Collections.Generic.IEnumerable<global::System.Object>",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::System.Collections.Generic.IEnumerable<global::System.Object>": {
+                  "label": "System.Collections.Generic.IEnumerable<object>",
+                  "description": "System.Collections.Generic.IEnumerable<object>",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>"
+                  ],
+                  "assignableFrom": [
+                    "global::System.Collections.Generic.List<global::System.String>"
+                  ]
+                },
+                "global::System.Object": {
+                  "label": "object",
+                  "description": "object",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object"
+                  ],
+                  "assignableFrom": [
+                    "global::System.Boolean",
+                    "boolean",
+                    "global::System.Double",
+                    "number",
+                    "global::System.String",
+                    "string",
+                    "global::System.Text.Json.Nodes.JsonObject",
+                    "object",
+                    "global::System.Text.Json.Nodes.JsonArray",
+                    "array",
+                    "global::HassSharp.EntityStateSnapshot",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.IComparable<global::System.Boolean>",
+                    "global::System.IEquatable<global::System.Boolean>",
+                    "global::System.ISpanParsable<global::System.Boolean>",
+                    "global::System.IParsable<global::System.Boolean>",
+                    "global::System.ValueType",
+                    "global::System.Numerics.IBinaryFloatingPointIeee754<global::System.Double>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Double>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IFloatingPointIeee754<global::System.Double>",
+                    "global::System.Numerics.IExponentialFunctions<global::System.Double>",
+                    "global::System.Numerics.IFloatingPoint<global::System.Double>",
+                    "global::System.Numerics.INumber<global::System.Double>",
+                    "global::System.IComparable<global::System.Double>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Double, global::System.Double, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.ISignedNumber<global::System.Double>",
+                    "global::System.Numerics.IHyperbolicFunctions<global::System.Double>",
+                    "global::System.Numerics.ILogarithmicFunctions<global::System.Double>",
+                    "global::System.Numerics.IPowerFunctions<global::System.Double>",
+                    "global::System.Numerics.IRootFunctions<global::System.Double>",
+                    "global::System.Numerics.ITrigonometricFunctions<global::System.Double>",
+                    "global::System.Numerics.IFloatingPointConstants<global::System.Double>",
+                    "global::System.Numerics.INumberBase<global::System.Double>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Double>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.IEquatable<global::System.Double>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Double, global::System.Double, global::System.Boolean>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Double>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.ISpanParsable<global::System.Double>",
+                    "global::System.IParsable<global::System.Double>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Double, global::System.Double>",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.IUtf8SpanParsable<global::System.Double>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Double>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Char>",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.IComparable<global::System.String?>",
+                    "global::System.IEquatable<global::System.String?>",
+                    "global::System.ICloneable",
+                    "global::System.ISpanParsable<global::System.String>",
+                    "global::System.IParsable<global::System.String>",
+                    "global::System.Collections.Generic.IDictionary<global::System.String, global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IList<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Text.Json.Nodes.JsonNode",
+                    "global::System.Collections.Generic.IList<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.ICollection<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>",
+                    "global::System.Collections.Generic.List<global::System.String>"
+                  ]
+                },
+                "global::System.Collections.Generic.List<global::System.String>": {
+                  "label": "System.Collections.Generic.List<string>",
+                  "description": "System.Collections.Generic.List<string>",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>",
+                    "global::System.Collections.Generic.List<global::System.String>",
+                    "global::System.Collections.Generic.IList<global::System.String>",
+                    "global::System.Collections.Generic.ICollection<global::System.String>",
+                    "global::System.Collections.IList",
+                    "global::System.Collections.ICollection",
+                    "global::System.Collections.Generic.IReadOnlyList<global::System.String>",
+                    "global::System.Collections.Generic.IReadOnlyCollection<global::System.String>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.String>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:bridge",
+          "source": "make",
+          "target": "bridge",
+          "port": "next"
+        },
+        {
+          "id": "bridge:next:take",
+          "source": "bridge",
+          "target": "take",
+          "port": "next"
+        },
+        {
+          "id": "make.result:bridge.items",
+          "kind": "data",
+          "source": "make",
+          "target": "bridge",
+          "sourcePort": "result",
+          "targetPort": "items"
+        },
+        {
+          "id": "make.result:take.value",
+          "kind": "data",
+          "source": "make",
+          "target": "take",
+          "sourcePort": "result",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "custom node: a CLR list does not go into another custom node's IEnumerable<object> pin when no node names both",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Make\")]\n    public static List<string> Run() => [\"a\"];\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::System.Collections.Generic.List<global::System.String>",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::System.Collections.Generic.List<global::System.String>": {
+                  "label": "System.Collections.Generic.List<string>",
+                  "description": "System.Collections.Generic.List<string>",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.Collections.Generic.List<global::System.String>",
+                    "global::System.Collections.Generic.IList<global::System.String>",
+                    "global::System.Collections.Generic.ICollection<global::System.String>",
+                    "global::System.Collections.IList",
+                    "global::System.Collections.ICollection",
+                    "global::System.Collections.Generic.IReadOnlyList<global::System.String>",
+                    "global::System.Collections.Generic.IReadOnlyCollection<global::System.String>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.String>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "take",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Take\")]\n    public static void Run(IEnumerable<object> value) => Logger.Info(value!.ToString()!);\n}",
+            "arguments": {
+              "value": {
+                "kind": "unset"
+              }
+            },
+            "signature": {
+              "title": "Take",
+              "description": "",
+              "pure": false,
+              "inputs": {
+                "value": {
+                  "types": [
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>"
+                  ],
+                  "required": true,
+                  "label": "Value",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {},
+              "types": {
+                "global::System.Collections.Generic.IEnumerable<global::System.Object>": {
+                  "label": "System.Collections.Generic.IEnumerable<object>",
+                  "description": "System.Collections.Generic.IEnumerable<object>",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>"
+                  ],
+                  "assignableFrom": []
+                },
+                "global::System.Object": {
+                  "label": "object",
+                  "description": "object",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "assignableTo": [
+                    "global::System.Object"
+                  ],
+                  "assignableFrom": [
+                    "global::System.Boolean",
+                    "boolean",
+                    "global::System.Double",
+                    "number",
+                    "global::System.String",
+                    "string",
+                    "global::System.Text.Json.Nodes.JsonObject",
+                    "object",
+                    "global::System.Text.Json.Nodes.JsonArray",
+                    "array",
+                    "global::HassSharp.EntityStateSnapshot",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.IComparable<global::System.Boolean>",
+                    "global::System.IEquatable<global::System.Boolean>",
+                    "global::System.ISpanParsable<global::System.Boolean>",
+                    "global::System.IParsable<global::System.Boolean>",
+                    "global::System.ValueType",
+                    "global::System.Numerics.IBinaryFloatingPointIeee754<global::System.Double>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Double>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IFloatingPointIeee754<global::System.Double>",
+                    "global::System.Numerics.IExponentialFunctions<global::System.Double>",
+                    "global::System.Numerics.IFloatingPoint<global::System.Double>",
+                    "global::System.Numerics.INumber<global::System.Double>",
+                    "global::System.IComparable<global::System.Double>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Double, global::System.Double, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.ISignedNumber<global::System.Double>",
+                    "global::System.Numerics.IHyperbolicFunctions<global::System.Double>",
+                    "global::System.Numerics.ILogarithmicFunctions<global::System.Double>",
+                    "global::System.Numerics.IPowerFunctions<global::System.Double>",
+                    "global::System.Numerics.IRootFunctions<global::System.Double>",
+                    "global::System.Numerics.ITrigonometricFunctions<global::System.Double>",
+                    "global::System.Numerics.IFloatingPointConstants<global::System.Double>",
+                    "global::System.Numerics.INumberBase<global::System.Double>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Double>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.IEquatable<global::System.Double>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Double, global::System.Double, global::System.Boolean>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Double>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.ISpanParsable<global::System.Double>",
+                    "global::System.IParsable<global::System.Double>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Double, global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Double, global::System.Double>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Double, global::System.Double>",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.IUtf8SpanParsable<global::System.Double>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Double>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Char>",
+                    "global::System.Collections.IEnumerable",
+                    "global::System.IComparable<global::System.String?>",
+                    "global::System.IEquatable<global::System.String?>",
+                    "global::System.ICloneable",
+                    "global::System.ISpanParsable<global::System.String>",
+                    "global::System.IParsable<global::System.String>",
+                    "global::System.Collections.Generic.IDictionary<global::System.String, global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IList<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Collections.Generic.ICollection<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Collections.Generic.KeyValuePair<global::System.String, global::System.Text.Json.Nodes.JsonNode?>>",
+                    "global::System.Text.Json.Nodes.JsonNode",
+                    "global::System.Collections.Generic.IList<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.ICollection<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Text.Json.Nodes.JsonNode?>",
+                    "global::System.Collections.Generic.IEnumerable<global::System.Object>"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:take",
+          "source": "make",
+          "target": "take",
+          "port": "next"
+        },
+        {
+          "id": "make.result:take.value",
+          "kind": "data",
+          "source": "make",
+          "target": "take",
+          "sourcePort": "result",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "take",
+    "inputId": "value",
+    "messages": [
+      "Value accepts List of Object, not List of Text"
+    ]
+  },
+  {
+    "name": "compare: less than with a CLR int on the left and a number on the right",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Make\")]\n    public static int Run() => 1;\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::System.Int32",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::System.Int32": {
+                  "label": "int",
+                  "description": "int",
+                  "category": "Number",
+                  "nullable": false,
+                  "literalKind": "integer",
+                  "min": -2147483648,
+                  "max": 2147483647,
+                  "assignableTo": [
+                    "global::System.Double",
+                    "number",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.ValueType",
+                    "global::System.Object",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.Int32",
+                    "global::System.Numerics.ISignedNumber<global::System.Int32>",
+                    "global::System.Numerics.IBinaryInteger<global::System.Int32>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Int32>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumber<global::System.Int32>",
+                    "global::System.IComparable<global::System.Int32>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumberBase<global::System.Int32>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.IEquatable<global::System.Int32>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.ISpanParsable<global::System.Int32>",
+                    "global::System.IParsable<global::System.Int32>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.IUtf8SpanParsable<global::System.Int32>",
+                    "global::System.Numerics.IShiftOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Int32>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "cmp",
+          "kind": "compare",
+          "config": {
+            "operator": "lt",
+            "left": {
+              "kind": "unset"
+            },
+            "right": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2.5
+            }
+          }
+        },
+        {
+          "id": "i",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:i",
+          "source": "make",
+          "target": "i",
+          "port": "next"
+        },
+        {
+          "id": "make.result:cmp.left",
+          "kind": "data",
+          "source": "make",
+          "target": "cmp",
+          "sourcePort": "result",
+          "targetPort": "left"
+        },
+        {
+          "id": "cmp.value:i.value",
+          "kind": "data",
+          "source": "cmp",
+          "target": "i",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "compare: at least with a number on the left and a CLR long on the right",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Make\")]\n    public static long Run() => 5000000000;\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::System.Int64",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::System.Int64": {
+                  "label": "long",
+                  "description": "long",
+                  "category": "Number",
+                  "nullable": false,
+                  "literalKind": "integer",
+                  "min": -9007199254740991,
+                  "max": 9007199254740991,
+                  "assignableTo": [
+                    "global::System.Double",
+                    "number",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.ValueType",
+                    "global::System.Object",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.Int64",
+                    "global::System.Numerics.ISignedNumber<global::System.Int64>",
+                    "global::System.Numerics.IBinaryInteger<global::System.Int64>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Int64>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Int64, global::System.Int64, global::System.Int64>",
+                    "global::System.Numerics.INumber<global::System.Int64>",
+                    "global::System.IComparable<global::System.Int64>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Int64, global::System.Int64, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Int64, global::System.Int64, global::System.Int64>",
+                    "global::System.Numerics.INumberBase<global::System.Int64>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Int64, global::System.Int64, global::System.Boolean>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Int64, global::System.Int64, global::System.Int64>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Int64, global::System.Int64>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Int64>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Int64, global::System.Int64, global::System.Int64>",
+                    "global::System.IEquatable<global::System.Int64>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Int64>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Int64, global::System.Int64>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Int64, global::System.Int64, global::System.Int64>",
+                    "global::System.ISpanParsable<global::System.Int64>",
+                    "global::System.IParsable<global::System.Int64>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Int64, global::System.Int64, global::System.Int64>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Int64, global::System.Int64>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Int64, global::System.Int64>",
+                    "global::System.IUtf8SpanParsable<global::System.Int64>",
+                    "global::System.Numerics.IShiftOperators<global::System.Int64, global::System.Int32, global::System.Int64>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Int64>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "cmp",
+          "kind": "compare",
+          "config": {
+            "operator": "ge",
+            "left": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            },
+            "right": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "i",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:i",
+          "source": "make",
+          "target": "i",
+          "port": "next"
+        },
+        {
+          "id": "make.result:cmp.right",
+          "kind": "data",
+          "source": "make",
+          "target": "cmp",
+          "sourcePort": "result",
+          "targetPort": "right"
+        },
+        {
+          "id": "cmp.value:i.value",
+          "kind": "data",
+          "source": "cmp",
+          "target": "i",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "compare: greater than with a CLR double on the left and a CLR int on the right",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Make\")]\n    public static double Run() => 2.5;\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::System.Double",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {}
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Make\")]\n    public static int Run() => 2;\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::System.Int32",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::System.Int32": {
+                  "label": "int",
+                  "description": "int",
+                  "category": "Number",
+                  "nullable": false,
+                  "literalKind": "integer",
+                  "min": -2147483648,
+                  "max": 2147483647,
+                  "assignableTo": [
+                    "global::System.Double",
+                    "number",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.ValueType",
+                    "global::System.Object",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.Int32",
+                    "global::System.Numerics.ISignedNumber<global::System.Int32>",
+                    "global::System.Numerics.IBinaryInteger<global::System.Int32>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Int32>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumber<global::System.Int32>",
+                    "global::System.IComparable<global::System.Int32>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumberBase<global::System.Int32>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.IEquatable<global::System.Int32>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.ISpanParsable<global::System.Int32>",
+                    "global::System.IParsable<global::System.Int32>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.IUtf8SpanParsable<global::System.Int32>",
+                    "global::System.Numerics.IShiftOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Int32>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "cmp",
+          "kind": "compare",
+          "config": {
+            "operator": "gt",
+            "left": {
+              "kind": "unset"
+            },
+            "right": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "i",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:a",
+          "source": "t",
+          "target": "a",
+          "port": "next"
+        },
+        {
+          "id": "a:next:b",
+          "source": "a",
+          "target": "b",
+          "port": "next"
+        },
+        {
+          "id": "b:next:i",
+          "source": "b",
+          "target": "i",
+          "port": "next"
+        },
+        {
+          "id": "a.result:cmp.left",
+          "kind": "data",
+          "source": "a",
+          "target": "cmp",
+          "sourcePort": "result",
+          "targetPort": "left"
+        },
+        {
+          "id": "b.result:cmp.right",
+          "kind": "data",
+          "source": "b",
+          "target": "cmp",
+          "sourcePort": "result",
+          "targetPort": "right"
+        },
+        {
+          "id": "cmp.value:i.value",
+          "kind": "data",
+          "source": "cmp",
+          "target": "i",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "compare: at most with a nullable CLR int on the left and a number on the right",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Make\")]\n    public static int? Run() => null;\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::System.Int32?",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::System.Int32?": {
+                  "label": "int?",
+                  "description": "int?",
+                  "category": "Number",
+                  "nullable": true,
+                  "literalKind": "integer",
+                  "min": -2147483648,
+                  "max": 2147483647,
+                  "assignableTo": [
+                    "global::System.Int32?"
+                  ],
+                  "assignableFrom": [
+                    "global::System.Int32"
+                  ]
+                },
+                "global::System.Int32": {
+                  "label": "int",
+                  "description": "int",
+                  "category": "Number",
+                  "nullable": false,
+                  "literalKind": "integer",
+                  "min": -2147483648,
+                  "max": 2147483647,
+                  "assignableTo": [
+                    "global::System.Double",
+                    "number",
+                    "global::System.IComparable",
+                    "global::System.IConvertible",
+                    "global::System.ValueType",
+                    "global::System.Object",
+                    "global::System.ISpanFormattable",
+                    "global::System.IFormattable",
+                    "global::System.IUtf8SpanFormattable",
+                    "global::System.Int32?",
+                    "global::System.Int32",
+                    "global::System.Numerics.ISignedNumber<global::System.Int32>",
+                    "global::System.Numerics.IBinaryInteger<global::System.Int32>",
+                    "global::System.Numerics.IBinaryNumber<global::System.Int32>",
+                    "global::System.Numerics.IBitwiseOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumber<global::System.Int32>",
+                    "global::System.IComparable<global::System.Int32>",
+                    "global::System.Numerics.IComparisonOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IModulusOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.INumberBase<global::System.Int32>",
+                    "global::System.Numerics.IEqualityOperators<global::System.Int32, global::System.Int32, global::System.Boolean>",
+                    "global::System.Numerics.IAdditionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IAdditiveIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IDecrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IDivisionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.IEquatable<global::System.Int32>",
+                    "global::System.Numerics.IIncrementOperators<global::System.Int32>",
+                    "global::System.Numerics.IMultiplicativeIdentity<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMultiplyOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.ISpanParsable<global::System.Int32>",
+                    "global::System.IParsable<global::System.Int32>",
+                    "global::System.Numerics.ISubtractionOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryPlusOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IUnaryNegationOperators<global::System.Int32, global::System.Int32>",
+                    "global::System.IUtf8SpanParsable<global::System.Int32>",
+                    "global::System.Numerics.IShiftOperators<global::System.Int32, global::System.Int32, global::System.Int32>",
+                    "global::System.Numerics.IMinMaxValue<global::System.Int32>"
+                  ],
+                  "assignableFrom": []
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "cmp",
+          "kind": "compare",
+          "config": {
+            "operator": "le",
+            "left": {
+              "kind": "unset"
+            },
+            "right": {
+              "kind": "literal",
+              "type": "number",
+              "value": 3
+            }
+          }
+        },
+        {
+          "id": "i",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:i",
+          "source": "make",
+          "target": "i",
+          "port": "next"
+        },
+        {
+          "id": "make.result:cmp.left",
+          "kind": "data",
+          "source": "make",
+          "target": "cmp",
+          "sourcePort": "result",
+          "targetPort": "left"
+        },
+        {
+          "id": "cmp.value:i.value",
+          "kind": "data",
+          "source": "cmp",
+          "target": "i",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "compare: greater than with a CLR string on the left",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Make\")]\n    public static string Run() => \"a\";\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::System.String",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {}
+            }
+          }
+        },
+        {
+          "id": "cmp",
+          "kind": "compare",
+          "config": {
+            "operator": "gt",
+            "left": {
+              "kind": "unset"
+            },
+            "right": {
+              "kind": "literal",
+              "type": "string",
+              "value": "b"
+            }
+          }
+        },
+        {
+          "id": "i",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:i",
+          "source": "make",
+          "target": "i",
+          "port": "next"
+        },
+        {
+          "id": "make.result:cmp.left",
+          "kind": "data",
+          "source": "make",
+          "target": "cmp",
+          "sourcePort": "result",
+          "targetPort": "left"
+        },
+        {
+          "id": "cmp.value:i.value",
+          "kind": "data",
+          "source": "cmp",
+          "target": "i",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "cmp",
+    "inputId": "left",
+    "contains": "Less-than and greater-than comparisons need Number values",
+    "messages": [
+      "Less-than and greater-than comparisons need Number values"
+    ]
+  },
+  {
+    "name": "compare: less than with a number on the left and a CLR string on the right",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    [Node(\"Make\")]\n    public static string Run() => \"a\";\n}",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::System.String",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {}
+            }
+          }
+        },
+        {
+          "id": "cmp",
+          "kind": "compare",
+          "config": {
+            "operator": "lt",
+            "left": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "right": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "i",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:i",
+          "source": "make",
+          "target": "i",
+          "port": "next"
+        },
+        {
+          "id": "make.result:cmp.right",
+          "kind": "data",
+          "source": "make",
+          "target": "cmp",
+          "sourcePort": "result",
+          "targetPort": "right"
+        },
+        {
+          "id": "cmp.value:i.value",
+          "kind": "data",
+          "source": "cmp",
+          "target": "i",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "cmp",
+    "inputId": "right",
+    "contains": "Less-than and greater-than comparisons need Number values",
+    "messages": [
+      "Both sides of the comparison must have the same type",
+      "Less-than and greater-than comparisons need Number values"
+    ]
   }
 ]

@@ -5,14 +5,13 @@ import {
   executionPorts,
   inputValue,
   isPure,
-  withGraphTypes,
   type GraphEdge,
   type GraphNode,
   type InputSpec,
   type Operand,
   type VisualCatalogSnapshot,
 } from '../contract'
-import { connectionIndex } from '../connectionIndex'
+import { connectionIndex, graphTypes } from '../connectionIndex'
 import { inputType, nodeInputs, outputPort, portLabel, type VisualGraph } from '../graph'
 import { nodeIdentity, type NodeIdentity } from '../icons'
 import { nodeSummary, serviceFieldLabel, type SummaryNames } from '../nodeSummary'
@@ -208,7 +207,7 @@ const unreachable = (node: GraphNode, ctx: ViewContext) => {
 /** The card of one node: pins, rows, summary and problems. Pure: the adapter caches it per node content. */
 export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   // Type labels, colours and editors know the types the graph's Custom C# nodes declare.
-  const graph = ctx.graph, catalog = withGraphTypes(ctx.catalog, graph)
+  const graph = ctx.graph, catalog = graphTypes(graph, ctx.catalog)
   const known = Object.hasOwn(catalog.nodes, node.kind)
   const spec = known ? catalog.nodes[node.kind] : undefined
   const identity = nodeIdentity(node.kind, catalog)
@@ -346,7 +345,7 @@ export interface EdgeView {
 }
 /** The wire of one graph edge; `undefined` for an edge whose endpoints are missing. */
 export function buildEdgeView(edge: GraphEdge, graph: VisualGraph, catalog: VisualCatalogSnapshot): EdgeView | undefined {
-  catalog = withGraphTypes(catalog, graph)
+  catalog = graphTypes(graph, catalog)
   const source = graph.nodes.find(n => n.id === edge.source), target = graph.nodes.find(n => n.id === edge.target)
   if (!source || !target) return
   if (edge.kind === 'data') {

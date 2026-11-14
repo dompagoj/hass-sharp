@@ -136,15 +136,29 @@ export function customSignature(node: GraphNode, catalog: VisualCatalogSnapshot 
   return wellFormedSignature(signature) ? signature : undefined
 }
 /**
- * The catalog with the types of the graph's Custom C# nodes added: each well-formed signature's `types`, in node
- * order, where neither the catalog nor an earlier node has that id. The catalog itself when there are none. Mirrors
+ * The catalog with the types of the graph's Custom C# nodes added: each well-formed signature's `types` whose id the
+ * catalog does not have. Each node lists what its own compile knows a type converts to and from, so the entries of one
+ * id are merged: the first node's entry, with `assignableTo` and `assignableFrom` the union of every node's (in node
+ * order). The order of the nodes never changes what is accepted. The catalog itself when there are none. Mirrors
  * `VisualNodeCatalog.WithGraphTypes`; both validators compare these types by their entries alone.
  */
 export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): VisualCatalogSnapshot {
   const added: Record<string, TypeSpec> = Object.create(null)
+  const union = (list: string[] | undefined, more: string[]) => {
+    const merged = Array.isArray(list) ? [...list] : []
+    for (const id of more) if (typeof id === 'string' && !merged.includes(id)) merged.push(id)
+    return merged
+  }
   for (const node of record(graph) && Array.isArray(graph.nodes) ? graph.nodes : [])
-    if (record(node)) for (const [id, entry] of Object.entries(customSignature(node as unknown as GraphNode, catalog)?.types ?? {}))
-      if (!Object.hasOwn(catalog.types, id) && !Object.hasOwn(added, id)) added[id] = entry
+    if (record(node)) for (const [id, entry] of Object.entries(customSignature(node as unknown as GraphNode, catalog)?.types ?? {})) {
+      if (Object.hasOwn(catalog.types, id)) continue
+      const first = Object.hasOwn(added, id) ? added[id] : undefined
+      if (!first) { added[id] = entry; continue }
+      const next: TypeSpec = { ...first }
+      for (const key of ['assignableTo', 'assignableFrom'] as const)
+        if (Array.isArray(entry[key])) next[key] = union(first[key], entry[key])
+      added[id] = next
+    }
   return Object.keys(added).length ? { ...catalog, types: Object.assign(Object.create(null), catalog.types, added) } : catalog
 }
 export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, OutputSpec> {
@@ -492,7 +506,10 @@ export function comparisonDiagnostics(node: GraphNode, spec: NodeSpec, resolved:
   const left = rule.leftInput ? resolved[rule.leftInput] : text(node.config[rule.typeConfig!])
   const right = resolved[rule.rightInput]
   if (left && right && !(isAssignable(left, right, catalog) || isAssignable(right, left, catalog))) error('Both sides of the comparison must have the same type', rule.rightInput)
-  if (rule.orderingOperators.includes(text(node.config[rule.operatorConfig])) && left !== rule.orderingType) error(`Less-than and greater-than comparisons need ${typeLabel(rule.orderingType, catalog)} values`, rule.leftInput ?? rule.typeConfig)
+  // Ordering takes any number type on either side (number and every CLR number type); the run time widens both.
+  const ordered = (type: string | undefined) => type === rule.orderingType || (!!type && numeric(rootType(type, catalog), catalog))
+  if (rule.orderingOperators.includes(text(node.config[rule.operatorConfig])) && (!ordered(left) || (!!right && !ordered(right))))
+    error(`Less-than and greater-than comparisons need ${typeLabel(rule.orderingType, catalog)} values`, !ordered(left) ? (rule.leftInput ?? rule.typeConfig) : rule.rightInput)
   return errors
 }
 /** Static validation only: evaluating data never schedules a producer. */

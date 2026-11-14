@@ -185,9 +185,36 @@ fails the step when it runs, naming the step and pin, and such a value typed int
 the pin is refused at once. The same check applies to a loop's carried and exported
 values, to each item a For each takes (naming the item), and to Convert. Compare
 works in a type that holds both sides exactly, never rounding one side to the
-other's type, and its trace shows the values as given. A type that one Custom C# node declares belongs to that
-node: another node's code cannot name it (declare the type in a node library to
-share it), though a wire can carry it into `object` or an interface it implements.
+other's type, and its trace shows the values as given. Less than, at most, greater
+than and at least take any number type on either side; with a nullable side that is
+null they are false. A type that one Custom C# node declares belongs to that node:
+another node's code cannot name it (declare the type in a node library to share it),
+though a wire can carry it into `object` or an interface it implements.
+
+Between two Custom C# nodes, a type that only Custom C# code uses (not the catalog
+or a node library) is matched by what each node's compile records about it. Each
+node records, for every type its pins use, the types it converts to among the
+catalog, the libraries, that node's own pin types and the type's base types and
+interfaces, and the types among the catalog, the libraries and its own pin types
+that convert to it. When several nodes use one type, the editor and the backend take
+the union of their records, so the order of the nodes does not matter. So a wire
+between two Custom C# nodes is accepted when:
+
+- both pins have the same type;
+- the target is a base type or an interface of the source type (`List<string>` into
+  `IEnumerable<string>`, a declared record into `IDisposable` or `object`);
+- the target is a catalog or library type the source converts to, or the source is
+  one that converts to the target;
+- both are numbers (the rule above);
+- or some Custom C# node in the graph uses both types in its pins, so its compile
+  recorded the conversion.
+
+A conversion that C# makes only through generic variance between two types that
+only Custom C# code uses is refused otherwise: a `List<string>` output into another
+node's `IEnumerable<object>` pin is refused, though C# accepts it, unless a node
+uses both `List<string>` and `IEnumerable<object>`. Wire it through such a node or
+declare the parameter as `IEnumerable<string>` instead. A user-defined `implicit
+operator` is never used for a wire.
 
 The **Edit code** dialog edits the code with completion, hover, signature help and
 diagnostics, and applies its pins to the node. MCP authoring sends `source` and
