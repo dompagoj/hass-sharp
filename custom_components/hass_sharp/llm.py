@@ -54,7 +54,10 @@ NODE = p.Schema({p.Required("id"): str, p.Required("kind"): str,
 EDGE = p.Schema({p.Required("id"): str, p.Required("source"): str, p.Required("target"): str,
                  p.Optional("kind"): p.In(["data", "execution"]), p.Optional("port"): str,
                  p.Optional("sourcePort"): str, p.Optional("targetPort"): str})
-GRAPH = p.Schema({p.Required("version"): 5, p.Required("name"): str, p.Required("nodes"): [NODE], p.Required("edges"): [EDGE]})
+# A graph's other members (such as imports or members, which are gone), and a version other than 5, reach the backend validator, which says what to
+# do instead; a refusal here could only say that the arguments do not match. Nodes and edges stay strict: an unknown key
+# there (such as a node's old size) means nothing to the backend, which would silently keep it.
+GRAPH = p.Schema({p.Required("version"): int, p.Required("name"): str, p.Required("nodes"): [NODE], p.Required("edges"): [EDGE]}, extra=p.ALLOW_EXTRA)
 ID = p.All(str, p.Match(r"^[a-z0-9][a-z0-9_-]{0,79}$"))
 REVISION = p.All(int, p.Range(min=0))
 PAGE = {p.Optional("offset", default=0): p.All(int, p.Range(min=0)), p.Optional("limit", default=50): p.All(int, p.Range(min=1, max=100))}
@@ -113,13 +116,16 @@ class HassSharpTool(llm.Tool):
             # must validate too. Python bool is int, so reject it explicitly.
             for key in ("expectedRevision", "offset", "limit"):
                 if key in tool_input.tool_args and type(tool_input.tool_args[key]) is not int:
-                    raise ValueError(f"{key} must be an integer")
+                    raise p.Invalid(f"{key} must be an integer")
             args = self.parameters(tool_input.tool_args)
             result = await self._call(hass, args)
             return llm.ToolResult(result, error=result.get("ok") is False)
         except PermissionError:
             return llm.ToolResult(error("unauthorized", "Administrator required"), error=True)
-        except (p.Invalid, ValueError, TypeError):
+        except p.Invalid as invalid:
+            # Says which argument: "extra keys not allowed @ data['graph']['nodes'][0]['size']", say.
+            return llm.ToolResult(error("invalid_request", f"Arguments do not match the tool parameter schema: {invalid}"), error=True)
+        except (ValueError, TypeError):
             return llm.ToolResult(error("invalid_request", "Arguments do not match the tool parameter schema"), error=True)
         except Exception:
             logger.exception("HassSharp MCP %s failed", self.operation)

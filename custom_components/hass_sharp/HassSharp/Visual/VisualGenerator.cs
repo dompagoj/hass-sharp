@@ -30,6 +30,27 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
 {
     static string Text(JsonNode? n,string key,string fallback="")=>VisualNodeCatalog.Text(n,key,fallback);
     static string Q(string value)=>JsonSerializer.Serialize(value);
+    /// <summary>
+    /// A long text (the graph and catalog JSON, hundreds of KB) as one expression of short literals:
+    /// <c>global::System.String.Concat(new string[]{"…","…"})</c>, on one line. Roslyn keeps what it parses in two
+    /// process-wide tables that are never cleared: each small syntax node (a literal is one) in a cache of 65536 entries
+    /// that only another parse overwrites, and each string literal's value among its interned strings. One literal holding
+    /// the graph, parsed again on every reload, preview and compile, stayed there each time: memory grew by the size of
+    /// every automation on every reload of the entry. Pieces of <see cref="PieceLength"/> characters bound what those
+    /// entries can hold, and the list of pieces has too many children to be cached.
+    /// </summary>
+    internal static string Pieces(string value) {
+        if(value.Length<=PieceLength)return Q(value);
+        var pieces=new List<string>();
+        for(var start=0;start<value.Length;) {
+            var length=Math.Min(PieceLength,value.Length-start);
+            // A surrogate pair stays in one piece: one half alone would not be serialised as itself.
+            if(start+length<value.Length&&char.IsHighSurrogate(value[start+length-1]))length--;
+            pieces.Add(Q(value.Substring(start,length)));start+=length;
+        }
+        return "global::System.String.Concat(new string[]{"+string.Join(",",pieces)+"})";
+    }
+    internal const int PieceLength=64;
     // A dispatch expression must never acquire dynamic overload resolution.
     static string ClrExpression(ITypeSymbol symbol)
     {
@@ -280,7 +301,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 Add($"private delegate {ClrExpression(method.Method.ReturnType)} {delegates[MethodKey(node)]}({string.Join(",",method.Parameters.Select(p=>ClrExpression(p.Symbol.Type)+" @"+p.Name))});");
             }
             foreach(var root in roots)Section(Text(root,"id"),$"public global::System.Threading.Tasks.Task {VisualNodeCatalog.EffectiveTriggerMethod(root)}() => {run}({Q(Text(root,"id"))});");
-            Add($"private global::System.Threading.Tasks.Task {run}(string {nodeId}) => new global::HassSharp.VisualRuntime({Q(graph.ToJsonString())},{Q(embedded.ToJsonString())},new global::System.Collections.Generic.Dictionary<string,global::System.Type> {{");
+            Add($"private global::System.Threading.Tasks.Task {run}(string {nodeId}) => new global::HassSharp.VisualRuntime({Pieces(graph.ToJsonString())},{Pieces(embedded.ToJsonString())},new global::System.Collections.Generic.Dictionary<string,global::System.Type> {{");
             var clrTypes=snapshot.Types.Values.Concat(snapshot.Custom.Values.SelectMany(c=>c.Types)).DistinctBy(t=>t.Id);
             foreach(var type in clrTypes.Where(t=>embeddedTypes.ContainsKey(t.Id)).OrderBy(t=>t.Id,StringComparer.Ordinal))Add($"[{Q(type.Id)}]=typeof({(type.Symbol.TypeKind==TypeKind.Dynamic ? "global::System.Object" : type.Symbol.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))}),");
             Add($"}},TriggerData,CancellationToken,{handler},new global::System.Collections.Generic.HashSet<string>{{{string.Join(",",compiledConversions.Keys.Select(Q))}}},new global::System.Collections.Generic.Dictionary<string,string>{{{string.Join(",",comparisonTypes.Select(p=>"["+Q(p.Key)+"]="+Q(p.Value)))}}}).RunAsync({nodeId});");

@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+
 namespace HassSharp;
 
 public partial class HassSharpManager
@@ -27,6 +29,8 @@ public partial class HassSharpManager
     public HassSharpManager(string hassConfigPath)
     {
         HassPath.HassConfiguration = hassConfigPath;
+        // Before any automation loads: otherwise Python.NET keeps every automation assembly, and each reload's memory.
+        PythonNetAssemblies.IgnoreCollectible();
         _compiler = new(_diagnosticsProvider);
         _history = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "runs.db"));
         _serviceCallSchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "service_schema.json"));
@@ -39,6 +43,8 @@ public partial class HassSharpManager
         try
         {
             if (_languageLifetime.IsCancellationRequested) _languageLifetime = new();
+            if (!PythonNetAssemblies.IgnoreCollectible() && PythonNetAssemblies.PythonHosted)
+                Logger.Warn("Python.NET keeps every automation assembly it sees: each reload of HassSharp and each save will keep some memory until Home Assistant restarts");
             // Services appear gradually while Home Assistant starts: the persisted schema keeps node code compiling.
             // Whatever goes wrong there leaves the previous (or empty) typed calls: setup goes on without them.
             try { RefreshServiceCalls(); }
@@ -62,8 +68,9 @@ public partial class HassSharpManager
                 catch (Exception ex)
                 {
                     RecordLoadError(VisualRuntimePath(document.Id), ex);
-                    Logger.Error($"Cannot load visual document {document.Id}: {ex}");
-                    if (ex is CompilationErrorException compilation) Logger.Error(string.Join("\n", compilation.Errors));
+                    Logger.Error(LoadFailure(document, ex, libraries.Preview.Snapshot));
+                    // Neither a graph that does not validate nor code that does not compile is a HassSharp bug; anything else is.
+                    if (ex is not (VisualValidationException or CompilationErrorException)) Logger.Debug($"Loading visual document {document.Id} failed: {ex}");
                 }
             }
 
@@ -76,6 +83,37 @@ public partial class HassSharpManager
             _userScriptManager.DependencyTracking.Debug();
         }
         finally { _visualGate.Release(); }
+    }
+
+    /// <summary>How many problems the startup log names for an automation that does not load; the rest are counted.</summary>
+    internal const int LoggedProblems = 3;
+
+    /// <summary>
+    /// The startup log line for a saved automation that does not load: its name and id, then why, as a person can act on
+    /// it: the first problems of a graph that does not validate (each message and the step it is on), the first compiler
+    /// errors, or the error's message. Never the exception's type or stack.
+    /// </summary>
+    internal static string LoadFailure(VisualDocument document, Exception error, VisualCatalogSnapshot snapshot)
+    {
+        var name = AutomationName(document) is { } named ? $"\"{named}\" ({document.Id})" : document.Id;
+        static string Listed(IReadOnlyCollection<string> problems) =>
+            string.Join("; ", problems.Take(LoggedProblems)) + (problems.Count > LoggedProblems ? $"; and {problems.Count - LoggedProblems} more" : "");
+        if (error is VisualValidationException invalid)
+        {
+            var nodes = (document.Graph["nodes"] as JsonArray ?? []).OfType<JsonObject>()
+                .GroupBy(n => VisualNodeCatalog.Text(n, "id"), StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            string Where(VisualDiagnostic diagnostic) => diagnostic.NodeId switch
+            {
+                { } id when id.StartsWith("$library:", StringComparison.Ordinal) => $" (node library {id["$library:".Length..]})",
+                { } id when nodes.TryGetValue(id, out var node) => $" (step {VisualGraphValidator.Words.StepName(node, snapshot.Root["nodes"]?[VisualNodeCatalog.Text(node, "kind")])})",
+                _ => "",
+            };
+            var problems = invalid.Preview.Diagnostics.Where(d => d.Severity >= 3).Select(d => d.Message + Where(d)).ToArray();
+            return $"Cannot load automation {name}: {(problems.Length == 1 ? "1 problem" : $"{problems.Length} problems")}: {Listed(problems)}";
+        }
+        if (error is CompilationErrorException compilation)
+            return $"Cannot load automation {name}: its code does not compile: {Listed(compilation.Errors)}";
+        return $"Cannot load automation {name}: {error.GetBaseException().Message}";
     }
 
     // Hand-written automations used to live here. They are no longer loaded, and the files are never touched.

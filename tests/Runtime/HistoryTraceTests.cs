@@ -351,7 +351,7 @@ static class HistoryTraceTests
                 var noTrigger = VisualGenerator.EmbeddedCatalog(JsonNode.Parse("""{"version":5,"nodes":[{"id":"x","kind":"stop","config":{}}],"edges":[]}""")!.AsObject(), libraries.Snapshot);
                 Check(!noTrigger.ContainsKey("triggerOutputs"), "triggerOutputs kept without a trigger");
                 var preview = new VisualGenerator(diagnostics).Preview(StopGraph(), libraries.Snapshot);
-                Check(preview.Valid && preview.EmbeddedCatalog == catalog.ToJsonString() && preview.Source.Contains(JsonSerializer.Serialize(catalog.ToJsonString())), "generated class does not embed the pruned catalog");
+                Check(preview.Valid && preview.EmbeddedCatalog == catalog.ToJsonString() && preview.Source.Contains(VisualGenerator.Pieces(catalog.ToJsonString())), "generated class does not embed the pruned catalog");
                 Check(!JsonSerializer.Serialize(preview).Contains("embeddedCatalog", StringComparison.OrdinalIgnoreCase), "preview serialises the embedded catalog");
                 return Task.CompletedTask;
             });
@@ -397,7 +397,7 @@ static class HistoryTraceTests
                     Check(snapshot["revision"]!.GetValue<string>() == revision && snapshot["visualId"]!.GetValue<string>() == "front-door" && snapshot["visualRevision"]!.GetValue<long>() == 1, "snapshot identity");
                     Check(JsonNode.DeepEquals(snapshot["graph"], read["graph"]), "snapshot graph differs from the saved graph");
                     var running = VisualTests.Loaded(api, "front-door")!.CompiledScript.SourceCode;
-                    Check(running.Contains(JsonSerializer.Serialize(snapshot["catalog"]!.ToJsonString())) && !snapshot["catalog"]!.AsObject().ContainsKey("services")
+                    Check(running.Contains(VisualGenerator.Pieces(snapshot["catalog"]!.ToJsonString())) && !snapshot["catalog"]!.AsObject().ContainsKey("services")
                         && snapshot["catalog"]!["nodes"]!.AsObject().Select(p => p.Key).Order().SequenceEqual(["log", "stop", "trigger"]), "snapshot catalog is not the pruned embedded catalog");
 
                     var traceJson = """{"format":1,"runId":"RUN","rootNodeId":"t","startedUtc":"2026-11-13T00:00:00Z","complete":true,"truncated":false,"dropped":0,"trigger":{"platform":"manual"},"events":[],"summary":{}}""".Replace("RUN", runId);

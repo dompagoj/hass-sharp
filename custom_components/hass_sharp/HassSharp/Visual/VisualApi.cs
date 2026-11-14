@@ -80,24 +80,24 @@ public partial class HassSharpManager
         await _visualGate.WaitAsync();
         try
         {
-            var request = JsonNode.Parse(requestJson)!.AsObject();
-            var operation = request["operation"]!.GetValue<string>();
+            var request = ApiRequest.Parse(requestJson);
+            var operation = ApiRequest.String(request, "operation");
             object result;
             var store = VisualDocuments;
             var libraries = SavedLibraries();
             var authoring = AuthoringSnapshot(libraries.Preview.Snapshot);
             // deriveSignatures: each Custom C# node's pins are first written from its code, so a caller can send only the code.
-            var derive = request["deriveSignatures"] is JsonValue deriveFlag && deriveFlag.TryGetValue<bool>(out var deriving) && deriving;
+            var derive = ApiRequest.OptionalBool(request, "deriveSignatures") ?? false;
             // What deriving removed (values and wires of pins the code no longer has) is reported as warnings.
             List<VisualDiagnostic> removed = [];
-            JsonObject Graph() => derive ? new VisualGenerator(_diagnosticsProvider).DeriveSignatures(request["graph"]!.AsObject(), authoring, out removed) : request["graph"]!.AsObject();
+            JsonObject Graph() => derive ? new VisualGenerator(_diagnosticsProvider).DeriveSignatures(ApiRequest.Object(request, "graph"), authoring, out removed) : ApiRequest.Object(request, "graph");
             if (operation == "preview")
             {
                 var graph = Graph(); var preview = new VisualGenerator(_diagnosticsProvider).Preview(graph, authoring);
                 result = preview with { Graph = derive ? preview.Graph ?? graph : preview.Graph, Diagnostics = [.. removed, .. preview.Diagnostics, .. UnknownEntities(preview.Graph ?? graph, authoring, PyInterop.Entity)] };
             }
             // The automations page: no graphs, an outline of each instead, and how each has been running (one history query).
-            else if (operation == "list" && request["view"]?.GetValue<string>() == "home") result = HomeList(store.List().Select(WithRuntimeIdentity).ToArray(), request["todayUtc"]);
+            else if (operation == "list" && ApiRequest.OptionalString(request, "view") == "home") result = HomeList(store.List().Select(WithRuntimeIdentity).ToArray(), ApiRequest.OptionalString(request, "todayUtc"));
             // Listing omits the generated source and its map; "read" returns them.
             else if (operation == "list") result = store.List().Select(WithRuntimeIdentity).Select(document =>
             {
@@ -107,12 +107,12 @@ public partial class HassSharpManager
             }).ToArray();
             else
             {
-                var id = request["id"]!.GetValue<string>();
-                if (operation == "run") result = DispatchVisual(store.Read(id) ?? throw new FileNotFoundException("Visual document not found"), request["triggerId"]!.GetValue<string>());
+                var id = ApiRequest.String(request, "id");
+                if (operation == "run") result = DispatchVisual(store.Read(id) ?? throw new FileNotFoundException("Visual document not found"), ApiRequest.String(request, "triggerId"));
                 else if (operation == "read") result = WithRuntimeIdentity(store.Read(id) ?? throw new FileNotFoundException("Visual document not found"));
                 else if (operation == "set_enabled")
                 {
-                    var enabled = request["enabled"]?.GetValue<bool>() ?? throw new ArgumentException("enabled is required");
+                    var enabled = ApiRequest.Bool(request, "enabled");
                     var document = store.SetEnabled(id, enabled);
                     // The loaded script keeps running its manual runs; only its own triggers and startup run follow the switch.
                     // Stored first, then applied; a failure while cancelling runs or detaching triggers is logged, not returned.
@@ -121,11 +121,11 @@ public partial class HassSharpManager
                 }
                 else
                 {
-                    var revision = request["expectedRevision"]!.GetValue<long>();
+                    var revision = ApiRequest.Long(request, "expectedRevision", "the revision this replaces, 0 for a new automation");
                     if (operation == "save")
                     {
                         // A new automation may be saved turned off (a duplicate is): stored before activation, so it never runs on.
-                        bool? enabled = request["enabled"] is JsonNode flag ? flag.GetValue<bool>() : null;
+                        var enabled = ApiRequest.OptionalBool(request, "enabled");
                         var document = store.Save(id, Graph(), revision, authoring, libraries.Generation, enabled);
                         result = await ActivateVisualDocument(document, [.. removed, .. UnknownEntities(document.Graph, authoring, PyInterop.Entity)]);
                     }
@@ -146,8 +146,9 @@ public partial class HassSharpManager
         catch (VisualValidationException ex) { return Error("validation", ex.Preview); }
         catch (VisualConflictException ex) { return Error("conflict", ex.Message); }
         catch (FileNotFoundException ex) { return Error("not_found", ex.Message); }
-        catch (Exception ex) when (ex is ArgumentException or JsonException or InvalidOperationException or NullReferenceException or OverflowException)
+        catch (Exception ex) when (ex is ArgumentException or JsonException or InvalidOperationException or OverflowException)
         { return Error("invalid_request", ex.Message); }
+        catch (NullReferenceException) { return Error("invalid_request", ApiRequest.Unreadable); }
         finally { _visualGate.Release(); }
     }
     /// <summary>
@@ -211,11 +212,11 @@ public partial class HassSharpManager
     }
 
     /// <summary>The automations page's list: each document without its graph, with <see cref="Outline"/>, its load problems and recent runs.</summary>
-    object[] HomeList(VisualDocument[] documents, JsonNode? todayUtc)
+    object[] HomeList(VisualDocument[] documents, string? todayUtc)
     {
         // The start of the viewer's day, for "runs today"; UTC midnight when not given.
         var today = DateTime.UtcNow.Date;
-        if (todayUtc != null && !DateTime.TryParse(todayUtc.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture,
+        if (todayUtc != null && !DateTime.TryParse(todayUtc, System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out today))
             throw new ArgumentException("todayUtc must be an ISO 8601 time");
         var runs = _history.Recent(documents.Select(d => d.AutomationId!).ToArray(), today, DateTime.UtcNow.AddDays(-1));

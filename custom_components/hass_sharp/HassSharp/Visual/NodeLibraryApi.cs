@@ -70,7 +70,7 @@ public partial class HassSharpManager
         return new { service, known = schema != null, response, hasTarget = schema?["target"] is JsonObject,
             inputs = VisualNodeCatalog.DataInputs(node, null, snapshot), outputs = VisualNodeCatalog.DataOutputs(node, snapshot) };
     }
-    static string RequiredString(JsonObject request, string key) => request[key]?.GetValue<string>() ?? throw new ArgumentException($"{key} is required");
+    static string RequiredString(JsonObject request, string key) => ApiRequest.String(request, key);
 
     public async Task<string> NodeLibraryRequest(string requestJson)
     {
@@ -79,25 +79,24 @@ public partial class HassSharpManager
         await _visualGate.WaitAsync();
         try
         {
-            var request = JsonNode.Parse(requestJson)!.AsObject();
+            var request = ApiRequest.Parse(requestJson);
             var operation = RequiredString(request, "operation");
             var saved = SavedLibraries();
             if (operation == "catalog") return Success(new { catalog = saved.Preview.Snapshot.Catalog, generation = saved.Generation, servicesGeneration = ServiceSchemas.Generation, saved = true, valid = saved.Preview.Valid, diagnostics = saved.Preview.Diagnostics });
             if (operation == "list") return Success(new { documents = saved.Documents, generation = saved.Generation });
             if (operation == "service_ports") return Success(ServicePorts(RequiredString(request, "service"), AuthoringSnapshot(saved.Preview.Snapshot)));
             // A Custom C# node's code: its pins as the compiler derives them, and the language services, beside the saved libraries.
-            var customRequest = request["custom"] is JsonValue flag && flag.TryGetValue<bool>(out var custom) && custom;
+            var customRequest = ApiRequest.OptionalBool(request, "custom") ?? false;
             if (operation == "custom_preview" || customRequest && operation is "completion" or "hover" or "signature" or "format" or "definition")
             {
                 // The node's id decides the namespace its code compiles in, and so the ids of the types it declares.
-                var nodeId = request["nodeId"] is JsonValue node && node.TryGetValue<string>(out var given) ? given : throw new ArgumentException("nodeId is required: the id of the Custom C# node whose code this is");
+                var nodeId = ApiRequest.String(request, "nodeId", "the id of the Custom C# node whose code this is");
                 if (nodeId.Length == 0) throw new ArgumentException("nodeId must not be empty");
                 var code = new CustomNodeSource(nodeId, RequiredString(request, "source"));
                 var libraries = saved.Documents.ToDictionary(d => d.Id, d => d.AsSource(), StringComparer.Ordinal);
-                if (request["sources"] is JsonArray edited)
-                foreach (var item in edited)
+                foreach (var change in ApiRequest.OptionalObjects(request, "sources") ?? [])
                 {
-                    var change = item!.AsObject(); var sourceId = RequiredString(change, "id"); NodeLibraryStore.ValidateId(sourceId);
+                    var sourceId = RequiredString(change, "id"); NodeLibraryStore.ValidateId(sourceId);
                     libraries[sourceId] = new(sourceId, RequiredString(change, "source"), libraries.GetValueOrDefault(sourceId)?.Revision ?? 0);
                 }
                 var ordered = libraries.Values.OrderBy(s => s.Id, StringComparer.Ordinal).ToArray();
@@ -112,9 +111,9 @@ public partial class HassSharpManager
                     return Success(new { valid = compiled.Valid && result.Valid, diagnostics, signature = result.Signature });
                 }
                 var workspace = RequiredString(request, "workspaceVersion");
-                if (request["generation"] is {} current && current.GetValue<string>() != saved.Generation) throw new VisualConflictException();
+                if (ApiRequest.OptionalString(request, "generation") is { } current && current != saved.Generation) throw new VisualConflictException();
                 var lifetime = _languageLifetime.Token;
-                var request_ = new NodeLibraryLanguageServices(_diagnosticsProvider).RequestAsync(operation, ordered, code, request["position"]?.GetValue<int>() ?? 0, lifetime);
+                var request_ = new NodeLibraryLanguageServices(_diagnosticsProvider).RequestAsync(operation, ordered, code, ApiRequest.OptionalInt(request, "position") ?? 0, lifetime);
                 _visualGate.Release();
                 object answer;
                 try { answer = await request_; }
@@ -128,12 +127,11 @@ public partial class HassSharpManager
             {
                 var source = RequiredString(request, "source");
                 var workspaceVersion = RequiredString(request, "workspaceVersion");
-                if (request["generation"] is {} expected && expected.GetValue<string>() != saved.Generation) throw new VisualConflictException();
+                if (ApiRequest.OptionalString(request, "generation") is { } expected && expected != saved.Generation) throw new VisualConflictException();
                 var sources = saved.Documents.ToDictionary(d => d.Id, d => d.AsSource(), StringComparer.Ordinal);
-                if (request["sources"] is JsonArray unsaved)
-                foreach (var item in unsaved)
+                foreach (var change in ApiRequest.OptionalObjects(request, "sources") ?? [])
                 {
-                    var change = item!.AsObject(); var sourceId = RequiredString(change, "id"); NodeLibraryStore.ValidateId(sourceId);
+                    var sourceId = RequiredString(change, "id"); NodeLibraryStore.ValidateId(sourceId);
                     sources[sourceId] = new(sourceId, RequiredString(change, "source"), sources.GetValueOrDefault(sourceId)?.Revision ?? 0);
                 }
                 sources[id] = new(id, source, old?.Revision ?? 0);
@@ -150,7 +148,7 @@ public partial class HassSharpManager
                     var token = _languageLifetime.Token;
                     // The immutable source snapshot remains coherent after releasing the authoring gate.
                     var services = new NodeLibraryLanguageServices(_diagnosticsProvider);
-                    var languageTask = services.RequestAsync(operation, snapshot, id, request["position"]?.GetValue<int>() ?? 0, token);
+                    var languageTask = services.RequestAsync(operation, snapshot, id, ApiRequest.OptionalInt(request, "position") ?? 0, token);
                     _visualGate.Release();
                     try { data = await languageTask; }
                     finally { await _visualGate.WaitAsync(); }
@@ -158,7 +156,7 @@ public partial class HassSharpManager
                 return Success(new { id, workspaceVersion, generation = saved.Generation, sourceGeneration, saved = false, data });
             }
             if (operation is not ("save" or "delete")) throw new ArgumentException("Unknown library operation");
-            var revision = request["expectedRevision"]?.GetValue<long>() ?? throw new ArgumentException("expectedRevision is required");
+            var revision = ApiRequest.Long(request, "expectedRevision", "the revision this replaces, 0 for a new library");
             if ((old?.Revision ?? 0) != revision) throw new VisualConflictException();
             if (operation == "delete" && old == null) throw new FileNotFoundException("Library document not found");
             NodeLibraryDocument? document = null;
@@ -203,8 +201,9 @@ public partial class HassSharpManager
         catch (OperationCanceledException) { return Error("cancelled", "Library language request cancelled"); }
         catch (IOException ex) { return Error("storage", ex.Message); }
         catch (UnauthorizedAccessException ex) { return Error("storage", ex.Message); }
-        catch (Exception ex) when (ex is ArgumentException or JsonException or InvalidOperationException or NullReferenceException or OverflowException)
+        catch (Exception ex) when (ex is ArgumentException or JsonException or InvalidOperationException or OverflowException)
         { return Error("invalid_request", ex.Message); }
+        catch (NullReferenceException) { return Error("invalid_request", ApiRequest.Unreadable); }
         finally { _visualGate.Release(); }
     }
 }

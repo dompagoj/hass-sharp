@@ -60,8 +60,10 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
                 var filter = full.Substring(list.Span.Start, Math.Max(0, adjusted-list.Span.Start));
                 if (filter.Length > 0) items = service.FilterItems(document, [.. items], filter);
                 var results = new List<CompletionModel>();
+                var compilation = await document.Project.GetCompilationAsync(cancellationToken);
                 foreach (var item in items)
                 {
+                    if (IsPythonNetItem(item, compilation)) continue;
                     var change = await service.GetChangeAsync(document,item,cancellationToken: cancellationToken);
                     var edits = change.TextChanges.IsDefaultOrEmpty ? [change.TextChange] : change.TextChanges;
                     var primary = edits.FirstOrDefault(e => e.Span.Start <= adjusted && e.Span.End >= adjusted);
@@ -76,6 +78,7 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
                 var service = QuickInfoService.GetService(document);
                 var info = service == null ? null : await service.GetQuickInfoAsync(document,adjusted,cancellationToken);
                 if (info == null || !InSource(info.Span,source)) return new { };
+                if (IsPythonNet(await SymbolFinder.FindSymbolAtPositionAsync(document,adjusted,cancellationToken))) return new { };
                 return new LibraryHover(string.Join("\n",info.Sections.Select(s=>s.Text)),Range(source,info.Span));
             }
             case "definition":
@@ -107,7 +110,7 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
                     methods.AddRange(model!.GetMemberGroup(invocation.Expression,cancellationToken).OfType<IMethodSymbol>());
                 else if (expression is ObjectCreationExpressionSyntax creation && model!.GetTypeInfo(creation,cancellationToken).Type is INamedTypeSymbol type)
                     methods.AddRange(type.InstanceConstructors.Where(m=>m.DeclaredAccessibility==Accessibility.Public));
-                var candidates = methods.Distinct<IMethodSymbol>(SymbolEqualityComparer.Default).ToArray();
+                var candidates = methods.Where(m=>!IsPythonNet(m)).Distinct<IMethodSymbol>(SymbolEqualityComparer.Default).ToArray();
                 var signatures = candidates.Select(m=>new LibrarySignature(
                     m.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),m.GetDocumentationCommentXml(cancellationToken:cancellationToken) ?? "",
                     m.Parameters.Select(p=>p.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)).ToArray())).ToArray();
@@ -129,6 +132,24 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
             }
             default: throw new ArgumentException("Unknown language operation");
         }
+    }
+    // Python.NET is in the process, so among the references, and extends every object with ToPython and ToPythonAs<T>
+    // (more with its codecs). They mean nothing in node code: completion, signature help and hover leave them out. The
+    // assembly stays referenced; only these are not offered.
+    const string PythonNetAssembly = "Python.Runtime";
+    static readonly HashSet<string> PythonNetExtensions = typeof(Python.Runtime.PyObject).Assembly.GetExportedTypes()
+        .SelectMany(t => t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly))
+        .Where(m => m.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), false)).Select(m => m.Name).ToHashSet(StringComparer.Ordinal);
+    internal static bool IsPythonNet(ISymbol? symbol) => symbol is IMethodSymbol method && (method.ReducedFrom ?? method) is var definition
+        && definition.IsExtensionMethod && definition.ContainingAssembly?.Name == PythonNetAssembly;
+    // A completion item names its symbol only by name: an extension method of Python.NET's name is one of them, unless the
+    // code or a library declares an extension method by that name itself.
+    static bool IsPythonNetItem(CompletionItem item, Compilation? compilation)
+    {
+        if (!item.Tags.Contains(Microsoft.CodeAnalysis.Tags.WellKnownTags.ExtensionMethod)) return false;
+        var name = item.Properties.TryGetValue("SymbolName", out var symbolName) ? symbolName : item.DisplayText;
+        if (!PythonNetExtensions.Contains(name)) return false;
+        return compilation == null || !compilation.GetSymbolsWithName(name, SymbolFilter.Member).OfType<IMethodSymbol>().Any(m => m.IsExtensionMethod);
     }
     static LibrarySourceRange SourceRange(string source,TextSpan wrapped,int offset)
     {

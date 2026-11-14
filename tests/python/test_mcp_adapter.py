@@ -100,11 +100,26 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.service.visual.assert_awaited_with({'operation':'preview','graph':graph,'deriveSignatures':True},is_admin=True)
         await self.call('save',{'id':'x','expectedRevision':0,'graph':graph})
         self.service.visual.assert_awaited_with({'operation':'save','id':'x','expectedRevision':0,'graph':graph,'deriveSignatures':True},is_admin=True)
-        # Usings and helper members are no longer part of a graph.
-        calls=self.service.visual.await_count
-        for removed in ({'imports':'using System;'},{'members':'int X;'}):
-            self.assertEqual((await self.call('preview',{'graph':{**graph,**removed}})).data['error']['code'],'invalid_request')
-        self.assertEqual(self.service.visual.await_count,calls)
+        # Removed features (usings, helper members, variables, exposed values) reach the backend validator, whose answer
+        # says what to do instead; the tool schema does not refuse them first.
+        variable={**graph,'nodes':[graph['nodes'][0],{'id':'log','kind':'log','config':{'value':{'kind':'variable','name':'reading'}}}]}
+        exposed={**graph,'nodes':[graph['nodes'][0],{'id':'log','kind':'log','config':{'value':{'kind':'literal','type':'string','value':'x'},'output':'reading'}}]}
+        for removed,message in (({**graph,'imports':['System.Linq']},'Usings are no longer part of an automation'),
+                                ({**graph,'members':'int X;'},'Helper members are no longer part of an automation'),
+                                (variable,'Message reads a variable, and variables are gone'),
+                                (exposed,'Steps no longer expose values to C# by name'),
+                                ({**graph,'version':4},'Expected graph version 5')):
+            answer={'version':1,'ok':True,'result':{'valid':False,'diagnostics':[{'nodeId':None,'message':message,'severity':3}]}}
+            self.service.visual.return_value=answer
+            result=await self.call('preview',{'graph':removed})
+            self.service.visual.assert_awaited_with({'operation':'preview','graph':removed,'deriveSignatures':True},is_admin=True)
+            self.assertEqual(result.data,answer)
+        self.service.visual.return_value={'version':1,'ok':True,'result':[]}
+        # The tool's own arguments stay strict, and a refusal names the argument.
+        refused=(await self.call('preview',{'graph':graph,'extra':1})).data['error']
+        self.assertEqual(refused['code'],'invalid_request'); self.assertIn("extra",refused['detail'])
+        refused=(await self.call('save',{'id':'x','graph':graph})).data['error']
+        self.assertEqual(refused['code'],'invalid_request'); self.assertIn('expectedRevision',refused['detail'])
         self.service.node_library.return_value['result']['generation']='catalog-generation'
         result=await self.call('get_capabilities',{})
         self.assertFalse(result.error,result.data)
@@ -213,7 +228,8 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_graph_schema_has_no_node_size(self):
         graph={'version':5,'name':'Sized','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'},'size':{'width':220,'height':112}}],'edges':[]}
-        self.assertEqual((await self.call('preview',{'graph':graph})).data['error']['code'],'invalid_request')
+        refused=(await self.call('preview',{'graph':graph})).data['error']
+        self.assertEqual(refused['code'],'invalid_request'); self.assertIn('nodes[0].size',refused['detail'])
         self.service.visual.assert_not_called()
         self.service.visual.return_value={'version':1,'ok':True,'result':{'id':'x','revision':2,'graph':graph}}
         result=await self.call('read',{'id':'x'})

@@ -146,4 +146,37 @@ public class NodeLibraryLanguageServicesTests
         using var cts=new CancellationTokenSource();cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>new NodeLibraryLanguageServices(new DiagnosticsProvider()).RequestAsync("completion",[new("main",source,1)],"main",0,cts.Token));
     }
+    [Fact]
+    public async Task Python_net_extension_methods_are_not_offered_on_node_code_or_libraries()
+    {
+        // Python.NET extends every object with ToPython and ToPythonAs<T> (namespace Python.Runtime): neither belongs in
+        // node code. Completion offers them from that namespace (adding its using line) where code has using lines of its
+        // own, and as members once the code imports it.
+        var service=new NodeLibraryLanguageServices(new DiagnosticsProvider());
+        async Task<JsonNode> Ask(string operation,string code,int position,bool custom=true) =>
+            JsonSerializer.SerializeToNode(custom?await service.RequestAsync(operation,[],new CustomNodeSource("check",code),position,TestContext.Current.CancellationToken)
+                :await service.RequestAsync(operation,[new("main",code,1)],"main",position,TestContext.Current.CancellationToken),VisualStore.Json)!;
+        async Task<string[]> Names(string code,string after,bool custom=true) =>
+            (await Ask("completion",code,code.IndexOf(after)+after.Length,custom)).AsArray().Select(i=>i!["displayText"]!.GetValue<string>()).ToArray();
+        foreach(var usings in new[]{"","using System.Globalization;\n","using Python.Runtime;\n"})
+        {
+            var custom=usings+"public static class CustomNode\n{\n    [Node(\"Check\")]\n    public static void Run(NodeContext context) { context.; }\n}";
+            var items=await Names(custom,"context.");
+            Assert.Contains("CancellationToken",items); Assert.Contains("ToString",items);
+            Assert.DoesNotContain(items,i=>i.StartsWith("ToPython",StringComparison.Ordinal));
+            Assert.DoesNotContain(await Names(custom.Replace("context.;","context.ToPy;"),"context.ToPy"),i=>i.StartsWith("ToPython",StringComparison.Ordinal));
+            var library=usings+"public static class Nodes { public static void Read(EntityStateSnapshot state) { state. } }";
+            var libraryItems=await Names(library,"state.",custom:false);
+            Assert.Contains("State",libraryItems); Assert.DoesNotContain(libraryItems,i=>i.StartsWith("ToPython",StringComparison.Ordinal));
+        }
+        // Written out with its namespace imported, signature help and hover do not describe them either.
+        const string called="using Python.Runtime;\npublic static class CustomNode\n{\n    [Node(\"Check\")]\n    public static void Run(NodeContext context) { context.ToPython(); }\n}";
+        var signature=(await Ask("signature",called,called.IndexOf("ToPython(")+"ToPython(".Length)).ToJsonString();
+        Assert.DoesNotContain("ToPython",signature); Assert.DoesNotContain("PyObject",signature);
+        var hover=(await Ask("hover",called,called.IndexOf("ToPython")+2)).ToJsonString();
+        Assert.DoesNotContain("PyObject",hover); Assert.DoesNotContain("ToPython",hover);
+        // An extension method of that name that a library declares is still offered.
+        const string own="public static class Mine { public static string ToPython(this NodeContext context) => \"\"; }\npublic static class Nodes { public static void Use(NodeContext context) { context. } }";
+        Assert.Contains("ToPython",await Names(own,"context.",custom:false));
+    }
 }

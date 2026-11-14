@@ -352,3 +352,57 @@ Task 28. Run against the local Compose Home Assistant only (`hass`, http://local
 - **Trace:**
   - In the "T28 Heat when motion" trace, the Compare card overlaps the taller State card.
   - The timeline shows three identical "Call service" rows.
+
+## Reload memory (2026-11-14)
+
+Task 29. This follows up the Phase 2 observation "Memory grows with each reload".
+
+### Causes
+
+1. **Python.NET (the main cause).**
+   - `Python.Runtime.AssemblyManager` handles `AppDomain.AssemblyLoad`. It keeps every assembly in its static
+     `assemblies` queue and `namespaces` table.
+   - Those references kept every automation's collectible assembly, so no `ScriptLoadContext` was ever unloaded.
+   - What stayed was the code (`shmem`, double-mapped JIT code), the type data (`anon`) and the image.
+   - After 15 reloads, 133 collectible assemblies were loaded, for 7 live automations.
+   - `PythonNetAssemblies.IgnoreCollectible` now passes Python.NET's handler only assemblies that are not collectible.
+2. **Roslyn's process-wide `SyntaxNodeCache` and `StringTable`.**
+   - These caches kept the large graph and catalog literals of each generation of generated source.
+   - The literals are now emitted in 64-character pieces (`VisualGenerator.Pieces`).
+
+### Regression test
+
+`tests/Runtime/ReloadMemoryTests.cs` (`--reload-memory`) runs 13 reloads with Python.NET's assembly manager started.
+It checks three things:
+
+- every load context and assembly of an earlier generation is collected;
+- no collectible assembly is left;
+- managed memory grows at most 7 MiB from reload 3 to 13. It plateaus near reload 20.
+
+### Method
+
+Same method as Phase 2:
+
+- **Reload:** `config_entries/reload` from the panel tab, 8 s apart.
+- **Memory:** the third of three `docker stats` readings, 10 s apart.
+- **Breakdown:** cgroup `anon` and `shmem`.
+
+### Series
+
+MiB, after a restart and then after reloads 1, 2, 5, 10 and 15:
+
+| Build | 0 | 1 | 2 | 5 | 10 | 15 |
+|---|---|---|---|---|---|---|
+| Before | 715.0 | 762.1 | 801.5 | 846.9 | 883.7 | 881.8 |
+| After | 702.2 | 737.5 | 766.2 | 778.7 | 798.4 | 806.9 |
+
+- **Before:** `anon` went from 607.5 to 731.2 MB and `shmem` from 99.7 to 149.8 MB. `shmem` reached 161.9 MB at reload 20.
+- **After:** `anon` went from 604.6 to 669.4 MB. `shmem` went from 89.5 to 133.8 MB and was flat from reload 10 (133.5).
+- At reload 15, the collectible assemblies went from 133 before to 7 after. Live managed memory went from 52.3 to 44.5 MiB.
+
+### Residual
+
+- After the fixes, the container rises about 1.7 MiB per reload from reload 10 to 15.
+- Managed memory and the assembly count are flat over those reloads, so the rise is native memory: the allocator and
+  Roslyn's metadata.
+- This series does not show whether the rise is bounded.
