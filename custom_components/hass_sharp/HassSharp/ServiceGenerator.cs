@@ -33,7 +33,7 @@ static class ServiceGenerator
     const string Task = "global::System.Threading.Tasks.Task";
     const string Element = "global::System.Text.Json.JsonElement";
     // Members every class has: a method of the same name would hide or overload them.
-    static readonly string[] ObjectMembers = ["Equals", "Finalize", "GetHashCode", "GetType", "MemberwiseClone", "ReferenceEquals", "ToString"];
+    internal static readonly string[] ObjectMembers = ["Equals", "Finalize", "GetHashCode", "GetType", "MemberwiseClone", "ReferenceEquals", "ToString"];
 
     sealed record Field(string Key, string Name, string Type, bool Required, bool IsTarget, string Doc, int Order);
     sealed record Service(string Id, string ServiceName, string Name, string? ResponseName, string Response, bool HasTarget, string TargetDoc, string Summary, Field[] Fields);
@@ -287,7 +287,7 @@ static class ServiceGenerator
     }
 
     // Names are decided in ordinal order of the ids: the first id of a name keeps it, the others get the lowest free suffix.
-    static Dictionary<string, string> Assign(IEnumerable<(string Id, string Name)> items, IEnumerable<string> reserved)
+    internal static Dictionary<string, string> Assign(IEnumerable<(string Id, string Name)> items, IEnumerable<string> reserved)
     {
         var sorted = items.OrderBy(i => i.Id, StringComparer.Ordinal).ToArray();
         var taken = new HashSet<string>(reserved, StringComparer.Ordinal);
@@ -321,7 +321,7 @@ static class ServiceGenerator
     internal static string Escape(string name) => SyntaxFacts.GetKeywordKind(name) != SyntaxKind.None || name == "await" ? "@" + name : name;
     static string Unescaped(string name) => name.TrimStart('@');
 
-    static string Literal(string text) => SymbolDisplay.FormatLiteral(text, true);
+    internal static string Literal(string text) => SymbolDisplay.FormatLiteral(text, true);
     static string? Text(JsonObject owner, string key) => owner[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
     static string? Number(JsonNode? node) => node is JsonValue v && v.GetValueKind() == JsonValueKind.Number ? v.ToJsonString() : null;
     static string Join(params string[] parts) => string.Join(' ', parts.Where(p => p.Length > 0));
