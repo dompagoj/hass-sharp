@@ -22,7 +22,7 @@ export interface InputSpec {
 /** `when` names a boolean config key; the output exists only while it is true. */
 export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; pointer?: string; refineFrom?: string; when?: string }
 export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
-export interface TypeSpec { clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[]; enumLabels?: string[] }
+export interface TypeSpec { clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; assignableFrom?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[]; enumLabels?: string[] }
 export interface ParametricTypeSpec { param: string; valuePattern: string; label: string }
 /** Contract C4: one normalised Home Assistant service field. */
 export interface ServiceFieldSchema {
@@ -89,11 +89,16 @@ export function isAssignable(source: string, target: string, catalog: VisualCata
   if (resolveTypeSpec(target, catalog)!.refines !== undefined) return chain.includes(target)
   const root = chain.at(-1)!
   if (root === target) return true
-  // The built-in number and every CLR number pin go into each other; a value that does not fit (a fraction for a
-  // whole number, or out of range) fails when the step runs. A number that may be missing does not go into number.
-  if ((root === 'number' && numeric(target, catalog)) || (target === 'number' && numeric(root, catalog) && catalog.types[root].nullable !== true)) return true
-  return (catalog.types[root].assignableTo ?? []).includes(target)
+  // Every number type (the built-in number and each CLR number pin) goes into every other; a value that does not fit
+  // (a fraction for a whole number, or out of range) fails when the step runs. A number that may be missing does not
+  // go into one that may not.
+  if (numeric(root, catalog) && numeric(target, catalog) && !(nullableType(root, catalog) && !nullableType(target, catalog))) return true
+  // Otherwise the entries decide: the source lists the target, or the target (a Custom C# node's own type, which only
+  // its node's compile knows) lists the source.
+  return listed(catalog.types[root].assignableTo, target) || listed(Object.hasOwn(catalog.types, target) ? catalog.types[target].assignableFrom : undefined, root)
 }
+const listed = (list: unknown, id: string) => Array.isArray(list) && list.includes(id)
+const nullableType = (id: string, catalog: VisualCatalogSnapshot) => resolveTypeSpec(id, catalog)?.nullable === true
 const numeric = (id: string, catalog: VisualCatalogSnapshot) => { const kind = resolveTypeSpec(id, catalog)?.literalKind; return kind === 'integer' || kind === 'number' }
 export function executionPorts(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
   const spec = nodeSpec(node.kind, catalog)
@@ -371,6 +376,8 @@ export const words = {
   incompatible: (subject: string, type: string, expected: string[], catalog: VisualCatalogSnapshot = nodeCatalog) => {
     if (!typeChain(type, catalog).length) return `${subject} is connected to a value of unknown type`
     const names = [...new Set(expected.map(t => typeLabel(t, catalog)))]
+    // The same kind of value, but one that may be empty where the pin needs it set (a nullable C# type).
+    if (resolveTypeSpec(type, catalog)?.nullable === true && names.includes(typeLabel(type, catalog))) return `${subject} needs a value that is always set, and this one may be empty`
     return names.length > 0 && names.length <= 4 ? `${subject} accepts ${words.or(names)}, not ${typeLabel(type, catalog)}` : `${subject} does not accept ${typeLabel(type, catalog)}`
   },
   /** A wire whose value is not visible where it arrives. */
@@ -383,6 +390,7 @@ export const words = {
   staleSignature: 'The pins are out of date with the code: open Edit code and apply it',
   /** The things hand-written automations left behind, and what to do instead. */
   oldCustomCode: "Custom C# code is now one static method marked [Node]; rewrite this node's code in that form",
+  missingLibraryNode: 'This step is no longer in its node library; delete it and add it again from the node library',
   imports: "Usings are no longer part of an automation; put using lines at the top of a Custom C# node's code",
   members: "Helper members are no longer part of an automation; write them in a Custom C# node's code or a node library",
   exposedValue: 'Steps no longer expose values to C# by name; connect a wire from this step to each step that uses its value',
@@ -564,7 +572,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (!record(node) || typeof node.id !== 'string' || !node.id || !record(node.config)) { error(null, 'Each node requires id and config', undefined, undefined, 'node.invalid'); continue }
     if (nodes.has(node.id)) error(node.id, 'Duplicate node id', undefined, undefined, 'node.duplicate')
     else nodes.set(node.id, node)
-    if (!nodeSpec(node.kind)) error(node.id, 'Unknown node kind', undefined, undefined, 'node.unknownKind')
+    if (!nodeSpec(node.kind)) error(node.id, typeof node.kind === 'string' && node.kind.startsWith('library:') ? words.missingLibraryNode : 'Unknown node kind', undefined, undefined, 'node.unknownKind')
   }
   const outgoing = new Map([...nodes.keys()].map(id => [id, [] as ExecutionEdge[]]))
   const dataIndex = new Map<DataEdge, number>()
@@ -670,6 +678,12 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         error(node.id, typeof raw.type !== 'string' || raw.type === '' ? `${subject} has a value without a type` : !knownType(type) ? `${subject} has a value of unknown type ${words.name(type)}` : `${subject} is not a valid ${typeLabel(type, catalog)} value`, port)
       }
       if (typeof v === 'number' && ((spec.min !== undefined && v < spec.min) || (spec.max !== undefined && v > spec.max) || (spec.integer && !Number.isInteger(v)))) error(node.id, `${subject} must be ${words.range(spec.min, spec.max, spec.integer === true)}`, port)
+      // A number typed into a pin of a narrower number type (a C# int, say) must fit that type, as it must when it runs.
+      if (valid && typeof v === 'number' && Number.isFinite(v) && numeric(type, catalog)) {
+        const fits = spec.types.filter(t => t !== type && isAssignable(type!, t))
+        const narrow = fits.length && fits.every(t => numeric(t, catalog) && !validLiteral(t, v, catalog)) ? resolveTypeSpec(fits[0], catalog) : undefined
+        if (narrow) error(node.id, `${subject} must be ${words.range(narrow.min, narrow.max, narrow.literalKind === 'integer')}`, port)
+      }
       // Input constraints restrict authored values only; a wire is constrained by its type. When any allowed value
       // is itself a list (a constant list), only a value equal to one of them is accepted. When every allowed value
       // is a scalar, a list, where the input accepts one, is checked item by item (a multiple select; an empty list

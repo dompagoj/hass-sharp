@@ -19,7 +19,8 @@ public partial class HassSharpManager
             ActivationError = _loadErrors.TryGetValue(path, out var error) ? error : active ? null : "Not active" };
     }
 
-    async Task<object> ActivateVisualDocument(VisualDocument document)
+    /// <param name="warnings">What the save removed while deriving Custom C# pins; returned as <c>diagnostics</c> when there is any.</param>
+    async Task<object> ActivateVisualDocument(VisualDocument document, IReadOnlyList<VisualDiagnostic>? warnings = null)
     {
         string? activationError = null;
         try
@@ -38,7 +39,8 @@ public partial class HassSharpManager
         catch (Exception ex) { RecordLoadError(VisualRuntimePath(document.Id), ex); activationError = _loadErrors[VisualRuntimePath(document.Id)]; }
         if (activationError == null) _loadErrors.TryRemove(VisualRuntimePath(document.Id), out _);
         document = WithRuntimeIdentity(document);
-        return new { id = document.Id, saved = true, document, active = document.CurrentRevisionActive, activationError };
+        return warnings is { Count: > 0 } ? (object)new { id = document.Id, saved = true, document, active = document.CurrentRevisionActive, activationError, diagnostics = warnings }
+            : new { id = document.Id, saved = true, document, active = document.CurrentRevisionActive, activationError };
     }
 
     async Task<CompiledUserScript> CompileVisualDocument(VisualDocument document)
@@ -86,8 +88,14 @@ public partial class HassSharpManager
             var authoring = AuthoringSnapshot(libraries.Preview.Snapshot);
             // deriveSignatures: each Custom C# node's pins are first written from its code, so a caller can send only the code.
             var derive = request["deriveSignatures"] is JsonValue deriveFlag && deriveFlag.TryGetValue<bool>(out var deriving) && deriving;
-            JsonObject Graph() => derive ? new VisualGenerator(_diagnosticsProvider).DeriveSignatures(request["graph"]!.AsObject(), authoring) : request["graph"]!.AsObject();
-            if (operation == "preview") { var graph = Graph(); result = new VisualGenerator(_diagnosticsProvider).Preview(graph, authoring) with { Graph = derive ? graph : null }; }
+            // What deriving removed (values and wires of pins the code no longer has) is reported as warnings.
+            List<VisualDiagnostic> removed = [];
+            JsonObject Graph() => derive ? new VisualGenerator(_diagnosticsProvider).DeriveSignatures(request["graph"]!.AsObject(), authoring, out removed) : request["graph"]!.AsObject();
+            if (operation == "preview")
+            {
+                var graph = Graph(); var preview = new VisualGenerator(_diagnosticsProvider).Preview(graph, authoring);
+                result = preview with { Graph = derive ? preview.Graph ?? graph : preview.Graph, Diagnostics = [.. removed, .. preview.Diagnostics] };
+            }
             // The automations page: no graphs, an outline of each instead, and how each has been running (one history query).
             else if (operation == "list" && request["view"]?.GetValue<string>() == "home") result = HomeList(store.List().Select(WithRuntimeIdentity).ToArray(), request["todayUtc"]);
             // Listing omits the generated source and its map; "read" returns them.
@@ -119,7 +127,7 @@ public partial class HassSharpManager
                         // A new automation may be saved turned off (a duplicate is): stored before activation, so it never runs on.
                         bool? enabled = request["enabled"] is JsonNode flag ? flag.GetValue<bool>() : null;
                         var document = store.Save(id, Graph(), revision, authoring, libraries.Generation, enabled);
-                        result = await ActivateVisualDocument(document);
+                        result = await ActivateVisualDocument(document, removed);
                     }
                     else if (operation == "delete")
                     {

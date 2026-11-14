@@ -240,7 +240,7 @@ export function NodeCard(props: NodeProps) {
               input={input().spec}
               value={operand(input().port)}
               label={input().pin.label}
-              catalog={flow.catalog()}
+              catalog={flow.types()}
               context={{ targetEntityIds: view()?.targetEntityIds ?? [] }}
               errors={input().errors}
               onChange={(next, options) => flow.setInput(id, input().port, next, options)}

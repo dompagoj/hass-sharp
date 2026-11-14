@@ -16,6 +16,7 @@
       "nullable": false,
       "category": "Boolean",
       "assignableTo": [
+        "global::System.Boolean",
         "boolean"
       ],
       "literalKind": "boolean",
@@ -27,6 +28,7 @@
       "nullable": false,
       "category": "Number",
       "assignableTo": [
+        "global::System.Double",
         "number"
       ],
       "literalKind": "number",
@@ -38,6 +40,7 @@
       "nullable": false,
       "category": "String",
       "assignableTo": [
+        "global::System.String",
         "string"
       ],
       "literalKind": "string",
@@ -49,6 +52,7 @@
       "nullable": false,
       "category": "Object",
       "assignableTo": [
+        "global::System.Text.Json.Nodes.JsonObject",
         "object"
       ],
       "literalKind": "object",
@@ -60,6 +64,7 @@
       "nullable": false,
       "category": "Array",
       "assignableTo": [
+        "global::System.Text.Json.Nodes.JsonArray",
         "array"
       ],
       "literalKind": "array",
@@ -94,6 +99,61 @@
       "category": "Object",
       "assignableTo": [
         "global::HassSharp.EntityStateSnapshot"
+      ]
+    },
+    "global::System.Boolean": {
+      "label": "bool",
+      "description": "A yes/no value.",
+      "category": "Boolean",
+      "nullable": false,
+      "literalKind": "boolean",
+      "assignableTo": [
+        "global::System.Boolean",
+        "boolean"
+      ]
+    },
+    "global::System.Double": {
+      "label": "double",
+      "description": "A number, such as 21.5.",
+      "category": "Number",
+      "nullable": false,
+      "literalKind": "number",
+      "assignableTo": [
+        "global::System.Double",
+        "number"
+      ]
+    },
+    "global::System.String": {
+      "label": "string",
+      "description": "Text, such as a state or a name.",
+      "category": "String",
+      "nullable": false,
+      "literalKind": "string",
+      "assignableTo": [
+        "global::System.String",
+        "string"
+      ]
+    },
+    "global::System.Text.Json.Nodes.JsonObject": {
+      "label": "System.Text.Json.Nodes.JsonObject",
+      "description": "A set of named values, such as the data of an event.",
+      "category": "Object",
+      "nullable": false,
+      "literalKind": "object",
+      "assignableTo": [
+        "global::System.Text.Json.Nodes.JsonObject",
+        "object"
+      ]
+    },
+    "global::System.Text.Json.Nodes.JsonArray": {
+      "label": "System.Text.Json.Nodes.JsonArray",
+      "description": "A list of values.",
+      "category": "Array",
+      "nullable": false,
+      "literalKind": "array",
+      "assignableTo": [
+        "global::System.Text.Json.Nodes.JsonArray",
+        "array"
       ]
     }
   },

@@ -6,7 +6,7 @@ import { Glyph } from './Glyph'
 import { Errors, focusRow, InputRow, type RowContext } from './InputRow'
 import { ArrayItems, Branches, Declarations, ObjectFields, type StructureContext } from './StructureEditors'
 import { buildNodeView } from './flow/flowModel'
-import { customSignature, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { customSignature, withGraphTypes, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
 import { typeLabel } from './typeLabels'
@@ -78,9 +78,11 @@ export function NodeConfig(props: NodeConfigProps) {
     void Promise.resolve(navigator.clipboard?.writeText?.(text)).then(() => setStatus(done), () => setStatus('Copying is not allowed here'))
   }
 
+  // The rows' type chips and editors know the types the graph's Custom C# nodes declare.
+  const types = createMemo(() => withGraphTypes(props.catalog, props.graph))
   const rows: RowContext = {
     node: () => props.node,
-    catalog: () => props.catalog,
+    catalog: types,
     input: port => inputs().get(port),
     targetEntityIds: () => view().targetEntityIds,
     onChange: (config, options) => props.onChange(config, options),

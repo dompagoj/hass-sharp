@@ -100,6 +100,34 @@ public static class NodeLibraryFixture
             Wire(graph,"array","result","loop","items");
             Case("CLR array foreach "+factory+" to "+itemType,graph,valid,valid?null:"items");
         }
+        // Custom C# nodes beside the library, with the pins the compiler writes for them (so their type ids are real).
+        static JsonObject Custom(string id, string source) => new() { ["id"] = id, ["kind"] = "custom", ["config"] = new JsonObject { ["source"] = source, ["arguments"] = new JsonObject() } };
+        static string Method(string returns, string parameters, string body, string before = "") =>
+            before + "public static class CustomNode\n{\n    [Node(\"" + (returns == "void" ? "Take" : "Make") + "\")]\n    public static " + returns + " Run(" + parameters + ") => " + body + ";\n}";
+        JsonObject Derived(JsonObject graph) => new VisualGenerator(new DiagnosticsProvider()).DeriveSignatures(graph, snapshot);
+        void CustomCase(string name, JsonObject from, string port, JsonObject to, string input, bool valid)
+        {
+            // Describe reads an entity first.
+            var entity = from["id"]!.GetValue<string>() == "describe";
+            var graph = entity ? Graph(VisualGraphContract.CreateNode("read_entity", "r", snapshot), from, to) : Graph(from, to);
+            if (entity) Wire(graph, "r", "value", "describe", "entity");
+            Wire(graph, from["id"]!.GetValue<string>(), port, to["id"]!.GetValue<string>(), input);
+            Case(name, Derived(graph), valid, valid ? null : input);
+        }
+        CustomCase("custom: a library int into a custom long", Node("Factory", "factory"), "result", Custom("take", Method("void", "long value", "Logger.Info(value.ToString())")), "value", true);
+        CustomCase("custom: a library int into a custom nullable float", Node("Factory", "factory"), "result", Custom("take", Method("void", "float? value", "Logger.Info(value.ToString()!)")), "value", true);
+        CustomCase("custom: a custom nullable int does not go into a library double", Custom("make", Method("int?", "", "null")), "result", Node("Widen", "widen"), "number", false);
+        CustomCase("custom: a custom decimal into a library double", Custom("make", Method("decimal", "", "1.5m")), "result", Node("Widen", "widen"), "number", true);
+        CustomCase("custom: a record the code declares into the library interface it implements", Custom("make", Method("Own", "", "new(\"on\")", "public sealed record Own(string State) : IReading;\n")), "result", Node("Consume", "consume"), "reading", true);
+        CustomCase("custom: a library record into a custom pin of the interface it implements", Node("Describe", "describe"), "result", Custom("take", Method("void", "IReading value", "Logger.Info(value.ToString()!)")), "value", true);
+        CustomCase("custom: a library record into a custom object pin", Node("Describe", "describe"), "result", Custom("take", Method("void", "object value", "Logger.Info(value.ToString()!)")), "value", true);
+        CustomCase("custom: a library nullable record does not go into a custom interface pin", Node("Nullable", "nullable"), "result", Custom("take", Method("void", "IReading value", "Logger.Info(value.ToString()!)")), "value", false);
+        CustomCase("custom: a library string array into a custom enumerable of object", Node("RequiredElements", "array"), "result", Custom("take", Method("void", "IEnumerable<object> value", "Logger.Info(string.Join(\",\", value))")), "value", true);
+        CustomCase("custom: a custom list into a library enumerable", Custom("make", Method("List<string>", "", "[\"a\"]")), "result", Node("RequiredEnumerable", "consumer"), "items", true);
+        CustomCase("custom: a library record does not go into a custom string pin", Node("Describe", "describe"), "result", Custom("take", Method("void", "string value", "Logger.Info(value)")), "value", false);
+        foreach (var test in cases.Where(c => c!["name"]!.GetValue<string>().StartsWith("custom: ")))
+            if (test!["graph"]!["nodes"]!.AsArray().Any(n => n!["kind"]!.GetValue<string>() == "custom" && n["config"]!["signature"] == null))
+                throw new Exception($"{test["name"]}: the custom node's code does not compile");
         return new() { ["sourceId"] = "shared", ["revision"] = 2, ["source"] = Source, ["catalog"] = snapshot.Catalog, ["cases"] = cases };
     }
 

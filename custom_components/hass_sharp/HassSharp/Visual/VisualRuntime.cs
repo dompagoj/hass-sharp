@@ -109,6 +109,8 @@ public sealed class VisualScope
 /// </summary>
 public sealed class VisualRuntime
 {
+    /// <summary>The step each unrecovered failure came from (the innermost), so Error details names it after a loop or parallel recovers.</summary>
+    readonly System.Runtime.CompilerServices.ConditionalWeakTable<Exception,string> failedSteps=new();
     readonly Dictionary<string,JsonObject> nodes;
     readonly Dictionary<(string,string),string> flow=[];
     readonly Dictionary<(string,string),(string,string)> data=[];
@@ -331,8 +333,9 @@ public sealed class VisualRuntime
             } catch(OperationCanceledException) when(scope.CancellationToken.IsCancellationRequested || external.IsCancellationRequested || Volatile.Read(ref stopped)!=0){ev??=Begin();if(ev!=null)trace!.End(ev,kind=="stop"?"stopped":"cancelled",null,null);throw;}
             catch(Exception error) {
                 ev??=Begin();
-                if(Next(id,"error") is not {} recovery){if(ev!=null)trace!.End(ev,"failed",null,error);throw;}
-                scope.LastError=error;scope.LastErrorStep=Title(id);next=recovery;
+                if(Next(id,"error") is not {} recovery){failedSteps.TryAdd(error,Title(id));if(ev!=null)trace!.End(ev,"failed",null,error);throw;}
+                // A failure inside a loop body or a parallel branch is the inner step's, not the loop's or the parallel's.
+                scope.LastError=error;scope.LastErrorStep=failedSteps.TryGetValue(error,out var inner)?inner:Title(id);next=recovery;
                 if(ev!=null)trace!.End(ev,"error","error",error);
             }
             id=next;

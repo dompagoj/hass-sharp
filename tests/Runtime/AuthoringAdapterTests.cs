@@ -28,13 +28,17 @@ static class AuthoringAdapterTests
                     VisualExecutionTests.Check(preview.Valid && preview.Diagnostics.Count==0,$"{label} validates and compiles {name} with no diagnostics: "+JsonSerializer.Serialize(preview.Diagnostics));
                 }
             }
-            var graphs=examples["graphs"]!.AsArray().Select(g=>g!.AsObject()).ToArray();
-            // A Custom C# node's pins in an example are the ones its code gives (preview and save would write the same).
-            void Derives(JsonObject example,VisualCatalogSnapshot snapshot,string label) {
-                var derived=new VisualGenerator(exampleDiagnostics).DeriveSignatures((JsonObject)example.DeepClone(),snapshot);
-                VisualExecutionTests.Check(JsonNode.DeepEquals(derived,example),$"{label}: its Custom C# signatures are what the code gives: "+string.Join(", ",derived["nodes"]!.AsArray().Where(n=>n!["kind"]!.GetValue<string>()=="custom").Select(n=>n!["config"]!["signature"]!.ToJsonString())));
+            // An example's Custom C# node carries its source and arguments only, as MCP authoring sends it: preview and
+            // save work its pins out from the code (deriveSignatures), which removes nothing from it.
+            JsonObject Derives(JsonObject example,VisualCatalogSnapshot snapshot,string label) {
+                foreach(var node in example["nodes"]!.AsArray().Where(n=>n!["kind"]!.GetValue<string>()=="custom"))
+                    VisualExecutionTests.Check(node!["config"]!.AsObject().Select(p=>p.Key).Order(StringComparer.Ordinal).SequenceEqual(["arguments","source"]),$"{label}: a Custom C# node carries source and arguments only");
+                var derived=new VisualGenerator(exampleDiagnostics).DeriveSignatures((JsonObject)example.DeepClone(),snapshot,out var removed);
+                VisualExecutionTests.Check(removed.Count==0,$"{label}: deriving its pins removes nothing: "+JsonSerializer.Serialize(removed));
+                return derived;
             }
-            foreach(var item in graphs) { Derives(item,builtIn,"capability example "+item["name"]); Clean(item,builtIn,"capability example "+item["name"]); }
+            var graphs=examples["graphs"]!.AsArray().Select(g=>Derives(g!.AsObject(),builtIn,"capability example "+g["name"])).ToArray();
+            foreach(var item in graphs) Clean(item,builtIn,"capability example "+item["name"]);
             VisualExecutionTests.Check(graphs.Any(g=>g["nodes"]!.AsArray().Any(n=>n!["kind"]!.GetValue<string>()=="custom"&&n["config"]!["source"]!.GetValue<string>().Contains("[Node(")&&n["config"]!["signature"]!["inputs"]!.AsObject().Count>0)),"capability examples include a Custom C# node with pins");
             VisualExecutionTests.Check(graphs.Any(g=>g["nodes"]!.AsArray().Any(n=>n!["kind"]!.GetValue<string>()=="service")),"capability examples include a service call");
             // The documented typing rule, against the examples themselves: with services attached, a plain entity_id

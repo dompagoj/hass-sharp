@@ -94,13 +94,18 @@ public static class VisualTypes
         if (Resolve(catalog, target)!.ContainsKey("refines")) return chain.Contains(target);
         var root = chain[^1];
         if (root == target) return true;
-        // The built-in number and every CLR number pin go into each other; a value that does not fit (a fraction for a
-        // whole number, or out of range) fails when the step runs. A number that may be missing does not go into number.
-        if (root == "number" && Numeric(catalog, target) || target == "number" && Numeric(catalog, root) && Resolve(catalog, root)!["nullable"]?.GetValue<bool>() != true) return true;
-        return roots?.Invoke(root, target) ?? (catalog["types"]![root]?["assignableTo"] as JsonArray ?? []).Any(t => t is JsonValue v && v.TryGetValue<string>(out var id) && id == target);
+        // Every number type (the built-in number and each CLR number pin) goes into every other; a value that does not fit
+        // (a fraction for a whole number, or out of range) fails when the step runs. A number that may be missing does not
+        // go into one that may not.
+        if (Numeric(catalog, root) && Numeric(catalog, target) && !(Nullable(catalog, root) && !Nullable(catalog, target))) return true;
+        // Otherwise Roslyn decides, or the entries: the source lists the target, or the target (a Custom C# node's own
+        // type, which only its node's compile knows) lists the source.
+        return roots?.Invoke(root, target) ?? (Listed(catalog["types"]![root]?["assignableTo"], target) || Listed(catalog["types"]![target]?["assignableFrom"], root));
     }
+    static bool Listed(JsonNode? list, string id) => (list as JsonArray ?? []).Any(t => t is JsonValue v && v.TryGetValue<string>(out var item) && item == id);
+    static bool Nullable(JsonObject catalog, string id) => Resolve(catalog, id)?["nullable"] is JsonValue v && v.TryGetValue<bool>(out var nullable) && nullable;
 
-    static bool Numeric(JsonObject catalog, string id) => Text(Resolve(catalog, id), "literalKind") is "integer" or "number";
+    internal static bool Numeric(JsonObject catalog, string id) => Text(Resolve(catalog, id), "literalKind") is "integer" or "number";
 
     /// <summary>Literal kind of the type itself, then pattern, numeric bounds and enumValues of every type in its chain.</summary>
     public static bool ValidLiteral(JsonObject catalog, string type, JsonNode? value, bool present)

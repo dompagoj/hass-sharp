@@ -73,7 +73,8 @@ public partial class HassSharpManager
             var customRequest = request["custom"] is JsonValue flag && flag.TryGetValue<bool>(out var custom) && custom;
             if (operation == "custom_preview" || customRequest && operation is "completion" or "hover" or "signature" or "format" or "definition")
             {
-                var nodeId = request["nodeId"] is JsonValue node ? node.GetValue<string>() : "custom";
+                // The node's id decides the namespace its code compiles in, and so the ids of the types it declares.
+                var nodeId = request["nodeId"] is JsonValue node && node.TryGetValue<string>(out var given) ? given : throw new ArgumentException("nodeId is required: the id of the Custom C# node whose code this is");
                 if (nodeId.Length == 0) throw new ArgumentException("nodeId must not be empty");
                 var code = new CustomNodeSource(nodeId, RequiredString(request, "source"));
                 var libraries = saved.Documents.ToDictionary(d => d.Id, d => d.AsSource(), StringComparer.Ordinal);
@@ -88,7 +89,11 @@ public partial class HassSharpManager
                 {
                     var compiled = new NodeLibraryCompiler(_diagnosticsProvider).Preview(ordered, [code], _languageLifetime.Token);
                     var result = compiled.Snapshot.Custom[nodeId];
-                    return Success(new { valid = compiled.Valid && result.Valid, diagnostics = result.Diagnostics, signature = result.Signature });
+                    // The node's code compiles with the libraries: while one of them has errors, say that first.
+                    var broken = compiled.Diagnostics.Where(d => d.Severity == 3 && libraries.ContainsKey(d.SourceId)).Select(d => d.SourceId).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+                    var diagnostics = broken.Length == 0 ? result.Diagnostics
+                        : [new NodeLibraryDiagnostic(nodeId, 1, 1, 1, 1, $"{(broken.Length == 1 ? "The node library " + broken[0] + " has" : "The node libraries " + string.Join(", ", broken) + " have")} errors; fix the node library first, then this code can be checked", 3), .. result.Diagnostics];
+                    return Success(new { valid = compiled.Valid && result.Valid, diagnostics, signature = result.Signature });
                 }
                 var workspace = RequiredString(request, "workspaceVersion");
                 if (request["generation"] is {} current && current.GetValue<string>() != saved.Generation) throw new VisualConflictException();
@@ -153,16 +158,22 @@ public partial class HassSharpManager
             var generation = LibraryWorkspaceGeneration(candidates);
             // Every artifact embeds every source, including advanced C# and indirect helper dependencies.
             var graphs = VisualDocuments.List(strict: true);
-            var previews = graphs.Select(g => (Document: g, Preview: new VisualGenerator(_diagnosticsProvider).Preview(g.Graph, candidate.Snapshot))).ToArray();
+            var all = graphs.Select(g => (Document: g, Preview: new VisualGenerator(_diagnosticsProvider).Preview(g.Graph, candidate.Snapshot))).ToArray();
+            // Only a graph that is valid now can be broken by the save. One that is already invalid with the saved libraries
+            // does not block it: it is left as it is and reported in "invalid".
+            var invalidBefore = all.Where(p => !p.Preview.Valid).Select(p => p.Document.Id)
+                .Where(id => !new VisualGenerator(_diagnosticsProvider).Preview(all.First(p => p.Document.Id == id).Document.Graph, saved.Preview.Snapshot).Valid).ToHashSet(StringComparer.Ordinal);
+            var previews = all.Where(p => !invalidBefore.Contains(p.Document.Id)).ToArray();
+            var invalid = all.Where(p => invalidBefore.Contains(p.Document.Id)).Select(p => new { id = p.Document.Id, diagnostics = p.Preview.Diagnostics }).ToArray();
             if (!candidate.Valid || previews.Any(p => !p.Preview.Valid))
-                return Error("validation", new { diagnostics = candidate.Diagnostics, automations = previews.Where(p => !p.Preview.Valid).Select(p => new { id = p.Document.Id, diagnostics = p.Preview.Diagnostics }) });
-            var rebuilt = previews.Select(p => new VisualDocument(1,p.Document.Id,checked(p.Document.Revision+1),p.Document.Graph,p.Preview.Source,p.Preview.SourceMap) { CatalogGeneration = generation, EmbeddedCatalog = p.Preview.EmbeddedCatalog, Enabled = p.Document.Enabled, SavedUtc = p.Document.SavedUtc }).ToArray();
+                return Error("validation", new { diagnostics = candidate.Diagnostics, automations = previews.Where(p => !p.Preview.Valid).Select(p => new { id = p.Document.Id, diagnostics = p.Preview.Diagnostics }), invalid });
+            var rebuilt = previews.Select(p => new VisualDocument(1,p.Document.Id,checked(p.Document.Revision+1),p.Preview.Graph ?? p.Document.Graph,p.Preview.Source,p.Preview.SourceMap) { CatalogGeneration = generation, EmbeddedCatalog = p.Preview.EmbeddedCatalog, Enabled = p.Document.Enabled, SavedUtc = p.Document.SavedUtc }).ToArray();
             var changes = rebuilt.ToDictionary(d => VisualDocuments.FilePath(d.Id), d => (string?)JsonSerializer.Serialize(d, VisualStore.Json));
             changes[LibraryDocuments.DocumentPath(id)] = document == null ? null : JsonSerializer.Serialize(document, VisualStore.Json);
             AuthoringFiles.Commit(changes);
             var automations = new List<object>();
             foreach (var graph in rebuilt) automations.Add(await ActivateVisualDocument(graph));
-            return Success(new { saved = true, document, deleted = operation == "delete", generation, catalog = candidate.Snapshot.Catalog, automations });
+            return Success(new { saved = true, document, deleted = operation == "delete", generation, catalog = candidate.Snapshot.Catalog, automations, invalid });
         }
         catch (VisualConflictException ex) { return Error("conflict", ex.Message); }
         catch (FileNotFoundException ex) { return Error("not_found", ex.Message); }

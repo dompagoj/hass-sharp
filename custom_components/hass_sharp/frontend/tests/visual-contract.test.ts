@@ -170,6 +170,31 @@ for (const fixture of rich.cases) it(`shared CLR catalog: ${fixture.name}`, () =
   expect(errors.length === 0, JSON.stringify(errors)).toBe(fixture.valid)
   if (fixture.inputId) expect(errors.some(e => e.inputId === fixture.inputId)).toBe(true)
 })
+it('any number goes into any numeric pin, except a nullable one into a pin that cannot hold null', () => {
+  const cases: [string, string, boolean][] = [
+    ['number', 'global::System.Int32', true], ['global::System.Int32', 'number', true], ['global::System.Double', 'global::System.Int32', true],
+    ['number', 'global::System.Single', true], ['global::System.Single', 'number', true], ['number', 'global::System.Double?', true],
+    ['global::System.Int32', 'global::System.Single?', true], ['global::System.Single?', 'global::System.Double?', true],
+    ['global::System.Double?', 'number', false], ['global::System.Single?', 'global::System.Int32', false], ['global::System.Double?', 'global::System.Single', false],
+    ['global::System.Int32', 'string', false], ['string', 'global::System.Int32', false], ['boolean', 'number', false],
+  ]
+  for (const [source, target, expected] of cases) expect(contract.isAssignable(source, target, richCatalog), `${source} -> ${target}`).toBe(expected)
+})
+it('a type entry\'s assignableFrom admits a source the source\'s own entry does not list', () => {
+  const catalog = structuredClone(contract.nodeCatalog)
+  catalog.types['global::Example.Words'] = { description: 'Words', assignableTo: ['global::Example.Words'], assignableFrom: ['string'], nullable: false }
+  expect(contract.isAssignable('string', 'global::Example.Words', catalog)).toBe(true)
+  expect(contract.isAssignable('global::Example.Words', 'string', catalog)).toBe(false)
+  expect(contract.isAssignable('boolean', 'global::Example.Words', catalog)).toBe(false)
+})
+it('the static catalog knows the CLR types the compiler writes for the built-in ones', () => {
+  for (const [clr, root] of [['global::System.String', 'string'], ['global::System.Double', 'number'], ['global::System.Boolean', 'boolean']] as const) {
+    expect(contract.isAssignable(root, clr), `${root} -> ${clr}`).toBe(true)
+    expect(contract.isAssignable(clr, root), `${clr} -> ${root}`).toBe(true)
+  }
+  const graph = contract.addGraphNode({ version: 5, name: 'New', nodes: [{ id: 't', kind: 'trigger', config: { type: 'manual' } }], edges: [] }, 'custom', 'x')
+  expect(contract.validateGraph({ ...graph, edges: [{ id: 'e', source: 't', target: 'x', port: 'next' }] })).toEqual([])
+})
 it('custom node creation and connections preserve reserved argument names', () => {
   const original = rich.cases[0].graph as Graph
   const consumer = original.nodes[3]
@@ -179,9 +204,9 @@ it('custom node creation and connections preserve reserved argument names', () =
   expect(contract.disconnectData(connected, consumer.id, 'reading', richCatalog).nodes[3].config.arguments).toMatchObject({ reading: { kind: 'unset' } })
   const created = contract.addGraphNode({ version: 5, name: 'Create', nodes: [], edges: [] }, consumer.kind, 'c', richCatalog).nodes[0]
   expect(created.config.arguments).toMatchObject({ type: { value: 3 }, output: { value: null }, service: { value: 'light.turn_on' } })
-  expect(contract.validateGraph(original).some(d => d.message === 'Unknown node kind')).toBe(true)
+  expect(contract.validateGraph(original).some(d => d.message === contract.words.missingLibraryNode && d.code === 'node.unknownKind')).toBe(true)
   expect(contract.validateGraph(original, richCatalog)).toEqual([])
-  expect(contract.validateGraph(original).some(d => d.message === 'Unknown node kind')).toBe(true)
+  expect(contract.validateGraph(original).some(d => d.message === contract.words.missingLibraryNode && d.code === 'node.unknownKind')).toBe(true)
 })
 
 it('nullable non-finite compiler defaults remain omitted when creating custom nodes', () => {

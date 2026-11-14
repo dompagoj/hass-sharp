@@ -5,6 +5,7 @@ import {
   executionPorts,
   inputValue,
   isPure,
+  withGraphTypes,
   type GraphEdge,
   type GraphNode,
   type InputSpec,
@@ -205,7 +206,8 @@ const unreachable = (node: GraphNode, ctx: ViewContext) => {
 }
 /** The card of one node: pins, rows, summary and problems. Pure: the adapter caches it per node content. */
 export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
-  const { graph, catalog } = ctx
+  // Type labels, colours and editors know the types the graph's Custom C# nodes declare.
+  const graph = ctx.graph, catalog = withGraphTypes(ctx.catalog, graph)
   const known = Object.hasOwn(catalog.nodes, node.kind)
   const spec = known ? catalog.nodes[node.kind] : undefined
   const identity = nodeIdentity(node.kind, catalog)
@@ -343,6 +345,7 @@ export interface EdgeView {
 }
 /** The wire of one graph edge; `undefined` for an edge whose endpoints are missing. */
 export function buildEdgeView(edge: GraphEdge, graph: VisualGraph, catalog: VisualCatalogSnapshot): EdgeView | undefined {
+  catalog = withGraphTypes(catalog, graph)
   const source = graph.nodes.find(n => n.id === edge.source), target = graph.nodes.find(n => n.id === edge.target)
   if (!source || !target) return
   if (edge.kind === 'data') {
@@ -388,6 +391,8 @@ export type PinState = 'origin' | 'compatible' | 'incompatible'
 export interface FlowContextValue {
   readOnly(): boolean
   catalog(): VisualCatalogSnapshot
+  /** The catalog with the types the graph's Custom C# nodes declare, for value editors. */
+  types(): VisualCatalogSnapshot
   view(id: string): NodeView | undefined
   graphNode(id: string): GraphNode | undefined
   /** False without the query client and Home Assistant context (a bare adapter): editors become value chips. */

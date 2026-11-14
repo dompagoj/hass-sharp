@@ -52,7 +52,7 @@ public partial class HassSharpManager
                 {
                     var preview = new VisualGenerator(_diagnosticsProvider).Preview(document.Graph, libraries.Preview.Snapshot);
                     if (!preview.Valid) throw new VisualValidationException(preview);
-                    assemblies.Add(await CompileVisualDocument(document with { Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = libraries.Generation, EmbeddedCatalog = preview.EmbeddedCatalog }));
+                    assemblies.Add(await CompileVisualDocument(document with { Graph = preview.Graph ?? document.Graph, Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = libraries.Generation, EmbeddedCatalog = preview.EmbeddedCatalog }));
                     // Store the regenerated source so the running revision is recognised as current.
                     try { store.RefreshDerived(document.Id, document.Revision, preview.Source, preview.SourceMap, libraries.Generation); }
                     catch (Exception ex) { Logger.Error($"Cannot refresh stored source of visual document {document.Id}: {ex}"); }

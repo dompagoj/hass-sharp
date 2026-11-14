@@ -71,7 +71,9 @@ public static class NodeLibraryTests
         Check(snapshot.Catalog["nodes"]![consume.Kind]!["inputs"]!["cancellationToken"] == null, "token has no input");
         Check(snapshot.IsAssignable("global::NodeLib.Reading", "global::NodeLib.IReading"), "interface conversion");
         Check(snapshot.IsAssignable("global::System.Int32", "global::System.Double"), "numeric widening");
-        Check(!snapshot.IsAssignable("global::System.Double", "global::System.Int32"), "numeric narrowing");
+        // Any number goes into any numeric pin; a value the pin cannot hold fails the step when it runs.
+        Check(snapshot.IsAssignable("global::System.Double", "global::System.Int32"), "numeric narrowing is checked when it runs");
+        Check(!snapshot.IsAssignable("global::System.Double?", "global::System.Int32"), "a nullable number does not go into a pin that cannot hold null");
         Check(!snapshot.IsAssignable("global::NodeLib.Reading?", "global::NodeLib.Reading"), "nullable cannot flow to required");
         Check(!snapshot.IsAssignable("global::System.Collections.Generic.List<global::System.String?>", "global::System.Collections.Generic.IEnumerable<global::System.String>"), "nested nullable cannot flow to required");
         Check(!snapshot.IsAssignable("global::NodeLib.Other.Reading", "global::NodeLib.Reading"), "namespace collision");
@@ -95,7 +97,7 @@ public static class NodeLibraryTests
         graph["edges"]!.AsArray().Add(JsonNode.Parse("""{"id":"e2","source":"r","target":"custom"}"""));
         graph["edges"]!.AsArray().Add(JsonNode.Parse("""{"id":"d","kind":"data","source":"r","sourcePort":"value","target":"custom","targetPort":"entity"}"""));
         Check(VisualGraphValidator.Validate(graph, snapshot).Count == 0, "typed entity to custom graph");
-        Check(VisualGraphValidator.Validate(graph).Any(d => d.Message.Contains("Unknown node kind")), "catalog isolation");
+        Check(VisualGraphValidator.Validate(graph).Any(d => d.Message == VisualGraphValidator.Words.MissingLibraryNode && d.Code == "node.unknownKind"), "catalog isolation");
         var leaked = snapshot.Catalog; leaked["nodes"]!.AsObject().Clear();
         Check(snapshot.Catalog["nodes"]!.AsObject().Count > 0 && snapshot.Sources.Single().Revision == 7, "immutable snapshot");
         var again = compiler.Preview([new NodeLibrarySource("sensors", Source, 8)]);

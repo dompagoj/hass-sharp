@@ -80,6 +80,8 @@ public static class VisualGraphValidator
         internal static string PureScope(string node, string source, string output, string step) =>
             $"{node} uses {source} · {output}, which {step} cannot use here: it is on the other side of a loop or parallel branch boundary";
         /// <summary>A Custom C# node whose stored signature is not one the compiler writes.</summary>
+        /// <summary>A library node whose method its node library no longer has (or has under another kind id).</summary>
+        internal const string MissingLibraryNode = "This step is no longer in its node library; delete it and add it again from the node library";
         internal const string MalformedSignature = "The pins of this node cannot be read; open Edit code and apply it";
         /// <summary>A Custom C# node whose stored signature is not what its code gives (the backend compiles it to know).</summary>
         internal const string StaleSignature = "The pins are out of date with the code: open Edit code and apply it";
@@ -209,6 +211,9 @@ public static class VisualGraphValidator
         {
             if (VisualTypes.Chain(catalog, type).Count == 0) return $"{subject} is connected to a value of unknown type";
             var names = expected.Select(t => TypeLabel(catalog, t)).Distinct().ToList();
+            // The same kind of value, but one that may be empty where the pin needs it set (a nullable C# type).
+            if (VisualTypes.Resolve(catalog, type)?["nullable"]?.GetValue<bool>() == true && names.Contains(TypeLabel(catalog, type)))
+                return $"{subject} needs a value that is always set, and this one may be empty";
             return names.Count is > 0 and <= 4 ? $"{subject} accepts {Or(names)}, not {TypeLabel(catalog, type)}" : $"{subject} does not accept {TypeLabel(catalog, type)}";
         }
     }
@@ -304,7 +309,7 @@ public static class VisualGraphValidator
             {
                 if (raw is not JsonObject node || Id(node) == "" || node["config"] is not JsonObject) { Error(null, "Each node requires id and config", code: "node.invalid"); continue; }
                 if (!nodes.TryAdd(Id(node), node)) Error(Id(node), "Duplicate node id", code: "node.duplicate");
-                if (Spec(node) == null) Error(Id(node), "Unknown node kind", code: "node.unknownKind");
+                if (Spec(node) == null) Error(Id(node), Kind(node).StartsWith("library:", StringComparison.Ordinal) ? Words.MissingLibraryNode : "Unknown node kind", code: "node.unknownKind");
             }
             foreach (var id in nodes.Keys) outgoing[id] = [];
             var edgeIds = new HashSet<string>(StringComparer.Ordinal);
@@ -418,6 +423,10 @@ public static class VisualGraphValidator
                     : !KnownType(type) ? $"{subject} has a value of unknown type {Words.Name(type)}" : $"{subject} is not a valid {Words.TypeLabel(Root, type)} value", port);
                 if (Number(value) is { } number && (Number(spec["min"]) is { } min && number < min || Number(spec["max"]) is { } max && number > max || Bool(spec, "integer") && Math.Truncate(number) != number))
                     Error(Id(node), $"{subject} must be {Words.Range(Number(spec["min"]), Number(spec["max"]), Bool(spec, "integer"))}", port);
+                // A number typed into a pin of a narrower number type (a C# int, say) must fit that type, as it must when it runs.
+                if (valid && Number(value) is not null && VisualTypes.Numeric(Root, type) && Strings(spec["types"]).Where(t => t != type && CompatibleTypes(type, t)).ToArray() is { Length: > 0 } fits &&
+                    fits.All(t => VisualTypes.Numeric(Root, t) && !ValidLiteral(t, value, true, snapshot)) && VisualTypes.Resolve(Root, fits[0]) is { } narrow)
+                    Error(Id(node), $"{subject} must be {Words.Range(Number(narrow["min"]), Number(narrow["max"]), Text(narrow, "literalKind") == "integer")}", port);
                 // Input constraints restrict authored values only; a wire is constrained by its type. When any allowed
                 // value is itself a list (a constant list), only a value equal to one of them is accepted. When every
                 // allowed value is a scalar, a list, where the input accepts one, is checked item by item (a multiple

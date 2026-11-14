@@ -30,7 +30,8 @@ public static class CustomNode
 
 - **Title and description.** `[Node("Title")]` names the node. The XML `<summary>`
   is its description, each `<param>` describes an input and `<returns>` describes
-  the output.
+  the output. For a tuple, `<returns>` describes the first element's output; the
+  others have no description.
 - **Inputs.** The parameter name is the pin's id. Its label is the name in words
   (`roomName` becomes "Room name"), or the text of `[Port("Label")]` on the
   parameter. Optional parameters keep their C# defaults.
@@ -59,10 +60,13 @@ public static class CustomNode
   Constant or Compare. It has no place in the run order and is worked out each time
   a step uses its result, in that step's scope. It must return a value.
 - **Numbers.** A pin of any CLR number type (`int`, `long`, `double`, `decimal`, …)
-  and the built-in Number go into each other. A value that does not fit fails the
-  step when it runs, with a message such as "Count · How many needs a whole number
-  from -2147483648 to 2147483647, not 2.5". A nullable number output (`int?`) does
-  not go into a Number input, because it may be missing.
+  and the built-in Number go into each other, wider or narrower. A value that does
+  not fit fails the step when it runs, with a message such as "Count · How many
+  needs a whole number from -2147483648 to 2147483647, not 2.5"; a value typed into
+  the pin that cannot fit is refused at once ("How many must be a whole number
+  between -2147483648 and 2147483647"). A nullable number output (`int?`) goes only
+  into a pin that can hold null (`double?`), not into a Number or `long` input,
+  because it may be missing.
 - **Enums.** An enum pin offers its members by name in words, from the type's
   `enumLabels` (listed in the same order as `enumValues`).
 - **Refused.** Methods that are not public static, open generic methods or
@@ -141,19 +145,38 @@ A new Custom C# node starts from a template method. Its stored configuration is:
 - `arguments`: one value per input;
 - `signature`: the pins, worked out from the code.
 
-The signature holds the title, description, `pure`, the inputs and outputs, and the
-types only this code declares, such as a record defined beside the method. The code
-is compiled in its own namespace, `NodeLib.Custom_<node id>`, with the libraries in
-reach.
+The signature holds the title, description, `pure`, the inputs and outputs, and
+`types`: the compiler's entry for every type the pins use that the static catalog
+does not have, such as `int`, `List<string>`, a library record or a record defined
+beside the method. The code is compiled in its own namespace,
+`NodeLib.Custom_<escaped node id>`, with the libraries in reach. The escaped id keeps
+ASCII letters and digits and writes every other character as `_` followed by its
+UTF-16 code in four uppercase hex digits: node `kitchen-light` compiles in
+`NodeLib.Custom_kitchen_002Dlight`. `using` lines at the top of the code are placed
+inside that namespace.
 
-The code editor is not built yet. The inspector shows the node's pins and description,
-and its code read-only, with the note "Editing arrives with the code editor". MCP
-authoring sends `source` and `arguments`: preview and save work the signature out from
-the code (`deriveSignatures`). Both validators refuse a stored signature that is not
-one the compiler writes, with code `custom.signature`. The backend refuses one that no
-longer matches the code: "The pins are out of date with the code: open Edit code and
-apply it". The node library API's `custom_preview` compiles one node's code and
-returns its signature and diagnostics. Completion, hover, signature help, formatting
+A wire into or out of a Custom C# node is accepted where C# converts the value
+implicitly: a library `int` into a `long` parameter, a `List<string>` into an
+`IEnumerable<string>`, a record the code declares into a library interface it
+implements or into `object`. Any number goes into any numeric pin, except a nullable
+one into a pin that cannot hold null; a value the pin cannot hold (2.5 for an `int`)
+fails the step when it runs, naming the step and pin, and such a value typed into
+the pin is refused at once. A type that one Custom C# node declares belongs to that
+node: another node's code cannot name it (declare the type in a node library to
+share it), though a wire can carry it into `object` or an interface it implements.
+
+The **Edit code** dialog edits the code with completion, hover, signature help and
+diagnostics, and applies its pins to the node. MCP authoring sends `source` and
+`arguments`: preview and save work the signature out from the code
+(`deriveSignatures`), and say in `diagnostics` which values and wires of pins that
+are gone they removed. Both validators refuse a stored signature that is not one the
+compiler writes, with code `custom.signature`. The backend refuses one whose pins no
+longer match the code (their ids, types, required, nullable, defaults and `pure`):
+"The pins are out of date with the code: open Edit code and apply it". Labels,
+descriptions and type details that differ are not out of date: they are refreshed
+from the code. The node library API's `custom_preview` compiles one node's code
+(`nodeId` is required) and returns its signature and diagnostics; while a node
+library has errors it says so first. Completion, hover, signature help, formatting
 and go-to-definition work on a node's unsaved code beside the libraries (`custom: true`).
 
 Older Custom C# code (statements reading `values`, `lastError` and `TriggerData`) is

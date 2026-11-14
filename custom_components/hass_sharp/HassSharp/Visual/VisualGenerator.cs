@@ -16,7 +16,10 @@ public sealed record VisualDiagnostic(string? NodeId, string Message, int Severi
 public sealed record VisualSourceMap(string NodeId, int StartLine, int EndLine);
 public sealed record VisualPreview(bool Valid, string Source, List<VisualSourceMap> SourceMap, List<VisualDiagnostic> Diagnostics)
 {
-    /// <summary>The graph as previewed when its Custom C# signatures were derived from their code first; null otherwise.</summary>
+    /// <summary>
+    /// The graph as previewed when it is not the one given: its Custom C# signatures derived from their code first, or
+    /// refreshed from the compile where only their words or type entries differ; null otherwise.
+    /// </summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] public JsonObject? Graph { get; init; }
     /// <summary>The pruned catalog JSON the generated class embeds (the run snapshot's catalog); never serialized.</summary>
     [System.Text.Json.Serialization.JsonIgnore] public string? EmbeddedCatalog { get; init; }
@@ -105,7 +108,32 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
     /// <summary>The generation with the graph's Custom C# nodes compiled beside its libraries; the catalog is unchanged.</summary>
     VisualCatalogSnapshot WithCustom(JsonObject graph,VisualCatalogSnapshot snapshot) {
         var sources=CustomSources(graph,snapshot);
-        return sources.Length==0?snapshot:new NodeLibraryCompiler(diagnostics).Preview(snapshot.Sources,sources).Snapshot.WithServices(snapshot.Services);
+        if(sources.Length==0)return snapshot;
+        // The editor previews after each edit, and deriving pins compiles once more; most edits leave the code alone.
+        // The last few compiles are kept, keyed by all that goes into one: the service calls, the libraries and the code.
+        var services=diagnostics.ServicesSyntaxTree();
+        var key=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            string.Join("\0",snapshot.Sources.Select(s=>s.Id+"\0"+s.Revision+"\0"+s.Source))+"\u0001"+string.Join("\0",sources.Select(c=>c.NodeId+"\0"+c.Source)))));
+        VisualCatalogSnapshot? hit=null;
+        lock(CompiledCustom) {
+            for(var entry=CompiledCustom.First;entry!=null;entry=entry.Next)
+                if(ReferenceEquals(entry.Value.Services,services)&&entry.Value.Key==key) {hit=entry.Value.Compiled;CompiledCustom.Remove(entry);CompiledCustom.AddFirst(entry);break;}
+        }
+        if(hit==null) {
+            hit=new NodeLibraryCompiler(diagnostics).Preview(snapshot.Sources,sources).Snapshot;
+            lock(CompiledCustom) {CompiledCustom.AddFirst((services,key,hit));while(CompiledCustom.Count>4)CompiledCustom.RemoveLast();}
+        }
+        return hit.WithServices(snapshot.Services);
+    }
+    static readonly LinkedList<(object Services,string Key,VisualCatalogSnapshot Compiled)> CompiledCustom=new();
+    /// <summary>
+    /// Whether a stored signature has the pins the code gives: the same pure, input ids with their types, required,
+    /// nullable and default, and output ids with their types. Titles, words and type entries are not compared.
+    /// </summary>
+    internal static bool SamePins(JsonObject stored,JsonObject compiled) {
+        static bool Pins(JsonNode? a,JsonNode? b,string[] keys)=>a is JsonObject x&&b is JsonObject y&&x.Count==y.Count&&
+            x.All(p=>y.TryGetPropertyValue(p.Key,out var other)&&p.Value is JsonObject mine&&other is JsonObject theirs&&keys.All(k=>SameJson(mine[k],theirs[k])));
+        return SameJson(stored["pure"],compiled["pure"])&&Pins(stored["inputs"],compiled["inputs"],["types","required","nullable","hasDefaultValue","default"])&&Pins(stored["outputs"],compiled["outputs"],["type"]);
     }
     /// <summary>Numbers by value, objects by their properties in any order: a signature read back from the editor equals the compiler's.</summary>
     internal static bool SameJson(JsonNode? a,JsonNode? b)=>(a,b) switch {
@@ -121,19 +149,31 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
     /// code. Values and wires of pins that still exist are kept; those of pins that are gone are removed, and so are the
     /// step order wires of a node that became a value node. A node whose code does not compile keeps its signature.
     /// </summary>
-    public JsonObject DeriveSignatures(JsonObject graph,VisualCatalogSnapshot snapshot) {
+    public JsonObject DeriveSignatures(JsonObject graph,VisualCatalogSnapshot snapshot)=>DeriveSignatures(graph,snapshot,out _);
+    /// <param name="removed">One warning per value, value wire and step order wire removed, on its node, naming the pin.</param>
+    public JsonObject DeriveSignatures(JsonObject graph,VisualCatalogSnapshot snapshot,out List<VisualDiagnostic> removed) {
+        var warnings=new List<VisualDiagnostic>();removed=warnings;
         var next=(JsonObject)graph.DeepClone();
         if(snapshot.Compilation==null)snapshot=new NodeLibraryCompiler(diagnostics).Preview(snapshot.Sources).Snapshot.WithServices(snapshot.Services);
         var compiled=WithCustom(next,snapshot);
         var edges=next["edges"] as JsonArray;
         foreach(var node in (next["nodes"] as JsonArray??[]).OfType<JsonObject>()) {
             if(!compiled.Custom.TryGetValue(Text(node,"id"),out var custom)||custom.Signature==null||node["config"] is not JsonObject cfg)continue;
-            var id=Text(node,"id");var signature=(JsonObject)custom.Signature.DeepClone();cfg["signature"]=signature;
+            var id=Text(node,"id");var old=cfg["signature"] as JsonObject;var signature=(JsonObject)custom.Signature.DeepClone();cfg["signature"]=signature;
             var inputs=signature["inputs"]!.AsObject();var outputs=signature["outputs"]!.AsObject();var pure=signature["pure"]!.GetValue<bool>();
-            if(cfg["arguments"] is JsonObject arguments)foreach(var name in arguments.Select(p=>p.Key).Where(k=>!inputs.ContainsKey(k)).ToArray())arguments.Remove(name);
-            if(edges!=null)foreach(var edge in edges.OfType<JsonObject>().Where(e=>Text(e,"kind")=="data"
-                    ? Text(e,"target")==id&&!inputs.ContainsKey(Text(e,"targetPort"))||Text(e,"source")==id&&!outputs.ContainsKey(Text(e,"sourcePort"))
-                    : pure&&(Text(e,"source")==id||Text(e,"target")==id)).ToArray())edges.Remove(edge);
+            // A pin that is gone is named as the node showed it before.
+            string Label(string side,string port)=>VisualGraphValidator.Words.PortLabel(old!=null&&VisualNodeCatalog.WellFormedSignature(old)?old[side]?[port]:null,port);
+            void Removed(string message,string? input=null,string? output=null)=>warnings.Add(new(id,message,2,InputId:input,PortId:output));
+            if(cfg["arguments"] is JsonObject arguments)foreach(var name in arguments.Select(p=>p.Key).Where(k=>!inputs.ContainsKey(k)).ToArray()) {
+                arguments.Remove(name);Removed($"Removed the value of {Label("inputs",name)}: the code no longer has that input",input:name);
+            }
+            if(edges!=null)foreach(var edge in edges.OfType<JsonObject>().ToArray()) {
+                if(Text(edge,"kind")=="data") {
+                    if(Text(edge,"target")==id&&!inputs.ContainsKey(Text(edge,"targetPort"))) {edges.Remove(edge);Removed($"Removed the connection to {Label("inputs",Text(edge,"targetPort"))}: the code no longer has that input",input:Text(edge,"targetPort"));}
+                    else if(Text(edge,"source")==id&&!outputs.ContainsKey(Text(edge,"sourcePort"))) {edges.Remove(edge);Removed($"Removed the connection from {Label("outputs",Text(edge,"sourcePort"))}: the code no longer has that output",output:Text(edge,"sourcePort"));}
+                }
+                else if(pure&&(Text(edge,"source")==id||Text(edge,"target")==id)) {edges.Remove(edge);Removed("Removed a step order wire: this node is now a value node, which has no place in the run order");}
+            }
         }
         return next;
     }
@@ -144,16 +184,24 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
         if(snapshot.LibraryDiagnostics.Any(d=>d.Severity==3))return new(false,"",[],snapshot.LibraryDiagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
         var libraryErrors=snapshot.Compilation.GetDiagnostics().Where(d=>d.Severity==DiagnosticSeverity.Error).ToArray();
         if(libraryErrors.Length>0)return new(false,"",[],libraryErrors.Select(d=>new VisualDiagnostic("$library:"+d.Location.SourceTree?.FilePath,d.GetMessage())).ToList());
-        // Custom C# nodes compile with the libraries. What their code gives is the truth: a stored signature that differs is an error.
+        // Custom C# nodes compile with the libraries. What their code gives is the truth: a stored signature whose pins
+        // differ is an error. One that differs only in what the code does not decide for wires (words, type entries, which
+        // a newer HassSharp may write differently) is refreshed from the compile and previewed (and returned) as such.
         snapshot=WithCustom(graph,snapshot);
         var errors=new List<VisualDiagnostic>();
+        JsonObject? refreshed=null;
         foreach(var (id,custom) in snapshot.Custom.OrderBy(c=>c.Key,StringComparer.Ordinal)) {
             errors.AddRange(custom.Diagnostics.Select(d=>new VisualDiagnostic(id,d.Message,d.Severity,d.StartLine,d.StartColumn,"source")));
             var node=(graph["nodes"] as JsonArray??[]).OfType<JsonObject>().First(n=>Text(n,"id")==id);
-            if(custom.Signature!=null&&node["config"]?["signature"] is JsonObject stored&&VisualNodeCatalog.WellFormedSignature(stored)&&!SameJson(stored,custom.Signature))
-                errors.Add(new(id,VisualGraphValidator.Words.StaleSignature,InputId:"source",Code:"custom.signature"));
+            if(custom.Signature==null||node["config"]?["signature"] is not JsonObject stored||!VisualNodeCatalog.WellFormedSignature(stored))continue;
+            if(!SamePins(stored,custom.Signature))errors.Add(new(id,VisualGraphValidator.Words.StaleSignature,InputId:"source",Code:"custom.signature"));
+            else if(!SameJson(stored,custom.Signature)) {
+                refreshed??=(JsonObject)graph.DeepClone();
+                refreshed["nodes"]!.AsArray().OfType<JsonObject>().First(n=>Text(n,"id")==id)["config"]!["signature"]=custom.Signature.DeepClone();
+            }
         }
-        errors.AddRange(VisualGraphValidator.Validate(graph,snapshot,out var inputTypes));if(errors.Any(e=>e.Severity==3))return new(false,"",[],errors);
+        if(refreshed!=null)graph=refreshed;
+        errors.AddRange(VisualGraphValidator.Validate(graph,snapshot,out var inputTypes));if(errors.Any(e=>e.Severity==3))return new(false,"",[],errors){Graph=refreshed};
         var lines=new List<string>();var maps=new List<VisualSourceMap>();string? current=null;
         var customSections=new List<(string Id,int Start,int End)>();
         void Add(string source)=>lines.AddRange(source.Replace("\r\n","\n").Split('\n'));
@@ -254,7 +302,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
                 }
                 errors.Add(new(maps.FirstOrDefault(m=>line>=m.StartLine&&line<=m.EndLine)?.NodeId,d.GetMessage(),(int)d.Severity,line,location.StartLinePosition.Character+1));
             }
-            return new(!errors.Any(e=>e.Severity==3),source,maps,errors){EmbeddedCatalog=embedded.ToJsonString()};
-        }catch(Exception e)when(e is ArgumentException or InvalidOperationException or FormatException or JsonException or TimeZoneNotFoundException){errors.Add(new(current,e.Message));return new(false,string.Join('\n',lines),maps,errors);}
+            return new(!errors.Any(e=>e.Severity==3),source,maps,errors){EmbeddedCatalog=embedded.ToJsonString(),Graph=refreshed};
+        }catch(Exception e)when(e is ArgumentException or InvalidOperationException or FormatException or JsonException or TimeZoneNotFoundException){errors.Add(new(current,e.Message));return new(false,string.Join('\n',lines),maps,errors){Graph=refreshed};}
     }
 }

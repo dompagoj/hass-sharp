@@ -46,7 +46,8 @@ public class NodeLibraryLanguageServicesTests
     [Fact]
     public async Task Custom_node_code_gets_completion_hover_definition_and_format_beside_the_libraries_with_its_usings()
     {
-        // using lines at the top of a Custom C# node's code stay above its namespace; NodeContext and the libraries are in reach.
+        // using lines at the top of a Custom C# node's code sit inside the NodeLib.Custom_… namespace the code is placed in
+        // (C# allows using directives at the start of a namespace); NodeContext and the libraries are in reach.
         const string helper="public static class Rooms { public static int Count(string area) => 1; }";
         const string source="using System.Globalization;\npublic static class CustomNode\n{\n    [Node(\"Check\")]\n    public static int Run(NodeContext context, string area) { context.Cancel; return Rooms.Count(area); }\n}";
         NodeLibrarySource[] sources=[new("rooms",helper,1)];
@@ -60,6 +61,10 @@ public class NodeLibraryLanguageServicesTests
         var own=await Custom("definition",sources,source,source.IndexOf("area)")+1);
         Assert.Equal(NodeLibraryLanguageServices.CustomDocumentId,own[0]!["id"]!.GetValue<string>());
         Assert.Equal(source.IndexOf("area"),own[0]!["range"]!["start"]!.GetValue<int>());
+        // Signature help on a library method called from the code.
+        var signature=await Custom("signature",sources,source,source.IndexOf("Count(area)")+"Count(".Length);
+        Assert.Contains("area",signature.ToJsonString()); Assert.Equal(0,signature["activeParameter"]!.GetValue<int>());
+        Assert.Contains("Count",signature["signatures"]![0]!["label"]!.GetValue<string>());
         var formatted=(await Custom("format",sources,"public static class CustomNode{[Node(\"Check\")]public static int Run(int x)=>x;}")).GetValue<string>();
         Assert.DoesNotContain("namespace",formatted); Assert.StartsWith("public static class CustomNode",formatted);
     }

@@ -145,9 +145,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
             var metadataName = VisualNodeCatalog.Text(descriptor, "clrType");
             if (compilation.GetTypeByMetadataName(metadataName) is { } symbol) { Register(typeSymbols, symbol); typeSymbols[id] = symbol; }
         }
-        // The types every generation has, whatever its libraries: a custom node lists only the types it uses beyond them.
+        // The types of the static catalog, which every generation has and the editor knows before the server's catalog
+        // arrives: a custom node lists every type it uses beyond them, so its pins validate against the static catalog too.
         var builtIn = new Dictionary<string, ITypeSymbol>(typeSymbols, StringComparer.Ordinal);
-        Related(builtIn);
         var refined = (string id) => root["types"]![id]?["refines"] != null;
 
         // The pins of one [Node] method, as the catalog describes a library node; null (reported) when it cannot be one.
@@ -247,6 +247,17 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
         foreach (var method in methods)
             foreach (var (_, input) in root["nodes"]![method.Kind]!["inputs"]!.AsObject())
                 if (input is JsonObject rule && rule["default"] is JsonObject operand && !VisualNodeCatalog.ValidLiteral(VisualNodeCatalog.Text(operand, "type"), operand["value"], operand.ContainsKey("value"), root)) rule.Remove("default");
+        // A type declared in one Custom C# node's code is that node's own: another node's pins may not use it.
+        bool OwnTypesArePrivate(MethodDeclarationSyntax declaration, SyntaxTree tree, IEnumerable<ITypeSymbol> used)
+        {
+            foreach (var type in used)
+                if (type.OriginalDefinition.DeclaringSyntaxReferences.Select(r => r.SyntaxTree).FirstOrDefault(t => t != tree && customTrees.ContainsKey(t)) is { } other)
+                {
+                    Report(declaration.Identifier.GetLocation(), $"{type.ToDisplayString()} belongs to the Custom C# node {customTrees[other].NodeId}; declare the type in this code or in a node library to use it here");
+                    return false;
+                }
+            return true;
+        }
         var customs = new List<CustomNodeDescriptor>();
         foreach (var (tree, custom) in customTrees)
         {
@@ -260,14 +271,24 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
                 if (found.Length != 1)
                     Report(found.Length == 0 ? tree.GetRoot(cancellationToken).DescendantNodes().OfType<BaseTypeDeclarationSyntax>().FirstOrDefault()?.Identifier.GetLocation() ?? tree.GetRoot(cancellationToken).GetLocation() : found[1].Declaration.Identifier.GetLocation(),
                         found.Length == 0 ? "Mark one method with [Node]: it becomes this node" : $"Mark only one method with [Node]; this code has {found.Length}");
-                else if (Describe(found[0].Method, found[0].Declaration, found[0].Attribute, "custom", custom.NodeId, type => Register(own, type, builtIn)) is { } described)
+                else if (Describe(found[0].Method, found[0].Declaration, found[0].Attribute, "custom", custom.NodeId, type => Register(own, type, builtIn)) is { } described
+                    && OwnTypesArePrivate(found[0].Declaration, tree, own.Values))
                 {
-                    // Its own types are compared with the built-in types and each other only, so a library change never changes them.
+                    // Each type the pins use beyond the built-in ones, with what it converts to and from: every type of this
+                    // generation, its own other types, and every base type and interface it has (by id, so a pin of such a
+                    // type in another Custom C# node matches without that node's code). A type another Custom C# node
+                    // declares is refused above: it stays private to that node.
+                    var generation = typeSymbols.Where(pair => !refined(pair.Key)).Concat(own.Where(pair => !typeSymbols.ContainsKey(pair.Key))).ToArray();
                     var entries = new JsonObject();
                     foreach (var (id, symbol) in own)
                     {
                         var entry = new JsonObject();
-                        DescribeType(entry, symbol, builtIn.Where(pair => !refined(pair.Key)).Concat(own), compilation);
+                        var supertypes = symbol.AllInterfaces.Cast<ITypeSymbol>().Concat(BaseTypes(symbol))
+                            .Where(t => !Unsupported(t) && compilation.IsSymbolAccessibleWithin(t, compilation.Assembly))
+                            .Select(t => KeyValuePair.Create(TypeIdentity(t), t)).Where(pair => !generation.Any(g => g.Key == pair.Key)).DistinctBy(pair => pair.Key);
+                        DescribeType(entry, symbol, generation.Concat(supertypes), compilation);
+                        entry["assignableFrom"] = new JsonArray(generation.Where(pair => pair.Key != id && VisualCatalogSnapshot.StandardConversion(compilation, pair.Value, symbol))
+                            .Select(pair => (JsonNode?)JsonValue.Create(pair.Key)).ToArray());
                         entries[id] = entry;
                     }
                     foreach (var (_, input) in described.Inputs)
@@ -284,6 +305,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics)
         var snapshot = new VisualCatalogSnapshot(root, sources, methods, typeSymbols.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)), compilation, errors, customs);
         return new(!errors.Any(e => e.Severity == 3), errors.ToImmutableArray(), snapshot);
     }
+
+    static IEnumerable<ITypeSymbol> BaseTypes(ITypeSymbol type) { for (var b = type.BaseType; b != null; b = b.BaseType) yield return b; }
 
     /// <summary>A type's catalog entry: its words, literal rules and the targets (of <paramref name="targets"/>) it converts to implicitly.</summary>
     static void DescribeType(JsonObject type, ITypeSymbol symbol, IEnumerable<KeyValuePair<string, ITypeSymbol>> targets, CSharpCompilation compilation)

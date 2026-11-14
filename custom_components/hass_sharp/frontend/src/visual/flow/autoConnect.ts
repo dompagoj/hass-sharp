@@ -1,4 +1,4 @@
-import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, isPure, type GraphEdge, type GraphNode, type VisualCatalogSnapshot } from '../contract'
+import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, isPure, withGraphTypes, type GraphEdge, type GraphNode, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, connectNodes, nodeInputs, outputPort, removeEdge, updateNode, type VisualGraph } from '../graph'
 import { createUuid } from '../id'
 import { dataPortOf, nodeTitle } from './flowModel'
@@ -64,16 +64,18 @@ function portFor(graph: VisualGraph, kind: string, pin: PinRef, catalog: VisualC
   }
   // A value wire runs between steps of one flow: the new step needs an execution input.
   if (kind === 'trigger') return
+  // The types the graph's Custom C# nodes declare, beside the catalog's, decide which pins take the value.
+  const types = withGraphTypes(catalog, next)
   if (pin.type === 'source') {
     const output = dataOutputs(pinNode, catalog)[data]
     if (!output) return
     const inputs = Object.entries(nodeInputs(next, node, catalog))
-    return bestMatch(inputs, input => input.types.includes(output.type), input => input.types.some(t => isAssignable(output.type, t, catalog)))
+    return bestMatch(inputs, input => input.types.includes(output.type), input => input.types.some(t => isAssignable(output.type, t, types)))
   }
   const input = nodeInputs(graph, pinNode, catalog)[data]
   if (!input) return
   const outputs = Object.entries(dataOutputs(node, catalog))
-  return bestMatch(outputs, output => input.types.includes(output.type), output => input.types.some(t => isAssignable(output.type, t, catalog)))
+  return bestMatch(outputs, output => input.types.includes(output.type), output => input.types.some(t => isAssignable(output.type, t, types)))
 }
 
 /** What the pin is called on its card ("Entity", "If true"), for messages. */

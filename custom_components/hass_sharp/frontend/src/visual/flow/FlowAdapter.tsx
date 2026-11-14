@@ -7,7 +7,7 @@ import { QuickAdd } from '../QuickAdd'
 import type { VisualDiagnostic } from '../api'
 import { HassCtx } from '../../context'
 import { useRegistry } from '../../registry'
-import { connectData, nodeCatalog, setInput as writeInput, type Operand, type VisualCatalogSnapshot } from '../contract'
+import { connectData, nodeCatalog, setInput as writeInput, withGraphTypes, type Operand, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeEdge, removeNode, updateNode, type NodeKind, type VisualGraph } from '../graph'
 import { connectionIndex } from '../connectionIndex'
 import { NODE_DRAG_TYPE } from '../nodeDrag'
@@ -974,9 +974,11 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     })
   })
 
+  const types = createMemo(() => withGraphTypes(catalog(), graph()))
   const context: FlowContextValue = {
     readOnly,
     catalog,
+    types,
     view: id => views().get(id)?.view,
     graphNode: id => graph().nodes.find(n => n.id === id),
     editable: () => editable,

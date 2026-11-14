@@ -87,7 +87,8 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
             var snapshot = VisualGraphContract.FillMissingLayout(graph);
             var preview = catalog == null ? generator.Preview(snapshot) : generator.Preview(snapshot, catalog);
             if (!preview.Valid) throw new VisualValidationException(preview);
-            var document = new VisualDocument(1, id, checked(expectedRevision + 1), snapshot, preview.Source, preview.SourceMap)
+            // A Custom C# signature the compile refreshed (its words, its type entries) is stored as refreshed.
+            var document = new VisualDocument(1, id, checked(expectedRevision + 1), preview.Graph ?? snapshot, preview.Source, preview.SourceMap)
                 { CatalogGeneration = catalogGeneration, EmbeddedCatalog = preview.EmbeddedCatalog, Enabled = old?.Enabled ?? enabled ?? true, SavedUtc = DateTime.UtcNow };
             Directory.CreateDirectory(directory);
             Write(path, document);

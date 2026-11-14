@@ -4,7 +4,7 @@ import { TypeChip } from './InputRow'
 import { Glyph } from './Glyph'
 import type { VisualDiagnostic } from './api'
 import { copySteps, pasteSteps } from './clipboard'
-import { dataOutputs, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { dataOutputs, withGraphTypes, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { execLabel, nodeTitle } from './flow/flowModel'
 import { nodeInputs, outputPort, removeNode, updateNode, type VisualGraph } from './graph'
 import { focusSoon as focusWhenShown } from './soon'
@@ -293,7 +293,10 @@ export function Inspector(props: InspectorProps) {
           {end(target(), inputLabel())}
         </div>
         <Show when={type()}>
-          {id => <p class="hs-insp-meta">Carries <TypeChip text={typeLabel(id(), props.catalog)} color={typeColor(id(), props.catalog)} list={typeIsList(id(), props.catalog)} /></p>}
+          {id => {
+            const types = () => withGraphTypes(props.catalog, props.graph)
+            return <p class="hs-insp-meta">Carries <TypeChip text={typeLabel(id(), types())} color={typeColor(id(), types())} list={typeIsList(id(), types())} /></p>
+          }}
         </Show>
         <p class="hs-muted hs-insp-hint">To remove this wire, press Delete on the canvas or drag its end away.</p>
       </section>

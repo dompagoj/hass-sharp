@@ -72,10 +72,16 @@ public static class VisualGraphContractTests
             var name = fixture!["name"]!.GetValue<string>();
             var snapshot = fixture["catalogPatch"] is JsonObject patch ? Patched(patch) : VisualCatalogSnapshot.BuiltIn;
             if (fixture["services"]?.GetValue<bool>() == true) snapshot = snapshot.WithServices(Services(name));
-            var diagnostics = VisualGraphValidator.Validate(fixture["graph"]!.AsObject(), snapshot);
+            // A case whose Custom C# nodes take their pins from the compiler, as the editor applies them: the signatures
+            // (and their type ids) are what the compiler writes, and the graph is returned with them.
+            var graph = fixture["deriveSignatures"]?.GetValue<bool>() == true
+                ? new VisualGenerator(new DiagnosticsProvider()).DeriveSignatures(fixture["graph"]!.AsObject(), new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([]).Snapshot)
+                : fixture["graph"]!.AsObject();
+            var diagnostics = VisualGraphValidator.Validate(graph, snapshot);
             described.Add(new JsonObject
             {
                 ["name"] = name,
+                ["graph"] = graph.DeepClone(),
                 ["valid"] = diagnostics.All(d => d.Severity != 3),
                 ["messages"] = new JsonArray(diagnostics.Select(d => d.Message).Order(StringComparer.Ordinal).Select(m => (JsonNode)m).ToArray()),
                 ["codes"] = new JsonArray(diagnostics.Where(d => d.Code != null).Select(d => d.Code!).Order(StringComparer.Ordinal).Select(m => (JsonNode)m).ToArray()),

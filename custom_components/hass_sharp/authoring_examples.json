@@ -137,31 +137,6 @@
           "kind": "custom",
           "config": {
             "source": "public static class CustomNode\n{\n    /// <summary>Greets someone by name and writes the greeting to the log.</summary>\n    /// <param name=\"name\">Who to greet.</param>\n    /// <returns>The greeting.</returns>\n    [Node(\"Greeting\")]\n    public static string Greet(string name, NodeContext context)\n    {\n        var greeting = $\"Hello, {name}\";\n        context.Log(greeting);\n        return greeting;\n    }\n}",
-            "signature": {
-              "title": "Greeting",
-              "description": "Greets someone by name and writes the greeting to the log.",
-              "pure": false,
-              "inputs": {
-                "name": {
-                  "types": [
-                    "global::System.String"
-                  ],
-                  "required": true,
-                  "label": "Name",
-                  "description": "Who to greet.",
-                  "nullable": false,
-                  "hasDefaultValue": false
-                }
-              },
-              "outputs": {
-                "result": {
-                  "type": "global::System.String",
-                  "label": "Result",
-                  "description": "The greeting."
-                }
-              },
-              "types": {}
-            },
             "arguments": {
               "name": {
                 "kind": "literal",

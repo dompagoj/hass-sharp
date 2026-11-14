@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { clipboardMarker, copySteps, parseSteps, pasteRefusals, pasteSteps, readSteps, writeSteps } from '../src/visual/clipboard'
 import { addNode, connectNodes, createGraph, updateNode } from '../src/visual/graph'
-import { analyzeGraph, connectData, diagnosticCodes, nodeCatalog, validateGraph, type DiagnosticCode, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { analyzeGraph, connectData, diagnosticCodes, nodeCatalog, validateGraph, words, type DiagnosticCode, type VisualCatalogSnapshot } from '../src/visual/contract'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -66,7 +66,7 @@ it('pastes a second trigger the validator allows, and refuses what the editor wo
   expect('graph' in twice && twice.graph.nodes.filter(n => n.kind === 'trigger')).toHaveLength(2)
   // A step whose kind this catalog does not know.
   const unknown = { ...trigger, nodes: [{ ...trigger.nodes[0], kind: 'library:Gone' }] }
-  expect(pasteSteps(graph, unknown, nodeCatalog, { offset: { x: 0, y: 0 } })).toEqual({ error: 'Unknown node kind' })
+  expect(pasteSteps(graph, unknown, nodeCatalog, { offset: { x: 0, y: 0 } })).toEqual({ error: words.missingLibraryNode })
   // A copy of a wire into an input that is already wired: refused by its code (port.inputTaken), not its wording.
   const fed = sample()
   const copy = copySteps(fed, ['value', 'log'])!

@@ -87,18 +87,46 @@ saying what to do instead: graph `imports` and `members`, a node's `config.outpu
 
 A Custom C# node's pins come from `config.signature`, which the compiler writes from
 the code (`VisualGenerator.DeriveSignatures`; the `deriveSignatures` flag of
-preview and save). `signature.types` holds only the types the code itself declares.
-Both validators merge those into the catalog (`WithGraphTypes`/`withGraphTypes`:
-catalog types first, then each well-formed signature's types in node order, the
-first entry for an id winning). Both compare such types by their entries alone. A
-signature that is not well formed is refused by both validators with code
-`custom.signature`. One that the code no longer gives is refused by the backend,
-which compiles the code to know. The code compiles in namespace
-`NodeLib.Custom_<escaped node id>`, beside the libraries; its diagnostics map to the
-node's `source` input and to lines of its code. `NodeLibraryRequest` offers
-`custom_preview` (`{nodeId?,source,sources?}` returns
-`{valid,diagnostics,signature}`), and the language operations take `custom: true`
-for a node's unsaved code.
+preview and save). Pruning a value or a wire of a pin that is gone gives one warning
+(severity 2) per value, data wire and order wire, on the node, naming the pin
+("Removed the connection to Text: the code no longer has that input"); preview and
+save return them in `diagnostics`. `signature.types` holds an entry for every type
+the pins use that the static catalog (`visual_node_catalog.json`) does not have:
+CLR types such as `global::System.Int32` or `global::System.Collections.Generic.List<global::System.String>`,
+library types, and the types the code declares. Each entry is the compiler's, with
+`assignableTo` (every type of the generation, the node's other types and each of
+the type's own interfaces and base types it converts to implicitly) and
+`assignableFrom` (every type of the generation and the node's other types that
+convert to it implicitly). Both validators merge those into the catalog
+(`WithGraphTypes`/`withGraphTypes`: catalog types first, then each well-formed
+signature's types in node order, the first entry for an id winning) and accept a
+wire `s → t` when `t` is in `s.assignableTo` or `s` is in `t.assignableFrom`, so
+wires between two Custom C# nodes match through types both can name. Any numeric
+type goes into any other (`number` and every CLR numeric type), except a nullable
+one into a pin that cannot hold null; a value the pin cannot hold fails the step
+when it runs, naming the step and pin, and a literal that cannot fit is refused
+when validating. A type one Custom C# node declares is its own: another node's
+code that names it is refused ("… belongs to the Custom C# node make; declare the
+type in this code or in a node library to use it here"); a wire can still carry it
+into an `object` pin or a pin of an interface it implements.
+
+A signature that is not well formed is refused by both validators with code
+`custom.signature`. The backend compiles the code and compares what the code
+decides: the pin ids, each input's type ids, `required`, `nullable`,
+`hasDefaultValue` and `default`, each output's type id, and `pure`. When those
+differ the node is refused ("The pins are out of date with the code: open Edit code
+and apply it"). When they match, the compiled signature is used: titles, labels,
+descriptions and type entries are refreshed from it in what preview and save return
+and in what the next save stores, and `Manager.Init` loads the automation as it is.
+The code compiles in namespace `NodeLib.Custom_<escaped node id>`, beside the
+libraries; the escaped id keeps ASCII letters and digits and writes every other
+character as `_` and its UTF-16 code in four uppercase hex digits (`kitchen-light`
+becomes `kitchen_002Dlight`). Its diagnostics map to the node's `source` input and
+to lines of its code. `NodeLibraryRequest` offers `custom_preview`
+(`{nodeId,source,sources?}` returns `{valid,diagnostics,signature}`; `nodeId` is
+required, since the type ids depend on it, and a library among `sources` with errors
+is one diagnostic saying to fix the node library first), and the language
+operations take `custom: true` and `nodeId` for a node's unsaved code.
 
 The actual catalog comes from `NodeLibraryRequest({operation:"catalog"})`, merged
 by Roslyn from the packaged built-ins and saved library sources. MCP
