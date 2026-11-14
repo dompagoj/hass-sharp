@@ -101,6 +101,22 @@ public partial class HassSharpManager
             if (operation == "catalog") return Success(new { catalog = saved.Preview.Snapshot.Catalog, generation = saved.Generation, servicesGeneration = ServiceSchemas.Generation, saved = true, valid = saved.Preview.Valid, diagnostics = saved.Preview.Diagnostics });
             if (operation == "list") return Success(new { documents = saved.Documents, generation = saved.Generation });
             if (operation == "service_ports") return Success(ServicePorts(RequiredString(request, "service"), AuthoringSnapshot(saved.Preview.Snapshot)));
+            // The C# definition of a type a pin carries: from the saved libraries' compile, or, for a type a Custom C# node
+            // declares, from that node's code (as the editor holds it) compiled beside them.
+            if (operation == "type_definition")
+            {
+                var type = RequiredString(request, "type");
+                var files = saved.Documents.ToDictionary(d => d.Id, d => d.Name, StringComparer.Ordinal);
+                var snapshot = saved.Preview.Snapshot;
+                if (ApiRequest.OptionalString(request, "nodeId") is { } nodeId)
+                {
+                    if (nodeId.Length == 0) throw new ArgumentException("nodeId must not be empty");
+                    var code = new CustomNodeSource(nodeId, ApiRequest.String(request, "source", "the code of the Custom C# node nodeId names"));
+                    snapshot = new NodeLibraryCompiler(_diagnosticsProvider).Preview(saved.Documents.Select(d => d.AsSource()), [code], _languageLifetime.Token).Snapshot;
+                    return Success(TypeDefinitions.Find(snapshot, type, nodeId, files, _languageLifetime.Token));
+                }
+                return Success(TypeDefinitions.Find(snapshot, type, null, files, _languageLifetime.Token));
+            }
             // A Custom C# node's code: its pins as the compiler derives them, and the language services, beside the saved libraries.
             var customRequest = ApiRequest.OptionalBool(request, "custom") ?? false;
             if (operation == "custom_preview" || customRequest && operation is "completion" or "hover" or "signature" or "format" or "definition")

@@ -51,6 +51,53 @@ export function fixtureCustomPreview(nodeId: string, source: string) {
   return { valid: true, diagnostics: [], signature: { title, description: summary, pure: /Pure\s*=\s*true/.test(options), inputs, outputs, types: {} } }
 }
 
+/** The fixture's `EntityStateSnapshot`, as the server rebuilds a HassSharp type from its metadata. */
+export const fixtureSnapshotDefinition = `namespace HassSharp;
+
+/// <summary>A detached Home Assistant entity state: what a step reads, kept as it was (fixture).</summary>
+public sealed record EntityStateSnapshot
+{
+    public EntityStateSnapshot(string EntityId, string State, JsonObject Attributes, DateTimeOffset LastChanged, DateTimeOffset LastUpdated);
+    public string EntityId { get; init; }
+    public string State { get; init; }
+    public JsonObject Attributes { get; init; }
+    public DateTimeOffset LastChanged { get; init; }
+    public DateTimeOffset LastUpdated { get; init; }
+    public double? NumericState { get; }
+}`
+
+/**
+ * A fixture's `type_definition`: the declaration of the type's last name (with its doc comments) in the code of the
+ * Custom C# node the request names, or else in a saved library; `EntityStateSnapshot` from HassSharp. No compiler: a
+ * declaration ends at its first `;` or at the brace that closes it.
+ */
+export function fixtureTypeDefinition(request: { type: string; nodeId?: string; source?: string }, libraries: Iterable<{ id: string; name: string; source: string }>) {
+  const id = request.type.replace(/\?$/, '')
+  if (id === 'global::HassSharp.EntityStateSnapshot') return { name: 'EntityStateSnapshot', kind: 'metadata', text: fixtureSnapshotDefinition, origin: { assembly: 'HassSharp' } }
+  const name = id.replace(/^global::/, '').replace(/^NodeLib\.(?:Custom_[^.]+\.)?/, '')
+  if (!/^[A-Za-z_]\w*$/.test(name)) return undefined
+  const find = (source: string) => {
+    const header = new RegExp(`^([ \\t]*(?:\\/\\/.*\\n[ \\t]*)*)(?:(?:public|internal|sealed|static|abstract|partial|readonly)\\s+)*(?:record\\s+struct|record|class|struct|interface|enum)\\s+${name}\\b`, 'm').exec(source)
+    if (!header) return
+    let end = header.index + header[0].length, depth = 0
+    for (; end < source.length; end++) {
+      const c = source[end]
+      if (c === ';' && depth === 0) { end++; break }
+      if (c === '{') depth++
+      if (c === '}' && --depth === 0) { end++; break }
+    }
+    return { text: source.slice(header.index, end), line: source.slice(0, header.index).split('\n').length }
+  }
+  if (request.nodeId !== undefined) {
+    const found = find(request.source ?? '')
+    return found && { name, kind: 'source', text: found.text, origin: { nodeId: request.nodeId }, line: found.line }
+  }
+  for (const library of libraries) {
+    const found = find(library.source)
+    if (found) return { name, kind: 'source', text: found.text, origin: { library: library.id, file: library.name }, line: found.line }
+  }
+}
+
 /** How a fixture automation has been running, for the automations page; nothing when it never ran. */
 export type FixtureRuns = Partial<Pick<HomeAutomation, 'recentRuns' | 'runsToday' | 'failedLastDay' | 'lastRunUtc' | 'problemCount'>>
 
@@ -82,6 +129,10 @@ export function visualFixture(
     holdEnabled: undefined as Promise<unknown> | undefined,
     /** A save is taken at once; its reply waits for this. */
     holdSaveReply: undefined as Promise<unknown> | undefined,
+    /** Types whose `type_definition` fails as if renamed since. */
+    missingTypes: new Set<string>(),
+    /** `type_definition` waits for this before it answers. */
+    holdTypeDefinition: undefined as Promise<unknown> | undefined,
   }
   const makePreview = (_graph: VisualGraph): VisualPreview => ({
     valid: !controls.invalid,
@@ -127,6 +178,11 @@ export function visualFixture(
           return { id: prior.id, saved: true, document: updated, active: controls.active, activationError: controls.active ? null : 'Fixture activation failed' }
         })
         return ok({ saved: true, deleted: !document, document, generation: controls.generation, catalog: controls.catalog, automations })
+      }
+      if (request.operation === 'type_definition') {
+        await controls.holdTypeDefinition
+        const found = controls.missingTypes.has(request.type) ? undefined : fixtureTypeDefinition(request, libraries.values())
+        return found ? ok(found) : fail('not_found', `There is no type ${request.type.replace(/global::/g, '')}; it may have been renamed or removed`)
       }
       if (request.generation && request.generation !== controls.generation) return fail('conflict', 'Saved library generation changed')
       if (controls.previewError) throw new Error('Library fixture offline')

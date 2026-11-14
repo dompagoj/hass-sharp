@@ -94,7 +94,7 @@ static class PythonNetAssemblies
     }
 
     /// <summary>
-    /// <see cref="IgnoreCollectible"/>, warning once (through <paramref name="warn"/>) when it could not be done while
+    /// <see cref="IgnoreCollectible()"/>, warning once (through <paramref name="warn"/>) when it could not be done while
     /// Python.NET hosts this runtime.
     /// </summary>
     internal static void IgnoreCollectible(Action<string> warn)

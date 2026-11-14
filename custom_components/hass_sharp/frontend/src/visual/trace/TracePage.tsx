@@ -12,6 +12,9 @@ import { media } from '../media'
 import { nodeCatalog, type ServicesSection } from '../contract'
 import { TopBar } from '../TopBar'
 import { CustomCodeEditor } from '../CustomCodeEditor'
+import { libraryApi } from '../library-api'
+import { TypeDefinitions } from '../typeDefinition'
+import { useHass } from '../../context'
 import type { RunStatus, RunTraceResponse, TraceEvent } from '../../types'
 import { Timeline } from './Timeline'
 import { runDuration, runTime, TraceInspector } from './TraceInspector'
@@ -49,7 +52,10 @@ export function TracePage(props: {
   onRetry?(): void
   /** The live services section (C4): names service fields and their options when the stored snapshot has no schema. */
   services?: ServicesSection
+  /** Opens a node library file at a line (a type's definition was declared there); not offered without it. */
+  onOpenLibrary?(id: string, line?: number): void
 }) {
+  const hass = useHass()
   let root!: HTMLElement
   let flow: FlowControls | undefined
   const run = () => props.response.run
@@ -226,6 +232,9 @@ export function TracePage(props: {
       on:keyup={event => event.stopPropagation()}
       on:focusin={event => (retryFocused = !!(event.target as Element).closest?.('.hs-trace-paused__retry'))}
     >
+      {/* A type's definition: a Custom C# node's own type from the code this run used, a library type as it is now. */}
+      <TypeDefinitions run load={(type, code) => libraryApi(hass).typeDefinition(type, code)} graph={graph} catalog={catalog}
+        onOpenLibrary={props.onOpenLibrary}>
       <TopBar
         name={name()}
         onBack={() => props.onBack()}
@@ -353,6 +362,7 @@ export function TracePage(props: {
       <Show when={codeNode() && codeNodeId()} keyed>
         {_id => <CustomCodeEditor node={codeNode()!} catalog={catalog()} readOnly onClose={() => setCodeNodeId(undefined)} />}
       </Show>
+      </TypeDefinitions>
     </section>
   )
 }

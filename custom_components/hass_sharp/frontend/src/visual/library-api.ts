@@ -17,6 +17,19 @@ export interface CustomPreview { valid: boolean; diagnostics: LibraryDiagnostic[
 /** A language-service reply about a Custom C# node's code: `id` is the node's id; definitions in its code name `$custom`. */
 export interface CustomReply<T> { id: string; workspaceVersion: string; generation: string; saved: false; data: T }
 export const customDocumentId = '$custom'
+/**
+ * The C# definition of a type (`type_definition`): `source` is the declaration as written in a node library or a
+ * Custom C# node's code (`line` is where it starts there), `metadata` one rebuilt from HassSharp's assembly.
+ */
+export interface TypeDefinition {
+  name: string
+  kind: 'source' | 'metadata'
+  text: string
+  origin: { library?: string; file?: string; nodeId?: string; assembly?: string }
+  line?: number
+  /** Cut at 64 KiB. */
+  truncated?: boolean
+}
 export interface LibraryActivation { id: string; saved: true; document: VisualDocument; active: boolean; activationError: string | null }
 /** An automation a library save did not rebuild, because it already had errors; `message` says whether it still runs. */
 export interface LibraryNotRebuilt { id: string; name?: string | null; running: boolean; message: string }
@@ -49,6 +62,8 @@ export function libraryApi(hass: Pick<HomeAssistant, 'callWS'>) {
     customSignature: (code: CustomCode, position: number) => custom<LibrarySignatureHelp>('signature', code, position),
     customDefinition: (code: CustomCode, position: number) => custom<LibraryDefinition[]>('definition', code, position),
     customFormat: (code: CustomCode) => custom<string>('format', code),
+    /** A type a Custom C# node declares is read from that node's code (`code`), compiled beside the saved libraries. */
+    typeDefinition: (type: string, code?: { nodeId: string; source: string }) => request<TypeDefinition>('type_definition', { type, ...(code ?? {}) }),
     list: () => request<{ documents: LibraryDocument[]; generation: string }>('list'),
     read: (id: string) => request<LibraryDocument>('read', { id }),
     catalog: () => request<LibraryPreview & { generation: string; saved: true }>('catalog'),
@@ -64,4 +79,6 @@ export function libraryApi(hass: Pick<HomeAssistant, 'callWS'>) {
 }
 export type LibraryApi = ReturnType<typeof libraryApi>
 export interface LibraryValidationDetail { diagnostics?: LibraryDiagnostic[]; automations?: { id: string; name?: string | null; diagnostics: VisualDiagnostic[] }[] }
+/** The node library view with a file open at a line (`?file=<id>&line=<n>`), as a type's "Open in library" goes there. */
+export const libraryHref = (id: string, line?: number) => `/libraries?file=${encodeURIComponent(id)}${line ? `&line=${line}` : ''}`
 export const librariesChanged = () => window.dispatchEvent(new Event('hass-sharp-libraries-changed'))

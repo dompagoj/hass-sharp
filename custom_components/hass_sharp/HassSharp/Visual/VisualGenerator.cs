@@ -228,6 +228,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     public JsonObject DeriveSignatures(JsonObject graph,VisualCatalogSnapshot snapshot,out List<VisualDiagnostic> removed) {
         var warnings=new List<VisualDiagnostic>();removed=warnings;
         var next=(JsonObject)graph.DeepClone();
+        // A graph of the wrong shape or past the size limits is the validator's to answer: nothing of it is compiled.
+        if(!Buildable(snapshot.Root,graph))return next;
         if(snapshot.Compilation==null)snapshot=new NodeLibraryCompiler(diagnostics).Preview(snapshot.Sources).Snapshot.WithServices(snapshot.Services);
         var compiled=WithCustom(next,snapshot,ServiceCalls());
         var edges=next["edges"] as JsonArray;
@@ -251,6 +253,11 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         }
         return next;
     }
+    /// <summary>
+    /// Whether the graph has the nodes and edges arrays and is within the catalog's limits: otherwise the validator
+    /// answers it with <c>graph.shape</c> or <c>graph.limit</c> alone, and nothing else of it is looked at or compiled.
+    /// </summary>
+    internal static bool Buildable(JsonObject root,JsonObject graph)=>graph["nodes"] is JsonArray&&graph["edges"] is JsonArray&&!VisualNodeCatalog.OverLimit(root,graph);
     public VisualPreview Preview(JsonObject graph,VisualCatalogSnapshot snapshot)
     {
         // A descriptor from an invalid library preview is never an executable snapshot.
@@ -258,6 +265,10 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         if(snapshot.LibraryDiagnostics.Any(d=>d.Severity==3))return new(false,"",[],snapshot.LibraryDiagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
         var libraryErrors=snapshot.Compilation.GetDiagnostics().Where(d=>d.Severity==DiagnosticSeverity.Error).ToArray();
         if(libraryErrors.Length>0)return new(false,"",[],libraryErrors.Select(d=>new VisualDiagnostic("$library:"+d.Location.SourceTree?.FilePath,d.GetMessage())).ToList());
+        // A graph of the wrong shape or past the size limits gets the validator's answer (graph.shape, graph.limit) before
+        // any Custom C# code is compiled: 300 nodes of code would otherwise all compile first, and each be looked up by id
+        // among all the nodes, for an answer that does not depend on them.
+        if(!Buildable(snapshot.Root,graph))return new(false,"",[],VisualGraphValidator.Validate(graph,snapshot));
         // Custom C# nodes compile with the libraries. What their code gives is the truth: a stored signature whose pins
         // differ is an error. One that differs only in what the code does not decide for wires (words, type entries, which
         // a newer HassSharp may write differently) is refreshed from the compile and previewed (and returned) as such.

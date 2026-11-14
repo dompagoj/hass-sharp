@@ -143,6 +143,22 @@ Entity IDs can be narrowed further to one domain with the parametric type
 `entity_id:<domain>`, such as `entity_id:light`, whose values must look like
 `light.<name>`.
 
+A C# type that your code or HassSharp declares is a link in that panel: on input
+rows, output rows, a Select property's chosen property, and the values of a run's
+trace. It opens a dialog with the type's definition, which you can select and copy
+but not edit. A type from a node library shows its declaration as written there,
+with its doc comments (every part of a `partial` type, in order), and **Open in
+library** opens the file at that line. A type that a Custom C# node's code declares
+comes from the code in the editor, even code you have not applied yet, and **Edit
+code** opens it. A HassSharp type, such as `EntityStateSnapshot`, shows its public
+members and their summaries; the code inside them is not shown. In a trace, a
+node library type is shown as the library is now, which may differ from what the
+run used, and a Custom C# type comes from the code that the run used. C#'s own types
+(`bool`, `string`, `double?`, `List<…>` and the rest of the `System` namespaces) are
+plain text. In a composed type, such as `List<NodeLib.Mode>`, only the part that
+has a definition is a link. A definition longer than 64 KiB is cut off, and the
+dialog says so.
+
 Two rules come first. Any number type fits any other: `number` and every CLR
 number type (`int`, `double`, `decimal` and the rest) go into one another, and a
 value that does not fit the narrower type (2.5 for a whole number, 300 for a byte)

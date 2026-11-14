@@ -3,6 +3,7 @@ import { useBeforeLeave, useSearchParams, useParams, useNavigate } from '@solidj
 import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
 import { VisualEditor } from '../visual/VisualEditor'
+import { libraryHref } from '../visual/library-api'
 
 export function VisualAutomationView() {
   const [params, setParams] = useSearchParams()
@@ -27,6 +28,7 @@ export function VisualAutomationView() {
       // A first save, or a copy saved instead of a conflicting revision, has an id of its own.
       onSaved={doc => { if (route.id !== doc.id) navigate(`/visual/${doc.id}`, { replace: true }) }}
       onBack={() => navigate('/automations')}
+      onOpenLibrary={(id, line) => navigate(libraryHref(id, line))}
       drawer={params.drawer === 'runs' ? 'runs' : undefined}
       name={typeof params.name === 'string' && params.name.trim() ? params.name : 'Untitled visual automation'} />
     <Dialog open={!!leave()} title="Unsaved changes" width="small" onClose={() => setLeave(undefined)} footer={<>

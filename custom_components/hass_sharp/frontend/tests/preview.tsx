@@ -97,9 +97,14 @@ const typedDemo = (): Graph => {
   g = connectData(g, 'who', 'value', 'greet', 'value', catalog)
   g = connectData(g, 'me', 'result', 'gone', 'value', catalog)
   const sample = fillGraphLayout(rich.cases[0].graph as Graph)
-  return { ...g, nodes: [...g.nodes, ...sample.nodes.map((node, i) => ({ ...node, position: { x: 40 + i * 400, y: 820 } }))], edges: [...g.edges, ...sample.edges] }
+  // A Custom C# node whose code declares a record (its output type's definition is read from that code).
+  const make = (rich.cases.find(c => c.name.startsWith('custom: a record the code declares'))!.graph as Graph).nodes.find(n => n.id === 'make')!
+  return { ...g, nodes: [...g.nodes, ...sample.nodes.map((node, i) => ({ ...node, position: { x: 40 + i * 400, y: 820 } })), { ...make, position: { x: 1640, y: 820 } }], edges: [...g.edges, ...sample.edges, { id: 'consume->make', source: 'consume', target: 'make' }] }
 }
 if(typedFixture)visualBackend.controls.services = services as unknown as ServicesSection
+// The C# type links: library types, the Custom C# node's Own and EntityStateSnapshot answer; IReading answers that it
+// no longer exists, to see the dialog's error.
+visualBackend.controls.missingTypes.add('global::NodeLib.IReading')
 // For checking by eye: the stored documents and controls (a revision saved elsewhere, a refused check).
 ;(window as any).visualBackend = visualBackend
 if(typedFixture)visualBackend.documents.set('typed-demo',{version:1,id:'typed-demo',revision:1,graph:typedDemo(),source:'// Typed fixture generated on the server',sourceMap:[],automationId:'visual:typed-demo',currentRevisionActive:true,catalogGeneration:'saved-fixture'})

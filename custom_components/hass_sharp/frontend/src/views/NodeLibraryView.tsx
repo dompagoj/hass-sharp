@@ -1,5 +1,5 @@
 import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js'
-import { useBeforeLeave } from '@solidjs/router'
+import { useBeforeLeave, useSearchParams } from '@solidjs/router'
 import { useHass } from '../context'
 import { Button, Icon } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
@@ -12,17 +12,22 @@ export const NodeLibraryView = () => {
   const [dirty, setDirty] = createSignal(false)
   const [leave, setLeave] = createSignal<() => void>()
   useBeforeLeave(event => { if (dirty()) { event.preventDefault(); setLeave(() => () => event.retry(true)) } })
-  return <><NodeLibraryEditor onDirtyChange={setDirty} />
+  // `?file=<id>&line=<n>`: a type's "Open in library" opens the file it is declared in, at its line.
+  const [params] = useSearchParams()
+  const file = typeof params.file === 'string' ? params.file : undefined
+  const line = typeof params.line === 'string' && /^\d+$/.test(params.line) ? Number(params.line) : undefined
+  return <><NodeLibraryEditor onDirtyChange={setDirty} open={file ? { file, line } : undefined} />
     <Dialog open={!!leave()} title="Unsaved library files" onClose={() => setLeave(undefined)} footer={<>
       <Button onClick={() => setLeave(undefined)}>Keep editing</Button><Button variant="danger" onClick={() => { const retry = leave(); setLeave(undefined); retry?.() }}>Discard changes</Button>
     </>}><p>Leaving discards unsaved changes in all library files. Save them or download your drafts first.</p></Dialog>
   </>
 }
-export const NodeLibraryEditor = (props: { onDirtyChange?: (dirty: boolean) => void }) => {
+/** `open`: a file to show first, at a line, once the files have loaded. */
+export const NodeLibraryEditor = (props: { onDirtyChange?: (dirty: boolean) => void; open?: { file: string; line?: number } }) => {
   const hass = useHass()
   return <Show when={hass.user?.is_admin} fallback={<p class="hs-notice" role="alert">Node libraries require a Home Assistant administrator.</p>}><LibraryWorkspace {...props} /></Show>
 }
-const LibraryWorkspace = (props: { onDirtyChange?: (dirty: boolean) => void }) => {
+const LibraryWorkspace = (props: { onDirtyChange?: (dirty: boolean) => void; open?: { file: string; line?: number } }) => {
   const hass = useHass()
   const session = createLibrarySession(libraryApi(hass))
   const [fullScreen, setFullScreen] = createSignal(false)
@@ -44,6 +49,15 @@ const LibraryWorkspace = (props: { onDirtyChange?: (dirty: boolean) => void }) =
   window.addEventListener('beforeunload', beforeUnload)
   onCleanup(() => window.removeEventListener('beforeunload', beforeUnload))
   createEffect(() => props.onDirtyChange?.(session.dirty()))
+  let opened = false
+  createEffect(() => {
+    const open = props.open
+    if (!open || opened || !session.files().some(file => file.id === open.file)) return
+    opened = true
+    session.select(open.file)
+    // Once the editor shows the file.
+    if (open.line) setTimeout(() => navigateRange?.({ start: 0, length: 0, startLine: open.line!, startColumn: 1, endLine: open.line!, endColumn: 1 }), 0)
+  })
   return <section class="hs-node-library" classList={{ 'hs-node-library--fullscreen': fullScreen() }} aria-label="Node library">
     <header class="hs-library-heading"><div><p class="hs-eyebrow">REUSABLE C#</p><h1>Node library</h1></div>
       <div class="hs-library-tools"><Button onClick={() => setFullScreen(!fullScreen())}>{fullScreen() ? 'Exit full screen' : 'Full screen'}</Button></div>

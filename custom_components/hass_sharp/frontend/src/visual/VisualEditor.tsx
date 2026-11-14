@@ -27,6 +27,8 @@ import { soon } from './soon'
 import { createNotice, TopBar } from './TopBar'
 import { CodeLeftBehind, CustomCodeEditor } from './CustomCodeEditor'
 import { applyCustomCode } from './customCode'
+import { libraryApi } from './library-api'
+import { TypeDefinitions } from './typeDefinition'
 
 export type DrawerTab = 'problems' | 'code' | 'runs'
 /** Focus is where keys mean text or a choice in a list: the page's shortcuts leave those keys alone. */
@@ -51,6 +53,8 @@ export function VisualEditor(props: {
   drawer?: DrawerTab
   /** Receives what discards the unsaved changes' draft, for leaving without saving. */
   discardRef?: (discard: () => void) => void
+  /** Opens a node library file at a line (a type's definition was declared there); not offered without it. */
+  onOpenLibrary?: (id: string, line?: number) => void
 }) {
   const hass = useHass()
   // Unapplied code counts as unsaved: a revision saved elsewhere is then never reloaded over it.
@@ -437,6 +441,8 @@ export function VisualEditor(props: {
       on:keydown={keyboard}
       on:keyup={event => event.stopPropagation()}
     >
+      <TypeDefinitions load={(type, code) => libraryApi(hass).typeDefinition(type, code)} graph={graph} catalog={session.catalog}
+        onOpenLibrary={props.onOpenLibrary} onEditCode={editCode}>
       <TopBar
         name={graph().name}
         onRename={(name, options) => commit({ ...graph(), name }, options)}
@@ -649,6 +655,7 @@ export function VisualEditor(props: {
         )}
       </Show>
       <CodeLeftBehind source={orphanCode()} onClose={() => setOrphanCode(undefined)} />
+      </TypeDefinitions>
     </section>
   )
 }

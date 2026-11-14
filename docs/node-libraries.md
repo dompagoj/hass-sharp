@@ -132,6 +132,21 @@ shows both on every pin row, such as "True/False · `bool`"):
 The mapping goes one way: a `string` parameter takes an Entity value, but a `string`
 result is Text and needs a Convert node to go into an Entity input (see above).
 
+**Definitions.** Each type a node library declares is a link wherever a pin carries
+it: on the editor's input and output rows, as a Select property's chosen property,
+and in a run's trace. The link opens the declaration exactly as you wrote it in
+the library, with its doc comments and attributes. A `partial` type shows all of
+its parts, in file order. The dialog names the file, and **Open in library** opens
+the file at the declaration. The same holds for types that a Custom C# node's code
+declares, read from that node's code. HassSharp's own types show their public
+signatures and `<summary>` text, taken from the documentation file that ships with
+HassSharp. Backends and tools can ask for a definition with the `node_library`
+operation `type_definition` and `{type, nodeId?, source?}`. To ask for a Custom C#
+node's type, send that node's id and code. The reply is `{name, kind, text, origin,
+line?, truncated?}`; `kind` is `source` or `metadata`. An unknown type answers
+`not_found`. C#'s own types answer `invalid_request`, as do types from other
+assemblies.
+
 ## States and services
 
 An entity reaches node code through a pin: a `string` entity ID, or an

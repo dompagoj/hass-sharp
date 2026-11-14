@@ -145,10 +145,12 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         {
             foreach (var declared in (only ?? into.Values).ToArray())
             {
+                // A supertype nested deeper than a pin may be is left out, as a member of such a type is: comparing it
+                // for conversions would take as long as a pin of that depth.
                 foreach (var contract in declared.AllInterfaces)
-                    if (!Unsupported(contract) && compilation.IsSymbolAccessibleWithin(contract, compilation.Assembly)) into.TryAdd(TypeIdentity(contract), contract);
+                    if (!Unsupported(contract) && !TooDeep(contract) && compilation.IsSymbolAccessibleWithin(contract, compilation.Assembly)) into.TryAdd(TypeIdentity(contract), contract);
                 for (var baseType = declared.BaseType; baseType != null; baseType = baseType.BaseType)
-                    if (!Unsupported(baseType) && compilation.IsSymbolAccessibleWithin(baseType, compilation.Assembly)) into.TryAdd(TypeIdentity(baseType), baseType);
+                    if (!Unsupported(baseType) && !TooDeep(baseType) && compilation.IsSymbolAccessibleWithin(baseType, compilation.Assembly)) into.TryAdd(TypeIdentity(baseType), baseType);
             }
         }
         foreach (var (id, descriptor) in root["types"]!.AsObject())
@@ -330,7 +332,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                     {
                         var entry = new JsonObject();
                         var supertypes = symbol.AllInterfaces.Cast<ITypeSymbol>().Concat(BaseTypes(symbol))
-                            .Where(t => !Unsupported(t) && compilation.IsSymbolAccessibleWithin(t, compilation.Assembly))
+                            .Where(t => !Unsupported(t) && !TooDeep(t) && compilation.IsSymbolAccessibleWithin(t, compilation.Assembly))
                             .Select(t => KeyValuePair.Create(TypeIdentity(t), t)).Where(pair => !generation.Any(g => g.Key == pair.Key)).DistinctBy(pair => pair.Key);
                         DescribeType(entry, symbol, generation.Concat(supertypes), compilation);
                         entry["assignableFrom"] = new JsonArray(generation.Where(pair => pair.Key != id && VisualCatalogSnapshot.StandardConversion(compilation, pair.Value, symbol))

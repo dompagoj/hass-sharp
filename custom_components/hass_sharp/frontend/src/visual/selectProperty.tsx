@@ -2,6 +2,7 @@ import { createEffect, createMemo, createUniqueId, For, Show } from 'solid-js'
 import { analyzeGraph, connectable, dataInputs, dataOutputs, typeProperties, wireTypeError, words, type GraphNode, type PropertySpec, type VisualCatalogSnapshot } from './contract'
 import { graphTypes } from './connectionIndex'
 import { csharpType } from './csharpType'
+import { CSharpTypeText } from './typeDefinition'
 import { removeEdge, updateNode, type VisualGraph } from './graph'
 import { typeLabel } from './typeLabels'
 import { SearchSelect } from './widgets/SearchSelect'
@@ -135,11 +136,10 @@ export function PropertyPicker(props: {
       </Show>
       <Show when={!props.compact && chosen()}>
         {property => {
-          const csharp = () => csharpType(property().type, types())
           return (
             <p class="hs-select-property__type">
               <span>{typeLabel(property().type, types())}{property().nullable ? ', may be empty' : ''}</span>
-              <Show when={csharp()}>{text => <><span class="hs-visually-hidden">, C# type </span><code class="hs-csharp-type">{text()}</code></>}</Show>
+              <CSharpTypeText types={[property().type]} catalog={types()} />
               <Show when={property().description}>{text => <small class="hs-field-hint">{text()}</small>}</Show>
             </p>
           )

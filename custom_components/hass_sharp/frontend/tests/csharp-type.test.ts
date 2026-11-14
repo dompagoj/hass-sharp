@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
 import { nodeCatalog, type VisualCatalogSnapshot } from '../src/visual/contract'
-import { csharpType, csharpTypes } from '../src/visual/csharpType'
+import { csharpType, csharpTypeParts, csharpTypes, hasDefinition } from '../src/visual/csharpType'
 
 const catalog = rich.catalog as unknown as VisualCatalogSnapshot
 
@@ -90,4 +90,61 @@ it('writes a parametric entity type as its root, the nullable flag as ?, and not
 
 it('names each C# type of several types once, in order', () => {
   expect(csharpTypes(['target', 'entity_id', 'entity_id:light', 'unknown'], nodeCatalog)).toEqual(['JsonObject', 'string'])
+})
+
+/** The links of a type's C# text: [text, the type id it asks for]. */
+const links = (id: string, types: VisualCatalogSnapshot = catalog) => (csharpTypeParts(id, types) ?? []).filter(p => p.type).map(p => [p.text, p.type])
+
+// Which part of each type of the rich catalog is a link to its definition: library, Custom C# and HassSharp types only.
+const linked: Record<string, string[][]> = {
+  'global::HassSharp.EntityStateSnapshot': [['EntityStateSnapshot', 'global::HassSharp.EntityStateSnapshot']],
+  'global::NodeLib.Reading': [['NodeLib.Reading', 'global::NodeLib.Reading']],
+  'global::NodeLib.IReading': [['NodeLib.IReading', 'global::NodeLib.IReading']],
+  'global::NodeLib.Mode': [['NodeLib.Mode', 'global::NodeLib.Mode']],
+  'global::NodeLib.Profile': [['NodeLib.Profile', 'global::NodeLib.Profile']],
+  // A nullable reference: the type it may hold is the link, the ? is not.
+  'global::NodeLib.Reading?': [['NodeLib.Reading', 'global::NodeLib.Reading']],
+  // A System interface of a library type: only the library type is a link.
+  'global::System.IEquatable<global::NodeLib.Reading>': [['NodeLib.Reading', 'global::NodeLib.Reading']],
+  'global::System.IEquatable<global::NodeLib.Profile>': [['NodeLib.Profile', 'global::NodeLib.Profile']],
+}
+
+it('links, over every type of the rich catalog, exactly the parts that name a library, Custom C# or HassSharp type', () => {
+  for (const id of Object.keys(catalog.types)) expect(links(id), id).toEqual(linked[id] ?? [])
+  // The pieces always read as the plain C# type.
+  for (const id of Object.keys(catalog.types)) expect(csharpTypeParts(id, catalog)!.map(p => p.text).join(''), id).toBe(csharpType(id, catalog))
+})
+
+it.each([
+  // C#'s keywords and the System namespaces are never links, alone or composed.
+  ['boolean', []],
+  ['entity_id:light', []],
+  ['target', []],
+  ['global::System.Collections.Generic.List<global::System.String>', []],
+  ['global::System.Text.Json.JsonElement', []],
+  ['global::Microsoft.Extensions.Primitives.StringValues', []],
+  // Composed: only the part that qualifies.
+  ['global::NodeLib.Mode[]', [['NodeLib.Mode', 'global::NodeLib.Mode']]],
+  ['global::System.Collections.Generic.List<global::NodeLib.Person>', [['NodeLib.Person', 'global::NodeLib.Person']]],
+  ['global::System.Nullable<global::NodeLib.Point>', [['NodeLib.Point', 'global::NodeLib.Point']]],
+  ['global::NodeLib.Point?', [['NodeLib.Point', 'global::NodeLib.Point']]],
+  ['global::System.Collections.Generic.Dictionary<global::System.String, global::NodeLib.Mode?>', [['NodeLib.Mode', 'global::NodeLib.Mode']]],
+  ['(global::NodeLib.Mode Mode, global::System.Double Value)', [['NodeLib.Mode', 'global::NodeLib.Mode']]],
+  // A generic library type: its name asks for the whole constructed type; its arguments are links of their own.
+  ['global::NodeLib.Box<global::System.String>', [['NodeLib.Box', 'global::NodeLib.Box<global::System.String>']]],
+  ['global::NodeLib.Box<global::NodeLib.Mode>', [['NodeLib.Box', 'global::NodeLib.Box<global::NodeLib.Mode>'], ['NodeLib.Mode', 'global::NodeLib.Mode']]],
+  // A Custom C# node's own type, written without its namespace, asks for its full id.
+  ['global::NodeLib.Custom_make2.Reading', [['Reading', 'global::NodeLib.Custom_make2.Reading']]],
+  ['global::HassSharp.ServiceCalls.LightServices', [['HassSharp.ServiceCalls.LightServices', 'global::HassSharp.ServiceCalls.LightServices']]],
+])('links in %s: %j', (id, expected) => {
+  expect(links(id)).toEqual(expected)
+})
+
+it('decides by the namespace: NodeLib and HassSharp have definitions, keywords and System do not', () => {
+  expect(hasDefinition('global::NodeLib.Mode')).toBe(true)
+  expect(hasDefinition('NodeLib.Custom_x.Reading')).toBe(true)
+  expect(hasDefinition('HassSharp.EntityStateSnapshot')).toBe(true)
+  expect(hasDefinition('global::NodeLib.@class')).toBe(true)
+  for (const id of ['System.String', 'global::System.Text.Json.Nodes.JsonObject', 'System', 'NodeLib', 'HassSharpish.Thing', 'Microsoft.Thing', 'bool', 'Mode'])
+    expect(hasDefinition(id), id).toBe(false)
 })

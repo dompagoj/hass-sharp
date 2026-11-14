@@ -523,9 +523,9 @@ export const words = {
     const names = [...new Set(expected.map(t => apart.get(t) ?? typeLabel(t, catalog)))], given = apart.get(type)!
     return names.length > 0 && names.length <= 4 ? `${subject} accepts ${words.or(names)}, not ${given}` : `${subject} does not accept ${given}`
   },
-  /** A wire from a Select property node whose property is not chosen yet: its value has no type. */
   /** A value typed into an input that takes a wire only (a Select property node's value): a record, class or struct comes from a step. */
   wireOnly: (step: string) => `Connect a value to ${step}; nothing can be typed in here`,
+  /** A wire from a Select property node whose property is not chosen yet: its value has no type. */
   chooseProperty: (step: string) => `Choose a property in ${step} to use its value`,
   /** A Select property node with a value connected and no property chosen. */
   propertyUnset: (type: string) => `Choose a property of ${type}`,

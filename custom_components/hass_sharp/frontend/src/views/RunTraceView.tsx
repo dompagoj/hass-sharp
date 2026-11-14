@@ -6,6 +6,7 @@ import { Button } from '../components/Controls'
 import { useHass } from '../context'
 import type { RunTraceResponse } from '../types'
 import { visualApi, visualError } from '../visual/api'
+import { libraryHref } from '../visual/library-api'
 import { sharePoll } from '../visual/trace/poll'
 import { TracePage } from '../visual/trace/TracePage'
 
@@ -85,6 +86,7 @@ export function RunTraceView() {
             retrying={trace.isError && trace.isFetching}
             onRetry={() => void trace.refetch()}
             services={services.data ? unwrap(services.data) : undefined}
+            onOpenLibrary={(id, line) => navigate(libraryHref(id, line))}
           />
         )}
       </Match>

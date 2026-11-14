@@ -185,7 +185,8 @@ public partial class HassSharpManager
     internal static List<VisualDiagnostic> UnknownEntities(JsonObject graph, VisualCatalogSnapshot snapshot, Func<string, HasEntityState?>? lookup)
     {
         var warnings = new List<VisualDiagnostic>();
-        if (lookup == null) return warnings;
+        // A graph the validator refuses whole (wrong shape, past the size limits) is not walked.
+        if (lookup == null || !VisualGenerator.Buildable(snapshot.Root, graph)) return warnings;
         var root = VisualNodeCatalog.WithGraphTypes(snapshot.Root, graph);
         var known = new Dictionary<string, bool>(StringComparer.Ordinal);
         var unavailable = false;

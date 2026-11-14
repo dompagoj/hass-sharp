@@ -3,7 +3,8 @@ import { Menu, type MenuItem } from '../components/Menu'
 import { ServiceFields } from './ServiceFields'
 import { retypeTriggerNode, TriggerAdvanced, TriggerConfig } from './TriggerConfig'
 import { Glyph } from './Glyph'
-import { CSharpType, Errors, focusRow, InputRow, type RowContext } from './InputRow'
+import { Errors, focusRow, InputRow, type RowContext } from './InputRow'
+import { CSharpTypeText } from './typeDefinition'
 import { csharpType } from './csharpType'
 import { ArrayItems, Branches, Declarations, ObjectFields, type StructureContext } from './StructureEditors'
 import { buildNodeView } from './flow/flowModel'
@@ -299,6 +300,7 @@ export function NodeConfig(props: NodeConfigProps) {
                 const pin = () => outputs().find(p => p.id === pinId)!
                 const descId = createUniqueId()
                 const csharp = () => (pin().typeId ? csharpType(pin().typeId!, types()) : undefined)
+                const csharpIds = () => (pin().typeId ? [pin().typeId!] : [])
                 // The canvas pin's name, with the C# type after the friendly one: "Output Result, True/False, C# type bool, connected".
                 const name = () => [`Output ${pin().label}`, pin().typeName, csharp() && `C# type ${csharp()}`, pin().connected ? 'connected' : 'not connected'].filter(Boolean).join(', ')
                 return (
@@ -308,7 +310,7 @@ export function NodeConfig(props: NodeConfigProps) {
                       <span class="hs-insp-output__name">{pin().label}</span>
                       <span class="hs-insp-output__type" title={csharp() ? `Type: ${pin().typeName} · C#: ${csharp()}` : undefined}>
                         <span class="hs-insp-output__friendly">{pin().typeName}</span>
-                        <Show when={csharp()}>{text => <CSharpType text={text()} />}</Show>
+                        <CSharpTypeText types={csharpIds()} catalog={types()} />
                       </span>
                       <Show when={pin().description}><small id={descId} class="hs-insp-output__desc">{pin().description}</small></Show>
                     </li>

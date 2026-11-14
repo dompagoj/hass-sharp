@@ -6,6 +6,10 @@
         <Nullable>enable</Nullable>
         <WarningsAsErrors>Nullable</WarningsAsErrors>
         <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+        <!-- HassSharp.xml beside the assembly: the summaries a type's definition shows in the editor (TypeDefinitions.cs).
+             Members without a doc comment, or with parameters it does not describe, are not reported. -->
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>
