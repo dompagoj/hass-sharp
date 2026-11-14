@@ -13,9 +13,13 @@ export interface Graph { version: 5; name: string; nodes: GraphNode[]; edges: Gr
 /** `code` names structural kinds (see `diagnosticCodes`), the same in both validators; other diagnostics have none. */
 export interface GraphDiagnostic { nodeId: string | null; message: string; severity: number; inputId?: string; portId?: string; code?: DiagnosticCode }
 export interface ConfigSpec { label?: string; description?: string; type: string; required?: boolean; default?: unknown; enum?: unknown[]; enumSource?: 'types'; min?: number; max?: number; pattern?: string; format?: 'date-time-offset'; minItems?: number; maxItems?: number }
-/** Constraints (enum, pattern, minItems, maxItems, min, max, integer) apply to literal operands only; wires are constrained by type. */
+/**
+ * Constraints (enum, pattern, minItems, maxItems, min, max, integer) apply to literal operands only; wires are constrained by type.
+ * `connectable: false` marks an input that takes a value only (a Constant's value): it has no pin, and a wire into it is
+ * refused as into an input the step does not have.
+ */
 export interface InputSpec {
-  nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description?: string; default?: unknown; min?: number; max?: number; integer?: boolean
+  connectable?: boolean; nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description?: string; default?: unknown; min?: number; max?: number; integer?: boolean
   enum?: JsonValue[]; enumLabels?: string[]; pattern?: string; minItems?: number; maxItems?: number; step?: number; unit?: string
   selector?: Record<string, unknown>; advanced?: boolean; section?: string | null; example?: JsonValue
 }
@@ -333,9 +337,28 @@ export const targetKeyMessage = (key: string) => `Target can only contain entity
  */
 /** JavaScript's whitespace, spelled out so `VisualGraphValidator.Words.Name` trims the very same characters. */
 const blankEnds = /^[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g
+const youSound = ['uni', 'use', 'usa', 'usu', 'uti', 'ura', 'ure', 'uri', 'uro', 'ubi']
 export const words = {
   /** A key or value people did not name, in words: `needs_action` → `Needs action`; never empty. */
   key: (key: string) => { const w = domainWords(key); return w.replace(blankEnds, '') ? w : 'Unnamed' },
+  /** "a" or "an" before a word, by its first sound: an input boolean entity, an update entity, a utility meter entity, a European one. */
+  article: (word: string) => {
+    const w = word.toLowerCase()
+    if (w.startsWith('eu') || w.startsWith('one')) return 'a'
+    if (/^[aeio]/.test(w)) return 'an'
+    return w.startsWith('u') && !youSound.some(p => w.startsWith(p)) ? 'an' : 'a'
+  },
+  /** A service as people know it: the name its description gives, else its key in words (`set_hvac_mode` → `Set hvac mode`), as the editor names it. */
+  serviceName: (schema: ServiceSchema, service: string) => {
+    const key = service.slice(service.indexOf('.') + 1)
+    const name = text(schema.name).replace(blankEnds, '')
+    return name && name !== key ? name : words.key(key)
+  },
+  /** A time of day as the daily trigger runs it: 24-hour HH:MM. */
+  timeOfDay: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$',
+  timeOfDayMessage: (label: string) => `${label} must be a time of day as HH:MM, from 00:00 to 23:59`,
+  /** A Get field path with a ~ that is not ~0 or ~1. */
+  pathTilde: 'Path has a ~ that is not followed by 0 or 1; inside a name, write ~0 for a ~ and ~1 for a /, such as /data/on~1off for the name on/off',
   /**
    * A step as people see it on the canvas: its own label, else (for a Custom C# node) its method's title, else its
    * kind's catalog label, else its kind in words.
@@ -419,9 +442,31 @@ export const inputSubject = (node: GraphNode, spec: InputSpec | undefined, port:
   const service = serviceName(node, catalog)
   return (service ? service + ': ' : '') + words.portLabel(spec, port)
 }
+/** A service as people know it: its name where the services section describes it, else its id; undefined for other nodes. */
+const serviceTitle = (node: GraphNode, catalog: VisualCatalogSnapshot) => {
+  const service = serviceName(node, catalog), schema = serviceSchema(node, catalog)
+  return service && schema ? words.serviceName(schema, service) : service
+}
+/**
+ * The message for a wire into a service's target that brings an entity of a domain the service does not take, worded
+ * as the value case is; undefined for any other mismatch. Mirrors `VisualGraphValidator` `WrongDomain`.
+ */
+function wrongDomain(node: GraphNode, port: string, type: string, catalog: VisualCatalogSnapshot): string | undefined {
+  const schema = port === 'target' && serviceName(node, catalog) ? serviceSchema(node, catalog) : undefined
+  const domains = schema ? serviceTargetDomains(schema) : []
+  if (!domains.length) return
+  const entity = /^entity_id:([a-z0-9_]+)$/.exec(type)
+  let carried: string
+  if (type === 'entity_id') carried = 'can be any entity'
+  else if (entity) { const named = `${domainWords(entity[1]).toLowerCase()} entity`; carried = `is ${words.article(named)} ${named}` }
+  else return
+  return `${serviceTitle(node, catalog)} only accepts ${words.or(domains.map(d => domainWords(d).toLowerCase()))} entities; the connected value ${carried}`
+}
+/** The input when a wire may go into it: undefined for an input that takes a value only (`connectable: false`). */
+export const connectable = (input: InputSpec | undefined) => input?.connectable === false ? undefined : input
 /** The error a data wire into `port` gets when its type is not accepted there; shared with the connection index. */
 export const incompatibleInput = (node: GraphNode, spec: InputSpec, port: string, type: string, catalog: VisualCatalogSnapshot = nodeCatalog) =>
-  words.incompatible(inputSubject(node, spec, port, catalog), type, spec.types, catalog)
+  wrongDomain(node, port, type, catalog) ?? words.incompatible(inputSubject(node, spec, port, catalog), type, spec.types, catalog)
 /**
  * The target rules of a service node, mirrored by `VisualGraphValidator.TargetRules`; `connected` says which inputs
  * are wired. A target the service does not take is an error (with services only). A target value holds only
@@ -656,7 +701,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   for (const edge of data) {
     origin = { kind: 'edge', edge: dataIndex.get(edge)! }
     const source = nodes.get(edge.source)!, target = nodes.get(edge.target)!
-    const output = dataOutputs(source)[edge.sourcePort], input = dataInputs(target, ownerOf(target))[edge.targetPort]
+    const output = dataOutputs(source)[edge.sourcePort], input = connectable(dataInputs(target, ownerOf(target))[edge.targetPort])
     if (!output) error(source.id, 'Unknown data output port', undefined, edge.sourcePort, 'port.unknownOutput')
     if (!input) error(target.id, words.unknownInput(edge.targetPort), edge.targetPort, edge.targetPort, 'port.unknownInput')
     if (incoming.has(key(target.id, edge.targetPort))) error(target.id, 'Only one data source per input', edge.targetPort, edge.targetPort, 'port.inputTaken')
@@ -684,7 +729,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (edge) return dataOutputs(nodes.get(edge.source)!)[edge.sourcePort]?.type
     if (raw === undefined && !spec.required) return
     const label = words.portLabel(spec, port), subject = inputSubject(node, spec, port, catalog), service = serviceName(node, catalog)
-    if (!record(raw) || raw.kind === 'unset') { if (spec.required) error(node.id, service ? `${service} needs a value for ${label}` : `${label} is required`, port, port); else if (raw !== undefined && !record(raw)) error(node.id, `${subject} has an invalid value`, port, port); return }
+    if (!record(raw) || raw.kind === 'unset') { if (spec.required) error(node.id, service ? `${serviceTitle(node, catalog)} needs ${label}` : `${label} is required`, port, port); else if (raw !== undefined && !record(raw)) error(node.id, `${subject} has an invalid value`, port, port); return }
     let type: string | undefined
     if (raw.kind === 'variable') { error(node.id, words.variable(subject), port, port); return }
     if (raw.kind === 'literal') {
@@ -719,8 +764,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       if (spec.pattern && typeof v === 'string' && !formatted(node.id, subject, v, spec.pattern, port)) error(node.id, `${subject} is not in the expected format`, port)
       if (Array.isArray(v) && ((spec.minItems !== undefined && v.length < spec.minItems) || (spec.maxItems !== undefined && v.length > spec.maxItems))) error(node.id, `${subject} must have ${words.items(spec.minItems, spec.maxItems)}`, port)
     } else error(node.id, `${subject} has an invalid value`, port)
-    // A value of unknown type was reported above; it is not also a mismatch.
-    if (type && knownType(type) && !spec.types.some(t => isAssignable(type!, t))) error(node.id, words.incompatible(subject, type, spec.types, catalog), port)
+    // A value of unknown type was reported above; it is not also a mismatch. Nor is a value for an input that accepts no
+    // known type (a Constant whose Type is missing or unknown): that is reported where the type is set.
+    if (type && knownType(type) && spec.types.some(knownType) && !spec.types.some(t => isAssignable(type!, t))) error(node.id, words.incompatible(subject, type, spec.types, catalog), port)
     return type
   }
   // Memoize by the full analysis context. Shared successors are visited once,
@@ -752,7 +798,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     const known = record(schema.fields) ? schema.fields : {}
     const fields = record(node.config.fields) ? node.config.fields : {}
     for (const name of Object.keys(fields)) if (!Object.hasOwn(known, name)) error(node.id, `${service} has no field ${words.name(name)}`, `field:${name}`)
-    for (const [name, field] of Object.entries(known)) if (record(field) && field.required === true && !Object.hasOwn(fields, name)) error(node.id, `${service} needs a value for ${words.portLabel(field, name)}`, 'fields')
+    for (const [name, field] of Object.entries(known)) if (record(field) && field.required === true && !Object.hasOwn(fields, name)) error(node.id, `${serviceTitle(node, catalog)} needs ${words.portLabel(field, name)}`, 'fields')
     const wired = incoming.has(key(node.id, 'target')), target = node.config.target
     const response = text(schema.response, 'none'), returnResponse = node.config.returnResponse === true
     if (returnResponse && response === 'none') error(node.id, `${service} returns no response; turn off Return response`, 'returnResponse')
@@ -765,7 +811,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     origin = { kind: 'serviceTarget', node: node.id }
     for (const entity of entities)
       if (typeof entity === 'string' && entity !== 'all' && entity !== 'none' && !domains.includes(entity.split('.')[0]))
-        error(node.id, `${service} only accepts ${accepted} entities; ${words.name(entity)} is not ${entity.indexOf('.') > 0 ? 'one' : 'an entity'}`, 'target')
+        error(node.id, `${serviceTitle(node, catalog)} only accepts ${accepted} entities; ${words.name(entity)} is not ${entity.indexOf('.') > 0 ? 'one' : 'an entity'}`, 'target')
     origin = graphOrigin
   }
   for (const node of nodes.values()) {
@@ -813,6 +859,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       const type = node.config.type ?? spec.config.type.default
       const required = type === 'ha' ? ['trigger'] : type === 'entity' ? ['entity'] : type === 'daily' ? ['time','timeZone'] : type === 'once' ? ['at'] : []
       for (const field of required) if (node.config[field] === undefined || node.config[field] === '') error(node.id, `${configLabel(spec.config[field], field)} is required`, field)
+      // The generator reads a daily time as exactly HH:MM.
+      if (type === 'daily' && typeof node.config.time === 'string' && node.config.time !== '' && !matches(node.config.time, words.timeOfDay)) error(node.id, words.timeOfDayMessage(configLabel(spec.config.time, 'time')), 'time')
       if (type === 'ha' && record(node.config.trigger) && ![node.config.trigger.trigger, node.config.trigger.platform].some(p => typeof p === 'string' && p.trim())) error(node.id, 'Home Assistant trigger needs a platform', 'trigger')
       if (Object.hasOwn(node.config, 'entitiesExpression')) error(node.id, words.entitiesExpression, 'entitiesExpression')
       if (Object.hasOwn(node.config, 'schedulesExpression')) error(node.id, words.schedulesExpression, 'schedulesExpression')
@@ -820,7 +868,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (['entity_field','wait_until'].includes(node.kind) && node.config.field === 'attribute' && (typeof node.config.attribute !== 'string' || !node.config.attribute.trim())) error(node.id, 'Attribute is required', 'attribute')
     // A path that starts with / can still be wrong in one way: a ~ that is not ~0 (a ~ in a key) or ~1 (a / in a key).
     if (node.kind === 'get_field' && (typeof node.config.pointer !== 'string' || !/^(?:\/(?:[^~]|~[01])*)*$/.test(node.config.pointer)))
-      error(node.id, typeof node.config.pointer === 'string' && node.config.pointer.startsWith('/') ? 'Path can use ~ only as ~0 for a ~ or ~1 for a / in a name' : 'Path must start with /, such as /state', 'pointer')
+      error(node.id, typeof node.config.pointer === 'string' && node.config.pointer.startsWith('/') ? words.pathTilde : 'Path must start with /, such as /state', 'pointer')
     if (node.kind === 'parallel' && Array.isArray(node.config.branches)) {
       const ids = new Set<string>()
       for (const branch of node.config.branches) {
@@ -835,7 +883,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         for (const decl of declarations(node, group)) {
           if (!record(decl) || typeof decl.name !== 'string' || !matches(decl.name, catalog.structures.loopDeclaration.name.pattern) || names.has(decl.name) || typeof decl.type !== 'string' || !knownType(decl.type)) { error(node.id, `The ${group === 'carry' ? 'carried' : 'exported'} values of this loop need unique names and known types`, group); continue }
           names.add(decl.name)
-          operand(node, `${group}.${decl.name}.initial`, decl.initial, { types: [decl.type], required: true, description: 'Starting value', label: `Initial ${decl.name}` })
+          operand(node, `${group}.${decl.name}.initial`, decl.initial, { types: [decl.type], required: true, description: 'Starting value', label: `Starting value of ${decl.name}` })
         }
       }
       if (['while','until'].includes(node.kind)) {

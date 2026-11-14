@@ -109,13 +109,19 @@ public static class NodeLibraryTests
         }
         var sourceError = compiler.Preview([new("broken", "public static class Broken {\n [Node(\"Bad\")] public static Missing Bad() => null;\n}", 1)]);
         Check(!sourceError.Valid && sourceError.Diagnostics.Any(d => d.SourceId == "broken" && d.StartLine == 2), "mapped compiler errors");
-        var passThrough = VisualGraphContract.CreateNode("constant", "passthrough", snapshot);
-        passThrough["config"]!["type"] = "global::NodeLib.Reading";
-        var richGraph = (JsonObject)graph.DeepClone();
-        richGraph["nodes"]!.AsArray().Add(passThrough);
-        richGraph["edges"]!.AsArray().Add(JsonNode.Parse("""{"id":"d2","kind":"data","source":"custom","sourcePort":"result","target":"passthrough","targetPort":"value"}"""));
-        // The Constant is a value node outside the run order; nothing reads it, which is only a warning.
-        Check(VisualGraphValidator.Validate(richGraph, snapshot).Select(d => d.Code).SequenceEqual(["pure.unused"]), "rich value flows into generic built-in node");
+        JsonObject RichInto(string kind)
+        {
+            var passThrough = VisualGraphContract.CreateNode(kind, "passthrough", snapshot);
+            passThrough["config"]!["type"] = "global::NodeLib.Reading";
+            var rich = (JsonObject)graph.DeepClone();
+            rich["nodes"]!.AsArray().Add(passThrough);
+            rich["edges"]!.AsArray().Add(JsonNode.Parse("""{"id":"d2","kind":"data","source":"custom","sourcePort":"result","target":"passthrough","targetPort":"value"}"""));
+            return rich;
+        }
+        // The Convert is a value node outside the run order; nothing reads it, which is only a warning.
+        Check(VisualGraphValidator.Validate(RichInto("convert"), snapshot).Select(d => d.Code).SequenceEqual(["pure.unused"]), "rich value flows into generic built-in node");
+        // A Constant's value is typed in: nothing, a rich value included, can be wired into it.
+        Check(VisualGraphValidator.Validate(RichInto("constant"), snapshot).Any(d => d.Code == "port.unknownInput" && d.NodeId == "passthrough" && d.InputId == "value"), "nothing can be wired into a Constant");
         var literalMethod = snapshot.Methods.Values.Single(m => m.Method.Name == "Literal");
         var literalNode = VisualGraphContract.CreateNode(literalMethod.Kind, "literal", snapshot);
         var literalGraph = JsonNode.Parse("""{"version":5,"name":"Literal","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}}],"edges":[{"id":"e","source":"t","target":"literal"}]}""")!.AsObject();

@@ -1,9 +1,9 @@
 import { dataOutputs, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../contract'
-import { nodeTitle } from '../flow/flowModel'
+import { literalTargetEntities, nodeTitle } from '../flow/flowModel'
 import { nodeInputs, portLabel } from '../graph'
 import { serviceFieldLabel } from '../nodeSummary'
 import type { TraceValue } from '../../types'
-import { optionLabel, widgetFor } from '../widgets'
+import { optionLabel, widgetFor, withStates, type StateEntity } from '../widgets'
 import type { OptionText } from './traceModel'
 
 /** Words for the trace view's value panel: port names, where an input came from, and the order inputs are listed in. */
@@ -20,13 +20,16 @@ export const outputLabel = (node: GraphNode | undefined, port: string, catalog: 
 
 /**
  * How a recorded value of a step's input reads when the input is a choice (a select or a state): the same option
- * label the card and the panel show (`optionLabel`); undefined for any other input.
+ * label the card and the panel show (`optionLabel`); undefined for any other input. A state is read with the states
+ * of the entities the step targets (from the registry's `entities`, once loaded), as its picker labels them.
  */
-export function inputOption(graph: Graph, node: GraphNode | undefined, port: string, catalog: VisualCatalogSnapshot): OptionText | undefined {
+export function inputOption(graph: Graph, node: GraphNode | undefined, port: string, catalog: VisualCatalogSnapshot, entities?: readonly StateEntity[]): OptionText | undefined {
   const spec = node ? own(nodeInputs(graph, node, catalog), port) : undefined
-  if (!spec) return
-  const widget = widgetFor(spec, catalog)
-  return widget.kind === 'select' || widget.kind === 'state' ? value => optionLabel(widget, value) : undefined
+  if (!node || !spec) return
+  const base = widgetFor(spec, catalog)
+  if (base.kind !== 'select' && base.kind !== 'state') return
+  const widget = withStates(base, literalTargetEntities(node), entities)
+  return value => optionLabel(widget, value)
 }
 
 /** Where an input's value came from: "From Motion · Entity" or "Value". */

@@ -390,3 +390,7 @@ describe('Custom C# node signatures', () => {
     expect(contract.nodeCatalog.types['global::NodeLib.Custom_a.Reading']).toBeUndefined()
   })
 })
+
+it('chooses the article by the first sound, as the C# validator does (same list in VisualGraphContractTests)', () => {
+  for (const [word, article] of [['input boolean', 'an'], ['update', 'an'], ['utility meter', 'a'], ['unit', 'a'], ['european', 'a'], ['one', 'a'], ['light', 'a'], ['alarm control panel', 'an'], ['humidifier', 'a'], ['image', 'an'], ['ozone', 'an']]) expect(contract.words.article(word), word).toBe(article)
+})

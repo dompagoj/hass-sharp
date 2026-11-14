@@ -134,7 +134,9 @@ get_node_schema exposes this same snapshot. Do not maintain another node/type
 list. It includes inputs/outputs, defaults, dynamic ports, scope rules, limits,
 CLR assignability, nullability, literal choices, labels and XML documentation.
 Library arguments live in `config.arguments`; built-in input values follow their
-catalog definitions. Data edges read previously produced values and do not execute
+catalog definitions. An input marked `connectable: false` takes only a literal:
+both validators refuse a data edge into it as into an input the node does not
+have (Constant's `value`, typed `$type` from `config.type`). Data edges read previously produced values and do not execute
 a producing step. Control edges schedule steps. Value nodes (catalog `pure: true`:
 constant, object, array, object_create, array_create, get_field, entity_field,
 convert, and, or, xor, not, compare, last_error, and any `[Node(Pure = true)]`

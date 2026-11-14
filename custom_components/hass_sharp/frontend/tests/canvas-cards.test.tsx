@@ -89,9 +89,10 @@ const providers = (children: () => any, fixture = visualFixture()) => (
 const typed = () => {
   let graph = addNode(createGraph('Cards'), 'constant', 'temperature')
   graph = updateNode(graph, 'temperature', { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 20 } } })
-  graph = addNode(graph, 'constant', 'rooms')
+  // A Convert, so a wire can go into its value (nothing can be wired into a Constant).
+  graph = addNode(graph, 'convert', 'rooms')
   graph = updateNode(graph, 'rooms', { config: { type: 'array', value: { kind: 'literal', type: 'array', value: [] } } })
-  // Constants are values: they take no place in the run order, so there is nothing to connect by execution.
+  // Constants and Converts are values: they take no place in the run order, so there is nothing to connect by execution.
   return graph
 }
 
@@ -116,19 +117,22 @@ it('draws execution and typed data pins, with inputs on the left and outputs on 
   expect(execIn.classList).toContain('hs-pin--exec')
   expect(execIn.classList).toContain('hs-pin--connected')
   expect(step.querySelector('.hs-card__head [data-handleid="next"]')?.classList).toContain('hs-pin--exec')
-  // One row carries the Value input (left) and the Value output (right).
+  // One row carries the Constant's value (left: its Type and the value, nothing to wire into) and its one output (right).
   const row = card.querySelector('[data-input-id="value"]')!.closest('.hs-card__row')!
   expect(row.querySelector('[data-output-id="value"]')).not.toBeNull()
-  const input = row.querySelector<HTMLElement>('[data-handleid="data:value"].target')!
+  expect(card.querySelectorAll('.target')).toHaveLength(0)
+  expect(card.querySelectorAll('.source')).toHaveLength(1)
+  expect(row.querySelector('[data-input-id="value"] .hs-pin-value')?.textContent).toBe('20')
   const output = row.querySelector<HTMLElement>('[data-handleid="data:value"].source')!
-  for (const pin of [input, output]) {
-    expect(pin.classList).toContain('hs-pin--data')
-    expect(pin.style.getPropertyValue('--hs-pin-color')).toBe('var(--hs-port-number)')
-    expect(pin.getAttribute('data-type')).toBe('number')
-  }
-  expect(input.classList).toContain('hs-pin--in')
+  expect(output.classList).toContain('hs-pin--data')
+  expect(output.style.getPropertyValue('--hs-pin-color')).toBe('var(--hs-port-number)')
+  expect(output.getAttribute('data-type')).toBe('number')
   expect(output.classList).toContain('hs-pin--out')
-  expect(input.getAttribute('aria-label')).toBe('Input Value, Number, required, not connected, has a value')
+  // A step's value input has its pin on the left.
+  const input = el.querySelector<HTMLElement>('[data-id="rooms"] [data-handleid="data:value"].target')!
+  expect(input.classList).toContain('hs-pin--data')
+  expect(input.classList).toContain('hs-pin--in')
+  expect(input.getAttribute('aria-label')).toBe('Input Value, List, required, not connected, has a value')
   // Lists are drawn as squares; entity ids and targets have their own colours.
   const list = el.querySelector<HTMLElement>('[data-id="rooms"] .source[data-handleid="data:value"]')!
   expect(list.classList).toContain('hs-pin--list')
@@ -199,6 +203,48 @@ it('edits an unconnected input on the card: one graph change, the same value in 
   expect(graphJson().nodes.at(-1).config.seconds).toEqual({ kind: 'literal', type: 'number', value: 45 })
 })
 
+it("shows a Constant's Type and value on its card, with nothing to wire into: a new Type keeps a value that fits and clears one that does not, one undo step each", async () => {
+  const el = host()
+  const fixture = visualFixture()
+  dispose = render(() => providers(() => <VisualEditor name="Constant" />, fixture), el)
+  button(el, 'Add step').click()
+  button(el, 'Create Constant').click()
+  button(el, 'Graph JSON').click()
+  const graphJson = () => JSON.parse(el.querySelector('pre[aria-label="Graph JSON"]')!.textContent!)
+  const id = graphJson().nodes.at(-1).id
+  const card = () => el.querySelector<HTMLElement>(`[data-id="${id}"] .hs-card`)!
+  const type = () => card().querySelector<HTMLSelectElement>('select[aria-label="Type"]')!
+  const value = () => card().querySelector<HTMLInputElement>('.hs-card-editor input[aria-label="Value"]')!
+  const config = () => graphJson().nodes.at(-1).config
+  // The Type select and one editor for that type; no input pin and no second type select; one output pin.
+  expect(type().value).toBe('string')
+  expect(card().querySelectorAll('[data-input-id="value"] select')).toHaveLength(1)
+  expect(card().querySelectorAll('.target')).toHaveLength(0)
+  expect(card().querySelectorAll('.source')).toHaveLength(1)
+  value().value = 'light.hall'
+  value().dispatchEvent(new Event('input', { bubbles: true }))
+  value().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  expect(config().value).toEqual(lit('string', 'light.hall'))
+  // Text that is an entity id is still a value of Entity: kept, as an entity id.
+  type().value = 'entity_id'
+  type().dispatchEvent(new Event('change', { bubbles: true }))
+  expect(config()).toMatchObject({ type: 'entity_id', value: lit('entity_id', 'light.hall') })
+  // An entity id is not a number: cleared.
+  type().value = 'number'
+  type().dispatchEvent(new Event('change', { bubbles: true }))
+  expect(config()).toMatchObject({ type: 'number', value: { kind: 'unset' } })
+  await vi.waitFor(() => expect(type().value).toBe('number'))
+  // The panel shows the same two controls and no type select of the value's own.
+  const panel = el.querySelector<HTMLElement>('.hs-inspector')!
+  expect(panel.querySelector<HTMLSelectElement>('[data-input-id="type"] select')!.value).toBe('number')
+  expect(panel.querySelectorAll('[data-input-id="value"] select')).toHaveLength(0)
+  // Each Type change is one undo step: Type and value come back together.
+  button(el, 'Undo').click()
+  expect(config()).toMatchObject({ type: 'entity_id', value: lit('entity_id', 'light.hall') })
+  button(el, 'Undo').click()
+  expect(config()).toMatchObject({ type: 'string', value: lit('string', 'light.hall') })
+})
+
 it('passes the coalesce key of an inline edit to onChange: one key for every step of a slider drag, none for a typed value', () => {
   const el = host()
   const changes: [VisualGraph, { coalesce?: string } | undefined][] = []
@@ -257,7 +303,6 @@ it('opens the problem in the panel from the card badge', async () => {
   )
   const card = el.querySelector('[data-id="temperature"] .hs-card')!
   expect(card.classList).toContain('hs-flow-card--error')
-  expect(card.querySelector('[data-handleid="data:value"].target')?.getAttribute('aria-invalid')).toBe('true')
   const badge = card.querySelector<HTMLButtonElement>('.hs-card__badge')!
   expect(badge.textContent).toBe('1')
   expect(badge.getAttribute('aria-label')).toBe('1 problem: show in the panel')
@@ -429,8 +474,7 @@ it('marks pin states by side: a twin pin with the same id on the other side is n
   // Constant has data:value on both sides; pick the output of one from the keyboard.
   pin('temperature', 'source').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
   expect(pin('temperature', 'source').classList).toContain('hs-pin--origin')
-  expect(pin('temperature', 'target').classList).not.toContain('hs-pin--origin')
-  // The other Constant's input is a candidate target; its output, with the same handle id, is not marked at all.
+  // The Convert's input is a candidate target; its output, with the same handle id, is not marked at all.
   expect(pin('rooms', 'target').className).toMatch(/hs-pin--(compatible|incompatible)/)
   expect(pin('rooms', 'source').className).not.toMatch(/hs-pin--(origin|compatible|incompatible)/)
 })
@@ -654,6 +698,39 @@ it('names registry items on read-only value chips', async () => {
   const graph = updateNode(typed(), 'service-1', { config: { ...typed().nodes.find(n => n.id === 'service-1')!.config, target: lit('target', { area_id: 'hall' }) } })
   dispose = render(() => providers(() => <FlowAdapter graph={graph} readOnly onSelect={() => {}} />, named as any), el)
   await vi.waitFor(() => expect(el.querySelector('[data-id="service-1"] [data-input-id="target"] .hs-value-chip')?.textContent).toBe('Hall'))
+})
+
+it('reads state values on cards as the state picker labels them: from the entity\'s state options when known, else in words', async () => {
+  const el = host()
+  const fixture = visualFixture()
+  const callWS = fixture.callWS
+  const states = { entity_id: 'climate.hall', name: 'Hall', domain: 'climate', area_id: null, device_id: null, device_class: null,
+    supported_features: null, unit: null, icon: null, disabled: false, state_options: ['off', 'heat_cool'] }
+  const named = {
+    ...fixture,
+    callWS: async (message: any) =>
+      message.type === 'hass_sharp/get_entities' ? { entities: [states], areas: [], devices: [], floors: [], labels: [] } : callWS(message),
+  }
+  const base = typed()
+  let graph = updateNode(base, 'service-1', { config: { ...base.nodes.find(n => n.id === 'service-1')!.config, service: 'climate.set_hvac_mode',
+    target: lit('target', { entity_id: ['climate.hall'] }), fields: { hvac_mode: lit('string', 'heat_cool') } } })
+  graph = updateNode(graph, 'condition-1', { config: { ...graph.nodes.find(n => n.id === 'condition-1')!.config, entity: lit('entity_id', 'climate.hall'), state: 'dry_mode' } })
+  graph = updateNode(graph, 'trigger-1', { config: { type: 'ha', trigger: { trigger: 'state', entity_id: 'climate.hall', to: ['heat_cool', 'off'] } } })
+  dispose = render(() => providers(() => <FlowAdapter graph={graph} catalog={withServices()} readOnly onSelect={() => {}} />, named as any), el)
+  const chip = () => el.querySelector('[data-id="service-1"] [data-input-id="field:hvac_mode"] .hs-value-chip')?.textContent
+  const summary = (id: string) => el.querySelector(`[data-id="${id}"] .hs-card__summary`)?.textContent
+  // Once the registry has loaded, a state the entity does not have reads as stored (the picker would not offer it)...
+  await vi.waitFor(() => expect(summary('condition-1')).toBe('If Hall is dry_mode'))
+  // ...and one it has reads as the picker labels it, whether the entity is the step's literal target or its own.
+  expect(summary('trigger-1')).toBe('When Hall becomes Heat cool or Off')
+  expect(chip()).toBe('Heat cool')
+  // The stored values are unchanged.
+  expect((graph.nodes.find(n => n.id === 'service-1')!.config.fields as any).hvac_mode.value).toBe('heat_cool')
+  dispose()
+  // Without the registry the states are not known: the value in words when it looks like an identifier.
+  dispose = render(() => <FlowAdapter graph={graph} catalog={withServices()} readOnly onSelect={() => {}} />, el)
+  expect(chip()).toBe('Heat cool')
+  expect(summary('condition-1')).toBe('If Hall is Dry mode')
 })
 
 it('names branch rows by the branch name, else by position; keeps the execution input of an unknown kind; tells warnings by icon', async () => {
@@ -982,7 +1059,7 @@ it('rebuilds a card whose wired input shows its source when only the source outp
   setGraph(updateNode(graph(), 'source', { config: { type: 'array', value: lit('array', []) } }))
   await vi.waitFor(() => expect(pin().getAttribute('data-type')).toBe('array'))
   // A loop carry renamed (with its wire): the consumer's chip names the new output.
-  let loop = addNode(addNode(createGraph('Loop'), 'repeat', 'loop'), 'constant', 'shown')
+  let loop = addNode(addNode(createGraph('Loop'), 'repeat', 'loop'), 'convert', 'shown')
   loop = updateNode(loop, 'loop', { config: { count: lit('number', 3), carry: [{ name: 'total', type: 'number', initial: lit('number', 0) }], exports: [] } })
   loop = updateNode(loop, 'shown', { config: { type: 'number', value: lit('number', 0) } })
   loop = contract.connectData(connectNodes(loop, 'service-1', 'loop'), 'loop', 'carry:total', 'shown', 'value')

@@ -12,6 +12,7 @@ import { typeColor, typeIsList, typeLabel } from '../typeLabels'
 import type { AutomationRun, TraceEvent, TraceValue } from '../../types'
 import { isCut, isPlaceholder, isTree, opaque, valueText, type OptionText, type TraceModel } from './traceModel'
 import { inputLabel, inputOption, inputOrder, inputSource, outputLabel, secretName } from './traceWords'
+import { useLoadedRegistry } from '../../registry'
 import { statusIcon } from './Timeline'
 
 export const runTime = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—')
@@ -142,6 +143,8 @@ function StepValues(props: {
   onSelectWholeRun(): void
 }) {
   const chooserId = createUniqueId()
+  // A recorded state reads as its picker labels it once the registry has loaded.
+  const registry = useLoadedRegistry()
   const identity = () => nodeIdentity(props.node.kind, props.catalog)
   // A kind this catalog does not know is still a step; its title (its own label) says which.
   const kindLabel = () => (Object.hasOwn(props.catalog.nodes, props.node.kind) ? props.catalog.nodes[props.node.kind].label : 'Step')
@@ -232,7 +235,7 @@ function StepValues(props: {
                 ports={inputOrder(props.graph, props.node, inputs(), props.catalog)}
                 value={port => inputs()[port]}
                 label={port => inputLabel(props.graph, props.node, port, props.catalog)}
-                option={port => inputOption(props.graph, props.node, port, props.catalog)}
+                option={port => inputOption(props.graph, props.node, port, props.catalog, registry()?.entities)}
                 source={(_port, value) => (
                   <Show when={value.src} fallback={<span class="hs-trace-port__source">{inputSource(props.graph, value, props.catalog)}</span>}>
                     {src => (

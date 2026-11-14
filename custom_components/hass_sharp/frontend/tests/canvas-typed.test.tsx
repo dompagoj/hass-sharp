@@ -85,9 +85,11 @@ import { connectData, dataOutputs } from '../src/visual/contract'
 import { createSignal } from 'solid-js'
 it('colors connected and literal input rows from their actual types rather than the first accepted union type', () => {
   const el = host()
-  const graph = fixture()
+  // A Convert's value takes any type; a Constant's takes its Type only and has no pin.
+  const graph = updateNode(addNode(fixture(), 'convert', 'reading'), 'reading', { config: { type: 'string', value: { kind: 'literal', type: 'number', value: 20 } } })
   dispose = render(() => <FlowAdapter graph={graph} onSelect={() => {}} onChange={() => {}} />, el)
-  const input = el.querySelector<HTMLElement>('[data-id="temperature"] .target[data-handleid="data:value"]')!
+  expect(el.querySelector('[data-id="temperature"] .target[data-handleid="data:value"]')).toBeNull()
+  const input = el.querySelector<HTMLElement>('[data-id="reading"] .target[data-handleid="data:value"]')!
   expect(input.style.getPropertyValue('--hs-pin-color')).toBe('var(--hs-port-number)')
   expect(input.classList.contains('hs-pin--data')).toBe(true)
 })
@@ -499,13 +501,13 @@ it('connects an execution pin from the keyboard: Enter on the pin, Tab reaches o
   expect(pin('condition-1', 'in').classList).toContain('hs-pin--incompatible')
   expect(pin('condition-1', 'in').tabIndex).toBe(-1)
   // Data pins are not candidates for an execution wire, and leave the Tab order too.
-  expect(pin('temperature', 'data:value', '.target').className).not.toMatch(/hs-pin--(compatible|incompatible)/)
-  expect(pin('temperature', 'data:value', '.target').tabIndex).toBe(-1)
+  expect(pin('branch', 'data:value', '.target').className).not.toMatch(/hs-pin--(compatible|incompatible)/)
+  expect(pin('branch', 'data:value', '.target').tabIndex).toBe(-1)
   expect(pin('branch', 'true').tabIndex).toBe(0)
   press(pin('later', 'in'))
   expect(history.graph().edges.at(-1)).toMatchObject({ source: 'branch', target: 'later', port: 'true' })
   expect(el.textContent).not.toContain('Choose a pin to connect to')
-  expect(pin('temperature', 'data:value', '.target').tabIndex).toBe(0)
+  expect(pin('branch', 'data:value', '.target').tabIndex).toBe(0)
   // Escape cancels a picked pin.
   press(pin('later', 'next'))
   expect(pin('later', 'next').classList).toContain('hs-pin--origin')
@@ -515,7 +517,7 @@ it('connects an execution pin from the keyboard: Enter on the pin, Tab reaches o
 
 it('connects a data pin from the keyboard and says why a refused one cannot connect, next to the target pin', () => {
   const el = host()
-  let graph = addNode(addNode(createGraph('Data'), 'constant', 'a'), 'constant', 'b')
+  let graph = addNode(addNode(createGraph('Data'), 'constant', 'a'), 'convert', 'b')
   for (const id of ['a', 'b']) graph = updateNode(graph, id, { config: { type: 'number', value: { kind: 'literal', type: 'number', value: 1 } } })
   graph = addNode(graph, 'if', 'branch')
   const history = createGraphHistory(graph)

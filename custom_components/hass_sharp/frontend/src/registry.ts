@@ -1,5 +1,6 @@
-import { useQuery } from '@tanstack/solid-query'
-import { useHass } from './context'
+import { QueryClientContext, useQuery } from '@tanstack/solid-query'
+import { useContext } from 'solid-js'
+import { HassCtx, useHass } from './context'
 import type { EntityInfo, EntityRegistry } from './entities'
 import type { HomeAssistant } from './types'
 
@@ -44,6 +45,15 @@ export const registryQuery = (hass: Pick<HomeAssistant, 'callWS'>) => ({
 export function useRegistry() {
   const hass = useHass()
   return useQuery(() => registryQuery(hass))
+}
+/**
+ * The registry once it has loaded, for words that only get better with it (names, state labels); undefined until then,
+ * and always outside the app's providers (a bare canvas in a test has none). Reading it never suspends.
+ */
+export function useLoadedRegistry(): () => Registry | undefined {
+  if (!useContext(QueryClientContext) || !useContext(HassCtx)) return () => undefined
+  const registry = useRegistry()
+  return () => (registry.isSuccess ? registry.data : undefined)
 }
 
 interface EntityFilter { domain: string[]; deviceClass: string[]; supportedFeatures: number[] }

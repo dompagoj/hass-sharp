@@ -6,6 +6,7 @@ import { Glyph } from './Glyph'
 import { Errors, focusRow, InputRow, type RowContext } from './InputRow'
 import { ArrayItems, Branches, Declarations, ObjectFields, type StructureContext } from './StructureEditors'
 import { buildNodeView } from './flow/flowModel'
+import { retypeConstant } from './constant'
 import { graphTypes } from './connectionIndex'
 import { customSignature, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { updateNode, type VisualGraph } from './graph'
@@ -145,7 +146,12 @@ export function NodeConfig(props: NodeConfigProps) {
           </Show>
         }>
           <select id={id} class="hs-input" aria-describedby={hint()} aria-invalid={errors().length > 0 || undefined}
-            onChange={e => set(field.name, e.currentTarget.value === '' ? undefined : e.currentTarget.value)}>
+            onChange={e => {
+              const next = e.currentTarget.value === '' ? undefined : e.currentTarget.value
+              // A Constant's value follows its Type in the same change: kept while it fits, else cleared.
+              if (kind() === 'constant' && field.name === 'type') { const config = retypeConstant(props.node.config, next, rows.catalog()); if (config !== props.node.config) props.onChange(config) }
+              else set(field.name, next)
+            }}>
             <Show when={value() === undefined || !options().includes(String(value()))}>
               <option value="" selected>{value() === undefined ? 'Not set' : String(value())}</option>
             </Show>

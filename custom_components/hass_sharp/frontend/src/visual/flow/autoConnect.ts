@@ -69,7 +69,8 @@ function portFor(graph: VisualGraph, kind: string, pin: PinRef, catalog: VisualC
   if (pin.type === 'source') {
     const output = dataOutputs(pinNode, catalog)[data]
     if (!output) return
-    const inputs = Object.entries(nodeInputs(next, node, catalog))
+    // An input that takes a value only (a Constant's) has no pin to connect.
+    const inputs = Object.entries(nodeInputs(next, node, catalog)).filter(([, input]) => input.connectable !== false)
     return bestMatch(inputs, input => input.types.includes(output.type), input => input.types.some(t => isAssignable(output.type, t, types)))
   }
   const input = nodeInputs(graph, pinNode, catalog)[data]

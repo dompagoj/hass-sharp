@@ -104,7 +104,10 @@ Write entity IDs for domain-filtered inputs with their exact type: the target of
 and a wired plain `entity_id` needs a Convert node with type `entity_id:light`
 first. Convert and the other value nodes (catalog `pure: true`, such as `constant`
 and `compare`) take no execution edges: connect only their data ports, and the
-step that reads them works them out each time it runs. See [visual authoring](writing-visual-automations.md#types-and-refinement).
+step that reads them works them out each time it runs. A `constant` gives
+`config.value`, a literal of the type in `config.type`, such as
+`{"type":"number","value":{"kind":"literal","type":"number","value":21}}`; its
+input is `connectable: false` in the catalog, so no data edge may end at it. See [visual authoring](writing-visual-automations.md#types-and-refinement).
 
 Tool arguments are strict: unknown fields and wrong types are rejected. Revisions
 and pagination values must be integers (booleans are not accepted). Stable IDs

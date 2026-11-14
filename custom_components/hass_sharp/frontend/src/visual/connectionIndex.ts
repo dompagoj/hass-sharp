@@ -4,6 +4,7 @@ import {
   inputSubject,
   comparisonDiagnostics,
   connectData,
+  connectable,
   dataInputs,
   dataOutputs,
   incompatibleInput,
@@ -172,7 +173,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       if (!volatile(origins[i])) messages.add(diagnostics[i].message)
     // The new edge, as the validator types it.
     const output = dataOutputs(source, catalog)[sourcePort]
-    const input = dataInputs(target, analysis.ownerOf(target), catalog)[targetPort]
+    const input = connectable(dataInputs(target, analysis.ownerOf(target), catalog)[targetPort])
     if (!output) messages.add('Unknown data output port')
     if (!input) messages.add(words.unknownInput(targetPort))
     if (output && input) {

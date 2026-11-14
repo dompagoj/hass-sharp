@@ -7,6 +7,7 @@ import { domainWords } from '../typeLabels'
 import { Chips, type WidgetProps } from './common'
 import { ListWidget, SelectWidget, TextWidget } from './basic'
 import { optionWords, record, strings } from './json'
+import { stateOptions } from './states'
 import type { Widget, WidgetOption } from './model'
 import { SearchSelect, type SearchOption } from './SearchSelect'
 import type { NameResolver } from './summary'
@@ -75,11 +76,8 @@ export function StateWidget(props: WidgetProps) {
   const entities = useEntities()
   const options = createMemo((): WidgetOption[] => {
     if (props.widget.stateAttribute) return []
-    const ids = new Set([...(props.context?.targetEntityIds ?? []), ...(props.widget.stateEntities ?? [])])
-    const hidden = new Set(props.widget.hideStates ?? []), found: string[] = []
-    for (const entity of entities.data ?? []) if (ids.has(entity.entity_id))
-      for (const state of entity.state_options ?? []) if (!hidden.has(state) && !found.includes(state)) found.push(state)
-    return found.map(value => ({ value, label: optionWords(value) }))
+    const ids = [...(props.context?.targetEntityIds ?? []), ...(props.widget.stateEntities ?? [])]
+    return stateOptions(entities.data, ids, props.widget.hideStates).map(value => ({ value, label: optionWords(value) }))
   })
   return <Show when={options().length} fallback={<TextWidget {...props} widget={{ ...props.widget, kind: 'text' }} />}>
     <SelectWidget {...props} widget={{ ...props.widget, kind: 'select', options: options() }} />

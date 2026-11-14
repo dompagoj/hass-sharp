@@ -53,6 +53,9 @@ public static class VisualGraphContractTests
         if (VisualNodeCatalog.EffectiveTriggerMethod(laidOut["nodes"]![0]!.AsObject()) != "Run_747269676765722FC3A9") throw new Exception("Trigger method identity must use uppercase UTF8 hex");
         var created = VisualGraphContract.CreateNode("parallel", "p");
         if (created["config"]?["branches"]?.ToJsonString() != "[\"a\",\"b\"]") throw new Exception("Visual graph creation must use catalog defaults");
+        // The article goes by the first sound; the editor's copy (words.article) is held to the same list.
+        foreach (var (word, article) in new[] { ("input boolean", "an"), ("update", "an"), ("utility meter", "a"), ("unit", "a"), ("european", "a"), ("one", "a"), ("light", "a"), ("alarm control panel", "an"), ("humidifier", "a"), ("image", "an"), ("ozone", "an") })
+            if (VisualGraphValidator.Words.Article(word) != article) throw new Exception($"Article of {word} must be {article}");
         Console.WriteLine($"PASS visual graph contract: {fixtures.Count} shared contract fixtures");
         return Task.CompletedTask;
     }

@@ -6,7 +6,7 @@ from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, Mock
 
-EVENTS = ('service_registered', 'service_removed', 'homeassistant_started')
+EVENTS = ('service_registered', 'service_removed', 'homeassistant_started', 'core_config_updated')
 
 
 class Selector:
@@ -30,7 +30,7 @@ def load_services(descriptions=None, translations=None):
         timers.append(timer)
         return timer.cancel
     env = {'CoreState': NS(running='running', starting='starting'), 'EVENT_SERVICE_REGISTERED': EVENTS[0], 'EVENT_SERVICE_REMOVED': EVENTS[1],
-           'EVENT_HOMEASSISTANT_STARTED': EVENTS[2], 'callback': lambda f: f, 'JSONEncoder': Encoder,
+           'EVENT_HOMEASSISTANT_STARTED': EVENTS[2], 'EVENT_CORE_CONFIG_UPDATE': EVENTS[3], 'callback': lambda f: f, 'JSONEncoder': Encoder,
            'async_call_later': call_later, 'logger': Mock(),
            'async_get_all_descriptions': AsyncMock(return_value=descriptions or {}),
            'async_get_translations': AsyncMock(return_value=translations or {})}
@@ -144,6 +144,27 @@ class ServiceDescriptions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(listeners, {})
         timers[3].cancel.assert_called_once()
         timers[2].cancel.assert_not_called()
+
+    async def test_a_language_change_pushes_again_and_other_config_changes_do_not(self):
+        # Names and descriptions are translated into the language of Home Assistant: a new language re-pushes them,
+        # debounced like the service events; a change of, say, the time zone leaves them as they are.
+        env, hass, listeners, timers, _ = load_services({'light': {}})
+        manager = NS(SetServiceDescriptions=Mock())
+        unsubscribe = env['async_track'](hass, manager)
+        listeners[EVENTS[3]](NS(data={'time_zone': 'Europe/Zagreb'}))
+        listeners[EVENTS[3]](NS(data={}))
+        listeners[EVENTS[3]](NS(data=None))
+        self.assertEqual(timers, [])
+        hass.config.language = 'hr'
+        listeners[EVENTS[3]](NS(data={'language': 'hr'}))
+        listeners[EVENTS[0]](NS(data={}))
+        self.assertEqual([t.delay for t in timers], [2, 2])
+        timers[0].cancel.assert_called_once()
+        await timers[1].action(None)
+        env['async_get_translations'].assert_awaited_once_with(hass, 'hr', 'services', ['light'])
+        manager.SetServiceDescriptions.assert_called_once()
+        unsubscribe()
+        self.assertEqual(listeners, {})
 
     async def test_started_during_the_first_push_is_not_missed(self):
         # The listeners are in place before the first push gathers descriptions: a "started" event that fires

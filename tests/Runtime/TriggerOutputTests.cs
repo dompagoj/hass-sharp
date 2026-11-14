@@ -201,7 +201,7 @@ static class TriggerOutputTests
         // Entity: refined entity_id and both states, attributes included.
         var current = State("sensor.test", "on"); current.OldState = State("sensor.test", "off");
         var entity = Wired(new() { ["type"] = "entity", ["entity"] = "sensor.test" },
-            [N("e", "constant", new { type = "entity_id:sensor", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), Field("from"), Log("lf"), Field("unit", "attribute", "unit"), Log("lu")],
+            [N("e", "convert", new { type = "entity_id:sensor", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), Field("from"), Log("lf"), Field("unit", "attribute", "unit"), Log("lu")],
             ("entity_id", "e", "value"), ("to_state", "to", "entity"), ("from_state", "from", "entity"), ("to_state", "unit", "entity"));
         foreach (var (source, target) in new[] { ("e", "le"), ("to", "lt"), ("from", "lf"), ("unit", "lu") }) entity["edges"]!.AsArray().Add(D(source, target, "value"));
         Check((await Logged(entity, InvocationCause.Entity, TriggerPayload.Entity(current, current.OldState))).SequenceEqual(["sensor.test", "on", "off", "C"]), "entity payload reaches typed outputs: " + string.Join("|", messages));
@@ -221,7 +221,7 @@ static class TriggerOutputTests
             (Ha(new { trigger = "numeric_state", entity_id = new[] { "sensor.test" }, above = 20 }), ["sensor.test", "21", "21", "C", "numeric_state", "20"]) })
         {
             var reads = Wired(trigger,
-                [N("e", "constant", new { type = "entity_id:sensor", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), Field("from"), Log("lf"), Field("unit", "attribute", "unit"), Log("lu"),
+                [N("e", "convert", new { type = "entity_id:sensor", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), Field("from"), Log("lf"), Field("unit", "attribute", "unit"), Log("lu"),
                  N("p", "get_field", new { value = new { kind = "unset" }, pointer = "/platform", type = "string" }), Log("lp")],
                 ("entity_id", "e", "value"), ("to_state", "to", "entity"), ("from_state", "from", "entity"), ("to_state", "unit", "entity"), ("data", "p", "value"));
             foreach (var (source, target) in new[] { ("e", "le"), ("to", "lt"), ("from", "lf"), ("unit", "lu"), ("p", "lp") }) reads["edges"]!.AsArray().Add(D(source, target, "value"));
@@ -255,7 +255,7 @@ static class TriggerOutputTests
         var state = new { entity_id = "light.kitchen", state = "on", attributes = new { brightness = 3 }, last_changed = "2026-11-13T10:00:00+00:00", last_updated = "2026-11-13T10:00:00+00:00" };
         var variables = JsonSerializer.SerializeToElement(new { trigger = new { platform = "state", entity_id = "light.kitchen", from_state = (object?)null, to_state = state }, context = new { id = "ctx" } });
         var native = Wired(Ha(new { trigger = "state", entity_id = "light.kitchen" }),
-            [N("e", "constant", new { type = "entity_id:light", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), N("ctx", "get_field", new { value = new { kind = "unset" }, pointer = "/context/id", type = "string" }), Log("lc")],
+            [N("e", "convert", new { type = "entity_id:light", value = new { kind = "unset" } }), Log("le"), Field("to"), Log("lt"), N("ctx", "get_field", new { value = new { kind = "unset" }, pointer = "/context/id", type = "string" }), Log("lc")],
             ("entity_id", "e", "value"), ("to_state", "to", "entity"), ("data", "ctx", "value"));
         foreach (var (source, target) in new[] { ("e", "le"), ("to", "lt"), ("ctx", "lc") }) native["edges"]!.AsArray().Add(D(source, target, "value"));
         Check((await Logged(native, InvocationCause.HomeAssistantTrigger, TriggerPayload.Native(variables))).SequenceEqual(["light.kitchen", "on", "ctx"]), "native state payload reaches typed outputs: " + string.Join("|", messages));

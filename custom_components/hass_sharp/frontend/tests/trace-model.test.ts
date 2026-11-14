@@ -1,7 +1,8 @@
 import { expect, it } from 'vitest'
 import { nodeCatalog, type Graph, type GraphNode } from '../src/visual/contract'
 import { chipValue, flowTrace, framesAgree, inChosenFrame, parseFrame, traceModel, valueText } from '../src/visual/trace/traceModel'
-import { inputSource, secretName } from '../src/visual/trace/traceWords'
+import { inputOption, inputSource, secretName } from '../src/visual/trace/traceWords'
+import services from '../../../../tests/fixtures/visual-services.json'
 import secretNames from '../../../../tests/fixtures/trace-secret-names.json'
 import type { RunTrace, TraceEvent } from '../src/types'
 
@@ -271,4 +272,18 @@ it('hides the recorder\'s secret names exactly as the C# rule does', () => {
     // A name in a recorded tree may carry the position the recorder gave alike keys.
     if (row.name) expect(secretName(`${row.name}#3`), `${row.name}#3`).toBe(row.secret)
   }
+})
+
+it('reads a recorded state with the labels of its entity\'s states when the step targets a known entity, else in words', () => {
+  const catalog = { ...nodeCatalog, services: services as never }
+  const step = node('s', 'service', { service: 'climate.set_hvac_mode', target: lit('target', { entity_id: 'climate.hall' }), fields: { hvac_mode: lit('string', 'heat_cool') } })
+  const g = graph([step], [])
+  const entities = [{ entity_id: 'climate.hall', state_options: ['off', 'heat_cool'] }]
+  const known = inputOption(g, step, 'field:hvac_mode', catalog, entities)!
+  expect(valueText({ type: 'string', v: 'heat_cool' }, known)).toBe('Heat cool')
+  expect(valueText({ type: 'string', v: 'dry_mode' }, known)).toBe('dry_mode')
+  const unknown = inputOption(g, step, 'field:hvac_mode', catalog)!
+  expect(valueText({ type: 'string', v: 'dry_mode' }, unknown)).toBe('Dry mode')
+  expect(chipValue({ type: 'string', v: 'fan_only' }, unknown).v).toBe('Fan only')
+  expect(valueText({ type: 'string', v: 'Living Room' }, unknown)).toBe('Living Room')
 })

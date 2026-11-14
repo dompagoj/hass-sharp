@@ -17,6 +17,7 @@ import { Timeline } from './Timeline'
 import { runDuration, runTime, TraceInspector } from './TraceInspector'
 import { flowTrace, inChosenFrame, traceModel } from './traceModel'
 import { inputOption } from './traceWords'
+import { useLoadedRegistry } from '../../registry'
 
 /** Focus is where keys mean text or a choice in a list: the page's shortcuts leave those keys alone. */
 const typing = (target: Element) =>
@@ -52,6 +53,8 @@ export function TracePage(props: {
   let root!: HTMLElement
   let flow: FlowControls | undefined
   const run = () => props.response.run
+  // State values read as their pickers label them once the registry has loaded (the run's chips and the panel).
+  const registry = useLoadedRegistry()
   const snapshot = () => props.response.snapshot ?? undefined
   const graph = () => snapshot()?.graph
   const stored = () => snapshot()?.catalog ?? nodeCatalog
@@ -134,9 +137,9 @@ export function TracePage(props: {
   )
   const trace = createMemo(() => {
     const current = model(), shown = graph()
-    const words = catalog()
+    const words = catalog(), entities = registry()?.entities
     return current && shown
-      ? flowTrace(current, shown, frame(), focusId(), (id, port) => inputOption(shown, shown.nodes.find(n => n.id === id), port, words))
+      ? flowTrace(current, shown, frame(), focusId(), (id, port) => inputOption(shown, shown.nodes.find(n => n.id === id), port, words, entities))
       : undefined
   })
 

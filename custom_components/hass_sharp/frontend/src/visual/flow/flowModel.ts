@@ -16,7 +16,7 @@ import { inputType, nodeInputs, outputPort, portLabel, type VisualGraph } from '
 import { nodeIdentity, type NodeIdentity } from '../icons'
 import { nodeSummary, serviceFieldLabel, type SummaryNames } from '../nodeSummary'
 import { domainWords, typeColor, typeIsList, typeLabel } from '../typeLabels'
-import { targetIds, widgetFor, type NameResolver } from '../widgets'
+import { targetIds, widgetFor, type NameResolver, type StateEntity } from '../widgets'
 import type { VisualDiagnostic } from '../api'
 import type { TraceEventStatus, TraceValue } from '../../types'
 
@@ -162,6 +162,11 @@ export function keepUnrendered(original: VisualGraph, edited: VisualGraph): Visu
 }
 
 /** A node's name on its card: its own label, else (a Custom C# node) its method's title, else its kind's label. */
+/** The entities a step acts on when its target is typed in (for the states of a state field); none when it is wired. */
+export function literalTargetEntities(node: GraphNode): string[] {
+  const target = node.config.target
+  return record(target) && target.kind === 'literal' ? targetIds(target.value as never).entity_id : []
+}
 export const nodeTitle = (node: GraphNode | undefined, catalog: VisualCatalogSnapshot, fallback = '') =>
   node ? (text(node.label) || text(customSignature(node, catalog)?.title) || (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].label : node.kind)) : fallback
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
@@ -255,7 +260,8 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     const source = wire?.kind === 'data' ? `${nodeTitle(sourceNode, catalog, wire.source)} · ${sourceOutput?.label ?? wire.sourcePort}` : undefined
     const operand = inputValue(node, port, catalog) as Operand | undefined
     const unset = !record(operand) || operand.kind === 'unset'
-    const mode: InputMode = wire ? 'connected' : widgetFor(input, catalog).kind === 'none' ? 'wire' : unset && !input.required ? 'muted' : 'value'
+    // An input that takes a value only always shows its editor (a Constant whose Type is not set yet still has one).
+    const mode: InputMode = wire ? 'connected' : widgetFor(input, catalog).kind === 'none' && input.connectable !== false ? 'wire' : unset && !input.required ? 'muted' : 'value'
     const errors = messagesFor(port)
     return {
       port, spec: input, mode, source, sourceNode: wire?.source, errors,
@@ -287,8 +293,7 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   const summary = nodeSummary(node, catalog, ctx.names, graph)
   const errors = problems.filter(p => p.severity === 3).length
   const warnings = problems.filter(p => p.severity === 2).length
-  const target = node.config.target
-  const targetEntityIds = record(target) && target.kind === 'literal' ? targetIds(target.value as never).entity_id : []
+  const targetEntityIds = literalTargetEntities(node)
   const problemText = errors || warnings ? `. ${[errors && `${errors} error${errors === 1 ? '' : 's'}`, warnings && `${warnings} warning${warnings === 1 ? '' : 's'}`].filter(Boolean).join(', ')}: ${problems.map(p => p.message).join('; ')}` : ''
   return {
     id: node.id, kind: node.kind, known, title, kindLabel: spec?.label ?? node.kind, summary, identity,
@@ -402,6 +407,8 @@ export interface FlowContextValue {
   pinState(nodeId: string, handle: string, type: 'source' | 'target'): PinState | undefined
   /** Registry names for value chips (ids where nothing is known). */
   names(): NameResolver
+  /** The registry's entities once loaded, for the states a state value chip is read with. */
+  entities(): readonly StateEntity[] | undefined
   activateHandle(nodeId: string, handle: string, type: 'source' | 'target'): void
   /** A wire is being dragged or a pin was picked from the keyboard: only pins it can end on stay in the Tab order. */
   connecting(): boolean
@@ -412,6 +419,8 @@ export interface FlowContextValue {
   /** True when the pointer moved since it went down (a drag, not a click). */
   moved(): boolean
   setInput(nodeId: string, port: string, operand: Operand, options?: { coalesce?: string }): void
+  /** Replaces the node's config as one change (a Constant's Type and value together). */
+  setConfig(nodeId: string, config: Record<string, unknown>): void
   locateProblem(nodeId: string): void
   /** Whether the node's code can be opened (a Custom C# node on a page with the code editor). */
   hasCode(nodeId: string): boolean

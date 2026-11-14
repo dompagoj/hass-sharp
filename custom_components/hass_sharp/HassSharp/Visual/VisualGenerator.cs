@@ -260,7 +260,11 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics)
             for(var i=0;i<roots.Length;i++) {
                 var root=roots[i];current=Text(root,"id");var cfg=root["config"]!;var kind=VisualNodeCatalog.TriggerType(root,snapshot);var entities="[]";var schedules="[]";var triggers="[]";
                 if(kind=="entity")entities=$"[new global::HassSharp.EntityReference({Q(Text(cfg,"entity"))})]";
-                if(kind=="daily") {var time=TimeOnly.ParseExact(Text(cfg,"time"),"HH:mm",CultureInfo.InvariantCulture);TimeZoneInfo.FindSystemTimeZoneById(Text(cfg,"timeZone"));schedules=$"[global::HassSharp.AutomationSchedule.Daily({Q(current)},new global::System.TimeOnly({time.Hour},{time.Minute}),{Q(Text(cfg,"timeZone"))})]";}
+                if(kind=="daily") {
+                    // Both validators accept only HH:MM. A time zone is this machine's to know, so it is checked here, on its input.
+                    var time=TimeOnly.ParseExact(Text(cfg,"time"),"HH:mm",CultureInfo.InvariantCulture);
+                    if(!TimeZoneInfo.TryFindSystemTimeZoneById(Text(cfg,"timeZone"),out _)){errors.Add(new(current,VisualGraphValidator.Words.UnknownTimeZone(Text(cfg,"timeZone")),InputId:"timeZone"));return new(false,"",[],errors){Graph=refreshed};}
+                    schedules=$"[global::HassSharp.AutomationSchedule.Daily({Q(current)},new global::System.TimeOnly({time.Hour},{time.Minute}),{Q(Text(cfg,"timeZone"))})]";}
                 if(kind=="once") {var at=DateTimeOffset.Parse(Text(cfg,"at"),CultureInfo.InvariantCulture);schedules=$"[global::HassSharp.AutomationSchedule.Once({Q(current)},global::System.DateTimeOffset.Parse({Q(at.ToString("O"))}))]";}
                 if(kind=="ha")triggers=$"[new global::HassSharp.HomeAssistantTrigger({Q(current)},{Q(cfg["trigger"]!.ToJsonString())})]";
                 var startup=cfg["startup"]?.GetValue<bool>()??kind=="startup";var manual=cfg["manual"]?.GetValue<bool>()??true;

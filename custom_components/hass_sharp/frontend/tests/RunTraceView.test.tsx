@@ -80,7 +80,7 @@ const layout = () => {
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
 }
-function mount(trace: (message: any) => Promise<unknown>, options: { admin?: boolean; revision?: number; path?: string; services?: unknown } = {}) {
+function mount(trace: (message: any) => Promise<unknown>, options: { admin?: boolean; revision?: number; path?: string; services?: unknown; entities?: unknown[] } = {}) {
   layout()
   const root = document.createElement('div'); root.className = 'hs-app'; document.body.append(root)
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -90,6 +90,7 @@ function mount(trace: (message: any) => Promise<unknown>, options: { admin?: boo
     if (message.type === 'hass_sharp/run_trace') return trace(message)
     if (message.type === 'hass_sharp/visual' && message.request.operation === 'read')
       return { version: 1, ok: true, result: { id: message.request.id, revision: options.revision ?? 4, graph: graph() } }
+    if (message.type === 'hass_sharp/get_entities' && options.entities) return { entities: options.entities, areas: [], devices: [], floors: [], labels: [] }
     if (message.type === 'hass_sharp/node_library' && message.request.operation === 'services' && options.services)
       return { version: 1, ok: true, result: options.services }
     return []
@@ -506,6 +507,28 @@ it('names service fields and their options from the live services when the run\'
   await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe('Turn on'))
   expect(port(root, 'field:brightness_pct').querySelector('.hs-trace-port__name')!.textContent).toBe('Brightness')
   expect(port(root, 'field:flash').querySelector('.hs-trace-value')!.textContent).toBe('Long')
+})
+
+it('reads a recorded state as the state picker labels it, on its card and in the panel', async () => {
+  const climate = { entity_id: 'climate.hall', name: 'Hall', domain: 'climate', area_id: null, device_id: null, device_class: null,
+    supported_features: null, unit: null, icon: null, disabled: false, state_options: ['off', 'heat_cool'] }
+  const g = graph()
+  const service = g.nodes.find(n => n.id === 'service-1')!
+  service.config = { ...service.config, service: 'climate.set_hvac_mode', target: lit('target', { entity_id: ['climate.hall'] }), fields: { hvac_mode: lit('string', 'heat_cool') } }
+  const hvac = (i: number) => ({ type: 'string', v: i === 1 ? 'dry_mode' : 'heat_cool' })
+  const reply = response({ snapshot: { revision: 'rev', visualId: 'heating', visualRevision: 4, graph: g, catalog: { ...nodeCatalog, services: services as any } } },
+    { events: events().map(e => e.node === 'service-1' ? { ...e, inputs: { 'field:hvac_mode': hvac(Number(e.frame.at(7))) } } : e) })
+  const { root } = mount(async () => reply, { entities: [climate] })
+  const chip = () => card(root, 'service-1').querySelector('[data-input-id="field:hvac_mode"] .hs-value-chip')?.textContent
+  // The card shows the last iteration's value: the state as the entity's state options label it.
+  await vi.waitFor(() => expect(chip()).toBe('Heat cool'))
+  card(root, 'service-1').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await vi.waitFor(() => expect(port(root, 'field:hvac_mode')?.querySelector('.hs-trace-value')?.textContent).toBe('Heat cool'))
+  // A state the entity does not have reads as recorded, on the card and in the panel (without the registry it would
+  // read in words): the labels come from the entity's states.
+  choose(panel(root).querySelector<HTMLSelectElement>('select')!, 'Iteration 2 of 3 · Recovered')
+  await vi.waitFor(() => expect(chip()).toBe('dry_mode'))
+  expect(port(root, 'field:hvac_mode').querySelector('.hs-trace-value')!.textContent).toBe('dry_mode')
 })
 
 it('keeps the run\'s own services schema when its snapshot has one: the live services are not used', async () => {

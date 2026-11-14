@@ -1034,6 +1034,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     trace: () => props.trace,
     pinState: (nodeId, handle, type) => pinStates().get(`${nodeId}|${type}|${handle}`),
     names: nameResolver,
+    entities: () => names()?.entities,
     activateHandle,
     connecting: () => !!origin(),
     refusal: (nodeId, handle) => {
@@ -1043,6 +1044,10 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     removeEdge: removeWire,
     moved: gestureMoved,
     setInput: setNodeInput,
+    setConfig: (nodeId, config) => {
+      const node = graph().nodes.find(n => n.id === nodeId)
+      if (node && !readOnly() && config !== node.config) change(updateNode(graph(), nodeId, { config }))
+    },
     locateProblem,
     hasCode,
     editCode,

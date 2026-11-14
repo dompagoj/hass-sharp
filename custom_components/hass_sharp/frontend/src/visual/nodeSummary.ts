@@ -1,9 +1,11 @@
 import { customSignature, dataOutputs, inputValue, nodeCatalog, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
+import { stateOptions, stateWords } from './widgets/states'
 
 /** Registry names used to say "Hallway" rather than `light.hallway`; every list is optional. */
 export interface SummaryNames {
-  entities?: readonly { entity_id: string; name: string | null }[]
+  /** With their `state_options`, a state reads as the state picker labels it. */
+  entities?: readonly { entity_id: string; name: string | null; state_options?: readonly string[] | null }[]
   areas?: readonly { area_id: string; name: string }[]
   devices?: readonly { id: string; name: string | null }[]
   floors?: readonly { floor_id: string; name: string }[]
@@ -101,6 +103,13 @@ function operandText(ctx: Context, port: string): string | undefined {
   if (!record(operand)) return
   if (operand.kind === 'literal') return valueText(operand.value, ctx.registry)
 }
+/** A state of these entities as the state picker labels it (see `stateWords`); the stored value is left as it is. */
+const stateText = (ctx: Context, ids: string[], value: string) => stateWords(value, stateOptions(ctx.registry?.entities, ids))
+/** The entity id an input holds as a typed-in value. */
+const literalEntity = (ctx: Context, port: string) => {
+  const operand = inputValue(ctx.node, port, ctx.catalog)
+  return record(operand) && operand.kind === 'literal' && typeof operand.value === 'string' ? [operand.value] : []
+}
 const entityOperand = (ctx: Context, port: string) => {
   const operand = inputValue(ctx.node, port, ctx.catalog)
   return record(operand) && operand.kind === 'literal' && typeof operand.value === 'string' ? entityName(operand.value, ctx.registry) : operandText(ctx, port)
@@ -136,7 +145,7 @@ function triggerText(ctx: Context): string | undefined {
   const who = list(strings(t.entity_id).map(id => entityName(id, ctx.registry))) || 'an entity'
   const hold = durationText(t.for)
   const forText = hold ? ` for ${hold}` : ''
-  const state = (value: unknown) => strings(value).join(' or ')
+  const state = (value: unknown) => strings(value).map(v => stateText(ctx, strings(t.entity_id), v)).join(' or ')
   switch (platform) {
     case 'state':
       if (t.to !== undefined && t.to !== null && state(t.to)) return `When ${who} becomes ${state(t.to)}${forText}`
@@ -184,7 +193,7 @@ function kindText(ctx: Context): string | undefined {
     }
     case 'condition': {
       const entity = entityOperand(ctx, 'entity')
-      return entity && text(config.state) ? `If ${entity} is ${text(config.state)}` : undefined
+      return entity && text(config.state) ? `If ${entity} is ${stateText(ctx, literalEntity(ctx, 'entity'), text(config.state))}` : undefined
     }
     case 'if': { const value = operandText(ctx, 'value'); return value ? `If ${value}` : undefined }
     case 'compare': {

@@ -1,7 +1,12 @@
 """Hand Home Assistant service descriptions to the .NET manager and keep them current."""
 import json
 
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_SERVICE_REGISTERED, EVENT_SERVICE_REMOVED
+from homeassistant.const import (
+    EVENT_CORE_CONFIG_UPDATE,
+    EVENT_HOMEASSISTANT_STARTED,
+    EVENT_SERVICE_REGISTERED,
+    EVENT_SERVICE_REMOVED,
+)
 from homeassistant.core import CoreState, callback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.json import JSONEncoder
@@ -97,7 +102,11 @@ async def async_start(hass, manager):
 
 
 def async_track(hass, manager):
-    """Re-push descriptions once service changes settle; returns the unsubscribe callback."""
+    """Re-push descriptions once service changes settle; returns the unsubscribe callback.
+
+    Service names and descriptions are translated into Home Assistant's language, so a change of language
+    re-pushes them too (debounced the same way); other changes of the core configuration do not.
+    """
     pending = None
 
     async def push(_now):
@@ -112,10 +121,16 @@ def async_track(hass, manager):
             pending()
         pending = async_call_later(hass, DEBOUNCE_SECONDS, push)
 
+    @callback
+    def config_updated(event):
+        if "language" in (event.data or {}):
+            schedule(event)
+
     removers = [
         hass.bus.async_listen(event_type, schedule)
         for event_type in (EVENT_SERVICE_REGISTERED, EVENT_SERVICE_REMOVED, EVENT_HOMEASSISTANT_STARTED)
     ]
+    removers.append(hass.bus.async_listen(EVENT_CORE_CONFIG_UPDATE, config_updated))
 
     def unsubscribe():
         nonlocal pending

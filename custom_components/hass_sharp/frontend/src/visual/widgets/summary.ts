@@ -1,7 +1,8 @@
 import type { JsonValue } from '../contract'
-import { displayValue, jsonEqual, record, strings } from './json'
+import { displayValue, jsonEqual, optionWords, record, strings } from './json'
 import { durationParts, durationSeconds, type Widget } from './model'
 import { targetIds } from './pickers'
+import { stateOptions, stateWords, type StateEntity } from './states'
 
 /** The registry kinds whose ids a summary names. */
 export type NamedKind = 'entity' | 'device' | 'area' | 'floor' | 'label'
@@ -20,10 +21,23 @@ function plain(value: JsonValue): string {
 /**
  * How a chosen option reads, wherever it is shown (the card, the panel, the trace view): the widget's own option label
  * (the schema's label, else the value in words). A value that is not one of the options reads as it is stored, the way
- * the validator names it. One helper, so the three always agree.
+ * the validator names it. A state field whose entity's states are not known (see `withStates`) reads in words when the
+ * value looks like an identifier. One helper, so the three always agree.
  */
 export function optionLabel(widget: Widget, value: JsonValue): string {
-  return widget.options?.find(o => jsonEqual(o.value, value))?.label ?? displayValue(value)
+  const own = widget.options?.find(o => jsonEqual(o.value, value))?.label
+  if (own !== undefined) return own
+  return widget.kind === 'state' ? stateWords(value, (widget.options ?? []).map(o => String(o.value))) : displayValue(value)
+}
+/**
+ * A state widget with the options its picker offers: the states of the entities the step acts on (`ids`, from its
+ * literal target or entity) and of the selector's own entities, from the registry's `state_options`. Any other widget,
+ * and the state of an attribute, as it is.
+ */
+export function withStates(widget: Widget, ids: readonly string[], entities: readonly StateEntity[] | undefined): Widget {
+  if (widget.kind !== 'state' || widget.stateAttribute) return widget
+  const states = stateOptions(entities, [...ids, ...(widget.stateEntities ?? [])], widget.hideStates)
+  return { ...widget, options: states.map(value => ({ value, label: optionWords(value) })) }
 }
 /** A widget in which null is a value someone wrote (the JSON editor), not an empty input. */
 export const keepsNull = (widget: Widget) => widget.kind === 'json'

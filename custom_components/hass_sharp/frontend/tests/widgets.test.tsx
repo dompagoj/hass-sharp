@@ -13,7 +13,7 @@ import { dataInputs, nodeCatalog, validateGraph, validLiteral, type GraphNode, t
 import { InputEditor } from '../src/visual/InputEditor'
 import { typeLabel } from '../src/visual/typeLabels'
 import {
-  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, optionLabel, optionWords, registryNames, targetValue, valueSummary, WidgetControl, widgetFor,
+  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, optionLabel, optionWords, registryNames, stateOptions, targetValue, valueSummary, WidgetControl, widgetFor, withStates,
   type ValueKind, type Widget,
 } from '../src/visual/widgets'
 
@@ -88,12 +88,13 @@ describe('widgetFor', () => {
     // The card's summary, the panel's options and the trace's text all go through optionLabel.
     expect(optionLabel(modes, 'heat_cool')).toBe('Heat and cool')
     expect(valueSummary(modes, 'fan_only')).toBe('Fan only')
-    // A stored value that is not one of the options reads as stored, as the validator names it; so does free text in
-    // a state field (its options are the target entities' states, unknown to a summary).
+    // A stored value that is not one of the options reads as stored, as the validator names it.
     expect(optionLabel(modes, 'auto')).toBe('auto')
     expect(valueSummary(modes, 'heat_cool_2')).toBe('heat_cool_2')
-    expect(optionLabel({ kind: 'state', multiple: false }, 'heat_cool')).toBe('heat_cool')
+    // A state whose entity's states are not known reads in words when it looks like an identifier, else as stored.
+    expect(optionLabel({ kind: 'state', multiple: false }, 'heat_cool')).toBe('Heat cool')
     expect(valueSummary({ kind: 'state', multiple: false }, 'sensor.kitchen')).toBe('sensor.kitchen')
+    expect(valueSummary({ kind: 'state', multiple: false }, 'Living Room')).toBe('Living Room')
     expect(optionWords(3)).toBe('3')
     expect(optionWords('')).toBe('')
     // What is sent stays the raw value.
@@ -396,6 +397,27 @@ describe('pickers', () => {
     options()[1].click()
     expect(values()).toEqual(['light.hall'])
     expect(options().map(o => o.getAttribute('aria-selected'))).toEqual(['true', 'false'])
+  })
+  it('reads a state as the picker labels it when its entity is known, from the registry\'s state options', () => {
+    const states = [entity('climate.hall', { state_options: ['off', 'heat_cool', 'unavailable'] }), entity('climate.den', { state_options: ['off', 'fan_only'] }), entity('light.hall')]
+    // The union of the entities' state options, in registry order, without the hidden ones: what the picker offers.
+    expect(stateOptions(states, ['climate.den', 'climate.hall'], ['unavailable'])).toEqual(['off', 'heat_cool', 'fan_only'])
+    expect(stateOptions(states, ['light.hall'])).toEqual([])
+    expect(stateOptions(undefined, ['climate.hall'])).toEqual([])
+    const hvac = widgetFor(field('climate.set_hvac_mode', 'hvac_mode'), catalog)
+    const known = withStates(hvac, ['climate.hall'], states)
+    expect(known.options).toEqual([{ value: 'off', label: 'Off' }, { value: 'heat_cool', label: 'Heat cool' }])
+    expect(valueSummary(known, 'heat_cool')).toBe('Heat cool')
+    // One of the selector's own entities counts as known too; a state the entity does not have reads as stored.
+    expect(valueSummary(withStates({ ...hvac, stateEntities: ['climate.den'] }, [], states), 'fan_only')).toBe('Fan only')
+    expect(valueSummary(known, 'dry_mode')).toBe('dry_mode')
+    // Without a known entity (or one without state options): the value in words, as the picker's free text would not.
+    expect(valueSummary(withStates(hvac, [], states), 'heat_cool')).toBe('Heat cool')
+    expect(valueSummary(withStates(hvac, ['light.hall'], states), 'heat_cool')).toBe('Heat cool')
+    // An attribute's states are not the entity's states; other widgets are left as they are.
+    expect(withStates({ ...hvac, stateAttribute: 'preset_mode' }, ['climate.hall'], states).options).toBeUndefined()
+    const flash = widgetFor(field('light.turn_on', 'flash'), catalog)
+    expect(withStates(flash, ['climate.hall'], states)).toBe(flash)
   })
   it('state select offers the target entity state options (climate.set_hvac_mode)', async () => {
     const changes: Operand[] = []

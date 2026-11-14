@@ -39,6 +39,11 @@ when the wait starts, not again at each poll. When a value
 node fails, the step reading it fails (and takes its own Error path). A value node
 that no step reads is a warning.
 
+A Constant gives a value you type: its card and panel show a Type select and an
+editor for a value of that type. Changing the Type keeps the value when it is
+still a value of the new type and clears it otherwise (one undo step). Nothing can
+be connected into a Constant; use Convert to change the type of a connected value.
+
 Inputs can be values you type, explicit unset values, or connected data ports. A
 connection replaces the input's own value. A step's value reaches another step only
 over a data wire; there are no named variables. Use a Custom C# node, or a

@@ -577,7 +577,7 @@
     "contains": "path",
     "messages": [
       "Get field is not used",
-      "Path can use ~ only as ~0 for a ~ or ~1 for a / in a name"
+      "Path has a ~ that is not followed by 0 or 1; inside a name, write ~0 for a ~ and ~1 for a /, such as /data/on~1off for the name on/off"
     ],
     "codes": [
       "pure.unused"
@@ -2387,9 +2387,9 @@
     "valid": false,
     "nodeId": "r",
     "inputId": "exports.n.initial",
-    "contains": "Initial n is required",
+    "contains": "Starting value of n is required",
     "messages": [
-      "Initial n is required"
+      "Starting value of n is required"
     ]
   },
   {
@@ -7713,9 +7713,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "fields",
-    "contains": "notify.notify needs a value for Message",
+    "contains": "Notify needs Message",
     "messages": [
-      "notify.notify needs a value for Message"
+      "Notify needs Message"
     ]
   },
   {
@@ -7757,9 +7757,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "field:message",
-    "contains": "notify.notify needs a value for Message",
+    "contains": "Notify needs Message",
     "messages": [
-      "notify.notify needs a value for Message"
+      "Notify needs Message"
     ]
   },
   {
@@ -7979,9 +7979,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "light.turn_on: Target accepts Target or Light entity, not Switch entity",
+    "contains": "Turn on only accepts light entities; the connected value is a switch entity",
     "messages": [
-      "light.turn_on: Target accepts Target or Light entity, not Switch entity"
+      "Turn on only accepts light entities; the connected value is a switch entity"
     ]
   },
   {
@@ -8167,9 +8167,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "climate.set_hvac_mode only accepts climate entities; light.hall is not one",
+    "contains": "Set hvac mode only accepts climate entities; light.hall is not one",
     "messages": [
-      "climate.set_hvac_mode only accepts climate entities; light.hall is not one"
+      "Set hvac mode only accepts climate entities; light.hall is not one"
     ]
   },
   {
@@ -8217,9 +8217,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "climate.set_hvac_mode only accepts climate entities; light.hall is not one",
+    "contains": "Set hvac mode only accepts climate entities; light.hall is not one",
     "messages": [
-      "climate.set_hvac_mode only accepts climate entities; light.hall is not one"
+      "Set hvac mode only accepts climate entities; light.hall is not one"
     ]
   },
   {
@@ -9939,9 +9939,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "climate.set_hvac_mode only accepts climate entities; switch.kitchen is not one",
+    "contains": "Set hvac mode only accepts climate entities; switch.kitchen is not one",
     "messages": [
-      "climate.set_hvac_mode only accepts climate entities; switch.kitchen is not one"
+      "Set hvac mode only accepts climate entities; switch.kitchen is not one"
     ]
   },
   {
@@ -9992,9 +9992,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "climate.set_hvac_mode only accepts climate entities; kitchen is not an entity",
+    "contains": "Set hvac mode only accepts climate entities; kitchen is not an entity",
     "messages": [
-      "climate.set_hvac_mode only accepts climate entities; kitchen is not an entity"
+      "Set hvac mode only accepts climate entities; kitchen is not an entity"
     ]
   },
   {
@@ -10951,9 +10951,9 @@
     "valid": false,
     "nodeId": "s",
     "inputId": "target",
-    "contains": "climate.set_hvac_mode only accepts climate entities; text.foo is not one",
+    "contains": "Set hvac mode only accepts climate entities; text.foo is not one",
     "messages": [
-      "climate.set_hvac_mode only accepts climate entities; text.foo is not one"
+      "Set hvac mode only accepts climate entities; text.foo is not one"
     ]
   },
   {
@@ -19239,5 +19239,801 @@
       "Both sides of the comparison must have the same type",
       "Less-than and greater-than comparisons need Number values"
     ]
+  },
+  {
+    "name": "constant: a wire into its value is refused as into an input it does not have",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "a.value:c.value",
+          "kind": "data",
+          "source": "a",
+          "target": "c",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "c.value:l.value",
+          "kind": "data",
+          "source": "c",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "c",
+    "inputId": "value",
+    "contains": "This value wire goes into Value, which this step does not have",
+    "messages": [
+      "This value wire goes into Value, which this step does not have"
+    ],
+    "codes": [
+      "port.unknownInput"
+    ]
+  },
+  {
+    "name": "constant: a value of its type",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 21
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "c.value:l.value",
+          "kind": "data",
+          "source": "c",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "constant: a value of another type than its Type is refused",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "21"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "c.value:l.value",
+          "kind": "data",
+          "source": "c",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "c",
+    "inputId": "value",
+    "contains": "Value accepts Number, not Text",
+    "messages": [
+      "Value accepts Number, not Text"
+    ]
+  },
+  {
+    "name": "constant: a value of a refined type of its Type",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "entity_id",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id:light",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "c.value:l.value",
+          "kind": "data",
+          "source": "c",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "service required field missing names the service by its name",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "service": "hass_sharp_test.sectioned",
+            "fields": {},
+            "target": {
+              "kind": "unset"
+            },
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:s",
+          "source": "t",
+          "target": "s",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "services": true,
+    "nodeId": "s",
+    "inputId": "fields",
+    "contains": "Sectioned needs ",
+    "messages": [
+      "Sectioned needs Level"
+    ]
+  },
+  {
+    "name": "service input boolean entity wired into a light target is named with an",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "entity_id:input_boolean",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id:input_boolean",
+              "value": "input_boolean.guest"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on",
+            "fields": {},
+            "target": {
+              "kind": "unset"
+            },
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:s",
+          "source": "t",
+          "target": "s",
+          "port": "next"
+        },
+        {
+          "id": "c.value:s.target",
+          "kind": "data",
+          "source": "c",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "target"
+        }
+      ]
+    },
+    "valid": false,
+    "services": true,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "Turn on only accepts light entities; the connected value is an input boolean entity",
+    "messages": [
+      "Turn on only accepts light entities; the connected value is an input boolean entity"
+    ]
+  },
+  {
+    "name": "service entity of any domain wired into a light target",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "entity_id",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on",
+            "fields": {},
+            "target": {
+              "kind": "unset"
+            },
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:s",
+          "source": "t",
+          "target": "s",
+          "port": "next"
+        },
+        {
+          "id": "c.value:s.target",
+          "kind": "data",
+          "source": "c",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "target"
+        }
+      ]
+    },
+    "valid": false,
+    "services": true,
+    "nodeId": "s",
+    "inputId": "target",
+    "contains": "Turn on only accepts light entities; the connected value can be any entity",
+    "messages": [
+      "Turn on only accepts light entities; the connected value can be any entity"
+    ]
+  },
+  {
+    "name": "service light entity wired into a light target",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "entity_id:light",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id:light",
+              "value": "light.hall"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on",
+            "fields": {},
+            "target": {
+              "kind": "unset"
+            },
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:s",
+          "source": "t",
+          "target": "s",
+          "port": "next"
+        },
+        {
+          "id": "c.value:s.target",
+          "kind": "data",
+          "source": "c",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "target"
+        }
+      ]
+    },
+    "valid": true,
+    "services": true
+  },
+  {
+    "name": "daily trigger time with seconds is refused",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "daily",
+            "time": "07:30:00",
+            "timeZone": "UTC"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "time",
+    "contains": "Time must be a time of day as HH:MM, from 00:00 to 23:59",
+    "messages": [
+      "Time must be a time of day as HH:MM, from 00:00 to 23:59"
+    ]
+  },
+  {
+    "name": "daily trigger time with a one-digit hour is refused",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "daily",
+            "time": "7:30",
+            "timeZone": "UTC"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "time",
+    "contains": "Time must be a time of day as HH:MM",
+    "messages": [
+      "Time must be a time of day as HH:MM, from 00:00 to 23:59"
+    ]
+  },
+  {
+    "name": "daily trigger time of 24:00 is refused",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "daily",
+            "time": "24:00",
+            "timeZone": "UTC"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "time",
+    "contains": "Time must be a time of day as HH:MM",
+    "messages": [
+      "Time must be a time of day as HH:MM, from 00:00 to 23:59"
+    ]
+  },
+  {
+    "name": "daily trigger time with a trailing newline is refused",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "daily",
+            "time": "07:30\n",
+            "timeZone": "UTC"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "time",
+    "contains": "Time must be a time of day as HH:MM",
+    "messages": [
+      "Time must be a time of day as HH:MM, from 00:00 to 23:59"
+    ]
+  },
+  {
+    "name": "daily trigger time in words is refused",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "daily",
+            "time": "noon",
+            "timeZone": "UTC"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "time",
+    "contains": "Time must be a time of day as HH:MM",
+    "messages": [
+      "Time must be a time of day as HH:MM, from 00:00 to 23:59"
+    ]
+  },
+  {
+    "name": "daily trigger times 00:00 and 23:59",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "daily",
+            "time": "00:00",
+            "timeZone": "UTC"
+          }
+        },
+        {
+          "id": "u",
+          "kind": "trigger",
+          "config": {
+            "type": "daily",
+            "time": "23:59",
+            "timeZone": "UTC"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "u:next:l",
+          "source": "u",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a time kept by a trigger that is no longer daily is not checked",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual",
+            "time": "07:30:00",
+            "timeZone": "UTC"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true,
+    "noDiagnostics": true
   }
 ]

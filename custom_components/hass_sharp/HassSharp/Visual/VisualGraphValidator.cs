@@ -59,6 +59,28 @@ public static class VisualGraphValidator
         internal static string DomainWords(string domain) => Capital(domain.Replace('_', ' '));
         /// <summary>A key or value people did not name, in words: <c>needs_action</c> → <c>Needs action</c>; never empty.</summary>
         internal static string KeyWords(string key) => DomainWords(key) is var words && Trimmed(words).Length > 0 ? words : "Unnamed";
+        static readonly string[] YouSound = ["uni", "use", "usa", "usu", "uti", "ura", "ure", "uri", "uro", "ubi"];
+        /// <summary>
+        /// "a" or "an" before a word, by its first sound: an input boolean entity, an update entity, a utility meter
+        /// entity, a European one.
+        /// </summary>
+        internal static string Article(string word)
+        {
+            var w = word.ToLowerInvariant();
+            if (w.StartsWith("eu", StringComparison.Ordinal) || w.StartsWith("one", StringComparison.Ordinal)) return "a";
+            if (w.Length > 0 && w[0] is 'a' or 'e' or 'i' or 'o') return "an";
+            return w.StartsWith('u') && !YouSound.Any(p => w.StartsWith(p, StringComparison.Ordinal)) ? "an" : "a";
+        }
+        /// <summary>
+        /// A service as people know it: the name its description gives, else its key in words (<c>set_hvac_mode</c> →
+        /// <c>Set hvac mode</c>), as the editor names it.
+        /// </summary>
+        internal static string ServiceName(JsonObject schema, string service)
+        {
+            var key = service[(service.IndexOf('.') + 1)..];
+            var name = Trimmed(Text(schema, "name"));
+            return name.Length > 0 && name != key ? name : KeyWords(key);
+        }
         /// <summary>
         /// A step as people see it on the canvas: its own label, else (for a Custom C# node) its method's title, else its
         /// kind's catalog label, else its kind in words.
@@ -104,6 +126,13 @@ public static class VisualGraphValidator
             while (end > start && Blank(text[end - 1])) end--;
             return text[start..end];
         }
+        /// <summary>A time of day as the daily trigger runs it: 24-hour HH:MM.</summary>
+        internal const string TimeOfDay = "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$";
+        internal static string TimeOfDayMessage(string label) => $"{label} must be a time of day as HH:MM, from 00:00 to 23:59";
+        /// <summary>A daily trigger's time zone that this machine does not know (the generator checks it, not the validators).</summary>
+        internal static string UnknownTimeZone(string zone) => $"Time zone {Name(zone)} is not known; use a name such as Europe/Zagreb or UTC";
+        /// <summary>A Get field path with a ~ that is not ~0 or ~1.</summary>
+        internal const string PathTilde = "Path has a ~ that is not followed by 0 or 1; inside a name, write ~0 for a ~ and ~1 for a /, such as /data/on~1off for the name on/off";
         static string ClrWords(string id)
         {
             var trimmed = Regex.Replace(Regex.Replace(Regex.Replace(id, "^global::", ""), "<.*$", "", RegexOptions.Singleline), @"[?[\]]+$", "");
@@ -250,6 +279,24 @@ public static class VisualGraphValidator
         /// <summary>The service a service node calls, named in its messages; null for other nodes or without a service id.</summary>
         string? ServiceName(JsonObject node) => Text(Spec(node), "dynamicInputs") == "service" && Text(Config(node), "service") is { Length: > 0 } service ? service : null;
         string Prefix(JsonObject node) => ServiceName(node) is { } service ? service + ": " : "";
+        /// <summary>A service as people know it: its name where the services section describes it, else its id.</summary>
+        string ServiceTitle(string service) => snapshot.Services?.Items[service] is JsonObject schema ? Words.ServiceName(schema, service) : service;
+        /// <summary>
+        /// The message for a wire into a service's target that brings an entity of a domain the service does not take,
+        /// worded as the value case is; null for any other mismatch.
+        /// </summary>
+        string? WrongDomain(JsonObject node, string port, string type)
+        {
+            if (port != "target" || ServiceName(node) is not { } service || snapshot.Services?.Items[service] is not JsonObject schema || ServiceTargetDomains(schema) is not { Length: > 0 } domains) return null;
+            string carried;
+            if (type == "entity_id") carried = "can be any entity";
+            else if (EntityDomain.Match(type) is { Success: true } entity) { var named = Words.DomainWords(entity.Groups[1].Value).ToLowerInvariant() + " entity"; carried = $"is {Words.Article(named)} {named}"; }
+            else return null;
+            return $"{ServiceTitle(service)} only accepts {Words.Or(domains.Select(d => Words.DomainWords(d).ToLowerInvariant()))} entities; the connected value {carried}";
+        }
+        static readonly Regex EntityDomain = new("^entity_id:([a-z0-9_]+)$", RegexOptions.CultureInvariant);
+        /// <summary>An input that takes a value only (a Constant's value): a wire into it is refused as into an input the step does not have.</summary>
+        static JsonNode? Connectable(JsonNode? input) => input is JsonObject spec && spec["connectable"] is JsonValue v && v.TryGetValue<bool>(out var connectable) && !connectable ? null : input;
         string ConfigLabel(JsonNode? rule, string field) => Text(rule, "label") is { Length: > 0 } label && label.Trim().Length > 0 ? label : Words.KeyWords(field);
         static string Kind(JsonObject node) => Text(node, "kind");
         static string Id(JsonObject node) => Text(node, "id");
@@ -355,14 +402,14 @@ public static class VisualGraphValidator
             {
                 var source = nodes[Text(edge, "source")]; var target = nodes[Text(edge, "target")];
                 var sp = Text(edge, "sourcePort"); var tp = Text(edge, "targetPort");
-                var output = DataOutputs(source)[sp]; var input = DataInputs(target, Owner(target))[tp];
+                var output = DataOutputs(source)[sp]; var input = Connectable(DataInputs(target, Owner(target))[tp]);
                 if (output == null) Error(Id(source), "Unknown data output port", port: sp, code: "port.unknownOutput");
                 if (input == null) Error(Id(target), $"This value wire goes into {Words.PortLabel(null, tp)}, which this step does not have", tp, tp, "port.unknownInput");
                 if (!incoming.TryAdd((Id(target), tp), edge)) Error(Id(target), "Only one data source per input", tp, tp, "port.inputTaken");
                 if (output != null && input != null)
                 {
                     var type = Text(output, "type"); var expected = Strings(input["types"]);
-                    if (!expected.Any(t => CompatibleTypes(type, t))) Error(Id(target), Words.Incompatible(Root, Prefix(target) + Words.PortLabel(input, tp), type, expected), tp, tp);
+                    if (!expected.Any(t => CompatibleTypes(type, t))) Error(Id(target), WrongDomain(target, tp, type) ?? Words.Incompatible(Root, Prefix(target) + Words.PortLabel(input, tp), type, expected), tp, tp);
                     // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable.
                     if (scopes.ContainsKey(Id(source)) && scopes.ContainsKey(Id(target)) && !Visible(source, target, output))
                         Error(Id(target), ScopeData(Prefix(target) + Words.PortLabel(input, tp)), tp, tp, "scope.data");
@@ -409,7 +456,7 @@ public static class VisualGraphValidator
             var label = Words.PortLabel(spec, port); var subject = Prefix(node) + label;
             if (raw is not JsonObject operand || Text(raw, "kind") == "unset")
             {
-                if (required) Error(Id(node), ServiceName(node) is { } service ? $"{service} needs a value for {label}" : $"{label} is required", port, port);
+                if (required) Error(Id(node), ServiceName(node) is { } service ? $"{ServiceTitle(service)} needs {label}" : $"{label} is required", port, port);
                 else if (present && raw is not JsonObject) Error(Id(node), $"{subject} has an invalid value", port, port);
                 return null;
             }
@@ -453,7 +500,8 @@ public static class VisualGraphValidator
                     Error(Id(node), $"{subject} must have {Words.Items(Number(spec["minItems"]), Number(spec["maxItems"]))}", port);
             }
             else Error(Id(node), $"{subject} has an invalid value", port);
-            if (type != null && KnownType(type) && !Strings(spec["types"]).Any(t => CompatibleTypes(type, t))) Error(Id(node), Words.Incompatible(Root, subject, type, Strings(spec["types"])), port);
+            // An input that accepts no known type (a Constant whose Type is missing or unknown) is reported where that type is set.
+            if (type != null && KnownType(type) && Strings(spec["types"]).Any(KnownType) && !Strings(spec["types"]).Any(t => CompatibleTypes(type, t))) Error(Id(node), Words.Incompatible(Root, subject, type, Strings(spec["types"])), port);
             return type;
         }
         readonly Dictionary<(string Node, string Terminal, string Owner), bool> terminalMemo = [];
@@ -483,7 +531,7 @@ public static class VisualGraphValidator
             var known = schema["fields"] as JsonObject ?? [];
             var fields = cfg["fields"] as JsonObject ?? [];
             foreach (var (key, _) in fields) if (!known.ContainsKey(key)) Error(id, $"{service} has no field {Words.Name(key)}", "field:" + key);
-            foreach (var (key, field) in known) if (Bool(field, "required") && !fields.ContainsKey(key)) Error(id, $"{service} needs a value for {Words.PortLabel(field, key)}", "fields");
+            foreach (var (key, field) in known) if (Bool(field, "required") && !fields.ContainsKey(key)) Error(id, $"{ServiceTitle(service)} needs {Words.PortLabel(field, key)}", "fields");
             var wired = incoming.ContainsKey((id, "target"));
             var response = Text(schema, "response", "none"); var returnResponse = Bool(cfg, "returnResponse");
             if (returnResponse && response == "none") Error(id, $"{service} returns no response; turn off Return response", "returnResponse");
@@ -495,7 +543,7 @@ public static class VisualGraphValidator
             var accepted = Words.Or(domains.Select(d => Words.DomainWords(d).ToLowerInvariant()));
             foreach (var entity in entities)
                 if (entity is JsonValue ev && ev.TryGetValue<string>(out var entityId) && entityId is not ("all" or "none") && !domains.Contains(entityId.Split('.')[0]))
-                    Error(id, $"{service} only accepts {accepted} entities; {Words.Name(entityId)} is not " + (entityId.IndexOf('.') > 0 ? "one" : "an entity"), "target");
+                    Error(id, $"{ServiceTitle(service)} only accepts {accepted} entities; {Words.Name(entityId)} is not " + (entityId.IndexOf('.') > 0 ? "one" : "an entity"), "target");
         }
         /// <summary>
         /// The target rules of a service node, with or without services. A target the service does not take is an
@@ -584,6 +632,9 @@ public static class VisualGraphValidator
                 var type = TriggerType(node, snapshot);
                 string[] required = type switch { "ha" => ["trigger"], "entity" => ["entity"], "daily" => ["time", "timeZone"], "once" => ["at"], _ => [] };
                 foreach (var field in required) if (!cfg.ContainsKey(field) || cfg[field] is JsonValue v && v.TryGetValue<string>(out var s) && s == "") Error(id, $"{ConfigLabel(spec["config"]?[field], field)} is required", field);
+                // The generator reads a daily time as exactly HH:MM.
+                if (type == "daily" && cfg["time"] is JsonValue time && time.TryGetValue<string>(out var at) && at != "" && !Match(at, Words.TimeOfDay))
+                    Error(id, Words.TimeOfDayMessage(ConfigLabel(spec["config"]?["time"], "time")), "time");
                 if (type == "ha" && cfg["trigger"] is JsonObject trigger && string.IsNullOrWhiteSpace(Text(trigger, "trigger")) && string.IsNullOrWhiteSpace(Text(trigger, "platform"))) Error(id, "Home Assistant trigger needs a platform", "trigger");
                 if (cfg.ContainsKey("entitiesExpression")) Error(id, Words.EntitiesExpression, "entitiesExpression");
                 if (cfg.ContainsKey("schedulesExpression")) Error(id, Words.SchedulesExpression, "schedulesExpression");
@@ -591,7 +642,7 @@ public static class VisualGraphValidator
             if (kind is "entity_field" or "wait_until" && Text(cfg, "field") == "attribute" && string.IsNullOrWhiteSpace(Text(cfg, "attribute"))) Error(id, "Attribute is required", "attribute");
             // A path that starts with / can still be wrong in one way: a ~ that is not ~0 (a ~ in a key) or ~1 (a / in a key).
             if (kind == "get_field" && (cfg["pointer"] is not JsonValue pointer || !pointer.TryGetValue<string>(out var p) || !Match(p, "^(?:/(?:[^~]|~[01])*)*$")))
-                Error(id, cfg["pointer"] is JsonValue path && path.TryGetValue<string>(out var text) && text.StartsWith('/') ? "Path can use ~ only as ~0 for a ~ or ~1 for a / in a name" : "Path must start with /, such as /state", "pointer");
+                Error(id, cfg["pointer"] is JsonValue path && path.TryGetValue<string>(out var text) && text.StartsWith('/') ? Words.PathTilde : "Path must start with /, such as /state", "pointer");
             if (kind == "parallel" && cfg["branches"] is JsonArray branches)
             {
                 var ids = new HashSet<string>();
@@ -607,7 +658,7 @@ public static class VisualGraphValidator
                     {
                         var name = Text(decl, "name"); var type = Text(decl, "type");
                         if (!Match(name, Text(Root["structures"]?["loopDeclaration"]?["name"], "pattern")) || !names.Add(name) || !KnownType(type)) { Error(id, $"The {(group == "carry" ? "carried" : "exported")} values of this loop need unique names and known types", group); continue; }
-                        Operand(node, $"{group}.{name}.initial", decl["initial"], new JsonObject { ["types"] = new JsonArray(type), ["required"] = true, ["label"] = "Initial " + name });
+                        Operand(node, $"{group}.{name}.initial", decl["initial"], new JsonObject { ["types"] = new JsonArray(type), ["required"] = true, ["description"] = "Starting value", ["label"] = "Starting value of " + name });
                     }
                 }
                 if (kind is "while" or "until")

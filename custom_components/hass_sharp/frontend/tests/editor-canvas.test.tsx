@@ -543,9 +543,11 @@ it('drops a data pin on empty canvas and connects a new value node by its value 
   const history = createGraphHistory({ ...start, edges: start.edges.filter(e => e.source !== 'trigger-1') })
   dispose = render(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />, host)
   await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
-  for (const [node, side, port, kind, label] of [['trigger-1', 'source', 'entity_id', 'constant', 'Constant'], ['log', 'target', 'value', 'compare', 'Compare']] as const) {
+  for (const [node, side, port, kind, label] of [['trigger-1', 'source', 'entity_id', 'convert', 'Convert'], ['log', 'target', 'value', 'compare', 'Compare']] as const) {
     const before = history.graph()
     dropOnPane(host, dataPin(host, node, side, port))
+    // Nothing can be wired into a Constant, so a value going out is never offered one.
+    if (side === 'source') expect(host.querySelector('[aria-label="Create Constant"]')).toBeNull()
     button(host, `Create ${label}`).click()
     const after = history.graph()
     const created = after.nodes.at(-1)!

@@ -3547,10 +3547,11 @@
         "inputs": {
           "value": {
             "types": [
-              "$any"
+              "$type"
             ],
             "required": true,
-            "description": "The value to give. It is changed to the chosen type if needed, such as the text 21 into the number 21.",
+            "connectable": false,
+            "description": "The value to give, of the chosen type. Nothing can be connected to it.",
             "default": {
               "kind": "literal",
               "type": "string",

@@ -3,8 +3,9 @@ import { delegateEvents } from 'solid-js/web'
 import { useUpdateNodeInternals, type NodeProps } from '@dschz/solid-flow'
 import { inputValue, type Operand } from '../contract'
 import { InputEditor } from '../InputEditor'
+import { ConstantType, retypeConstant } from '../constant'
 import { icons } from '../icons'
-import { displayValue, keepsNull, valueSummary, widgetFor } from '../widgets'
+import { displayValue, keepsNull, valueSummary, widgetFor, withStates } from '../widgets'
 import { Pin } from './Pin'
 import { durationLabel, traceStatusLabel, traceText, useFlow, type InputView, type PinView, type RowView, type TraceStatus } from './flowModel'
 
@@ -119,7 +120,8 @@ export function NodeCard(props: NodeProps) {
       return value?.kind === 'literal' && (value.value !== null || keepsNull(widget())) ? value.value : undefined
     }
     const configured = () => {
-      return literal() === undefined ? '' : valueSummary(widget(), literal(), flow.names())
+      // A state reads as its picker labels it: with the states of the entities this step acts on, once they are known.
+      return literal() === undefined ? '' : valueSummary(withStates(widget(), view()?.targetEntityIds ?? [], flow.entities()), literal(), flow.names())
     }
     const traced = () => trace()?.value?.(id, input().port, 'in')
     const canEdit = () => !flow.readOnly() && flow.editable()
@@ -229,7 +231,10 @@ export function NodeCard(props: NodeProps) {
         on:focusout={leave}
       >
         <div class="hs-pin-line">
-          <Pin nodeId={id} pin={input().pin} errors={pinErrors(input().pin, input().port)} describedBy={errorsId} />
+          {/* An input that takes a value only (a Constant's) has no pin: nothing can be connected to it. */}
+          <Show when={input().spec.connectable !== false}>
+            <Pin nodeId={id} pin={input().pin} errors={pinErrors(input().pin, input().port)} describedBy={errorsId} />
+          </Show>
           <Show
             when={canEdit() && muted() && !expanded()}
             fallback={
@@ -269,16 +274,33 @@ export function NodeCard(props: NodeProps) {
         </div>
         <Show when={showEditor()}>
           <EditorBoundary>
-            <InputEditor
-              variant="inline"
-              input={input().spec}
-              value={operand(input().port)}
-              label={input().pin.label}
-              catalog={flow.types()}
-              context={{ targetEntityIds: view()?.targetEntityIds ?? [] }}
-              errors={input().errors}
-              onChange={(next, options) => flow.setInput(id, input().port, next, options)}
-            />
+            {(() => {
+              const editor = () => (
+                <InputEditor
+                  variant="inline"
+                  input={input().spec}
+                  value={operand(input().port)}
+                  label={input().pin.label}
+                  catalog={flow.types()}
+                  context={{ targetEntityIds: view()?.targetEntityIds ?? [] }}
+                  errors={input().errors}
+                  onChange={(next, options) => flow.setInput(id, input().port, next, options)}
+                />
+              )
+              // A Constant's value is edited beside its Type; changing the Type keeps the value only while it fits.
+              const constant = () => { const node = flow.graphNode(id); return node?.kind === 'constant' && input().port === 'value' ? node : undefined }
+              return (
+                <Show when={constant()} fallback={editor()}>
+                  {node => (
+                    <span class="hs-mixed hs-constant-value">
+                      <ConstantType type={node().config.type} catalog={flow.types()}
+                        onChange={type => flow.setConfig(id, retypeConstant(node().config, type, flow.types()))} />
+                      <span class="hs-mixed-value">{editor()}</span>
+                    </span>
+                  )}
+                </Show>
+              )
+            })()}
           </EditorBoundary>
         </Show>
         <Show when={shown()}>
