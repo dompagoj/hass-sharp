@@ -397,9 +397,11 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
         completionTimer = setTimeout(() => {
           completionTimer = undefined
           const position = editor.getPosition()
+          // Asked as typing asks (auto): Monaco shows "Loading…" and "No suggestions." only for a list a person asked
+          // for, and keeps that box open over the rest of the word. A word with no suggestions closes the list quietly.
           if (model && owns(model) && model.getVersionId() === version && editor.hasTextFocus()
             && position && completionPosition && position.lineNumber === completionPosition.lineNumber
-            && position.column === completionPosition.column) editor.trigger('typing-recovery', 'editor.action.triggerSuggest', {})
+            && position.column === completionPosition.column) editor.trigger('typing-recovery', 'editor.action.triggerSuggest', { auto: true })
           completionPosition = null
         }, 100)
       }

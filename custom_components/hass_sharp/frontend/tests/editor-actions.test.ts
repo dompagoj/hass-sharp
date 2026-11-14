@@ -207,6 +207,19 @@ describe('Editor feedback and typing recovery', () => {
     response.resolve([completion])
     expect((await first).suggestions).toEqual([])
   })
+  it('reopens suggestions as typing does, so a word with none shows no "No suggestions" box', async () => {
+    // Monaco shows "No suggestions." (and "Loading…") only for suggestions a person asked for. The reopening follows
+    // their typing, so it asks as typing does: an empty answer then closes the list without a word.
+    const response = deferred<any>()
+    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
+    void completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
+    editor.change('motionCount')
+    editor.move({ lineNumber: 1, column: 12 }, 'keyboard', 0)
+    await vi.advanceTimersByTimeAsync(150)
+    expect(editor.triggers).toEqual(['editor.action.triggerSuggest'])
+    expect(editor.triggerPayloads).toEqual([{ auto: true }])
+    response.resolve([])
+  })
   it('marks server-filtered lists incomplete and shows namespaces as modules', async () => {
     const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? [{ ...completion, tags: ['Namespace'] }] : []))
     const result = await completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)

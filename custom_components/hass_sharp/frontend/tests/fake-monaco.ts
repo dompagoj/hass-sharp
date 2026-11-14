@@ -50,9 +50,11 @@ export class FakeEditor {
   key(keyCode: number) { this.keyListeners.forEach(fn => fn({ keyCode })) }
   selection: any
   triggers: string[] = []
+  /** What each trigger was given, beside its action in `triggers`. */
+  triggerPayloads: unknown[] = []
   setSelection(range: any) { this.selection = range }
   revealRangeInCenter() {}
-  trigger(_source: string, action: string) { this.triggers.push(action) }
+  trigger(_source: string, action: string, payload?: unknown) { this.triggers.push(action); this.triggerPayloads.push(payload) }
   setPosition() {}
   focus() {}
   updateOptions(options: any) { Object.assign(this.options, options) }
