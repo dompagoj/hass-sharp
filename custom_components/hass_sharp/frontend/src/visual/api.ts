@@ -10,6 +10,10 @@ export interface SourceRange {
 export interface VisualDiagnostic {
   inputId?: string | null
   portId?: string | null
+  /** The validator's code for a structural problem (`port.unknownInput`); most problems have none. */
+  code?: string | null
+  /** Set by the editor on a problem about a value wire whose pin is missing: that wire, which the problem can remove. */
+  edgeId?: string
   nodeId: string | null
   message: string
   severity: number

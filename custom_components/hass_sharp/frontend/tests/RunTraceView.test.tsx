@@ -531,6 +531,18 @@ it('reads a recorded state as the state picker labels it, on its card and in the
   expect(port(root, 'field:hvac_mode').querySelector('.hs-trace-value')!.textContent).toBe('dry_mode')
 })
 
+it('offers no way to edit a wire into a missing pin in the read-only trace view', async () => {
+  const g = graph()
+  g.nodes.push({ id: 'c', kind: 'constant', config: { type: 'string', value: lit('string', 'hi') }, position: { x: 400, y: 600 } } as any)
+  g.edges.push({ id: 'into-constant', kind: 'data', source: 'trigger-1', sourcePort: 'entity_id', target: 'c', targetPort: 'value' } as any)
+  const reply = response({ snapshot: { revision: 'rev', visualId: 'heating', visualRevision: 4, graph: g, catalog: { ...nodeCatalog, services: services as any } } })
+  const { root } = mount(async () => reply)
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(7))
+  card(root, 'c').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe('Constant'))
+  expect([...root.querySelectorAll('button')].some(b => b.textContent?.includes('Remove connection') || b.getAttribute('aria-label')?.startsWith('Remove connection'))).toBe(false)
+})
+
 it('keeps the run\'s own services schema when its snapshot has one: the live services are not used', async () => {
   const live = structuredClone(services) as any
   live.items['light.turn_on'].fields.brightness_pct.label = 'Brightness now'

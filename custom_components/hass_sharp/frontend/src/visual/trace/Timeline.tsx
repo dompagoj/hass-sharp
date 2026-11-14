@@ -5,6 +5,8 @@ import { durationLabel, nodeTitle, traceStatusLabel, type TraceStatus } from '..
 import { icons, nodeIdentity } from '../icons'
 import type { TraceEvent } from '../../types'
 import type { TraceModel } from './traceModel'
+import { stepSummary } from '../nodeSummary'
+import { useLoadedRegistry } from '../../registry'
 
 /** The icon beside each step status (the word is always there too). */
 export const statusIcon: Record<TraceStatus, readonly string[]> = {
@@ -15,8 +17,10 @@ export const offsetLabel = (ms: number) => `+${durationLabel(ms) || '0 ms'}`
 
 /**
  * Every recorded run of a step, in the order they started: status, step, iteration or branch, when it started and
- * how long it took. A value node worked out for a step is a lesser row labelled "Value", just before that step's row. Choosing one selects its step (and that run); the selected step's runs are marked. One row is in
- * the Tab order; the arrow keys, Home and End move between rows.
+ * how long it took. A step is named by its title and what its card says about it (the service a Call service step
+ * calls), so runs of steps of one kind read apart. A value node worked out for a step is a lesser row labelled
+ * "Value", just before that step's row. Choosing one selects its step (and that run); the selected step's runs are
+ * marked. One row is in the Tab order; the arrow keys, Home and End move between rows.
  */
 export function Timeline(props: {
   model: TraceModel
@@ -32,6 +36,8 @@ export function Timeline(props: {
   let list: HTMLOListElement | undefined
   const rows = () => [...(list?.querySelectorAll<HTMLButtonElement>('.hs-trace-step') ?? [])]
   const node = (id: string) => props.graph.nodes.find(n => n.id === id)
+  // Registry names, once loaded, for the steps' summaries (as on their cards).
+  const names = useLoadedRegistry()
   const current = () => {
     const events = props.model.events
     const index = events.findIndex(e => e.seq === props.selectedSeq)
@@ -71,6 +77,8 @@ export function Timeline(props: {
               const status = () => event().status
               const selected = () => event().seq === props.selectedSeq
               const value = () => !!step() && isPure(step()!, props.catalog)
+              const summary = () => { const n = step(); return n ? stepSummary(n, props.catalog, names(), props.graph) : undefined }
+              const detail = () => [value() && 'Value', summary(), frame(), event().trunc && 'Some values were too large to record'].filter(Boolean).join(' · ')
               return (
                 <li>
                   <button
@@ -89,10 +97,8 @@ export function Timeline(props: {
                     </span>
                     <span class="hs-trace-step__main">
                       <span class="hs-trace-step__title">{nodeTitle(step(), props.catalog, 'A removed step')}</span>
-                      <Show when={value() || frame() || event().trunc}>
-                        <span class="hs-trace-step__detail">
-                          {[value() && 'Value', frame(), event().trunc && 'Some values were too large to record'].filter(Boolean).join(' · ')}
-                        </span>
+                      <Show when={detail()}>
+                        <span class="hs-trace-step__detail" title={detail()}>{detail()}</span>
                       </Show>
                     </span>
                     <span class="hs-trace-step__time">

@@ -284,6 +284,7 @@ export function NodeCard(props: NodeProps) {
                   catalog={flow.types()}
                   context={{ targetEntityIds: view()?.targetEntityIds ?? [] }}
                   errors={input().errors}
+                  retype={flow.graphNode(id)?.kind === 'constant' && input().port === 'value'}
                   onChange={(next, options) => flow.setInput(id, input().port, next, options)}
                 />
               )

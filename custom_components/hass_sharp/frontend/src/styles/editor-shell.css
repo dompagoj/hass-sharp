@@ -194,6 +194,9 @@
 .hs-app .hs-problem__message { padding: 0; border: 0; background: none; color: var(--hs-text); font: inherit; text-align: left; overflow-wrap: anywhere; }
 .hs-app .hs-problem__message:hover { text-decoration: underline; text-underline-offset: 2px; }
 .hs-app .hs-problem__line { padding: 0; border: 0; background: none; color: var(--hs-accent); font-size: 12px; font-weight: 600; white-space: nowrap; text-decoration: underline; text-underline-offset: 2px; }
+.hs-app .hs-problem__actions { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: flex-end; }
+.hs-app .hs-problem__actions:empty { display: none; }
+.hs-app .hs-problems:focus { outline: none; }
 
 /* Generated C# and Graph JSON. */
 .hs-app .hs-code-panel { display: grid; gap: 8px; min-width: 0; }

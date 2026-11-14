@@ -38,7 +38,8 @@ export function NumberWidget(props: WidgetProps) {
   const session = dragSession(() => props.id, (v, o) => props.commit(v, o))
   return <Show when={props.widget.slider} fallback={<span class="hs-widget-row">
     <DraftField id={props.id} label={props.label} inputmode={decimalMode(props.widget.min)} text={value() === undefined ? displayValue(props.value) : String(value())}
-      placeholder="Not set" describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
+      placeholder="Not set" describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled} force={props.stale}
+      initialError={props.stale && Number.isNaN(parseNumber(displayValue(props.value))) ? 'Enter a number.' : undefined}
       commit={text => {
         const parsed = parseNumber(text)
         if (Number.isNaN(parsed)) return 'Enter a number.'
@@ -67,7 +68,7 @@ export function TextWidget(props: WidgetProps) {
     <Show when={props.widget.multiple} fallback={
       <DraftField id={props.id} label={props.label} text={displayValue(props.value)} multiline={props.widget.multiline} list={suggestions()}
         placeholder={textPlaceholder(props.value)} shortcutHint={!props.compact} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
-        commit={text => { props.commit(emptyText(props, text)) }} />}>
+        force={props.stale} commit={text => { props.commit(emptyText(props, text)) }} />}>
       <ListWidget {...props} add={add => <DraftField id={props.id} label={`Add to ${props.label}`} text="" placeholder="Add…" clearOnCommit list={suggestions()} describedBy={props.describedBy}
         invalid={props.invalid} disabled={props.disabled} commit={text => { if (text.trim()) add(text) }} />} />
     </Show>

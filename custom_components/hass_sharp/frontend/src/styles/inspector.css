@@ -30,6 +30,8 @@
 .hs-app .hs-insp-problem__body .hs-insp-glyph { color: var(--hs-danger); margin-top: 2px; }
 .hs-app .hs-insp-problem--warning .hs-insp-problem__body { border-color: color-mix(in oklab, var(--hs-warning) 45%, var(--hs-line)); background: color-mix(in oklab, var(--hs-warning) 9%, var(--hs-surface)); }
 .hs-app .hs-insp-problem--warning .hs-insp-glyph { color: var(--hs-warning); }
+.hs-app .hs-insp-problem { display: grid; gap: 4px; }
+.hs-app .hs-insp-problem__action { justify-self: end; font-size: 13px; }
 
 /* Sections and plain fields. */
 .hs-app .hs-insp-main, .hs-app .hs-insp-service, .hs-app .hs-insp-trigger { display: grid; gap: 16px; min-width: 0; }

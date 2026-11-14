@@ -92,7 +92,11 @@ export function VisualEditor(props: {
       },
     ),
   )
+  // Saved, unchanged and active: Save would store the same revision again. A saved version that is not active can be
+  // saved again (to activate it), and a new automation always can.
+  const nothingToSave = () => { const doc = session.document(); return !!doc && !session.dirty() && doc.currentRevisionActive !== false }
   const save = async () => {
+    if (nothingToSave()) return
     const result = await session.save()
     if (result) {
       void queryClient.invalidateQueries({ queryKey: ['visual-automations'] })
@@ -386,7 +390,8 @@ export function VisualEditor(props: {
         canRedo={history.canRedo()}
         onUndo={history.undo}
         onRedo={history.redo}
-        canSave={session.canSave()}
+        canSave={session.canSave() && !nothingToSave()}
+        saveTitle={nothingToSave() ? 'Nothing to save: every change is saved' : undefined}
         onSave={() => void save()}
         run={
           admin() ? (
@@ -487,7 +492,7 @@ export function VisualEditor(props: {
             get tone() { return errorCount() ? 'error' as const : 'warning' as const },
             content: () => (
               <ProblemsPanel diagnostics={session.diagnostics()} graph={graph()} catalog={session.catalog()} onLocate={locate}
-                onSelectStep={id => { choose(id); focusCard(id) }} onShowLine={showLine} />
+                onSelectStep={id => { choose(id); focusCard(id) }} onShowLine={showLine} onGraphChange={next => commit(next)} />
             ),
           },
           {

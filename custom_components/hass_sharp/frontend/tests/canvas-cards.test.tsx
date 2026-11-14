@@ -10,6 +10,7 @@ import * as contract from '../src/visual/contract'
 import { addNode, connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { visualFixture } from './visual-fixture'
 import { Timeline } from '../src/visual/trace/Timeline'
+import { nodeSummary } from '../src/visual/nodeSummary'
 import { chipValue, flowTrace, traceModel } from '../src/visual/trace/traceModel'
 import type { RunTrace, TraceEvent } from '../src/types'
 import services from '../../../../tests/fixtures/visual-services.json'
@@ -74,6 +75,9 @@ const withServices = (edit?: (section: contract.ServicesSection) => void) => {
   return { ...contract.nodeCatalog, services: section }
 }
 const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
+/** What a step's card says about it. */
+const nodeSummaryOf = (graph: VisualGraph, id: string, catalog: contract.VisualCatalogSnapshot = contract.nodeCatalog) =>
+  nodeSummary(graph.nodes.find(n => n.id === id)! as contract.GraphNode, catalog, undefined, graph as contract.Graph)
 /** Transition as a typed number field instead of a slider, so a draft can be refused. */
 const typedTransition = (section: contract.ServicesSection) => {
   ;(section as any).items['light.turn_on'].fields.transition.selector.number.mode = 'box'
@@ -678,10 +682,34 @@ it('shows a run of value nodes: their cards with status and values, "Not used" f
   // The timeline: the value node is a lesser row labelled Value, directly before the step that used it.
   const rows = [...el.querySelectorAll<HTMLButtonElement>('.hs-trace-step')]
   expect(rows.map(row => row.classList.contains('hs-trace-step--value'))).toEqual([false, false, false, true, false])
-  expect(rows[3].querySelector('.hs-trace-step__detail')!.textContent).toBe('Value')
+  // A row says what the step's card says about it: the Constant's value, what the Log writes.
+  expect(rows[3].querySelector('.hs-trace-step__detail')!.textContent).toBe('Value · 20')
   expect(rows[3].querySelector('.hs-trace-step__title')!.textContent).toBe('Constant')
   expect(rows[4].querySelector('.hs-trace-step__title')!.textContent).toBe('Log')
-  expect(rows[4].querySelector('.hs-trace-step__detail')).toBeNull()
+  expect(rows[4].querySelector('.hs-trace-step__detail')!.textContent).toBe('Log value')
+  expect(nodeSummaryOf(graph, 'say')).toBe('Log value')
+})
+
+it('tells runs of steps of one kind apart in the timeline: each row says what its card says (the service it calls)', () => {
+  const el = host()
+  const catalog = withServices()
+  let graph = typed()
+  const base = graph.nodes.find(n => n.id === 'service-1')!.config
+  graph = updateNode(graph, 'service-1', { config: { ...base, service: 'light.turn_on' } })
+  graph = connectNodes(addNode(graph, 'service', 'service-2', catalog), 'service-1', 'service-2', undefined, catalog)
+  graph = updateNode(graph, 'service-2', { config: { ...base, service: 'light.turn_off' } })
+  graph = connectNodes(addNode(graph, 'service', 'service-3', catalog), 'service-2', 'service-3', undefined, catalog)
+  graph = updateNode(graph, 'service-3', { config: { ...base, service: 'climate.set_hvac_mode' } })
+  const events = (['trigger-1', 'condition-1', 'service-1', 'service-2', 'service-3'] as const).map((node, i) => ({ node, frame: '', t: i, ms: 1, status: 'ok', port: node === 'condition-1' ? 'true' : 'next', seq: i + 1 }) as TraceEvent)
+  const summary: RunTrace['summary'] = Object.fromEntries(events.map(e => [e.node, { count: 1, failed: 0, last: 'ok' as const }]))
+  const run: RunTrace = { format: 1, runId: 'run-1', rootNodeId: 'trigger-1', startedUtc: '2026-11-12T18:00:00Z', complete: true, truncated: false, dropped: 0, trigger: {}, events, summary }
+  dispose = render(() => <Timeline model={traceModel(run, graph, catalog)} graph={graph} catalog={catalog} live={false} onSelect={() => {}} />, el)
+  const rows = [...el.querySelectorAll<HTMLButtonElement>('.hs-trace-step')].slice(2)
+  expect(rows.map(row => row.querySelector('.hs-trace-step__title')!.textContent)).toEqual(['Call service', 'Call service', 'Call service'])
+  const details = rows.map(row => row.querySelector('.hs-trace-step__detail')?.textContent)
+  expect(details).toEqual(['light.turn_on · Hall', 'light.turn_off · Hall', 'climate.set_hvac_mode · Hall'])
+  expect(details).toEqual(['service-1', 'service-2', 'service-3'].map(id => nodeSummaryOf(graph, id, catalog)))
+  expect(new Set(details).size).toBe(3)
 })
 
 it('names registry items on read-only value chips', async () => {

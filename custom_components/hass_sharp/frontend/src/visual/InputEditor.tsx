@@ -30,6 +30,11 @@ export interface InputEditorProps {
   /** Set while the input is connected: the source shown read-only (for example "Read entity · State"). */
   wiredFrom?: string
   catalog?: VisualCatalogSnapshot
+  /**
+   * A stored value of another type than the input's (a Constant's value from before its Type set the value's type) is
+   * shown in the input's own number or text editor, as text, and committing it stores it as the input's type.
+   */
+  retype?: boolean
 }
 
 const jsonWidget: Widget = { kind: 'json', multiple: false }
@@ -52,8 +57,14 @@ export function InputEditor(props: InputEditorProps) {
   // in the JSON editor it is a value someone wrote, and stays one.
   const literal = () => { const o = operand(); return o.kind === 'literal' && (o.value !== null || keepsNull(widget())) ? o.value : undefined }
   const widget = createMemo(() => widgetFor(props.input, catalog()))
+  // A Constant's stored text or number of another kind than its Type is shown in the Type's own editor (see `retype`).
+  const stale = () => {
+    const value = literal(), kind = widget().kind, stored = operand()
+    return !!props.retype && (kind === 'number' || kind === 'text') && !widget().multiple && (typeof value === 'string' || typeof value === 'number')
+      && (!fitsWidget(widget(), value) || (stored.kind === 'literal' && !props.input.types.includes(stored.type)))
+  }
   // A stored value of another shape stays editable as JSON instead of being misread by the widget.
-  const shown = () => fitsWidget(widget(), literal()) ? widget() : jsonWidget
+  const shown = () => fitsWidget(widget(), literal()) || stale() ? widget() : jsonWidget
   const view = () => props.wiredFrom !== undefined ? 'wired' : 'value'
   // A list or object typed into a kind switch is as large as the JSON editor.
   const light = () => inlineWidget(shown()) && !(shown().kind === 'mixed' && valueKind(literal()) === 'json')
@@ -93,11 +104,11 @@ export function InputEditor(props: InputEditorProps) {
   const content = () => <>
     <Show when={view() === 'value'}>
       <Show when={widget().kind !== 'none'} fallback={<span class="hs-input-editor__state hs-muted">
-        {props.variant === 'inline' ? 'Connect an output' : `Connect an output of type ${typeNames()}.`}
+        {props.retype ? (props.variant === 'inline' ? 'Choose another Type' : 'No value can be typed in for this Type: choose another.') : props.variant === 'inline' ? 'Connect an output' : `Connect an output of type ${typeNames()}.`}
       </span>}>
         <Show when={!summary()} fallback={<Summary widget={shown()} value={literal()} />}>
           <WidgetControl widget={shown()} value={literal()} commit={commit} id={id} label={props.label} describedBy={describedBy()} required={props.input.required}
-            invalid={errors().length > 0} disabled={!!props.disabled} compact={props.variant === 'inline'} context={props.context} />
+            invalid={errors().length > 0} disabled={!!props.disabled} compact={props.variant === 'inline'} context={props.context} stale={stale()} />
         </Show>
       </Show>
     </Show>

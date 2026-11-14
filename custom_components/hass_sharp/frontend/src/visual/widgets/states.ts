@@ -1,5 +1,6 @@
 import type { JsonValue } from '../contract'
 import { displayValue, optionWords } from './json'
+import type { Widget } from './model'
 
 /** An entity as far as its states go (a registry entity carries more). */
 export interface StateEntity {
@@ -26,3 +27,17 @@ export function stateOptions(entities: readonly StateEntity[] | undefined, ids: 
  */
 export const stateWords = (value: JsonValue, states: readonly string[]): string =>
   states.length && !(typeof value === 'string' && states.includes(value)) ? displayValue(value) : optionWords(value)
+
+/**
+ * The state picker of a setting that is not a service field (a State condition's state, a state trigger's from and
+ * to): the panel offers its states with this widget, and a card's summary reads them by the same rule.
+ */
+export const stateField: Widget = { kind: 'state', multiple: false }
+
+/** The states a state widget offers for these entities: the rule of its picker, its card chip and its trace chip. */
+export const widgetStates = (widget: Widget, ids: readonly string[], entities: readonly StateEntity[] | undefined): string[] =>
+  widget.stateAttribute ? [] : stateOptions(entities, [...ids, ...(widget.stateEntities ?? [])], widget.hideStates)
+
+/** How a state reads where it is not being picked, for a state widget and the entities its step acts on. */
+export const stateLabel = (value: JsonValue, widget: Widget, ids: readonly string[], entities: readonly StateEntity[] | undefined): string =>
+  stateWords(value, widgetStates(widget, ids, entities))

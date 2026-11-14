@@ -8,12 +8,13 @@ import type { EntityInfo } from '../src/entities'
 import { createRegistry } from '../src/registry'
 import { EntityAutocomplete } from '../src/components/EntityAutocomplete'
 import { CatalogPicker } from '../src/components/CatalogPicker'
-import { createGraph, updateNode } from '../src/visual/graph'
+import { addNode, createGraph, updateNode } from '../src/visual/graph'
+import { nodeSummary } from '../src/visual/nodeSummary'
 import { dataInputs, nodeCatalog, validateGraph, validLiteral, type GraphNode, type InputSpec, type JsonValue, type Operand, type ServiceFieldSchema, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { InputEditor } from '../src/visual/InputEditor'
 import { typeLabel } from '../src/visual/typeLabels'
 import {
-  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, optionLabel, optionWords, registryNames, stateOptions, targetValue, valueSummary, WidgetControl, widgetFor, withStates,
+  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, optionLabel, optionWords, registryNames, stateField, stateLabel, stateOptions, targetValue, valueSummary, WidgetControl, widgetFor, withStates,
   type ValueKind, type Widget,
 } from '../src/visual/widgets'
 
@@ -432,6 +433,21 @@ describe('pickers', () => {
     expect(withStates({ ...hvac, stateAttribute: 'preset_mode' }, ['climate.hall'], states).options).toBeUndefined()
     const flash = widgetFor(field('light.turn_on', 'flash'), catalog)
     expect(withStates(flash, ['climate.hall'], states)).toBe(flash)
+  })
+  it('reads a state by one rule in the picker, the card, the trace and the step summary: hidden states included', () => {
+    const states = [entity('climate.hall', { state_options: ['off', 'heat_cool', 'unavailable'] })]
+    const hvac = widgetFor(field('climate.set_hvac_mode', 'hvac_mode'), catalog)
+    // A state the selector hides is not one the picker offers: it reads as stored, as the card's summary reads it.
+    expect(stateLabel('unavailable', hvac, ['climate.hall'], states)).toBe('unavailable')
+    expect(stateLabel('unavailable', hvac, ['climate.hall'], states)).toBe(valueSummary(withStates(hvac, ['climate.hall'], states), 'unavailable'))
+    expect(stateLabel('heat_cool', hvac, ['climate.hall'], states)).toBe(valueSummary(withStates(hvac, ['climate.hall'], states), 'heat_cool'))
+    // A State condition's state has no selector: the panel's picker (`stateField`) hides nothing, and the step's
+    // summary reads it by that same widget.
+    expect(stateLabel('unavailable', stateField, ['climate.hall'], states)).toBe('Unavailable')
+    let graph = addNode(createGraph('States'), 'condition', 'c')
+    graph = updateNode(graph, 'c', { config: { type: 'state', entity: { kind: 'literal', type: 'entity_id', value: 'climate.hall' }, state: 'unavailable' } })
+    const summary = nodeSummary(graph.nodes.find(n => n.id === 'c')!, nodeCatalog, { entities: states } as any, graph)
+    expect(summary).toContain(stateLabel('unavailable', stateField, ['climate.hall'], states))
   })
   it('state select offers the target entity state options (climate.set_hvac_mode)', async () => {
     const changes: Operand[] = []

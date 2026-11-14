@@ -22,6 +22,11 @@ export interface WidgetProps {
   compact: boolean
   required: boolean
   context?: { targetEntityIds?: string[] }
+  /**
+   * The stored value is of another type than this editor's (a Constant's value from before its Type set the value's
+   * type): it is shown here as text, and committing it, even unchanged, stores it as this editor's type.
+   */
+  stale?: boolean
 }
 
 export const describedBy = (...ids: (string | false | undefined)[]) => ids.filter(Boolean).join(' ') || undefined
@@ -50,16 +55,20 @@ export function DraftField(props: {
   clearOnCommit?: boolean
   /** Show the "Ctrl+Enter to apply" hint of a multiline field ("⌘+Enter" on Apple platforms). */
   shortcutHint?: boolean
+  /** Commit the text even when it is unchanged (a stored value that is to be stored again as another type). */
+  force?: boolean
+  /** The message the field shows before anything is typed (a stored value that does not read as the field's kind). */
+  initialError?: string
 }) {
   const [draft, setDraft] = createSignal(props.text)
-  const [error, setError] = createSignal<string>()
+  const [error, setError] = createSignal<string | undefined>(props.initialError)
   const ownId = createUniqueId()
   const errorId = () => `${props.id ?? ownId}-local-error`, hintId = () => `${props.id ?? ownId}-shortcut`
   // The last draft handed to the parent, until the parent's new text arrives.
   let reported: string | undefined
-  createEffect(on(() => props.text, text => { setDraft(text); setError(); reported = undefined }, { defer: true }))
+  createEffect(on(() => props.text, text => { setDraft(text); setError(props.initialError); reported = undefined }, { defer: true }))
   const finish = () => {
-    if (draft() === props.text) { setError(); return }
+    if (draft() === props.text && !props.force) { setError(); return }
     if (draft() === reported) return
     const message = props.commit(draft())
     setError(message)
@@ -69,9 +78,9 @@ export function DraftField(props: {
   }
   const keydown = (event: KeyboardEvent) => {
     if (event.key === 'Enter' && !event.isComposing && (!props.multiline || event.ctrlKey || event.metaKey)) { event.preventDefault(); finish() }
-    if (event.key === 'Escape' && (draft() !== props.text || error())) {
+    if (event.key === 'Escape' && (draft() !== props.text || (error() && error() !== props.initialError))) {
       event.preventDefault(); event.stopPropagation()
-      setDraft(props.text); setError(); reported = undefined
+      setDraft(props.text); setError(props.initialError); reported = undefined
     }
   }
   const hint = () => props.multiline && props.shortcutHint

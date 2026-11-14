@@ -124,7 +124,8 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
       <Show when={!wired() && !muted() && editSpec()} fallback={<span class="hs-insp-input__label">{label()}</span>}>
         {current => (
           <InputEditor variant="panel" input={current()} value={operand()} label={label()} catalog={ctx.catalog()}
-            context={{ targetEntityIds: ctx.targetEntityIds() }} errors={errors()} onChange={change} />
+            context={{ targetEntityIds: ctx.targetEntityIds() }} errors={errors()} onChange={change}
+            retype={ctx.node().kind === 'constant' && row.port === 'value'} />
         )}
       </Show>
       <TypeChip {...chip()} />

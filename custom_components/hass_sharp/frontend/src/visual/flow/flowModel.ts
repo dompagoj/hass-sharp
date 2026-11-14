@@ -161,12 +161,12 @@ export function keepUnrendered(original: VisualGraph, edited: VisualGraph): Visu
   }
 }
 
-/** A node's name on its card: its own label, else (a Custom C# node) its method's title, else its kind's label. */
 /** The entities a step acts on when its target is typed in (for the states of a state field); none when it is wired. */
 export function literalTargetEntities(node: GraphNode): string[] {
   const target = node.config.target
   return record(target) && target.kind === 'literal' ? targetIds(target.value as never).entity_id : []
 }
+/** A node's name on its card: its own label, else (a Custom C# node) its method's title, else its kind's label. */
 export const nodeTitle = (node: GraphNode | undefined, catalog: VisualCatalogSnapshot, fallback = '') =>
   node ? (text(node.label) || text(customSignature(node, catalog)?.title) || (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].label : node.kind)) : fallback
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '')

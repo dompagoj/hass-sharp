@@ -13,6 +13,9 @@
 
 .hs-app .hs-widget-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .hs-app .hs-widget-row > .hs-input { flex: 1; }
+/* A field's own message ("Enter a number.") goes on a line of its own, so it never squeezes the field. */
+.hs-app .hs-widget-row:has(> .hs-error) { flex-wrap: wrap; row-gap: 2px; }
+.hs-app .hs-widget-row > .hs-error { flex-basis: 100%; }
 .hs-app .hs-unit { color: var(--hs-muted); font-size: 12px; white-space: nowrap; }
 .hs-app .hs-range { flex: 1; min-width: 0; min-height: 32px; accent-color: var(--hs-action); }
 .hs-app .hs-slider-value { min-width: 4.5em; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; }

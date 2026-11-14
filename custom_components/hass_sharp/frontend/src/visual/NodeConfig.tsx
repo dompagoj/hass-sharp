@@ -6,14 +6,15 @@ import { Glyph } from './Glyph'
 import { Errors, focusRow, InputRow, type RowContext } from './InputRow'
 import { ArrayItems, Branches, Declarations, ObjectFields, type StructureContext } from './StructureEditors'
 import { buildNodeView } from './flow/flowModel'
-import { retypeConstant } from './constant'
+import { constantTypes, retypeConstant } from './constant'
+import { RemoveWire } from './RemoveWire'
 import { graphTypes } from './connectionIndex'
 import { customSignature, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
 import { typeLabel } from './typeLabels'
 import { DraftField } from './widgets/common'
-import { WidgetControl } from './widgets'
+import { stateField, WidgetControl } from './widgets'
 import type { VisualDiagnostic } from './api'
 
 type Options = { coalesce?: string }
@@ -114,7 +115,8 @@ export function NodeConfig(props: NodeConfigProps) {
     const value = () => props.node.config[field.name]
     const errors = () => errorsFor(field.name)
     const types = () => field.rule.enumSource === 'types' || field.name === 'type' || field.name === 'itemType'
-    const options = () => (field.rule.enumSource === 'types' ? Object.keys(props.catalog.types) : (field.rule.enum ?? []).map(String))
+    // A Constant offers only the types a value can be typed in for; a Convert or a loop any type.
+    const options = () => (field.rule.enumSource === 'types' ? (kind() === 'constant' && field.name === 'type' ? constantTypes(props.catalog) : Object.keys(props.catalog.types)) : (field.rule.enum ?? []).map(String))
     const optionLabel = (option: string) => (types() ? typeLabel(option, props.catalog) : field.name === 'operator' ? operators[option] ?? option : words.key(option))
     const number = () => field.rule.type === 'integer' || field.rule.type === 'number'
     const entityIds = () => { const entity = props.node.config.entity; return record(entity) && entity.kind === 'literal' && typeof entity.value === 'string' ? [entity.value] : [] }
@@ -134,7 +136,7 @@ export function NodeConfig(props: NodeConfigProps) {
                   set(field.name, parsed)
                 }} />
             }>
-              <WidgetControl widget={{ kind: 'state', multiple: false }} value={typeof value() === 'string' ? (value() as string) : undefined} id={id} label={label()}
+              <WidgetControl widget={stateField} value={typeof value() === 'string' ? (value() as string) : undefined} id={id} label={label()}
                 describedBy={hint()} invalid={errors().length > 0} disabled={false} compact={false} required={!!field.rule.required}
                 context={{ targetEntityIds: entityIds() }} commit={v => set(field.name, typeof v === 'string' ? v : undefined)} />
             </Show>
@@ -153,7 +155,7 @@ export function NodeConfig(props: NodeConfigProps) {
               else set(field.name, next)
             }}>
             <Show when={value() === undefined || !options().includes(String(value()))}>
-              <option value="" selected>{value() === undefined ? 'Not set' : String(value())}</option>
+              <option value="" selected>{value() === undefined ? 'Not set' : types() ? typeLabel(String(value()), props.catalog) : String(value())}</option>
             </Show>
             <For each={options()}>{option => <option value={option} selected={String(value()) === option}>{optionLabel(option)}</option>}</For>
           </select>
@@ -213,6 +215,8 @@ export function NodeConfig(props: NodeConfigProps) {
                   <Show when={port} fallback={<span class="hs-insp-problem__body">{body()}</span>}>
                     <button type="button" class="hs-insp-problem__body" title="Go to the field" onClick={() => focusRow(root, port!)}>{body()}</button>
                   </Show>
+                  <RemoveWire graph={props.graph} diagnostic={problem} catalog={props.catalog} class="hs-insp-link hs-insp-problem__action"
+                    onRemove={next => props.onGraphChange(next)} focusAfter={() => title} />
                 </li>
               )
             }}

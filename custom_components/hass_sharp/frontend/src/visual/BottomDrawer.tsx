@@ -5,6 +5,7 @@ import type { VisualCatalogSnapshot } from './contract'
 import { nodeTitle } from './flow/flowModel'
 import { serializeGraph, type VisualGraph } from './graph'
 import { icons, nodeIdentity } from './icons'
+import { RemoveWire } from './RemoveWire'
 
 export interface DrawerTab {
   id: string
@@ -126,7 +127,10 @@ export function ProblemsPanel(props: {
   onLocate(diagnostic: VisualDiagnostic): void
   onSelectStep(id: string): void
   onShowLine(line: number): void
+  /** Applies a graph change (the editor's: one undo step); without it (read only) nothing is offered that edits. */
+  onGraphChange?(graph: VisualGraph): void
 }) {
+  let root!: HTMLDivElement
   const shown = () => props.diagnostics.filter(d => d.severity > 0)
   const groups = createMemo(() => {
     const byKey = new Map<string, VisualDiagnostic[]>()
@@ -139,7 +143,7 @@ export function ProblemsPanel(props: {
     return [...byKey].sort(([a], [b]) => order(a) - order(b))
   })
   return (
-    <div class="hs-problems">
+    <div class="hs-problems" ref={root} tabindex="-1">
       <Show when={shown().length} fallback={<p class="hs-problems__empty">No problems found.</p>}>
         <For each={groups()}>
           {([key, list]) => {
@@ -165,12 +169,18 @@ export function ProblemsPanel(props: {
                           <Glyph paths={diagnostic.severity === 3 ? icons.problem : icons.warning} />
                         </span>
                         <button type="button" class="hs-problem__message" onClick={() => props.onLocate(diagnostic)}>{diagnostic.message}</button>
-                        <Show when={diagnostic.startLine != null}>
-                          <button type="button" class="hs-problem__line" aria-label={`Show line ${diagnostic.startLine} of the generated C#`}
-                            onClick={() => props.onShowLine(diagnostic.startLine!)}>
-                            Line {diagnostic.startLine}
-                          </button>
-                        </Show>
+                        <span class="hs-problem__actions">
+                          <Show when={props.onGraphChange}>
+                            {change => <RemoveWire graph={props.graph} diagnostic={diagnostic} catalog={props.catalog} class="hs-problem__line"
+                              onRemove={next => change()(next)} focusAfter={() => root} />}
+                          </Show>
+                          <Show when={diagnostic.startLine != null}>
+                            <button type="button" class="hs-problem__line" aria-label={`Show line ${diagnostic.startLine} of the generated C#`}
+                              onClick={() => props.onShowLine(diagnostic.startLine!)}>
+                              Line {diagnostic.startLine}
+                            </button>
+                          </Show>
+                        </span>
                       </li>
                     )}
                   </For>

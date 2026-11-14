@@ -4,6 +4,7 @@ import { createGraphHistory, serializeGraph, type VisualGraph } from './graph'
 import { visualApi, VisualApiError, visualError, type VisualDocument, type VisualPreview } from './api'
 import { nodeCatalog, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { connectionIndex } from './connectionIndex'
+import { danglingWireIds } from './danglingWire'
 import { createUuid } from './id'
 
 /** Owns graph/source pairs and their revisions. Never generates or persists source locally. */
@@ -34,7 +35,10 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
   const dirty = createMemo(() => serializeGraph(history.graph()) !== baseline())
   const diagnostics = createMemo(() => {
     // The same validation the connection index of this graph snapshot already ran.
-    const local = connectionIndex(history.graph(), catalog()).analysis.diagnostics.map(d => ({ ...d, startLine: null, startColumn: null }))
+    const graph = history.graph(), analysis = connectionIndex(graph, catalog()).analysis
+    // A problem about a wire whose pin is missing names that wire, so it can be removed from the problem.
+    const wires = danglingWireIds(graph, analysis)
+    const local = analysis.diagnostics.map((d, i) => ({ ...d, startLine: null, startColumn: null, ...(wires[i] ? { edgeId: wires[i] } : {}) }))
     const backend = preview()?.diagnostics ?? []
     // The server sends a missing input as null; local diagnostics leave it out.
     return [

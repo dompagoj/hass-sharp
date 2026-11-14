@@ -60,6 +60,8 @@ export function TopBar(props: {
   onUndo?(): void
   onRedo?(): void
   canSave?: boolean
+  /** Why Save is disabled, when it is for a reason worth saying (nothing to save); its title. */
+  saveTitle?: string
   onSave?(): void
   /** The Run now button (admins only). */
   run?: JSX.Element
@@ -149,7 +151,7 @@ export function TopBar(props: {
             <div class="hs-fs-hide">{run()}</div>
           </Show>
           <Show when={props.onSave}>
-            <Button variant="primary" class="hs-topbar__save" busy={props.save?.saving} disabled={!props.canSave} onClick={() => props.onSave?.()}>
+            <Button variant="primary" class="hs-topbar__save" busy={props.save?.saving} disabled={!props.canSave} title={props.saveTitle} onClick={() => props.onSave?.()}>
               Save
             </Button>
           </Show>

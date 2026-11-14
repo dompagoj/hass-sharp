@@ -7,17 +7,16 @@ import { Icon } from '../../components/Controls'
 import { QuickAdd } from '../QuickAdd'
 import type { VisualDiagnostic } from '../api'
 import { HassCtx } from '../../context'
-import { useRegistry } from '../../registry'
+import { useLoadedRegistry } from '../../registry'
 import { connectData, nodeCatalog, setInput as writeInput, type Operand, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeEdge, removeNode, updateNode, type NodeKind, type VisualGraph } from '../graph'
 import { connectionIndex, graphTypes } from '../connectionIndex'
 import { media } from '../media'
 import { NODE_DRAG_TYPE } from '../nodeDrag'
 import { copySteps, pasteSteps, readSteps, writeSteps, type StepClipboard } from '../clipboard'
-import { applyLayout, tidyLayout } from '../layout'
+import { applyLayout, separateCards, tidyLayout, type LayoutBox } from '../layout'
 import type { SummaryNames } from '../nodeSummary'
 import { registryNames, type NameResolver } from '../widgets'
-import type { Registry } from '../../registry'
 import { addConnected, canAddFor, type PinRef } from './autoConnect'
 import { CanvasToolbar } from './CanvasToolbar'
 import { edgeTypes } from './Edges'
@@ -106,13 +105,6 @@ const motion = () => (typeof matchMedia === 'function' && matchMedia('(prefers-r
 const typing = (target: Element) =>
   !!target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="menu"], [role="listbox"], .hs-card-editor, .hs-quick-add')
 
-/** Registry names for summaries; only inside the app's providers (a bare adapter in a test has none). */
-function useNames(enabled: boolean): () => Registry | undefined {
-  if (!enabled) return () => undefined
-  const registry = useRegistry()
-  // Reading `data` before the query settles would suspend the editor; names are only an improvement.
-  return () => (registry.isSuccess ? registry.data : undefined)
-}
 
 /**
  * The canvas. The rest of the app depends only on `VisualGraph`, never on Solid Flow stores or events: cards read
@@ -128,7 +120,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   const graph = createMemo(() => renderableGraph(props.graph))
   const palette = () => catalogPalette(catalog())
   const editable = !!useContext(QueryClientContext) && !!useContext(HassCtx)
-  const names = useNames(editable)
+  // Registry names for summaries; only inside the app's providers (a bare adapter in a test has none).
+  const names = useLoadedRegistry()
   // Value chips name registry items the way the inline editors do (one resolver per registry snapshot).
   const nameResolver = createMemo<NameResolver>(() => registryNames(names()))
   /** Every canvas edit is made on what the canvas shows and applied to the original graph (malformed entries stay). */
@@ -584,6 +577,21 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
         },
       ),
     )
+    // In the read-only trace view a card never overlaps another: one that has grown taller than the stored layout
+    // allowed for (a run's values, a newer card design) pushes the cards below it down, for this view only. Once every
+    // card is measured, and again when one changes size; the graph keeps its positions.
+    createEffect(() => {
+      if (!readOnly()) return untrack(() => spread().size && setSpread(new Map()))
+      const boxes: LayoutBox[] = []
+      for (const [index, node] of graph().nodes.entries()) {
+        const size = api.getInternalNode(node.id)?.measured
+        if (!size?.width || !size.height) return
+        boxes.push({ id: node.id, ...basePosition(node, index), width: size.width, height: size.height })
+      }
+      const next = separateCards(boxes)
+      const current = untrack(spread)
+      if (next.size !== current.size || [...next].some(([id, at]) => current.get(id)?.x !== at.x || current.get(id)?.y !== at.y)) setSpread(next)
+    })
     // Centre the run's focus node once it is measured, then leave the viewport to the user: a new trace object for
     // the same node (a live run polling) does not move the view again. On a wide screen the opening view (above) takes
     // in the focus a run opens with.
@@ -605,6 +613,10 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
 
   let touchDrag: { id: string; graph: VisualGraph } | undefined
   const [nodes, setNodes] = createStore<Node[]>([])
+  /** Where a stored graph puts a card (one without a position goes in a row, as it always has). */
+  const basePosition = (node: VisualGraph['nodes'][number], index: number): Point => (node.position ? { ...node.position } : { x: 60 + index * 300, y: 100 })
+  /** Read-only only: the cards moved down so that none overlaps another (see the Viewport). */
+  const [spread, setSpread] = createSignal<ReadonlyMap<string, Point>>(new Map())
   const [edges, setEdges] = createStore<Edge[]>([])
   /** One graph change for a finished drag, however many nodes it moved. */
   const commitGeometry = () => {
@@ -720,8 +732,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   // Flow nodes carry only identity, position and selection; cards read everything else from their view.
   createEffect(
     on(
-      () => [graph(), views(), props.trace] as const,
-      ([current, built, trace]) =>
+      () => [graph(), views(), props.trace, spread()] as const,
+      ([current, built, trace, moved]) =>
         untrack(() =>
           setNodes(
             reconcile(
@@ -732,9 +744,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
                 position:
                   touchDrag?.graph === props.graph && touchDrag.id === node.id
                     ? { ...nodes.find(n => n.id === node.id)!.position }
-                    : node.position
-                      ? { ...node.position }
-                      : { x: 60 + index * 300, y: 100 },
+                    : { ...(moved.get(node.id) ?? basePosition(node, index)) },
                 domAttributes: { 'aria-label': `${built.get(node.id)?.view.label ?? node.id}${trace ? `. Run: ${traceText(trace.nodes[node.id])}` : ''}` },
                 selected: selectedSet().has(node.id),
               })),

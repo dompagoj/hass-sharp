@@ -7,7 +7,7 @@ import { domainWords } from '../typeLabels'
 import { Chips, type WidgetProps } from './common'
 import { ListWidget, SelectWidget, TextWidget } from './basic'
 import { optionWords, record, strings } from './json'
-import { stateOptions } from './states'
+import { widgetStates } from './states'
 import type { Widget, WidgetOption } from './model'
 import { SearchSelect, type SearchOption } from './SearchSelect'
 import type { NameResolver } from './summary'
@@ -75,9 +75,7 @@ export function EntityWidget(props: WidgetProps) {
 export function StateWidget(props: WidgetProps) {
   const entities = useEntities()
   const options = createMemo((): WidgetOption[] => {
-    if (props.widget.stateAttribute) return []
-    const ids = [...(props.context?.targetEntityIds ?? []), ...(props.widget.stateEntities ?? [])]
-    return stateOptions(entities.data, ids, props.widget.hideStates).map(value => ({ value, label: optionWords(value) }))
+    return widgetStates(props.widget, props.context?.targetEntityIds ?? [], entities.data).map(value => ({ value, label: optionWords(value) }))
   })
   return <Show when={options().length} fallback={<TextWidget {...props} widget={{ ...props.widget, kind: 'text' }} />}>
     <SelectWidget {...props} widget={{ ...props.widget, kind: 'select', options: options() }} />

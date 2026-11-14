@@ -14,6 +14,7 @@ const shadowFixture = new URLSearchParams(location.search).has('shadow')
 // it: every third read of the live run fails, as when the connection drops).
 const traceFixture = new URLSearchParams(location.search).get('view') === 'trace'
 const liveTrace = new URLSearchParams(location.search).has('live')
+const gridTrace = new URLSearchParams(location.search).has('grid')
 const dropTrace = new URLSearchParams(location.search).has('drop')
 let traceReads = 0
 // Fixture controls are deliberately local: no HA websocket or device call is made.
@@ -126,7 +127,9 @@ const traceGraph = (): Graph => {
   g = connectData(g, 'weather', 'value', 'temp', 'entity', catalog)
   g = connectData(g, 'temp', 'value', 'warm', 'left', catalog)
   g = connectData(g, 'warm', 'value', 'report', 'field:warm', catalog)
-  return g
+  // `&grid=1`: the same graph as one saved through the API without positions (the 300 × 180 px grid it then gets),
+  // where taller cards would overlap the ones below them.
+  return gridTrace ? fillGraphLayout({ ...g, nodes: g.nodes.map(({ position, ...node }) => node) }) : g
 }
 const traceCatalog = (): VisualCatalogSnapshot => ({ ...(rich.catalog as unknown as VisualCatalogSnapshot), services: services as unknown as ServicesSection })
 const traceEvents = (): TraceEvent[] => {

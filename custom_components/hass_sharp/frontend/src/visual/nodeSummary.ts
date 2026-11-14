@@ -1,6 +1,6 @@
 import { customSignature, dataOutputs, inputValue, nodeCatalog, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
-import { stateOptions, stateWords } from './widgets/states'
+import { stateField, stateLabel } from './widgets/states'
 
 /** Registry names used to say "Hallway" rather than `light.hallway`; every list is optional. */
 export interface SummaryNames {
@@ -103,8 +103,8 @@ function operandText(ctx: Context, port: string): string | undefined {
   if (!record(operand)) return
   if (operand.kind === 'literal') return valueText(operand.value, ctx.registry)
 }
-/** A state of these entities as the state picker labels it (see `stateWords`); the stored value is left as it is. */
-const stateText = (ctx: Context, ids: string[], value: string) => stateWords(value, stateOptions(ctx.registry?.entities, ids))
+/** A state of these entities as the panel's state picker (`stateField`) labels it; the stored value is left as it is. */
+const stateText = (ctx: Context, ids: string[], value: string) => stateLabel(value, stateField, ids, ctx.registry?.entities)
 /** The entity id an input holds as a typed-in value. */
 const literalEntity = (ctx: Context, port: string) => {
   const operand = inputValue(ctx.node, port, ctx.catalog)
@@ -244,16 +244,24 @@ function kindText(ctx: Context): string | undefined {
 }
 
 /**
+ * What a node's card says about this one step ("Turn on · Hallway", "Wait 5 minutes"), without the kind's description
+ * the card falls back to: undefined when the step has nothing of its own to say (the trace timeline shows it beside
+ * the step's title, where a description would only repeat the title).
+ */
+export function stepSummary(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog, entities?: SummaryNames, graph?: Graph): string | undefined {
+  try {
+    return kindText({ node, catalog, registry: entities, graph }) || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * A one-line, human description of a node for its card and for lists: "light.turn_on · Hallway",
  * "When Bathroom TRV becomes heat for 30 minutes", "Wait 5 minutes", "If brightness > 40". It falls back to the
  * kind's description. `graph`, when given, names the outputs wired into inputs.
  */
 export function nodeSummary(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog, entities?: SummaryNames, graph?: Graph): string {
-  let summary: string | undefined
-  try {
-    summary = kindText({ node, catalog, registry: entities, graph })
-  } catch {
-    summary = undefined // A malformed config still gets the kind's description.
-  }
-  return summary || (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].description : 'Unknown node kind')
+  // A malformed config still gets the kind's description.
+  return stepSummary(node, catalog, entities, graph) || (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].description : 'Unknown node kind')
 }

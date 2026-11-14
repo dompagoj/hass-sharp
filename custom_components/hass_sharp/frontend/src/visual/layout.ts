@@ -241,3 +241,31 @@ export function applyLayout(graph: VisualGraph, positions: ReadonlyMap<string, P
   })
   return moved ? { ...graph, nodes } : graph
 }
+
+export interface LayoutBox extends Point, LayoutSize { id: string }
+
+/**
+ * Where cards go so that none overlaps another, for a view that cannot be edited (the trace view): stored positions
+ * are kept except that a card overlapping one above it (one that has grown taller since the graph was laid out, by a
+ * run's values or a newer card design) moves down to `gap` below it; what it then overlaps moves down after it. Cards
+ * that only sit close are left where they are.
+ * Only the cards that move are in the result, so a graph without overlaps gets an empty map. The graph is unchanged.
+ */
+export function separateCards(boxes: readonly LayoutBox[], gap = 24): Map<string, Point> {
+  const order = [...boxes].sort((a, b) => a.y - b.y || a.x - b.x || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  const placed: LayoutBox[] = [], moved = new Map<string, Point>()
+  const across = (a: LayoutBox, b: LayoutBox) => a.x < b.x + b.width && b.x < a.x + a.width
+  for (const box of order) {
+    let y = box.y
+    // Below every placed card it would overlap, until it overlaps none (each pass moves it further down).
+    for (let again = true; again; ) {
+      again = false
+      for (const other of placed) {
+        if (across(box, other) && y < other.y + other.height && other.y < y + box.height) { y = other.y + other.height + gap; again = true }
+      }
+    }
+    if (y !== box.y) moved.set(box.id, { x: box.x, y })
+    placed.push({ ...box, y })
+  }
+  return moved
+}
