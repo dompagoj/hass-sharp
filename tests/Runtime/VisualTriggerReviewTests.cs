@@ -19,7 +19,7 @@ public static class VisualTriggerReviewTests
                 var graph = new JsonObject { ["version"] = 5, ["name"] = "Trigger review", ["nodes"] = new JsonArray(new JsonObject { ["id"] = "t", ["kind"] = "trigger", ["config"] = config }), ["edges"] = new JsonArray() };
                 var preview = new VisualGenerator(diagnostics).Preview(graph);
                 if (!preview.Valid) throw new Exception(string.Join("; ", preview.Diagnostics));
-                var compiled = await new CodeCompiler(diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cs"), preview.Source, true);
+                var compiled = await new CodeCompiler(diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cs"), preview.Source);
                 try { return ((Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!).Configure().Actions.Single(); }
                 finally { compiled.Unload(); }
             }

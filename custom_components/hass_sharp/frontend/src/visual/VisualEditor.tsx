@@ -19,7 +19,7 @@ import { createFullscreen, createFullscreenPage, FullscreenButton } from './full
 import { media } from './media'
 import { createVisualSession } from './session'
 import type { VisualDiagnostic, VisualDocument } from './api'
-import { createGraph, createNodeAt, serializeGraph, visualActionLabels, type NodeKind } from './graph'
+import { createGraph, createNodeAt, serializeGraph, type NodeKind } from './graph'
 import { RunNowButton } from './RunNow'
 import { soon } from './soon'
 import { createNotice, TopBar } from './TopBar'
@@ -444,7 +444,7 @@ export function VisualEditor(props: {
             content: () => (
               <Show when={session.document()} fallback={<p class="hs-drawer__empty">Save this automation to see its runs here.</p>}>
                 {doc => (
-                  <AutomationRuns automationId={doc().automationId} classes={[]} actionLabels={visualActionLabels(doc().graph, session.catalog())} hideRunControls />
+                  <AutomationRuns automationId={doc().automationId} />
                 )}
               </Show>
             ),
@@ -473,7 +473,7 @@ export function VisualEditor(props: {
       >
         <p>Reloading replaces your local graph with the saved revision. Export your graph first to keep a copy.</p>
       </Dialog>
-      <HelpDialog mode="visual" open={helpOpen()} onClose={() => setHelpOpen(false)} />
+      <HelpDialog open={helpOpen()} onClose={() => setHelpOpen(false)} />
     </section>
   )
 }

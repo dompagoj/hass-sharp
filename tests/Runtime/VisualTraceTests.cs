@@ -59,7 +59,7 @@ static class VisualTraceTests
         Diagnostics.GenerateHassEntities(["sensor.test"]);
         var preview = snapshot == null ? new VisualGenerator(Diagnostics).Preview(graph) : new VisualGenerator(Diagnostics).Preview(graph, snapshot);
         Check(preview.Valid, "graph compiles: " + JsonSerializer.Serialize(preview.Diagnostics));
-        var compiled = await new CodeCompiler(Diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cs"), preview.Source, true);
+        var compiled = await new CodeCompiler(Diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cs"), preview.Source);
         return new((Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!, compiled.Unload);
     }
 

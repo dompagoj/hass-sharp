@@ -1,6 +1,4 @@
 using HassSharp;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using static VisualExecutionTests;
@@ -72,7 +70,6 @@ static class AuthoringAdapterTests
             var unknown=(await Ports("light.not_a_service"))["result"]!;
             VisualExecutionTests.Check(!unknown["known"]!.GetValue<bool>() && unknown["response"]==null && unknown["inputs"]!.AsObject().Select(p=>p.Key).SequenceEqual(["target"])
                 && Types(unknown["inputs"]!["target"]).SequenceEqual(["target","entity_id"]) && unknown["outputs"]!.AsObject().Count==0,"service_ports unknown service keeps only the permissive target: "+unknown.ToJsonString());
-            var ordinary=await new CodeCompiler(exampleDiagnostics).CompileSingleFile(Path.Combine(path,"example.cs"),examples["ordinaryCSharp"]!.GetValue<string>(),true); ordinary.Unload();
             var graph=G(N("l","log",new{value=Lit("string","safe")}));
             graph["nodes"]![0]!["position"]=new JsonObject{["x"]=12,["y"]=34};
             var save=await Request(manager,new{operation="save",id="safe",graph,expectedRevision=0});
@@ -104,22 +101,7 @@ static class AuthoringAdapterTests
             VisualExecutionTests.Check(!(await racing)["ok"]!.GetValue<bool>(),"failed replacement blocks stale visual run");
             try { await ws; throw new Exception("WS dispatched stale saved revision"); } catch(InvalidOperationException) { }
             await manager.UnloadAsync();
-            var diagnostics=new DiagnosticsProvider(); diagnostics.GenerateHassEntities([]);
-            var compiler=new CodeCompiler(diagnostics);
-            var scriptPath=Path.Combine(HassPath.UserScripts,"cached.cs");
-            Directory.CreateDirectory(HassPath.UserScripts);
-            const string current="public class Current { public static int Value => 2; }";
-            var stale=await compiler.CompileSingleFile(scriptPath,"public class Stale { }",true); stale.Unload();
-            await File.WriteAllTextAsync(scriptPath,current);
-            var oldHash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(scriptPath+current+"\0"+diagnostics.HassEntitiesSyntaxTree())));
-            var hashPath=Path.Combine(HassPath.UserScripts,".cache","cached.cs.hash");
-            await File.WriteAllTextAsync(hashPath,oldHash);
-            var loaded=await compiler.CompileFromUserScriptsFolder();
-            VisualExecutionTests.Check(loaded.Single().Assembly.GetType("Current")!=null,"runtime build identity invalidates valid stale assembly under legacy cache key");
-            var identity=loaded.Single().Assembly.ManifestModule.ModuleVersionId; loaded.ForEach(s=>s.Unload());
-            loaded=await compiler.CompileFromUserScriptsFolder();
-            VisualExecutionTests.Check(loaded.Single().Assembly.ManifestModule.ModuleVersionId==identity,"same build reuses compiled cache"); loaded.ForEach(s=>s.Unload());
-            Console.WriteLine("PASS atomic visual run / stale activation rejection / runtime cache identity");
+            Console.WriteLine("PASS atomic visual run / stale activation rejection");
         }
         finally { await manager.UnloadAsync(); HassPath.HassConfiguration=previous; Directory.Delete(path,true); }
     }

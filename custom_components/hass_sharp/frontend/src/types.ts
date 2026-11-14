@@ -352,23 +352,6 @@ export interface Diagnostic {
   severity: number
 }
 
-export interface UserScriptClassDto {
-  name: string
-  methods: string[]
-}
-
-export interface UserScriptDTO {
-  automationId?: string
-  revision?: string
-  fileName: string
-  classes: UserScriptClassDto[]
-}
-
-export interface UserScriptSourceDTO {
-  fileName: string
-  source: string
-}
-
 export interface HassValueChangedEvent extends Event {
   detail: {
     value: string

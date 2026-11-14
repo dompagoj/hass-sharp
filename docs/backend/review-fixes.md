@@ -2,6 +2,10 @@
 
 Based on integrated commit e7ee0ac, 2026-11-12.
 
+This is a historical record. Hand-written `.cs` automations, their HTTP routes,
+the compile cache and the MotionLight helper have since been removed (automations
+are visual only); statements about them describe the code at that commit.
+
 - Startup compiles code files and saved visual sources independently. Invalid
   files stay on disk for repair, and errors identify their paths. Visual listing
   skips malformed JSON, invalid names and invalid document envelopes.
@@ -65,7 +69,8 @@ corrupt files. Compile cache image failures fall back to source compilation. Def
 graph previews no longer report scaffolding nullable/unused-variable warnings.
 
 Fable independently passed the first commit's runtime/Python suites, and confirmed
-that HTTP code paths already confine delete/rename to user_scripts; the additional
+that the HTTP code paths of that time confined delete/rename to the hand-written
+script folder; the additional
 runtime guard is defense in depth. The synchronous rename HTTP bridge issue reported
 by inspection predates this work and remains outside these fixes.
 

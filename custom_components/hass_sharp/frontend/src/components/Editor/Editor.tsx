@@ -1,5 +1,4 @@
-import { createEffect, createSignal, createUniqueId, onMount, onCleanup, Show, For, type JSX } from 'solid-js'
-import { A } from '@solidjs/router'
+import { createEffect, createSignal, createUniqueId, onMount, onCleanup, Show, For } from 'solid-js'
 import * as monaco from 'monaco-editor'
 import { initVimMode, type VimAdapterInstance } from 'monaco-vim'
 
@@ -13,19 +12,17 @@ import { useMutation } from '@tanstack/solid-query'
 import { useEditorActions, libraryModelUri, type LibraryEditorContext } from './editor-actions'
 import type { LibraryRange } from '../../visual/library-api'
 import { Button, Icon, Status } from '../Controls'
-import { HelpDialog } from '../HelpDialog'
 import { Tabs } from '../Tabs'
 
 // @ts-ignore
 monaco.editor.defineTheme('visual-assist', visualAssistTheme)
 
+// The node library's C# editor.
 interface Props {
   fileName: string
   onSave: (model: monaco.editor.ITextModel) => Promise<any>
   initial?: string
-  onBackRef?: string
-  renderRuns?: () => JSX.Element
-  library?: LibraryEditorContext
+  library: LibraryEditorContext
   documentId?: string
   onChange?: (source: string) => void
   saveDisabled?: boolean
@@ -36,8 +33,6 @@ export const Editor = (props: Props) => {
   const hass = useHass()
   const tabId = createUniqueId()
   const [tab, setTab] = createSignal('source')
-  const [runsOpened, setRunsOpened] = createSignal(false)
-  createEffect(() => { if (tab() === 'runs') setRunsOpened(true) })
   let editorRef: HTMLDivElement = undefined!
   let statusBarRef: HTMLDivElement = undefined!
   let editor: monaco.editor.IStandaloneCodeEditor
@@ -55,20 +50,7 @@ export const Editor = (props: Props) => {
   onMount(() => {
     const initialModel = props.documentId ? monaco.editor.createModel(props.initial ?? '', 'csharp', libraryModelUri(props.documentId)) : undefined
     editor = monaco.editor.create(editorRef, {
-      ...(initialModel ? { model: initialModel } : { value:
-        props.initial ??
-        `public class MyAutomation : Automation
-{
-    public override AutomationConfiguration Configure() => new(
-        new AutomationAction(nameof(Execute), AutomationMode.Single, Manual: true));
-
-    public Task Execute()
-    {
-        Logger.Info("Manual automation started");
-        return Task.CompletedTask;
-    }
-}`,
-      language: 'csharp' }),
+      ...(initialModel ? { model: initialModel } : { value: props.initial ?? '', language: 'csharp' }),
       inlayHints: {
         enabled: 'on',
       },
@@ -151,19 +133,19 @@ export const Editor = (props: Props) => {
       setTab('source'); editor.setSelection(selection); editor.revealRangeInCenter(selection); editor.focus()
     })
     editorActions.register(editor, model => props.onSave(model), () => saveMut.mutateAsync())
-    const opener = props.library ? monaco.editor.registerEditorOpener({
+    const opener = monaco.editor.registerEditorOpener({
       openCodeEditor: (source, resource, selection) => {
         if (source !== editor || resource.toString() === editor.getModel()?.uri.toString()) return false
-        const target = props.library?.documents?.().find(file => libraryModelUri(file.id).toString() === resource.toString())
-        if (!target || !props.library?.onDefinition) return false
+        const target = props.library.documents?.().find(file => libraryModelUri(file.id).toString() === resource.toString())
+        if (!target || !props.library.onDefinition) return false
         const range = selection && 'startLineNumber' in selection ? { start: 0, length: 0, startLine: selection.startLineNumber, startColumn: selection.startColumn, endLine: selection.endLineNumber, endColumn: selection.endColumn }
           : { start: 0, length: 0, startLine: selection?.lineNumber ?? 1, startColumn: selection?.column ?? 1, endLine: selection?.lineNumber ?? 1, endColumn: selection?.column ?? 1 }
         props.library.onDefinition({ id: target.id, range })
         return editor.getModel()?.uri.toString() === resource.toString()
       },
-    }) : undefined
+    })
     createEffect(() => {
-      for (const file of props.library?.documents?.() ?? []) {
+      for (const file of props.library.documents?.() ?? []) {
         let model = models.get(file.id)
         if (!model) { model = monaco.editor.createModel(file.source, 'csharp', libraryModelUri(file.id)); models.set(file.id, model) }
         // The active model is synchronized below through undoable editor edits.
@@ -188,7 +170,6 @@ export const Editor = (props: Props) => {
       }
     })
     createEffect(() => {
-      if (!props.library) return
       props.library.context() // All file/generation changes invalidate semantic providers, even with an unchanged active model.
       editorActions.invalidateContext()
     })
@@ -200,7 +181,7 @@ export const Editor = (props: Props) => {
       }
     })
     onCleanup(() => {
-      changes.dispose(); opener?.dispose()
+      changes.dispose(); opener.dispose()
       editorActions.dispose()
       editor.dispose()
       for (const owned of new Set([model, ...models.values()])) owned?.dispose()
@@ -213,16 +194,15 @@ export const Editor = (props: Props) => {
     <section class="hs-editor" aria-label={`Edit ${props.fileName}`}>
       <header class="hs-editor-toolbar">
         <div class="hs-editor-heading">
-          <Show when={props.onBackRef}><A class="hs-button hs-button--ghost hs-icon-button" href={props.onBackRef!} aria-label="Back to automations"><Icon name="arrow" /></A></Show>
-          <div class="hs-editor-title"><p class="hs-eyebrow">{props.library ? 'C# NODE LIBRARY' : 'C# AUTOMATION'}</p><h1>{props.fileName}</h1></div>
+          <div class="hs-editor-title"><p class="hs-eyebrow">C# NODE LIBRARY</p><h1>{props.fileName}</h1></div>
         </div>
-        <div class="hs-editor-actions"><Show when={!props.library}><HelpDialog mode="code" /></Show><Show when={props.renderRuns}><Button onClick={() => setTab('runs')}>Run now…</Button></Show>
+        <div class="hs-editor-actions">
         <Button data-save variant="primary" busy={saveMut.isPending} onClick={() => { void saveMut.mutateAsync().catch(() => {}) }} disabled={editorActions.saveDisabled() || props.saveDisabled}>
           <Icon name="save" />{saveMut.isPending ? 'Saving…' : 'Save'}
         </Button></div>
       </header>
       <div class="hs-editor-subbar">
-        <Tabs id={tabId} label={props.library ? 'Node library editor' : 'Automation editor'} value={tab()} onChange={setTab} items={[{ id: 'source', label: 'Source' }, ...(props.renderRuns ? [{ id: 'runs', label: 'Run history' }] : []), { id: 'settings', label: 'Editor settings' }]} />
+        <Tabs id={tabId} label="Node library editor" value={tab()} onChange={setTab} items={[{ id: 'source', label: 'Source' }, { id: 'settings', label: 'Editor settings' }]} />
         <span class="hs-save-hint">Ctrl / ⌘ S to save</span>
       </div>
       <Show when={saveMut.isError}><div class="hs-notice hs-notice--danger" role="alert">Save failed: {String(saveMut.error)}</div></Show>
@@ -241,9 +221,6 @@ export const Editor = (props: Props) => {
         </section>
         <footer class="hs-editor-status"><Status>C#</Status><span>Roslyn language services</span><div ref={statusBarRef} /></footer>
       </section>
-      <Show when={props.renderRuns}><section class="hs-editor-runs" role="tabpanel" id={`${tabId}-runs-panel`} aria-labelledby={`${tabId}-runs`} hidden={tab() !== 'runs'}>
-        <Show when={runsOpened()}>{props.renderRuns?.()}</Show>
-      </section></Show>
       <section class="hs-editor-settings" role="tabpanel" id={`${tabId}-settings-panel`} aria-labelledby={`${tabId}-settings`} hidden={tab() !== 'settings'}>
         <h2>Make yourself comfortable</h2><p class="hs-muted">Editor preferences are saved in this browser.</p>
         <div class="hs-setting-row"><label for={`${tabId}-font`}>Font size<span class="hs-muted">Change the size of your code.</span></label>

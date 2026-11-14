@@ -172,17 +172,6 @@ public sealed class RunHistoryStore
             return row.Id;
         }
     }
-    public void Rename(string oldPath, string newPath)
-    {
-        lock (gate)
-        {
-            using var db = new HistoryContext(path);
-            var row = db.Identities.Find(oldPath) ?? throw new InvalidOperationException("Unknown automation");
-            db.Identities.Remove(row);
-            db.Identities.Add(new() { Path = newPath, Id = row.Id });
-            db.SaveChanges();
-        }
-    }
     public void Forget(string scriptPath)
     {
         lock (gate) { using var db = new HistoryContext(path); db.Identities.Where(i => i.Path == scriptPath).ExecuteDelete(); }

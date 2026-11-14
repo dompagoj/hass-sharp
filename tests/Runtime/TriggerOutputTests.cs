@@ -294,7 +294,7 @@ static class TriggerOutputTests
         var graph = new JsonObject { ["version"] = 5, ["name"] = "Causes", ["nodes"] = nodes, ["edges"] = edges };
         var preview = new VisualGenerator(diagnostics).Preview(graph);
         Check(preview.Valid, "cause graph compiles: " + JsonSerializer.Serialize(preview.Diagnostics));
-        var compiled = await new CodeCompiler(diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cs"), preview.Source, true);
+        var compiled = await new CodeCompiler(diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cs"), preview.Source);
 
         var (schedule, registerSchedule) = ((Func<string, Task>?)null, PyInterop.RegisterSchedule);
         var (native, beginNative, removeNative) = ((Func<string, Task>?)null, PyInterop.BeginRegisterHaTriggers, PyInterop.BeginRemoveHaTriggers);
@@ -320,7 +320,7 @@ static class TriggerOutputTests
             Check(messages.Contains("2026-11-13T12:00:00.0000000Z"), "schedule payload reaches the graph: " + string.Join("|", messages));
             await native!("""{"trigger":{"platform":"event","event":{"event_type":"test_event","data":{}}},"context":{"id":"c"}}""");
             Check(messages.Contains("test_event"), "native payload reaches the graph: " + string.Join("|", messages));
-            await manager.RunNow(script.AutomationId, script.Classes.Single().ClassName, VisualNodeCatalog.EffectiveTriggerMethod(nodes.OfType<JsonObject>().Single(n => n["id"]!.GetValue<string>() == "m")));
+            await script.Classes.Single().RunMethod(VisualNodeCatalog.EffectiveTriggerMethod(nodes.OfType<JsonObject>().Single(n => n["id"]!.GetValue<string>() == "m")));
             Check(messages.Contains("manual"), "manual payload reaches the graph: " + string.Join("|", messages));
             Check(!messages.Any(m => m.Contains("failed")), "no invocation failed: " + string.Join("|", messages));
         }

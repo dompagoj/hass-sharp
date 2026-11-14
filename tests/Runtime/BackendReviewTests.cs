@@ -30,7 +30,7 @@ static class BackendReviewTests
                 await Test($"v4 {symbol} binding survives compiled execution", async () => {
                     var preview = generator.Preview(VisualTests.MemberBindingGraph(symbol));
                     Check(preview.Valid, "v4 member preview rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
-                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "binding-" + symbol + ".cs"), preview.Source, true);
+                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "binding-" + symbol + ".cs"), preview.Source);
                     try {
                         var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
                         await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
@@ -59,11 +59,11 @@ static class BackendReviewTests
                     var api = new HassSharpManager(root);
                     try {
                         await api.Init(["binary_sensor.motion", "light.hall"]);
-                        Check(api.GetUserScript("visual_" + id) != null, "saved v4 graph failed activation");
+                        Check(VisualTests.Loaded(api, id) != null, "saved v4 graph failed activation");
                         await completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
                         var stored = JsonNode.Parse(File.ReadAllText(path))!;
                         Check(stored["revision"]!.GetValue<long>() == 1 && stored["graph"]!.ToJsonString() == graph.ToJsonString(), "startup changed the saved revision or graph");
-                        Check(stored["source"]!.GetValue<string>() == api.GetUserScript("visual_" + id)!.Source, "startup did not store the regenerated source");
+                        Check(stored["source"]!.GetValue<string>() == VisualTests.Loaded(api, id)!.CompiledScript.SourceCode, "startup did not store the regenerated source");
                     } finally { api.Unload(); PyInterop.Log = oldLog; File.Delete(path); }
                 });
             }
@@ -72,7 +72,7 @@ static class BackendReviewTests
                     var graph = VisualTests.MemberBindingGraph(symbol); graph["version"] = 5;
                     var preview = generator.Preview(graph);
                     Check(preview.Valid, "v4 member preview rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
-                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-binding-" + symbol + ".cs"), preview.Source, true);
+                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-binding-" + symbol + ".cs"), preview.Source);
                     try {
                         var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
                         await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
@@ -87,7 +87,7 @@ static class BackendReviewTests
                         node!["config"]!["code"] = node["config"]!["code"]!.GetValue<string>().Replace(symbol,internalName);
                     var preview = generator.Preview(graph);
                     Check(preview.Valid, "authored prefix member rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
-                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-prefix-" + symbol + ".cs"), preview.Source, true);
+                    var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-prefix-" + symbol + ".cs"), preview.Source);
                     try {
                         var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
                         await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
@@ -101,20 +101,12 @@ static class BackendReviewTests
                 graph["nodes"]![2]!["config"]!["code"] = "if (!Completed) throw new Exception(\"interpolation node did not run\");";
                 var preview = generator.Preview(graph);
                 Check(preview.Valid, "interpolated declaration rejected: " + JsonSerializer.Serialize(preview.Diagnostics));
-                var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-interpolation-binding.cs"), preview.Source, true);
+                var compiled = await compiler.CompileSingleFile(Path.Combine(root, "v4-interpolation-binding.cs"), preview.Source);
                 try {
                     var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
                     await ((Task)instance.GetType().GetMethod("Run_74")!.Invoke(instance, null)!).WaitAsync(TimeSpan.FromSeconds(2));
                     Check((bool)instance.GetType().GetField("Completed")!.GetValue(instance)!, "interpolation node was skipped");
                     Check(logs.Contains("interpolation:True 7"), "interpolated declaration did not produce its authored value");
-                } finally { compiled.Unload(); }
-            });
-            await Test("missing motion sensor gives actionable error", async () => {
-                var compiled = await compiler.CompileSingleFile(Path.Combine(root,"motion.cs"), "public class Motion : HassSharp.HelperBaseAutomations.MotionLightAutomation {}", true);
-                try {
-                    var instance = (Automation)Activator.CreateInstance(compiled.Assembly.GetType("Motion")!)!;
-                    try { instance.Configure(); throw new Exception("missing sensor accepted"); }
-                    catch (InvalidOperationException ex) { Check(ex.Message.Contains("MotionSensor"), "missing property not named"); }
                 } finally { compiled.Unload(); }
             });
             await Test("delete inactive visual forgets identity", async () => {
@@ -145,26 +137,6 @@ static class BackendReviewTests
                 Check(preview.Valid && preview.Diagnostics.Count == 0, "unexpected diagnostics: " + JsonSerializer.Serialize(preview.Diagnostics));
                 return Task.CompletedTask;
             });
-            await Test("damaged compile cache rebuilds", async () => {
-                Directory.CreateDirectory(HassPath.UserScripts);
-                var path = Path.Combine(HassPath.UserScripts, "cached.cs");
-                File.WriteAllText(path, "public class Cached : Automation {}");
-                foreach (var script in await compiler.CompileFromUserScriptsFolder()) script.Unload();
-                File.WriteAllBytes(Path.Combine(HassPath.UserScripts,".cache","cached.cs.dll"), [1,2,3]);
-                var rebuilt = await compiler.CompileFromUserScriptsFolder();
-                try { Check(rebuilt.Any(x => x.FileName == "cached"), "valid source blocked by cache"); }
-                finally { foreach (var script in rebuilt) script.Unload(); File.Delete(path); }
-            });
-            await Test("entity refresh invalidates compiled folder cache", async () => {
-                Directory.CreateDirectory(HassPath.UserScripts);
-                var path = Path.Combine(HassPath.UserScripts, "typed-cache.cs");
-                File.WriteAllText(path, "public class TypedCache : Automation { public override AutomationConfiguration Configure() => new(new AutomationAction(\"Run\", Entities: [Entities.BinarySensor.Motion])); public Task Run() => Task.CompletedTask; }");
-                foreach (var script in await compiler.CompileFromUserScriptsFolder()) script.Unload();
-                diagnostics.GenerateHassEntities(["light.hall"]);
-                var refreshed = await compiler.CompileFromUserScriptsFolder();
-                try { Check(!refreshed.Any(x => x.FileName == "typed-cache"), "cached assembly retained removed entity symbol"); }
-                finally { foreach (var script in refreshed) script.Unload(); File.Delete(path); diagnostics.GenerateHassEntities(["binary_sensor.motion", "light.hall"]); }
-            });
             await Test("corrupt visual can be explicitly deleted", () => {
                 var dir = Path.Combine(root,"corrupt-delete"); Directory.CreateDirectory(dir);
                 var path = Path.Combine(dir,"hall.json"); File.WriteAllText(path,"{ truncated");
@@ -177,36 +149,6 @@ static class BackendReviewTests
                 try { store.Delete("hall",0); throw new Exception("zero revision deleted healthy document"); }
                 catch (VisualConflictException) { }
                 return Task.CompletedTask;
-            });
-            await Test("failed startup code remains readable and deletable", async () => {
-                Directory.CreateDirectory(HassPath.UserScripts);
-                var path = Path.Combine(HassPath.UserScripts,"repair.cs");
-                File.WriteAllText(path,"invalid code for repair");
-                var api = new HassSharpManager(root);
-                try {
-                    await api.Init(["binary_sensor.motion", "light.hall"]);
-                    var summary = api.GetScriptSummaries().SingleOrDefault(x => x.FileName == "repair");
-                    Check(summary is { Active: false } && !string.IsNullOrEmpty(summary.ActivationError), "failed code not listed with error");
-                    Check(api.GetUserScript("repair")?.Source == "invalid code for repair", "failed code cannot be opened");
-                    await api.DeleteScript(path);
-                    Check(!File.Exists(path) && api.GetUserScript("repair") == null, "failed code cannot be deleted");
-                } finally { api.Unload(); File.Delete(path); }
-            });
-            await Test("failed startup code can be repaired and activated", async () => {
-                Directory.CreateDirectory(HassPath.UserScripts);
-                var path = Path.Combine(HassPath.UserScripts,"repair.cs");
-                File.WriteAllText(path,"invalid code for repair");
-                var manager = new UserScriptManager();
-                var compiled = await compiler.CompileSingleFile(path,"public class Repaired : Automation {}",false);
-                try {
-                    var rejected = await compiler.CompileSingleFile(path, "public class Invalid : Automation { public override AutomationConfiguration Configure() => throw new InvalidOperationException(\"not ready\"); }", false);
-                    try { await manager.UpdateUserScript(rejected); throw new Exception("invalid repair accepted"); }
-                    catch (InvalidOperationException ex) when (ex.Message == "not ready") { }
-                    Check(File.ReadAllText(path) == "invalid code for repair" && manager.GetUserScripts().Count == 0, "invalid repair damaged source or activated");
-                    await manager.UpdateUserScript(compiled);
-                    Check(manager.GetUserScripts().Single().CompiledScript.FileName == "repair", "repair did not activate");
-                    Check(File.ReadAllText(path).Contains("Repaired"), "repair not persisted");
-                } finally { manager.UnloadUserScripts(); File.Delete(path); }
             });
             await Test("visual startup failure is visible in read and list", async () => {
                 var dir = Path.Combine(root,".storage","hass_sharp","visual");
@@ -247,8 +189,8 @@ static class BackendReviewTests
                   public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Run), Entities: [new EntityRefWrapper<HaSensor>("sensor.partial")], Schedules: [AutomationSchedule.Once("bad", DateTimeOffset.UtcNow)]));
                   public Task Run() => Task.CompletedTask;
                 }
-                """, true);
-                var good = await compiler.CompileSingleFile(Path.Combine(root,"good.cs"), "public class Good : Automation {}", true);
+                """);
+                var good = await compiler.CompileSingleFile(Path.Combine(root,"good.cs"), "public class Good : Automation {}");
                 var register = PyInterop.RegisterSchedule;
                 PyInterop.RegisterSchedule = (_, _) => throw new InvalidOperationException("schedule registration failed");
                 try {
@@ -263,7 +205,7 @@ static class BackendReviewTests
                   public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Run)));
                   public Task Run() => throw new InvalidOperationException("review failure");
                 }
-                """, true);
+                """);
                 var manager = new UserScriptManager();
                 try {
                     await manager.LoadUserScripts([compiled]);
@@ -281,8 +223,8 @@ static class BackendReviewTests
                 var api = new HassSharpManager(root);
                 try {
                     await api.Init(["binary_sensor.motion", "light.hall"]);
-                    Check(api.GetUserScript("visual_v4") != null, "v4 generated string source failed to activate");
-                    var running = api.GetUserScript("visual_v4")!.Source;
+                    Check(VisualTests.Loaded(api, "v4") != null, "v4 generated string source failed to activate");
+                    var running = VisualTests.Loaded(api, "v4")!.CompiledScript.SourceCode;
                     Check(running.Contains("Entities:[Entities.BinarySensor.Motion]"), "runtime did not compile regenerated source");
                     var read = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"v4\"}"))!["result"]!;
                     Check(read["currentRevisionActive"]!.GetValue<bool>(), "regenerated revision is not current after startup");
@@ -294,7 +236,7 @@ static class BackendReviewTests
                     Check(run["ok"]!.GetValue<bool>() && run["result"]?["runId"] != null, "manual dispatch of refreshed revision rejected: " + run.ToJsonString());
                     var refreshed = File.ReadAllText(path);
                     await api.Init(["light.hall"]);
-                    Check(api.GetUserScript("visual_v4") == null, "missing trigger still active");
+                    Check(VisualTests.Loaded(api, "v4") == null, "missing trigger still active");
                     var missing = JsonNode.Parse(await api.VisualRequest("{\"operation\":\"read\",\"id\":\"v4\"}"))!["result"]!;
                     Check(missing["activationError"]!.GetValue<string>().Contains("t: Unknown entity"), "missing entity omitted actionable graph node");
                     Check(File.ReadAllText(path) == refreshed, "failed startup compile rewrote the saved document");
@@ -311,7 +253,7 @@ static class BackendReviewTests
                 var api = new HassSharpManager(root);
                 try {
                     await api.Init(["binary_sensor.motion", "light.hall"]);
-                    Check(api.GetUserScript("visual_uncompiled") == null, "invalid saved graph activated");
+                    Check(VisualTests.Loaded(api, "uncompiled") == null, "invalid saved graph activated");
                     Check(File.ReadAllText(path) == persisted, "startup rewrote a document that failed to compile");
                 } finally { api.Unload(); store.Delete("uncompiled", saved.Revision); }
             });
@@ -330,10 +272,7 @@ static class BackendReviewTests
                 Check(Directory.GetFiles(dir).Length == 1, "temporary refresh file left behind");
                 return Task.CompletedTask;
             });
-            await Test("startup isolates code and visual compilation errors", async () => {
-                Directory.CreateDirectory(HassPath.UserScripts);
-                File.WriteAllText(Path.Combine(HassPath.UserScripts,"broken.cs"), "invalid code");
-                File.WriteAllText(Path.Combine(HassPath.UserScripts,"healthy.cs"), "public class Healthy : Automation {}");
+            await Test("startup isolates visual compilation errors", async () => {
                 var dir = Path.Combine(root,".storage","hass_sharp","visual");
                 var store = new VisualStore(dir, generator);
                 var doc = store.Save("invalid", VisualTests.Graph(),0);
@@ -343,12 +282,45 @@ static class BackendReviewTests
                 var api = new HassSharpManager(root);
                 try {
                     await api.Init(["binary_sensor.motion", "light.hall"]);
-                    Check(api.GetUserScript("healthy") != null && api.GetUserScript("visual_healthy") != null, "healthy runtime missing");
-                    Check(api.GetUserScript("visual_invalid") == null, "invalid saved graph activated");
-                    Check(File.Exists(Path.Combine(HassPath.UserScripts,"broken.cs")), "broken source deleted");
-                    try { await api.DeleteScript(Path.Combine(dir,"visual_healthy.cs")); throw new Exception("code delete accepted visual path"); }
-                    catch (ArgumentException) { }
+                    Check(VisualTests.Loaded(api, "healthy") != null, "healthy runtime missing");
+                    Check(VisualTests.Loaded(api, "invalid") == null, "invalid saved graph activated");
+                    Check(!Directory.Exists(Path.Combine(HassPath.HassSharpIntegration, "user_scripts")), "startup created a user_scripts directory");
+                } finally { api.Unload(); store.Delete("invalid", doc.Revision); store.Delete("healthy", 1); }
+            });
+            await Test("startup leaves hand-written files in user_scripts alone and loads none of them", async () => {
+                var scripts = Path.Combine(HassPath.HassSharpIntegration, "user_scripts");
+                Directory.CreateDirectory(scripts);
+                var path = Path.Combine(scripts, "legacy.cs");
+                byte[] source = System.Text.Encoding.UTF8.GetBytes("""
+                    public class Legacy : Automation
+                    {
+                        public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Run), Startup: true));
+                        public Task Run() { Logger.Info("LEGACY SCRIPT RAN"); return Task.CompletedTask; }
+                    }
+                    """);
+                File.WriteAllBytes(path, source);
+                var written = File.GetLastWriteTimeUtc(path);
+                const string notice = "user_scripts is no longer used: automations are visual only. The files there were left as they are.";
+                var api = new HassSharpManager(root);
+                try {
+                    lock (logs) logs.Clear();
+                    await api.Init(["binary_sensor.motion", "light.hall"]);
+                    await Task.Delay(100); // A startup action, had one loaded, would have logged by now.
+                    string[] seen; lock (logs) seen = logs.ToArray();
+                    Check(seen.Count(m => m == notice) == 1, "notice not logged exactly once: " + string.Join(" | ", seen));
+                    Check(!seen.Any(m => m.Contains("LEGACY SCRIPT RAN")), "a user_scripts file was loaded and started");
+                    var loaded = (UserScriptManager)typeof(HassSharpManager).GetField("_userScriptManager", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(api)!;
+                    Check(loaded.GetUserScripts().Count == 0, "a user_scripts file was loaded");
+                    Check(File.ReadAllBytes(path).SequenceEqual(source) && File.GetLastWriteTimeUtc(path) == written, "the user_scripts file was changed");
+                    Check(Directory.GetFileSystemEntries(scripts).SequenceEqual([path]), "user_scripts gained entries: " + string.Join(", ", Directory.GetFileSystemEntries(scripts)));
                 } finally { api.Unload(); }
+                File.Delete(path);
+                var quiet = new HassSharpManager(root);
+                try {
+                    lock (logs) logs.Clear();
+                    await quiet.Init(["binary_sensor.motion", "light.hall"]);
+                    lock (logs) Check(!logs.Contains(notice), "notice logged without a .cs file");
+                } finally { quiet.Unload(); }
             });
         }
         finally { PyInterop.Log = log; HassPath.HassConfiguration = previous; Directory.Delete(root,true); }

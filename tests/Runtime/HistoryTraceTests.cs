@@ -245,7 +245,7 @@ static class HistoryTraceTests
                 var manager = new UserScriptManager { History = history };
                 try
                 {
-                    await manager.LoadUserScripts([new CompiledUserScript { FilePath = Path.Combine(folder, "summary.cs"), FileName = "summary", SourceCode = "summary", Assembly = typeof(Probe).Assembly, WrittenToDisk = true }]);
+                    await manager.LoadUserScripts([new CompiledUserScript { FilePath = Path.Combine(folder, "summary.cs"), FileName = "summary", SourceCode = "summary", Assembly = typeof(Probe).Assembly }]);
                     var script = manager.GetUserScripts().Single();
                     await script.Classes.Single().StartupCompletion;
                     ScriptSyncRunner.Summarize = (_, _) => throw new InvalidOperationException("summary failed");
@@ -265,7 +265,7 @@ static class HistoryTraceTests
                 Probe.Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
                 var history = new RunHistoryStore(Path.Combine(folder, "cancel.db"));
                 var manager = new UserScriptManager { History = history };
-                var compiled = new CompiledUserScript { FilePath = Path.Combine(folder, "cancel.cs"), FileName = "cancel", SourceCode = "cancel", Assembly = typeof(Probe).Assembly, WrittenToDisk = true };
+                var compiled = new CompiledUserScript { FilePath = Path.Combine(folder, "cancel.cs"), FileName = "cancel", SourceCode = "cancel", Assembly = typeof(Probe).Assembly };
                 try
                 {
                     await manager.LoadUserScripts([compiled]);
@@ -276,19 +276,19 @@ static class HistoryTraceTests
                     await Until(() => Run("Startup", "Cancelled") != null, "restart cancels the startup run");
                     Check(Run("Startup", "Cancelled").Error == "Restarted by a newer trigger", "restart reason: " + Run("Startup", "Cancelled").Error);
                     await Probe.Starts.Reader.ReadAsync();
-                    await manager.UpdateUserScript(new CompiledUserScript { FilePath = compiled.FilePath, FileName = "cancel", SourceCode = "cancel 2", Assembly = typeof(Probe).Assembly, WrittenToDisk = true });
+                    await manager.UpdateUserScript(new CompiledUserScript { FilePath = compiled.FilePath, FileName = "cancel", SourceCode = "cancel 2", Assembly = typeof(Probe).Assembly });
                     await Until(() => history.ReadRun(manual)?.Status == "Cancelled", "reload cancels the manual run");
                     Check(history.ReadRun(manual)!.Error == "Automation reloaded", "reload reason: " + history.ReadRun(manual)!.Error);
                     await Probe.Starts.Reader.ReadAsync();
                     await manager.UnloadUserScriptsAsync(CancelReasons.Stopping);
                     await Until(() => history.Read(id, 0, 100).Count(r => r.Cause == "Startup" && r.Status == "Cancelled") == 2, "stopping cancels the new startup run");
                     Check(history.Read(id, 0, 100).First(r => r.Cause == "Startup").Error == "Home Assistant stopping", "stopping reason");
-                    await manager.LoadUserScripts([new CompiledUserScript { FilePath = compiled.FilePath, FileName = "cancel", SourceCode = "cancel 3", Assembly = typeof(Probe).Assembly, WrittenToDisk = true }]);
+                    await manager.LoadUserScripts([new CompiledUserScript { FilePath = compiled.FilePath, FileName = "cancel", SourceCode = "cancel 3", Assembly = typeof(Probe).Assembly }]);
                     await Probe.Starts.Reader.ReadAsync();
                     await manager.UnloadUserScriptsAsync();
                     await Until(() => history.Read(id, 0, 100).Count(r => r.Cause == "Startup" && r.Status == "Cancelled") == 3, "an unnamed unload cancels the startup run");
                     Check(history.Read(id, 0, 100).First(r => r.Cause == "Startup").Error == "Invocation cancelled", "unknown reason");
-                    Check(history.Read(id, 0, 100).All(r => !r.HasTrace && r.VisualId == null && history.ReadSnapshot(r.Revision) == null), "a code automation run has a trace or snapshot");
+                    Check(history.Read(id, 0, 100).All(r => !r.HasTrace && r.VisualId == null && history.ReadSnapshot(r.Revision) == null), "a run without a visual document has a trace or snapshot");
                 }
                 finally { await manager.UnloadUserScriptsAsync(); Probe.Release.TrySetResult(); Probe.Mode = AutomationMode.Single; }
             });
@@ -297,16 +297,24 @@ static class HistoryTraceTests
             {
                 var root = Path.Combine(folder, "reasons");
                 var previous = HassPath.HassConfiguration; HassPath.HassConfiguration = root;
-                Directory.CreateDirectory(HassPath.UserScripts);
-                File.WriteAllText(Path.Combine(HassPath.UserScripts, "hold.cs"), "public class Hold : Automation { public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Go), Startup: true)); public Task Go() => Task.Delay(-1, CancellationToken); }");
+                // A startup trigger whose run holds until it is cancelled.
+                var hold = JsonNode.Parse("""
+                {"version":5,"name":"Hold","nodes":[
+                  {"id":"t","kind":"trigger","config":{"type":"startup"}},
+                  {"id":"c","kind":"custom","config":{"code":"await Task.Delay(-1, CancellationToken);"}}
+                ],"edges":[{"id":"tc","source":"t","target":"c"}]}
+                """)!.AsObject();
+                var diagnostics = new DiagnosticsProvider(); diagnostics.GenerateHassEntities([]);
+                new VisualStore(Path.Combine(root, ".storage", "hass_sharp", "visual"), new VisualGenerator(diagnostics)).Save("hold", hold, 0);
                 var api = new HassSharpManager(root);
                 try
                 {
                     JsonNode[] Runs(string automation) => JsonNode.Parse(api.GetRunHistory(automation, 0, 100, null))!["runs"]!.AsArray().Select(r => r!).ToArray();
+                    async Task<string> Automation() => JsonNode.Parse(await api.VisualRequest("""{"operation":"read","id":"hold"}"""))!["result"]!["automationId"]!.GetValue<string>();
                     async Task<string> Cancelled(Func<Task> cancel, int count)
                     {
                         await api.Init([]);
-                        var automation = api.GetScriptSummaries().Single(s => s.FileName == "hold").AutomationId!;
+                        var automation = await Automation();
                         await Until(() => Runs(automation).Any(r => r["status"]!.GetValue<string>() == "Running"), "startup run is running");
                         await cancel();
                         await Until(() => Runs(automation).Count(r => r["status"]!.GetValue<string>() == "Cancelled") == count, "startup run cancelled");
@@ -316,12 +324,12 @@ static class HistoryTraceTests
                     Check(await Cancelled(() => api.UnloadAsync(true), 2) == "Home Assistant stopping", "an unload while stopping");
                     Check(await Cancelled(() => { api.CancelRunsForShutdown(); return Task.CompletedTask; }, 3) == "Home Assistant stopping", "the stop event");
                     // After the stop, a new run is recorded as cancelled for the same reason, and an unload still works.
-                    var automation = api.GetScriptSummaries().Single(s => s.FileName == "hold").AutomationId!;
-                    var late = JsonNode.Parse(api.RunNow(automation, "Hold", "Go"))!["runId"]!.GetValue<string>();
+                    var automation = await Automation();
+                    var late = JsonNode.Parse(api.RunNow(automation, "VisualAutomation", VisualNodeCatalog.EffectiveTriggerMethod(hold["nodes"]![0]!.AsObject())))!["runId"]!.GetValue<string>();
                     var lateRun = JsonNode.Parse(api.GetRunTrace(late))!["run"]!;
                     Check(lateRun["status"]!.GetValue<string>() == "Cancelled" && lateRun["error"]!.GetValue<string>() == "Home Assistant stopping", "run after stop: " + lateRun.ToJsonString());
                     await api.UnloadAsync(true);
-                    Check(api.GetScriptSummaries().All(s => !s.Active), "unload after stop left a script active");
+                    Check(VisualTests.Loaded(api, "hold") == null, "unload after stop left a script active");
                 }
                 finally { await api.UnloadAsync(); HassPath.HassConfiguration = previous; }
             });
@@ -387,7 +395,7 @@ static class HistoryTraceTests
                     var revision = run["revision"]!.GetValue<string>();
                     Check(snapshot["revision"]!.GetValue<string>() == revision && snapshot["visualId"]!.GetValue<string>() == "front-door" && snapshot["visualRevision"]!.GetValue<long>() == 1, "snapshot identity");
                     Check(JsonNode.DeepEquals(snapshot["graph"], read["graph"]), "snapshot graph differs from the saved graph");
-                    var running = api.GetUserScript("visual_front-door")!.Source;
+                    var running = VisualTests.Loaded(api, "front-door")!.CompiledScript.SourceCode;
                     Check(running.Contains(JsonSerializer.Serialize(snapshot["catalog"]!.ToJsonString())) && !snapshot["catalog"]!.AsObject().ContainsKey("services")
                         && snapshot["catalog"]!["nodes"]!.AsObject().Select(p => p.Key).Order().SequenceEqual(["log", "stop", "trigger"]), "snapshot catalog is not the pruned embedded catalog");
 
@@ -502,26 +510,6 @@ static class HistoryTraceTests
                 var real = TriggerPayload.Entity(state, new HasEntityState { EntityId = "binary_sensor.motion", State = "off" });
                 Check(TriggerSummary.Summarize(InvocationCause.Entity, real) == """{"kind":"entity","entityId":"binary_sensor.motion","from":"off","to":"on"}""", "real entity summary: " + TriggerSummary.Summarize(InvocationCause.Entity, real));
                 return Task.CompletedTask;
-            });
-
-            await Test("a code automation run has no trace and no snapshot in run_trace", async () =>
-            {
-                var root = Path.Combine(folder, "code");
-                var previous = HassPath.HassConfiguration; HassPath.HassConfiguration = root;
-                Directory.CreateDirectory(HassPath.UserScripts);
-                File.WriteAllText(Path.Combine(HassPath.UserScripts, "plain.cs"), "public class Plain : Automation { public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Go))); public Task Go() => Task.CompletedTask; }");
-                var api = new HassSharpManager(root);
-                try
-                {
-                    await api.Init([]);
-                    var summary = api.GetScriptSummaries().Single(s => s.FileName == "plain");
-                    var runId = JsonNode.Parse(api.RunNow(summary.AutomationId!, "Plain", "Go"))!["runId"]!.GetValue<string>();
-                    await Until(() => JsonNode.Parse(api.GetRunTrace(runId))!["run"]!["status"]!.GetValue<string>() == "Succeeded", "code run completes");
-                    var trace = JsonNode.Parse(api.GetRunTrace(runId))!;
-                    Check(trace["snapshot"] == null && trace["trace"] == null && !trace["run"]!["hasTrace"]!.GetValue<bool>() && trace["run"]!["visualId"] == null
-                        && trace["run"]!["actionLabel"]!.GetValue<string>() == "Go" && trace["run"]!["trigger"]!.ToJsonString() == """{"kind":"manual"}""", "code run: " + trace.ToJsonString());
-                }
-                finally { await api.UnloadAsync(); HassPath.HassConfiguration = previous; }
             });
         }
         finally { Directory.Delete(folder, true); }

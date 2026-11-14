@@ -8,11 +8,6 @@ from homeassistant.helpers import (
     label_registry as lr,
 )
 
-import os
-
-def get_file_name(path: str):
-  return os.path.basename(path)
-
 def get_hass_entities(hass: HomeAssistant):
     state_entity_ids = set(hass.states.async_entity_ids())
 

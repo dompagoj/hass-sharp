@@ -56,7 +56,7 @@ className is `VisualAutomation`, and method is the advertised stable trigger
 method, `Run_` plus uppercase UTF-8 hexadecimal of its node ID. The run operation
 used by MCP accepts only document ID and triggerId. Both resolve the saved
 visual and check current activation/manual eligibility while holding the managed
-authoring gate through dispatch. Ordinary C# run behavior is unchanged.
+authoring gate through dispatch.
 
 Run history is `{id,type:"hass_sharp/run_history",automationId,offset?,limit?,status?}`
 and returns run history version 2; `hass_sharp/run_trace {runId}` returns one run's
@@ -266,16 +266,13 @@ Preview compiles immutable snapshots and validates native HA declarations withou
 attaching listeners or executing user code. Save persists then activates through
 the normal Automation runtime; custom code has administrator privileges and
 startup/native/scheduled effects require authorization. Cancellation, concurrency,
-schedules and history remain owned by the existing runtime. Compiled ordinary
-C# cache keys include loaded runtime/compiler module identities so upgrades cannot
-reuse stale constructor signatures; same-build reuse is retained.
+schedules and history remain owned by the existing runtime.
 
 ## Verification
 
 The runtime harness covers v5 typed execution and scopes, type refinement, trigger
 outputs, service schemas and the Call service node, run history and traces, custom CLR libraries,
-revision races, recovery, failed activation, atomic manual dispatch, cache build
-identity, history and native trigger lifecycle. The editor suite tests real Roslyn
+revision races, recovery, failed activation, atomic manual dispatch, history and native trigger lifecycle. The editor suite tests real Roslyn
 services. Python tests cover shared service parity, immutable snapshots, native
 validation, lifecycle cleanup and current HA 2026.11 LLM/MCP schemas, permissions,
 read-only filtering and registry discovery. Live publication/transport/browser

@@ -20,9 +20,6 @@ class UserScript
 
     internal CancellationToken LifetimeToken => _lifetimeCancellation.Token;
 
-    public Task WriteToDisk() => CompiledScript.WriteToDisk();
-    public ValueTask WriteIfDirty() => CompiledScript.WriteIfDirty();
-
     internal async Task ConfigureAndStart()
     {
         var epoch = ScriptManager.ActivationEpoch;
@@ -78,16 +75,6 @@ class UserScript
     }
 
     internal void RenewLifetime() { _cancelReason = null; _lifetimeCancellation = new(); }
-
-    public async Task FullCleanAsync()
-    {
-        List<Exception> errors = [];
-        try { await ClearFromTrackingAsync(); } catch (Exception error) { errors.Add(error); }
-        try { Unload(); } catch (Exception error) { errors.Add(error); }
-        try { CompiledScript.DeleteFromDisk(); } catch (Exception error) { errors.Add(error); }
-        try { ScriptManager.History?.Forget(CompiledScript.FilePath); } catch (Exception error) { errors.Add(error); }
-        if (errors.Count > 0) throw new AggregateException(errors);
-    }
 
     internal Task ClearFromTrackingAsync()
     {

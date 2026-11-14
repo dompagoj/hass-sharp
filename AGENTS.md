@@ -44,10 +44,10 @@ container name stays `hass`, so these commands also manage the existing instance
 - After frontend changes, run `(cd custom_components/hass_sharp/frontend && bun run build)`
   and hard-refresh the HassSharp panel. For continuous builds, use
   `(cd custom_components/hass_sharp/frontend && bun run build:watch)`.
-- Saving a C# automation in the panel recompiles and replaces that script without
-  restarting Home Assistant. Scripts live in
-  `custom_components/hass_sharp/user_scripts/` on the host. For direct file edits,
-  reload the integration from **Settings → Devices & services**.
+- Saving a visual automation or a node library in the panel recompiles and replaces
+  the affected automations without restarting Home Assistant. Both are stored under
+  `/config/.storage/hass_sharp/` inside the container, which is not bind-mounted. For
+  direct file edits there, reload the integration from **Settings → Devices & services**.
 - Use the browser console and Network/WebSocket tools for editor problems. Check
   `docker compose logs --tail=200 hass` for Python, runtime initialization, compile,
   and automation errors; C# `Logger` messages are forwarded to Home Assistant.

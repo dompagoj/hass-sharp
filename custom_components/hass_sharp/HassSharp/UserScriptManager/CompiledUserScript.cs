@@ -6,11 +6,11 @@ namespace HassSharp;
 public class CompiledUserScript
 {
     bool _unloaded;
-    // Explicit metadata for visual artifacts; ordinary source files retain multi-class activation.
+    // Explicit metadata for visual artifacts; other compiled sources activate every Automation class they hold.
     public string? DesignatedRootType { get; set; }
     public long? VisualRevision { get; set; }
     public string? CatalogGeneration { get; set; }
-    /// <summary>The visual document id (the editor's <c>/visual/:id</c>); null for code automations.</summary>
+    /// <summary>The visual document id (the editor's <c>/visual/:id</c>); null for a script compiled outside the visual store.</summary>
     public string? VisualId { get; set; }
     /// <summary>Trigger method name to its graph node id and label (null when the node has none).</summary>
     public IReadOnlyDictionary<string, VisualTrigger>? VisualTriggers { get; set; }
@@ -24,47 +24,7 @@ public class CompiledUserScript
 
     public required Assembly Assembly { get; init; }
 
-    public required bool WrittenToDisk { get; set; }
-
     public string Id() => FilePath;
-    public string Slug() => FileName;
-
-    public void SetDirty() => WrittenToDisk = false;
-
-    public async Task WriteToDisk()
-    {
-        var temporary = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            await File.WriteAllTextAsync(temporary, SourceCode);
-            File.Move(temporary, FilePath, overwrite: true);
-        }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); }
-    }
-
-    public void RenameOnDisk(string newSlug)
-    {
-        var newPath = UserScriptManager.GetScriptFilePathFromSlug($"{newSlug}.cs");
-        if (FilePath == newPath) return;
-
-        // Move without overwriting, and keep the original identity if the move fails.
-        File.Move(FilePath, newPath);
-        FileName = newSlug;
-        FilePath = newPath;
-    }
-
-    public async ValueTask WriteIfDirty()
-    {
-        if (WrittenToDisk) return;
-        Logger.Debug($"Writing script to ${FilePath}");
-        await WriteToDisk();
-        WrittenToDisk = true;
-    }
-
-    public void DeleteFromDisk()
-    {
-        File.Delete(FilePath);
-    }
 
     public void Unload()
     {
@@ -76,25 +36,3 @@ public class CompiledUserScript
 }
 
 public sealed record VisualTrigger(string NodeId, string? Label);
-
-public class UserScriptDTO
-{
-    public string? AutomationId { get; init; }
-    public string Revision { get; init; } = "";
-    public bool Active { get; init; }
-    public string? ActivationError { get; init; }
-    public required string FileName { get; init; }
-    public required UserScriptClassDto[] Classes { get; init; }
-}
-
-public class UserScriptClassDto
-{
-    public required string Name { get; init; }
-    public required string[] Methods { get; init; }
-}
-
-public class UserScriptSourceDTO
-{
-    public required string FileName { get; init; }
-    public required string Source { get; init; }
-}

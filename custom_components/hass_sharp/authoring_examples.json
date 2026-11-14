@@ -562,6 +562,5 @@
         }
       ]
     }
-  },
-  "ordinaryCSharp": "public class HarmlessExample : Automation\n{\n    public override AutomationConfiguration Configure() => new(\n        new AutomationAction(nameof(Run), Manual: true));\n    public void Run() => Logger.Info(\"Hello from C#\");\n}"
+  }
 }

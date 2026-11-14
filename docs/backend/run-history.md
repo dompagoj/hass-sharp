@@ -36,8 +36,9 @@ All are administrator only.
 
 - `action` is the class and method; `actionLabel` is the trigger node's label, or
   the method name when it has none. `triggerNodeId`, `visualId` and
-  `visualRevision` identify the visual trigger and document revision that ran and
-  are `null` for C# automations.
+  `visualRevision` identify the visual trigger and document revision that ran. They
+  are `null` only in rows kept from hand-written C# automations, which are no
+  longer loaded.
 - `cause` is `Startup`, `Entity`, `Manual`, `Schedule` or `HomeAssistantTrigger`.
 - `trigger` is a parsed object summarising what fired the run:
   `{kind, platform?, id?, description?, entityId?, from?, to?, eventType?, scheduleId?, planned?}`
@@ -67,8 +68,8 @@ keyed by the run's `revision` (the hash of the generated source), when that
 revision first runs. `run_trace` returns that snapshot as
 `{revision, visualId, visualRevision, graph, catalog}`; `visualId` and
 `visualRevision` come from the run, because one snapshot can be shared by several
-document revisions that generate the same source. C# automations have no snapshot
-and no trace.
+document revisions that generate the same source. Rows kept from hand-written C#
+automations have no snapshot and no trace.
 
 ```json
 {"format":1,"runId":"…","rootNodeId":"t1","startedUtc":"…","complete":false,"truncated":false,"dropped":0,

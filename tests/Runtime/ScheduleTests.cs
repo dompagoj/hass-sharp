@@ -17,7 +17,7 @@ static class ScheduleTests
             Probe.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Probe.Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
             PyInterop.Entity = id => new() { EntityId = id, State = "fresh" };
-            var compiled = new CompiledUserScript { FilePath = "scheduled.cs", FileName = "scheduled", SourceCode = "schedule", Assembly = typeof(Probe).Assembly, WrittenToDisk = true };
+            var compiled = new CompiledUserScript { FilePath = "scheduled.cs", FileName = "scheduled", SourceCode = "schedule", Assembly = typeof(Probe).Assembly };
             await manager.LoadUserScripts([compiled]);
             await Probe.Starts.Reader.ReadAsync();
             var planned = "2026-11-12T12:00:00+00:00";

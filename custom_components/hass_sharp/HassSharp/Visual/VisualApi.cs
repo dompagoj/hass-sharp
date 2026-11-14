@@ -43,7 +43,7 @@ public partial class HassSharpManager
 
     async Task<CompiledUserScript> CompileVisualDocument(VisualDocument document)
     {
-        var compiled = await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), document.Source, true);
+        var compiled = await _compiler.CompileSingleFile(VisualRuntimePath(document.Id), document.Source);
         compiled.DesignatedRootType = "VisualAutomation";
         compiled.VisualRevision = document.Revision;
         compiled.CatalogGeneration = document.CatalogGeneration;
@@ -105,7 +105,7 @@ public partial class HassSharpManager
                     else if (operation == "delete")
                     {
                         store.Delete(id, revision);
-                        await _userScriptManager.DeleteScriptAsync(VisualRuntimePath(id), requireExisting: false);
+                        await _userScriptManager.DeleteScriptAsync(VisualRuntimePath(id));
                         _loadErrors.TryRemove(VisualRuntimePath(id), out _);
                         result = new { deleted = true };
                     }

@@ -1,9 +1,9 @@
-import { batch, createEffect, createMemo, createSignal, createUniqueId, For, on, onCleanup, Show, useContext } from 'solid-js'
+import { batch, createEffect, createSignal, createUniqueId, For, on, onCleanup, Show, useContext } from 'solid-js'
 import { A, RouterContext } from '@solidjs/router'
-import { useQuery, useMutation } from '@tanstack/solid-query'
+import { useQuery } from '@tanstack/solid-query'
 import { useHass } from '../context'
-import type { AutomationRun, RunHistoryResponse, RunStatus, UserScriptClassDto } from '../types'
-import { acceptedRun, dispatchRun, forgetAcceptedRun, runErrorMessage as errorMessage, type RunAction } from './runDispatch'
+import type { AutomationRun, RunHistoryResponse, RunStatus } from '../types'
+import { acceptedRun, forgetAcceptedRun, runErrorMessage as errorMessage } from './runDispatch'
 import { Button, Icon } from './Controls'
 import { JsonTree } from './JsonTree'
 import { summarizeTrigger, TriggerSummary } from './TriggerSummary'
@@ -32,28 +32,23 @@ const Timestamp = (props: { value: string | null }) => <Show when={props.value} 
   <time dateTime={value()} title={value()}>{new Date(value()).toLocaleString()}</time>
 }</Show>
 
+/** The run history of one saved automation. Runs are started elsewhere (the visual editor's top bar). */
 interface RunsProps {
   automationId: string
-  classes: UserScriptClassDto[]
-  actionLabels?: Record<string, string>
-  /** History only: the page starts runs elsewhere (the visual editor's top bar). */
-  hideRunControls?: boolean
 }
 export const AutomationRuns = (props: RunsProps) => {
   const hass = useHass()
   // Identity, rather than filename, owns pagination and dispatch feedback.
-  return <Show when={hass.user?.is_admin} fallback={<p class="hs-notice">Administrator access is required to run automations and view history.</p>}>
-    <Show when={props.automationId} keyed>{id => <RunPanel automationId={id} classes={props.classes} actionLabels={props.actionLabels} hideRunControls={props.hideRunControls} />}</Show>
+  return <Show when={hass.user?.is_admin} fallback={<p class="hs-notice">Administrator access is required to view run history.</p>}>
+    <Show when={props.automationId} keyed>{id => <RunPanel automationId={id} />}</Show>
   </Show>
 }
 
 const RunPanel = (props: RunsProps) => {
   const hass = useHass()
-  const selectId = createUniqueId()
   const filterId = createUniqueId()
   const [offset, setOffset] = createSignal(0)
   const [statusFilter, setStatusFilter] = createSignal<RunStatus | ''>('')
-  const [selection, setSelection] = createSignal('')
   // Shared with every place that starts a run of this automation, so a run started elsewhere is polled here too.
   const accepted = () => acceptedRun(props.automationId)
   // Leaving the page forgets it: a run accepted before is not awaited when the list opens again.
@@ -68,10 +63,6 @@ const RunPanel = (props: RunsProps) => {
     if (!next.delete(runId)) next.add(runId)
     return next
   })
-  const actions = createMemo(() => props.classes.flatMap(klass => klass.methods.map(method => ({
-    key: `${klass.name}::${method}`, className: klass.name, method,
-  }))))
-  const selected = () => actions().find(action => action.key === selection()) ?? actions()[0]
   const history = useQuery(() => ({
     queryKey: ['run-history', props.automationId, offset(), statusFilter()],
     queryFn: () => hass.callWS<RunHistoryResponse>({
@@ -87,37 +78,15 @@ const RunPanel = (props: RunsProps) => {
       return runs.some(active) || awaitingResult ? 2000 : false
     },
   }))
-  // Each newly accepted run, started here or elsewhere (the editor's top bar), returns the list to the newest,
+  // Each newly accepted run, wherever it was started (the editor's top bar), returns the list to the newest,
   // unfiltered records so it is never hidden, and polls for its result.
   createEffect(on(() => accepted()?.runId, runId => {
     if (!runId) return
     if (offset() || statusFilter()) batch(() => { setOffset(0); setStatusFilter('') })
     else void history.refetch()
   }, { defer: true }))
-  const dispatch = useMutation(() => ({
-    mutationFn: (action: RunAction) => dispatchRun(hass, props.automationId, action),
-  }))
-  const runNow = () => {
-    const action = selected()
-    if (!action || dispatch.isPending) return
-    dispatch.mutate(action)
-  }
   const filter = (value: RunStatus | '') => batch(() => { setStatusFilter(value); setOffset(0) })
   return <div class="hs-runs">
-    <Show when={!props.hideRunControls}><section class="hs-run-controls" aria-label="Run automation">
-      <div><h2>Run now</h2><p class="hs-muted">Runs the last saved version. Unsaved editor changes are not included.</p></div>
-      <Show when={actions().length} fallback={<p class="hs-muted">No actions available for manual runs in the saved automation.</p>}>
-        <div class="hs-run-action"><label for={selectId}>Action</label>
-          <select id={selectId} class="hs-input" value={selected()?.key} disabled={dispatch.isPending} onChange={event => setSelection(event.currentTarget.value)}>
-            <For each={actions()}>{action => <option value={action.key}>{props.actionLabels?.[action.key] ?? `${action.className} · ${action.method}`}</option>}</For>
-          </select>
-          <Button variant="primary" busy={dispatch.isPending} onClick={runNow}>{dispatch.isPending ? 'Requesting…' : 'Run now'}</Button>
-        </div>
-        <p class="hs-muted hs-run-help">The action must allow manual runs. Success means the C# action completed; it does not confirm a device effect.</p>
-      </Show>
-      <Show when={accepted()}>{request => <p class="hs-run-feedback" role="status">Request accepted · <code>{request().runId}</code>. Check its status below for the result.</p>}</Show>
-      <Show when={dispatch.isError}><p class="hs-error" role="alert">Run request failed: {errorMessage(dispatch.error)}</p></Show>
-    </section></Show>
     <section aria-label="Run history" class="hs-run-history">
       <header class="hs-history-heading"><div><h2>Run history</h2><p class="hs-muted">Newest first · times in your local time zone. Pages may shift when new runs arrive.</p></div>
         <div class="hs-history-tools">
@@ -134,7 +103,7 @@ const RunPanel = (props: RunsProps) => {
       </div></Show>
       <Show when={history.isSuccess && !history.data.runs.length}><div class="hs-empty" role="status">
         <h2>{offset() ? 'No more runs' : statusFilter() ? `No ${statusFilter().toLowerCase()} runs` : 'No runs yet'}</h2>
-        <p>{offset() ? 'Return to the newest runs or the previous page.' : statusFilter() ? 'Choose another status to see other runs.' : 'Run an action or wait for its next trigger.'}</p>
+        <p>{offset() ? 'Return to the newest runs or the previous page.' : statusFilter() ? 'Choose another status to see other runs.' : 'Run it now or wait for its next trigger.'}</p>
       </div></Show>
       <ul class="hs-run-list" aria-label="Recorded runs" aria-busy={history.isFetching}>
         <For each={history.data?.runs}>{run => <RunRow run={run} now={now()} open={expanded().has(run.runId)} onToggle={() => toggle(run.runId)} />}</For>

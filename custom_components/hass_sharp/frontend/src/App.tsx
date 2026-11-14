@@ -9,7 +9,6 @@ import { AutomationsListView } from './views/AutomationsListView'
 import { VisualAutomationView } from './views/VisualAutomationView'
 import { NodeLibraryView } from './views/NodeLibraryView'
 import { RunTraceView } from './views/RunTraceView'
-import { AutomationView } from './views/AutomationView'
 import { findCustomComponent } from './utils'
 
 const client = new QueryClient({
@@ -38,7 +37,6 @@ function App(props: { hass: HomeAssistant }) {
         <Router base="/hass-sharp" root={MainLayout}>
           <Route path="/" component={() => <Navigate href="/automations" />} />
           <Route path="/automations" component={AutomationsListView} />
-          <Route path="/automations/:id" component={AutomationView} />
           <Route path="/visual/:id" component={VisualAutomationView} />
           <Route path="/visual/:id/runs/:runId" component={RunTraceView} />
           <Route path="/libraries" component={NodeLibraryView} />

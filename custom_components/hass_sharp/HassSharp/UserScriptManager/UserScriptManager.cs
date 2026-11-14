@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Text;
-
 namespace HassSharp;
 
 record TriggerContext(HasEntityState State);
@@ -8,12 +5,6 @@ record TriggerContext(HasEntityState State);
 class UserScriptManager
 {
     public RunHistoryStore? History { get; init; }
-
-    public Task RunNow(string automationId, string className, string method)
-    {
-        var script = _userScripts.Single(s => s.AutomationId == automationId);
-        return script.Classes.Single(c => c.ClassName == className).RunMethod(method, InvocationCause.Manual);
-    }
 
     /// <param name="payload">The normalised trigger payload; <c>{platform: "manual"}</c> when omitted.</param>
     public string DispatchManual(string automationId, string className, string method, System.Text.Json.JsonElement? payload = null)
@@ -47,9 +38,6 @@ class UserScriptManager
     public ScriptSyncRunner SyncRunner { get; } = new();
 
     public List<UserScript> GetUserScripts() { lock (ActivationGate) return _userScripts.ToList(); }
-
-    public UserScript? GetUserScript(string scriptSlug)
-    { lock (ActivationGate) return _userScripts.FirstOrDefault(s => s.CompiledScript.Slug() == scriptSlug); }
 
     public void UnloadUserScripts() => UnloadUserScripts(null);
     public void UnloadUserScripts(string? reason) => _ = Observe(UnloadUserScriptsAsync(reason));
@@ -232,7 +220,7 @@ class UserScriptManager
                     throw new InvalidOperationException("Script manager is unloaded");
                 }
             var found = _userScripts.SingleOrDefault(s => s.CompiledScript.Id() == compiled.Id());
-            if (found is null && !File.Exists(compiled.FilePath))
+            if (found is null)
             {
                 compiled.Unload();
                 throw new InvalidOperationException("Script not found");
@@ -243,19 +231,16 @@ class UserScriptManager
                 // Stage subscriptions while the original remains the only trigger recipient.
                 replacement = LoadUserScript(compiled, staged: true);
                 await replacement.PrepareAsync();
-                EnsureCanActivate(replacement, epoch);
-                await replacement.WriteIfDirty();
                 lock (ActivationGate)
                 {
                     EnsureCanActivate(replacement, epoch);
-                    var index = found == null ? -1 : _userScripts.IndexOf(found);
-                    if (found != null && (index < 0 || !found.Active))
+                    var index = _userScripts.IndexOf(found);
+                    if (index < 0 || !found.Active)
                         throw new InvalidOperationException("Script was unloaded during update");
-                    if (found != null) found.Invalidate();
+                    found.Invalidate();
                     replacement.Active = true;
                     _preparing.Remove(replacement);
-                    if (found == null) _userScripts.Add(replacement);
-                    else _userScripts[index] = replacement;
+                    _userScripts[index] = replacement;
                 }
             }
             catch (Exception error)
@@ -267,101 +252,14 @@ class UserScriptManager
                 throw;
             }
 
-            if (found != null)
-            {
-                found.SetCancelReason(CancelReasons.Reloaded);
-                try { await found.ClearFromTrackingAsync(); } finally { found.Unload(); }
-            }
+            found.SetCancelReason(CancelReasons.Reloaded);
+            try { await found.ClearFromTrackingAsync(); } finally { found.Unload(); }
             replacement.Start();
         }
         finally { _updates.Release(); }
     }
 
-    public async Task<string> CreateEmptyScript(CodeCompiler compiler, string scriptNameUserInput)
-    {
-        var slug = $"{NormalizeScriptName(scriptNameUserInput)}.cs";
-        const string emptyScriptSource = """
-                                         public class ReplaceThisNameAutomation : Automation
-                                         {
-                                         }
-                                         """;
-        var scriptPath = GetScriptFilePathFromSlug(slug);
-        var slugWithoutExtension = Path.GetFileNameWithoutExtension(slug);
-
-        if (GetUserScript(slugWithoutExtension) is not null || File.Exists(scriptPath))
-            throw new InvalidOperationException($"An automation named '{slugWithoutExtension}' already exists");
-
-        FileStream stream;
-        try
-        {
-            stream = new FileStream(
-                scriptPath,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                bufferSize: 4096,
-                useAsync: true
-            );
-        }
-        catch (IOException ex) when (File.Exists(scriptPath))
-        {
-            throw new InvalidOperationException($"An automation named '{slugWithoutExtension}' already exists", ex);
-        }
-
-        try
-        {
-            await using (stream)
-            await using (var writer = new StreamWriter(stream))
-                await writer.WriteAsync(emptyScriptSource);
-        }
-        catch
-        {
-            TryDeleteFailedScript(scriptPath);
-            throw;
-        }
-
-        CompiledUserScript? compiled = null;
-        UserScript? loadedScript = null;
-
-        try
-        {
-            compiled = await compiler.CompileFromUserScriptFile(slug, emptyScriptSource, true);
-            loadedScript = LoadUserScript(compiled);
-            await loadedScript.ConfigureAndStart();
-        }
-        catch
-        {
-            if (loadedScript is not null)
-            {
-                await loadedScript.ClearFromTrackingAsync();
-                loadedScript.Unload();
-            }
-            else
-            {
-                compiled?.Unload();
-            }
-
-            TryDeleteFailedScript(scriptPath);
-
-            throw;
-        }
-
-        return slug;
-    }
-
-    static void TryDeleteFailedScript(string scriptPath)
-    {
-        try
-        {
-            File.Delete(scriptPath);
-        }
-        catch (Exception cleanupError)
-        {
-            Logger.Error($"Failed to clean up script after creation failed: {cleanupError.Message}");
-        }
-    }
-
-    public async Task DeleteScriptAsync(string scriptPath, bool requireExisting = true)
+    public async Task DeleteScriptAsync(string scriptPath)
     {
         UserScript[] deleting;
         lock (ActivationGate)
@@ -378,10 +276,7 @@ class UserScriptManager
             await _updates.WaitAsync();
             try
             {
-                if (requireExisting && deleting.Length == 0 && !File.Exists(scriptPath))
-                    throw new FileNotFoundException("Script not found");
                 try { await CleanupScriptsAsync(deleting); } catch (Exception error) { errors.Add(error); }
-                try { File.Delete(scriptPath); } catch (Exception error) { errors.Add(error); }
                 try { History?.Forget(scriptPath); } catch (Exception error) { errors.Add(error); }
             }
             finally { _updates.Release(); }
@@ -389,41 +284,4 @@ class UserScriptManager
         finally { lock (ActivationGate) _deletingPaths.Remove(scriptPath); }
         if (errors.Count > 0) throw new AggregateException(errors);
     }
-
-    public static string NormalizeScriptName(string name)
-    {
-        var normalized = name.Trim().Normalize(NormalizationForm.FormD);
-        var slug = new StringBuilder();
-        var needsSeparator = false;
-
-        foreach (var character in normalized)
-        {
-            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark)
-                continue;
-
-            var lower = char.ToLowerInvariant(character);
-            var isAsciiLetter = char.IsAsciiLetter(lower);
-            var isDigit = char.IsAsciiDigit(lower);
-
-            if (isAsciiLetter || isDigit)
-            {
-                if (needsSeparator && slug.Length > 0)
-                    slug.Append('_');
-
-                slug.Append(lower);
-                needsSeparator = false;
-            }
-            else
-            {
-                needsSeparator = true;
-            }
-        }
-
-        if (slug.Length == 0)
-            throw new ArgumentException("Automation name must contain at least one letter or number", nameof(name));
-
-        return slug.ToString();
-    }
-
-    internal static string GetScriptFilePathFromSlug(string slug) => Path.Join(HassPath.UserScripts, slug);
 }

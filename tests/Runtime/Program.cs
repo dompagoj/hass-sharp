@@ -47,7 +47,7 @@ static class RuntimeCoreTests
             Probe.Mode = mode;
             Probe.Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>(); Probe.Completed = new(); Probe.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var manager = new UserScriptManager();
-            var compiled = new CompiledUserScript { FilePath = "test.cs", FileName = "test", SourceCode = "", Assembly = typeof(Probe).Assembly, WrittenToDisk = true };
+            var compiled = new CompiledUserScript { FilePath = "test.cs", FileName = "test", SourceCode = "", Assembly = typeof(Probe).Assembly };
             await manager.LoadUserScripts([compiled]).WaitAsync(TimeSpan.FromSeconds(2));
             var klass = manager.GetUserScripts().Single().Classes.Single();
             var startup = await Probe.Starts.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
@@ -85,7 +85,7 @@ static class RuntimeCoreTests
         Probe.Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
         Probe.Order = new();
         var queueManager = new UserScriptManager();
-        await queueManager.LoadUserScripts([new() { FilePath = "queue.cs", FileName = "queue", SourceCode = "", Assembly = typeof(Probe).Assembly, WrittenToDisk = true }]);
+        await queueManager.LoadUserScripts([new() { FilePath = "queue.cs", FileName = "queue", SourceCode = "", Assembly = typeof(Probe).Assembly }]);
         await Probe.Starts.Reader.ReadAsync();
         var pending = Enumerable.Range(0, 100).Select(i => queueManager.RunEntries("sensor.test", new(new() { EntityId = "sensor.test", State = i.ToString() }))).ToArray();
         Probe.Release.SetResult();
@@ -99,7 +99,7 @@ static class RuntimeCoreTests
         var isolated = new UserScriptManager();
         foreach (var id in new[] { "first", "second" })
         {
-            await isolated.LoadUserScripts([new() { FilePath = id, FileName = id, SourceCode = "", Assembly = typeof(Probe).Assembly, WrittenToDisk = true }]);
+            await isolated.LoadUserScripts([new() { FilePath = id, FileName = id, SourceCode = "", Assembly = typeof(Probe).Assembly }]);
             await Probe.Starts.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         }
         var startupTasks = isolated.GetUserScripts().SelectMany(s => s.Classes).Select(c => c.StartupCompletion).ToArray();
@@ -108,18 +108,6 @@ static class RuntimeCoreTests
         await Task.WhenAll(startupTasks);
         Check(Probe.Completed.Count == beforeCancel, "unload cancels pending delay before effects");
         Console.WriteLine("PASS instance policy isolation");
-        var assembly = System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(new("MotionFixture"), System.Reflection.Emit.AssemblyBuilderAccess.Run);
-        var motionType = assembly.DefineDynamicModule("main").DefineType("MotionFixture", System.Reflection.TypeAttributes.Public, typeof(HassSharp.HelperBaseAutomations.MotionLightAutomation)).CreateType()!;
-        var motion = (HassSharp.HelperBaseAutomations.MotionLightAutomation)Activator.CreateInstance(motionType)!;
-        motion.MotionSensor = new HaBinarySensor("binary_sensor.motion");
-        motion.Light = new HaLight("light.test");
-        motion.TurnOffDelay = TimeSpan.FromMilliseconds(1);
-        PyInterop.Entity = id => new() { EntityId = id, State = "off" };
-        var turnedOff = false;
-        PyInterop.CallService = (_, service, _, _, _) => turnedOff |= service == "turn_off";
-        await motion.Run();
-        Check(turnedOff, "motion-off trigger must finish turn-off after restart");
-        Console.WriteLine("PASS motion-off delay");
     }
 }
 

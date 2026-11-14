@@ -10,7 +10,7 @@ public enum AutomationMode
     Parallel
 }
 
-public abstract class Automation : UserScriptClassBase
+public abstract class Automation
 {
     public virtual AutomationConfiguration Configure() => new();
     public InvocationCause Cause => InvocationContext.Current?.Cause ?? default;

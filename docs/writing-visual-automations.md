@@ -4,7 +4,7 @@ HassSharp supports **graph version 5 only**. Older graph formats must be recreat
 there is no migration or backward-execution mode. Document and API envelope
 version 1 is separate from the graph version.
 
-Choose **Automations → New automation → Visual**, enter a name, and edit the
+Choose **Automations → New automation**, enter a name, and edit the
 canvas. Drag steps from the palette, inspect their settings, and connect control
 and typed data ports. The inspector uses the same catalog as compiler validation
 and MCP. Custom library nodes appear after a successful library save.
@@ -221,13 +221,12 @@ tool; see [MCP authoring](mcp-authoring.md).
 ## C# escape hatch
 
 Custom C# nodes run statements with `values`, `lastError`, `TriggerData` (the
-normalised trigger payload) and normal Automation members. For example,
+normalised trigger payload) and `CancellationToken` in scope. For example,
 `Logger.Info("Hello from a C# node");` is a complete harmless node body. Graph
 `imports` and `members` provide shared imports and class members. Compiler errors
 map back to node/input/source positions. Custom code is trusted administrator
 code, and preview compiles it without executing it. Use
-[custom libraries](node-libraries.md) for reusable typed methods, and the
-[ordinary C# guide](writing-csharp-automations.md) for `.cs` automations.
+[custom libraries](node-libraries.md) for reusable typed methods.
 
 Editor and [MCP authoring](mcp-authoring.md) use the same revision-checked services.
 On a conflict, reload the current document and reconcile edits. Library changes

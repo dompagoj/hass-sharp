@@ -54,30 +54,6 @@ public sealed class VisualValues
             _ => throw new InvalidOperationException($"Cannot convert '{text}' to {type}. Boolean accepts true/false, on/off, 1/0; numbers must be finite invariant numbers.")
         };
     }
-    public static object Read<T>(EntityRef<T> entity, string field, string attribute, string type)
-    {
-        var raw = entity.Raw;
-        object? value = raw.State;
-        if (field == "attribute" && (raw.Attributes == null || !raw.Attributes.TryGetValue(attribute, out value)))
-            throw new InvalidOperationException($"Entity '{raw.EntityId}' has no attribute '{attribute}'.");
-        return ConvertValue(value, type);
-    }
-    // Poll the live integration directly: trigger snapshots must never overwrite a fresh poll.
-    public static object ReadFresh(string entity, string field, string attribute, string type)
-    {
-        var raw = PyInterop.Entity(entity) ?? throw new InvalidOperationException($"Entity '{entity}' is unavailable.");
-        object? value = raw.State;
-        if (field == "attribute" && (raw.Attributes == null || !raw.Attributes.TryGetValue(attribute, out value)))
-            throw new InvalidOperationException($"Entity '{entity}' has no attribute '{attribute}'.");
-        return ConvertValue(value, type);
-    }
-    public static bool Compare(object left, object right, string op) => op switch
-    {
-        "eq" => left.Equals(right), "ne" => !left.Equals(right),
-        "lt" => (double)left < (double)right, "le" => (double)left <= (double)right,
-        "gt" => (double)left > (double)right, "ge" => (double)left >= (double)right,
-        _ => throw new InvalidOperationException("Unknown comparison")
-    };
     public static async Task WaitUntil(Func<bool> predicate, double timeout, double interval, CancellationToken cancellation)
     {
         var clock = Stopwatch.StartNew();

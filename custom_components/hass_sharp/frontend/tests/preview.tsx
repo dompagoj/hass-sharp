@@ -7,9 +7,8 @@ import { visualFixture as makeVisualFixture } from './visual-fixture'
 import { render } from 'solid-js/web'
 import App from '../src/App'
 import '../src/style.css'
-import type { AutomationRun, HomeAssistant, RunTrace, RunTraceResponse, TraceEvent, UserScriptDTO } from '../src/types'
+import type { AutomationRun, HomeAssistant, RunTrace, RunTraceResponse, TraceEvent } from '../src/types'
 
-const diagnosticsFixture = new URLSearchParams(location.search).has('diagnostics')
 const shadowFixture = new URLSearchParams(location.search).has('shadow')
 // `?view=trace`: the run trace view with a sample run (`&live=1`: the same run arriving step by step; `&drop=1` with
 // it: every third read of the live run fails, as when the connection drops).
@@ -17,42 +16,13 @@ const traceFixture = new URLSearchParams(location.search).get('view') === 'trace
 const liveTrace = new URLSearchParams(location.search).has('live')
 const dropTrace = new URLSearchParams(location.search).has('drop')
 let traceReads = 0
-const scripts: UserScriptDTO[] = [
-  { fileName: 'BathroomHeating.cs', automationId: 'fixture-bathroom', revision: 'fixture-revision', classes: [{ name: 'Home.BathroomHeating', methods: ['Execute'] }] },
-  { fileName: 'EveningLights.cs', classes: [{ name: 'Home.EveningLights', methods: ['Configure', 'ExecuteAsync'] }] },
-  { fileName: 'A very long automation file name to check wrapping on a small screen.cs', classes: [] },
-]
-let source = `public class BathroomHeating : Automation
-{
-    public override AutomationConfiguration Configure() => new(
-        new AutomationAction(nameof(Execute), AutomationMode.Single, Manual: true));
-
-    public Task Execute()
-    {
-        Logger.Info("Manual automation started");
-        return Task.CompletedTask;
-    }
-}`
-if (diagnosticsFixture) source = 'public class Broken { void Run() { MissingName(); } }'
 // Fixture controls are deliberately local: no HA websocket or device call is made.
 const fixture = { historyError: false, dispatchError: false, result: 'Succeeded' as AutomationRun['status'] }
 ;(window as any).runFixture = fixture
-// Run history v2 samples: the action's plain label, the trigger summary, and which runs have a trace.
+// Run history v2 samples of the typed demo: the trigger's label, the trigger summary, and which runs have a trace.
 const statuses: AutomationRun['status'][] = ['Failed', 'Skipped', 'Succeeded', 'Stopped', 'Cancelled', 'Succeeded', 'Interrupted']
 const errors: Partial<Record<AutomationRun['status'], string>> = {
   Failed: 'Example error detail\nSecond line (fixture only).', Stopped: 'Stopped by a Stop step: nobody is home', Cancelled: 'Restarted by a newer trigger', Interrupted: 'Home Assistant restarted during the run',
-}
-const scriptRun = (i: number): AutomationRun => {
-  const status = i < statuses.length ? statuses[i] : 'Succeeded', kind = i % 3 === 0 ? 'schedule' : i % 3 === 1 ? 'entity' : 'manual'
-  return {
-    runId: `fixture-run-${i}`, automationId: 'fixture-bathroom', revision: 'fixture-revision', action: 'Home.BathroomHeating::Execute', actionLabel: 'BathroomHeating · Execute',
-    triggerNodeId: null, visualId: null, visualRevision: null,
-    cause: kind === 'schedule' ? 'Schedule' : kind === 'entity' ? 'Entity' : 'Manual',
-    trigger: kind === 'schedule' ? { kind, scheduleId: 'morning', planned: '2026-11-12T00:59:00Z' } : kind === 'entity' ? { kind, entityId: 'sensor.bathroom_temperature', from: '20.5', to: '19.0' } : { kind },
-    plannedUtc: kind === 'schedule' ? '2026-11-12T00:59:00Z' : null, receivedUtc: '2026-11-12T01:00:00Z',
-    startUtc: '2026-11-12T01:00:00Z', endUtc: '2026-11-12T01:00:01Z', durationMs: 1000,
-    status, error: errors[status] ?? null, hasTrace: false,
-  }
 }
 const visualRun = (i: number): AutomationRun => {
   const status = (['Succeeded', 'Failed', 'Stopped', 'Succeeded', 'Cancelled'] as const)[i % 5], manual = i % 4 === 2
@@ -65,7 +35,8 @@ const visualRun = (i: number): AutomationRun => {
     status, error: errors[status] ?? null, hasTrace: true,
   }
 }
-const runs: AutomationRun[] = [...Array.from({ length: 23 }, (_, i) => scriptRun(i)), ...Array.from({ length: 8 }, (_, i) => visualRun(i))]
+// More than one page (20 runs), so the Runs tab's pagination can be checked.
+const runs: AutomationRun[] = Array.from({ length: 23 }, (_, i) => visualRun(i))
 
 ;(window as any).setPreviewTheme = (theme: 'light' | 'dark') => {
   const vars = theme === 'light'
@@ -216,22 +187,14 @@ if (traceFixture) visualBackend.documents.set('trace-demo', { version: 1, id: 't
 ;(window as any).visualFixture = visualBackend
 const visualFixture = new URLSearchParams(location.search).get('view') === 'visual'
 const libraryFixture = new URLSearchParams(location.search).get('view') === 'library'
-history.replaceState(null, '', traceFixture ? '/hass-sharp/visual/trace-demo/runs/fixture-trace-run' : libraryFixture ? '/hass-sharp/libraries' : diagnosticsFixture ? '/hass-sharp/automations/BathroomHeating.cs' : visualFixture ? typedFixture?'/hass-sharp/visual/typed-demo':'/hass-sharp/visual/new?name=Motion%20lights' : '/hass-sharp/automations')
+// The automations list (no view): saved automations, one with a long name to check wrapping on a small screen.
+if (!traceFixture && !libraryFixture && !visualFixture) for (const [id, name] of [['evening-lights', 'Evening lights'], ['long-name', 'A very long automation name to check wrapping on a small screen']])
+  visualBackend.documents.set(id, { version: 1, id, revision: 1, graph: createGraph(name), source: '// List fixture', sourceMap: [], automationId: `visual:${id}`, currentRevisionActive: true, catalogGeneration: 'saved-fixture' })
+history.replaceState(null, '', traceFixture ? '/hass-sharp/visual/trace-demo/runs/fixture-trace-run' : libraryFixture ? '/hass-sharp/libraries' : visualFixture ? typedFixture?'/hass-sharp/visual/typed-demo':'/hass-sharp/visual/new?name=Motion%20lights' : '/hass-sharp/automations')
 const hass = {
   user: { is_admin: true },
   connection:visualBackend.connection,
-  async callApi(method: string, path: string, parameters?: { name?: string; source?: string }) {
-    const file = decodeURIComponent(path.split('/')[2] ?? '')
-    if (method === 'GET') return file ? { fileName: file, source } : [...scripts]
-    if (method === 'POST' && parameters?.source !== undefined) { source = parameters.source; return {} }
-    if (method === 'DELETE') { scripts.splice(scripts.findIndex(script => script.fileName === file), 1); return {} }
-    const fileName = `${parameters?.name?.replace(/\.cs$/, '')}.cs`
-    if (scripts.some(script => script.fileName === fileName)) throw { body: { error: 'That name is already in use.' } }
-    if (method === 'PUT') scripts.find(script => script.fileName === file)!.fileName = fileName
-    else scripts.push({ fileName, automationId: `fixture-${fileName}`, revision: 'fixture-revision', classes: [] })
-    return { fileName }
-  },
-  async callWS(message: { type: string; source: string }) {
+  async callWS(message: { type: string }) {
     if (message.type === 'hass_sharp/get_entities') return { entities: Array.from({length:80},(_,i)=>({entity_id: `${i%2?'light':'binary_sensor'}.hall_${i}`, name: `Hall ${i%2?'lamp':'motion'} ${i}`})) }
     if (message.type === 'get_services') return { light: { turn_on: {name:'Turn on',description:'Turn on a light'}, turn_off: {name:'Turn off',description:'Turn off a light'} }, climate: { set_temperature: {name:'Set temperature',description:'Change the target temperature'} } }
     if (message.type === 'hass_sharp/visual'||message.type==='hass_sharp/node_library') return visualBackend.callWS(message)
@@ -239,13 +202,6 @@ const hass = {
       if (dropTrace && ++traceReads % 3 === 0) throw { code: 3, message: 'Connection lost' }
       return JSON.parse(JSON.stringify(traceResponse()))
     }
-    if (diagnosticsFixture && message.type.endsWith('get_diagnostics')) {
-      const start = message.source.indexOf('MissingName')
-      if (start < 0) return []
-      const before = message.source.slice(0, start).split('\n')
-      return [{ startLine: before.length, startColumn: before.at(-1)!.length + 1, endLine: before.length, endColumn: before.at(-1)!.length + 12, message: "The name 'MissingName' does not exist in the current context", severity: 3 }]
-    }
-    if (message.type.endsWith('format_source')) return message.source
     if (message.type === 'hass_sharp/run_history') {
       if (fixture.historyError) throw { message: 'Example history connection error' }
       const request = message as any
@@ -255,14 +211,13 @@ const hass = {
     if (message.type === 'hass_sharp/run_now') {
       if (fixture.dispatchError) throw { message: 'Example manual dispatch rejection' }
       const request = message as any
-      const visual = String(request.automationId).startsWith('visual:')
-      const run: AutomationRun = { ...(visual ? visualRun(0) : scriptRun(2)), automationId: request.automationId, action: `${request.className}::${request.method}`, runId: `fixture-manual-${Date.now()}`,
+      const run: AutomationRun = { ...visualRun(0), automationId: request.automationId, action: `${request.className}::${request.method}`, runId: `fixture-manual-${Date.now()}`,
         cause: 'Manual', trigger: { kind: 'manual' }, receivedUtc: new Date().toISOString(), startUtc: null, plannedUtc: null, endUtc: null, durationMs: null, status: 'Pending', error: null }
       runs.unshift(run)
       setTimeout(() => Object.assign(run, { status: fixture.result, startUtc: new Date().toISOString(), endUtc: new Date().toISOString(), durationMs: 1000 }), 1000)
       return { version: 1, runId: run.runId }
     }
-    return message.type.endsWith('get_hover') ? null : []
+    return []
   },
 } as unknown as HomeAssistant
 let previewRoot: HTMLElement | ShadowRoot = document.getElementById('preview')!
@@ -281,5 +236,3 @@ render(() => <App hass={hass} />, previewRoot)
 // Browser smoke checks can inspect the real Monaco model without replacing it.
 import * as monaco from 'monaco-editor'
 ;(window as any).previewCode = () => monaco.editor.getModels().map(model => model.getValue())
-
-;(window as any).previewSaved = () => source

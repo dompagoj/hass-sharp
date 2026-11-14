@@ -23,7 +23,7 @@ static class VisualExecutionTests
         Diagnostics.GenerateHassEntities(["sensor.test"]);
         var preview = snapshot == null ? new VisualGenerator(Diagnostics).Preview(graph) : new VisualGenerator(Diagnostics).Preview(graph,snapshot);
         Check(preview.Valid, "v4 compiles: "+JsonSerializer.Serialize(preview.Diagnostics));
-        var compiled=await new CodeCompiler(Diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(),Guid.NewGuid()+".cs"),preview.Source,true);
+        var compiled=await new CodeCompiler(Diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(),Guid.NewGuid()+".cs"),preview.Source);
         try {
             var instance=(Automation)Activator.CreateInstance(compiled.Assembly.GetType("VisualAutomation")!)!;
             using var cts=new CancellationTokenSource();instance._cancellationToken.Value=cts.Token;

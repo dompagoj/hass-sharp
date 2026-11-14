@@ -10,10 +10,19 @@ const diagnostic = { startLine: 1, startColumn: 1, endLine: 1, endColumn: 2, mes
 const completion = { displayText: 'List', displayTextPrefix: '', displayTextSuffix: '<>', filterText: 'List', tags: ['Class'], textEdit: { start: 0, length: 3, newText: 'List' }, additionalTextEdits: [] }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r }); return { promise, resolve } }
 let cleanup: () => void
-function setup(callWS = vi.fn(async () => [] as any), onSave = vi.fn(async () => {})) {
+// The library transport: handlers answer a request by its operation; this wraps the answer in the reply envelope.
+function setup(handler: (request: any) => any = vi.fn(async () => [] as any), onSave = vi.fn(async () => {})) {
+  const context = () => ({ id: 'main', source: 'Lis', workspaceVersion: '1', generation: 'saved', sources: [] })
+  const callWS = vi.fn(async (message: any) => {
+    const r = message.request
+    let data = await handler(r)
+    if (r.operation === 'preview') data = { valid: !data.some((d: any) => d.severity === 3), diagnostics: data.map((d: any) => ({ ...d, sourceId: 'main' })) }
+    if (r.operation === 'hover' && typeof data === 'string') data = { text: data }
+    return { version: 1, ok: true, result: { id: r.id, workspaceVersion: r.workspaceVersion, generation: r.generation, sourceGeneration: 'source-1', saved: false, data } }
+  })
   const editor = new FakeEditor({ value: 'Lis' })
   let actions!: ReturnType<typeof useEditorActions>
-  createRoot(dispose => { cleanup = dispose; actions = useEditorActions({ callWS } as any); actions.register(editor as any, onSave) })
+  createRoot(dispose => { cleanup = dispose; actions = useEditorActions({ callWS } as any, { context }); actions.register(editor as any, onSave) })
   return { editor, actions, onSave, callWS }
 }
 beforeEach(() => { resetHost(); vi.useFakeTimers() })
@@ -22,7 +31,7 @@ async function flush() { await vi.advanceTimersByTimeAsync(600) }
 
 describe('Monaco requests', () => {
   it('inserts the Roslyn edit instead of the decorated display label', async () => {
-    const { editor } = setup(vi.fn(async (m: any) => m.type.endsWith('get_completions') ? [completion] : []))
+    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? [completion] : []))
     const request = completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
     await flush()
     const result = await request
@@ -31,13 +40,13 @@ describe('Monaco requests', () => {
     expect(result.suggestions[0].range).toEqual({ startLineNumber: 1, endLineNumber: 1, startColumn: 1, endColumn: 4 })
   })
   it('preserves method completion kind zero', async () => {
-    const { editor } = setup(vi.fn(async (m: any) => m.type.endsWith('get_completions') ? [{ ...completion, tags: ['Method'] }] : []))
+    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? [{ ...completion, tags: ['Method'] }] : []))
     const result = await completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
     expect(result.suggestions[0].kind).toBe(0)
   })
   it('maps primary and additional Roslyn edits against the same multiline source', async () => {
     const item = { ...completion, textEdit: { start: 5, length: 3, newText: 'List' }, additionalTextEdits: [{ start: 0, length: 0, newText: 'using Example;\n' }] }
-    const { editor } = setup(vi.fn(async (m: any) => m.type.endsWith('get_completions') ? [item] : []))
+    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? [item] : []))
     editor.change('// x\nLis')
     const result = await completions[0].provideCompletionItems(editor.model, { lineNumber: 2, column: 4 }, {}, noCancellation)
     expect(result.suggestions[0].range).toEqual({ startLineNumber: 2, startColumn: 1, endLineNumber: 2, endColumn: 4 })
@@ -45,7 +54,7 @@ describe('Monaco requests', () => {
   })
   it('settles superseded completion requests and ignores their late responses', async () => {
     const response = deferred<any>()
-    const { editor } = setup(vi.fn(async (m: any) => m.type.endsWith('get_completions') ? response.promise : []))
+    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
     const first = completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
     await vi.advanceTimersByTimeAsync(160)
     editor.change('new')
@@ -57,7 +66,7 @@ describe('Monaco requests', () => {
   })
   it('cancels an in-flight completion without waiting for the server', async () => {
     const response = deferred<any>()
-    const { editor } = setup(vi.fn(async (m: any) => m.type.endsWith('get_completions') ? response.promise : []))
+    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
     let cancel!: () => void
     const token = { isCancellationRequested: false, onCancellationRequested: (fn: () => void) => { cancel = fn; return { dispose() {} } } }
     const result = completions[0].provideCompletionItems(editor.model, position, {}, token)
@@ -71,7 +80,7 @@ describe('Monaco requests', () => {
   })
   it('ignores stale diagnostics and hover after editing', async () => {
     const diagnostics = deferred<any>(); const hover = deferred<any>()
-    const { editor } = setup(vi.fn(async (m: any) => m.type.endsWith('get_hover') ? hover.promise : diagnostics.promise))
+    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'hover' ? hover.promise : diagnostics.promise))
     const result = hovers[0].provideHover(editor.model, position, noCancellation)
     editor.change('valid')
     diagnostics.resolve([diagnostic]); hover.resolve('old symbol')
@@ -81,7 +90,7 @@ describe('Monaco requests', () => {
   })
   it('checks the version when consuming an already delivered completion', async () => {
     const response = deferred<any>()
-    const { editor } = setup(vi.fn((m: any) => m.type.endsWith('get_completions') ? response.promise : Promise.resolve([])))
+    const { editor } = setup(vi.fn((m: any) => m.operation === 'completion' ? response.promise : Promise.resolve([])))
     const result = completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
     response.promise.then(() => editor.change('newer'))
     response.resolve([completion])
@@ -108,7 +117,7 @@ describe('Monaco requests', () => {
 describe('Save', () => {
   it('uses one command to format, validate and persist for button and Ctrl/Cmd+S', async () => {
     const saved: string[] = []
-    const { editor, actions } = setup(vi.fn(async (m: any) => m.type.endsWith('format_source') ? 'formatted' : []), vi.fn(async (model: any) => { saved.push(model.getValue()) }))
+    const { editor, actions } = setup(vi.fn(async (m: any) => m.operation === 'format' ? 'formatted' : []), vi.fn(async (model: any) => { saved.push(model.getValue()) }))
     await flush()
     await actions.save()
     expect(saved).toEqual(['formatted'])
@@ -120,11 +129,11 @@ describe('Save', () => {
   })
   it('does not overwrite or save edits made while formatting', async () => {
     const format = deferred<any>()
-    const { editor, actions, onSave, callWS } = setup(vi.fn(async (m: any) => m.type.endsWith('format_source') ? format.promise : []))
+    const { editor, actions, onSave, callWS } = setup(vi.fn(async (m: any) => m.operation === 'format' ? format.promise : []))
     await flush()
     const saving = actions.save()
     await vi.advanceTimersByTimeAsync(0)
-    expect(callWS.mock.calls.some(([m]) => m.type.endsWith('format_source'))).toBe(true)
+    expect(callWS.mock.calls.some(([m]) => m.request.operation === 'format')).toBe(true)
     editor.change('newer edit')
     format.resolve('stale format'); await saving
     expect(editor.model.getValue()).toBe('newer edit')
@@ -132,7 +141,7 @@ describe('Save', () => {
   })
   it('does not apply formatting delivered just before a model edit', async () => {
     const format = deferred<any>()
-    const { editor, actions, onSave } = setup(vi.fn((m: any) => m.type.endsWith('format_source') ? format.promise : Promise.resolve([])))
+    const { editor, actions, onSave } = setup(vi.fn((m: any) => m.operation === 'format' ? format.promise : Promise.resolve([])))
     await flush()
     const saving = actions.save()
     await vi.advanceTimersByTimeAsync(0)
@@ -144,17 +153,17 @@ describe('Save', () => {
   })
   it('blocks only current-model errors and coalesces duplicate saves', async () => {
     const format = deferred<any>()
-    const { editor, actions, onSave, callWS } = setup(vi.fn(async (m: any) => m.type.endsWith('format_source') ? format.promise : []))
+    const { editor, actions, onSave, callWS } = setup(vi.fn(async (m: any) => m.operation === 'format' ? format.promise : []))
     await flush()
     markers.set('other-model', [{ severity: 8 }])
     markers.set(editor.model.uri.toString(), [{ severity: 4 }])
     const first = actions.save(); const second = actions.save()
     format.resolve('formatted'); await Promise.all([first, second])
     expect(onSave).toHaveBeenCalledTimes(1)
-    expect(callWS.mock.calls.filter(([m]) => m.type.endsWith('format_source'))).toHaveLength(1)
+    expect(callWS.mock.calls.filter(([m]) => m.request.operation === 'format')).toHaveLength(1)
   })
   it('validates the formatted revision before persisting', async () => {
-    const { actions, onSave } = setup(vi.fn(async (m: any) => m.type.endsWith('format_source') ? 'broken' : m.source === 'broken' ? [diagnostic] : []))
+    const { actions, onSave } = setup(vi.fn(async (m: any) => m.operation === 'format' ? 'broken' : m.source === 'broken' ? [diagnostic] : []))
     await flush(); await actions.save()
     expect(onSave).not.toHaveBeenCalled()
   })
@@ -164,8 +173,8 @@ describe('Editor feedback and typing recovery', () => {
   it('exposes diagnostics, selects exact ranges, and clears stale results on edits', async () => {
     const { editor, actions } = setup(vi.fn(async () => [diagnostic]))
     await flush()
-    expect(actions.diagnostics()).toEqual([diagnostic])
-    actions.goToDiagnostic(diagnostic)
+    expect(actions.diagnostics()).toEqual([{ ...diagnostic, sourceId: 'main' }])
+    actions.goToDiagnostic(actions.diagnostics()[0])
     expect(editor.selection).toEqual({ startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 2 })
     editor.change('fixed')
     expect(actions.diagnostics()).toEqual([])
@@ -189,7 +198,7 @@ describe('Editor feedback and typing recovery', () => {
   })
   it('reopens suggestions after typing cancels an in-flight request', async () => {
     const response = deferred<any>()
-    const { editor } = setup(vi.fn(async (m: any) => m.type.endsWith('get_completions') ? response.promise : []))
+    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
     const first = completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
     editor.change('List')
     editor.move({ lineNumber: 1, column: 5 }, 'keyboard', 0)
@@ -199,7 +208,7 @@ describe('Editor feedback and typing recovery', () => {
     expect((await first).suggestions).toEqual([])
   })
   it('marks server-filtered lists incomplete and shows namespaces as modules', async () => {
-    const { editor } = setup(vi.fn(async (m: any) => m.type.endsWith('get_completions') ? [{ ...completion, tags: ['Namespace'] }] : []))
+    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? [{ ...completion, tags: ['Namespace'] }] : []))
     const result = await completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
     expect(result.incomplete).toBe(true)
     expect(result.suggestions[0].kind).toBe(8)
@@ -208,7 +217,7 @@ describe('Editor feedback and typing recovery', () => {
 
 it('does not reopen suggestions after switching models or disposing the editor', async () => {
   const response = deferred<any>()
-  const { editor } = setup(vi.fn(async (m: any) => m.type.endsWith('get_completions') ? response.promise : []))
+  const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
   void completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
   editor.change('List')
   editor.setModel(new FakeModel('another'))
@@ -224,7 +233,7 @@ it('does not reopen suggestions after switching models or disposing the editor',
 
 it.each(['escape', 'cursor'])('does not reopen dismissed suggestions after %s', async kind => {
   const response = deferred<any>()
-  const { editor } = setup(vi.fn(async (m: any) => m.type.endsWith('get_completions') ? response.promise : []))
+  const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
   void completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
   editor.change('List')
   if (kind === 'escape') editor.key(9)

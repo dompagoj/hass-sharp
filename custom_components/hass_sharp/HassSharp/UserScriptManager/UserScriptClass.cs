@@ -16,7 +16,6 @@ class UserScriptClass
     {
         Script = script;
         Instance = (Automation)Activator.CreateInstance(classType)!;
-        Instance.UserScriptClass = this;
     }
 
     internal void Configure()

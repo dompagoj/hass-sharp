@@ -5,7 +5,7 @@ using System.Text.Json;
 static class NativeTriggerTests
 {
     static void Check(bool ok, string message) { if (!ok) throw new Exception(message); }
-    static CompiledUserScript Compiled(string source = "test") => new() { FilePath = "native.cs", FileName = "native", SourceCode = source, Assembly = typeof(Probe).Assembly, WrittenToDisk = true };
+    static CompiledUserScript Compiled(string source = "test") => new() { FilePath = "native.cs", FileName = "native", SourceCode = source, Assembly = typeof(Probe).Assembly };
     static CompiledUserScript NamedCompiled(string name)
     {
         var compiled = Compiled(); compiled.FilePath = name + ".cs"; compiled.FileName = name; return compiled;
@@ -27,7 +27,7 @@ static class NativeTriggerTests
             if (scenario == null || scenario == "cleanup-entity") await ThrowingCleanup(false);
             if (scenario == null || scenario == "epoch-initial") await InvalidationDuringSlowCancellation(false);
             if (scenario == null || scenario == "epoch-direct") await InvalidationDuringSlowCancellation(true);
-            if (scenario == null || scenario == "delete-initial") await PublicDeleteDuringInitialRegistration();
+            if (scenario == null || scenario == "delete-initial") await DeleteDuringInitialRegistration();
             if (scenario == null || scenario == "schedule-drain") await SchedulePublicationDuringCleanup();
         }
         finally
@@ -118,50 +118,29 @@ static class NativeTriggerTests
         Console.WriteLine("PASS post-await invalidation during slow cancellation: " + (directConfigure ? "ConfigureAndStart" : "initial load"));
     }
 
-    static async Task PublicDeleteDuringInitialRegistration()
+    static async Task DeleteDuringInitialRegistration()
     {
-        var folder = Path.Combine(Path.GetTempPath(), "hass-sharp-pending-delete-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(folder);
-        var originalHassPath = HassPath.HassConfiguration;
-        var log = PyInterop.Log;
-        var runs = 0;
-        PyInterop.Log = (level, message) => {
-            if (message.Contains("PENDING SCRIPT MUST NOT START")) Interlocked.Increment(ref runs);
-            else log(level, message);
-        };
+        Probe.Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
+        Probe.TriggerPayloads = new();
         var registration = new TaskCompletionSource<(Func<string, Task> Fire, Action<string> Success)>(TaskCreationOptions.RunContinuationsAsynchronously);
         var removal = new TaskCompletionSource<Action>(TaskCreationOptions.RunContinuationsAsynchronously);
         PyInterop.BeginRegisterHaTriggers = (_, _, fire, success, _) => registration.TrySetResult((fire, success));
         PyInterop.BeginRemoveHaTriggers = (_, done, _) => removal.TrySetResult(done);
-        try
-        {
-            var api = new HassSharpManager(folder);
-            Directory.CreateDirectory(HassPath.UserScripts);
-            var path = Path.Combine(HassPath.UserScripts, "pending.cs");
-            File.WriteAllText(path, """
-                public class PendingAutomation : Automation
-                {
-                    public override AutomationConfiguration Configure() => new(new AutomationAction(nameof(Run), Startup: true,
-                        Triggers: [new HomeAssistantTrigger("pending", "{\"trigger\":\"event\",\"event_type\":\"test\"}")]));
-                    public Task Run() { Logger.Info("PENDING SCRIPT MUST NOT START"); return Task.CompletedTask; }
-                }
-                """);
-            var init = api.Init([]);
-            var pending = await registration.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            var delete = api.DeleteScriptAsync(path);
-            Check(!delete.IsCompleted, "public delete waits for first-load native registration");
-            pending.Success("pending-delete");
-            var done = await removal.Task.WaitAsync(TimeSpan.FromSeconds(3));
-            Check(!delete.IsCompleted, "public delete waits for native removal acknowledgement");
-            done();
-            await Task.WhenAll(init, delete).WaitAsync(TimeSpan.FromSeconds(5));
-            Check(!File.Exists(path) && api.GetScriptSummaries().Count == 0, "public delete removes a preparing script and its source");
-            await pending.Fire("{\"trigger\":{}}");
-            Check(runs == 0, "deleted first-load generation cannot start or dispatch stale callbacks");
-            await api.UnloadAsync();
-        }
-        finally { PyInterop.Log = log; HassPath.HassConfiguration = originalHassPath; Directory.Delete(folder, true); }
-        Console.WriteLine("PASS public deletion drains pending first-load generation");
+        var manager = new UserScriptManager();
+        var load = manager.LoadUserScripts([NamedCompiled("pending")]);
+        var pending = await registration.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var delete = manager.DeleteScriptAsync("pending.cs");
+        Check(!delete.IsCompleted, "delete waits for first-load native registration");
+        pending.Success("pending-delete");
+        var done = await removal.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Check(!delete.IsCompleted, "delete waits for native removal acknowledgement");
+        done();
+        await Task.WhenAll(load, delete).WaitAsync(TimeSpan.FromSeconds(5));
+        Check(manager.GetUserScripts().Count == 0, "delete removes a preparing script");
+        await pending.Fire("{\"trigger\":{}}");
+        Check(!Probe.Starts.Reader.TryRead(out _) && Probe.TriggerPayloads.IsEmpty, "deleted first-load generation cannot start or dispatch stale callbacks");
+        await manager.UnloadUserScriptsAsync();
+        Console.WriteLine("PASS deletion drains pending first-load generation");
     }
 
     static async Task SchedulePublicationDuringCleanup()
@@ -268,27 +247,6 @@ static class NativeTriggerTests
         Check(Probe.TriggerPayloads.Count == 1, "reload and replacement retain exactly one live native generation");
         await deleteManager.UnloadUserScriptsAsync();
         Check(removed.Contains("replacement"), "native replacement lease removed on unload");
-
-        var folder = Path.Combine(Path.GetTempPath(), "hass-sharp-native-write-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(folder);
-        try
-        {
-            var path = Path.Combine(folder, "atomic.cs");
-            File.WriteAllText(path, "old-source");
-            var source = new string('x', 8 * 1024 * 1024);
-            var atomic = new CompiledUserScript { FilePath = path, FileName = "atomic", SourceCode = source, Assembly = typeof(Probe).Assembly, WrittenToDisk = false };
-            var writing = atomic.WriteToDisk();
-            var sawPartial = false;
-            while (!writing.IsCompleted)
-            {
-                var length = new FileInfo(path).Length;
-                sawPartial |= length != 10 && length != source.Length;
-                await Task.Yield();
-            }
-            await writing;
-            Check(!sawPartial && File.ReadAllText(path) == source, "replacement source writes never expose truncated files");
-        }
-        finally { Directory.Delete(folder, true); }
 
         // Completion must not run an awaiting managed continuation inline under Python's GIL.
         var continuationInline = false;

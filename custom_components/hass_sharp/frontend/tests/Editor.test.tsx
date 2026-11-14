@@ -10,14 +10,19 @@ vi.mock('monaco-editor', async () => (await import('./fake-monaco')).host)
 const vim = vi.hoisted(() => ({ init: vi.fn(), dispose: vi.fn() }))
 vi.mock('monaco-vim', () => ({ initVimMode: vim.init }))
 let dispose: () => void
+// The node library transport: answers each request by operation, in the reply envelope.
+const library = { context: () => ({ id: 'main', source: '', workspaceVersion: '1', generation: 'saved', sources: [] }) }
+const libraryHass = (answer: (operation: string) => unknown = () => ({ valid: true, diagnostics: [] })) => ({
+  callWS: async (m: any) => ({ version: 1, ok: true, result: { id: m.request.id, workspaceVersion: m.request.workspaceVersion, generation: m.request.generation, sourceGeneration: 'source-1', saved: false, data: answer(m.request.operation) } }),
+}) as any
 beforeEach(() => { resetHost(); vi.useFakeTimers(); localStorage.clear(); vim.init.mockReset(); vim.dispose.mockReset(); vim.init.mockReturnValue({ dispose: vim.dispose }) })
 afterEach(() => { dispose?.(); document.body.innerHTML = ''; vi.useRealTimers() })
 it('keeps the editor model through font/Vim/prop updates and disposes all owned resources', async () => {
   const div = document.createElement('div'); document.body.append(div)
   const [initial, setInitial] = createSignal('original')
   const saved: string[] = []
-  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS: async (m: any) => m.type.endsWith('format_source') ? 'formatted' : [] } as any}>
-    <Editor fileName="test.cs" initial={initial()} onSave={async model => { saved.push(model.getValue()) }} />
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={libraryHass(operation => operation === 'format' ? 'formatted' : { valid: true, diagnostics: [] })}>
+    <Editor fileName="test.cs" library={library} initial={initial()} onSave={async model => { saved.push(model.getValue()) }} />
   </HassCtx.Provider></QueryClientProvider>, div)
   await Promise.resolve()
   const editor = editors[0]
@@ -46,8 +51,8 @@ it('keeps the editor model through font/Vim/prop updates and disposes all owned 
 
 it('moves between editor tabs with arrow keys without recreating the model', async () => {
   const div = document.createElement('div'); document.body.append(div)
-  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS: async () => [] } as any}>
-    <Editor fileName="test.cs" initial="source" onSave={async () => {}} />
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={libraryHass()}>
+    <Editor fileName="test.cs" library={library} initial="source" onSave={async () => {}} />
   </HassCtx.Provider></QueryClientProvider>, div)
   const tabs = div.querySelectorAll<HTMLButtonElement>('[role="tab"]')
   expect(tabs).toHaveLength(2)
@@ -63,8 +68,8 @@ it('moves between editor tabs with arrow keys without recreating the model', asy
 
 it('keeps every editor keyboard event away from Home Assistant without blocking typing or Monaco shortcuts', () => {
   const div = document.createElement('div'); document.body.append(div)
-  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS: async () => [] } as any}>
-    <Editor fileName="keys.cs" initial="source" onSave={async () => {}} />
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={libraryHass()}>
+    <Editor fileName="keys.cs" library={library} initial="source" onSave={async () => {}} />
   </HassCtx.Provider></QueryClientProvider>, div)
   // Monaco owns descendants of its host, including text input and suggestion/find widgets.
   const input = document.createElement('textarea'); div.querySelector('.hs-monaco')!.append(input)
@@ -92,24 +97,12 @@ it('keeps every editor keyboard event away from Home Assistant without blocking 
   }
 })
 
-it('opens the C# automation guide without losing the current draft', () => {
-  const div = document.createElement('div'); document.body.append(div)
-  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS: async () => [] } as any}>
-    <Editor fileName="help.cs" initial="unsaved source" onSave={async () => {}} />
-  </HassCtx.Provider></QueryClientProvider>, div)
-  const help = div.querySelector<HTMLButtonElement>('button[aria-label="C# automation help"]')
-  expect(help).not.toBeNull()
-  help!.click()
-  expect(div.querySelector('dialog[open]')?.textContent).toContain('Entities.BinarySensor.HallMotion')
-  expect(editors[0].model.getValue()).toBe('unsaved source')
-})
-
 it('renders clickable compiler errors below the editor and clears them on typing', async () => {
   const div = document.createElement('div'); document.body.append(div)
-  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS: async () => [{ startLine: 1, startColumn: 2, endLine: 1, endColumn: 5, message: 'Unknown name', severity: 3 }] } as any}>
-    <Editor fileName="broken.cs" initial="broken" onSave={async () => {}} />
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={libraryHass(() => ({ valid: false, diagnostics: [{ sourceId: 'main', startLine: 1, startColumn: 2, endLine: 1, endColumn: 5, message: 'Unknown name', severity: 3 }] }))}>
+    <Editor fileName="broken.cs" library={library} initial="broken" onSave={async () => {}} />
   </HassCtx.Provider></QueryClientProvider>, div)
-  await vi.advanceTimersByTimeAsync(0)
+  await vi.advanceTimersByTimeAsync(600)
   const issue = div.querySelector<HTMLButtonElement>('[aria-label="Compiler diagnostics"] button')
   expect(issue?.textContent).toContain('Error · 1:2')
   expect(issue?.textContent).toContain('Unknown name')

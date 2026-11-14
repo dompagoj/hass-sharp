@@ -5,6 +5,7 @@ import { createMemoryHistory, MemoryRouter, Route } from '@solidjs/router'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
 import { AutomationRuns } from '../src/components/AutomationRuns'
+import { dispatchRun } from '../src/components/runDispatch'
 import { summarizeTrigger } from '../src/components/TriggerSummary'
 import { page, run as record, triggers, v1Run } from './run-fixture'
 
@@ -17,11 +18,13 @@ function setup(callWS: (message: any) => Promise<any>, admin = true) {
   const [id, setId] = createSignal('automation-1')
   const history = createMemoryHistory()
   history.set({ value: '/visual/heating' })
-  const Panel = () => <AutomationRuns automationId={id()} classes={[{ name: 'Home.Lights', methods: ['Execute', 'Other'] }, { name: 'Home.Heating', methods: ['Heat'] }]} />
+  const Panel = () => <AutomationRuns automationId={id()} />
   dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={{ callWS, user: { is_admin: admin } } as any}>
     <MemoryRouter history={history}><Route path="*" component={Panel} /></MemoryRouter>
   </HassCtx.Provider></QueryClientProvider>, root)
-  return { root, setId }
+  // Runs start elsewhere (the visual editor's top bar); this is the same shared dispatch.
+  const run = () => dispatchRun({ callWS } as any, id(), { className: 'VisualAutomation', method: 'Run_74' }, client)
+  return { root, setId, run }
 }
 const button = (root: HTMLElement, text: string) => [...root.querySelectorAll('button')].find(b => b.textContent?.includes(text))!
 const listText = (root: HTMLElement) => root.querySelector('.hs-run-list')?.textContent ?? ''
@@ -29,26 +32,24 @@ const rows = (root: HTMLElement) => [...root.querySelectorAll<HTMLLIElement>('.h
 const toggle = (row: HTMLElement) => row.querySelector<HTMLButtonElement>('.hs-run-toggle')!
 const statusSelect = (root: HTMLElement) => [...root.querySelectorAll('select')].find(select => select.textContent?.includes('All statuses'))!
 
-it('uses the saved identity and selected class/action; accepted dispatch is not success', async () => {
+it('polls for a run accepted elsewhere without treating acceptance as success', async () => {
   let accept!: (value: any) => void
   const calls: any[] = []
-  const { root } = setup(async message => {
+  const { root, run } = setup(async message => {
     calls.push(message)
     if (message.type === 'hass_sharp/run_now') return new Promise(resolve => { accept = resolve })
     return page([])
   })
   await vi.waitFor(() => expect(root.textContent).toContain('No runs yet'))
-  const select = root.querySelector('select')!
-  select.selectedIndex = 2; select.dispatchEvent(new Event('change', { bubbles: true }))
-  button(root, 'Run now').click()
-  await vi.waitFor(() => expect(button(root, 'Requesting')).toBeDefined())
-  expect(button(root, 'Requesting').disabled).toBe(true)
-  expect(calls.at(-1)).toEqual({ type: 'hass_sharp/run_now', automationId: 'automation-1', className: 'Home.Heating', method: 'Heat' })
-  accept({ version: 1, runId: 'run-accepted' })
-  await vi.waitFor(() => expect(root.textContent).toContain('Request accepted'))
-  expect(root.textContent).toContain('run-accepted')
+  expect(root.querySelector('select')!.textContent).toContain('All statuses')
+  const dispatched = run()
+  expect(calls.at(-1)).toEqual({ type: 'hass_sharp/run_now', automationId: 'automation-1', className: 'VisualAutomation', method: 'Run_74' })
+  const reads = calls.length
+  accept({ version: 1, runId: 'run-accepted' }); await dispatched
+  await vi.waitFor(() => expect(calls.length).toBeGreaterThan(reads))
+  expect(calls.at(-1)).toMatchObject({ type: 'hass_sharp/run_history', automationId: 'automation-1', offset: 0 })
   expect(listText(root)).not.toContain('Succeeded')
-  expect(root.textContent).toContain('last saved version')
+  expect(root.textContent).toContain('No runs yet')
 })
 
 it('shows history loading, paginates without claiming a total, and returns to newest', async () => {
@@ -195,7 +196,7 @@ it('sends the server-side status filter and resets to the first page', async () 
 
 it('explains an empty filtered page and clears the filter after a manual dispatch', async () => {
   const calls: any[] = []
-  const { root } = setup(async message => {
+  const { root, run } = setup(async message => {
     calls.push(message)
     if (message.type === 'hass_sharp/run_now') return { version: 1, runId: 'manual-1' }
     return page(message.status ? [] : [record({ runId: 'manual-1', status: 'Succeeded' })])
@@ -204,7 +205,7 @@ it('explains an empty filtered page and clears the filter after a manual dispatc
   const select = statusSelect(root)
   select.value = 'Stopped'; select.dispatchEvent(new Event('change', { bubbles: true }))
   await vi.waitFor(() => expect(root.textContent).toContain('No stopped runs'))
-  button(root, 'Run now').click()
+  await run()
   await vi.waitFor(() => expect(rows(root)).toHaveLength(1))
   expect(statusSelect(root).value).toBe('')
   expect(calls.at(-1)).toEqual({ type: 'hass_sharp/run_history', automationId: 'automation-1', offset: 0, limit: 20 })
@@ -241,29 +242,25 @@ it('still renders v1-shaped rows from the current backend', async () => {
   expect(row.textContent).not.toContain('Graph revision')
 })
 
-it('reports dispatch rejection and history failure separately and can retry reads', async () => {
+it('reports a history failure and can retry reads', async () => {
   let failing = true
-  const { root } = setup(async message => {
-    if (message.type === 'hass_sharp/run_now') throw { code: 'run_failed', message: 'Manual invocation disabled' }
+  const { root } = setup(async () => {
     if (failing) throw { code: 'history_failed', message: 'History unavailable' }
     return page([])
   })
   await vi.waitFor(() => expect(root.textContent).toContain('History unavailable'))
-  button(root, 'Run now').click()
-  await vi.waitFor(() => expect(root.textContent).toContain('Manual invocation disabled'))
-  expect(root.textContent).not.toContain('Request accepted')
   failing = false; button(root, 'Try again').click()
   await vi.waitFor(() => expect(root.textContent).toContain('No runs yet'))
 })
 
-it('refreshes actual results after accepted dispatch and clears selection feedback for a new automation', async () => {
+it('refreshes actual results after accepted dispatch and forgets them for a new automation', async () => {
   let ran = false
-  const { root, setId } = setup(async message => {
+  const { root, setId, run } = setup(async message => {
     if (message.type === 'hass_sharp/run_now') { ran = true; return { version: 1, runId: 'manual-result' } }
     return page(ran && message.automationId === 'automation-1' ? [record({ runId: 'manual-result', status: 'Skipped' })] : [], message.offset)
   })
   await vi.waitFor(() => expect(root.textContent).toContain('No runs yet'))
-  button(root, 'Run now').click()
+  await run()
   await vi.waitFor(() => expect(listText(root)).toContain('Skipped'))
   setId('automation-2')
   await vi.waitFor(() => expect(root.textContent).toContain('No runs yet'))
@@ -309,7 +306,7 @@ it('does not let a late history response from another automation replace the cur
 it('returns from an older page to the accepted manual result', async () => {
   let dispatched = false
   const calls: any[] = []
-  const { root } = setup(async message => {
+  const { root, run } = setup(async message => {
     calls.push(message)
     if (message.type === 'hass_sharp/run_now') { dispatched = true; return { version: 1, runId: 'latest-manual' } }
     return page(dispatched ? [record({ runId: 'latest-manual', status: 'Cancelled' })] : Array.from({ length: 20 }, (_, i) => record({ runId: `page-${message.offset}-${i}` })), message.offset)
@@ -317,7 +314,7 @@ it('returns from an older page to the accepted manual result', async () => {
   await vi.waitFor(() => expect(button(root, 'Older').disabled).toBe(false))
   button(root, 'Older').click()
   await vi.waitFor(() => expect(calls.at(-1)?.offset).toBe(20))
-  button(root, 'Run now').click()
+  await run()
   await vi.waitFor(() => expect(listText(root)).toContain('Cancelled'))
   expect(calls.at(-1)).toEqual({ type: 'hass_sharp/run_history', automationId: 'automation-1', offset: 0, limit: 20 })
   expect(button(root, 'Newest').disabled).toBe(true)

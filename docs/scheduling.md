@@ -1,20 +1,19 @@
 # Scheduling
 
-Declare schedules on the same action as entity/manual/startup triggers:
+A Trigger step runs its automation on a schedule when its type is **Daily** or
+**Once**. In the graph, that is the trigger's `config`:
 
-```csharp
-public override AutomationConfiguration Configure() => new(
-    new AutomationAction(nameof(Run), AutomationMode.Restart,
-        Entities: [Entities.Sensor.Temperature],
-        Schedules: [
-            AutomationSchedule.Daily("morning", new TimeOnly(7, 30), "Europe/Zagreb"),
-            AutomationSchedule.Once("appointment", DateTimeOffset.Parse("2026-12-01T10:00:00Z"))
-        ]));
+```json
+{"type": "daily", "time": "07:30", "timeZone": "Europe/Zagreb"}
+{"type": "once", "at": "2026-12-01T10:00:00Z"}
 ```
 
-Schedules persist in the saved script. Daily recurrence requires an explicit IANA
-timezone and local time. One-shots represent absolute instants, normalized to UTC.
-IDs must be nonempty and unique within an action. Keep IDs stable across edits.
+Daily recurrence requires a local time (`HH:mm`) and an explicit IANA time zone.
+A once trigger is an absolute instant: an ISO timestamp with an explicit offset or
+`Z`, normalized to UTC. The schedule's ID is the trigger node's ID, which stays the
+same through renames and layout changes. The trigger's Trigger data output carries
+`{platform: "schedule", schedule_id, planned}`; see
+[Writing visual automations](writing-visual-automations.md#triggers-and-their-outputs).
 
 Policy: only future occurrences are registered at startup/reload. Missed starts
 are skipped, including past one-shots. A nonexistent local time during a DST gap
@@ -24,8 +23,8 @@ missed recurrences are skipped. No hard real-time guarantee is made.
 
 HA's UTC point-in-time helper owns each timer; recurrence computes the next local
 calendar date rather than adding 24 elapsed hours. Registration/removal is marshaled
-to HA's loop. Replacement and unload cancel the script lifetime and all timers;
-stale callbacks cannot dispatch into the old lifetime.
+to HA's loop. Replacement and unload cancel the automation's lifetime and all
+timers; stale callbacks cannot dispatch into the old lifetime.
 
 Schedule invocations use the ordinary mode/cancellation/history runner. History
 contains cause `Schedule`, planned UTC, received/start/end UTC, schedule ID and a
@@ -34,8 +33,10 @@ SQLite claims each occurrence before dispatch, including mode-skipped attempts.
 Claims survive reload, process restart, revision edits and history retention.
 The claims table is intentionally retained indefinitely, independently of bounded
 run history; it currently has no pruning UI. Without configured history, dedup
-is limited to the loaded class. At-most-once dispatch attempts do not guarantee
-exactly-once device effects: a crash after claiming can lose that attempt.
+is limited to the loaded automation. At-most-once dispatch attempts do not
+guarantee exactly-once device effects: a crash after claiming can lose that attempt.
 
-Daily recurrence is the initial recurring API; weekly/monthly/cron rules are not
-implemented. Changing a schedule ID deliberately creates a new identity.
+Daily and once are the only schedule kinds; weekly/monthly/cron rules are not
+implemented. Replacing a trigger with a new node deliberately creates a new
+schedule identity. For other time-based starts, use a native Home Assistant
+trigger such as `time` or `time_pattern`.

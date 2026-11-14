@@ -12,89 +12,18 @@ public class CodeCompiler(
         optimizationLevel: OptimizationLevel.Release, allowUnsafe: true
     );
 
-    readonly UserScriptCacheProvider _cacheProvider = new();
-
-    public Task<List<CompiledUserScript>> CompileFromUserScriptsFolder(Action<string, Exception>? onFailure = null) => CompileFromFolder(HassPath.UserScripts, onFailure);
-
-    public Task<CompiledUserScript> CompileFromUserScriptFile(string path, string source, bool writtenToDisk) =>
-        CompileSingleFile(Path.Join(HassPath.UserScripts, path), source, writtenToDisk);
-
-    public async Task<CompiledUserScript> CompileSingleFile(string path, string source, bool writtenToDisk)
+    /// <param name="path">The script's identity; nothing is read from or written to it.</param>
+    public Task<CompiledUserScript> CompileSingleFile(string path, string source)
     {
-        var entities = _diagnosticsProvider.HassEntitiesSyntaxTree();
-        var hash = _cacheProvider.ComputeHash(path, source + "\0" + entities.ToString());
-        var assemblyBytes = CompileSingleFileToBytes(source, path, entities);
-        await _cacheProvider.SetFileCache(path, hash, assemblyBytes);
+        var assemblyBytes = CompileSingleFileToBytes(source, path, _diagnosticsProvider.HassEntitiesSyntaxTree());
 
-        return new CompiledUserScript
+        return Task.FromResult(new CompiledUserScript
         {
             Assembly = LoadAssembly(assemblyBytes),
             FilePath = path,
             FileName = Path.GetFileNameWithoutExtension(path),
             SourceCode = source,
-            WrittenToDisk = writtenToDisk,
-        };
-    }
-
-    async Task<List<CompiledUserScript>> CompileFromFolder(string folderPath, Action<string, Exception>? onFailure)
-    {
-        if (!Directory.Exists(folderPath))
-        {
-            Directory.CreateDirectory(folderPath);
-        }
-
-        var filePaths = Directory.GetFiles(folderPath, "*.cs");
-
-        var tasks = filePaths.Select(async path =>
-        {
-            try
-            {
-                var source = await File.ReadAllTextAsync(path);
-                var entities = _diagnosticsProvider.HassEntitiesSyntaxTree();
-                var hash = _cacheProvider.ComputeHash(path, source + "\0" + entities.ToString());
-                var cachedBytes = await _cacheProvider.GetFileCache(path, hash);
-
-                if (cachedBytes != null)
-                {
-                    try
-                    {
-                        Logger.Info($"No change detected in {Path.GetFileName(path)}, using cached dll");
-                        return new CompiledUserScript
-                        {
-                            Assembly = LoadAssembly(cachedBytes),
-                            FilePath = path,
-                            FileName = Path.GetFileNameWithoutExtension(path),
-                            SourceCode = source,
-                            WrittenToDisk = true,
-                        };
-                    }
-                    catch (Exception ex) when (ex is BadImageFormatException or FileLoadException)
-                    { Logger.Error($"Invalid compile cache for {path}; rebuilding: {ex}"); }
-                }
-
-                Logger.Info($"Change detected in {Path.GetFileName(path)}, recompiling");
-                var assemblyBytes = CompileSingleFileToBytes(source, path, entities);
-                await _cacheProvider.SetFileCache(path, hash, assemblyBytes);
-                return new CompiledUserScript
-                {
-                    Assembly = LoadAssembly(assemblyBytes),
-                    FilePath = path,
-                    FileName = Path.GetFileNameWithoutExtension(path),
-                    SourceCode = source,
-                    WrittenToDisk = true,
-                };
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"Cannot load script {path}: {ex}");
-                if (ex is CompilationErrorException compilation) Logger.Error(string.Join("\n", compilation.Errors));
-                onFailure?.Invoke(path, ex);
-                return null;
-            }
         });
-
-        var assemblies = await Task.WhenAll(tasks);
-        return assemblies.OfType<CompiledUserScript>().ToList();
     }
 
     static Assembly LoadAssembly(byte[] assemblyBytes)

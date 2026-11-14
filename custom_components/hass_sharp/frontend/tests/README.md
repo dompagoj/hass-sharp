@@ -9,16 +9,15 @@ Assistant or a device. Its outer controls set a real 360px iframe viewport and
 switch inherited Home Assistant theme tokens while the editor stays mounted.
 Do not treat these samples as compiled or working runtime automations.
 
-Check list/search, the action menu with Arrow keys/Escape, create/rename forms
-with Enter, delete confirmation, and modal focus wrapping/return. In the editor,
-check Source/Editor settings with arrows/Home/End, font size and Vim mode, typing,
-Save and Ctrl/Cmd+S, and switching back to the list. Use Ctrl+M (Control+Shift+M
-on Mac) to let Tab move focus out of Monaco. Check both themes at 360px and desktop
+Check list/search, the action menu with Arrow keys/Escape, the New automation form
+with Enter, delete confirmation, and modal focus wrapping/return. In the node library
+editor, check Source/Editor settings with arrows/Home/End, font size and Vim mode,
+typing, Save and Ctrl/Cmd+S. Use Ctrl+M (Control+Shift+M on Mac) to let Tab move
+focus out of Monaco. Check both themes at 360px and desktop
 widths; long names should wrap without horizontal page scrolling.
 
 For smoke-check evidence in browser devtools, the iframe exposes `previewCode()`
-(real Monaco models) and `previewSaved()` (last in-memory saved source). This
-fixture is outside the production build entry point. Live Home Assistant checks
+(real Monaco models). This fixture is outside the production build entry point. Live Home Assistant checks
 still require the local instance described in the repository's AGENTS.md.
 
 Visual editor page coverage lives in `editor-shell.test.tsx` (the top bar's in-place
@@ -37,20 +36,20 @@ capability limits, and browser follow-up results.
 
 Run `bun run build:preview` to build the mock-data responsive fixture; see the feasibility report for the temporary local HA static-route workflow. This is not a real HA integration test.
 
-Run history checks are in `AutomationRuns.test.tsx` and `AutomationView.test.tsx`.
-The preview's sample runs follow run history v2 (action labels, trigger summaries,
+Run history checks are in `AutomationRuns.test.tsx` (the history list, with runs
+started through the same `runDispatch.ts` dispatch as the editor's Run now) and
+`VisualAutomationView.test.tsx`. The preview's sample runs follow run history v2 (action labels, trigger summaries,
 `hasTrace`, and Stopped/Cancelled/Interrupted reasons); `?view=visual&typed=1` has
 runs for its saved typed-demo automation under the editor's Runs tab.
-The fixture's BathroomHeating automation has sample history and accepts mock manual
-runs. Its `window.runFixture` lets browser checks set `historyError`,
-`dispatchError`, or the terminal `result`; no real HA service/device is called.
-`window.previewErrors` collects page errors and rejected promises, including the
-Monaco worker bootstrap regression. Open a code automation, type, and switch
-Source/Run history: the real Monaco model must survive, with no worker error.
+Those runs accept mock manual runs. `window.runFixture` lets browser checks set
+`historyError`, `dispatchError`, or the terminal `result`; no real HA service/device
+is called. `window.previewErrors` collects page errors and rejected promises,
+including the Monaco worker bootstrap regression. Open the node library, type, and
+switch Source/Editor settings: the real Monaco model must survive, with no worker error.
 
 The preview build uses `/hass-sharp-static/visual-v2-check-baby/`.
-For a narrow code-editor iframe, open its `tests/visual-check.html` with
-`?view=code&width=390&theme=dark`. See `../docs/run-history-ui.md` for evidence and
+For a narrow iframe, open its `tests/visual-check.html` with `?view=list`,
+`?view=library` or `?view=visual`, plus for example `&width=390&theme=dark`. See `../docs/run-history-ui.md` for evidence and
 remaining live-HA verification. Copy preview output only to a unique temporary
 static subdirectory, leaving the live panel bundles untouched, and remove it after
 checking.
@@ -80,14 +79,12 @@ remains mounted; only its node-body touch path is owned by the adapter. Native
 mouse/resize regressions still exercise D3. Physical touch hardware remains a
 separate acceptance check.
 
-For compiler-marker browser checks, open `tests/preview.html?diagnostics=1`.
-Append `&shadow=1` to embed the app beneath two open shadow roots, matching Home
-Assistant event retargeting and exercising the pinned Monaco hover correction.
-This opens a deliberately broken C# source with a `MissingName` diagnostic from
-an in-memory fixture. Check the red squiggle, Show Hover (Ctrl+K, Ctrl+I), the
-clickable error below the editor, and clear/recheck behavior after removing the
-name. The fixture intentionally returns no symbol hover so marker hover is tested
-independently from Roslyn QuickInfo.
+For compiler-marker browser checks, open `tests/preview.html?view=library&shadow=1`.
+`shadow=1` embeds the app beneath two open shadow roots, matching Home Assistant
+event retargeting and exercising the pinned Monaco hover correction. Add
+`MissingName` to a draft for a diagnostic from the in-memory fixture, then check the
+red squiggle, Show Hover (Ctrl+K, Ctrl+I), the clickable error below the editor, and
+clear/recheck behavior after removing the name.
 
 Typed v4 coverage also lives in `typed-editor.test.tsx`, `NodeConfig.test.tsx`,
 `TriggerConfig.test.tsx` and `visual-session.test.ts`. These mount real Solid Flow

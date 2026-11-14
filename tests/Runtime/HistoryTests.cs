@@ -11,8 +11,7 @@ static class HistoryTests
             var path = Path.Combine(folder, "history.db");
             var store = new RunHistoryStore(path, 3);
             var id = store.Identity("one.cs");
-            store.Rename("one.cs", "two.cs");
-            Check(new RunHistoryStore(path, 3).Identity("two.cs") == id, "stable identity");
+            Check(new RunHistoryStore(path, 3).Identity("one.cs") == id, "stable identity");
             var unfinished = new InvocationRecord { AutomationId = id, Revision = "r1", Action = "Run", Cause = "Manual" };
             store.Save(unfinished);
             store = new RunHistoryStore(path, 3);
@@ -29,10 +28,10 @@ static class HistoryTests
             Probe.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Probe.Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
             var manager = new UserScriptManager { History = new RunHistoryStore(Path.Combine(folder, "runtime.db")) };
-            await manager.LoadUserScripts([new() { FilePath = "history.cs", FileName = "history", SourceCode = "revision", Assembly = typeof(Probe).Assembly, WrittenToDisk = true }]);
+            await manager.LoadUserScripts([new() { FilePath = "history.cs", FileName = "history", SourceCode = "revision", Assembly = typeof(Probe).Assembly }]);
             var script = manager.GetUserScripts().Single();
             await Probe.Starts.Reader.ReadAsync();
-            await manager.RunNow(script.AutomationId, nameof(Probe), nameof(Probe.Run));
+            await script.Classes.Single().RunMethod(nameof(Probe.Run));
             Check(manager.History.Read(script.AutomationId, 0, 100).Any(r => r.Status == "Skipped" && r.Cause == "Manual"), "manual skip recorded");
             manager.UnloadUserScripts();
             await script.Classes.Single().StartupCompletion;
@@ -42,7 +41,7 @@ static class HistoryTests
             await manager.GetUserScripts().Single().Classes.Single().StartupCompletion;
             Check(manager.History.Read(script.AutomationId, 0, 100).Any(r => r.Status == "Succeeded" && r.DurationMs != null), "success duration");
             PyInterop.Entity = entity => new() { EntityId = entity, State = "wrong" };
-            await manager.RunNow(script.AutomationId, nameof(Probe), nameof(Probe.Run));
+            await manager.GetUserScripts().Single().Classes.Single().RunMethod(nameof(Probe.Run));
             Check(manager.History.Read(script.AutomationId, 0, 100).Any(r => r.Status == "Failed" && r.Error!.Contains("refresh failed")), "failure recorded");
             var dispatched = manager.DispatchManual(script.AutomationId, nameof(Probe), nameof(Probe.Run));
             Check(manager.History.Read(script.AutomationId, 0, 100).Any(r => r.RunId == dispatched), "dispatch returns persisted run id");
@@ -58,7 +57,7 @@ static class HistoryTests
             Directory.CreateDirectory(blockedPath);
             var count = Probe.Completed.Count;
             var rejected = false;
-            try { await blockedManager.RunNow(blockedScript.AutomationId, nameof(Probe), nameof(Probe.Run)); }
+            try { await blockedScript.Classes.Single().RunMethod(nameof(Probe.Run)); }
             catch { rejected = true; }
             Check(rejected && Probe.Completed.Count == count, "database failure rejects invocation");
             blockedManager.UnloadUserScripts();

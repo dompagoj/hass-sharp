@@ -15,7 +15,7 @@ from homeassistant.core import Event, EventStateChangedData, HomeAssistant, call
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
 
-from . import scheduling, dotnet_downloader, dotnet_tasks, http, native_triggers, services, utils, websocket
+from . import scheduling, dotnet_downloader, dotnet_tasks, native_triggers, services, utils, websocket
 from .const import logger
 
 os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "true"
@@ -103,7 +103,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
     utils.set_hass_sharp_manager(hass, hass_sharp)
 
     websocket.register_websocket_routes(hass, hass_sharp)
-    http.register_http_routes(hass)
 
     return True
 
