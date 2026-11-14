@@ -24,13 +24,16 @@ using static VisualExecutionTests;
 /// </summary>
 static class ReloadMemoryTests
 {
-    const int Reloads = 30, From = 20;
-    // What managed memory may grow between reload 20 and reload 30. Until about reload 20 Roslyn's process-wide caches fill
-    // up to their fixed number of entries (see VisualGenerator.Pieces): about 5 MiB from reload 3 to 13. After that it is
-    // flat (0.3 MiB over these ten, 40 reloads end where 20 do), so 1 MiB catches 0.1 MiB per reload. With the literals
-    // whole it grew about 2 MiB per reload with these four automations; with Python.NET keeping the assemblies no load
-    // context was collected at all.
-    const double BoundMiB = 1;
+    const int Reloads = 50, From = 20, Window = 10;
+    // What managed memory may grow in the quietest of the three ten-reload windows after reload 20. Memory that is kept
+    // grows in every window; what the process fills once does not. Roslyn's process-wide caches fill up to their fixed
+    // number of entries (see VisualGenerator.Pieces), and measured with these seven automations memory rises about 7 MiB
+    // in a few steps of 1 to 3 MiB, which land at different reloads from run to run (one as late as reload 45), to a
+    // level it then keeps: 100 reloads end where 50 do. One window alone therefore failed about every second run of this
+    // suite on its own. A quiet window measured 0.3 MiB at most, so 0.5 MiB catches 0.05 MiB per reload. With the
+    // literals whole it grew about 2 MiB per reload with four automations; with Python.NET keeping the assemblies no
+    // load context was collected at all.
+    const double BoundMiB = 0.5;
 
     [RuntimeSuite("--reload-memory", Order = 30)]
     public static async Task Run()
@@ -75,7 +78,7 @@ static class ReloadMemoryTests
                 contexts.AddRange(loaded.Select(s => (new WeakReference(s.CompiledScript.LoadContext ?? throw new Exception("a compiled automation without its load context")), $"reload {reload} {s.CompiledScript.FileName}")));
                 assemblies.AddRange(loaded.Select(s => new WeakReference(s.CompiledScript.Assembly)));
                 loaded.Clear();
-                if (reload is From or Reloads) memory[reload] = Collected();
+                if (reload >= From && (reload - From) % Window == 0) memory[reload] = Collected();
             }
             await manager.UnloadAsync();
             // System.Text.Json's process-wide member accessor cache (its compiled getters and constructors of the types it
@@ -99,9 +102,10 @@ static class ReloadMemoryTests
             Check(aliveAssemblies == 0, $"{aliveAssemblies} of {assemblies.Count} automation assemblies of earlier generations are still alive after the reloads");
             var left = CollectibleAssemblies().Count(name => !earlier.Contains(name));
             Check(left == 0, $"{left} collectible assemblies are still loaded after the last unload");
-            var growth = (memory[Reloads] - memory[From]) / 1048576.0;
-            Check(growth <= BoundMiB, $"managed memory grew {growth:F2} MiB from reload {From} to reload {Reloads} ({memory[From] / 1048576.0:F1} to {memory[Reloads] / 1048576.0:F1} MiB); at most {BoundMiB} MiB is allowed");
-            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), every load context collected; managed memory {memory[From] / 1048576.0:F1} MiB after reload {From}, {memory[Reloads] / 1048576.0:F1} MiB after reload {Reloads}");
+            var samples = string.Join(", ", memory.OrderBy(m => m.Key).Select(m => $"{m.Value / 1048576.0:F1} MiB after reload {m.Key}"));
+            var growth = memory.Keys.Where(reload => reload > From).Min(reload => (memory[reload] - memory[reload - Window]) / 1048576.0);
+            Check(growth <= BoundMiB, $"managed memory grew in every {Window} reloads from reload {From} to reload {Reloads}, {growth:F2} MiB at the least ({samples}); a window that grows at most {BoundMiB} MiB is required");
+            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), every load context collected; managed memory {samples}");
         }
         finally
         {
