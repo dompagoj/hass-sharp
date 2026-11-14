@@ -361,11 +361,11 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                     Add($"{delegates[MethodKey(node)]} {prefix}selected = {method!.InvocationType}.{method.MethodName};");
                     var flowing=method.Parameters.Any(p=>p.Flow!=null);
                     if(flowing)Add($"var {prefix}flows = {engine}.Flows({scope},{Q(id)});");
-                    // A flow is a lambda that runs the flow's steps: an Action waits for them, a Func<…, Task> gives their Task.
+                    // A flow is a lambda giving the Task of the flow's steps, which the method awaits.
                     string Flow(NodeFlowDescriptor flow) {
                         var values=flow.Values.Select(v=>$",({Q(v.Port)},(object?){prefix}value{(v.Position is {} at?".Item"+(at+1).ToString(CultureInfo.InvariantCulture):"")})");
                         var run=$"{prefix}flows.Run({Q(flow.Port)}{string.Concat(values)})";
-                        return (flow.Values.IsEmpty?"()":prefix+"value")+" => "+(flow.Async?run:run+".GetAwaiter().GetResult()");
+                        return (flow.Values.IsEmpty?"()":prefix+"value")+" => "+run;
                     }
                     foreach(var parameter in method.Parameters) {
                         var connected=graph["edges"]!.AsArray().Any(e=>Text(e,"kind")=="data"&&Text(e,"target")==id&&Text(e,"targetPort")==parameter.Name);

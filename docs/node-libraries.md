@@ -88,26 +88,24 @@ public static class CustomNode
 
 A node can choose which steps run next, and run them more than once, by declaring
 its flows as parameters. Mark each one `[Port("Label", FlowControl = true)]` and give
-it one of these types:
+it one of these types, in an `async` method that awaits it:
 
 | Type | Calling it |
 | --- | --- |
-| `Action` | runs the flow's steps and waits until they end |
-| `Action<T>` | the same, and the steps on that flow read the value as a pin |
 | `Func<Task>` | runs the flow's steps; the Task ends when they do |
-| `Func<T, Task>` | the same, with a value |
+| `Func<T, Task>` | the same, and the steps on that flow read the value as a pin |
 
 ```csharp
 [Node("Classify temperature", Category = "Climate")]
-public static void Classify(
-    [Port("Cold", FlowControl = true)] Action<double> cold,
-    [Port("Comfortable", FlowControl = true)] Action ok,
-    [Port("Hot", FlowControl = true)] Action<double> hot,
+public static async Task Classify(
+    [Port("Cold", FlowControl = true)] Func<double, Task> cold,
+    [Port("Comfortable", FlowControl = true)] Func<Task> ok,
+    [Port("Hot", FlowControl = true)] Func<double, Task> hot,
     double temperature, double low = 19, double high = 24)
 {
-    if (temperature < low) cold(low - temperature);
-    else if (temperature > high) hot(temperature - high);
-    else ok();
+    if (temperature < low) await cold(low - temperature);
+    else if (temperature > high) await hot(temperature - high);
+    else await ok();
 }
 
 [Node("For each light", Category = "Lights")]
@@ -134,8 +132,10 @@ own scope, and the trace shows it as "Hot · Call 1".
   another flow's steps, and not the steps after Done. Values made by steps on a flow
   stay there too, as in a loop body. A value the method returns is set as usual and
   can be read after Done.
-- **Sync or async.** Prefer `Func<…, Task>` in an `async` method. An `Action` blocks
-  its thread until the flow's steps end, delays and service calls included.
+- **Always awaited.** A flow's steps may wait (a Delay, Wait until, a service call),
+  and awaiting the flow holds no thread meanwhile. So a flow is never an `Action`,
+  and a method with flows returns `Task` or `Task<T>`. Do not block on a flow with
+  `.Wait()` or `.Result`: that holds a thread for as long as its steps wait.
 - **Failures.** A step on a flow that fails throws out of the call, so the method
   can catch it. Uncaught, it fails the node, whose On error flow runs if it has one;
   the error is the inner step's. A Stop step on a flow stops the whole run.
@@ -145,11 +145,12 @@ own scope, and the trace shows it as "Hot · Call 1".
   is cancelled, and the step waits for it to stop before the run goes on at Done. A
   flow called after its method has returned (kept in a field, say) fails the step
   that calls it: "Keep: Later was called after the step finished".
-- **Refused.** A flow on a value node (`Pure = true`); a flow of any other type, a
+- **Refused.** An `Action` marked as a flow; a method with flows that does not return
+  a `Task`; a flow on a value node (`Pure = true`); a flow of any other type, a
   nullable one or one with a default value; a tuple with unnamed elements; a flow
-  named `next`, `error` or `condition`; two flows or values with the same name. An
-  `Action` or `Func<…, Task>` parameter without `FlowControl` stays an ordinary input
-  pin, with a warning that suggests marking it.
+  named `next`, `error` or `condition`; two flows or values with the same name. A
+  `Func<…, Task>` parameter without `FlowControl` stays an ordinary input pin, with a
+  warning that suggests marking it.
 
 A Custom C# node can have flows too. Its signature then carries `execution`,
 `scopePorts` and `executionLabels`, as a library node's catalog entry does.

@@ -126,7 +126,7 @@ loops have structured scopes. Branch/body outputs do not automatically escape. L
 exports publish selected values when the loop completes. Each declaration has a
 type and required initial operand. For each validates a declared item type, snapshots
 its input and exposes item/index only inside its body. A C# node can have flows of its
-own: each is a scope like a loop body, run when the node's method calls it, with the
+own: each is a scope like a loop body, run when the node's method awaits it, with the
 values it carries read only on that flow, and the run goes on at Done when the method
 returns (see [flow outputs](node-libraries.md#flow-outputs)). A loop may lower its own
 iteration cap; the shared catalog defines global node/edge/nesting/step limits.

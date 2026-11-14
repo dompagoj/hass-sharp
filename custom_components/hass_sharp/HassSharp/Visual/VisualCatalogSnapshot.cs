@@ -15,10 +15,10 @@ public sealed record NodeParameterDescriptor(string Name, string TypeId, string 
     public bool Injected => IsCancellationToken || IsContext || Flow != null;
 }
 /// <summary>
-/// A flow of a node method: its execution port, whether calling it gives a Task (<c>Func&lt;…, Task&gt;</c>) rather than
-/// waiting (<c>Action</c>), and the values a call carries.
+/// A flow of a node method (a <c>Func&lt;Task&gt;</c> or <c>Func&lt;T, Task&gt;</c> it awaits): its execution port and the
+/// values a call carries.
 /// </summary>
-public sealed record NodeFlowDescriptor(string Port, bool Async, ImmutableArray<NodeFlowValue> Values);
+public sealed record NodeFlowDescriptor(string Port, ImmutableArray<NodeFlowValue> Values);
 /// <summary>One value a flow carries: the output pin it sets in the flow's scope, and its tuple position (null for the whole value).</summary>
 public sealed record NodeFlowValue(string Port, int? Position);
 /// <summary>One output pin of a node method: the whole result (<paramref name="Element"/> null) or one named tuple element.</summary>

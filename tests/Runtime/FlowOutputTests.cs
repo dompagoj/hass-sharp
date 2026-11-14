@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 using static VisualExecutionTests;
 
 /// <summary>
-/// Flow outputs: a [Node] method's Action and Func&lt;…, Task&gt; parameters marked [Port(..., FlowControl = true)]. Calling
+/// Flow outputs: a [Node] method's Func&lt;Task&gt; and Func&lt;T, Task&gt; parameters marked [Port(..., FlowControl = true)]. Calling
 /// one runs the steps on that flow there and then, in a scope of their own, and returns when they end; the run goes on
 /// at Done once the method returns.
 /// </summary>
@@ -14,15 +14,15 @@ static class FlowOutputTests
         public static class Flows
         {
             [Node("Classify temperature", Category = "Climate")]
-            public static void Classify(
-                [Port("Cold", FlowControl = true)] Action<double> cold,
-                [Port("Comfortable", FlowControl = true)] Action ok,
-                [Port("Hot", FlowControl = true)] Action<double> hot,
+            public static async Task Classify(
+                [Port("Cold", FlowControl = true)] Func<double, Task> cold,
+                [Port("Comfortable", FlowControl = true)] Func<Task> ok,
+                [Port("Hot", FlowControl = true)] Func<double, Task> hot,
                 double temperature, double low = 19, double high = 24)
             {
-                if (temperature < low) cold(low - temperature);
-                else if (temperature > high) hot(temperature - high);
-                else ok();
+                if (temperature < low) await cold(low - temperature);
+                else if (temperature > high) await hot(temperature - high);
+                else await ok();
             }
 
             [Node("Each light")]
@@ -32,9 +32,9 @@ static class FlowOutputTests
             }
 
             [Node("If")]
-            public static void Choose([Port("Yes", FlowControl = true)] Action @true, [Port("No", FlowControl = true)] Action @false, bool condition)
+            public static async Task Choose([Port("Yes", FlowControl = true)] Func<Task> @true, [Port("No", FlowControl = true)] Func<Task> @false, bool condition)
             {
-                if (condition) @true(); else @false();
+                if (condition) await @true(); else await @false();
             }
 
             [Node("Together")]
@@ -49,16 +49,16 @@ static class FlowOutputTests
             }
 
             [Node("Many")]
-            public static void Many([Port("Body", FlowControl = true)] Action body, double count)
+            public static async Task Many([Port("Body", FlowControl = true)] Func<Task> body, double count)
             {
-                for (var i = 0; i < count; i++) body();
+                for (var i = 0; i < count; i++) await body();
             }
 
-            static Action? kept;
+            static Func<Task>? kept;
             [Node("Keep")]
-            public static void Keep([Port("Later", FlowControl = true)] Action later) => kept = later;
+            public static Task Keep([Port("Later", FlowControl = true)] Func<Task> later) { kept = later; return Task.CompletedTask; }
             [Node("Late")]
-            public static void Late() => kept!();
+            public static Task Late() => kept!();
 
             [Node("Timeout")]
             public static async Task Timeout([Port("Body", FlowControl = true)] Func<Task> body, double seconds) =>
@@ -76,7 +76,7 @@ static class FlowOutputTests
             public static double AddItem(List<string> items) { items.Add("x"); return items.Count; }
 
             [Node("Average with flow")]
-            public static double Measured([Port("Each", FlowControl = true)] Action<double> each, double value) { each(value); return value * 2; }
+            public static async Task<double> Measured([Port("Each", FlowControl = true)] Func<double, Task> each, double value) { await each(value); return value * 2; }
         }
         """;
 
@@ -133,7 +133,7 @@ static class FlowOutputTests
         Check(classify["inputs"]!.AsObject().Select(p => p.Key).SequenceEqual(["temperature", "low", "high"]), "flows are not input pins: " + classify["inputs"]!.ToJsonString());
         var outputs = classify["outputs"]!.AsObject();
         Check(outputs.Select(p => p.Key).SequenceEqual(["cold", "hot"]) && outputs["hot"]!["scope"]!.GetValue<string>() == "hot" && outputs["hot"]!["label"]!.GetValue<string>() == "Hot"
-            && outputs["hot"]!["type"]!.GetValue<string>() == "global::System.Double", "an Action<T> flow carries one value, read only on that flow: " + outputs.ToJsonString());
+            && outputs["hot"]!["type"]!.GetValue<string>() == "global::System.Double", "a Func<T, Task> flow carries one value, read only on that flow: " + outputs.ToJsonString());
         var each = snapshot.Catalog["nodes"]![Kind(snapshot, "EachLight")]!;
         Check(each["outputs"]!.AsObject().Select(p => p.Key).SequenceEqual(["light", "index"]) && each["outputs"]!.AsObject().All(p => p.Value!["scope"]!.GetValue<string>() == "body")
             && each["outputs"]!["light"]!["label"]!.GetValue<string>() == "Light", "a named tuple gives one value per element: " + each["outputs"]!.ToJsonString());
@@ -150,34 +150,48 @@ static class FlowOutputTests
     {
         void Refused(string parameters, string message, string body = "")
         {
-            var preview = Library("public static class Bad { [Node(\"Bad\")] public static void Run(" + parameters + ") { " + body + " } }", "refused");
+            var preview = Library("public static class Bad { [Node(\"Bad\")] public static async Task Run(" + parameters + ") { " + body + " } }", "refused");
             Check(!preview.Valid && preview.Diagnostics.Any(d => d.Message == message), $"expected \"{message}\" for ({parameters}): " + Messages(preview.Diagnostics));
         }
-        // An unmarked Action stays an input pin, as before flows: the compiler only warns, at the parameter.
-        foreach (var parameter in new[] { "Action body", "Func<double, Task> body" })
+        // An unmarked Func<…, Task> stays an input pin, as before flows: the compiler only warns, at the parameter. An
+        // unmarked Action is an ordinary pin, with no warning: it can never be a flow.
+        foreach (var (parameter, warns) in new[] { ("Func<Task> body", true), ("Func<double, Task> body", true), ("Action body", false), ("Action<double> body", false) })
         {
             var warned = Library("public static class Warned\n{\n    [Node(\"Warned\")]\n    public static void Run(" + parameter + ") { }\n}", "warned");
             var warning = warned.Diagnostics.SingleOrDefault(d => d.Message == NodeLibraryCompiler.FlowUnmarkedMessage);
             var spec = warned.Snapshot.Catalog["nodes"]!.AsObject().Single(p => p.Key.StartsWith("library:warned:")).Value!;
-            Check(warned.Valid && warning is { Severity: 2, StartLine: 4 } && warning.StartColumn == "    public static void Run(".Length + parameter.IndexOf("body") + 1
-                && spec["inputs"]!["body"] != null && Strings(spec["execution"]).SequenceEqual(["next", "error"]), $"an unmarked {parameter} warns and stays an input pin: " + Messages(warned.Diagnostics));
+            Check(warned.Valid && (warns ? warning is { Severity: 2, StartLine: 4 } && warning.StartColumn == "    public static void Run(".Length + parameter.IndexOf("body") + 1 : warning == null)
+                && spec["inputs"]!["body"] != null && Strings(spec["execution"]).SequenceEqual(["next", "error"]), $"an unmarked {parameter} {(warns ? "warns and " : "")}stays an input pin: " + Messages(warned.Diagnostics));
         }
+        // A flow is awaited: an Action would hold a thread for as long as its steps wait (a Delay, Wait until).
+        Refused("[Port(\"Body\", FlowControl = true)] Action body", NodeLibraryCompiler.FlowActionMessage);
+        Refused("[Port(\"Body\", FlowControl = true)] Action<double> body", NodeLibraryCompiler.FlowActionMessage);
+        Refused("[Port(\"Body\", FlowControl = true)] Action<double, double> body", NodeLibraryCompiler.FlowActionMessage);
+        // A method with flows returns a Task, so it can await them; a sync one could only block on a flow or leave it.
+        foreach (var returned in new[] { "void", "double" })
+        {
+            var sync = Library("public static class Bad\n{\n    [Node(\"Bad\")]\n    public static " + returned + " Run([Port(\"Body\", FlowControl = true)] Func<Task> body) => " + (returned == "void" ? "body()" : "1") + ";\n}", "refused");
+            var refusal = sync.Diagnostics.SingleOrDefault(d => d.Message == NodeLibraryCompiler.FlowAwaitMessage);
+            Check(!sync.Valid && refusal is { StartLine: 4 } && refusal.StartColumn == ("    public static " + returned + " ").Length + 1, $"a {returned} method with flows is refused at its name: " + Messages(sync.Diagnostics));
+        }
+        foreach (var returned in new[] { "Task", "Task<double>", "ValueTask" })
+            Check(Library("public static class Fine { [Node(\"Fine\")] public static async " + returned + " Run([Port(\"Body\", FlowControl = true)] Func<Task> body) { await body(); " + (returned == "Task<double>" ? "return 1; " : "") + "} }", "fine").Valid, $"a {returned} method may have flows");
         Refused("[Port(\"Body\", FlowControl = true)] double body", NodeLibraryCompiler.FlowTypeMessage);
         Refused("[Port(\"Body\", FlowControl = true)] Func<double> body", NodeLibraryCompiler.FlowTypeMessage);
-        Refused("[Port(\"Body\", FlowControl = true)] Action<double, double> body", NodeLibraryCompiler.FlowTypeMessage);
-        Refused("[Port(\"Body\", FlowControl = true)] Action? body", NodeLibraryCompiler.FlowTypeMessage);
-        Refused("[Port(\"Body\", FlowControl = true)] Action body = null!", NodeLibraryCompiler.FlowTypeMessage);
-        Refused("[Port(\"Body\", FlowControl = true)] Action<(double, double)> body", NodeLibraryCompiler.FlowTupleMessage);
-        Refused("[Port(\"Body\", FlowControl = true)] Action next", NodeLibraryCompiler.FlowNameMessage("next"));
-        Refused("[Port(\"Body\", FlowControl = true)] Action error", NodeLibraryCompiler.FlowNameMessage("error"));
-        Refused("[Port(\"Body\", FlowControl = true)] Action condition", NodeLibraryCompiler.FlowNameMessage("condition"));
-        Refused("[Port(\"Body\", FlowControl = true)] Action širina", NodeLibraryCompiler.PinNameMessage("flow", "širina"));
-        Refused("[Port(\"A\", FlowControl = true)] Action<double> value, [Port(\"B\", FlowControl = true)] Action<(double Value, double Other)> other", NodeLibraryCompiler.FlowDuplicateMessage);
-        var pure = Library("public static class Bad { [Node(\"Bad\", Pure = true)] public static double Run([Port(\"Body\", FlowControl = true)] Action body) => 1; }", "refused");
+        Refused("[Port(\"Body\", FlowControl = true)] Func<double, double, Task> body", NodeLibraryCompiler.FlowTypeMessage);
+        Refused("[Port(\"Body\", FlowControl = true)] Func<Task>? body", NodeLibraryCompiler.FlowTypeMessage);
+        Refused("[Port(\"Body\", FlowControl = true)] Func<Task> body = null!", NodeLibraryCompiler.FlowTypeMessage);
+        Refused("[Port(\"Body\", FlowControl = true)] Func<(double, double), Task> body", NodeLibraryCompiler.FlowTupleMessage);
+        Refused("[Port(\"Body\", FlowControl = true)] Func<Task> next", NodeLibraryCompiler.FlowNameMessage("next"));
+        Refused("[Port(\"Body\", FlowControl = true)] Func<Task> error", NodeLibraryCompiler.FlowNameMessage("error"));
+        Refused("[Port(\"Body\", FlowControl = true)] Func<Task> condition", NodeLibraryCompiler.FlowNameMessage("condition"));
+        Refused("[Port(\"Body\", FlowControl = true)] Func<Task> širina", NodeLibraryCompiler.PinNameMessage("flow", "širina"));
+        Refused("[Port(\"A\", FlowControl = true)] Func<double, Task> value, [Port(\"B\", FlowControl = true)] Func<(double Value, double Other), Task> other", NodeLibraryCompiler.FlowDuplicateMessage);
+        var pure = Library("public static class Bad { [Node(\"Bad\", Pure = true)] public static double Run([Port(\"Body\", FlowControl = true)] Func<Task> body) => 1; }", "refused");
         Check(!pure.Valid && pure.Diagnostics.Any(d => d.Message == NodeLibraryCompiler.FlowPureMessage), "a value node has no flows: " + Messages(pure.Diagnostics));
-        var located = Library("public static class Bad\n{\n    [Node(\"Bad\")]\n    public static void Run([Port(\"Body\", FlowControl = true)] double body) { }\n}", "refused").Diagnostics.Single(d => d.Message == NodeLibraryCompiler.FlowTypeMessage);
-        Check(located.StartLine == 4 && located.StartColumn == "    public static void Run([Port(\"Body\", FlowControl = true)] double ".Length + 1, "the problem is at the parameter: " + Messages([located]));
-        Console.WriteLine("PASS flow refusals: unmarked delegates warn and stay pins; other types, nullable and default flows, unnamed tuples, taken and foreign names, duplicates, value nodes");
+        var located = Library("public static class Bad\n{\n    [Node(\"Bad\")]\n    public static Task Run([Port(\"Body\", FlowControl = true)] double body) => Task.CompletedTask;\n}", "refused").Diagnostics.Single(d => d.Message == NodeLibraryCompiler.FlowTypeMessage);
+        Check(located.StartLine == 4 && located.StartColumn == "    public static Task Run([Port(\"Body\", FlowControl = true)] double ".Length + 1, "the problem is at the parameter: " + Messages([located]));
+        Console.WriteLine("PASS flow refusals: unmarked Func<…, Task> warns and stays a pin, an unmarked Action is a pin; Action flows, sync methods with flows, other types, nullable and default flows, unnamed tuples, taken and foreign names, duplicates, value nodes");
     }
 
     static async Task Branches(VisualCatalogSnapshot snapshot)
@@ -213,10 +227,10 @@ static class FlowOutputTests
             E("t", "g"), E("g", "wait", "each"), E("wait", "each"), E("g", "done"), D("g", "each", "value", "each"));
         var concurrent = await Logged(together, snapshot);
         Check(concurrent.Take(3).Order().SequenceEqual(["0", "1", "2"]) && concurrent[^1] == "done", "concurrent calls keep their own values: " + string.Join(",", concurrent));
-        // A sync Action waits for its steps, a delay among them.
+        // An awaited flow waits for its steps, a delay among them, without holding a thread.
         var many = Graph([N("m", Kind(snapshot, "Many"), new { arguments = new { count = Lit("number", 2) } }), N("wait", "delay", new { seconds = Lit("number", 0.01) }), Say("tick", "tick"), Say("done", "done")],
             E("t", "m"), E("m", "wait", "body"), E("wait", "tick"), E("m", "done"));
-        Check((await Logged(many, snapshot)).SequenceEqual(["tick", "tick", "done"]), "a sync Action runs its steps, a delay among them, before it returns");
+        Check((await Logged(many, snapshot)).SequenceEqual(["tick", "tick", "done"]), "an awaited flow runs its steps, a delay among them, before the method goes on");
         // Each call gets its own copy of the value it carries: a step changing it changes neither a sibling's nor the method's.
         var share = Graph([N("s", Kind(snapshot, "Share"), new { arguments = new { } }), N("add", Kind(snapshot, "AddItem"), new { arguments = new { } }), Reader("count")],
             E("t", "s"), E("s", "add", "each"), E("add", "count"), D("s", "add", "items", "each"), D("add", "count", "value", "result"));
@@ -230,7 +244,7 @@ static class FlowOutputTests
         try { await Execute(timeout, snapshot); await Task.Delay(500); }
         finally { PyInterop.Log = previous; }
         Check(orphaned.SequenceEqual(["done"]), "a flow the method left running is cancelled when the step ends: " + string.Join(",", orphaned));
-        Console.WriteLine("PASS flow loops: a body per item, concurrent calls, a sync Action with a delay, a copy per call, no call outliving its step");
+        Console.WriteLine("PASS flow loops: a body per item, concurrent calls, an awaited flow with a delay, a copy per call, no call outliving its step");
     }
 
     static async Task Failures(VisualCatalogSnapshot snapshot)

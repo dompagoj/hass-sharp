@@ -39,7 +39,7 @@ public static class NodeLibraryFixture
             /// <summary>Sorts a temperature: each flow runs its steps, then the run goes on at Done.</summary>
             /// <param name="cold">How far below 19 it is.</param>
             [Node("Classify", Category = "Fixture")]
-            public static void Classify([Port("Cold", FlowControl = true)] Action<double> cold, [Port("Comfortable", FlowControl = true)] Action ok, double temperature) { if (temperature < 19) cold(19 - temperature); else ok(); }
+            public static async Task Classify([Port("Cold", FlowControl = true)] Func<double, Task> cold, [Port("Comfortable", FlowControl = true)] Func<Task> ok, double temperature) { if (temperature < 19) await cold(19 - temperature); else await ok(); }
             [Node("Nonfinite defaults")] public static void NonfiniteDefaults(double? nan = double.NaN, float? positive = float.PositiveInfinity, double? negative = double.NegativeInfinity) {}
         }
         """;

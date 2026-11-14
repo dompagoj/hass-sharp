@@ -51,27 +51,30 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     static bool InSystem(INamedTypeSymbol type) => type.ContainingNamespace is { Name: "System", ContainingNamespace.IsGlobalNamespace: true };
     static bool IsTask(ITypeSymbol type) => type is INamedTypeSymbol { Name: "Task", Arity: 0 } task && task.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks";
     /// <summary>
-    /// A flow's shape: <c>Action</c> and <c>Action&lt;T&gt;</c> wait for the flow's steps, <c>Func&lt;Task&gt;</c> and
-    /// <c>Func&lt;T, Task&gt;</c> give a Task; <c>T</c> is what a call carries. Null for any other type.
+    /// A flow's shape: <c>Func&lt;Task&gt;</c> or <c>Func&lt;T, Task&gt;</c>, which the method awaits; <c>T</c> is what a
+    /// call carries. Null for any other type.
     /// </summary>
-    static (bool Async, ITypeSymbol? Value)? FlowShape(ITypeSymbol type) => type is INamedTypeSymbol named && InSystem(named) ? named switch
+    static (bool Flow, ITypeSymbol? Value)? FlowShape(ITypeSymbol type) => type is INamedTypeSymbol named && InSystem(named) ? named switch
     {
-        { Name: "Action", Arity: 0 } => (false, null),
-        { Name: "Action", Arity: 1 } => (false, named.TypeArguments[0]),
         { Name: "Func", Arity: 1 } when IsTask(named.TypeArguments[0]) => (true, null),
         { Name: "Func", Arity: 2 } when IsTask(named.TypeArguments[1]) => (true, named.TypeArguments[0]),
         _ => null
     } : null;
-    /// <summary>An Action of any arity, or a Func giving a Task: what a flow parameter looks like, even unmarked.</summary>
-    static bool DelegateLike(ITypeSymbol type) => type is INamedTypeSymbol named && InSystem(named) && (named.Name == "Action" || named.Name == "Func" && named.Arity > 0 && IsTask(named.TypeArguments[^1]));
+    /// <summary>A Func giving a Task: what a flow parameter looks like, even unmarked.</summary>
+    static bool DelegateLike(ITypeSymbol type) => type is INamedTypeSymbol named && InSystem(named) && named.Name == "Func" && named.Arity > 0 && IsTask(named.TypeArguments[^1]);
+    static bool IsAction(ITypeSymbol type) => type is INamedTypeSymbol { Name: "Action" } named && InSystem(named);
     static string LowerFirst(string name) => name.Length == 0 ? name : char.ToLowerInvariant(name[0]) + name[1..];
     /// <summary>Whether a parameter or returned value's name can be a pin's id, as both validators read pin ids.</summary>
     static bool PinId(string id) => VisualTypes.Matches(id, "^[A-Za-z_][A-Za-z0-9_]*$");
     /// <summary>What a pin's name may contain, said at the parameter or returned value whose name is not one.</summary>
     internal static string PinNameMessage(string what, string name) => $"Name this {what} with English letters, digits and _ only; {name} cannot name a pin";
-    /// <summary>A warning at an Action or Func&lt;…, Task&gt; parameter without FlowControl: it stays an input pin, which is rarely meant.</summary>
-    internal const string FlowUnmarkedMessage = "This Action or Func<…, Task> is an input pin; mark it [Port(\"Label\", FlowControl = true)] to make it a flow";
-    internal const string FlowTypeMessage = "A flow (FlowControl = true) is an Action, Action<T>, Func<Task> or Func<T, Task>, not nullable and without a default value";
+    /// <summary>A warning at a Func&lt;…, Task&gt; parameter without FlowControl: it stays an input pin, which is rarely meant.</summary>
+    internal const string FlowUnmarkedMessage = "This Func<…, Task> is an input pin; mark it [Port(\"Label\", FlowControl = true)] to make it a flow";
+    internal const string FlowTypeMessage = "A flow (FlowControl = true) is a Func<Task> or Func<T, Task>, not nullable and without a default value";
+    /// <summary>At an Action marked as a flow: a flow is awaited, as an Action would block its thread while the flow's steps wait.</summary>
+    internal const string FlowActionMessage = "A flow is a Func<Task> or Func<T, Task> that the method awaits, not an Action: an Action would hold a thread for as long as the flow's steps wait (a Delay, Wait until)";
+    /// <summary>At a method with flows that does not return a Task: it could only block on its flows or leave them running.</summary>
+    internal const string FlowAwaitMessage = "A node with flows awaits them: make it async, return Task or Task<T>, and await each flow";
     internal const string FlowTupleMessage = "Name each value the flow carries, such as (string Light, double Index)";
     internal const string FlowDuplicateMessage = "Give each flow and each value it carries its own name, apart from the values the method returns";
     internal const string FlowPureMessage = "A value node (Pure = true) has no flows; remove Pure or the FlowControl parameters";
@@ -251,6 +254,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 var marked = Port(p.GetAttributes())?.NamedArguments.Any(a => a.Key == "FlowControl" && a.Value.Value is true) == true;
                 if (!marked) { if (DelegateLike(p.Type)) Report(location, FlowUnmarkedMessage, 2); continue; }
                 if (pure) { Report(location, FlowPureMessage); return null; }
+                if (IsAction(p.Type)) { Report(location, FlowActionMessage); return null; }
                 if (FlowShape(p.Type) is not { } shape || p.Type.NullableAnnotation == NullableAnnotation.Annotated || p.HasExplicitDefaultValue) { Report(location, FlowTypeMessage); return null; }
                 if (!PinId(p.Name)) { Report(location, PinNameMessage("flow", p.Name)); return null; }
                 if (p.Name is "next" or "error" or "condition") { Report(location, FlowNameMessage(p.Name)); return null; }
@@ -281,8 +285,10 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 }
                 if (flowPorts.Contains(p.Name) || outputs.Any(o => flowOutputs.ContainsKey(o.Key))) { Report(location, FlowDuplicateMessage); return null; }
                 flowPorts.Add(p.Name); flowLabels[p.Name] = label;
-                flows[p] = new(p.Name, shape.Async, values);
+                flows[p] = new(p.Name, values);
             }
+            // A method that cannot await its flows could only block on them or leave them running.
+            if (flows.Count > 0 && !awaitResult) { Report(declaration.Identifier.GetLocation(), FlowAwaitMessage); return null; }
             JsonObject? flowSpec = null;
             if (flowPorts.Count > 0)
             {
