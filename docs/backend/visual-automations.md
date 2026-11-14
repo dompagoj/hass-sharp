@@ -326,6 +326,27 @@ the normal Automation runtime; custom code has administrator privileges and
 startup/native/scheduled effects require authorization. Cancellation, concurrency,
 schedules and history remain owned by the existing runtime.
 
+### Load contexts and Python.NET
+
+Each automation is compiled into its own collectible `ScriptLoadContext`, together
+with the typed service calls it uses. The context unloads when the automation is
+replaced, deleted, or the entry reloads. Nothing outside the context may keep a
+reference to its assemblies or types.
+
+Python.NET's `AssemblyManager` records every assembly loaded into the process.
+`PythonNetAssemblies` (in `HassSharp/PythonNetAssemblies.cs`) wraps its handler so
+that collectible assemblies are skipped. On a Python.NET upgrade (the version is
+pinned in `manifest.json` and in `HassSharp.csproj`), check these:
+
+- `Python.Runtime.AssemblyManager` still has the private static field `lhandler`.
+- That field is an `AssemblyLoadEventHandler`, subscribed to `AppDomain.AssemblyLoad`
+  and removed again in `Shutdown`.
+- Neither `AssemblyManager` nor `ClassManager` gained another place that keeps
+  assemblies or types.
+
+If the field cannot be wrapped while Python.NET hosts the runtime, HassSharp logs a
+warning once. The reload memory test (`tests/Runtime/ReloadMemoryTests.cs`) also fails.
+
 ## Verification
 
 The runtime harness covers v5 typed execution and scopes, type refinement, trigger

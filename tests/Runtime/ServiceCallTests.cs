@@ -617,6 +617,7 @@ static class ServiceCallTests
         Double();
         var root = Path.Combine(Path.GetTempPath(), "service-calls-entities-" + Guid.NewGuid());
         var subscribe = PyInterop.SubscribeToEntityTracking; PyInterop.SubscribeToEntityTracking = _ => { };
+        var register = PyInterop.BeginRegisterHaTriggers; var remove = PyInterop.BeginRemoveHaTriggers;
         PyInterop.Entity = id => id is "binary_sensor.door" or "sensor.known" ? new() { EntityId = id, State = "on" } : null;
         var graph = JsonNode.Parse("""
             {"version":5,"name":"Typos","nodes":[
@@ -671,6 +672,44 @@ static class ServiceCallTests
                 var read = await Visual(new { operation = "preview", graph = native });
                 Check(read["result"]!["valid"]!.GetValue<bool>() && Unknown(read["result"]!["diagnostics"]).SequenceEqual(expect), $"native trigger {config.ToJsonString()}: " + read.ToJsonString());
             }
+            // Any JSON in a native trigger (the validator does not look inside it): the lookup is advice, so preview and save
+            // answer as for any graph, and a save activates, whatever shape the target or the trigger has.
+            var shape = 0;
+            PyInterop.BeginRegisterHaTriggers = (generation, _, _, success, _) => success(generation);
+            PyInterop.BeginRemoveHaTriggers = (_, success, _) => success();
+            foreach (var trigger in new[] {
+                """{"trigger":"state","entity_id":"binary_sensor.motoin","target":"light.x"}""",
+                """{"trigger":"state","entity_id":"binary_sensor.motoin","target":[]}""",
+                """{"trigger":"state","entity_id":"binary_sensor.motoin","target":7}""",
+                """{"trigger":"state","entity_id":"binary_sensor.motoin","target":{"entity_id":{"nested":true}}}""",
+                """{"trigger":"state","entity_id":{"not":"text"}}""",
+                "\"state\"", "[]", "null" })
+            {
+                native["nodes"]![0]!["config"]!["trigger"] = JsonNode.Parse(trigger);
+                var odd = await Visual(new { operation = "preview", graph = native });
+                Check(odd["ok"]!.GetValue<bool>(), $"preview of a native trigger {trigger}: " + odd.ToJsonString());
+                if (!odd["result"]!["valid"]!.GetValue<bool>()) continue;
+                // A target of another shape is skipped, not the whole lookup: the trigger's own entity_id is still checked.
+                if (trigger.Contains("\"entity_id\":\"binary_sensor.motoin\"", StringComparison.Ordinal))
+                    Check(Unknown(odd["result"]!["diagnostics"]).SequenceEqual(["n/trigger/2: Home Assistant has no entity binary_sensor.motoin. Check the spelling: a trigger on it never fires."]),
+                        $"the entity_id beside a target {trigger} is still checked: " + odd.ToJsonString());
+                var oddSave = await Visual(new { operation = "save", id = "native-shape-" + shape++, graph = native, expectedRevision = 0 });
+                Check(oddSave["ok"]!.GetValue<bool>() && oddSave["result"]!["active"]!.GetValue<bool>() && oddSave["result"]!["activationError"] == null,
+                    $"save of a native trigger {trigger}: " + oddSave.ToJsonString());
+            }
+            Check(shape >= 5, $"only {shape} of the native trigger shapes validate, so the saves were barely tried");
+            // A config that is not an object at all: answered (a validation result), never a failure of the request.
+            native["nodes"]![0]!["config"] = "ha";
+            var noConfig = await Visual(new { operation = "preview", graph = native });
+            Check(noConfig["ok"]!.GetValue<bool>() || noConfig["error"]!["code"]!.GetValue<string>() == "validation", "preview of a trigger whose config is text: " + noConfig.ToJsonString());
+            // The lookup is advice: a lookup that throws something else again gives no warnings, never an error.
+            native["nodes"]![0]!["config"] = JsonNode.Parse("""{"type":"ha","trigger":{"trigger":"state","entity_id":"binary_sensor.motoin"}}""");
+            var entity = PyInterop.Entity;
+            PyInterop.Entity = _ => throw new NullReferenceException("lookup broke");
+            var broken = await Visual(new { operation = "save", id = "native-lookup", graph = native, expectedRevision = 0 });
+            Check(broken["ok"]!.GetValue<bool>() && broken["result"]!["active"]!.GetValue<bool>() && Unknown(broken["result"]!["diagnostics"]).Length == 0, "save with a lookup that throws: " + broken.ToJsonString());
+            PyInterop.Entity = entity;
+            // Init below removes these triggers again: Python's side stays stubbed until then.
             // Spelled right, no warning.
             graph["nodes"]![0]!["config"]!["entity"] = "binary_sensor.door";
             var fixedPreview = await Visual(new { operation = "preview", graph });
@@ -686,7 +725,12 @@ static class ServiceCallTests
             await api.Init();
             Check(VisualTests.Loaded(api, "typos") != null && (await Visual(new { operation = "read", id = "typos" }))["result"]!["activationError"] == null && asked == 0, $"Init: asked {asked}");
         }
-        finally { await api.UnloadAsync(); PyInterop.SubscribeToEntityTracking = subscribe; Directory.Delete(root, true); }
+        finally
+        {
+            await api.UnloadAsync(); PyInterop.SubscribeToEntityTracking = subscribe;
+            PyInterop.BeginRegisterHaTriggers = register; PyInterop.BeginRemoveHaTriggers = remove;
+            Directory.Delete(root, true);
+        }
         Console.WriteLine("PASS service calls: an entity Home Assistant does not have (in an entity input, an entity trigger or a Home Assistant trigger, its ids read as Home Assistant reads them) is a warning on preview and save (and MCP preview), never an error, not at Init or without a lookup");
     }
 

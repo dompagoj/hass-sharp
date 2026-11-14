@@ -60,10 +60,10 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
                 var filter = full.Substring(list.Span.Start, Math.Max(0, adjusted-list.Span.Start));
                 if (filter.Length > 0) items = service.FilterItems(document, [.. items], filter);
                 var results = new List<CompletionModel>();
-                var compilation = await document.Project.GetCompilationAsync(cancellationToken);
+                var hidden = await PythonNetOnly(document, list.Span.Start, cancellationToken);
                 foreach (var item in items)
                 {
-                    if (IsPythonNetItem(item, compilation)) continue;
+                    if (hidden(item)) continue;
                     var change = await service.GetChangeAsync(document,item,cancellationToken: cancellationToken);
                     var edits = change.TextChanges.IsDefaultOrEmpty ? [change.TextChange] : change.TextChanges;
                     var primary = edits.FirstOrDefault(e => e.Span.Start <= adjusted && e.Span.End >= adjusted);
@@ -137,19 +137,55 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
     // (more with its codecs). They mean nothing in node code: completion, signature help and hover leave them out. The
     // assembly stays referenced; only these are not offered.
     const string PythonNetAssembly = "Python.Runtime";
-    static readonly HashSet<string> PythonNetExtensions = typeof(Python.Runtime.PyObject).Assembly.GetExportedTypes()
-        .SelectMany(t => t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly))
-        .Where(m => m.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), false)).Select(m => m.Name).ToHashSet(StringComparer.Ordinal);
     internal static bool IsPythonNet(ISymbol? symbol) => symbol is IMethodSymbol method && (method.ReducedFrom ?? method) is var definition
         && definition.IsExtensionMethod && definition.ContainingAssembly?.Name == PythonNetAssembly;
-    // A completion item names its symbol only by name: an extension method of Python.NET's name is one of them, unless the
-    // code or a library declares an extension method by that name itself.
-    static bool IsPythonNetItem(CompletionItem item, Compilation? compilation)
+
+    /// <summary>
+    /// Which extension-method completion items stand only for Python.NET's methods, judged by the symbols an item stands
+    /// for, not by its name: the extension methods of that name the receiver before the dot has in scope or, for an item
+    /// from a namespace that is not imported, those of the item's namespace. An item that also stands for an extension
+    /// method of another assembly (the code's or a library's own <c>ToPython</c>) is offered; its signature help and hover
+    /// leave Python.NET's out.
+    /// </summary>
+    static async Task<Func<CompletionItem, bool>> PythonNetOnly(Document document, int start, CancellationToken cancellationToken)
     {
-        if (!item.Tags.Contains(Microsoft.CodeAnalysis.Tags.WellKnownTags.ExtensionMethod)) return false;
-        var name = item.Properties.TryGetValue("SymbolName", out var symbolName) ? symbolName : item.DisplayText;
-        if (!PythonNetExtensions.Contains(name)) return false;
-        return compilation == null || !compilation.GetSymbolsWithName(name, SymbolFilter.Member).OfType<IMethodSymbol>().Any(m => m.IsExtensionMethod);
+        var model = await document.GetSemanticModelAsync(cancellationToken);
+        var root = await document.GetSyntaxRootAsync(cancellationToken);
+        if (model == null || root == null) return _ => false;
+        // The receiver: what stands before the dot of the member access being completed.
+        var token = root.FindToken(Math.Max(0, start - 1));
+        var receiver = token.Parent switch
+        {
+            MemberAccessExpressionSyntax access when access.OperatorToken == token => model.GetTypeInfo(access.Expression, cancellationToken).Type,
+            MemberBindingExpressionSyntax binding when binding.OperatorToken == token && binding.Parent?.Parent is ConditionalAccessExpressionSyntax conditional
+                => model.GetTypeInfo(conditional.Expression, cancellationToken).Type,
+            _ => null,
+        };
+        var inScope = (receiver == null ? [] : model.LookupSymbols(start, receiver, includeReducedExtensionMethods: true))
+            .OfType<IMethodSymbol>().Where(m => m.ReducedFrom != null).ToLookup(m => m.Name, StringComparer.Ordinal);
+        var cache = new Dictionary<string, bool>(StringComparer.Ordinal);
+        return item =>
+        {
+            if (!item.Tags.Contains(Microsoft.CodeAnalysis.Tags.WellKnownTags.ExtensionMethod)) return false;
+            var name = item.Properties.TryGetValue("SymbolName", out var symbolName) ? symbolName : item.DisplayText;
+            // An item from a namespace the code does not import names that namespace.
+            var imported = item.Properties.ContainsKey("ReceiverKey") || item.Properties.ContainsKey("MethodKey");
+            var key = (imported ? item.InlineDescription + ":" : ":") + name;
+            if (cache.TryGetValue(key, out var only)) return only;
+            IEnumerable<IMethodSymbol> methods = imported ? NamespaceExtensions(model.Compilation, item.InlineDescription, name) : inScope[name];
+            var all = methods.ToArray();
+            return cache[key] = all.Length > 0 && all.All(m => IsPythonNet(m));
+        };
+    }
+
+    // The extension methods of this name declared in the namespace with this dotted name, in any assembly.
+    static IEnumerable<IMethodSymbol> NamespaceExtensions(Compilation compilation, string dotted, string name)
+    {
+        INamespaceSymbol? space = compilation.GlobalNamespace;
+        foreach (var part in dotted.Split('.', StringSplitOptions.RemoveEmptyEntries))
+            space = space?.GetNamespaceMembers().FirstOrDefault(n => n.Name == part);
+        if (space == null) return [];
+        return space.GetTypeMembers().Where(t => t.MightContainExtensionMethods).SelectMany(t => t.GetMembers(name)).OfType<IMethodSymbol>().Where(m => m.IsExtensionMethod);
     }
     static LibrarySourceRange SourceRange(string source,TextSpan wrapped,int offset)
     {

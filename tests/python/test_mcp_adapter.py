@@ -115,9 +115,14 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             self.service.visual.assert_awaited_with({'operation':'preview','graph':removed,'deriveSignatures':True},is_admin=True)
             self.assertEqual(result.data,answer)
         self.service.visual.return_value={'version':1,'ok':True,'result':[]}
-        # The tool's own arguments stay strict, and a refusal names the argument.
+        # The tool's own arguments stay strict, and a refusal names the argument (in probatio's words).
         refused=(await self.call('preview',{'graph':graph,'extra':1})).data['error']
-        self.assertEqual(refused['code'],'invalid_request'); self.assertIn("extra",refused['detail'])
+        self.assertEqual(refused['code'],'invalid_request'); self.assertIn("not a valid option at 'extra'",refused['detail'])
+        # So does any other graph key: only the removed members are let through to the backend.
+        self.service.visual.reset_mock()
+        refused=(await self.call('preview',{'graph':{**graph,'layout':{}}})).data['error']
+        self.assertEqual(refused['code'],'invalid_request'); self.assertIn("not a valid option at 'graph.layout'",refused['detail'])
+        self.service.visual.assert_not_called()
         refused=(await self.call('save',{'id':'x','graph':graph})).data['error']
         self.assertEqual(refused['code'],'invalid_request'); self.assertIn('expectedRevision',refused['detail'])
         self.service.node_library.return_value['result']['generation']='catalog-generation'
@@ -229,7 +234,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
     async def test_graph_schema_has_no_node_size(self):
         graph={'version':5,'name':'Sized','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'},'size':{'width':220,'height':112}}],'edges':[]}
         refused=(await self.call('preview',{'graph':graph})).data['error']
-        self.assertEqual(refused['code'],'invalid_request'); self.assertIn('nodes[0].size',refused['detail'])
+        self.assertEqual(refused['code'],'invalid_request'); self.assertIn("not a valid option at 'graph.nodes[0].size'",refused['detail'])
         self.service.visual.assert_not_called()
         self.service.visual.return_value={'version':1,'ok':True,'result':{'id':'x','revision':2,'graph':graph}}
         result=await self.call('read',{'id':'x'})

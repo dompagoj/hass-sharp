@@ -12,15 +12,22 @@ using static VisualExecutionTests;
 /// Python.NET's assembly manager is started as Home Assistant starts it (it records every assembly loaded into the
 /// process): before <see cref="PythonNetAssemblies"/> it held every automation assembly, so no load context unloaded.
 /// </para>
+/// <para>
+/// What this cannot see: the interop callbacks are C# stubs here, so nothing is held by Python. In Home Assistant the
+/// trigger and schedule callbacks Python keeps capture the automation's class until unload removes them; that part is
+/// shown only in the container (<c>memory_report.py</c>'s debug line: the collectible assemblies stay at the current
+/// automations). Native memory is not measured either.
+/// </para>
 /// </summary>
 static class ReloadMemoryTests
 {
-    const int Reloads = 13;
-    // What managed memory may grow between reload 3 and reload 13: Roslyn's process-wide caches fill up to their fixed
-    // number of entries (see VisualGenerator.Pieces), and the runtime keeps some slack. Here that is about 5 MiB, and it
-    // stops near reload 20 (40 reloads end where 20 do). With the literals whole it grew about 2 MiB per reload with these
-    // four automations, 20 MiB over the ten; with Python.NET keeping the assemblies no load context was collected at all.
-    const double BoundMiB = 7;
+    const int Reloads = 30, From = 20;
+    // What managed memory may grow between reload 20 and reload 30. Until about reload 20 Roslyn's process-wide caches fill
+    // up to their fixed number of entries (see VisualGenerator.Pieces): about 5 MiB from reload 3 to 13. After that it is
+    // flat (0.3 MiB over these ten, 40 reloads end where 20 do), so 1 MiB catches 0.1 MiB per reload. With the literals
+    // whole it grew about 2 MiB per reload with these four automations; with Python.NET keeping the assemblies no load
+    // context was collected at all.
+    const double BoundMiB = 1;
 
     [RuntimeSuite("--reload-memory", Order = 30)]
     public static async Task Run()
@@ -62,7 +69,7 @@ static class ReloadMemoryTests
                 contexts.AddRange(loaded.Select(s => new WeakReference(s.CompiledScript.LoadContext ?? throw new Exception("a compiled automation without its load context"))));
                 assemblies.AddRange(loaded.Select(s => new WeakReference(s.CompiledScript.Assembly)));
                 loaded.Clear();
-                if (reload is 3 or Reloads) memory[reload] = Collected();
+                if (reload is From or Reloads) memory[reload] = Collected();
             }
             await manager.UnloadAsync();
             Collected();
@@ -74,9 +81,9 @@ static class ReloadMemoryTests
             Check(aliveAssemblies == 0, $"{aliveAssemblies} of {assemblies.Count} automation assemblies of earlier generations are still alive after the reloads");
             var left = CollectibleAssemblies().Count(name => !earlier.Contains(name));
             Check(left == 0, $"{left} collectible assemblies are still loaded after the last unload");
-            var growth = (memory[Reloads] - memory[3]) / 1048576.0;
-            Check(growth <= BoundMiB, $"managed memory grew {growth:F1} MiB from reload 3 to reload {Reloads} ({memory[3] / 1048576.0:F1} to {memory[Reloads] / 1048576.0:F1} MiB); at most {BoundMiB} MiB is allowed");
-            Console.WriteLine($"PASS reload memory: {Reloads} reloads with four automations (Custom C# and library nodes calling a service), every load context collected; managed memory {memory[3] / 1048576.0:F1} MiB after reload 3, {memory[Reloads] / 1048576.0:F1} MiB after reload {Reloads}");
+            var growth = (memory[Reloads] - memory[From]) / 1048576.0;
+            Check(growth <= BoundMiB, $"managed memory grew {growth:F2} MiB from reload {From} to reload {Reloads} ({memory[From] / 1048576.0:F1} to {memory[Reloads] / 1048576.0:F1} MiB); at most {BoundMiB} MiB is allowed");
+            Console.WriteLine($"PASS reload memory: {Reloads} reloads with four automations (Custom C# and library nodes calling a service), every load context collected; managed memory {memory[From] / 1048576.0:F1} MiB after reload {From}, {memory[Reloads] / 1048576.0:F1} MiB after reload {Reloads}");
         }
         finally
         {

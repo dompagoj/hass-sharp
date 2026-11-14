@@ -15,7 +15,7 @@ from homeassistant.core import Event, EventStateChangedData, HomeAssistant, call
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
 
-from . import scheduling, dotnet_downloader, dotnet_tasks, native_triggers, services, utils, websocket
+from . import scheduling, dotnet_downloader, dotnet_tasks, memory_report, native_triggers, services, utils, websocket
 from .const import logger
 
 os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "true"
@@ -266,6 +266,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         register_panel(hass)
         state.ready = True
         llm.register(hass, state)
+        if memory_report.enabled():
+            try:
+                await hass.async_add_executor_job(memory_report.log, hass_sharp)
+            except Exception:
+                logger.debug("Cannot report memory after setup", exc_info=True)
     except BaseException:
         state.close()
         hass.data["hass_sharp_llm"].pop(entry.entry_id, None)

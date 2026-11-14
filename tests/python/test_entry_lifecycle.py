@@ -96,7 +96,7 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
                  dotnet_tasks=types.SimpleNamespace(async_run_dotnet_task=runner),
                  frontend=types.SimpleNamespace(async_register_built_in_panel=panel,async_remove_panel=remove),
                  llm=types.SimpleNamespace(EntryState=state_factory,register=register),AuthoringService=lambda h,m:None,
-                 services=services)
+                 services=services,memory_report=types.SimpleNamespace(enabled=lambda:False))
         exec(compile(tree,'<entry>','exec'),env)
         entry=types.SimpleNamespace(entry_id='test')
         self.assertTrue(await env['async_setup_entry'](hass,entry))

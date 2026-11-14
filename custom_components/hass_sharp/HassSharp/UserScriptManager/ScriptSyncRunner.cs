@@ -62,7 +62,15 @@ class ScriptSyncRunner
         if (errors.Count > 0) throw new AggregateException(errors);
     }
 
-    public async Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null)
+    /// <summary>Runs the method and records the run; the script waits for it when it is unloaded (<see cref="UserScript.TrackRun"/>).</summary>
+    public Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null)
+    {
+        var run = RunCore(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc);
+        scriptClass.Script.TrackRun(run);
+        return run;
+    }
+
+    async Task RunCore(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc)
     {
         var compiled = scriptClass.Script.CompiledScript;
         var trigger = compiled.VisualTriggers?.GetValueOrDefault(methodInfo.Name);

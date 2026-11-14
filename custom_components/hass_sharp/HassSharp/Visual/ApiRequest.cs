@@ -62,8 +62,8 @@ static class ApiRequest
     };
 
     /// <summary>
-    /// What a request is answered with when reading it failed in a way no check above caught: never the runtime's own
-    /// "Object reference not set to an instance of an object."
+    /// What a client is told of a defect in HassSharp itself (code <c>internal</c>, as the MCP tools answer theirs): never
+    /// the runtime's own text, such as "Object reference not set to an instance of an object."; the log has the rest.
     /// </summary>
-    public static string Unreadable => "The request could not be read: a field is missing or has the wrong type";
+    public const string Internal = "HassSharp hit an internal error; see the Home Assistant log";
 }

@@ -43,8 +43,7 @@ public partial class HassSharpManager
         try
         {
             if (_languageLifetime.IsCancellationRequested) _languageLifetime = new();
-            if (!PythonNetAssemblies.IgnoreCollectible() && PythonNetAssemblies.PythonHosted)
-                Logger.Warn("Python.NET keeps every automation assembly it sees: each reload of HassSharp and each save will keep some memory until Home Assistant restarts");
+            PythonNetAssemblies.IgnoreCollectible(Logger.Warn);
             // Services appear gradually while Home Assistant starts: the persisted schema keeps node code compiling.
             // Whatever goes wrong there leaves the previous (or empty) typed calls: setup goes on without them.
             try { RefreshServiceCalls(); }
@@ -56,9 +55,10 @@ public partial class HassSharpManager
             var store = VisualDocuments;
             foreach (var document in store.List())
             {
+                VisualPreview? preview = null;
                 try
                 {
-                    var preview = new VisualGenerator(_diagnosticsProvider).Preview(document.Graph, libraries.Preview.Snapshot);
+                    preview = new VisualGenerator(_diagnosticsProvider).Preview(document.Graph, libraries.Preview.Snapshot);
                     if (!preview.Valid) throw new VisualValidationException(preview);
                     assemblies.Add(await CompileVisualDocument(document with { Graph = preview.Graph ?? document.Graph, Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = libraries.Generation, EmbeddedCatalog = preview.EmbeddedCatalog }));
                     // Store the regenerated source so the running revision is recognised as current.
@@ -67,8 +67,9 @@ public partial class HassSharpManager
                 }
                 catch (Exception ex)
                 {
-                    RecordLoadError(VisualRuntimePath(document.Id), ex);
-                    Logger.Error(LoadFailure(document, ex, libraries.Preview.Snapshot));
+                    // The source map of the code that was compiled names the step of a compiler error.
+                    var compiled = preview is { Source.Length: > 0 } ? document with { Graph = preview.Graph ?? document.Graph, SourceMap = preview.SourceMap } : document;
+                    ReportLoadFailure(document.Id, () => { RecordLoadError(VisualRuntimePath(document.Id), ex); return LoadFailure(compiled, ex, libraries.Preview.Snapshot); });
                     // Neither a graph that does not validate nor code that does not compile is a HassSharp bug; anything else is.
                     if (ex is not (VisualValidationException or CompilationErrorException)) Logger.Debug($"Loading visual document {document.Id} failed: {ex}");
                 }
@@ -85,8 +86,30 @@ public partial class HassSharpManager
         finally { _visualGate.Release(); }
     }
 
+    /// <summary>The .NET side of the debug memory line (<see cref="RuntimeMemory"/>); forces a full collection.</summary>
+    public string MemoryReport() => RuntimeMemory.Report();
+
     /// <summary>How many problems the startup log names for an automation that does not load; the rest are counted.</summary>
     internal const int LoggedProblems = 3;
+
+    /// <summary>The longest a single problem is in the startup log line; a longer one is cut with an ellipsis.</summary>
+    internal const int LoggedProblemLength = 200;
+
+    /// <summary>
+    /// Logs why an automation does not load, as <paramref name="describe"/> says it. Whatever goes wrong while describing
+    /// it is logged in a plain line instead: it never stops the automations after this one from loading.
+    /// </summary>
+    internal static void ReportLoadFailure(string id, Func<string> describe)
+    {
+        string line;
+        try { line = describe(); }
+        catch (Exception ex)
+        {
+            line = $"Cannot load automation {id}; see the debug log for why";
+            try { Logger.Debug($"Cannot describe why automation {id} does not load: {ex}"); } catch { }
+        }
+        try { Logger.Error(line); } catch { }
+    }
 
     /// <summary>
     /// The startup log line for a saved automation that does not load: its name and id, then why, as a person can act on
@@ -96,25 +119,48 @@ public partial class HassSharpManager
     internal static string LoadFailure(VisualDocument document, Exception error, VisualCatalogSnapshot snapshot)
     {
         var name = AutomationName(document) is { } named ? $"\"{named}\" ({document.Id})" : document.Id;
+        static string Capped(string problem)
+        {
+            if (problem.Length <= LoggedProblemLength) return problem;
+            var length = LoggedProblemLength - 1;
+            if (char.IsHighSurrogate(problem[length - 1])) length--;
+            return problem[..length].TrimEnd() + "…";
+        }
         static string Listed(IReadOnlyCollection<string> problems) =>
-            string.Join("; ", problems.Take(LoggedProblems)) + (problems.Count > LoggedProblems ? $"; and {problems.Count - LoggedProblems} more" : "");
+            string.Join("; ", problems.Take(LoggedProblems).Select(Capped)) + (problems.Count > LoggedProblems ? $"; and {problems.Count - LoggedProblems} more" : "");
+        var nodes = (document.Graph["nodes"] as JsonArray ?? []).OfType<JsonObject>()
+            .GroupBy(n => VisualNodeCatalog.Text(n, "id"), StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        string? Step(string? id) => id != null && nodes.TryGetValue(id, out var node)
+            ? VisualGraphValidator.Words.StepName(node, snapshot.Root["nodes"] is JsonObject kinds ? kinds[VisualNodeCatalog.Text(node, "kind")] : null) : null;
         if (error is VisualValidationException invalid)
         {
-            var nodes = (document.Graph["nodes"] as JsonArray ?? []).OfType<JsonObject>()
-                .GroupBy(n => VisualNodeCatalog.Text(n, "id"), StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
             string Where(VisualDiagnostic diagnostic) => diagnostic.NodeId switch
             {
                 { } id when id.StartsWith("$library:", StringComparison.Ordinal) => $" (node library {id["$library:".Length..]})",
-                { } id when nodes.TryGetValue(id, out var node) => $" (step {VisualGraphValidator.Words.StepName(node, snapshot.Root["nodes"]?[VisualNodeCatalog.Text(node, "kind")])})",
+                { } id when Step(id) is { } step => $" (step {step})",
                 _ => "",
             };
             var problems = invalid.Preview.Diagnostics.Where(d => d.Severity >= 3).Select(d => d.Message + Where(d)).ToArray();
             return $"Cannot load automation {name}: {(problems.Length == 1 ? "1 problem" : $"{problems.Length} problems")}: {Listed(problems)}";
         }
         if (error is CompilationErrorException compilation)
-            return $"Cannot load automation {name}: its code does not compile: {Listed(compilation.Errors)}";
-        return $"Cannot load automation {name}: {error.GetBaseException().Message}";
+        {
+            // "path(line,column): error CS1002: ; expected": the message, its code, and the step whose code is on that line.
+            string Located(string text)
+            {
+                var match = CompilerError.Match(text);
+                if (!match.Success) return text;
+                var line = int.Parse(match.Groups["line"].Value, System.Globalization.CultureInfo.InvariantCulture);
+                var step = Step(document.SourceMap.FirstOrDefault(m => line >= m.StartLine && line <= m.EndLine)?.NodeId);
+                return $"{match.Groups["message"].Value} ({match.Groups["code"].Value}{(step == null ? "" : ", step " + step)})";
+            }
+            return $"Cannot load automation {name}: its code does not compile: {Listed([.. compilation.Errors.Select(Located)])}";
+        }
+        return $"Cannot load automation {name}: {Capped(error.GetBaseException().Message)}";
     }
+
+    static readonly System.Text.RegularExpressions.Regex CompilerError = new(@"\((?<line>\d+),\d+\): error (?<code>[A-Z]+\d+): (?<message>.*)$",
+        System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     // Hand-written automations used to live here. They are no longer loaded, and the files are never touched.
     static string LegacyUserScripts => Path.Join(HassPath.HassSharpIntegration, "user_scripts");

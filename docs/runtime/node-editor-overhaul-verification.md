@@ -406,3 +406,61 @@ MiB, after a restart and then after reloads 1, 2, 5, 10 and 15:
 - Managed memory and the assembly count are flat over those reloads, so the rise is native memory: the allocator and
   Roslyn's metadata.
 - This series does not show whether the rise is bounded.
+
+### Long series and baseline (Task 29 fix round 1, 2026-11-14)
+
+This build has both fixes and the debug line from `memory_report.py`. Restarted at
+08:59 UTC. Reloads were 8 s apart, and each reading was taken 12 s after the last
+reload.
+
+**Columns:**
+
+- `docker stats`, in MiB.
+- `anon`, `file` and `shmem` from the cgroup, in MB.
+- `Rss`, `Pss_Anon` and `Private_Dirty` from the Home Assistant process's `smaps_rollup`, in MiB.
+- From the debug line: .NET live and committed after a full GC (MiB), and Python's tracked object count.
+
+Loaded assemblies stayed at 94 and collectible ones at 6 (the current automations) on every reload.
+
+**Baseline: the built-in `sun` entry, 30 reloads.** `docker stats` went 705.7, 703.9
+(10), 701.6 (20), 697.3 MiB (30). `anon` went 582.0 → 573.6 MB. Home Assistant's own
+reload adds nothing.
+
+**HassSharp, 40 reloads:**
+
+| Reload | docker stats | anon | file | shmem | Rss | Pss_Anon | Private_Dirty | .NET live / committed | Python objects |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | 705.7 | 582.0 | 201.9 | 83.4 | 802.2 | 579.2 | 662.4 | 38.3 / 64.1 | 651151 |
+| 2 | 775.5 | 627.2 | 228.4 | 107.4 | 872.2 | 624.3 | 731.6 | 42.5 / 83.6 | 673306 |
+| 4 | 796.5 | 643.2 | 233.4 | 112.4 | 893.6 | 640.3 | 752.5 | 43.1 / 88.4 | 673514 |
+| 6 | 820.8 | 662.9 | 238.0 | 116.7 | 917.8 | 660.0 | 776.3 | 43.7 / 87.1 | 673341 |
+| 8 | 836 | 676.8 | 239.4 | 118.1 | 932.1 | 673.9 | 790.5 | 44.1 / 83.8 | 673524 |
+| 10 | 842.2 | 680.8 | 241.6 | 120.2 | 939.1 | 677.9 | 797.4 | 44.3 / 81.0 | 673678 |
+| 12 | 853.4 | 691.0 | 242.7 | 121.2 | 949.4 | 688.0 | 807.8 | 44.4 / 89.7 | 673493 |
+| 14 | 860.1 | 697.7 | 242.8 | 121.2 | 956.2 | 694.8 | 814.5 | 44.4 / 92.4 | 673676 |
+| 16 | 851.9 | 689.0 | 243.3 | 121.6 | 947.8 | 686.0 | 806.2 | 44.5 / 86.0 | 673653 |
+| 18 | 848.4 | 685.5 | 243.4 | 121.7 | 944.3 | 682.5 | 802.7 | 44.5 / 84.6 | 673428 |
+| 20 | 851.8 | 688.5 | 243.8 | 122.0 | 947.7 | 685.6 | 806.0 | 44.5 / 90.3 | 673584 |
+| 22 | 827.1 | 663.8 | 244.1 | 122.1 | 923.0 | 660.8 | 781.3 | 44.5 / 83.2 | 673665 |
+| 24 | 837.4 | 673.9 | 244.2 | 122.1 | 933.1 | 670.9 | 791.5 | 44.5 / 88.7 | 673423 |
+| 26 | 823.8 | 660.4 | 244.2 | 122.1 | 919.6 | 657.4 | 777.9 | 44.5 / 81.6 | 673601 |
+| 28 | 813.5 | 650.0 | 244.4 | 122.1 | 909.2 | 647.0 | 767.6 | 44.5 / 78.4 | 673579 |
+| 30 | 834.6 | 670.8 | 244.8 | 122.5 | 930.4 | 667.7 | 788.8 | 44.5 / 83.7 | 673601 |
+| 32 | 851.9 | 687.9 | 245.0 | 122.7 | 947.6 | 684.8 | 805.9 | 44.5 / 85.8 | 673777 |
+| 34 | 849.4 | 685.3 | 245.0 | 122.7 | 945.0 | 682.3 | 803.4 | 44.5 / 88.8 | 673554 |
+| 36 | 835.1 | 670.9 | 245.1 | 122.7 | 930.6 | 667.8 | 789.0 | 44.5 / 87.0 | 673730 |
+| 38 | 830.4 | 666.4 | 245.1 | 122.7 | 926.0 | 663.2 | 784.4 | 44.5 / 88.5 | 673903 |
+| 40 | 819.1 | 655.0 | 245.1 | 122.8 | 914.7 | 651.9 | 773.0 | 44.5 / 91.6 | 673716 |
+
+**Reading:**
+
+- **Reloads 0–10 are warm-up.** About +99 MB `anon`, +37 MB `shmem` (JIT code), +17–26 MiB of GC
+  committed memory, and +22,500 Python objects at the first reload only (Home Assistant's
+  own imports).
+- **Reloads 10–40 are flat.** `anon` went 680.8 → 655.0 MB (about −0.9 MB per reload,
+  range 650–698), and Rss went 939.1 → 914.7 MiB. .NET live stayed at 44.5 MiB from reload 14,
+  and Python objects at 673,6xx.
+- **Per-mapping smaps** at reloads 10, 20, 30 and 40: no class of mapping grows (the 1 GiB
+  anonymous reservation, mappings of 8 MiB or more, smaller ones, and the double-mapped JIT code).
+- **Bounded, with one exception.** The only steady growth is about 10 Python `dict`s per reload,
+  a few KB, whose owner the line cannot tell.

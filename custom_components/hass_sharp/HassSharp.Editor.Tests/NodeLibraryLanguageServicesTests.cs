@@ -178,5 +178,19 @@ public class NodeLibraryLanguageServicesTests
         // An extension method of that name that a library declares is still offered.
         const string own="public static class Mine { public static string ToPython(this NodeContext context) => \"\"; }\npublic static class Nodes { public static void Use(NodeContext context) { context. } }";
         Assert.Contains("ToPython",await Names(own,"context.",custom:false));
+        // Judged by the method, not its name: the library's own ToPython on another type does not bring Python.NET's back
+        // on a NodeContext, and is offered where it applies; the same with Python.NET imported, and from another namespace.
+        foreach(var usings in new[]{"","using Python.Runtime;\n","using System.Globalization;\n"})
+        {
+            var elsewhere=usings+"public static class Mine { public static string ToPython(this string text) => text; }\npublic static class Nodes { public static void Use(NodeContext context, string text) { context. } }";
+            Assert.DoesNotContain(await Names(elsewhere,"context.",custom:false),i=>i.StartsWith("ToPython",StringComparison.Ordinal));
+            var onText=elsewhere.Replace("{ context. }","{ text. }");
+            Assert.Contains("ToPython",await Names(onText,"text.",custom:false));
+        }
+        // Where both apply, the item is the library's: its signature help shows the library's method only.
+        const string both="using Python.Runtime;\npublic static class Mine { public static string ToPython(this NodeContext context, int depth) => \"\"; }\npublic static class Nodes { public static void Use(NodeContext context) { context.ToPython(); } }";
+        Assert.Contains("ToPython",await Names(both.Replace("context.ToPython();","context."),"context.",custom:false));
+        var bothSignature=(await Ask("signature",both,both.LastIndexOf("ToPython(")+"ToPython(".Length,custom:false)).ToJsonString();
+        Assert.True(bothSignature.Contains("depth"),bothSignature); Assert.DoesNotContain("PyObject",bothSignature);
     }
 }

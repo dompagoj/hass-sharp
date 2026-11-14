@@ -151,7 +151,46 @@ class UserScript
             catch (Exception error) { errors.Add(nativeCleanup.Exception ?? error); }
         }
         finally { NativeSwitch.Release(); }
+        try { await DrainRunsAsync(); } catch (Exception error) { errors.Add(error); }
         if (errors.Count > 0) throw new AggregateException(errors);
+    }
+
+    readonly HashSet<Task> _inFlight = [];
+
+    /// <summary>
+    /// How long unloading waits for the runs it cancelled to finish (user code may take a moment to stop, or ignore the
+    /// cancellation); after that the script unloads without them, and says so.
+    /// </summary>
+    internal static TimeSpan RunDrainTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>A run of this script, until it ends: unloading waits for it, so that it records its end first.</summary>
+    internal void TrackRun(Task run)
+    {
+        if (run.IsCompleted) return;
+        lock (_inFlight) _inFlight.Add(run);
+        run.ContinueWith(ended => { lock (_inFlight) _inFlight.Remove(ended); }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Waits for the runs in progress (already cancelled) to end, so that nothing of this script, its run history and
+    /// trace included, is written after unloading returns. A run's own failure was logged when it failed.
+    /// </summary>
+    async Task DrainRunsAsync()
+    {
+        Task[] runs;
+        lock (_inFlight) runs = [.. _inFlight];
+        if (await Drain(runs, RunDrainTimeout)) return;
+        int left; lock (_inFlight) left = _inFlight.Count;
+        Logger.Warn($"{CompiledScript.FileName}: {left} run(s) did not stop within {RunDrainTimeout.TotalSeconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} s of being cancelled; unloading without waiting for them");
+    }
+
+    /// <summary>Whether the runs ended within the timeout; their failures are observed, never thrown.</summary>
+    internal static async Task<bool> Drain(Task[] runs, TimeSpan timeout)
+    {
+        if (runs.Length == 0) return true;
+        var all = Task.WhenAll(runs);
+        _ = all.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        return await Task.WhenAny(all, Task.Delay(timeout)) == all;
     }
 
     internal void Unload()

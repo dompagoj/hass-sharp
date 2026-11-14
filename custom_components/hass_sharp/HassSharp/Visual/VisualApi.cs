@@ -94,7 +94,7 @@ public partial class HassSharpManager
             if (operation == "preview")
             {
                 var graph = Graph(); var preview = new VisualGenerator(_diagnosticsProvider).Preview(graph, authoring);
-                result = preview with { Graph = derive ? preview.Graph ?? graph : preview.Graph, Diagnostics = [.. removed, .. preview.Diagnostics, .. UnknownEntities(preview.Graph ?? graph, authoring, PyInterop.Entity)] };
+                result = preview with { Graph = derive ? preview.Graph ?? graph : preview.Graph, Diagnostics = [.. removed, .. preview.Diagnostics, .. EntityWarnings(preview.Graph ?? graph, authoring)] };
             }
             // The automations page: no graphs, an outline of each instead, and how each has been running (one history query).
             else if (operation == "list" && ApiRequest.OptionalString(request, "view") == "home") result = HomeList(store.List().Select(WithRuntimeIdentity).ToArray(), ApiRequest.OptionalString(request, "todayUtc"));
@@ -127,7 +127,8 @@ public partial class HassSharpManager
                         // A new automation may be saved turned off (a duplicate is): stored before activation, so it never runs on.
                         var enabled = ApiRequest.OptionalBool(request, "enabled");
                         var document = store.Save(id, Graph(), revision, authoring, libraries.Generation, enabled);
-                        result = await ActivateVisualDocument(document, [.. removed, .. UnknownEntities(document.Graph, authoring, PyInterop.Entity)]);
+                        // Advice only: EntityWarnings never throws, so a stored revision always goes on to activate.
+                        result = await ActivateVisualDocument(document, [.. removed, .. EntityWarnings(document.Graph, authoring)]);
                     }
                     else if (operation == "delete")
                     {
@@ -148,9 +149,25 @@ public partial class HassSharpManager
         catch (FileNotFoundException ex) { return Error("not_found", ex.Message); }
         catch (Exception ex) when (ex is ArgumentException or JsonException or InvalidOperationException or OverflowException)
         { return Error("invalid_request", ex.Message); }
-        catch (NullReferenceException) { return Error("invalid_request", ApiRequest.Unreadable); }
+        // Every field is read through ApiRequest, so a null reference here is HassSharp's own defect, not the request's.
+        catch (NullReferenceException ex) { return InternalError("Visual", ex); }
         finally { _visualGate.Release(); }
     }
+    /// <summary>
+    /// <see cref="UnknownEntities"/> with Home Assistant's lookup, as advice: whatever goes wrong while looking (a graph
+    /// shape it does not expect, a failing lookup) gives no warnings and is logged at debug, never failing a preview or a
+    /// save.
+    /// </summary>
+    static List<VisualDiagnostic> EntityWarnings(JsonObject graph, VisualCatalogSnapshot snapshot)
+    {
+        try { return UnknownEntities(graph, snapshot, PyInterop.Entity); }
+        catch (Exception ex)
+        {
+            try { Logger.Debug($"Cannot check the entities a graph names: {ex}"); } catch { }
+            return [];
+        }
+    }
+
     /// <summary>
     /// A warning (code <c>entity.unknown</c>) on the node and input of each entity id written into the graph that Home
     /// Assistant has no state for: an entity trigger's entity, a Home Assistant trigger's entity_id, and literal values
@@ -197,8 +214,10 @@ public partial class HassSharpManager
                 if (triggerType == "entity") Check(id, "entity", VisualNodeCatalog.Text(node["config"], "entity"), true);
                 // A Home Assistant trigger's entity_id, and its target's (a purpose-specific trigger), read as Home Assistant
                 // reads them; an entity registry id (it has no dot) names no entity id to look up.
-                else if (triggerType == "ha" && node["config"]?["trigger"] is JsonObject native)
-                    foreach (var entity in NativeIds(native["entity_id"]).Concat(NativeIds(native["target"]?["entity_id"])).Where(e => e.Contains('.')).Distinct()) Check(id, "trigger", entity, true);
+                // Any JSON may be there (the validator does not look inside a native trigger): each level is read only
+                // when it is an object.
+                else if (triggerType == "ha" && node["config"] is JsonObject config && config["trigger"] is JsonObject native)
+                    foreach (var entity in NativeIds(native["entity_id"]).Concat(NativeIds(native["target"] is JsonObject target ? target["entity_id"] : null)).Where(e => e.Contains('.')).Distinct()) Check(id, "trigger", entity, true);
             }
             JsonObject inputs;
             try { inputs = VisualNodeCatalog.DataInputs(node, null, snapshot); } catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException) { continue; }
@@ -266,6 +285,13 @@ public partial class HassSharpManager
             if (VisualNodeCatalog.Text(edge, "kind") != "data" && index.TryGetValue(VisualNodeCatalog.Text(edge, "source"), out var from) && index.TryGetValue(VisualNodeCatalog.Text(edge, "target"), out var to))
                 edges.Add(new JsonArray(from, to));
         return new JsonObject { ["name"] = graph["name"]?.DeepClone(), ["nodes"] = nodes, ["edges"] = edges };
+    }
+
+    /// <summary>An <c>internal</c> answer for a defect in HassSharp, logged with the exception.</summary>
+    static string InternalError(string api, Exception error)
+    {
+        try { Logger.Error($"{api} request failed inside HassSharp: {error}"); } catch { }
+        return Error("internal", ApiRequest.Internal);
     }
 
     static string Error(string code, object detail) => JsonSerializer.Serialize(new { version = 1, ok = false, error = new { code, detail } }, VisualStore.Json);

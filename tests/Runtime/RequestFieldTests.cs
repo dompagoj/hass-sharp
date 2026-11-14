@@ -67,6 +67,24 @@ static class RequestFieldTests
             Refused(await Library("[]"), "The request must be a JSON object", "a list as the request");
             Console.WriteLine("PASS request fields: a missing or wrongly typed field is answered with its name, never NullReference text");
 
+            // A null reference inside HassSharp (every field is read by name, so it is not the request's) is an internal
+            // error, logged with the exception: here a stored graph without nodes, which the running revision still matches.
+            var stored0 = Path.Combine(root, ".storage", "hass_sharp", "visual", "a.json");
+            var saved0 = JsonNode.Parse(File.ReadAllText(stored0))!;
+            var withNodes = File.ReadAllText(stored0);
+            saved0["graph"]!.AsObject().Remove("nodes");
+            File.WriteAllText(stored0, saved0.ToJsonString());
+            lock (messages) messages.Clear();
+            var internalReply = await Visual("""{"operation":"run","id":"a","triggerId":"t"}""");
+            Check(internalReply["ok"]!.GetValue<bool>() == false && internalReply["error"]!["code"]!.GetValue<string>() == "internal"
+                && internalReply["error"]!["detail"]!.GetValue<string>() == ApiRequest.Internal, "a defect inside HassSharp is answered as internal: " + internalReply.ToJsonString());
+            Check(!internalReply.ToJsonString().Contains("Object reference", StringComparison.Ordinal), "the internal answer has no NullReference text");
+            string[] logged; lock (messages) logged = messages.Where(m => m.Level >= (int)PyLogLevel.Error).Select(m => m.Message).ToArray();
+            Check(logged.Any(m => m.Contains("Visual request failed inside HassSharp", StringComparison.Ordinal) && m.Contains("NullReferenceException", StringComparison.Ordinal)),
+                "the internal error is logged with its exception: " + string.Join(" | ", logged));
+            File.WriteAllText(stored0, withNodes);
+            Console.WriteLine("PASS internal errors: a null reference inside HassSharp is logged with its exception and answered internal, not as the request's fault");
+
             // The startup log names the automation and says why it does not load, without the exception's type or stack.
             await manager.UnloadAsync();
             var file = Path.Combine(root, ".storage", "hass_sharp", "visual", "a.json");
@@ -89,7 +107,20 @@ static class RequestFieldTests
                     new VisualValidationException(new VisualPreview(false, "", [], [.. Enumerable.Range(1, 5).Select(i => new VisualDiagnostic(null, "Problem " + i))])), VisualCatalogSnapshot.BuiltIn)
                     == "Cannot load automation \"Many\" (b): 5 problems: Problem 1; Problem 2; Problem 3; and 2 more", "the log names the first problems and counts the rest");
             Check(HassSharpManager.LoadFailure(new VisualDocument(1, "c", 1, new JsonObject(), "", []), new CompilationErrorException(["(1,1): error CS1002: ; expected"]), VisualCatalogSnapshot.BuiltIn)
-                    == "Cannot load automation c: its code does not compile: (1,1): error CS1002: ; expected", "a compile failure is named with its errors");
+                    == "Cannot load automation c: its code does not compile: ; expected (CS1002)", "a compile failure is named with its errors");
+            // A compiler error on a line the source map gives a step is named with that step.
+            var mapped = new VisualDocument(1, "m", 1, G(N("log", "log", new { value = Lit("string", "hi") })), "", [new("log", 10, 12)]);
+            var located = HassSharpManager.LoadFailure(mapped, new CompilationErrorException(["/config/.storage/hass_sharp/visual/visual_m.cs(11,5): error CS0103: The name 'x' does not exist in the current context", "(40,1): error CS1513: } expected"]), VisualCatalogSnapshot.BuiltIn);
+            Check(located == "Cannot load automation \"Execution\" (m): its code does not compile: The name 'x' does not exist in the current context (CS0103, step Log); } expected (CS1513)", "compiler errors name their step: " + located);
+            // Each problem is cut at a length, so one long message cannot fill the log.
+            var longProblem = HassSharpManager.LoadFailure(new VisualDocument(1, "l", 1, new JsonObject(), "", []),
+                new VisualValidationException(new VisualPreview(false, "", [], [new VisualDiagnostic(null, new string('w', 5000))])), VisualCatalogSnapshot.BuiltIn);
+            Check(longProblem.Length < HassSharpManager.LoggedProblemLength + 60 && longProblem.EndsWith("…", StringComparison.Ordinal), "a long problem is cut: " + longProblem.Length);
+            // Describing a failure that fails itself still logs a line, and does not throw (Init goes on with the next automation).
+            lock (messages) messages.Clear();
+            HassSharpManager.ReportLoadFailure("broken", () => throw new InvalidOperationException("describing failed"));
+            string[] plain; lock (messages) plain = messages.Where(m => m.Level >= (int)PyLogLevel.Error).Select(m => m.Message).ToArray();
+            Check(plain.SequenceEqual(["Cannot load automation broken; see the debug log for why"]), "a failure to describe the failure is logged plainly: " + string.Join(" | ", plain));
             Console.WriteLine("PASS load failure log: the automation's name and its first problems, with their steps, on one line");
         }
         finally

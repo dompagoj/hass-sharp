@@ -203,7 +203,8 @@ public partial class HassSharpManager
         catch (UnauthorizedAccessException ex) { return Error("storage", ex.Message); }
         catch (Exception ex) when (ex is ArgumentException or JsonException or InvalidOperationException or OverflowException)
         { return Error("invalid_request", ex.Message); }
-        catch (NullReferenceException) { return Error("invalid_request", ApiRequest.Unreadable); }
+        // Every field is read through ApiRequest, so a null reference here is HassSharp's own defect, not the request's.
+        catch (NullReferenceException ex) { return InternalError("Node library", ex); }
         finally { _visualGate.Release(); }
     }
 }
