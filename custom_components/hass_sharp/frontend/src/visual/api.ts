@@ -134,7 +134,9 @@ export function visualApi(hass: Pick<HomeAssistant, 'callWS'>) {
     home: (todayUtc: string) => request<HomeAutomation[]>('list', { view: 'home', todayUtc }),
     setEnabled: (id: string, enabled: boolean) => request<{ id: string; enabled: boolean }>('set_enabled', { id, enabled }),
     read: (id: string) => request<VisualDocument>('read', { id }),
-    save: (id: string, graph: VisualGraph, expectedRevision: number) => request<VisualSaveResult>('save', { id, graph, expectedRevision }),
+    /** `enabled` only for a new automation (expectedRevision 0): saved turned off, it never runs on; the backend refuses it for a saved one. */
+    save: (id: string, graph: VisualGraph, expectedRevision: number, options: { enabled?: boolean } = {}) =>
+      request<VisualSaveResult>('save', { id, graph, expectedRevision, ...(options.enabled === undefined ? {} : { enabled: options.enabled }) }),
     delete: (id: string, expectedRevision: number) => request<{ deleted: true }>('delete', { id, expectedRevision }),
   }
 }

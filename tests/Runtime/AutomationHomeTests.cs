@@ -28,6 +28,78 @@ static class AutomationHomeTests
     ],"edges":[{"id":"e1","source":"door","target":"l1"},{"id":"e2","source":"noon","target":"l2"},{"id":"e3","source":"boot","target":"l3"},{"id":"e4","source":"hold","target":"wait"}]}
     """.Replace("NAME", name).Replace("HOLD", VisualExecutionTests.Code("wait", "await Task.Delay(-1, CancellationToken);")["config"]!.ToJsonString()))!.AsObject());
 
+    static async Task EngineSwitch()
+    {
+        var registerNative = PyInterop.BeginRegisterHaTriggers; var removeNative = PyInterop.BeginRemoveHaTriggers; var entity = PyInterop.Entity;
+        var registered = new List<(string Id, Func<string, Task> Fire)>(); var removed = new List<string>();
+        PyInterop.BeginRegisterHaTriggers = (_, _, fire, success, _) => { string id; lock (registered) { id = "lease-" + registered.Count; registered.Add((id, fire)); } success(id); };
+        PyInterop.BeginRemoveHaTriggers = (id, done, _) => { lock (removed) removed.Add(id); done(); };
+        PyInterop.Entity = id => new() { EntityId = id, State = "fresh" };
+        Probe.Triggers = [new HomeAssistantTrigger("event", "{\"trigger\":\"event\",\"event_type\":\"test\"}")];
+        Probe.Schedules = null; Probe.DelayedExit = null; Probe.Configuring = null;
+        Probe.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Probe.Starts = System.Threading.Channels.Channel.CreateUnbounded<InvocationCause>();
+        var folder = Path.Combine(Path.GetTempPath(), "automation-engine-" + Guid.NewGuid());
+        var manager = new UserScriptManager { History = new RunHistoryStore(Path.Combine(folder, "runs.db")) };
+        try
+        {
+            int Live() { lock (registered) lock (removed) return registered.Count(r => !removed.Contains(r.Id)); }
+            Func<string, Task> Latest() { lock (registered) return registered[^1].Fire; }
+            Probe.Mode = AutomationMode.Queued;
+            await manager.LoadUserScripts([new() { FilePath = "engine.cs", FileName = "engine", SourceCode = "engine", Assembly = typeof(Probe).Assembly, Enabled = false }]);
+            var script = manager.GetUserScripts().Single();
+            await script.Classes.Single().StartupCompletion;
+            Check(registered.Count == 0 && !Probe.Starts.Reader.TryRead(out _), "an automation loaded off attached its triggers or ran its startup");
+            List<InvocationRecord> Runs() => manager.History!.Read(script.AutomationId, 0, 100);
+
+            await manager.SetEnabledAsync("engine.cs", true);
+            await manager.SetEnabledAsync("engine.cs", true);
+            Check(registered.Count == 1 && Live() == 1, $"turning on attached {registered.Count} times");
+            await manager.SetEnabledAsync("engine.cs", false);
+            Check(Live() == 0 && removed.Count == 1, "turning off left triggers attached");
+            for (var i = 0; i < 3; i++) { await manager.SetEnabledAsync("engine.cs", true); await manager.SetEnabledAsync("engine.cs", false); }
+            await manager.SetEnabledAsync("engine.cs", true);
+            Check(Live() == 1 && registered.Count == 5, $"toggling left {Live()} live attachments after {registered.Count} attaches");
+            Check(!Probe.Starts.Reader.TryRead(out _), "turning on ran the startup action");
+
+            // Queued: one running and two waiting; turning off ends all three with the reason.
+            for (var i = 0; i < 3; i++) _ = Latest()("{\"trigger\":{\"id\":\"q" + i + "\"}}");
+            await Probe.Starts.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await Until(() => Runs().Count == 3, "three queued runs recorded");
+            await manager.SetEnabledAsync("engine.cs", false);
+            await Until(() => Runs().All(r => r.Status is not ("Running" or "Pending")), "turning off ends the queued runs");
+            Check(Runs().All(r => r.Status == "Cancelled" && r.Error == "Automation turned off"), "queued runs: " + string.Join("; ", Runs().Select(r => r.Status + " " + r.Error)));
+            await manager.UnloadUserScriptsAsync();
+
+            // Restart: the newer trigger replaces the first; turning off ends the replacement with the reason.
+            Probe.Mode = AutomationMode.Restart;
+            await manager.LoadUserScripts([new() { FilePath = "engine.cs", FileName = "engine", SourceCode = "engine", Assembly = typeof(Probe).Assembly, Enabled = false }]);
+            script = manager.GetUserScripts().Single();
+            await manager.SetEnabledAsync("engine.cs", true);
+            var before = Runs().Count;
+            _ = Latest()("{\"trigger\":{\"id\":\"first\"}}");
+            await Probe.Starts.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            _ = Latest()("{\"trigger\":{\"id\":\"second\"}}");
+            await Probe.Starts.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            // A cancellation callback that throws: every run still ends and the switch is applied.
+            script.Runs.Token.Register(() => throw new InvalidOperationException("callback failed"));
+            await manager.SetEnabledAsync("engine.cs", false);
+            Check(!script.Enabled && Live() == 0, "a throwing cancellation callback undid the switch or left triggers attached");
+            await Until(() => Runs().Count == before + 2 && Runs().All(r => r.Status is not ("Running" or "Pending")), "turning off ends the replacement");
+            var restart = Runs().Take(2).OrderBy(r => r.ReceivedUtc).ToArray();
+            Check(restart[0].Error == CancelReasons.Restarted && restart[1].Status == "Cancelled" && restart[1].Error == "Automation turned off",
+                "restart runs: " + string.Join("; ", restart.Select(r => r.Status + " " + r.Error)));
+        }
+        finally
+        {
+            Probe.Release.TrySetResult();
+            await manager.UnloadUserScriptsAsync();
+            Probe.Triggers = null; Probe.Mode = AutomationMode.Parallel;
+            PyInterop.BeginRegisterHaTriggers = registerNative; PyInterop.BeginRemoveHaTriggers = removeNative; PyInterop.Entity = entity;
+            try { Directory.Delete(folder, true); } catch (IOException) { }
+        }
+    }
+
     [RuntimeSuite("--automation-home", Order = 7)]
     public static async Task Run()
     {
@@ -113,11 +185,42 @@ static class AutomationHomeTests
                     // The runs started after it are not cancelled by that switch.
                     await Visual(new { operation = "run", id = "door", triggerId = "door" });
                     await Until(() => Count("Manual", "Succeeded") == 2, "Run now after turning off again");
-                    Check(!(await Visual(new { operation = "set_enabled", id = "missing", enabled = true }))["ok"]!.GetValue<bool>(), "set_enabled of a missing automation");
+                    Check((await Visual(new { operation = "set_enabled", id = "missing", enabled = true }))["error"]?["code"]?.GetValue<string>() == "not_found", "set_enabled of a missing automation");
                     Check((await Visual(new { operation = "set_enabled", id = "door" }))["error"]!["code"]!.GetValue<string>() == "invalid_request", "set_enabled without enabled");
                 }
                 finally { await api.UnloadAsync(); }
             });
+
+            await Test("a new automation saved off (a duplicate) never runs its startup or triggers, Run now works; enabled is refused for a saved one", async () =>
+            {
+                var root = Path.Combine(folder, "copy"); HassPath.HassConfiguration = root;
+                string[] entities = ["binary_sensor.door"];
+                var api = new HassSharpManager(root);
+                try
+                {
+                    await api.Init(entities);
+                    async Task<JsonNode> Visual(object request) => JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(request)))!;
+                    int before; lock (schedules) before = schedules.Count;
+                    var saved = await Visual(new { operation = "save", id = "copy", graph = Switchable("Door (copy)"), expectedRevision = 0, enabled = false });
+                    Check(saved["result"]?["active"]?.GetValue<bool>() == true && !saved["result"]!["document"]!["enabled"]!.GetValue<bool>(), "the copy is not saved off and loaded: " + saved.ToJsonString());
+                    var automation = saved["result"]!["document"]!["automationId"]!.GetValue<string>();
+                    JsonNode[] Runs() => JsonNode.Parse(api.GetRunHistory(automation, 0, 100, null))!["runs"]!.AsArray().Select(r => r!).ToArray();
+                    await api.OnTrackedEntityChange("binary_sensor.door", new() { EntityId = "binary_sensor.door", State = "on" }, new() { EntityId = "binary_sensor.door", State = "off" });
+                    Func<string, Task> schedule; lock (schedules) schedule = schedules[^1];
+                    Check(schedules.Count > before, "the copy registered no schedule");
+                    await schedule("2026-11-12T12:00:00+00:00");
+                    await Task.Delay(150);
+                    Check(Runs().Length == 0, "the copy ran while off: " + string.Join(", ", Runs().Select(r => r["cause"])));
+                    Check((await Visual(new { operation = "run", id = "copy", triggerId = "door" }))["ok"]!.GetValue<bool>(), "Run now of the copy");
+                    await Until(() => Runs().Any(r => r["cause"]!.GetValue<string>() == "Manual" && r["status"]!.GetValue<string>() == "Succeeded"), "Run now of the copy succeeds");
+                    var again = await Visual(new { operation = "save", id = "copy", graph = Switchable("Door (copy)"), expectedRevision = 1, enabled = true });
+                    Check(again["error"]?["code"]?.GetValue<string>() == "invalid_request" && again["error"]!["detail"]!.GetValue<string>().Contains("set_enabled"), "enabled on a saved automation: " + again.ToJsonString());
+                    Check((await Visual(new { operation = "read", id = "copy" }))["result"]!["revision"]!.GetValue<long>() == 1, "the refused save changed the document");
+                }
+                finally { await api.UnloadAsync(); }
+            });
+
+            await Test("engine: loaded off attaches no Home Assistant triggers; on attaches once however often it is toggled, off detaches; Queued and Restart runs end with \"Automation turned off\"; a throwing cancellation callback does not fail the switch", EngineSwitch);
 
             await Test("a document without enabled is on; turning it off keeps its revision, source and save time", () =>
             {
@@ -200,7 +303,7 @@ static class AutomationHomeTests
                 finally { await api.UnloadAsync(); }
             });
 
-            await Test("recent runs read each automation from the runs index", () =>
+            await Test("recent runs read only the newest runs and the last day of each automation, from the runs index", () =>
             {
                 var path = Path.Combine(folder, "plan.db");
                 _ = new RunHistoryStore(path);
@@ -210,7 +313,9 @@ static class AutomationHomeTests
                 foreach (var (name, value) in new (string, object)[] { ("$ids", "[\"a\",\"b\"]"), ("$today", DateTime.UtcNow), ("$failed", DateTime.UtcNow), ("$limit", 10) }) command.Parameters.AddWithValue(name, value);
                 using var reader = command.ExecuteReader(); var plan = "";
                 while (reader.Read()) plan += reader.GetString(3) + "; ";
-                Check(plan.Contains("IX_Runs_AutomationId_ReceivedUtc_RunId") && !plan.Contains("SCAN Runs"), "recent runs scan the table: " + plan);
+                Console.WriteLine("PLAN automation home recent runs: " + plan);
+                Check(plan.Contains("IX_Runs_AutomationId_ReceivedUtc_RunId") && !System.Text.RegularExpressions.Regex.IsMatch(plan, @"SCAN (Runs|r|t|c)\b")
+                    && plan.Contains("SEARCH r USING INDEX sqlite_autoindex_Runs_1 (RunId=?)") && !plan.Contains("TEMP B-TREE FOR ORDER BY; SEARCH t"), "recent runs scan the table: " + plan);
                 return Task.CompletedTask;
             });
 

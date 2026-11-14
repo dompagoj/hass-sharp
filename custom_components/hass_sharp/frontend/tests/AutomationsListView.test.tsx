@@ -9,6 +9,7 @@ import { addNode, createGraph, updateNode } from '../src/visual/graph'
 import { AutomationsListView } from '../src/views/AutomationsListView'
 import type { RecentRun } from '../src/visual/api'
 import { readFileSync } from 'node:fs'
+import { pollInterval } from '../src/automations/model'
 
 let dispose: (() => void) | undefined
 let client: QueryClient
@@ -118,9 +119,40 @@ it('says when the saved version is not active, prominently, and shows a run in p
   expect(busy.querySelector('.hs-home-card__last')?.textContent).toBe('Running since 1 minute ago')
   expect(busy.querySelector('.hs-run-dot:last-child')?.className).toContain('hs-run-dot--running')
   expect(busy.querySelector('.hs-run-dots')?.getAttribute('aria-label')).toBe('Last 2 runs: 1 succeeded, 1 running')
-  // A run in progress keeps the list fresh.
+  // A run in progress keeps the list fresh, at most every 5 s.
   const before = calls(fixture, 'list').length
+  await new Promise(resolve => setTimeout(resolve, 3000))
+  expect(calls(fixture, 'list').length).toBe(before)
   await vi.waitFor(() => expect(calls(fixture, 'list').length).toBeGreaterThan(before), { timeout: 4000 })
+}, 10_000)
+
+it('names a failed last run on the card and finds it under Needs attention', async () => {
+  const { root } = setup({ prepare: f => {
+    saved(f, 'fails', 'Garden pump', { runs: { recentRuns: [run('Succeeded', 30), run('Failed', 5)], runsToday: 2, failedLastDay: 1, lastRunUtc: minutesAgo(5) } })
+    saved(f, 'fine', 'Porch light', { runs: { recentRuns: [run('Failed', 30), run('Succeeded', 5)], runsToday: 2, failedLastDay: 1, lastRunUtc: minutesAgo(5) } })
+  } })
+  await loaded(root)
+  const fails = card(root, 'fails')
+  expect(fails.querySelector('.hs-home-card__health')?.textContent).toBe('Last run failed')
+  expect(fails.classList.contains('hs-home-card--attention')).toBe(true)
+  expect(card(root, 'fine').querySelector('.hs-home-card__health')).toBeNull()
+  // The card's description carries the reason too.
+  const link = fails.querySelector('.hs-home-card__link')!
+  expect(root.querySelector(`#${link.getAttribute('aria-describedby')}`)?.textContent).toContain('Last run failed')
+  ;[...root.querySelectorAll<HTMLButtonElement>('.hs-home-filter')].find(b => b.textContent?.startsWith('Needs attention'))!.click()
+  expect(cards(root)).toEqual(['fails'])
+})
+
+it('reads the list again every 5 s while a run that just started is going, every 30 s for older runs, never when none runs', () => {
+  const at = Date.parse('2026-11-14T12:00:00Z')
+  const item = (runs: RecentRun[]) => ({ id: 'x', recentRuns: runs } as any)
+  const started = (minutes: number, status: RecentRun['status'] = 'Running'): RecentRun => ({ runId: `${minutes}`, status, startUtc: new Date(at - minutes * 60_000).toISOString(), durationMs: null })
+  expect(pollInterval([], at)).toBe(false)
+  expect(pollInterval([item([started(1, 'Succeeded')])], at)).toBe(false)
+  expect(pollInterval([item([started(1)])], at)).toBe(5000)
+  expect(pollInterval([item([{ ...started(0, 'Pending'), startUtc: null }])], at)).toBe(5000)
+  expect(pollInterval([item([started(45)])], at)).toBe(30_000)
+  expect(pollInterval([item([started(45)]), item([started(1)])], at)).toBe(5000)
 })
 
 it('runs the one manual trigger, offers a menu for several, and explains when none allows it', async () => {
@@ -165,16 +197,23 @@ it('renames from the menu, keeping focus on the card', async () => {
   await vi.waitFor(() => expect(root.querySelector('dialog [role="alert"]')?.textContent).toContain('Could not rename: Changed elsewhere'))
 })
 
-it('duplicates as a new automation and moves focus to the copy; views runs on the editor’s Runs tab', async () => {
+it('duplicates as a new automation turned off and moves focus to the copy; views runs on the editor’s Runs tab', async () => {
   const { root, fixture, history } = setup({ prepare: f => saved(f, 'hall', 'Hall lights') })
   await loaded(root)
   menu(root, 'Hall lights', 'Duplicate')
   await vi.waitFor(() => expect(cards(root)).toHaveLength(2))
   const save = calls(fixture, 'save')[0]
-  expect(save).toMatchObject({ expectedRevision: 0, graph: { name: 'Hall lights (copy)' } })
+  // Saved off: the copy never runs its startup trigger or answers the original's triggers a second time.
+  expect(save).toMatchObject({ expectedRevision: 0, enabled: false, graph: { name: 'Hall lights (copy)' } })
   expect(save.id).toMatch(/^visual-[0-9a-f-]{36}$/)
+  expect(calls(fixture, 'set_enabled')).toEqual([])
   await vi.waitFor(() => expect(document.activeElement).toBe(card(root, save.id).querySelector('.hs-home-card__link')))
-  expect(root.querySelector('.hs-home-notice')?.textContent).toBe('Duplicated as “Hall lights (copy)”. It is on.')
+  const copy = card(root, save.id)
+  expect(copy.classList.contains('hs-home-card--off')).toBe(true)
+  expect(copy.querySelector('.hs-home-chip')?.textContent).toBe('Off')
+  expect(copy.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false)
+  expect(card(root, 'hall').classList.contains('hs-home-card--off')).toBe(false)
+  expect(root.querySelector('.hs-home-notice')?.textContent).toBe('Copy of Hall lights was created turned off.')
   menu(root, 'Hall lights', 'View runs')
   await vi.waitFor(() => expect(history.get()).toBe('/visual/hall?drawer=runs'))
 })
@@ -290,10 +329,21 @@ it('turns an automation off and on from its card at once, rolls back with a mess
   expect(hall.querySelector('.hs-home-chip')?.textContent).toBe('Off')
   expect(hall.querySelector('.hs-home-card__last')?.textContent).toBe('Off')
   expect(hall.querySelector('.hs-run-dots')).not.toBeNull()
-  expect(root.querySelector('.hs-home-summary')?.textContent).toBe('1 automation · 2 runs today · 1 off')
+  // Every automation is counted, and so are the runs of the one now off.
+  expect(root.querySelector('.hs-home-summary')?.textContent).toBe('2 automations · 1 off · 5 runs today · 1 failed in the last day')
+  // While its request is in flight the switch keeps focus (it is busy, not disabled) and ignores another press.
+  toggle().focus()
+  expect(toggle().disabled).toBe(false)
+  expect(toggle().getAttribute('aria-busy')).toBe('true')
+  toggle().click()
+  expect(toggle().checked).toBe(false)
+  expect(document.activeElement).toBe(toggle())
+  expect(hall.querySelector<HTMLButtonElement>('.hs-topbar__run')!.disabled).toBe(false)
+  expect(hall.querySelector<HTMLButtonElement>('.hs-menu > button')!.disabled).toBe(false)
   release()
   await vi.waitFor(() => expect(fixture.documents.get('hall')!.enabled).toBe(false))
   expect(calls(fixture, 'set_enabled')).toEqual([{ operation: 'set_enabled', id: 'hall', enabled: false }])
+  await vi.waitFor(() => expect(toggle().hasAttribute('aria-busy')).toBe(false))
   expect(toggle().checked).toBe(false)
   // A failure puts it back and says so.
   fixture.controls.setEnabledError = 'storage'
@@ -358,6 +408,8 @@ it('lays out for 360 px: one column of cards that never exceed the screen, long 
   expect(css).toMatch(/\.hs-home-card__title \{[^}]*overflow-wrap: anywhere/)
   expect(css).toMatch(/\.hs-home-card__starts li \{[^}]*overflow-wrap: anywhere/)
   expect(css).toMatch(/@media \(max-width: 700px\) \{[^@]*\.hs-home-search \{ flex-basis: 100%; max-width: none; \}/)
+  // A card whose menu is open rises above the cards after it (their actions are raised over each card's link).
+  expect(css).toMatch(/\.hs-home-card:has\(\[role="menu"\]\) \{ z-index: 2; \}/)
   for (const selector of ['.hs-home-grid', '.hs-home-card', '.hs-home-card__title', '.hs-home-card__starts li', '.hs-home-search', '.hs-home-tools'])
     expect(root.querySelector(selector), selector).not.toBeNull()
 })

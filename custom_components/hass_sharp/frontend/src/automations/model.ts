@@ -68,14 +68,14 @@ export function lastRunText(item: HomeAutomation, now: number): string {
 }
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
-/** Something wrong with the saved version, in words, or undefined when all is well. */
-export function healthText(item: HomeAutomation): string | undefined {
-  if (item.currentRevisionActive) return
-  return item.problemCount ? `Not active: ${plural(item.problemCount, 'problem')}` : 'Not active'
-}
 const lastFailed = (item: HomeAutomation) => runTone(item.recentRuns.at(-1)?.status ?? 'Succeeded') === 'failed'
-/** Not active, or its most recent run failed. */
-export const needsAttention = (item: HomeAutomation) => !item.currentRevisionActive || lastFailed(item)
+/** Something wrong, in words: the saved version is not active, or the most recent run failed; undefined when all is well. */
+export function healthText(item: HomeAutomation): string | undefined {
+  if (!item.currentRevisionActive) return item.problemCount ? `Not active: ${plural(item.problemCount, 'problem')}` : 'Not active'
+  if (lastFailed(item)) return 'Last run failed'
+}
+/** Not active, or its most recent run failed: whatever the card names in its health line. */
+export const needsAttention = (item: HomeAutomation) => !!healthText(item)
 
 export const filters = [
   { id: 'all', label: 'All' },
@@ -114,18 +114,30 @@ export function sortAutomations(items: readonly HomeAutomation[], sort: Sort): H
   return [...items].sort((a, b) => (key ? key(b) - key(a) : 0) || byName(a, b))
 }
 
-/** "6 automations · 14 runs today · 1 failed in the last day · 2 off": counts automations that are on; zero parts are left out. */
+/**
+ * "6 automations · 1 off · 14 runs today · 1 failed in the last day": every automation, how many of them are off, and
+ * the runs of all of them (Run now of one that is off counts too). Zero parts after the first are left out.
+ */
 export function homeSummary(items: readonly HomeAutomation[]): string {
-  const on = items.filter(item => item.enabled)
-  const off = items.length - on.length
-  const today = on.reduce((sum, item) => sum + item.runsToday, 0)
-  const failed = on.reduce((sum, item) => sum + item.failedLastDay, 0)
+  const off = items.filter(item => !item.enabled).length
+  const today = items.reduce((sum, item) => sum + item.runsToday, 0)
+  const failed = items.reduce((sum, item) => sum + item.failedLastDay, 0)
   return [
-    on.length && plural(on.length, 'automation'),
+    items.length && plural(items.length, 'automation'),
+    off && `${off} off`,
     today && `${plural(today, 'run')} today`,
     failed && `${failed} failed in the last day`,
-    off && `${off} off`,
   ].filter(Boolean).join(' · ')
+}
+
+/**
+ * How often the page reads the list again: every 5 s while a run that started in the last 2 minutes is going (most
+ * runs end by then), every 30 s while only older runs are going (a long Delay), and not at all when nothing runs.
+ */
+export function pollInterval(items: readonly HomeAutomation[], now: number): number | false {
+  const going = items.flatMap(item => item.recentRuns.filter(run => live(run)))
+  if (!going.length) return false
+  return going.some(run => !run.startUtc || now - Date.parse(run.startUtc) < 120_000) ? 5_000 : 30_000
 }
 
 /** The start of the viewer's day, for "runs today". */

@@ -46,6 +46,8 @@
 .hs-app .hs-home-card__actions { position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 8px 10px 12px 16px; }
 .hs-app .hs-home-card__actions .hs-enabled { margin-right: auto; }
 .hs-app .hs-home-card__actions .hs-topbar__run { min-height: 40px; padding: 6px 14px; }
+/* A card with an open menu (⋯ or Run now's trigger list) is raised above the cards after it, whose actions would cover it. */
+.hs-app .hs-home-card:has([role="menu"]) { z-index: 2; }
 
 /* The run dots: the run history's colours and shapes (runs.css), newest last. */
 .hs-app .hs-run-dots { display: inline-flex; align-items: center; gap: 3px; }

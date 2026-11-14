@@ -163,6 +163,8 @@ export function visualFixture(
       result = documents.get(req.id)
     } else if (req.operation === 'save') {
       if (controls.conflict || (documents.get(req.id)?.revision ?? 0) !== req.expectedRevision) return fail('conflict', 'Changed elsewhere')
+      // Like the backend: enabled only for a new automation.
+      if (documents.has(req.id) && req.enabled !== undefined) return fail('invalid_request', 'enabled can only be given when saving a new automation; use set_enabled to turn a saved one on or off')
       const preview = makePreview(req.graph)
       if (!preview.valid) return fail('validation', preview)
       const document: VisualDocument = {
@@ -177,7 +179,7 @@ export function visualFixture(
         catalogGeneration: 'saved-fixture',
         activeRevision: controls.active ? req.expectedRevision + 1 : null,
         automationId: `visual:${req.id}`,
-        enabled: documents.get(req.id)?.enabled ?? true,
+        enabled: documents.get(req.id)?.enabled ?? req.enabled ?? true,
         savedUtc: new Date().toISOString(),
       }
       documents.set(req.id, document)

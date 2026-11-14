@@ -362,7 +362,7 @@ export function VisualEditor(props: {
           admin() ? (
             <div class="hs-topbar__run-group">
               <Show when={session.document()}>
-                <EnabledSwitch class="hs-topbar__enabled" name={graph().name} enabled={enabled() ?? true} disabled={busy() || switching()} onChange={wanted => void toggleEnabled(wanted)} />
+                <EnabledSwitch class="hs-topbar__enabled" name={graph().name} enabled={enabled() ?? true} disabled={busy()} busy={switching()} onChange={wanted => void toggleEnabled(wanted)} />
               </Show>
               <RunNowButton document={session.document()} catalog={session.catalog()} names={names()} unavailable={runUnavailable()} dirty={session.dirty()} busy={busy()}
                 onNotice={showRunNotice} />

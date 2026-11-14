@@ -41,23 +41,64 @@ class UserScriptClass
 
     internal async Task SubscribeAsync()
     {
-        foreach (var action in _actions.Values)
+        await Script.NativeSwitch.WaitAsync();
+        try
         {
-            foreach (var entity in action.Entities ?? [])
-                Script.ScriptManager.TrackEntityCall(entity.EntityId, this, action.Method);
-            var lifetime = Script.LifetimeToken;
-            var triggers = action.Triggers ?? [];
-            if (triggers.Length > 0)
+            // An automation that is off never attaches its Home Assistant triggers; turning it on does (AttachNativeAsync).
+            var attach = Script.Enabled;
+            foreach (var action in _actions.Values)
             {
-                var lease = await PyInterop.RegisterHaTriggersAsync(Script.Generation,
-                    System.Text.Json.JsonSerializer.Serialize(triggers), payload => RunNative(action.Method, lifetime, payload));
-                _nativeLeases.Add(lease);
-                lifetime.ThrowIfCancellationRequested();
+                foreach (var entity in action.Entities ?? [])
+                    Script.ScriptManager.TrackEntityCall(entity.EntityId, this, action.Method);
+                var lifetime = Script.LifetimeToken;
+                if (attach && (action.Triggers ?? []).Length > 0)
+                {
+                    _nativeLeases.Add(await RegisterNativeAsync(action, lifetime));
+                    lifetime.ThrowIfCancellationRequested();
+                }
+                foreach (var schedule in action.Schedules ?? [])
+                    _scheduleUnsubs.Add(PyInterop.RegisterSchedule(System.Text.Json.JsonSerializer.Serialize(schedule),
+                        planned => lifetime.IsCancellationRequested ? Task.CompletedTask : RunSchedule(action.Method, schedule.Id, planned)));
             }
-            foreach (var schedule in action.Schedules ?? [])
-                _scheduleUnsubs.Add(PyInterop.RegisterSchedule(System.Text.Json.JsonSerializer.Serialize(schedule),
-                    planned => lifetime.IsCancellationRequested ? Task.CompletedTask : RunSchedule(action.Method, schedule.Id, planned)));
+            _nativeAttached = attach;
         }
+        finally { Script.NativeSwitch.Release(); }
+    }
+
+    Task<HomeAssistantTriggerLease> RegisterNativeAsync(AutomationAction action, CancellationToken lifetime) =>
+        PyInterop.RegisterHaTriggersAsync(Script.Generation,
+            System.Text.Json.JsonSerializer.Serialize(action.Triggers), payload => RunNative(action.Method, lifetime, payload));
+
+    /// <summary>Whether this class's Home Assistant triggers are attached; read and written with <see cref="UserScript.NativeSwitch"/> held.</summary>
+    bool _nativeAttached;
+
+    /// <summary>
+    /// Attaches the Home Assistant triggers of an automation turned on, once: a second call while attached does nothing.
+    /// A registration that fails removes the ones this call made, so a later attach starts clean. Call with
+    /// <see cref="UserScript.NativeSwitch"/> held.
+    /// </summary>
+    internal async Task AttachNativeAsync()
+    {
+        if (_nativeAttached) return;
+        var lifetime = Script.LifetimeToken;
+        try
+        {
+            foreach (var action in _actions.Values)
+            {
+                if ((action.Triggers ?? []).Length == 0) continue;
+                if (lifetime.IsCancellationRequested) return;
+                _nativeLeases.Add(await RegisterNativeAsync(action, lifetime));
+            }
+        }
+        catch { await UnsubscribeNativeAsync(); throw; }
+        _nativeAttached = true;
+    }
+
+    /// <summary>Removes the Home Assistant triggers of an automation turned off. Call with <see cref="UserScript.NativeSwitch"/> held.</summary>
+    internal Task DetachNativeAsync()
+    {
+        _nativeAttached = false;
+        return UnsubscribeNativeAsync();
     }
 
     internal void UnsubscribeSchedules()

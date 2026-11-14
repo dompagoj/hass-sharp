@@ -30,7 +30,10 @@ export function AutomationCard(props: CardActions & {
   names?: SummaryNames
   now: number
   admin: boolean
+  /** Deleting it: its actions wait (focus is in the confirmation dialog). */
   busy?: boolean
+  /** Its own switch request is in flight: the switch ignores presses but keeps focus; Run now and the menu stay usable. */
+  switching?: boolean
 }) {
   const describedBy = createUniqueId()
   const name = () => props.item.outline.name
@@ -84,7 +87,7 @@ export function AutomationCard(props: CardActions & {
       </div>
       <Show when={props.admin}>
         <div class="hs-home-card__actions">
-          <EnabledSwitch name={name()} enabled={props.item.enabled} disabled={props.busy} onChange={props.onToggle} />
+          <EnabledSwitch name={name()} enabled={props.item.enabled} disabled={props.busy} busy={props.switching} onChange={props.onToggle} />
           <RunNowButton
             document={document()}
             catalog={nodeCatalog}

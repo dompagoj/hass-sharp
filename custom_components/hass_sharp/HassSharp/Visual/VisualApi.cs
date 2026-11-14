@@ -47,6 +47,8 @@ public partial class HassSharpManager
         compiled.DesignatedRootType = "VisualAutomation";
         compiled.VisualRevision = document.Revision;
         compiled.CatalogGeneration = document.CatalogGeneration;
+        // The switch is read here, at compile time. That is safe only because every compile/activate path (Init, save, the
+        // library rebuild) and set_enabled hold _visualGate, so set_enabled cannot land between this read and the load.
         compiled.Enabled = document.Enabled;
         // What a run records: its trigger node, and the graph/catalog snapshot a trace is viewed against.
         compiled.VisualId = document.Id;
@@ -105,7 +107,8 @@ public partial class HassSharpManager
                     var enabled = request["enabled"]?.GetValue<bool>() ?? throw new ArgumentException("enabled is required");
                     var document = store.SetEnabled(id, enabled);
                     // The loaded script keeps running its manual runs; only its own triggers and startup run follow the switch.
-                    _userScriptManager.SetEnabled(VisualRuntimePath(id), document.Enabled);
+                    // Stored first, then applied; a failure while cancelling runs or detaching triggers is logged, not returned.
+                    await _userScriptManager.SetEnabledAsync(VisualRuntimePath(id), document.Enabled);
                     result = new { id, enabled = document.Enabled };
                 }
                 else
@@ -113,7 +116,9 @@ public partial class HassSharpManager
                     var revision = request["expectedRevision"]!.GetValue<long>();
                     if (operation == "save")
                     {
-                        var document = store.Save(id, Graph(), revision, authoring, libraries.Generation);
+                        // A new automation may be saved turned off (a duplicate is): stored before activation, so it never runs on.
+                        bool? enabled = request["enabled"] is JsonNode flag ? flag.GetValue<bool>() : null;
+                        var document = store.Save(id, Graph(), revision, authoring, libraries.Generation, enabled);
                         result = await ActivateVisualDocument(document);
                     }
                     else if (operation == "delete")

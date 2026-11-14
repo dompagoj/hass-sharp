@@ -32,11 +32,11 @@
 /* Status is always spelled out; the marker's colour and shape only reinforce it. */
 .hs-app .hs-run-status { grid-area: status; display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; white-space: nowrap; }
 .hs-app .hs-run-status::before { content: ''; flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--hs-muted); }
-.hs-app .hs-run-status--succeeded::before { background: var(--success-color, #258350); }
+.hs-app .hs-run-status--succeeded::before { background: var(--hs-run-succeeded); }
 .hs-app .hs-run-status--failed, .hs-app .hs-run-status--interrupted { color: var(--hs-danger); }
 .hs-app .hs-run-status--failed::before, .hs-app .hs-run-status--interrupted::before { background: var(--hs-danger); }
 .hs-app .hs-run-status--interrupted::before { border-radius: 2px; transform: rotate(45deg) scale(.85); }
-.hs-app .hs-run-status--cancelled::before { background: var(--warning-color, #c27c0e); }
+.hs-app .hs-run-status--cancelled::before { background: var(--hs-run-cancelled); }
 .hs-app .hs-run-status--stopped::before { border-radius: 2px; }
 .hs-app .hs-run-status--skipped::before { background: transparent; border: 2px solid var(--hs-muted); }
 .hs-app .hs-run-status--running::before { background: var(--hs-accent); animation: hs-run-pulse 1.4s ease-in-out infinite; }

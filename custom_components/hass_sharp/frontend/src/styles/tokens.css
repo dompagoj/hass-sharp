@@ -51,7 +51,7 @@
  --hs-trace-running: color-mix(in oklab, #2f86d6 var(--hs-hue-mix), var(--hs-text, #202535));
  --hs-trace-stopped: color-mix(in oklab, #6c778a var(--hs-hue-mix), var(--hs-text, #202535));
  --hs-warning: color-mix(in oklab, #c27a00 85%, var(--hs-text, #202535));
- /* Run statuses as the run history draws them (runs.css), for the automations page's run dots. */
+ /* Run status colours, shared by the run history (runs.css) and the automations page's run dots. */
  --hs-run-succeeded: var(--success-color, #258350);
  --hs-run-cancelled: var(--warning-color, #c27c0e);
  --hs-motion: 140ms;

@@ -16,7 +16,7 @@ import { AutomationCard } from '../automations/AutomationCard'
 import { GraphThumbnail } from '../automations/GraphThumbnail'
 import { homeQueryKey, setAutomationEnabled } from '../automations/enabled'
 import {
-  filters, homeSummary, isRunning, loadPreferences, matchesSearch, outlineGraph, passes, savePreferences, sortAutomations, sorts, startOfToday,
+  filters, homeSummary, loadPreferences, pollInterval, matchesSearch, outlineGraph, passes, savePreferences, sortAutomations, sorts, startOfToday,
   triggerSummaries, type Filter, type Sort,
 } from '../automations/model'
 
@@ -54,12 +54,14 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
     } finally { setRefreshing(false) }
   }
 
-  // ---- The list: one request for every card (outlines, health and recent runs); it polls while a run is going.
+  // ---- The list: one request for every card (outlines, health and recent runs). While a run is going it is read
+  // again (see pollInterval), only while the page is visible: the query pauses its interval in a background tab.
   const home = useQuery(() => ({
     queryKey: [...homeQueryKey],
     queryFn: () => visual.home(startOfToday()),
     staleTime: 0,
-    refetchInterval: query => (query.state.data?.some(isRunning) ? 3000 : false),
+    refetchInterval: query => pollInterval(query.state.data ?? [], Date.now()),
+    refetchIntervalInBackground: false,
   }))
   const registry = useRegistry()
   const names = () => (registry.isSuccess ? registry.data : undefined)
@@ -157,9 +159,10 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
     try {
       const document = await visual.read(item.id)
       const id = `visual-${createUuid()}`, copyName = `${document.graph.name} (copy)`
-      await visual.save(id, { ...document.graph, name: copyName }, 0)
+      // The copy starts off, so it does not run its startup trigger or answer the original's triggers a second time.
+      await visual.save(id, { ...document.graph, name: copyName }, 0, { enabled: false })
       await refresh()
-      showNotice({ text: `Duplicated as “${copyName}”. It is on.` })
+      showNotice({ text: `Copy of ${document.graph.name} was created turned off.` })
       focusCard(id)
     } catch (error) {
       showNotice({ text: `Could not duplicate ${item.outline.name}: ${visualError(error)}`, error: true })
@@ -273,7 +276,8 @@ export const AutomationsListView = (_props: RouteSectionProps) => {
                     names={names()}
                     now={now()}
                     admin={admin()}
-                    busy={deleting() || toggling().has(id)}
+                    busy={deleting()}
+                    switching={toggling().has(id)}
                     onToggle={enabled => void toggle(item(), enabled)}
                     onRename={() => openRename(item())}
                     onDuplicate={() => void duplicate(item())}

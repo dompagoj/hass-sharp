@@ -5,10 +5,14 @@ class UserScript
     internal bool Active { get; set; } = true;
     volatile bool _enabled = true;
     /// <summary>
-    /// Off: the script stays loaded and subscribed, so a manual run still works, but its entity, Home Assistant and
-    /// schedule triggers and its startup run are dropped (a schedule occurrence that passes is skipped, not caught up).
+    /// Off: the script stays loaded, so a manual run still works, but its Home Assistant triggers are detached (never
+    /// attached when it loads off), and its entity and schedule triggers and its startup run are dropped (a schedule
+    /// occurrence that passes is skipped, not caught up).
     /// </summary>
     internal bool Enabled { get => _enabled; init => _enabled = value; }
+
+    /// <summary>Held while Home Assistant triggers are attached or detached, so they are attached at most once.</summary>
+    internal SemaphoreSlim NativeSwitch { get; } = new(1, 1);
 
     /// <summary>The runs started since the automation was last turned off; turning it off again cancels them.</summary>
     internal sealed class RunScope
@@ -21,19 +25,34 @@ class UserScript
     volatile RunScope _runs = new();
     internal RunScope Runs => _runs;
 
-    /// <summary>Turns the automation on or off without reloading it; turning it off cancels its runs in progress.</summary>
-    internal void SetEnabled(bool enabled)
+    /// <summary>
+    /// Turns the automation on or off without reloading it. The switch is applied first (under the activation gate, so a
+    /// trigger sees either on or off); then runs in progress are cancelled and Home Assistant triggers detached or
+    /// attached. Errors in that follow-up are logged: they do not undo or fail the switch.
+    /// </summary>
+    internal async Task SetEnabledAsync(bool enabled)
     {
-        RunScope cancelled;
+        RunScope? cancelled = null;
         lock (ScriptManager.ActivationGate)
         {
             if (_enabled == enabled) return;
             _enabled = enabled;
-            if (enabled) return;
-            cancelled = _runs;
-            _runs = new();
+            if (!enabled) { cancelled = _runs; _runs = new(); }
         }
-        cancelled.Cancel(CancelReasons.TurnedOff);
+        // A cancellation callback (user code can register one) may throw; every callback has still run.
+        try { cancelled?.Cancel(CancelReasons.TurnedOff); }
+        catch (Exception error) { Logger.Error($"Turning {CompiledScript.FileName} off: a cancellation callback failed: {error}"); }
+        await NativeSwitch.WaitAsync();
+        try
+        {
+            if (LifetimeToken.IsCancellationRequested) return;
+            // The latest switch wins when calls overlap; attaching twice does nothing.
+            var on = _enabled;
+            foreach (var klass in Classes)
+                try { if (on) await klass.AttachNativeAsync(); else await klass.DetachNativeAsync(); }
+                catch (Exception error) { Logger.Error($"Turning {CompiledScript.FileName} {(on ? "on" : "off")}: Home Assistant triggers could not be {(on ? "attached" : "detached")}: {error}"); }
+        }
+        finally { NativeSwitch.Release(); }
     }
     internal bool Invalidated { get; private set; }
     internal string Generation { get; } = Guid.NewGuid().ToString("N");
@@ -123,9 +142,15 @@ class UserScript
         try { await _preparation; } catch (Exception error) { errors.Add(error); }
         try { ScriptManager.SyncRunner.Clear(this); } catch (Exception error) { errors.Add(error); }
         try { ScriptManager.DependencyTracking.RemoveScript(this); } catch (Exception error) { errors.Add(error); }
-        var nativeCleanup = Task.WhenAll(Classes.Select(klass => klass.UnsubscribeNativeAsync()));
-        try { await nativeCleanup; }
-        catch (Exception error) { errors.Add(nativeCleanup.Exception ?? error); }
+        // An attach in progress (the automation being turned on) finishes first, so its leases are removed here too.
+        await NativeSwitch.WaitAsync();
+        try
+        {
+            var nativeCleanup = Task.WhenAll(Classes.Select(klass => klass.UnsubscribeNativeAsync()));
+            try { await nativeCleanup; }
+            catch (Exception error) { errors.Add(nativeCleanup.Exception ?? error); }
+        }
+        finally { NativeSwitch.Release(); }
         if (errors.Count > 0) throw new AggregateException(errors);
     }
 

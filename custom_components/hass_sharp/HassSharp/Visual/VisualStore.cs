@@ -74,17 +74,21 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
             return documents.ToArray();
         }
     }
-    public VisualDocument Save(string id, JsonObject graph, long expectedRevision, VisualCatalogSnapshot? catalog = null, string? catalogGeneration = null)
+    /// <param name="enabled">Only for a new document: whether it starts on (the default) or off, written before anything
+    /// activates it. An existing document keeps its own; <see cref="SetEnabled"/> changes it.</param>
+    public VisualDocument Save(string id, JsonObject graph, long expectedRevision, VisualCatalogSnapshot? catalog = null, string? catalogGeneration = null, bool? enabled = null)
     {
         lock (Gate)
         {
             var path = FilePath(id); var old = Read(id);
             if ((old?.Revision ?? 0) != expectedRevision) throw new VisualConflictException();
+            if (old != null && enabled != null)
+                throw new ArgumentException("enabled can only be given when saving a new automation; use set_enabled to turn a saved one on or off");
             var snapshot = VisualGraphContract.FillMissingLayout(graph);
             var preview = catalog == null ? generator.Preview(snapshot) : generator.Preview(snapshot, catalog);
             if (!preview.Valid) throw new VisualValidationException(preview);
             var document = new VisualDocument(1, id, checked(expectedRevision + 1), snapshot, preview.Source, preview.SourceMap)
-                { CatalogGeneration = catalogGeneration, EmbeddedCatalog = preview.EmbeddedCatalog, Enabled = old?.Enabled ?? true, SavedUtc = DateTime.UtcNow };
+                { CatalogGeneration = catalogGeneration, EmbeddedCatalog = preview.EmbeddedCatalog, Enabled = old?.Enabled ?? enabled ?? true, SavedUtc = DateTime.UtcNow };
             Directory.CreateDirectory(directory);
             Write(path, document);
             return document;

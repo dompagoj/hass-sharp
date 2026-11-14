@@ -274,15 +274,21 @@ public sealed class RunHistoryStore
             return result;
         }
     }
+    // Bounded per automation, all through the (AutomationId, ReceivedUtc, RunId) index: the newest $limit run ids (a
+    // covered descending range, then a primary-key lookup each), today's count (a covered range), the failed count (the
+    // range since $failed, reading Status for those rows only) and the newest time (one index seek). Older runs are not read.
     internal const string RecentSql = """
-        SELECT AutomationId, RunId, Status, StartUtc, DurationMs, Today, Failed, Last FROM (
-          SELECT AutomationId, RunId, Status, StartUtc, DurationMs,
-            ROW_NUMBER() OVER (PARTITION BY AutomationId ORDER BY ReceivedUtc DESC, RunId DESC) AS Position,
-            SUM(ReceivedUtc >= $today) OVER (PARTITION BY AutomationId) AS Today,
-            SUM(Status IN ('Failed', 'Interrupted') AND ReceivedUtc >= $failed) OVER (PARTITION BY AutomationId) AS Failed,
-            MAX(ReceivedUtc) OVER (PARTITION BY AutomationId) AS Last
-          FROM Runs WHERE AutomationId IN (SELECT value FROM json_each($ids)))
-        WHERE Position <= $limit ORDER BY AutomationId, Position
+        WITH Wanted AS (SELECT DISTINCT value AS AutomationId FROM json_each($ids)),
+        Counts AS (
+          SELECT w.AutomationId,
+            (SELECT COUNT(*) FROM Runs c WHERE c.AutomationId = w.AutomationId AND c.ReceivedUtc >= $today) AS Today,
+            (SELECT COUNT(*) FROM Runs c WHERE c.AutomationId = w.AutomationId AND c.ReceivedUtc >= $failed AND c.Status IN ('Failed', 'Interrupted')) AS Failed,
+            (SELECT MAX(c.ReceivedUtc) FROM Runs c WHERE c.AutomationId = w.AutomationId) AS Last
+          FROM Wanted w)
+        SELECT n.AutomationId, r.RunId, r.Status, r.StartUtc, r.DurationMs, n.Today, n.Failed, n.Last
+        FROM Counts n JOIN Runs r ON r.RunId IN (
+          SELECT t.RunId FROM Runs t WHERE t.AutomationId = n.AutomationId ORDER BY t.ReceivedUtc DESC, t.RunId DESC LIMIT $limit)
+        ORDER BY n.AutomationId, r.ReceivedUtc DESC, r.RunId DESC
         """;
     static DateTime Utc(DateTime value) => DateTime.SpecifyKind(value, DateTimeKind.Utc);
     public InvocationRecord? ReadRun(string runId)
