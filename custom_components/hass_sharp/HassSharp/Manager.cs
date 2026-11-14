@@ -11,7 +11,7 @@ public partial class HassSharpManager
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _loadErrors = new();
     // How many problems a load error names, when it names them (compile errors, graph errors); read only beside _loadErrors.
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _loadProblems = new();
-    // The load errors a later service push may cure, the only ones it retries: all but a graph error with no line of code.
+    // The load errors a later service or entity push may cure, the only ones it retries: all but a graph error with no line of code.
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _curableLoadErrors = new();
     void RecordLoadError(string path, Exception error)
     {
@@ -42,6 +42,7 @@ public partial class HassSharpManager
         _compiler = new(_diagnosticsProvider);
         _history = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "runs.db"));
         _serviceCallSchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "service_schema.json"));
+        _entitySchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "entity_schema.json"), "entity");
         _userScriptManager = new() { History = _history };
     }
 
@@ -56,6 +57,9 @@ public partial class HassSharpManager
             // Whatever goes wrong there leaves the previous (or empty) typed calls: setup goes on without them.
             try { RefreshServiceCalls(); }
             catch (Exception ex) { try { Logger.Error($"Cannot generate the typed service calls; node code compiles without the new ones: {ex}"); } catch { } }
+            // The entity classes alike: the persisted schema keeps node code that names them compiling.
+            try { RefreshEntities(); }
+            catch (Exception ex) { try { Logger.Error($"Cannot generate the entity classes; node code compiles without the new ones: {ex}"); } catch { } }
             var libraries = SavedLibraries();
             _loadErrors.Clear(); _curableLoadErrors.Clear();
             ReportLegacyUserScripts();
@@ -262,15 +266,29 @@ public partial class HassSharpManager
             try { Logger.Error($"Ignoring Home Assistant service descriptions, keeping the previous ones: {ex.Message}"); } catch { }
             return;
         }
-        for (var current = Volatile.Read(ref _serviceDescriptions); current.Sequence < sequence;)
-        {
-            var seen = Interlocked.CompareExchange(ref _serviceDescriptions, next, current);
-            if (ReferenceEquals(seen, current)) break;
-            current = seen;
-        }
+        Publish(ref _serviceDescriptions, next, state => state.Sequence);
         try { Logger.Debug($"Received {next.Catalog.Count} Home Assistant service descriptions"); } catch { }
         try { if (RefreshServiceCalls()) RetryFailedLoads(); }
         catch (Exception ex) { try { Logger.Error($"Cannot regenerate the typed service calls: {ex}"); } catch { } }
+    }
+
+    /// <summary>Swaps <paramref name="next"/> in unless a later push (by <paramref name="sequence"/>) is there already.</summary>
+    static void Publish<T>(ref T state, T next, Func<T, long> sequence) where T : class
+    {
+        for (var current = Volatile.Read(ref state); sequence(current) < sequence(next);)
+        {
+            var seen = Interlocked.CompareExchange(ref state, next, current);
+            if (ReferenceEquals(seen, current)) break;
+            current = seen;
+        }
+    }
+
+    /// <summary>Logs, once per schema, that generated code did not compile: left out in part, or not used at all.</summary>
+    static void ReportRejected(bool accepted, IReadOnlyList<string> excluded, IReadOnlyList<string> errors, Func<string, string> leftOut, string rejected)
+    {
+        if (accepted && excluded.Count == 0) return;
+        try { Logger.Warn((accepted ? leftOut(string.Join(", ", excluded)) : rejected) + ". This is a HassSharp bug; please report it with these errors:\n" + string.Join("\n", errors)); }
+        catch { }
     }
 
     readonly ServiceCallSchema _serviceCallSchema;
@@ -295,15 +313,61 @@ public partial class HassSharpManager
             if (_serviceCallSchema.Update(live.Catalog, live.Started) is not { } services) return false;
             var result = _diagnosticsProvider.UseServiceSchema(services);
             if (result.Accepted) _serviceCallSchema.Accept(result.Services);
-            if (!result.Accepted || result.Excluded.Count > 0)
-                try
-                {
-                    Logger.Warn((result.Accepted
-                        ? $"The typed service calls of {string.Join(", ", result.Excluded)} do not compile and were left out; node code cannot call them by name"
-                        : "The typed service calls of Home Assistant's services do not compile; node code keeps the previous ones") +
-                        ". This is a HassSharp bug; please report it with these errors:\n" + string.Join("\n", result.Errors));
-                }
-                catch { }
+            ReportRejected(result.Accepted, result.Excluded, result.Errors,
+                excluded => $"The typed service calls of {excluded} do not compile and were left out; node code cannot call them by name",
+                "The typed service calls of Home Assistant's services do not compile; node code keeps the previous ones");
+            return result.Grew;
+        }
+    }
+
+    sealed record EntityDescriptionsState(long Sequence, EntitySchemaCatalog Catalog, bool Started);
+    EntityDescriptionsState _entityDescriptions = new(0, EntitySchemaCatalog.Empty, false);
+    long _entityDescriptionsSequence;
+
+    /// <summary>
+    /// Receives Home Assistant's entity components (<c>{"domains": [...], "translations": {...}}</c>) from a Python
+    /// executor thread, at any time, as <see cref="SetServiceDescriptions(string, bool)"/> receives the services: a later
+    /// push always wins, malformed input is logged and the previous schema stays, and it never throws. Then regenerates
+    /// the entity classes (<see cref="RefreshEntities"/>).
+    /// </summary>
+    /// <param name="started">Whether Home Assistant has finished starting: only then may a domain missing from this push
+    /// be dropped from the entity classes.</param>
+    public void SetEntityDescriptions(string json, bool started = false)
+    {
+        var sequence = Interlocked.Increment(ref _entityDescriptionsSequence);
+        EntityDescriptionsState next;
+        try { next = new(sequence, EntitySchemaCatalog.Parse(json), started); }
+        catch (Exception ex)
+        {
+            try { Logger.Error($"Ignoring Home Assistant's entity components, keeping the previous ones: {ex.Message}"); } catch { }
+            return;
+        }
+        Publish(ref _entityDescriptions, next, state => state.Sequence);
+        try { Logger.Debug($"Received the states and attributes of {next.Catalog.Count} Home Assistant entity domains"); } catch { }
+        try { if (RefreshEntities()) RetryFailedLoads(); }
+        catch (Exception ex) { try { Logger.Error($"Cannot regenerate the entity classes: {ex}"); } catch { } }
+    }
+
+    readonly ServiceCallSchema _entitySchema;
+    readonly object _entitiesGate = new();
+
+    /// <summary>
+    /// Regenerates the entity classes from the live schema united with the one they were last generated from, as
+    /// <see cref="RefreshServiceCalls"/> regenerates the typed calls (persisted, so Init compiles node code that names a
+    /// class before Home Assistant has pushed them). Compilations made earlier keep the classes they were compiled against.
+    /// </summary>
+    /// <returns>Whether the classes every compilation gets were replaced with ones that add or change a domain.</returns>
+    bool RefreshEntities()
+    {
+        lock (_entitiesGate)
+        {
+            var live = Volatile.Read(ref _entityDescriptions);
+            if (_entitySchema.Update(live.Catalog.Items, live.Started) is not { } domains) return false;
+            var result = _diagnosticsProvider.UseEntitySchema(domains);
+            if (result.Accepted) _entitySchema.Accept(result.Domains);
+            ReportRejected(result.Accepted, result.Excluded, result.Errors,
+                excluded => $"The entity classes of {excluded} do not compile and were left out; node code cannot name them",
+                "The entity classes of Home Assistant's domains do not compile; node code keeps the previous ones");
             return result.Grew;
         }
     }
@@ -312,8 +376,9 @@ public partial class HassSharpManager
     Task _retry = Task.CompletedTask;
 
     /// <summary>
-    /// After the typed service calls changed to add or change a service: tries again to activate each saved automation whose last load failed and
-    /// that is not loaded (one that did not compile against a service that was missing, or whose Home Assistant trigger
+    /// After the typed service calls changed to add or change a service, or the entity classes to add or change a domain:
+    /// tries again to activate each saved automation whose last load failed and that is not loaded (one that did not
+    /// compile against a service or an entity class that was missing, or whose Home Assistant trigger
     /// could not attach before its integration was set up, say), except a graph error naming no line of code. Loaded
     /// automations are left alone. Runs after anything queued before it, under the same gate as every other activation.
     /// </summary>
@@ -352,14 +417,14 @@ public partial class HassSharpManager
                         try { store.RefreshDerived(document.Id, document.Revision, preview.Source, preview.SourceMap, libraries.Generation); }
                         catch (Exception ex) { Logger.Error($"Cannot refresh stored source of visual document {document.Id}: {ex}"); }
                         await ActivateVisualDocument(current);
-                        if (!_loadErrors.ContainsKey(path)) Logger.Info($"Visual document {document.Id} loaded now that the typed service calls changed");
+                        if (!_loadErrors.ContainsKey(path)) Logger.Info($"Visual document {document.Id} loaded now that the typed service calls or entity classes changed");
                     }
                     catch (Exception ex) { RecordLoadError(path, ex); }
                 }
             }
             finally { _visualGate.Release(); }
         }
-        catch (Exception ex) { try { Logger.Error($"Cannot retry loading automations after the typed service calls changed: {ex}"); } catch { } }
+        catch (Exception ex) { try { Logger.Error($"Cannot retry loading automations after the typed service calls or entity classes changed: {ex}"); } catch { } }
     }
 
     // An entry unload is a reload or removal unless Home Assistant is stopping; runs it cancels record which.

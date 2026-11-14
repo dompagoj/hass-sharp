@@ -380,7 +380,7 @@ static class ServiceCallTests
         Console.WriteLine("PASS service calls: an entity trigger through the plain reference subscribes, runs with its payload and label, and runs manually");
     }
 
-    static DiagnosticsProvider ProviderOf(HassSharpManager api) =>
+    internal static DiagnosticsProvider ProviderOf(HassSharpManager api) =>
         (DiagnosticsProvider)typeof(HassSharpManager).GetField("_diagnosticsProvider", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(api)!;
 
     // Schema text is untrusted: line breaks (\n, \r, U+0085, U+2028, U+2029), control characters and markup in a key, a
@@ -561,7 +561,7 @@ static class ServiceCallTests
     }
 
     /// <summary>Removes a test's directory, trying again for a while when a file is still being written into it.</summary>
-    static async Task DeleteWhenQuiet(string root)
+    internal static async Task DeleteWhenQuiet(string root)
     {
         for (var attempt = 0; ; attempt++)
             try { Directory.Delete(root, true); return; }
@@ -818,6 +818,24 @@ static class ServiceCallTests
             var back = (await Library(new { operation = "catalog" }))["result"]!;
             Check(back["valid"]!.GetValue<bool>() && back["generation"]!.GetValue<string>() == before["generation"]!.GetValue<string>() && dropped["generation"]!.GetValue<string>() == before["generation"]!.GetValue<string>()
                 && JsonNode.DeepEquals(back["catalog"], before["catalog"]), "the catalog changed under an unchanged generation");
+
+            // A pin of an entity class: the generation follows the entity classes, never the typed calls.
+            api.SetEntityDescriptions(Fixture("ha-entity-components.json"), started: true);
+            var lit = await Library(new { operation = "save", id = "lit", name = "Lit", expectedRevision = 0, source = """
+                public static class Lit
+                {
+                    [Node("Is on")]
+                    public static bool IsOn(LightEntity light) => light.State == LightState.On;
+                }
+                """ });
+            Check(lit["ok"]!.GetValue<bool>(), "library with an entity class pin: " + lit.ToJsonString());
+            var withEntity = (await Library(new { operation = "catalog" }))["result"]!["generation"]!.GetValue<string>();
+            api.SetServiceDescriptions(Calls[..^1] + ""","extra":{"thing":{"fields":{}}}}""", started: true);
+            Check((await Library(new { operation = "catalog" }))["result"]!["generation"]!.GetValue<string>() == withEntity, "a service push changed the generation of a library with an entity class pin");
+            var entities = JsonNode.Parse(Fixture("ha-entity-components.json"))!; entities["domains"]!.AsArray().Add("made_up");
+            api.SetEntityDescriptions(entities.ToJsonString(), started: true);
+            Check((await Library(new { operation = "catalog" }))["result"]!["generation"]!.GetValue<string>() != withEntity, "an entity push kept the generation of a library with an entity class pin");
+            api.SetServiceDescriptions(Calls, started: true);
 
             // A pin of a generated type: the catalog follows the typed calls, and so does the generation.
             var typed = await Library(new { operation = "save", id = "typed", name = "Typed", expectedRevision = 0, source = """

@@ -20,14 +20,20 @@ public partial class HassSharpManager
     /// (a doc comment's <c>see</c> adds no text), and a library that calls a service that is gone does not compile, so
     /// the reply says <c>valid: false</c>, which no editor caches.
     /// </para>
+    /// <para>
+    /// The entity classes the libraries were compiled against are always part of it, whether or not the catalog has one of
+    /// their types; a service push leaves them as they are.
+    /// </para>
     /// </summary>
     /// <param name="preview">The libraries compiled; without it, the generation of the sources alone.</param>
     string LibraryWorkspaceGeneration(IEnumerable<NodeLibraryDocument> documents, NodeLibraryPreview? preview = null)
     {
         var content = NodeLibraryStore.Generation(documents);
-        // The services assembly's name is a hash of its source.
+        // Each generated assembly's name is a hash of its source.
         if (preview?.Snapshot.Types.Values.Select(t => t.Symbol.OriginalDefinition.ContainingAssembly?.Name).FirstOrDefault(n => n?.StartsWith(GeneratedServiceCalls.AssemblyPrefix, StringComparison.Ordinal) == true) is { } services)
             content += "\0services\0" + services;
+        if (preview?.Snapshot.Compilation?.ReferencedAssemblyNames.FirstOrDefault(a => a.Name.StartsWith(GeneratedEntities.AssemblyPrefix, StringComparison.Ordinal)) is { } entities)
+            content += "\0entities\0" + entities.Name;
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
     }
 

@@ -4,8 +4,9 @@ using System.Runtime.Loader;
 namespace HassSharp;
 
 /// <summary>
-/// Collectible load context for compiled automations, one per automation. The typed service calls it was compiled
-/// against are loaded into it, from their bytes, the first time its code needs them; they go when it is unloaded.
+/// Collectible load context for compiled automations, one per automation. The typed service calls and the entity classes
+/// it was compiled against are loaded into it, from their bytes, the first time its code needs each; they go when it is
+/// unloaded.
 /// </summary>
 public sealed class ScriptLoadContext : AssemblyLoadContext
 {
@@ -13,18 +14,18 @@ public sealed class ScriptLoadContext : AssemblyLoadContext
 
     readonly AssemblyDependencyResolver _resolver = new(HassSharpAssembly.Location);
 
-    readonly string? _serviceCallsName;
-    readonly byte[]? _serviceCallsImage;
+    // The generated assemblies by name: only their names and bytes are kept, not the compiler's metadata.
+    readonly (string Name, byte[] Image)[] _generated = [];
 
     public ScriptLoadContext() : base(true)
     {
     }
 
-    /// <param name="serviceCalls">The typed service calls the automation was compiled against: only their name and bytes
-    /// are kept, not the compiler's metadata.</param>
+    /// <param name="serviceCalls">The generated code the automation was compiled against: the typed service calls and the
+    /// entity classes they carry.</param>
     public ScriptLoadContext(GeneratedServiceCalls serviceCalls) : base(true)
     {
-        (_serviceCallsName, _serviceCallsImage) = (serviceCalls.AssemblyName, serviceCalls.Image);
+        _generated = [(serviceCalls.AssemblyName, serviceCalls.Image), (serviceCalls.Entities.AssemblyName, serviceCalls.Entities.Image)];
     }
 
     protected override Assembly? Load(AssemblyName assemblyName)
@@ -36,11 +37,12 @@ public sealed class ScriptLoadContext : AssemblyLoadContext
             return HassSharpAssembly;
         }
 
-        if (_serviceCallsImage != null && assemblyName.Name == _serviceCallsName)
-        {
-            using var image = new MemoryStream(_serviceCallsImage, writable: false);
-            return LoadFromStream(image);
-        }
+        foreach (var (name, bytes) in _generated)
+            if (assemblyName.Name == name)
+            {
+                using var image = new MemoryStream(bytes, writable: false);
+                return LoadFromStream(image);
+            }
 
         var path = _resolver.ResolveAssemblyToPath(assemblyName);
         return path != null ? LoadFromAssemblyPath(path) : null;

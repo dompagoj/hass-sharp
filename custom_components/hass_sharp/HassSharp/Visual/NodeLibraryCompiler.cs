@@ -111,8 +111,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         }
         var syntaxTrees = trees.Keys.Concat(customTrees.Keys).ToList();
         syntaxTrees.Add(CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings, cancellationToken: cancellationToken));
-        // The typed service calls as their built assembly: nothing of them is bound again here.
-        var compilation = CSharpCompilation.Create("HassSharpNodeLibrary", syntaxTrees, FrameworkReferences().Add((serviceCalls ?? diagnostics.ServiceCalls()).Reference),
+        // The typed service calls and the entity classes as their built assemblies: nothing of them is bound again here.
+        var compilation = CSharpCompilation.Create("HassSharpNodeLibrary", syntaxTrees, FrameworkReferences().AddRange((serviceCalls ?? diagnostics.ServiceCalls()).References),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true, nullableContextOptions: NullableContextOptions.Enable));
         void Report(Location location, string message, int severity = 3)
         {

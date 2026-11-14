@@ -50,7 +50,7 @@ public class CodeCompiler(
             CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings),
         ];
 
-        var references = NodeLibraryCompiler.FrameworkReferences().Add(services.Reference);
+        var references = NodeLibraryCompiler.FrameworkReferences().AddRange(services.References);
 
         var compilation = CSharpCompilation.Create(
             assemblyName: "Automation_" + Guid.NewGuid(),
