@@ -690,6 +690,16 @@ it('shows a run of value nodes: their cards with status and values, "Not used" f
   expect(nodeSummaryOf(graph, 'say')).toBe('Log value')
 })
 
+it('words a True/False value on the card and the peek bar as the panel and the trace do (live defect D3)', () => {
+  const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
+  const compare = (right: boolean) => ({ id: 'cmp', kind: 'compare', config: { operator: 'gt', left: lit('number', 3), right: lit('boolean', right) } })
+  for (const [right, shown] of [[true, 'True'], [false, 'False']] as const) {
+    const graph = { version: 5, name: 'D3', nodes: [compare(right)], edges: [] } as unknown as VisualGraph
+    expect(nodeSummaryOf(graph, 'cmp')).toBe(`If 3 > ${shown}`)
+    expect(contract.words.show(right)).toBe(shown)
+  }
+})
+
 it('tells runs of steps of one kind apart in the timeline: each row says what its card says (the service it calls)', () => {
   const el = host()
   const catalog = withServices()

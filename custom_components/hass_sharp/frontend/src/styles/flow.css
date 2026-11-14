@@ -235,7 +235,8 @@
 .hs-app .hs-canvas-notice__close svg { width: 14px; height: 14px; }
 
 /* Why a connection was refused, beside the pin that refused it. */
-.hs-app .hs-flow .hs-pin-refusal { position: absolute; z-index: 30; bottom: calc(100% + 6px); left: calc(-1 * var(--hs-card-pad)); width: max-content; max-width: 260px; padding: 6px 10px; border: 1px solid var(--hs-port-error); border-radius: 6px; background: var(--hs-surface); color: var(--hs-text); box-shadow: var(--hs-card-shadow-raised); font-size: 12px; font-weight: 400; line-height: 1.35; white-space: normal; pointer-events: none; }
+/* A refusal is clamped to three lines so one long message never covers the cards around it; the pin's tip and the card's problems tip hold all of it. */
+.hs-app .hs-flow .hs-pin-refusal { position: absolute; z-index: 30; bottom: calc(100% + 6px); left: calc(-1 * var(--hs-card-pad)); width: max-content; max-width: 260px; padding: 6px 10px; border: 1px solid var(--hs-port-error); border-radius: 6px; background: var(--hs-surface); color: var(--hs-text); box-shadow: var(--hs-card-shadow-raised); font-size: 12px; font-weight: 400; line-height: 1.35; white-space: normal; pointer-events: none; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
 .hs-app .hs-flow .hs-pin-refusal::before { content: '!'; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-right: 6px; border-radius: 50%; background: var(--hs-port-error); color: var(--hs-surface); font-size: 11px; font-weight: 700; vertical-align: -3px; }
 .hs-app .hs-flow .hs-card__head > .hs-pin-refusal { left: 0; }
 

@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
@@ -219,6 +220,17 @@ it('labels the panel control and associates validation messages with it once', (
   expect(described(wired.host, q(wired.host, '.hs-input-editor'))).toEqual(['Input is required'])
 })
 
+it('clamps a long message on a node card and keeps the whole of it as its tip; the panel shows it whole (live defect D1)', () => {
+  const long = `Message accepts ${'Text, '.repeat(60)}not User`
+  const { host } = mount({ input: spec(['string']), label: 'Message', variant: 'inline', errors: [long] })
+  const item = q(host, '.hs-input-editor--inline .hs-input-editor__errors li')
+  expect(item.textContent).toBe(long)
+  expect(item.getAttribute('title')).toBe(long)
+  const css = readFileSync('src/styles/widgets.css', 'utf8')
+  expect(css).toMatch(/\.hs-input-editor--inline \.hs-input-editor__errors li \{[^}]*-webkit-line-clamp: 2;[^}]*overflow: hidden;/)
+  const panel = remount({ input: spec(['string']), label: 'Message', errors: [long] }).host
+  expect(q(panel, '.hs-input-editor__errors li').getAttribute('title')).toBeNull()
+})
 it('validates JSON on commit, keeps the text on a parse error and shows the shortcut', () => {
   const { host, changes } = mount({ input: spec(['object', 'array']), label: 'Data' })
   const area = q<HTMLTextAreaElement>(host, 'textarea[aria-label="Data"]')

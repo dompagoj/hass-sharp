@@ -263,10 +263,13 @@ public static class VisualGraphValidator
             return $"{label} is {names[type]}, but this Constant's Type is {names[expected]}; type the value again, or change Type";
         }
         /// <summary>
-        /// A type mismatch: the accepted types (named, at most four) and the one given, unless that is unknown. An
-        /// accepted type that reads as the given one does is told apart by its C# name (<see cref="DistinctLabels"/>):
-        /// "accepts Mode (A.Mode), not Mode (B.Mode)".
+        /// A type mismatch: the accepted types and the one given, unless that is unknown. At most <see cref="Shown"/>
+        /// accepted types are named, then how many more ("accepts True/False, Number, Text, Object and 2 more, not
+        /// User"). An accepted type that reads as the given one does is told apart by its C# name
+        /// (<see cref="DistinctLabels"/>): "accepts Mode (A.Mode), not Mode (B.Mode)".
         /// </summary>
+        /// <summary>How many accepted types a type mismatch names before it says how many more (contract.ts <c>Shown</c>).</summary>
+        const int Shown = 4;
         internal static string Incompatible(JsonObject catalog, string subject, string type, IEnumerable<string> expected)
         {
             if (VisualTypes.Chain(catalog, type).Count == 0) return $"{subject} is connected to a value of unknown type";
@@ -277,7 +280,9 @@ public static class VisualGraphValidator
                 return $"{subject} needs a value that is always set, and this one may be empty";
             var apart = DistinctLabels(catalog, [type, .. accepted.Where(t => TypeLabel(catalog, t) == label)]);
             var names = accepted.Select(t => apart.TryGetValue(t, out var named) ? named : TypeLabel(catalog, t)).Distinct().ToList();
-            return names.Count is > 0 and <= 4 ? $"{subject} accepts {Or(names)}, not {apart[type]}" : $"{subject} does not accept {apart[type]}";
+            if (names.Count == 0) return $"{subject} does not accept {apart[type]}";
+            var listed = names.Count <= Shown ? Or(names) : $"{string.Join(", ", names.Take(Shown))} and {names.Count - Shown} more";
+            return $"{subject} accepts {listed}, not {apart[type]}";
         }
         /// <summary>The parts of a dotted name, splitting only outside type arguments (<c>List&lt;System.String&gt;</c> stays one part).</summary>
         static List<string> NameParts(string name)

@@ -31309,5 +31309,145 @@
     "messages": [
       "Turn on (light.turn_on): Brightness accepts Number, not Text"
     ]
+  },
+  {
+    "name": "type mismatch: an input of more than four types names four, then how many more",
+    "services": true,
+    "graph": {
+      "version": 5,
+      "name": "Service node",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "make",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { }",
+            "arguments": {},
+            "signature": {
+              "title": "Make",
+              "description": "",
+              "pure": false,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "global::NodeLib.User",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {
+                "global::NodeLib.User": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": false,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                },
+                "global::NodeLib.User?": {
+                  "label": "User",
+                  "description": "",
+                  "category": "Object",
+                  "nullable": true,
+                  "literalKind": null,
+                  "properties": [
+                    {
+                      "name": "UserName",
+                      "type": "string",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Level",
+                      "type": "number",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Lamp",
+                      "type": "entity_id:light",
+                      "nullable": false
+                    },
+                    {
+                      "name": "Plug",
+                      "type": "entity_id:switch",
+                      "nullable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "svc",
+          "kind": "service",
+          "config": {
+            "service": "light.turn_on",
+            "fields": {
+              "hs_color": {
+                "kind": "unset"
+              }
+            },
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:make",
+          "source": "t",
+          "target": "make",
+          "port": "next"
+        },
+        {
+          "id": "make:next:svc",
+          "source": "make",
+          "target": "svc",
+          "port": "next"
+        },
+        {
+          "id": "make.result:svc.field:hs_color",
+          "kind": "data",
+          "source": "make",
+          "target": "svc",
+          "sourcePort": "result",
+          "targetPort": "field:hs_color"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "svc",
+    "inputId": "field:hs_color",
+    "contains": "and 1 more, not User",
+    "messages": [
+      "Turn on (light.turn_on): Hs color accepts Object, List, Text, Number and 1 more, not User"
+    ]
   }
 ]

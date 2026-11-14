@@ -96,6 +96,14 @@ const typedDemo = (): Graph => {
   g = connectData(g, 'me', 'result', 'who', 'value', catalog)
   g = connectData(g, 'who', 'value', 'greet', 'value', catalog)
   g = connectData(g, 'me', 'result', 'gone', 'value', catalog)
+  // Live defect D1: a Log and a Wait after Greet with nothing wired, to drag the chosen property into (Log accepts it,
+  // Wait's Seconds refuses Text in the validator's words).
+  g = addNode(g, 'log', 'tell', catalog)
+  g = updateNode(g, 'tell', { label: 'Tell', position: { x: 3240, y: 20 } })
+  g = connectNodes(g, 'greet', 'tell', undefined, catalog)
+  g = addNode(g, 'delay', 'hold', catalog)
+  g = updateNode(g, 'hold', { position: { x: 3240, y: 300 } })
+  g = connectNodes(g, 'tell', 'hold', undefined, catalog)
   const sample = fillGraphLayout(rich.cases[0].graph as Graph)
   // A Custom C# node whose code declares a record (its output type's definition is read from that code).
   const make = (rich.cases.find(c => c.name.startsWith('custom: a record the code declares'))!.graph as Graph).nodes.find(n => n.id === 'make')!

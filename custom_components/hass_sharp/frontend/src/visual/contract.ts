@@ -437,6 +437,8 @@ export const targetKeyMessage = (key: string) => `Target can only contain entity
 /** JavaScript's whitespace, spelled out so `VisualGraphValidator.Words.Name` trims the very same characters. */
 const blankEnds = /^[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g
 const youSound = ['uni', 'use', 'usa', 'usu', 'uti', 'ura', 'ure', 'uri', 'uro', 'ubi']
+/** How many accepted types a type mismatch names before it says how many more (`VisualGraphValidator.Shown`). */
+const Shown = 4
 export const words = {
   /** A key or value people did not name, in words: `needs_action` → `Needs action`; never empty. */
   key: (key: string) => { const w = domainWords(key); return w.replace(blankEnds, '') ? w : 'Unnamed' },
@@ -509,9 +511,10 @@ export const words = {
     return typeof spec?.label === 'string' && spec.label && spec.label !== key && spec.label.trim() ? spec.label : words.key(key)
   },
   /**
-   * A type mismatch: the accepted types (named, at most four) and the one given, unless that is unknown. An accepted
-   * type that reads as the given one does is told apart by its C# name (`distinctTypeLabels`): "accepts Mode (A.Mode),
-   * not Mode (B.Mode)".
+   * A type mismatch: the accepted types and the one given, unless that is unknown. At most four accepted types are
+   * named, then how many more ("accepts True/False, Number, Text, Object and 2 more, not User"). An accepted type that
+   * reads as the given one does is told apart by its C# name (`distinctTypeLabels`): "accepts Mode (A.Mode), not Mode
+   * (B.Mode)".
    */
   incompatible: (subject: string, type: string, expected: string[], catalog: VisualCatalogSnapshot = nodeCatalog) => {
     if (!typeChain(type, catalog).length) return `${subject} is connected to a value of unknown type`
@@ -521,7 +524,8 @@ export const words = {
     if (resolveTypeSpec(type, catalog)?.nullable === true && plain.includes(label)) return `${subject} needs a value that is always set, and this one may be empty`
     const apart = distinctTypeLabels([type, ...expected.filter(t => typeLabel(t, catalog) === label)], catalog)
     const names = [...new Set(expected.map(t => apart.get(t) ?? typeLabel(t, catalog)))], given = apart.get(type)!
-    return names.length > 0 && names.length <= 4 ? `${subject} accepts ${words.or(names)}, not ${given}` : `${subject} does not accept ${given}`
+    if (!names.length) return `${subject} does not accept ${given}`
+    return `${subject} accepts ${names.length <= Shown ? words.or(names) : `${names.slice(0, Shown).join(', ')} and ${names.length - Shown} more`}, not ${given}`
   },
   /** A value typed into an input that takes a wire only (a Select property node's value): a record, class or struct comes from a step. */
   wireOnly: (step: string) => `Connect a value to ${step}; nothing can be typed in here`,

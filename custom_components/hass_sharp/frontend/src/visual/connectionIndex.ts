@@ -172,8 +172,13 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     // Carried-over diagnostics reject when they match connectData's filters.
     for (const i of [...(byInput.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(sourceId, sourcePort)) ?? []).filter(i => diagnostics[i].inputId === undefined)].sort((a, b) => a - b))
       if (!volatile(origins[i])) messages.add(diagnostics[i].message)
+    // A wire into the input a Select property node reads retypes its output, and every output resolved from it, as for
+    // the graph connectData makes. The new edge is typed under that graph too: when it closes a cycle through the node,
+    // its own source has no type there, and the validator words only the cycle.
+    const retypes = Object.values(spec.outputs).some(o => o.propertyOf === targetPort)
+    const after = retypes ? withGraphTypes(catalog, { ...graph, edges: [...graph.edges.filter((_, i) => !removed.has(i)), { id: 'candidate', kind: 'data' as const, source: sourceId, target: targetId, sourcePort, targetPort }] }) : catalog
     // The new edge, as the validator types it.
-    const output = dataOutputs(source, catalog)[sourcePort]
+    const output = dataOutputs(source, after)[sourcePort]
     const input = connectable(dataInputs(target, analysis.ownerOf(target), catalog)[targetPort])
     if (!output) messages.add('Unknown data output port')
     if (!input) messages.add(words.unknownInput(targetPort, target.kind))
@@ -183,7 +188,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       const crossing = (reader: GraphNode, via: GraphNode) => produced.filter(p => analysis.scopes.has(p.node.id) && !analysis.visible(p.node, reader, p.output))
         .map(p => words.pureScope(words.stepName(via, catalog), words.stepName(p.node, catalog), words.portLabel(p.output, p.port), words.stepName(reader, catalog)))
       if (input) {
-        const wrong = wireTypeError(source, output, target, input, targetPort, catalog, index.assignable)
+        const wrong = wireTypeError(source, output, target, input, targetPort, after, index.assignable)
         if (wrong) messages.add(wrong.message)
         if (analysis.scopes.has(sourceId) && analysis.scopes.has(targetId) && !analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
         if (sourcePure && !targetPure && analysis.scopes.has(targetId)) for (const m of crossing(target, source)) messages.add(m)
@@ -196,7 +201,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     }
     // Into the input a Select property node reads: the wire changes the type of its output, and so of every wire from it
     // and from a Select property node reading it in turn. What the nodes say about their property never refuses it.
-    if (Object.values(spec.outputs).some(o => o.propertyOf === targetPort)) for (const m of retyped(sourceId, sourcePort, targetId, targetPort, removed)) messages.add(m)
+    if (retypes) for (const m of retyped(after, targetId, targetPort)) messages.add(m)
     // The new wire lies on a cycle. Without one in the graph, a path from the target back to the source cannot use
     // the wire it replaces, so the memoised reach of the current graph answers.
     const rewired = () => [...analysis.data.filter(e => !(e.target === targetId && e.targetPort === targetPort)), { source: sourceId, target: targetId }]
@@ -216,13 +221,11 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     return messages.size ? { message: [...messages].join('; '), fallback: false } : { fallback: false }
   }
   /**
-   * The new problems of the wires whose source output a Select property node's new value retypes (the catalog resolves
+   * The new problems of the wires whose source output a Select property node's new value retypes (`after` resolves
    * its output again, as for the graph connectData makes): a wire that no longer fits, and a comparison whose sides no
    * longer match. A problem the graph already has is no new one, and a `property.` one is about a node, not the wire.
    */
-  function retyped(sourceId: string, sourcePort: string, targetId: string, targetPort: string, removed: Set<number>): string[] {
-    const edges = [...graph.edges.filter((_, i) => !removed.has(i)), { id: 'candidate', kind: 'data' as const, source: sourceId, target: targetId, sourcePort, targetPort }]
-    const after = withGraphTypes(catalog, { ...graph, edges })
+  function retyped(after: VisualCatalogSnapshot, targetId: string, targetPort: string): string[] {
     const type = (types: VisualCatalogSnapshot, node: string, port: string) => types.resolvedOutputs && Object.hasOwn(types.resolvedOutputs, node) && Object.hasOwn(types.resolvedOutputs[node], port) ? types.resolvedOutputs[node][port] : ''
     const changed = (node: string, port: string) => type(catalog, node, port) !== type(after, node, port)
     const found: string[] = [], first = new Map<string, DataEdge>()

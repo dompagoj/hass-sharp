@@ -56,7 +56,7 @@ it('renders typed labeled handles and rejects incompatible keyboard connection w
   for (const handle of [source, target])
     handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
   expect(history.graph().edges.filter(e => e.kind === 'data')).toHaveLength(0)
-  expect(el.textContent).toContain('Condition requires True/False; Value outputs Number')
+  expect(el.textContent).toContain('Condition accepts True/False, not Number')
   expect(target.getAttribute('aria-invalid')).toBe('true')
 })
 it('removes only an Alt-primary-clicked native edge and restores it in one undo/redo', async () => {
@@ -152,7 +152,7 @@ it('rejects a real incompatible data drag before edge creation and highlights th
   document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 200, clientY: 200 }))
   expect(graph().edges.some(e => e.kind === 'data')).toBe(false)
   expect(target.getAttribute('aria-invalid')).toBe('true')
-  expect(target.getAttribute('title')).toBe('Condition requires True/False; Value outputs Number')
+  expect(target.getAttribute('title')).toBe('Condition accepts True/False, not Number')
   expect(el.querySelector('[aria-label="Search steps"]')).toBeNull()
 })
 it('colours pins, data wires and inspector rows by type: the five primitive tokens, the entity token for entity ids, and execution and error tokens', async () => {
@@ -535,7 +535,7 @@ it('connects a data pin from the keyboard and says why a refused one cannot conn
   expect(history.graph()).toBe(before)
   const callout = pin('branch', 'target').parentElement!.querySelector('.hs-pin-refusal')!
   expect(callout.getAttribute('role')).toBe('alert')
-  expect(callout.textContent).toBe('Condition requires True/False; Value outputs Number')
+  expect(callout.textContent).toBe('Condition accepts True/False, not Number')
   expect(el.querySelectorAll('.hs-pin-refusal')).toHaveLength(1)
   press(el.querySelector('.hs-flow')!, 'Escape')
   expect(el.querySelector('.hs-pin-refusal')).toBeNull()

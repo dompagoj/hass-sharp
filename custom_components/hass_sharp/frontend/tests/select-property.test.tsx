@@ -1,7 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render } from 'solid-js/web'
 import { analyzeGraph, connectData, dataOutputs, nodeCatalog, resolveOutputs, withGraphTypes, type Graph, type GraphNode, type TypeSpec, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { connectionIndex, graphTypes } from '../src/visual/connectionIndex'
+import { dataConnectionError } from '../src/visual/graph'
+import { FlowAdapter } from '../src/visual/FlowAdapter'
+import { createSignal } from 'solid-js'
+import { readFileSync } from 'node:fs'
+import { words } from '../src/visual/contract'
 import { canAddFor } from '../src/visual/flow/autoConnect'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { NodeConfig } from '../src/visual/NodeConfig'
@@ -35,7 +40,7 @@ function graph(property: unknown, from: string | null = 'user', into = true): Gr
 }
 const node = (g: Graph, id: string) => g.nodes.find(n => n.id === id)!
 let dispose: (() => void) | undefined
-afterEach(() => { dispose?.(); document.body.innerHTML = '' })
+afterEach(() => { dispose?.(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
 describe('the type of a Select property node', () => {
   it('is the chosen property type of the wired value, resolved per graph', () => {
@@ -93,6 +98,100 @@ describe('resolving the types of a chain of Select property nodes', () => {
     expect(analyzeGraph(long).diagnostics.map(d => d.code)).toEqual(['graph.limit'])
   })
 })
+
+describe('dragging a wire from a Select property node (live defect D1)', () => {
+  // As on the live instance: a value node gives a User, Select property (UserName) reads it, and a Log takes the text.
+  const pure = (node: GraphNode) => { (node.config.signature as { pure: boolean }).pure = true; return node }
+  const HOLDER = 'global::NodeLib.Holder', ADDRESS = 'global::NodeLib.Address'
+  const holder = { [HOLDER]: entry('Holder', [{ name: 'Home', type: ADDRESS, nullable: false }]), [ADDRESS]: entry('Address', [{ name: 'City', type: 'string', nullable: false }, { name: 'Zip', type: 'number', nullable: false }]) }
+  const log = (id = 'l'): GraphNode => ({ id, kind: 'log', config: { value: U } })
+  function live(property: unknown = 'UserName'): Graph {
+    return {
+      version: 5, name: 'Smoke',
+      nodes: [{ id: 't', kind: 'trigger', config: { type: 'manual' } }, pure(make('user', USER)), select('s', property), log(), pure(make('h', HOLDER, holder)), select('home', 'Home'), select('city', 'City'), log('l2')],
+      edges: [step('t', 'l'), step('l', 'l2'), wire('user', 'result', 's', 'value'), wire('h', 'result', 'home', 'value'), wire('home', 'value', 'city', 'value')],
+    }
+  }
+  it('connects the chosen property into a step that takes any value, as connectData does', () => {
+    const g = live()
+    expect(dataConnectionError(g, 's', 'value', 'l', 'value', nodeCatalog, { quick: true })).toBeUndefined()
+    expect(dataConnectionError(g, 's', 'value', 'l', 'value', nodeCatalog)).toBeUndefined()
+    expect(dataConnectionError(g, 'city', 'value', 'l2', 'value', nodeCatalog)).toBeUndefined()
+    expect(connectData(g, 's', 'value', 'l', 'value')).toBeTruthy()
+  })
+  it('connects into typed inputs by the property type: a Delay, a Compare, a step already wired when the property changes', () => {
+    const g = { ...live('Age'), nodes: [...live('Age').nodes, { id: 'd', kind: 'delay', config: { seconds: U } }, { id: 'c', kind: 'compare', config: { operator: 'gt', left: U, right: { kind: 'literal', type: 'number', value: 3 } } }] }
+    expect(dataConnectionError(g, 's', 'value', 'd', 'seconds', nodeCatalog)).toBeUndefined()
+    expect(dataConnectionError(g, 's', 'value', 'c', 'left', nodeCatalog)).toBeUndefined()
+    // The text property into the number pin: the validator's words, never an empty type.
+    const text = updateSelect(g, 'UserName')
+    expect(dataConnectionError(text, 's', 'value', 'd', 'seconds', nodeCatalog)).toBe('Seconds accepts Number, not Text')
+    // Wired while Age, then the property becomes UserName: the wire is removed (chooseProperty), and dragging it back is refused in words.
+    const wired = connectData(g, 's', 'value', 'd', 'seconds')
+    const chosen = chooseProperty(wired, 's', 'UserName', nodeCatalog).graph
+    expect(dataConnectionError(chosen, 's', 'value', 'd', 'seconds', nodeCatalog)).toBe('Seconds accepts Number, not Text')
+    expect(dataConnectionError(chooseProperty(chosen, 's', 'Age', nodeCatalog).graph, 's', 'value', 'd', 'seconds', nodeCatalog)).toBeUndefined()
+  })
+  it('connects an entity state\'s property', () => {
+    const catalog: VisualCatalogSnapshot = { ...nodeCatalog, types: { ...nodeCatalog.types, 'global::HassSharp.EntityStateSnapshot': { ...nodeCatalog.types['global::HassSharp.EntityStateSnapshot'], properties: [{ name: 'State', type: 'string', nullable: false }] } } }
+    const g: Graph = { version: 5, name: 'State', nodes: [{ id: 't', kind: 'trigger', config: { type: 'manual' } }, { id: 'r', kind: 'read_entity', config: { entity: { kind: 'literal', type: 'entity_id', value: 'light.hall' } } }, select('s', 'State'), log()],
+      edges: [step('t', 'r'), step('r', 'l'), wire('r', 'value', 's', 'value')] }
+    expect(dataConnectionError(g, 's', 'value', 'l', 'value', catalog)).toBeUndefined()
+  })
+  it('never words an output without a type as an empty one', () => {
+    // No property chosen: the validator's own sentence.
+    expect(dataConnectionError(live(''), 's', 'value', 'l', 'value', nodeCatalog)).toBe('Choose a property in Select property to use its value')
+    // An output of a type the catalog does not know.
+    const g = { ...live(), nodes: [...live().nodes, make('odd', 'global::Nope.Gone', {}), { id: 'd', kind: 'delay', config: { seconds: U } }] }
+    const message = dataConnectionError(g, 'odd', 'result', 'd', 'seconds', nodeCatalog)!
+    expect(message).toBe('Seconds is connected to a value of unknown type')
+  })
+  it('lists a handful of accepted types, then how many more', () => {
+    const many = ['boolean', 'number', 'string', 'object', 'array', 'entity_id']
+    expect(words.incompatible('Many', USER, many, withGraphTypes(nodeCatalog, live()))).toBe('Many accepts True/False, Number, Text, Object and 2 more, not User')
+    const take: GraphNode = { id: 'take', kind: 'custom', config: { source: 'public static class CustomNode { }', arguments: { many: U },
+      signature: { title: 'Take', description: '', pure: false, inputs: { many: { types: many, required: true, label: 'Many', description: '', nullable: false, hasDefaultValue: false } }, outputs: {}, types: {} } } }
+    const g = { ...live(), nodes: [...live().nodes, take], edges: [...live().edges, step('l2', 'take')] }
+    const message = dataConnectionError(g, 'user', 'result', 'take', 'many', nodeCatalog)!
+    expect(message).toContain('accepts True/False, Number, Text, Object and 2 more, not User')
+    expect(message.length).toBeLessThan(120)
+  })
+  /** A real pointer drag on the canvas, from `source`'s output to `target`'s input, as the canvas tests make one. */
+  async function drag(g: Graph, source: string, target: string, port: string) {
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
+    const el = document.createElement('div')
+    document.body.append(el)
+    // Laid out apart, as a saved graph is.
+    const [graph, setGraph] = createSignal<Graph>({ ...g, nodes: g.nodes.map((n, i) => ({ ...n, position: { x: 260 * i, y: 0 } })) })
+    dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, el)
+    await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge')).not.toBeNull())
+    const from = el.querySelector<HTMLElement>(`[data-id="${source}"] .source[data-handleid="data:value"]`)!,
+      to = el.querySelector<HTMLElement>(`[data-id="${target}"] .target[data-handleid="data:${port}"]`)!
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(to)
+    from.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+    document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 200, clientY: 200 }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 200, clientY: 200 }))
+    return { el, graph, to }
+  }
+  it('adds the wire on a real drag from the chosen property into Log', async () => {
+    const { graph, to } = await drag(live(), 's', 'l', 'value')
+    expect(graph().edges.some(e => e.kind === 'data' && e.source === 's' && e.target === 'l' && e.targetPort === 'value')).toBe(true)
+    expect(to.getAttribute('aria-invalid')).not.toBe('true')
+  })
+  it('refuses a drag that does not fit in the validator\'s words, clamped on the card with the full text as its tip', async () => {
+    const g = { ...live(), nodes: [...live().nodes, { id: 'd', kind: 'delay', config: { seconds: U } }], edges: [...live().edges, step('l2', 'd')] }
+    const { el, graph, to } = await drag(g, 's', 'd', 'seconds')
+    expect(graph().edges.some(e => e.kind === 'data' && e.target === 'd')).toBe(false)
+    expect(to.getAttribute('title')).toBe('Seconds accepts Number, not Text')
+    // The callout under the pin and the pin's own tip say it; the callout is clamped, the tip and the problems tip are whole.
+    expect(el.querySelector('[data-id="d"] .hs-pin-refusal')!.textContent).toBe('Seconds accepts Number, not Text')
+    const css = readFileSync('src/styles/flow.css', 'utf8')
+    expect(css).toMatch(/\.hs-pin-refusal \{[^}]*-webkit-line-clamp: 3;[^}]*overflow: hidden;/)
+    expect(el.querySelector('[data-id="d"] .hs-node-errors')!.textContent).toContain('Seconds accepts Number, not Text')
+  })
+})
+const updateSelect = (g: Graph, property: string): Graph => ({ ...g, nodes: g.nodes.map(n => n.id === 's' ? { ...n, config: { ...n.config, property } } : n) })
 
 describe('connecting a Select property node', () => {
   it('connects a value before a property is chosen, and refuses a wire from its output until then', () => {

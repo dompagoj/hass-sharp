@@ -89,7 +89,7 @@ import type { VisualDiagnostic } from '../src/visual/api'
 it('shows a validator message as it is under its field, and clears it when the problem is gone', () => {
   const el = host(),
     graph = fixture()
-  const message = 'Condition requires True/False; Value outputs Number'
+  const message = 'Condition accepts True/False, not Number'
   const [diagnostics, setDiagnostics] = createSignal<VisualDiagnostic[]>([{ nodeId: 'branch', inputId: 'value', message, severity: 3, startLine: null, startColumn: null }])
   dispose = render(
     () => <NodeConfig graph={graph} node={graph.nodes.find(n => n.id === 'branch')!} catalog={nodeCatalog} diagnostics={diagnostics()} onChange={() => {}} onGraphChange={() => {}} />,

@@ -147,7 +147,8 @@ export function InputEditor(props: InputEditorProps) {
     </div>
     <Show when={hint()}><small id={hintId} class="hs-field-hint">{hint()}</small></Show>
     <Show when={errors().length}>
-      <ul id={errorsId} class="hs-input-editor__errors"><For each={errors()}>{message => <li>{message}</li>}</For></ul>
+      {/* On a card each message is clamped to two lines (the full text is its tip, the card's problems tip and the panel). */}
+      <ul id={errorsId} class="hs-input-editor__errors"><For each={errors()}>{message => <li title={props.variant === 'inline' ? message : undefined}>{message}</li>}</For></ul>
     </Show>
   </div>
 }

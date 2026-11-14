@@ -40,6 +40,8 @@
 .hs-app .hs-input-editor--inline .hs-picker-field { min-height: 32px; padding: 4px 8px; font-size: 12px; font-weight: 500; }
 .hs-app .hs-input-editor--inline .hs-field { gap: 0; }
 .hs-app .hs-input-editor--inline .hs-input-editor__errors { font-size: 11px; }
+/* One long message does not grow the card: two lines, then an ellipsis; the li's title, the problems tip and the panel hold the rest. */
+.hs-app .hs-input-editor--inline .hs-input-editor__errors li { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .hs-app .hs-input-editor--inline .hs-code-input { min-height: 56px; }
 .hs-app .hs-input-editor--inline .hs-chip-remove { width: 24px; height: 24px; }
 

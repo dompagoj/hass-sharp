@@ -24,21 +24,26 @@ function patched(patch: Record<string, unknown>): VisualCatalogSnapshot {
   return catalog
 }
 
-/** The previous dataConnectionError: port and type pre-check, then the full connectData (clone plus two validations). */
+/**
+ * What a drop decides: the ports, then connectData (clone plus two validations). The ports are read as the validator
+ * reads them, under the graph's own catalog (its Custom C# types and the resolved type of each Select property
+ * output). The drag once refused by a type pre-check of its own, under the bare catalog, where a Select property output
+ * had no type; this check copied that pre-check, so the two agreed on refusing a wire connectData accepts (live defect
+ * D1). It now has none: only connectData says whether a wire fits.
+ */
 function fullCheck(graph: Graph, source: string, sourcePort: string, target: string, targetPort: string, catalog: VisualCatalogSnapshot) {
   const from = graph.nodes.find(n => n.id === source)!, to = graph.nodes.find(n => n.id === target)!
-  const output = contract.dataOutputs(from, catalog)[sourcePort], input = nodeInputs(graph, to, catalog)[targetPort]
-  if (!output || !input) return 'Unknown data port'
-  if (!input.types.some(t => contract.isAssignable(output.type, t, contract.withGraphTypes(catalog, graph)))) return 'type'
+  const types = contract.withGraphTypes(catalog, graph)
+  if (!contract.dataOutputs(from, types)[sourcePort] || !nodeInputs(graph, to, types)[targetPort]) return 'Unknown data port'
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below. No pair needs the full check: the index decides every one itself.
-const GRAPHS = 360, PAIRS = 1574, ACCEPTED = 473, BY_VALIDATION = 252, SERVICES_ACCEPTED = 415, SERVICES_BY_VALIDATION = 262
+const GRAPHS = 361, PAIRS = 1578, ACCEPTED = 576, BY_VALIDATION = 1002, SERVICES_ACCEPTED = 513, SERVICES_BY_VALIDATION = 1065
 const FALLBACKS: string[] = []
 // The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit), and the one past the limit.
 const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config',
   'select property: a chain past the graph limit answers the limit alone: past the graph limit']
-const RICH: Totals = { graphs: 32, pairs: 244, accepted: 54, rejected: 190, byValidation: 0, fallbacks: [], skipped: [] }
+const RICH: Totals = { graphs: 32, pairs: 244, accepted: 54, rejected: 190, byValidation: 190, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 
 interface Totals { graphs: number; pairs: number; accepted: number; rejected: number; byValidation: number; fallbacks: string[]; skipped: string[] }
@@ -63,10 +68,11 @@ function agree(name: string, value: unknown, catalog: VisualCatalogSnapshot, tot
       const verdict = connectionIndex(graph, catalog).verdict(source.id, sourcePort, target.id, targetPort)
       if (verdict.fallback) totals.fallbacks.push(label)
       if (expected === undefined) expect(verdict.message, label).toBeUndefined()
-      if (expected !== undefined && expected !== 'type' && expected !== 'Unknown data port') {
+      if (expected !== undefined && expected !== 'Unknown data port') {
         totals.byValidation++
         // The index predicts the same diagnostics connectData adds, so the hover message matches the drop message.
         expect(parts(verdict.message), label).toEqual(parts(expected))
+        expect(parts(actual), label).toEqual(parts(expected))
       }
       totals.pairs++
       if (expected === undefined) totals.accepted++
@@ -124,7 +130,7 @@ describe('connection index', () => {
     const refined = light()
     expect(dataConnectionError(refined, 'trigger-1', 'entity_id', 'service-1', 'target', withServices, { quick: true })).toBeUndefined()
     const plain = updateNode(refined, 'trigger-1', { config: { type: 'entity', manual: true, mode: 'Single' } })
-    expect(dataConnectionError(plain, 'trigger-1', 'entity_id', 'service-1', 'target', withServices, { quick: true })).toMatch(/requires/)
+    expect(dataConnectionError(plain, 'trigger-1', 'entity_id', 'service-1', 'target', withServices, { quick: true })).toBe('Turn on (light.turn_on) only accepts light entities; the connected value can be any entity')
     // Without the services section the target stays permissive.
     expect(dataConnectionError(plain, 'trigger-1', 'entity_id', 'service-1', 'target', contract.nodeCatalog, { quick: true })).toBeUndefined()
   })

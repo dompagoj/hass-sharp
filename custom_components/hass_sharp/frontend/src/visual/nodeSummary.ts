@@ -1,4 +1,4 @@
-import { customSignature, dataInputs, dataOutputs, inputValue, nodeCatalog, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { customSignature, dataInputs, dataOutputs, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 import { stateField, stateLabel } from './widgets/states'
 
@@ -78,7 +78,8 @@ export function durationText(value: unknown): string | undefined {
 function valueText(value: unknown, registry?: SummaryNames): string | undefined {
   if (value === undefined) return
   if (value === null) return 'nothing'
-  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  // True or False, as the panel and the trace word it.
+  if (typeof value === 'boolean') return words.show(value)
   if (typeof value === 'number') return String(value)
   if (typeof value === 'string') return /^[a-z0-9_]+\.[a-z0-9_]+$/.test(value) ? entityName(value, registry) : `“${value}”`
   if (Array.isArray(value)) return value.length ? `${value.length} item${value.length === 1 ? '' : 's'}` : 'an empty list'

@@ -1,6 +1,5 @@
 import { createSignal } from 'solid-js'
 import { createUuid } from './id'
-import { typeLabel } from './typeLabels'
 import {
   addGraphNode,
   executionPorts,
@@ -252,14 +251,13 @@ export function dataConnectionError(
     target = graph.nodes.find(n => n?.id === targetId)
   if (!source || !target) return 'Connection endpoint missing'
   const index = connectionIndex(graph, catalog)
-  const output = index.remember(JSON.stringify(['outputs', sourceId]), () => dataOutputs(source, catalog))[sourcePort],
-    input = index.remember(JSON.stringify(['inputs', targetId]), () => nodeInputs(graph, target, catalog))[targetPort]
+  // The ports as the validator reads them: under the graph's types, where a Select property node's output has the
+  // type of its property and a Custom C# node's types are known. A wire that does not fit is refused by the verdict,
+  // in the validator's words (`wireTypeError`), so a hover says what the drop says.
+  const types = index.catalog
+  const output = index.remember(JSON.stringify(['outputs', sourceId]), () => dataOutputs(source, types))[sourcePort],
+    input = index.remember(JSON.stringify(['inputs', targetId]), () => nodeInputs(graph, target, types))[targetPort]
   if (!output || !input) return 'Unknown data port'
-  if (!input.types.some(t => index.assignable(output.type, t))) {
-    // A Custom C# node's own types are named from its signature.
-    const types = index.catalog
-    return `${input.label ?? targetPort} requires ${input.types.map(t => typeLabel(t, types)).join(' / ')}; ${output.label ?? sourcePort} outputs ${typeLabel(output.type, types)}`
-  }
   const quick = index.verdict(sourceId, sourcePort, targetId, targetPort)
   if (quick.message || options.quick || quick.fallback) return quick.message
   try {
