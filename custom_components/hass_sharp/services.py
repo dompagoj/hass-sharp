@@ -18,20 +18,27 @@ from .const import logger
 DEBOUNCE_SECONDS = 2
 
 
-async def async_push(hass, manager):
+async def async_push(hass, manager, active=lambda: True):
     """Send `{domain: {service: description}}` as JSON; failures are logged, never raised.
 
     Also says whether Home Assistant has finished starting: only then may the typed service calls of
-    node code drop a service this push lacks (services appear gradually while it starts).
+    node code drop a service this push lacks (services appear gradually while it starts). Nothing reaches
+    .NET once `active()` is false: the entry stopped listening while the descriptions were gathered.
     """
     try:
         started = hass.state is CoreState.running
         descriptions = await async_get_all_descriptions(hass)
         translations = await async_translations(hass, list(descriptions))
-        payload = json.dumps(translated(descriptions, translations), cls=JSONEncoder)
-        await hass.async_add_executor_job(manager.SetServiceDescriptions, payload, started)
+        # The translated copy and its JSON (about 1 KB per service) are made off the loop.
+        content = await hass.async_add_executor_job(payload, descriptions, translations)
+        if active():
+            await hass.async_add_executor_job(manager.SetServiceDescriptions, content, started)
     except Exception:
         logger.exception("Service description push failed")
+
+
+def payload(descriptions, translations):
+    return json.dumps(translated(descriptions, translations), cls=JSONEncoder)
 
 
 async def async_translations(hass, domains):
@@ -97,7 +104,12 @@ async def async_start(hass, manager):
     gathering descriptions schedules a push of its own, which then says started.
     """
     unsubscribe = async_track(hass, manager)
-    await async_push(hass, manager)
+    try:
+        await async_push(hass, manager)
+    except BaseException:
+        # Cancelled (the entry's setup was): nobody else could stop the listeners.
+        unsubscribe()
+        raise
     return unsubscribe
 
 
@@ -108,11 +120,12 @@ def async_track(hass, manager):
     re-pushes them too (debounced the same way); other changes of the core configuration do not.
     """
     pending = None
+    stopped = False
 
     async def push(_now):
         nonlocal pending
         pending = None
-        await async_push(hass, manager)
+        await async_push(hass, manager, lambda: not stopped)
 
     @callback
     def schedule(_event):
@@ -133,7 +146,8 @@ def async_track(hass, manager):
     removers.append(hass.bus.async_listen(EVENT_CORE_CONFIG_UPDATE, config_updated))
 
     def unsubscribe():
-        nonlocal pending
+        nonlocal pending, stopped
+        stopped = True
         for remove in removers:
             remove()
         if pending is not None:

@@ -43,6 +43,19 @@ class NativeTriggers(unittest.IsolatedAsyncioTestCase):
             diagnostics = await native.async_validate_graph_triggers(self.hass, graph)
         self.assertEqual(validated[0]['platform'], 'event')
         self.assertEqual([(d['nodeId'], d['inputId']) for d in diagnostics], [('bad', 'trigger')])
+        # Home Assistant's reason is what a person or a model can act on.
+        self.assertEqual(diagnostics[0]['message'], 'Invalid Home Assistant trigger configuration: unknown platform')
+
+    async def test_real_validation_reason_and_logger_hierarchy(self):
+        from homeassistant import loader
+        loader.async_setup(self.hass)
+        await native.trigger.async_setup(self.hass)
+        graph = {'nodes': [{'id': 'bad', 'kind': 'trigger', 'config': {'type': 'ha', 'trigger': {'trigger': 'state'}}}]}
+        diagnostics = await native.async_validate_graph_triggers(self.hass, graph)
+        self.assertTrue(diagnostics[0]['message'].startswith('Invalid Home Assistant trigger configuration: '))
+        self.assertIn('entity_id', diagnostics[0]['message'])
+        # Under the logger AGENTS.md documents, so its debug setting covers this module.
+        self.assertEqual(native._LOGGER.name, 'custom_components.HassSharp.native_triggers')
 
     async def test_second_attachment_failure_rolls_back_and_attempts_all_cleanup(self):
         removed = []

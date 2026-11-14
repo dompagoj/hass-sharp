@@ -1,5 +1,9 @@
 # Node editor overhaul verification
 
+A record of checks made at the commits it names, with what was open then. The
+sections are dated; for current behaviour, read the guides in `docs/`. Each list of
+open observations says which items have been fixed since.
+
 Verified on 2026-11-13 against the local Compose Home Assistant only (`hass`, http://localhost:5001), Home Assistant 2026.11.1 on linux-musl-arm64, at HEAD `4288a8f` plus the working-tree fixes listed at the end. No remote Home Assistant was touched. Before changing anything, `/config` was backed up outside the repository.
 
 Test fixtures added to the local instance only:
@@ -129,19 +133,23 @@ Test fixtures added to the local instance only:
 
 ## Open observations
 
-- **Field filters:** service field `filter`s are not applied, so Add field offers fields the chosen target cannot use (dispatch check 6).
-- **Trace labels:** the trace view labels service fields from the field key ("Hvac mode", "Brightness pct", "Who", "Times"). Snapshots carry no services section (contracts D2/D3), so the translated names are not available there.
-- **Trigger switching:** switching a trigger from Entity to native State keeps the old `config.entity` and the label "Entity changes". The reference automation shows both (plan check 4, "Manual run").
+As found at `4288a8f`. Task 27 polished most of them; **Fixed since** marks what the
+Phase 2 checks below saw working, **By design** what is intended, and **Not rechecked**
+the rest.
+
+- **Field filters:** service field `filter`s are not applied, so Add field offers fields the chosen target cannot use (dispatch check 6). **Fixed since** (Phase 2 check 7: the brightness-only dimmer is offered only brightness fields).
+- **Trace labels:** the trace view labels service fields from the field key ("Hvac mode", "Brightness pct", "Who", "Times"). Snapshots carry no services section (contracts D2/D3), so the translated names are not available there. **Fixed since** (Phase 2 check 11: the trace shows "Brightness").
+- **Trigger switching:** switching a trigger from Entity to native State keeps the old `config.entity` and the label "Entity changes". The reference automation shows both (plan check 4, "Manual run"). **Fixed since** (Phase 2 check 7: the settings reset on a type change).
 - **Raw values:**
-  - Enum option labels are raw values ("heat", "off").
-  - Selector option translations are not applied.
-  - The required-field message uses the service id ("notify.persistent_notification needs a value for Message").
+  - Enum option labels are raw values ("heat", "off"). **Fixed since** (Phase 2 check 7: "Heat" and "Off").
+  - Selector option translations are not applied. **Not rechecked.**
+  - The required-field message uses the service id ("notify.persistent_notification needs a value for Message"). **Fixed since:** messages name the service by its name.
 - **360 px layout:**
-  - "Add step" overlaps the canvas in full screen.
-  - The trace canvas is not fitted to the width.
+  - "Add step" overlaps the canvas in full screen. **Fixed since** (Phase 2 check 13).
+  - The trace canvas is not fitted to the width. **Fixed since** (Phase 2 check 13).
 - **Language:**
-  - The services catalog is not re-sent when the HA language changes.
-  - The server translates in the server language. The service picker and field rows use `hass.localize` in the user's profile language. A user whose profile language differs from the server's can therefore see two languages: one on the cards and in summaries and server messages, another in the picker and the field rows.
+  - The services catalog is not re-sent when the HA language changes. **Fixed since:** a language change pushes the services again.
+  - The server translates in the server language. The service picker and field rows use `hass.localize` in the user's profile language. A user whose profile language differs from the server's can therefore see two languages: one on the cards and in summaries and server messages, another in the picker and the field rows. **Not rechecked.**
 - **`last_updated`:** manual trigger payloads carry `last_updated: null`, by design (`TriggerPayload.cs`).
 
 ## Phase 2 re-verification (2026-11-14)
@@ -335,23 +343,27 @@ Task 28. Run against the local Compose Home Assistant only (`hass`, http://local
 
 ### Open observations (Phase 2)
 
-- **Memory grows with each reload:** about 10 MiB per HassSharp entry reload on average (719.6 to 869.9 MiB over 15), with no plateau. This needs investigation.
-- **Constant Type list:** it offers 73 types, including CLR interfaces such as "Comparable", "Span parsable" and "Additive identity".
-- **Startup log:** "Cannot load visual document X: … Graph validation failed" does not say why.
-- **Missing `expectedRevision`:** a websocket `save` without it answers "Object reference not set to an instance of an object."
-- **MCP refusal for `imports`:** the MCP schema refuses an `imports` key with a generic "Arguments do not match the tool parameter schema". This happens before the backend's actionable message.
+As found at `c2497af`. Marked **Fixed since** where a later commit fixed it, **By
+design** where it was judged a design choice, and **Open** otherwise (as of
+`1282d56` and the final fix round).
+
+- **Memory grows with each reload:** about 10 MiB per HassSharp entry reload on average (719.6 to 869.9 MiB over 15), with no plateau. **Fixed since** (Task 29): growth is bounded; see [Reload memory](#reload-memory-2026-11-14).
+- **Constant Type list:** it offers 73 types, including CLR interfaces such as "Comparable", "Span parsable" and "Additive identity". **Fixed since:** it offers only types a value can be typed in for.
+- **Startup log:** "Cannot load visual document X: … Graph validation failed" does not say why. **Fixed since** (Task 29): the line gives the reason.
+- **Missing `expectedRevision`:** a websocket `save` without it answers "Object reference not set to an instance of an object." **Fixed since** (Task 29): it answers which field is missing.
+- **MCP refusal for `imports`:** the MCP schema refuses an `imports` key with a generic "Arguments do not match the tool parameter schema". This happens before the backend's actionable message. **Fixed since** (Task 29): `imports` and `members` reach the backend, which says what to do instead.
 - **Code editor:**
-  - Completion on `context.` lists the `ToPython`/`ToPythonAs<>` extension methods.
-  - Completion opens after `} ` at the end of a file.
-- **Pure toggle toast:** "Log now follows Log." is ambiguous when two steps share a name.
-- **Palette:** a step added from the palette is not wired to the selected step.
+  - Completion on `context.` lists the `ToPython`/`ToPythonAs<>` extension methods. **Fixed since** (Task 29).
+  - Completion opens after `} ` at the end of a file. **Open.**
+- **Pure toggle toast:** "Log now follows Log." is ambiguous when two steps share a name. **Open.**
+- **Palette:** a step added from the palette is not wired to the selected step. **By design:** quick-add from a pin wires, the palette adds a free step.
 - **Editor top bar:**
-  - Save stays enabled while the document is Saved.
-  - At 360 px, the full-screen bar has no Run now and no switch.
-- **Entry reload:** reloading the HassSharp entry sends an open panel to Overview.
+  - Save stays enabled while the document is Saved. **Fixed since.**
+  - At 360 px, the full-screen bar has no Run now and no switch. **By design:** it is the compact bar.
+- **Entry reload:** reloading the HassSharp entry sends an open panel to Overview. **Fixed since** (final fix round): a reload keeps the panel; only turning the entry off or removing it removes the panel.
 - **Trace:**
-  - In the "T28 Heat when motion" trace, the Compare card overlaps the taller State card.
-  - The timeline shows three identical "Call service" rows.
+  - In the "T28 Heat when motion" trace, the Compare card overlaps the taller State card. **Fixed since.**
+  - The timeline shows three identical "Call service" rows. **Fixed since.**
 
 ## Reload memory (2026-11-14)
 

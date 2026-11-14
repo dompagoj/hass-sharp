@@ -9,7 +9,7 @@ canvas. Drag steps from the palette, inspect their settings, and connect control
 and typed data ports. The inspector uses the same catalog as compiler validation
 and MCP. Custom library nodes appear after a successful library save.
 
-**Save graph** validates, compiles, persists and activates. Native trigger
+**Save** validates, compiles, persists and activates. Native trigger
 configuration is checked by Home Assistant before saving. Warnings remain visible;
 errors prevent persistence. An entity ID that Home Assistant has no entity for (in an
 entity trigger, or typed into an entity input or a service target) is a warning,
@@ -19,6 +19,22 @@ external effects. Unsaved changes are drafts. Run now requires the exact saved
 revision to be active and the selected trigger to permit manual execution. If
 activation fails, an older runtime may remain active; the editor reports the
 failure and disables running the newer saved revision.
+
+## Turning an automation off
+
+Each automation has an on/off switch, on its card on the Automations page and in
+the editor. Turning it off changes neither its graph nor its revision:
+
+- none of its triggers starts it any more, and neither does a startup run: its
+  Home Assistant triggers are detached, and a daily or once time that passes while
+  it is off is skipped;
+- its runs in progress are cancelled, with the reason "Automation turned off";
+- **Run now** still runs it, for testing.
+
+Turning it on again attaches its triggers at once, without a save. The switch is
+kept across saves and restarts. **Duplicate** in a card's menu makes a copy that
+starts off, so the copy never runs beside the original until you turn it on. The
+**Off** filter on the Automations page lists the automations that are off.
 
 ## Control flow and typed data
 
@@ -82,10 +98,17 @@ Entity IDs can be narrowed further to one domain with the parametric type
 `entity_id:<domain>`, such as `entity_id:light`, whose values must look like
 `light.<name>`.
 
-A value fits an input when its type is the input's type, or when the input's type
-refines nothing and the value's root type is assignable to it (CLR conversions
-are checked by Roslyn). When the input's type refines another type, only that
-type or a narrower one fits. So `entity_id:light` fits an `entity_id` or `string`
+Two rules come first. Any number type fits any other: `number` and every CLR
+number type (`int`, `double`, `decimal` and the rest) go into one another, and a
+value that does not fit the narrower type (2.5 for a whole number, 300 for a byte)
+fails the step at run time, naming the step and the input. And a nullable value
+(such as `int?`) never fits an input that cannot hold null, even where C# would
+convert it explicitly.
+
+Otherwise a value fits an input when its type is the input's type, or when the
+input's type refines nothing and the value's root type is assignable to it (a CLR
+conversion that C# makes implicitly). When the input's type refines another type,
+only that type or a narrower one fits. So `entity_id:light` fits an `entity_id` or `string`
 input, but a plain `entity_id` does not fit an `entity_id:light` input: nothing
 proves it names a light. A literal must satisfy the pattern of its own type and of
 every type it refines.
@@ -175,8 +198,9 @@ triggerId and resolves the method inside the managed revision gate.
 The **Call service** node calls one Home Assistant service, chosen in its
 `service` setting as `domain.service`. Its inputs are:
 
-- **Target**: an entity ID or a target object. A string is sent as `entity_id`;
-  the properties of an object are sent as they are.
+- **Target**: an entity ID or a target object. A string is sent as `entity_id`.
+  An object may hold only `entity_id`, `device_id`, `area_id`, `floor_id` and
+  `label_id`; any other key is an error.
 - **Fields**: only the fields you add to the node. Each field becomes its own
   input port, so it can be a literal or a connection like any other input.
 - **Response**: turn on **Return response** to request the service response and
@@ -187,9 +211,11 @@ has registered: field types, required fields, allowed values and ranges, the
 target's entity domains, whether the service takes a target at all, and whether
 Return response matches the service (some services never return a response,
 some only return one). A service Home Assistant does not know is a warning, not an
-error, and its fields then accept any type. Loading saved automations at startup
-never depends on which services are registered, so a service that disappears
-later fails only when the node runs.
+error, and its fields then accept any type. A Call service node never stops an
+automation from loading at startup, whichever services are registered then: a
+service that disappears later fails only when the node runs. Custom C# and node
+library code that calls `context.Services` is different: it needs the service to
+compile; see [states and services](node-libraries.md#states-and-services).
 
 Pick the service and entities from the editor's searchable lists rather than
 typing IDs: they list what this Home Assistant has registered.
@@ -246,8 +272,10 @@ service calls (`context.Services.Light.TurnOn(...)`) and the log; see
 [states and services](node-libraries.md#states-and-services). The same methods in a [node library](node-libraries.md) become
 node kinds every automation can use. Compiler errors map back to the node and to the
 line in its code. Custom code is trusted administrator code, and preview compiles it
-without executing it. The panel shows a Custom C# node's pins and its code read-only;
-editing arrives with the code editor.
+without executing it. **Edit code**, on the node's card and in its panel, opens the
+code in a full-screen editor with completion, hover, signature help and live
+diagnostics; **Apply** writes the code and its pins to the node. See
+[Custom C# nodes](node-libraries.md#custom-c-nodes).
 
 Editor and [MCP authoring](mcp-authoring.md) use the same revision-checked services.
 On a conflict, reload the current document and reconcile edits. Library changes

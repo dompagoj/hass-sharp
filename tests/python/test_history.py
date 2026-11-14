@@ -13,14 +13,17 @@ class HistoryApi(unittest.IsolatedAsyncioTestCase):
         nodes = [n for n in register.body if isinstance(n, ast.AsyncFunctionDef) and n.name in ("websocket_run_now", "websocket_run_history", "websocket_run_trace")]
         for n in nodes:
             n.decorator_list = []
+        # The module-level readiness and refusal helpers the handlers use.
+        helpers = [n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name in ("loaded", "refusal")
+                   or isinstance(n, ast.Assign) and any(getattr(t, "id", None) in ("NOT_READY", "REFUSALS") for t in n.targets)]
         env = {"hass_sharp": backend, "json": json, "logger": Mock()}
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), "<history>", "exec"), env)
+        exec(compile(ast.Module(body=helpers + nodes, type_ignores=[]), "<history>", "exec"), env)
         results, errors = [], []
         connection = types.SimpleNamespace(user=types.SimpleNamespace(is_admin=admin),
             send_result=lambda *args: results.append(args), send_error=lambda *args: errors.append(args))
         async def executor(fn, *args):
             return fn(*args)
-        hass=types.SimpleNamespace(async_add_executor_job=executor)
+        hass=types.SimpleNamespace(async_add_executor_job=executor,data={"hass_sharp_llm":{"entry":types.SimpleNamespace(ready=True)}})
         service_tree=ast.parse(pathlib.Path("custom_components/hass_sharp/authoring.py").read_text())
         service_tree.body=[n for n in service_tree.body if not isinstance(n,ast.ImportFrom)]
         exec(compile(service_tree,"<authoring>","exec"),env)

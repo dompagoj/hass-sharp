@@ -1,7 +1,8 @@
 """A debug line after each setup of the entry: what the process holds, to tell a leak from growth that stops.
 
-Only with debug logging on for ``custom_components.HassSharp``: it walks every Python object and forces a full .NET
-collection, which takes a moment. One line per setup, with:
+Only when the ``custom_components.HassSharp.memory`` logger itself is set to debug (AGENTS.md: the leak probe), never by
+turning on debug logging for ``custom_components.HassSharp``: it walks every Python object while holding the GIL and
+forces a full .NET collection, which stalls Home Assistant for a moment on a large instance. One line per setup, with:
 
 - the process's ``/proc/self/smaps_rollup`` (Rss, Pss_Anon, Private_Dirty);
 - the .NET side (``HassSharpManager.MemoryReport``): live and committed GC bytes, loaded and collectible assemblies and
@@ -13,7 +14,10 @@ from collections import Counter
 import gc
 import logging
 
-from .const import logger
+from .const import logger as _integration_logger
+
+# Its own logger, checked by its own level: the parent's debug setting does not turn the probe on.
+logger = _integration_logger.getChild("memory")
 
 _first: Counter | None = None
 _previous: Counter | None = None
@@ -21,7 +25,7 @@ _setups = 0
 
 
 def enabled() -> bool:
-    return logger.isEnabledFor(logging.DEBUG)
+    return logger.level == logging.DEBUG
 
 
 def _smaps() -> str:

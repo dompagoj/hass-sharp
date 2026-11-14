@@ -18,17 +18,29 @@ Administrator WebSocket requests use:
 HA's outer WebSocket result envelope contains either
 `{version:1,ok:true,result:...}` or
 `{version:1,ok:false,error:{code,detail}}`. Unauthorized transport requests use HA's
-`unauthorized`; unexpected bridge failures use `visual_failed` or `library_failed`
-with a generic message and server-side logging.
+`unauthorized`; while no entry is set up (it is off, failed to start, or is
+reloading) every command but `get_entities` answers `not_ready`. Unexpected bridge
+failures use `visual_failed` or `library_failed` with a generic message and
+server-side logging. `run_now` on an automation that is not active, or with a
+trigger it does not have, answers `invalid_request` with the reason.
 
 | Visual operation | Request fields | Result |
 |---|---|---|
-| preview | graph | `{valid,source,sourceMap,diagnostics}` |
-| list | none | Document array without `source` and `sourceMap` |
+| preview | graph, deriveSignatures? | `{valid,source,sourceMap,diagnostics,graph}`; `graph` is the graph that was checked, with each Custom C# node's pins worked out from its code when `deriveSignatures` is true |
+| list | none | Document array without `source`, `sourceMap` and `savedUtc` |
+| list | view: `"home"`, todayUtc? | The automations page: per document `{id,revision,automationId,enabled,active,currentRevisionActive,activationError,problemCount,savedUtc,catalogGeneration,outline,recentRuns,runsToday,failedLastDay,lastRunUtc}`, with an `outline` (name, nodes with kind, position and label, trigger ids and configs, execution edges) instead of the graph |
 | read | id | Complete document |
-| save | id, graph, expectedRevision | `{id,saved:true,document,active,activationError}` |
+| save | id, graph, expectedRevision, enabled?, deriveSignatures? | `{id,saved:true,document,active,activationError,diagnostics?}`; `enabled: false` saves a new automation turned off (Duplicate does), and `diagnostics` lists what deriving removed |
+| set_enabled | id, enabled | `{id,enabled}`; the on/off switch, which changes neither the graph nor the revision |
 | delete | id, expectedRevision | `{deleted:true}` |
 | run | id, triggerId | `{version:1,runId}` |
+
+`deriveSignatures: true` rewrites each Custom C# node's `config.signature` from its
+code before validating (MCP always sends it); without it a stored signature that no
+longer matches the code is an error. A document carries `enabled` (missing means
+on). While it is off, none of its triggers or its startup run starts it, its runs in
+progress are cancelled, and `run` still starts it; see
+[turning an automation off](../writing-visual-automations.md#turning-an-automation-off).
 
 Preview and save validate against the registered service schemas (see Call service
 below); list, read and run do not validate.
@@ -45,7 +57,9 @@ A document contains `{version:1,id,revision,graph,source,sourceMap,automationId}
 and runtime metadata: `active`, `activationError`, `catalogGeneration`,
 `activeRevision`, `activeSourceHash`, `currentRevisionActive`. Shared Python
 list/read/save responses also include
-`triggers:[{triggerId,method,manual,runnable}]`. `active` means some generation
+`triggers:[{triggerId,method,manual,runnable}]` (the MCP `list` tool returns a
+summary of each document instead; see [MCP authoring](../mcp-authoring.md)).
+`active` means some generation
 exists; `currentRevisionActive` means its revision and source exactly match the
 saved document. A failed replacement can leave an older generation active.
 The outer save result's active flag describes the newly saved revision.
@@ -238,7 +252,10 @@ Service schemas are attached only to authoring validation of one graph (visual
 preview and save) and to the library `service_ports` operation; the `services`
 operation serves them, and `catalog` reports only their `servicesGeneration`. Startup
 loading and the rebuild after a library change validate without them, so whether
-an automation loads never depends on which integrations had registered services.
+an automation's Call service nodes load never depends on which integrations had
+registered services. Custom C# and node library code that calls
+`context.Services` does: it is compiled against the generated service methods; see
+[states and services](../node-libraries.md#states-and-services).
 The schemas never enter the catalog root, the generated source or the library
 generation.
 

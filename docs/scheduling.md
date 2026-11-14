@@ -19,7 +19,10 @@ Policy: only future occurrences are registered at startup/reload. Missed starts
 are skipped, including past one-shots. A nonexistent local time during a DST gap
 is skipped. A repeated time fires at its first instant only. A callback delayed
 while HA remains running dispatches its planned occurrence once; subsequent
-missed recurrences are skipped. No hard real-time guarantee is made.
+missed recurrences are skipped. No hard real-time guarantee is made. While the
+automation is turned off, an occurrence that comes due is skipped, without a
+history row or a claim, and is not caught up when it is turned on again; see
+[turning an automation off](writing-visual-automations.md#turning-an-automation-off).
 
 HA's UTC point-in-time helper owns each timer; recurrence computes the next local
 calendar date rather than adding 24 elapsed hours. Registration/removal is marshaled

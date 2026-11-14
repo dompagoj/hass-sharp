@@ -6,6 +6,16 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 
+# The frontend's mock preview build (frontend/tests/preview-build.config.ts). Everything under www/ is served without
+# authentication, so neither it nor any other HTML page in www/ ships.
+PREVIEW_DIRECTORY = "visual-v2-check-baby"
+
+
+def test_page(relative: Path) -> bool:
+    parts = relative.parts
+    return parts[0] == "www" and (PREVIEW_DIRECTORY in parts[1:] or relative.suffix.lower() == ".html")
+
+
 def package_release(integration_dir: Path, output: Path, version: str) -> None:
     required = (
         "__init__.py", "manifest.json", "dotnet.runtimeconfig.json",
@@ -24,6 +34,7 @@ def package_release(integration_dir: Path, output: Path, version: str) -> None:
         if path.is_file()
         and not any(part.startswith(".") or part == "__pycache__"
                     for part in path.relative_to(integration_dir).parts)
+        and not test_page(path.relative_to(integration_dir))
     )
     manifest = json.loads((integration_dir / "manifest.json").read_text(encoding="utf-8"))
     manifest["version"] = version.removeprefix("v")

@@ -9,6 +9,24 @@ Agents may add or update tests without waiting for an explicit request. Add usef
 regression coverage for bug fixes and behavior changes, and run checks appropriate
 to the change. Report what was verified and any checks that could not run.
 
+The suites, from the repository root (`.github/workflows/tests.yaml` runs all of
+them on every push and pull request, and a release only after they pass):
+
+```sh
+python3 -m unittest discover -s tests/python   # integration; needs Home Assistant installed to skip nothing
+python3 -m unittest discover -s tests          # release packaging
+dotnet run --project tests/Runtime --disable-build-servers
+dotnet test custom_components/hass_sharp/HassSharp.Editor.Tests
+(cd custom_components/hass_sharp/frontend && bun run test)
+```
+
+Without Home Assistant on the host, the MCP adapter and native trigger tests skip.
+To run them against the local container's Home Assistant, copy `tests/python` and
+`tests/fixtures` into a temporary directory in the container, link
+`custom_components/hass_sharp` there to `/config/custom_components/hass_sharp`, and
+run the suite from that directory with `HASS_SHARP_TEST_ROOT` set to it; remove the
+directory afterwards.
+
 ## Run Home Assistant locally
 
 Run commands from the repository root. Use `docker-compose.yaml` here; the former
@@ -63,6 +81,13 @@ logger:
 ```
 
 The logger name is case-sensitive; it is defined in the integration's `const.py`.
+
+**Leak probe.** To log what the process holds after each setup of the entry (the
+process's resident memory, .NET heap and assemblies, and the Python object types that
+grew), also set `custom_components.HassSharp.memory: debug`. It is off unless that
+logger itself is set to debug: ordinary debug logging does not turn it on, because
+it walks every Python object and forces a full .NET collection, which stalls Home
+Assistant for a moment on each setup and reload.
 To edit the configuration on the host, copy it out and back:
 
 ```sh

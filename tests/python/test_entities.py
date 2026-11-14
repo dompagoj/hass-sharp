@@ -54,7 +54,7 @@ def load_utils():
 
 def load_route(name, env):
     tree = ast.parse(Path('custom_components/hass_sharp/websocket.py').read_text())
-    register = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
+    register = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'register_websocket_routes')
     node = next(n for n in register.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'websocket_' + name)
     node.decorator_list = []
     for arg in node.args.args:

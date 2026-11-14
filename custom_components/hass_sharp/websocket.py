@@ -10,6 +10,21 @@ from .const import logger
 from .authoring import AuthoringService
 
 RUN_STATUSES = ("Pending", "Running", "Succeeded", "Failed", "Cancelled", "Skipped", "Interrupted", "Stopped")
+NOT_READY = "HassSharp is not running: wait for it to finish starting, or turn the integration on under Settings → Devices & services"
+# What RunNow throws for a request it refuses (not active, unknown trigger), as Python.NET names the .NET types.
+REFUSALS = ("InvalidOperationException", "ArgumentException")
+
+
+def loaded(hass):
+    """The commands are registered once; the automations exist only while an entry is set up and not unloading."""
+    return any(state.ready for state in hass.data.get("hass_sharp_llm", {}).values())
+
+
+def refusal(err):
+    """The message of a refusal from .NET, without its stack trace; None for anything else."""
+    if type(err).__name__ not in REFUSALS:
+        return None
+    return getattr(err, "Message", None) or str(err).split("\n", 1)[0]
 
 
 def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
@@ -18,6 +33,9 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
     async def websocket_visual(hass, connection, msg):
         if not connection.user.is_admin:
             connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        if not loaded(hass):
+            connection.send_error(msg["id"], "not_ready", NOT_READY)
             return
         try:
             result = await authoring.visual(msg["request"], is_admin=connection.user.is_admin)
@@ -37,6 +55,9 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
         if not connection.user.is_admin:
             connection.send_error(msg["id"], "unauthorized", "Administrator required")
             return
+        if not loaded(hass):
+            connection.send_error(msg["id"], "not_ready", NOT_READY)
+            return
         try:
             result = await authoring.node_library(msg["request"], is_admin=connection.user.is_admin)
             connection.send_result(msg["id"], result)
@@ -55,10 +76,16 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
         if not connection.user.is_admin:
             connection.send_error(msg["id"], "unauthorized", "Administrator required")
             return
+        if not loaded(hass):
+            connection.send_error(msg["id"], "not_ready", NOT_READY)
+            return
         try:
             result = await authoring.run_now(msg["automationId"], msg["className"], msg["method"], is_admin=connection.user.is_admin)
             connection.send_result(msg["id"], result)
-        except Exception:
+        except Exception as err:
+            if (message := refusal(err)) is not None:
+                connection.send_error(msg["id"], "invalid_request", message)
+                return
             logger.exception("Manual automation dispatch failed")
             connection.send_error(msg["id"], "run_failed", "Could not dispatch automation; check integration logs")
 
@@ -66,6 +93,9 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
     async def websocket_run_history(hass, connection, msg):
         if not connection.user.is_admin:
             connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        if not loaded(hass):
+            connection.send_error(msg["id"], "not_ready", NOT_READY)
             return
         try:
             result = await authoring.history(msg["automationId"], msg["offset"], msg["limit"], msg.get("status"), is_admin=connection.user.is_admin)
@@ -78,6 +108,9 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
     async def websocket_run_trace(hass, connection, msg):
         if not connection.user.is_admin:
             connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
+        if not loaded(hass):
+            connection.send_error(msg["id"], "not_ready", NOT_READY)
             return
         try:
             result = await authoring.trace(msg["runId"], is_admin=connection.user.is_admin)

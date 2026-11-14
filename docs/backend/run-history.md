@@ -6,18 +6,21 @@ A single manager owns the store, serializing writes with one connection per
 operation. Construct it once per process; construction marks unfinished runs
 Interrupted. Integration reload reuses it and cancels active invocations.
 
-Script list items include `automationId` and `revision`. Identity survives
-save, rename and process restart; deleting and recreating a script creates a new
-identity. Revision is the SHA-256 of the generated or written source. External
-filesystem renames are not tracked; use the integration rename API.
+Each visual automation document carries `automationId`, the identity its runs are
+recorded under. It survives saves, renames (a new `graph.name`) and process
+restarts; deleting and recreating an automation creates a new identity. A run's
+`revision` is the SHA-256 of the generated source that ran.
 
 ## WebSocket commands
 
-All are administrator only.
+All are administrator only, and answer `not_ready` while no HassSharp entry is
+set up.
 
 - `hass_sharp/run_now`: `automationId`, `className`, `method`.
   Returns `{version: 1, runId}` after initial persistence and registration.
-  This is an accepted attempt, not a claim of successful execution.
+  This is an accepted attempt, not a claim of successful execution. An automation
+  that is not active, or a method it does not have, answers `invalid_request`
+  with the reason.
 - `hass_sharp/run_history`: `automationId`, optional `offset` (default 0),
   `limit` (default 50, maximum 100) and `status` (a list of statuses; only runs
   with one of them are returned, filtered before paging). Returns

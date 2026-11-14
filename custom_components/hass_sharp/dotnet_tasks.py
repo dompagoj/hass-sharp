@@ -36,12 +36,20 @@ async def async_await_dotnet_task(task: DotNetTask[_T]) -> _T:
             future.set_exception(error)
 
     def on_completed() -> None:
+        # Runs on a .NET pool thread, where an escaping Python exception is fatal to the process. A task that ends
+        # after Home Assistant closed its loop has nobody left to tell, so that RuntimeError is dropped.
         try:
             result = task.GetAwaiter().GetResult()
         except BaseException as error:
-            _ = loop.call_soon_threadsafe(set_exception, error)
+            try:
+                _ = loop.call_soon_threadsafe(set_exception, error)
+            except RuntimeError:
+                pass
         else:
-            _ = loop.call_soon_threadsafe(set_result, result)
+            try:
+                _ = loop.call_soon_threadsafe(set_result, result)
+            except RuntimeError:
+                pass
 
     task.GetAwaiter().OnCompleted(Action(on_completed))
     return await future

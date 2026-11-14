@@ -9,6 +9,8 @@ from .const import logger
 
 # Target .NET version
 DOTNET_VERSION = "10.0.101"
+# Microsoft's current download host; dotnetcli.azureedge.net, used before, is being retired.
+DOWNLOAD_HOST = "https://builds.dotnet.microsoft.com"
 
 
 def get_architecture():
@@ -25,11 +27,11 @@ def get_architecture():
 
 def get_download_url(version, arch):
     # This URL pattern is for the .NET SDK binaries
-    # Example: https://dotnetcli.azureedge.net/dotnet/Sdk/10.0.101/dotnet-sdk-10.0.101-linux-x64.tar.gz
+    # Example: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.101/dotnet-sdk-10.0.101-linux-x64.tar.gz
     # Note: For non-linux platforms, this might need adjustment, but HASS usually runs on Linux.
     system = platform.system().lower()
     if system == "darwin":
-        return f"https://dotnetcli.azureedge.net/dotnet/Sdk/{version}/dotnet-sdk-{version}-osx-{arch}.tar.gz"
+        return f"{DOWNLOAD_HOST}/dotnet/Sdk/{version}/dotnet-sdk-{version}-osx-{arch}.tar.gz"
 
     # Detect Alpine Linux
     is_alpine = os.path.exists("/etc/alpine-release")
@@ -38,7 +40,7 @@ def get_download_url(version, arch):
     if is_alpine:
         os_name = "linux-musl"
 
-    return f"https://dotnetcli.azureedge.net/dotnet/Sdk/{version}/dotnet-sdk-{version}-{os_name}-{arch}.tar.gz"
+    return f"{DOWNLOAD_HOST}/dotnet/Sdk/{version}/dotnet-sdk-{version}-{os_name}-{arch}.tar.gz"
 
 
 def install_dotnet(install_dir: str):
@@ -118,5 +120,10 @@ def install_dotnet(install_dir: str):
         logger.info(".NET SDK installed successfully")
         return True
     except Exception as e:
-        logger.error("Failed to download and install .NET SDK: %s", e)
+        logger.error(
+            "Failed to download and install the .NET SDK from %s: %s. HassSharp downloads it once, on its first "
+            "start, and needs internet access for that; restart Home Assistant to try again",
+            url,
+            e,
+        )
         return False

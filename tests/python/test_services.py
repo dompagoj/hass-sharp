@@ -1,5 +1,6 @@
 """Service-description push and its debounced listener without a running HA instance."""
 import ast
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -60,8 +61,36 @@ class ServiceDescriptions(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(payload, str)
         self.assertEqual(json.loads(payload), {'light': {'turn_on': {'name': 'Turn on', 'fields': {
             'brightness_pct': {'selector': {'number': {'min': 0, 'max': 100}}}}}}})
-        self.assertEqual(executed, [manager.SetServiceDescriptions])
+        # The translated copy and its JSON (about 1 KB per service) are made off the loop, and so is the .NET call.
+        self.assertEqual(executed, [env['payload'], manager.SetServiceDescriptions])
         env['async_get_translations'].assert_awaited_once_with(hass, 'en', 'services', ['light'])
+
+    async def test_a_cancelled_first_push_leaves_no_listener(self):
+        env, hass, listeners, _, _ = load_services({'light': {}})
+        async def cancelled(_hass):
+            raise asyncio.CancelledError
+        env['async_get_all_descriptions'].side_effect = cancelled
+        with self.assertRaises(asyncio.CancelledError):
+            await env['async_start'](hass, NS(SetServiceDescriptions=Mock()))
+        self.assertEqual(listeners, {})
+
+    async def test_a_push_in_flight_does_not_reach_dotnet_after_unsubscribe(self):
+        env, hass, listeners, timers, _ = load_services({'light': {}})
+        manager = NS(SetServiceDescriptions=Mock())
+        unsubscribe = env['async_track'](hass, manager)
+        gathering, release = asyncio.Event(), asyncio.Event()
+        async def descriptions(_hass):
+            gathering.set()
+            await release.wait()
+            return {'light': {}}
+        env['async_get_all_descriptions'].side_effect = descriptions
+        listeners[EVENTS[0]](NS(data={}))
+        push = asyncio.create_task(timers[0].action(None))
+        await gathering.wait()
+        unsubscribe()
+        release.set()
+        await push
+        manager.SetServiceDescriptions.assert_not_called()
 
     async def test_push_says_whether_home_assistant_has_started(self):
         # Only a push once Home Assistant runs may drop a service from the typed calls of node code.

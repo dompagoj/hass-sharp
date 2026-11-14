@@ -13,7 +13,8 @@ from homeassistant.helpers import config_validation as cv, trigger
 from homeassistant.helpers.json import JSONEncoder
 from homeassistant.helpers.template import Template
 
-_LOGGER = logging.getLogger(__name__)
+# Under the integration's logger (const.logger), whose level AGENTS.md documents; this module is also loaded on its own.
+_LOGGER = logging.getLogger('custom_components.HassSharp.native_triggers')
 
 
 class NativeTriggerEncoder(JSONEncoder):
@@ -38,9 +39,11 @@ async def async_validate_graph_triggers(hass, graph):
             continue
         try:
             await _async_normalize(hass, config.get('trigger'))
-        except Exception:
-            diagnostics.append({'nodeId': node.get('id'), 'inputId': 'trigger',
-                                'severity': 'error', 'message': 'Invalid Home Assistant trigger configuration'})
+        except Exception as err:
+            # Home Assistant's reason (voluptuous names the key) is what a person or a model can act on.
+            reason = str(err).strip()
+            diagnostics.append({'nodeId': node.get('id'), 'inputId': 'trigger', 'severity': 'error',
+                                'message': 'Invalid Home Assistant trigger configuration' + (f': {reason}' if reason else '')})
     return diagnostics
 
 

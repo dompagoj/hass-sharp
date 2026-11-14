@@ -5,8 +5,13 @@ on:
     types: [published]
 
 jobs:
+  tests:
+    # Every suite (tests.yaml) passes before anything is packaged.
+    uses: ./.github/workflows/tests.yaml
+
   release:
     name: Prepare release
+    needs: tests
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -1,5 +1,12 @@
 # MCP and typed automations verification
 
+This is a historical record of graph version 4 at `546663d`. Hand-written `.cs`
+automations, typed entity objects, the 15-tool MCP surface and graph version 4
+have since been removed or replaced: automations are visual only (graph version 5),
+C# is written as `[Node]` methods, and the MCP API has 17 tools. Statements below
+describe the code at that commit; [MCP authoring](../mcp-authoring.md) and
+[writing visual automations](../writing-visual-automations.md) describe it now.
+
 Verified locally on 2026-11-12 on `feat/mcp-typed-automations`. Final implementation and published build: `546663d`. The full MCP workflow initially passed on `6c19321`, with final trigger/schema regressions repeated on `546663d`; the spacing correction is included from `36fa6fd`. Home Assistant 2026.11.1 in the repository Compose container, Linux .NET 10.0.101, Python.NET 3.1.0. The host SDK is an installed .NET 11 preview targeting net10; its preview-SDK informational message is expected. No remote Home Assistant deployment was performed.
 
 ## Automated checks

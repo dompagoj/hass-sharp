@@ -107,17 +107,38 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
     return True
 
 
+PANEL_URL = "hass-sharp"
+
+
 def register_panel(hass):
+    # A reload keeps the panel (removing it sends an open panel to Home Assistant's default dashboard), so the
+    # setup after it finds the panel registered; Home Assistant refuses a second registration.
+    if PANEL_URL in hass.data.get(frontend.DATA_PANELS, {}):
+        return
     frontend.async_register_built_in_panel(
         hass,
         "hass-sharp-view",
         "HassSharp",
         "mdi:language-csharp",
         True,
-        "hass-sharp",
+        PANEL_URL,
         {},
         True,
     )
+
+
+def on_loop(hass, function):
+    """A function .NET may call from its worker threads that runs `function` on Home Assistant's event loop.
+
+    Home Assistant's event helpers belong to the loop (scheduling and the native trigger bridge marshal the same
+    way). Calls keep their order. Once the loop has closed there is nothing left to track or untrack.
+    """
+    def marshalled(*args):
+        try:
+            hass.loop.call_soon_threadsafe(function, *args)
+        except RuntimeError:
+            pass
+    return marshalled
 
 unsubs: dict[str, callable] = {}
 
@@ -202,6 +223,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         hass.add_job(call_and_callback())
 
+    # These three run on the loop; .NET calls them through on_loop.
     def unsub_from_entity(entity_id: str):
         unsub = unsubs.pop(entity_id, None)
         if unsub is not None:
@@ -246,9 +268,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         PyInterop.CallServiceWithResponse = Action[String, String, String, Action[String], Action[String]](
             call_service_with_response
         )
-        PyInterop.UnSubscribeFromEntityTracking = Action[String](unsub_from_entity)
-        PyInterop.UnSubscribeAllFromEntityTracking = Action(unbsub_all)
-        PyInterop.SubscribeToEntityTracking = Action[String](subscribe_to_entity_change)
+        PyInterop.UnSubscribeFromEntityTracking = Action[String](on_loop(hass, unsub_from_entity))
+        PyInterop.UnSubscribeAllFromEntityTracking = Action(on_loop(hass, unbsub_all))
+        PyInterop.SubscribeToEntityTracking = Action[String](on_loop(hass, subscribe_to_entity_change))
 
         await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
         hass.data.setdefault("hass_sharp_services", {})[entry.entry_id] = await services.async_start(hass, hass_sharp)
@@ -280,7 +302,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         stop_listener = hass.data.get("hass_sharp_stop", {}).pop(entry.entry_id, None)
         if stop_listener is not None:
             stop_listener()
-        frontend.async_remove_panel(hass, "hass-sharp")
+        # Nothing is behind the panel now; it may not have been registered at all.
+        frontend.async_remove_panel(hass, PANEL_URL, warn_if_unknown=False)
         native_bridge.close()
         try:
             await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync, hass.is_stopping)
@@ -317,17 +340,28 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     native_bridge = hass.data.get("hass_sharp_native_triggers", {}).pop(entry.entry_id, None)
     if native_bridge is not None:
         native_bridge.close()
+    # Failures are logged and the entry still unloads: Home Assistant would otherwise mark it "failed to unload",
+    # which only a restart clears, while everything Python registered is already gone.
     try:
         # A reload or removal unless Home Assistant is stopping; cancelled runs record which.
         await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync, hass.is_stopping)
-    finally:
-        try:
-            if native_bridge is not None:
-                await native_bridge.async_shutdown()
-        finally:
-            frontend.async_remove_panel(hass, "hass-sharp")
+    except Exception:
+        logger.exception("Unloading the automations failed")
+    try:
+        if native_bridge is not None:
+            await native_bridge.async_shutdown()
+    except Exception:
+        logger.exception("Removing the automations' Home Assistant triggers failed")
+    # A reload keeps the panel; turning the entry off removes it (and so does removing the entry).
+    if entry.disabled_by is not None:
+        frontend.async_remove_panel(hass, PANEL_URL, warn_if_unknown=False)
 
     return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """The entry is deleted: its panel goes with it."""
+    frontend.async_remove_panel(hass, PANEL_URL, warn_if_unknown=False)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

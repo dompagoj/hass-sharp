@@ -13,9 +13,14 @@ Guides: [Writing visual automations](docs/writing-visual-automations.md) ·
 
 Open **HassSharp** in the sidebar. It has two pages:
 
-- **Automations** lists your saved automations. **New automation** asks for a name
-  and opens the node editor on a new draft. Each row's menu opens the automation
-  for editing or deletes it.
+- **Automations** shows a card for each saved automation: a thumbnail of its
+  graph, what starts it, its recent runs and whether it has problems. Search,
+  filter (needs attention, ran today, never ran, off) and sort the cards. Open a
+  card to edit the automation. Each card has an on/off switch: an automation
+  that is off is started by none of its triggers, but **Run now** still runs it.
+  A card's menu renames the automation, duplicates it (the copy starts off),
+  shows its runs, or deletes it. **New automation** asks for a name and opens
+  the node editor on a new draft.
 - **Node library** holds your own C# files of reusable nodes.
 
 ## The node editor
@@ -43,18 +48,39 @@ There are two places for your own C#:
   its result. The library editor has Roslyn completion, diagnostics, hover,
   signature help, formatting and go-to-definition. See
   [Custom node libraries](docs/node-libraries.md).
-- **The Custom C# node.** A step whose body is C# statements, for one-off logic
-  inside a graph; see
-  [Writing visual automations](docs/writing-visual-automations.md#c-escape-hatch).
+- **The Custom C# node.** One `[Node]` method of your own inside a graph, for
+  one-off logic. **Edit code** opens it in a full-screen editor with completion,
+  hover and diagnostics, and its parameters and return value become the node's
+  pins; see
+  [Writing visual automations](docs/writing-visual-automations.md#c-nodes).
 
 Custom code is trusted administrator code and runs inside Home Assistant.
 
 ## Authoring through MCP
 
-HassSharp registers an LLM API with Home Assistant's built-in MCP Server. An
-administrator's MCP client can discover nodes, preview, save and run graphs, edit
-node libraries and read run history and traces, through the same revision-checked
-services as the panel. See [MCP authoring](docs/mcp-authoring.md).
+HassSharp registers an LLM API with Home Assistant. Home Assistant's built-in MCP
+Server serves it to MCP clients, and any conversation agent an administrator
+configures with it gets the same tools. An administrator's client or agent can
+discover entities and nodes, preview, save and run graphs, turn automations on
+and off, edit node libraries and read run history and traces, through the same
+revision-checked services as the panel. See [MCP authoring](docs/mcp-authoring.md).
+
+### Security
+
+- The API is available to every conversation agent and MCP client an
+  administrator selects it for, not only the MCP Server, and only administrators
+  can use it.
+- Saving an automation or a node library compiles C# and runs it inside Home
+  Assistant's process, with its privileges. Treat the tools that change things as
+  code execution. For an agent that must not change anything, use an MCP Server
+  entry with **Read only** enabled.
+- What the tools return goes to the model's provider: discovered entities
+  (whether or not they are exposed to assistants, with only a few attributes),
+  service descriptions, graphs and their C#, and run errors and trace values.
+- Trace values under secret-looking names are redacted, by name only: this is a
+  safeguard, not a security boundary.
+
+See [MCP authoring](docs/mcp-authoring.md#security).
 
 ## Installation
 
@@ -75,7 +101,8 @@ packages include the compiled .NET library and frontend.
 Restart Home Assistant, add **HassSharp** under **Settings → Devices & services →
 Add integration**, and open **HassSharp** in the sidebar. The first start downloads
 the .NET 10 SDK into the integration directory, so it needs internet access and
-takes longer than later starts.
+takes longer than later starts. If the download fails, the log says so; restart
+Home Assistant to try again.
 
 Automations and node libraries are stored in Home Assistant's
 `.storage/hass_sharp/` directory. Earlier versions also loaded hand-written `.cs`

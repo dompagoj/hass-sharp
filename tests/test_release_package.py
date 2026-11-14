@@ -81,3 +81,13 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("100 MiB", result.stderr)
         self.assertFalse(self.output.exists())
+
+    def test_skips_test_pages_and_the_preview_build_under_www(self):
+        # The mock preview pages are served without authentication; a release built from a working copy must not hold them.
+        for name in ("www/visual-v2-check-baby/tests/preview-app.html", "www/visual-v2-check-baby/assets/preview.js",
+                     "www/visual-v2-check-baby/codicon.ttf", "www/index.html", "www/assets/page.HTML"):
+            self.write_file(name, "test page")
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with ZipFile(self.output) as archive:
+            self.assertEqual(set(archive.namelist()), set(self.files))
