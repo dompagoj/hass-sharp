@@ -656,3 +656,23 @@ it('opens a run\'s code read only, as the run had it, from the trace page', asyn
   button(dialog()!, 'Close')!.click()
   await vi.waitFor(() => expect(dialog()).toBeNull())
 })
+
+it('keeps unapplied code in the draft of a panel torn down, and opens it in the code editor when the draft is restored', async () => {
+  const { editor } = await open()
+  editor.change(`${template}\n// typed, not applied`)
+  // The panel goes away without asking (the sidebar): the unapplied code is kept with the draft.
+  dispose?.(); dispose = undefined
+  document.body.innerHTML = ''
+  const kept = JSON.parse(localStorage.getItem('hass-sharp:draft:saved')!)
+  expect(kept.code).toEqual({ nodeId: 'code', text: `${template}\n// typed, not applied` })
+  resetHost()
+  const { host, dirty } = mount()
+  const restore = () => [...document.querySelectorAll<HTMLDialogElement>('dialog')].find(d => d.open && d.textContent?.includes('Restore unsaved changes'))
+  await vi.waitFor(() => expect(restore()).toBeTruthy())
+  button(restore()!, 'Restore')!.click()
+  // The code editor opens on its node with the unapplied code, still to be applied.
+  await vi.waitFor(() => expect(editors).toHaveLength(1))
+  expect(editors[0].model.getValue()).toBe(`${template}\n// typed, not applied`)
+  await vi.waitFor(() => expect(dirty.at(-1)).toBe(true))
+  expect(graphOf(host).nodes.find(n => n.id === 'code')!.config.source).toBe(template)
+})

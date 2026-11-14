@@ -8,7 +8,7 @@ import { displayValue, jsonEqual, optionWords, record, strings } from './json'
 export type WidgetKind =
   | 'toggle' | 'number' | 'text' | 'select' | 'constant' | 'entity' | 'state' | 'device' | 'area' | 'floor' | 'label'
   | 'target' | 'duration' | 'time' | 'date' | 'datetime' | 'color' | 'mixed' | 'json' | 'none'
-/** The kinds a `mixed` widget switches between: Text, Number, Yes/No, List or object. */
+/** The kinds a `mixed` widget switches between: Text, Number, True/False, List or object. */
 export type ValueKind = 'text' | 'number' | 'boolean' | 'json'
 export interface WidgetOption { value: JsonValue; label: string }
 export interface Widget {

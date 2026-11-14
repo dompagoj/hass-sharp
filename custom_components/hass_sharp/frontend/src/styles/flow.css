@@ -85,6 +85,9 @@
 .hs-app .hs-card__runs { font-weight: 650; }
 
 .hs-app .hs-card__body { display: grid; gap: 4px; padding: 8px var(--hs-card-pad) 12px; border-top: 1px solid color-mix(in oklab, var(--hs-cat) 18%, var(--hs-line)); }
+/* A control on a card shows the app's standard ring (as in the panel), not the page's heavier one: it stays inside the
+   card's padding, clear of the card's edge and of the pins on it. */
+.hs-app .hs-flow .hs-card :is(input, select, textarea, button):focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
 .hs-app .hs-card__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: start; }
 .hs-app .hs-card__row--footer { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--hs-line); }
 .hs-app .hs-pin-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

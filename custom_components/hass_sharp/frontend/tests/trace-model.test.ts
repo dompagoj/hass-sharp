@@ -35,8 +35,8 @@ it('follows a linear run: every step reached once, every wire travelled, values 
   expect([...model.edges].sort()).toEqual(['d1', 'e1'])
   const flow = flowTrace(model, g, '')
   expect(flow.nodes).toEqual({ t: { status: 'ok', runs: 1, ms: 1 }, n: { status: 'ok', runs: 1, ms: 1 }, log: { status: 'ok', runs: 1, ms: 1 } })
-  expect(flow.value!('n', 'value', 'in')).toEqual({ type: 'boolean', v: 'Yes', trunc: undefined, src: undefined })
-  expect(flow.value!('n', 'value', 'out')?.v).toBe('No')
+  expect(flow.value!('n', 'value', 'in')).toEqual({ type: 'boolean', v: 'True', trunc: undefined, src: undefined })
+  expect(flow.value!('n', 'value', 'out')?.v).toBe('False')
   // A port the step did not record has no chip.
   expect(flow.value!('log', 'other', 'in')).toBeUndefined()
   expect(inputSource(g, model.value('log', 'value', 'in', '')!, nodeCatalog)).toBe('From Not · Result')
@@ -61,7 +61,7 @@ it('leaves a value node no step read unreached, and its wire not travelled', () 
   expect([...model.edges].sort()).toEqual(['d1', 'd2', 'e1', 'e2'])
   const flow = flowTrace(model, g, '')
   expect(Object.keys(flow.nodes).sort()).toEqual(['c', 'cmp', 'i', 't', 'yes'])
-  expect(flow.value!('cmp', 'value', 'out')?.v).toBe('Yes')
+  expect(flow.value!('cmp', 'value', 'out')?.v).toBe('True')
 })
 
 it('marks only the branch a condition took, and leaves the other side unreached', () => {
@@ -293,9 +293,17 @@ it('answers values read downstream in a long run without scanning the whole run 
   const sources = Array.from({ length: 400 }, (_, i) => node(`c${i}`, 'constant', { type: 'string', value: lit('string', '') }))
   const g = graph([node('t', 'trigger', { type: 'manual' }), node('loop', 'repeat'), node('log', 'log', { level: 'Info' }), ...sources],
     [{ id: 'e1', source: 't', target: 'loop' }, { id: 'e2', source: 'loop', target: 'log', port: 'body' }])
+  // Every read of a run's inputs is counted: a lookup that scans the whole run reads all 2,000 of them.
+  let scanned = 0
   const reads = Array.from({ length: 2000 }, (_, i) => ({ node: 'log', port: 'next', frame: `loop#${i}:body`, inputs: { value: { type: 'string', v: `read ${i}`, src: { node: `c${i % 400}`, port: 'value' } } } }))
-  const started = performance.now()
-  const model = traceModel(trace([{ node: 't', port: 'next' }, { node: 'loop', port: 'done' }, ...reads]), g, nodeCatalog)
+  const run = trace([{ node: 't', port: 'next' }, { node: 'loop', port: 'done' }, ...reads])
+  for (const event of run.events) {
+    const inputs = event.inputs
+    Object.defineProperty(event, 'inputs', { get: () => { scanned++; return inputs }, enumerable: true })
+  }
+  const model = traceModel(run, g, nodeCatalog)
+  expect(scanned).toBeGreaterThan(0)
+  scanned = 0
   // A person steps through 25 iterations; each shows the chip of every value on the canvas.
   for (let i = 0; i < 25; i++)
     for (let k = 0; k < 400; k++) {
@@ -303,6 +311,7 @@ it('answers values read downstream in a long run without scanning the whole run 
       if (k === i % 400) expect(value?.v).toBe(`read ${i}`)
     }
   expect(model.value('c0', 'value', 'out', '')?.v).toBe('read 1600')
+  // 10,001 lookups, each reading at most the 5 runs that read that value (a full scan would read 2,000 each: 20 million).
+  expect(scanned).toBeLessThanOrEqual(10_001 * 5)
   expect(model.eventsOf('log')).toHaveLength(2000)
-  expect(performance.now() - started).toBeLessThan(1000)
 })

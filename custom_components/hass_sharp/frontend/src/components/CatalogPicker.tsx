@@ -60,17 +60,20 @@ export function CatalogPicker(props: CatalogPickerProps) {
   const [domain, setDomain] = createSignal('')
   const [active, setActive] = createSignal(-1)
   const id = createUniqueId()
+  const values = () => props.values ?? []
+  const selected = (item: string) => props.multiple ? values().includes(item) : props.value === item
   const offered = createMemo(() => props.filter ? props.items.filter(item => props.filter!(item)) : props.items)
   const domains = createMemo(() => [...new Set(offered().map(item => item.id.split('.')[0]))].sort())
   const matches = createMemo(() => offered().filter(item =>
     (!domain() || item.id.startsWith(domain() + '.')) &&
     `${item.id} ${item.name ?? ''} ${item.description ?? ''}`.toLocaleLowerCase().includes(search().toLocaleLowerCase())))
-  const shown = createMemo(() => matches().length > shownResults ? matches().slice(0, shownResults) : matches())
+  // The first matches, and every selected one after them: a selection is always there to see and untick.
+  const shown = createMemo(() => matches().length > shownResults
+    ? [...matches().slice(0, shownResults), ...matches().slice(shownResults).filter(item => selected(item.id))]
+    : matches())
   // A refreshed catalog can reorder results while the dialog remains open.
   createEffect(() => { matches(); setActive(-1) })
   const activeId = () => active() >= 0 && active() < shown().length ? `${id}-${active()}` : undefined
-  const values = () => props.values ?? []
-  const selected = (item: string) => props.multiple ? values().includes(item) : props.value === item
   const choose = (value: string) => {
     if (!props.multiple) { props.onChange?.(value); setOpen(false); return }
     props.onChangeValues?.(values().includes(value) ? values().filter(v => v !== value) : [...values(), value])

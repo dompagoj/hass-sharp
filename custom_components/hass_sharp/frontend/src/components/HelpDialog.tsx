@@ -11,7 +11,7 @@ export function HelpDialog(props: { open: boolean; onClose: () => void }){
  <p>Select a step to edit it in the panel on the right. Simple values can also be changed on the step itself; both show the same value. A value that comes from another step shows where it comes from. On a phone, selecting a step shows its name at the bottom: tap it to edit the step.</p>
  <p>Search for an entity or a service by its name or its id. Optional fields are added with "+ Add field" and removed with their remove button.</p>
  <h3>Steps and values</h3>
- <p>Steps run in order along the step order wires, from the trigger on. Value nodes, such as Constant, Compare, And, Not and Error details, have no place in that order: a value node is worked out each time a step that uses it runs, so it always gives the value of that moment. Read entity gives a state or an attribute; Convert changes a value's type; If continues on a Yes/No value.</p>
+ <p>Steps run in order along the step order wires, from the trigger on. Value nodes, such as Constant, Compare, And, Not and Error details, have no place in that order: a value node is worked out each time a step that uses it runs, so it always gives the value of that moment. Read entity gives a state or an attribute; Convert changes a value's type; If continues on a True/False value.</p>
  <p>A step can use a value from a step that ran before it on its path, or from a value node. A missing or unsuitable value follows On error.</p>
  <h3>Repeat and wait</h3>
  <p>Repeat runs its Body up to 1,000 times, then continues with Next. Stop ends the whole run. Wait until checks an entity until it matches or the time limit passes. Waits and repeats stop when the run is cancelled.</p>

@@ -545,3 +545,176 @@ describe('drafts of unsaved changes', () => {
     } finally { getItem.mockRestore(); setItem.mockRestore() }
   })
 })
+
+describe('drafts and conflicts: closing pass', () => {
+  const stored = (key: string) => { const text = localStorage.getItem(`hass-sharp:draft:${key}`); return text ? JSON.parse(text) : undefined }
+  const draftKeys = () => Object.keys(localStorage).filter(k => k.startsWith('hass-sharp:draft:')).map(k => k.slice('hass-sharp:draft:'.length)).sort()
+  /** A server holding `motion` at `state.revision`; `user` is the Home Assistant user of the panel. */
+  function server(user?: string, options: { readFails?: boolean } = {}) {
+    const state = { revision: 2, graph: graph(), readFails: options.readFails ?? false }
+    const hass = { ...(user ? { user: { id: user } } : {}), callWS: async (message: any) => {
+      if (message.type === 'hass_sharp/node_library') return ok({ catalog: nodeCatalog, generation: `g${state.revision}`, saved: true, valid: true, diagnostics: [] })
+      const req = message.request
+      if (req.operation === 'read') {
+        if (state.readFails) return { version: 1, ok: false, error: { code: 'unavailable', detail: 'Try again' } }
+        return ok({ ...document(state.revision), graph: structuredClone(state.graph) })
+      }
+      if (req.operation === 'save') {
+        if (req.id === 'motion' && req.expectedRevision !== state.revision) return { version: 1, ok: false, error: { code: 'conflict', detail: 'Changed elsewhere' } }
+        if (req.id === 'motion') { state.revision++; state.graph = req.graph }
+        return ok({ document: { ...document(req.expectedRevision + 1), id: req.id, graph: req.graph }, active: true, activationError: null })
+      }
+      return ok(preview())
+    } } as any
+    const open = (code?: () => { nodeId: string; text: string } | undefined) => {
+      let stop!: () => void
+      const session = createRoot(d => { stop = d; dispose = d; return createVisualSession(hass, graph(), { code }) })
+      return { session, stop }
+    }
+    return { state, open }
+  }
+  const edit = (session: ReturnType<typeof createVisualSession>, label: string) => session.history.commit(updateNode(session.history.graph(), 'trigger-1', { label }))
+
+  it('keeps drafts per Home Assistant user: another person in this browser is not offered them', async () => {
+    const ann = server('ann')
+    const first = ann.open()
+    await flush(); await first.session.load('motion'); await flush()
+    edit(first.session, 'Ann\'s change')
+    first.stop()
+    expect(draftKeys()).toEqual(['ann/motion'])
+    const bob = server('bob').open()
+    await flush(); await bob.session.load('motion'); await flush()
+    expect(bob.session.restoreOffer()).toBeUndefined()
+    bob.stop()
+    const again = ann.open()
+    await flush(); await again.session.load('motion'); await flush()
+    expect(again.session.restoreOffer()?.graph.nodes[0].label).toBe('Ann\'s change')
+  })
+
+  it('writes a dirty session\'s draft when it is torn down, keeps the time of changes that did not change, and removes only its own', async () => {
+    vi.useFakeTimers()
+    const { open } = server()
+    const first = open()
+    await flush(); await first.session.load('motion'); await flush()
+    edit(first.session, 'Made first')
+    await vi.advanceTimersByTimeAsync(1000)
+    const at = stored('motion').at
+    // Torn down with no write waiting: the changes are written all the same, with the time they were made.
+    await vi.advanceTimersByTimeAsync(60_000)
+    localStorage.removeItem('hass-sharp:draft:motion')
+    first.stop()
+    expect(stored('motion').graph.nodes[0].label).toBe('Made first')
+    const written = stored('motion').at
+    // Opened again and restored, the same changes keep that time.
+    const second = open()
+    await flush(); await second.session.load('motion'); await flush()
+    second.session.restoreDraft()
+    await vi.advanceTimersByTimeAsync(60_000)
+    second.stop()
+    expect(stored('motion').at).toBe(written)
+    expect(written).toBeGreaterThanOrEqual(at)
+    // A clean session of the same automation (another tab) leaves the draft it did not write alone.
+    const clean = open()
+    await flush(); await clean.session.load('motion'); await flush()
+    await vi.advanceTimersByTimeAsync(1000)
+    clean.stop()
+    expect(stored('motion')).toBeDefined()
+  })
+
+  it('gives each new automation its own draft, and offers the newest one a new automation left', async () => {
+    vi.useFakeTimers()
+    const { open } = server('ann')
+    const first = open()
+    first.session.newDraft(createGraph('New automation'))
+    edit(first.session, 'First new')
+    await vi.advanceTimersByTimeAsync(1000)
+    const second = open()
+    second.session.newDraft(createGraph('New automation'))
+    // Nothing was left yet: the first is still being edited.
+    expect(second.session.restoreOffer()).toBeUndefined()
+    edit(second.session, 'Second new')
+    await vi.advanceTimersByTimeAsync(1000)
+    const keys = draftKeys()
+    expect(keys).toHaveLength(2)
+    for (const key of keys) expect(key).toMatch(/^ann\/new:/)
+    first.stop(); second.stop()
+    const third = open()
+    third.session.newDraft(createGraph('New automation'))
+    expect(third.session.restoreOffer()?.graph.nodes[0].label).toBe('Second new')
+    third.session.restoreDraft()
+    // Taken over: written under the key it came from, not a third one.
+    edit(third.session, 'Second new, continued')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(draftKeys()).toHaveLength(2)
+  })
+
+  it('sends a draft offered for a revision that was saved again meanwhile through the conflict choices', async () => {
+    const { state, open } = server()
+    const first = open()
+    await flush(); await first.session.load('motion'); await flush()
+    edit(first.session, 'Made on revision 2')
+    first.stop()
+    const { session } = open()
+    await flush(); await session.load('motion'); await flush()
+    expect(session.restoreOffer()).toBeDefined()
+    // Saved elsewhere while the offer is open: the page comes back and reloads quietly (nothing is unsaved).
+    state.revision = 3
+    state.graph = updateNode(state.graph, 'trigger-1', { label: 'Revision 3' })
+    await session.refreshCatalog()
+    expect(session.restoreOffer()).toBeUndefined()
+    expect(session.document()?.revision).toBe(3)
+    expect(session.conflict()).toBe(true)
+    expect(session.conflictDraft()).toBeDefined()
+    expect(session.history.graph().nodes[0].label).toBe('Made on revision 2')
+  })
+
+  it('says Keep my version did not save a graph with problems yet, and keeps its draft on the latest revision', async () => {
+    vi.useFakeTimers()
+    const { state, open } = server()
+    const first = open()
+    await flush(); await first.session.load('motion'); await flush()
+    edit(first.session, 'Mine')
+    first.stop()
+    state.revision = 3
+    const { session } = open()
+    await flush(); await session.load('motion'); await flush()
+    expect(session.conflict()).toBe(true)
+    // A problem only this graph has: a Compare with nothing to compare.
+    session.history.commit({ ...session.history.graph(), nodes: [...session.history.graph().nodes, { id: 'cmp', kind: 'compare', config: {}, position: { x: 0, y: 0 } } as any] })
+    expect(session.diagnostics().some(d => d.severity === 3)).toBe(true)
+    await session.keepMine()
+    expect(state.revision).toBe(3)
+    expect(session.conflict()).toBe(false)
+    expect(session.error()).toBe('Not saved yet: fix the problems, then Save.')
+    expect(session.document()?.revision).toBe(3)
+    expect(stored('motion')).toMatchObject({ revision: 3 })
+  })
+
+  it('keeps unapplied code in the draft and gives it back when the draft is restored', async () => {
+    vi.useFakeTimers()
+    const { open } = server()
+    let code: { nodeId: string; text: string } | undefined
+    const first = open(() => code)
+    await flush(); await first.session.load('motion'); await flush()
+    code = { nodeId: 'trigger-1', text: 'typed, not applied' }
+    first.stop()
+    expect(stored('motion').code).toEqual(code)
+    code = undefined
+    const { session } = open(() => code)
+    await flush(); await session.load('motion'); await flush()
+    expect(session.restoreOffer()?.code).toEqual({ nodeId: 'trigger-1', text: 'typed, not applied' })
+    session.restoreDraft()
+    expect(session.takeRestoredCode()).toEqual({ nodeId: 'trigger-1', text: 'typed, not applied' })
+    expect(session.takeRestoredCode()).toBeUndefined()
+  })
+
+  it('Discard after a read that failed reloads the automation that was asked for', async () => {
+    const { state, open } = server(undefined, { readFails: true })
+    const { session } = open()
+    await flush(); await session.load('motion'); await flush()
+    expect(session.document()).toBeUndefined()
+    state.readFails = false
+    await session.discardChanges()
+    expect(session.document()?.id).toBe('motion')
+  })
+})

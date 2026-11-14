@@ -119,15 +119,15 @@ it("shows a stored value that does not read as the Type with the field's own err
   expect(configOf(host)).toEqual({ type: 'number', value: lit('string', 'abc') })
 })
 
-it('shows a Yes/No Constant stored as the text True as that text, stores it as yes/no in one undo step, and keeps anything else with its error', async () => {
+it('shows a True/False Constant stored as the text True as that text, stores it as true/false in one undo step, and keeps anything else with its error', async () => {
   const host = mount(stale('True', 'string', 'boolean'))
   await vi.waitFor(() => expect(cardField(host)).not.toBeNull())
-  // A text field holding the stored text, not a switch that could only show it as No.
+  // A text field holding the stored text, not a switch that could only show it as False.
   expect(cardField(host).value).toBe('True')
   expect(host.querySelector('[data-id="c"] .hs-card-editor input[role="switch"]')).toBeNull()
   cardField(host).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
   expect(configOf(host)).toEqual({ type: 'boolean', value: lit('boolean', true) })
-  // Stored as yes/no, the switch is back.
+  // Stored as true/false, the switch is back.
   await vi.waitFor(() => expect(host.querySelector<HTMLInputElement>('[data-id="c"] .hs-card-editor input[role="switch"]')?.checked).toBe(true))
   byLabel(host, 'Undo')!.click()
   expect(configOf(host)).toEqual({ type: 'boolean', value: lit('string', 'True') })
@@ -196,7 +196,7 @@ it("keeps a Constant's outgoing wire when its new Type no longer fits the input 
   expect(after.edges.find(e => e.id === 'w')).toEqual(g.edges.find(e => e.id === 'w'))
   // The wire stays; the If's Condition carries the mismatch (the Constant's own problem is only its cleared value).
   expect(wireErrors(after).map(d => [d.nodeId, d.inputId, d.message])).toEqual([
-    ['branch', 'value', 'Condition accepts Yes/No, not Text'],
+    ['branch', 'value', 'Condition accepts True/False, not Text'],
     ['c', 'value', 'Value is required'],
   ])
 })
@@ -233,11 +233,11 @@ it('offers a Constant only the types a value can be typed in for, and keeps show
 it('names no two entries of the Type list alike, and offers a type that is the same as one of the editor\'s own once', () => {
   const catalog = (rich as any).catalog
   const offered = constantTypes(catalog), labels = constantTypeLabels(catalog)
-  // C#'s bool, double, string, JsonObject and JsonArray are Yes/No, Number, Text, Object and List: offered once, as those.
+  // C#'s bool, double, string, JsonObject and JsonArray are True/False, Number, Text, Object and List: offered once, as those.
   for (const same of ['global::System.Boolean', 'global::System.Double', 'global::System.String', 'global::System.Text.Json.Nodes.JsonObject', 'global::System.Text.Json.Nodes.JsonArray'])
     expect(offered, same).not.toContain(same)
   // int and float are other types that read as Number: their C# name follows. The editor's own Number keeps its label.
-  expect(offered.map(id => labels.get(id))).toEqual(['Yes/No', 'Number', 'Text', 'Object', 'List', 'Entity', 'Target', 'Number (int)', 'Mode', 'Number (float)'])
+  expect(offered.map(id => labels.get(id))).toEqual(['True/False', 'Number', 'Text', 'Object', 'List', 'Entity', 'Target', 'Number (int)', 'Mode', 'Number (float)'])
   expect(new Set(labels.values()).size).toBe(offered.length)
   // A stored Type that is the same as an offered one is named apart from it too, and stays selected.
   const stored = 'global::System.Double'

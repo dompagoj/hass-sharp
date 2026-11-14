@@ -36,6 +36,8 @@ export interface CustomCodeEditorProps {
    * on close, without it.
    */
   onDirtyChange?(dirty: boolean, source?: string): void
+  /** Unapplied code to open with (restored from a draft); unapplied, so it counts as unsaved until it is applied. */
+  draft?: string
 }
 
 /**
@@ -50,7 +52,9 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
   const [handle, setHandle] = createSignal<CustomCodeHandle>()
   const [confirm, setConfirm] = createSignal(false)
   const [help, setHelp] = createSignal(false)
-  const source = () => handle()?.source() ?? initial
+  // The text the editor opens with: the node's code, or unapplied code taken back from a draft.
+  const opening = !props.readOnly && props.draft !== undefined ? props.draft : initial
+  const source = () => handle()?.source() ?? opening
   const dirty = () => !props.readOnly && source() !== initial
   createEffect(() => props.onDirtyChange?.(dirty(), source()))
   onCleanup(() => props.onDirtyChange?.(false))
@@ -162,7 +166,7 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
               <LoadFailed class="hs-code-failed" what="code editor" error={surface.error()} onRetry={surface.retry} />
             </Show>
           }>
-            {component => <Dynamic component={component()} nodeId={props.node.id} initial={initial} readOnly={props.readOnly} label={`Code of ${title()}`} onReady={setHandle} onApply={apply} />}
+            {component => <Dynamic component={component()} nodeId={props.node.id} initial={opening} readOnly={props.readOnly} label={`Code of ${title()}`} onReady={setHandle} onApply={apply} />}
           </Show>
           <Show when={error()}>
             {reason => (

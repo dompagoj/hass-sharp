@@ -197,6 +197,7 @@ it('says when the graph could not be checked, still saves, and checks again when
   fixture.controls.previewError = true
   edit(root, 'Unchecked')
   await vi.waitFor(() => expect(button(root, 'Save').title).toBe('Could not check the graph'))
+  expect(document.getElementById(button(root, 'Save').getAttribute('aria-describedby')!)?.textContent).toBe('Could not check the graph')
   expect(button(root, 'Save').disabled).toBe(false)
   fixture.controls.previewError = false
   window.dispatchEvent(new Event('focus'))
@@ -258,6 +259,24 @@ it('keeps the switch as the server took it when a save that the server took firs
   answerSave()
   await saved(root, 5)
   // The save's answer says on; the server holds off, and so does the switch.
+  expect(toggle().checked).toBe(false)
+})
+it('cannot be switched while a save is on its way, so a save pressed first never races the switch', async () => {
+  const { root, fixture } = setup(true)
+  await saved(root, 4)
+  const toggle = () => root.querySelector<HTMLInputElement>('.hs-topbar__enabled input[role="switch"]')!
+  await vi.waitFor(() => expect(toggle()).not.toBeNull())
+  let answerSave!: () => void
+  fixture.controls.holdSaveReply = new Promise<void>(resolve => { answerSave = resolve })
+  edit(root, 'Saved before the switch')
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(fixture.documents.get('motion')!.revision).toBe(5))
+  // The switch waits for the save's answer.
+  expect(toggle().disabled).toBe(true)
+  answerSave()
+  await saved(root, 5)
+  toggle().click()
+  await vi.waitFor(() => expect(fixture.documents.get('motion')!.enabled).toBe(false))
   expect(toggle().checked).toBe(false)
 })
 it('shows persistence succeeded when runtime activation fails', async () => {
@@ -337,9 +356,11 @@ it('marks Save unavailable while there is nothing to save, keeps it focusable an
   const name = root.querySelector<HTMLInputElement>('[aria-label="Automation name"]')!
   name.value = 'Renamed motion'; name.dispatchEvent(new Event('input', { bubbles: true })); name.dispatchEvent(new FocusEvent('blur'))
   await vi.waitFor(() => expect(unavailable() || save().disabled).toBe(false))
-  // Available at once; until the check of the edit answers, its title says it is running.
-  expect(save().hasAttribute('aria-describedby')).toBe(false)
+  // Available at once; while the check of the edit runs, that is its title and its description, as a reason is.
+  expect(save().title).toBe('Checking…')
+  expect(document.getElementById(save().getAttribute('aria-describedby')!)?.textContent).toBe('Checking…')
   await vi.waitFor(() => expect(save().hasAttribute('title')).toBe(false))
+  expect(save().hasAttribute('aria-describedby')).toBe(false)
   button(root, 'Undo').click()
   await vi.waitFor(() => expect(unavailable()).toBe(true))
   name.value = 'Renamed motion'; name.dispatchEvent(new Event('input', { bubbles: true })); name.dispatchEvent(new FocusEvent('blur'))

@@ -3,7 +3,10 @@
 .hs-app .hs-code-input { font-family: monospace; resize: vertical; tab-size: 4; }
 .hs-app .hs-inspector textarea.hs-code-input { font: 12px/1.6 monospace; }
 .hs-app [data-input-id][aria-invalid="true"] { outline: 1px solid var(--hs-port-error); outline-offset: 4px; border-radius: 4px; }
-.hs-app [data-input-id]:focus-within { outline: 2px solid var(--hs-focus); outline-offset: 4px; border-radius: 4px; }
+/* One focus indicator at a time. A field, select or button in an input row (on a card or here) shows its own ring; the
+   row shows one only when it is itself focused (Go to the field, on a row with no control), never around a focused
+   control inside it. */
+.hs-app [data-input-id]:focus { outline: 2px solid var(--hs-focus); outline-offset: 2px; border-radius: 4px; }
 .hs-app .hs-inspector :is(button, input, select, textarea, summary, [tabindex]):focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
 .hs-app .hs-insp-glyph { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
@@ -66,7 +69,12 @@
 .hs-app .hs-insp-input > .hs-insp-remove { grid-column: 4; grid-row: 1; }
 .hs-app .hs-insp-input > .hs-input-editor > :not(.hs-input-editor__head), .hs-app .hs-insp-input > .hs-insp-pill, .hs-app .hs-insp-input > .hs-insp-unset,
 .hs-app .hs-insp-input > .hs-field-hint, .hs-app .hs-insp-input > .hs-input-editor__errors { grid-column: 1 / -1; }
-.hs-app .hs-type-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 160px; padding: 0 8px; min-height: 20px; border-radius: 10px; background: var(--hs-soft); color: var(--hs-muted); font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hs-app .hs-type-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 176px; min-width: 0; padding: 0 8px; min-height: 20px; border-radius: 10px; background: var(--hs-soft); color: var(--hs-muted); font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The friendly name, then the C# type in code style; on a narrow panel only the C# type gives way (the chip's title has both),
+   and the chip stays narrow enough for the row's label to keep one line at the panel's narrowest. */
+.hs-app .hs-type-chip__name { flex: 0 0 auto; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hs-app .hs-csharp-type { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hs-muted); font: 11px/18px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.hs-app .hs-type-chip__name + .hs-visually-hidden + .hs-csharp-type { padding-left: 2px; }
 .hs-app .hs-type-chip__dot { width: 8px; height: 8px; flex: none; border-radius: 50%; border: 2px solid var(--hs-chip-color, var(--hs-muted)); background: transparent; }
 .hs-app .hs-type-chip__dot--list { border-radius: 2px; }
 .hs-app .hs-type-chip__dot--filled { background: var(--hs-chip-color, var(--hs-muted)); }
@@ -81,7 +89,8 @@
 .hs-app .hs-insp-output { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0 8px; padding: 4px 8px; margin: 0 -8px; border-radius: 6px; }
 .hs-app .hs-insp-output:hover, .hs-app .hs-insp-output:focus-visible { background: var(--hs-soft); }
 .hs-app .hs-insp-output__name { overflow-wrap: anywhere; }
-.hs-app .hs-insp-output__type { color: var(--hs-muted); font-size: 12px; }
+.hs-app .hs-insp-output__type { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 200px; overflow: hidden; color: var(--hs-muted); font-size: 12px; white-space: nowrap; }
+.hs-app .hs-insp-output__friendly { flex: none; }
 .hs-app .hs-insp-output__desc { grid-column: 2 / -1; display: none; color: var(--hs-muted); font-size: 12px; }
 .hs-app .hs-insp-output:hover .hs-insp-output__desc, .hs-app .hs-insp-output:focus-visible .hs-insp-output__desc { display: block; }
 

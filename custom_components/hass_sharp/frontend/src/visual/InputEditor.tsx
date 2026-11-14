@@ -33,8 +33,8 @@ export interface InputEditorProps {
   catalog?: VisualCatalogSnapshot
   /**
    * A stored value of another type than the input's (a Constant's value from before its Type set the value's type) is
-   * shown in the input's own number, text or yes/no editor, as text, and committing it stores it as the input's type
-   * (a yes/no from the text true or false, any case).
+   * shown in the input's own number, text or true/false editor, as text, and committing it stores it as the input's type
+   * (a true/false value from the text true or false, any case).
    */
   retype?: boolean
 }

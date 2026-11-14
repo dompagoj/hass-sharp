@@ -6,11 +6,17 @@ import { nodeCatalog, type ServicesSection, type VisualCatalogSnapshot } from '.
 import { connectionIndex } from './connectionIndex'
 import { danglingWireIds } from './danglingWire'
 import { createUuid } from './id'
-import { pruneDrafts, readDraft, removeDraft, writeDraft, type VisualDraft } from './drafts'
+import { listDrafts, pruneDrafts, readDraft, removeDraft, writeDraft, type VisualDraft } from './drafts'
 
 /** How long the editor waits after a change before keeping its draft. */
 const draftDelay = 500
 const conflictMessage = 'This automation changed elsewhere while you had unsaved changes here.'
+/** Keep my version could not save the local graph yet: it has problems the person fixes first. */
+export const notSavedYet = 'Not saved yet: fix the problems, then Save.'
+/** The draft keys of the sessions open in this page: a new automation is never offered one still being edited here. */
+const liveKeys = new Set<string>()
+/** Unapplied code of a Custom C# node's code editor. */
+export type UnappliedCode = { nodeId: string; text: string }
 
 /**
  * Owns graph/source pairs and their revisions. Never generates or persists source locally.
@@ -18,12 +24,20 @@ const conflictMessage = 'This automation changed elsewhere while you had unsaved
  * `unsaved` says whether the editor has changes beyond the graph (a code editor's unapplied text): a saved revision
  * that changed elsewhere is then never reloaded quietly.
  *
- * While the graph has unsaved changes a draft of it is kept in this browser ({@link VisualDraft}), once the open
- * automation is known (`load`, `openNew`, `newDraft`); it is removed on save, reload and discard. Opening an automation
- * with a draft made on its saved revision offers it (`restoreOffer`); a draft made on an older revision is shown as a
- * conflict, with the same choices as one met while editing (`keepMine`, `saveCopy`, `discardChanges`).
+ * While there are unsaved changes (the graph, or `code`: a code editor's unapplied text) a draft of them is kept in this
+ * browser ({@link VisualDraft}) under the automation and the Home Assistant user, once the open automation is known
+ * (`load`, `openNew`, `newDraft`; a new automation's key is its own editing session's). A session removes only a draft
+ * it wrote or took over, on save, reload, discard or when its changes are undone; a dirty one writes its draft when it
+ * is torn down. Opening an automation with a draft made on its saved revision offers it (`restoreOffer`; a new
+ * automation, the newest left by a new automation); a draft made on an older revision is shown as a conflict, with the
+ * same choices as one met while editing (`keepMine`, `saveCopy`, `discardChanges`). A draft's unapplied code comes back
+ * through `restoredCode`, for the code editor.
  */
-export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial: VisualGraph, options: { unsaved?: () => boolean } = {}) {
+export function createVisualSession(
+  hass: Pick<HomeAssistant, 'callWS'>,
+  initial: VisualGraph,
+  options: { unsaved?: () => boolean; code?: () => UnappliedCode | undefined } = {},
+) {
   const api = visualApi(hass)
   const history = createGraphHistory(initial)
   const [libraryCatalog, setCatalog] = createSignal<VisualCatalogSnapshot>(nodeCatalog)
@@ -45,6 +59,8 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
   /** When the conflict is a draft made on an older revision: when that draft was written. */
   const [conflictDraft, setConflictDraft] = createSignal<number>()
   const [restoreOffer, setRestoreOffer] = createSignal<VisualDraft>()
+  /** Unapplied code of a draft taken back, for the code editor to open with (`takeRestoredCode`). */
+  const [restoredCode, setRestoredCode] = createSignal<UnappliedCode>()
   const [activationError, setActivationError] = createSignal<string>()
   const [loading, setLoading] = createSignal(false)
   const [saving, setSaving] = createSignal(false)
@@ -121,9 +137,15 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
           if (latest.revision !== opened.revision) {
             // Nothing unsaved: show the new revision. Unsaved changes: the person chooses what to keep.
             if (!unsaved() && latest.graph?.version === nodeCatalog.graphVersion) {
+              // A draft offered for the revision that was open is now a draft of an older one: the conflict choices.
+              const offer = restoreOffer()
               batch(() => {
                 showSaved(latest)
                 setError(undefined)
+                if (offer) {
+                  setRestoreOffer(undefined)
+                  adoptConflict(offer)
+                }
               })
               checkedDocument = { id: latest.id, revision: latest.revision, generation: result.generation }
             } else
@@ -196,57 +218,105 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
     !preview()?.diagnostics.some(d => d.severity === 3)
 
   // ---- Drafts of unsaved changes (see the doc comment above).
+  /** The Home Assistant user, so that another person in this browser is never offered these changes. */
+  const user = () => {
+    try {
+      const id = (hass as Partial<HomeAssistant>).user?.id
+      return typeof id === 'string' && id ? id : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const scoped = (key: string) => { const who = user(); return who ? `${who}/${key}` : key }
   /** Where this automation's draft is kept; none until the open automation is known. */
   let draftKey: string | undefined
+  /** The key of the draft offered for restoring (a new automation's may be another editing session's). */
+  let offerKey: string | undefined
   /** The revision the local changes were made on, when it is not the open document's (a draft of an older one). */
   let draftBase: number | undefined
   /** The person discarded the changes (leaving without saving): nothing is kept until the next automation opens. */
   let draftDiscarded = false
+  /** This session wrote the draft under `draftKey`, or took it over: only then does it remove it on its own. */
+  let ownsDraft = false
   let draftTimer: ReturnType<typeof setTimeout> | undefined
   pruneDrafts()
+  /** Moves this session to `key` (or none) in the page's live keys. */
+  const holdKey = (key: string | undefined) => {
+    if (draftKey) liveKeys.delete(draftKey)
+    draftKey = key
+    if (key) liveKeys.add(key)
+  }
+  onCleanup(() => { if (draftKey) liveKeys.delete(draftKey) })
+  const changed = () => dirty() || !!options.code?.()
   const keepDraft = () => {
     clearTimeout(draftTimer)
     draftTimer = undefined
     if (!draftKey || draftDiscarded || restoreOffer() || loading()) return
-    if (!dirty()) return removeDraft(draftKey)
-    const graph = history.graph()
-    writeDraft(draftKey, { graph, revision: draftBase ?? document()?.revision ?? 0, name: graph.name, at: Date.now() })
+    if (!changed()) {
+      if (ownsDraft) removeDraft(draftKey)
+      ownsDraft = false
+      return
+    }
+    const graph = history.graph(), code = options.code?.()
+    if (writeDraft(draftKey, { graph, revision: draftBase ?? document()?.revision ?? 0, name: graph.name, at: Date.now(), ...(code ? { code } : {}) })) ownsDraft = true
   }
   createEffect(() => {
     history.graph()
-    if (!dirty() || loading() || restoreOffer()) {
+    const waiting = loading() || !!restoreOffer()
+    if (!changed() || waiting) {
       clearTimeout(draftTimer)
       draftTimer = undefined
-      if (!dirty() && !loading() && !restoreOffer() && draftKey && !draftDiscarded) removeDraft(draftKey)
+      if (!changed() && !waiting && draftKey && !draftDiscarded && ownsDraft) {
+        removeDraft(draftKey)
+        ownsDraft = false
+      }
       return
     }
     clearTimeout(draftTimer)
     draftTimer = setTimeout(keepDraft, draftDelay)
   })
-  /** The page or the panel goes away: what is waiting is written now. */
-  const flushDraft = () => { if (draftTimer !== undefined) keepDraft() }
+  /** The page or the panel goes away: unsaved changes are written now. */
+  const flushDraft = () => { if (draftTimer !== undefined || changed()) keepDraft() }
   window.addEventListener('pagehide', flushDraft)
   onCleanup(() => {
     window.removeEventListener('pagehide', flushDraft)
     flushDraft()
   })
-  /** Starts keeping drafts under `key`; a draft already there is offered (same revision) or shown as a conflict. */
-  const openDraft = (key: string, saved?: VisualDocument) => {
-    draftKey = key
-    draftBase = undefined
-    draftDiscarded = false
-    const draft = readDraft(key)
-    if (!draft) return
-    const revision = saved?.revision ?? 0
-    if (serializeGraph(draft.graph) === serializeGraph(saved?.graph ?? history.graph())) return removeDraft(key)
-    if (draft.revision === revision) return setRestoreOffer(draft)
+  /** A draft of an older revision: its changes are shown, and the person chooses what to keep. */
+  const adoptConflict = (draft: VisualDraft) => {
     batch(() => {
       history.commit(draft.graph)
       draftBase = draft.revision
+      ownsDraft = true
       setConflict(true)
       setConflictDraft(draft.at)
       setError(conflictMessage)
+      if (draft.code) setRestoredCode(draft.code)
     })
+  }
+  /** Starts keeping drafts under `key`; a draft already there is offered (same revision) or shown as a conflict. */
+  const openDraft = (key: string, saved?: VisualDocument) => {
+    holdKey(key)
+    offerKey = undefined
+    draftBase = undefined
+    draftDiscarded = false
+    ownsDraft = false
+    setRestoredCode(undefined)
+    const draft = readDraft(key)
+    if (!draft) return
+    const revision = saved?.revision ?? 0
+    if (!draft.code && serializeGraph(draft.graph) === serializeGraph(saved?.graph ?? history.graph())) return removeDraft(key)
+    if (draft.revision !== revision) return adoptConflict(draft)
+    offerKey = key
+    setRestoreOffer(draft)
+  }
+  /** A new automation: its own key, and the newest draft a new automation left before is offered. */
+  const openNewDraft = () => {
+    openDraft(scoped(`new:${createUuid()}`))
+    const left = listDrafts(scoped('new:')).find(d => !liveKeys.has(d.key))
+    if (!left) return
+    offerKey = left.key
+    setRestoreOffer(left.draft)
   }
   /** Shows a saved revision as the clean state of the editor. */
   const showSaved = (saved: VisualDocument) => {
@@ -275,10 +345,13 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
       setActivationError(undefined)
       setLoading(false)
       setSaving(false)
-      openDraft(`new:${graph.name}`)
+      openNewDraft()
     })
   }
+  /** The automation last asked for: Discard reloads it even when its read failed. */
+  let requested: string | undefined
   const load = async (documentId: string) => {
+    requested = documentId
     identityGeneration++
     setSaving(false)
     const current = ++loadGeneration
@@ -295,7 +368,7 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
         throw new Error(`Unsupported graph version ${saved.graph.version}; only version ${nodeCatalog.graphVersion} is supported`)
       batch(() => {
         showSaved(saved)
-        openDraft(saved.id, saved)
+        openDraft(scoped(saved.id), saved)
       })
       void refreshCatalog()
     } catch (err) {
@@ -339,9 +412,11 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
       )
       draftBase = undefined
       // A new automation's draft moves to its id once it has one.
-      if (before !== result.document.id) {
-        if (before) removeDraft(before)
-        draftKey = result.document.id
+      const key = scoped(result.document.id)
+      if (before !== key) {
+        if (before && ownsDraft) removeDraft(before)
+        holdKey(key)
+        ownsDraft = false
       }
     })
   }
@@ -383,8 +458,15 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
       setSaving(false)
       draftBase = undefined
     })
-    // The local graph is now the unsaved change to the latest revision; one with errors stays to be fixed and saved.
-    if (dirty()) return save()
+    // The local graph is now the unsaved change to the latest revision, and its draft says so. One with problems is
+    // not saved yet: they are fixed first, then saved.
+    if (!dirty()) return
+    keepDraft()
+    if (!canSave()) {
+      setError(notSavedYet)
+      return
+    }
+    return save()
   }
   /** Save as a copy: the local graph becomes a new automation, turned off, and the editor goes on with it. */
   const saveCopy = async () => {
@@ -417,9 +499,13 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
   }
   /** Discard my changes (or Reload saved graph): the draft goes, and the latest saved revision opens. */
   const discardChanges = async () => {
-    const doc = document()
+    const target = document()?.id ?? requested
     if (draftKey) removeDraft(draftKey)
-    if (doc) await load(doc.id)
+    ownsDraft = false
+    // Unapplied code a draft brought back stays for the code editor, as code typed there does.
+    const code = restoredCode()
+    if (target) await load(target)
+    if (code && !disposed && document()?.id === target) setRestoredCode(code)
   }
   return {
     history,
@@ -441,19 +527,31 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
     saveCopy,
     discardChanges,
     restoreOffer,
-    /** Restores the offered draft as one undo step. */
+    /** Restores the offered draft as one undo step; its unapplied code comes back through `restoredCode`. */
     restoreDraft: () => {
       const draft = restoreOffer()
       if (!draft) return
       batch(() => {
+        // A new automation takes over the draft another editing session left.
+        if (offerKey && offerKey !== draftKey) holdKey(offerKey)
+        ownsDraft = true
         setRestoreOffer(undefined)
         history.commit(draft.graph)
+        if (draft.code) setRestoredCode(draft.code)
       })
     },
     /** Discards the offered draft. */
     dismissDraft: () => {
       setRestoreOffer(undefined)
-      if (draftKey) removeDraft(draftKey)
+      if (offerKey) removeDraft(offerKey)
+      offerKey = undefined
+    },
+    restoredCode,
+    /** The restored unapplied code, once: the code editor opens with it. */
+    takeRestoredCode: () => {
+      const code = restoredCode()
+      setRestoredCode(undefined)
+      return code
     },
     /** Leaving without saving: the draft is removed and none is kept until another automation opens. */
     discardDraft: () => {
@@ -464,7 +562,7 @@ export function createVisualSession(hass: Pick<HomeAssistant, 'callWS'>, initial
     },
     /** A new automation (no saved revision yet): starts keeping its draft, and offers one already kept. */
     openNew: () => {
-      if (!document() && !draftKey) openDraft(`new:${history.graph().name}`)
+      if (!document() && !draftKey) openNewDraft()
     },
     activationError,
     loading,

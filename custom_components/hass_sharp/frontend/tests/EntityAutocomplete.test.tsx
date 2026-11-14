@@ -64,3 +64,24 @@ it('draws the first 200 matches with a line to refine the search, and asks for t
     expect(options()[0]).toBe(first)
   } finally { vi.useRealTimers() }
 })
+
+it('always draws what is selected, also beyond the first 200 matches, so it can be unticked', async () => {
+  const host = document.createElement('div'); document.body.append(host)
+  const entity = (i: number) => ({ entity_id: `sensor.room_${i}`, name: `Room ${i}`, domain: 'sensor', area_id: null, device_id: null, device_class: null, supported_features: 0, unit: null, icon: null, disabled: false, state_options: null })
+  const callWS = vi.fn(async () => ({ entities: Array.from({ length: 500 }, (_, i) => entity(i)), areas: [], devices: [], floors: [], labels: [] }))
+  const [values, setValues] = createSignal(['sensor.room_3', 'sensor.room_450'])
+  client = new QueryClient()
+  dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={{ callWS } as any}>
+    <EntityAutocomplete multiple values={values()} onChangeValues={setValues} />
+  </HassCtx.Provider></QueryClientProvider>, host)
+  host.querySelector<HTMLButtonElement>('.hs-picker-field')!.click()
+  const options = () => [...host.querySelectorAll<HTMLElement>('[role="option"]')]
+  await vi.waitFor(() => expect(options().length).toBeGreaterThan(200))
+  // The first 200, then the selected one after them.
+  expect(options()).toHaveLength(201)
+  const far = options().at(-1)!
+  expect(far.textContent).toContain('sensor.room_450')
+  expect(far.getAttribute('aria-selected')).toBe('true')
+  far.click()
+  expect(values()).toEqual(['sensor.room_3'])
+})

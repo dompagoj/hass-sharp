@@ -434,7 +434,24 @@ it('falls back to the declared types when an input\'s type cannot be resolved', 
   const graph = addNode(createGraph('Odd'), 'odd_step', 'odd', odd)
   const { el } = mount(graph, 'odd', { catalog: odd })
   const chip = row(el, 'mystery')?.querySelector('.hs-type-chip')
-  expect(chip?.textContent).toBe('Number')
+  expect(chip?.querySelector('.hs-type-chip__name')?.textContent).toBe('Number')
+  // Only the type it can name has a C# type: none is guessed for the unknown one.
+  expect(chip?.querySelector('.hs-csharp-type')?.textContent).toBe('double')
+})
+
+it('names each C# type of an input that takes several, and the ? of a nullable one', () => {
+  const odd = structuredClone(nodeCatalog) as VisualCatalogSnapshot
+  odd.types['global::System.Int32?'] = { description: 'int?', label: 'int?', nullable: true, literalKind: 'integer', category: 'Number' }
+  odd.nodes.odd_step = { ...structuredClone(odd.nodes.delay), label: 'Odd step', inputs: {
+    either: { types: ['number', 'string', 'entity_id'], required: false, description: '' },
+    maybe: { types: ['global::System.Int32?'], required: false, description: '' },
+  } } as any
+  const graph = addNode(createGraph('Odd'), 'odd_step', 'odd', odd)
+  const { el } = mount(graph, 'odd', { catalog: odd })
+  const either = row(el, 'either')!.querySelector('.hs-type-chip')!
+  expect(either.querySelector('.hs-csharp-type')?.textContent).toBe('double or string')
+  expect(either.textContent).toContain(', C# types double or string')
+  expect(row(el, 'maybe')!.querySelector('.hs-csharp-type')?.textContent).toBe('int?')
 })
 
 it('edits the title, offers Duplicate, Copy node ID and Delete, and never shows the node id', async () => {
@@ -874,14 +891,35 @@ it('reads a setting\'s decimal comma as a point, and refuses a whole number writ
   const graph = addNode(createGraph('Loops'), 'repeat', 'loop')
   const { el, node } = mount(graph, 'loop')
   const field = () => row(el, 'maxIterations')!.querySelector<HTMLInputElement>('input')!
-  const error = () => row(el, 'maxIterations')!.querySelector('.hs-draft-error, [role="alert"], .hs-input-editor__errors')?.textContent ?? field().getAttribute('aria-invalid')
+  // The field's own message, not its aria-invalid (whose "false" would pass for one).
+  const error = () => row(el, 'maxIterations')!.querySelector('.hs-error')?.textContent
   type(field(), '12,0')
   expect(node().config.maxIterations).toBe(12)
   type(field(), '7')
   expect(node().config.maxIterations).toBe(7)
+  expect(error()).toBeUndefined()
   for (const text of ['1,5', '1,2,3', '1.2,3']) {
     type(field(), text)
     expect(node().config.maxIterations, text).toBe(7)
-    expect(error(), text).toBeTruthy()
+    expect(error(), text).toBe('Enter a whole number.')
   }
+  // A comma before exactly three digits, with the number format unknown: ambiguous, and refused with the reason.
+  type(field(), '1,000')
+  expect(node().config.maxIterations).toBe(7)
+  expect(error()).toBe('Enter a whole number. Use a point for decimals.')
+})
+
+it('refuses a setting\'s comma where the person\'s number format writes a point, and takes it where it writes a comma', () => {
+  const graph = addNode(createGraph('Loops'), 'repeat', 'loop')
+  let mounted = mount(graph, 'loop', { hass: { locale: { language: 'en', number_format: 'comma_decimal' } } })
+  const field = () => row(mounted.el, 'maxIterations')!.querySelector<HTMLInputElement>('input')!
+  const error = () => row(mounted.el, 'maxIterations')!.querySelector('.hs-error')?.textContent
+  type(field(), '1,000')
+  expect(mounted.node().config.maxIterations).not.toBe(1)
+  expect(error()).toBe('Enter a whole number. Use a point for decimals.')
+  dispose?.(); document.body.innerHTML = ''
+  mounted = mount(graph, 'loop', { hass: { locale: { language: 'en', number_format: 'decimal_comma' } } })
+  type(field(), '12,0')
+  expect(mounted.node().config.maxIterations).toBe(12)
+  expect(error()).toBeUndefined()
 })

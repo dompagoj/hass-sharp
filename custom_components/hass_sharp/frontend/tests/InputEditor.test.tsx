@@ -21,7 +21,9 @@ const registry = {
 
 let dispose: (() => void) | undefined
 let client: QueryClient | undefined
-afterEach(() => { dispose?.(); dispose = undefined; client?.clear(); document.body.innerHTML = '' })
+/** The person's number format in Home Assistant, for the next mount; unknown by default. */
+let locale: Record<string, string> | undefined
+afterEach(() => { dispose?.(); dispose = undefined; client?.clear(); document.body.innerHTML = ''; locale = undefined })
 type Change = { operand: Operand; coalesce?: string }
 /** A controlled editor; `delay` applies each change later, as an asynchronous parent would. */
 function mount(props: Partial<InputEditorProps> & { input: InputSpec }, initial?: Operand, delay?: number) {
@@ -29,7 +31,7 @@ function mount(props: Partial<InputEditorProps> & { input: InputSpec }, initial?
   const [value, setValue] = createSignal<Operand | undefined>(initial)
   const changes: Change[] = []
   client = new QueryClient()
-  dispose = render(() => <QueryClientProvider client={client!}><HassCtx.Provider value={{ callWS: async () => registry } as any}>
+  dispose = render(() => <QueryClientProvider client={client!}><HassCtx.Provider value={{ callWS: async () => registry, locale } as any}>
     <InputEditor variant="panel" label="Value" catalog={catalog} {...props} value={value()}
       onChange={(operand, options) => {
         changes.push({ operand, ...(options?.coalesce ? { coalesce: options.coalesce } : {}) })
@@ -238,7 +240,7 @@ it('validates JSON on commit, keeps the text on a parse error and shows the shor
 it('types a value of several kinds by the kind switch', () => {
   const { host, changes } = mount({ input: spec(Object.keys(nodeCatalog.types)), label: 'Value' })
   const kind = q<HTMLSelectElement>(host, 'select[aria-label="Value kind"]')
-  expect([...kind.options].map(o => o.textContent)).toEqual(['Text', 'Number', 'Yes/No', 'List or object'])
+  expect([...kind.options].map(o => o.textContent)).toEqual(['Text', 'Number', 'True/False', 'List or object'])
   expect(kind.value).toBe('text')
   const text = q<HTMLInputElement>(host, 'input[aria-label="Value"]')
   type(text, '01'); blur(text)
@@ -247,14 +249,14 @@ it('types a value of several kinds by the kind switch', () => {
   expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'number', value: 1 })
   expect(q<HTMLInputElement>(host, 'input[aria-label="Value"]').value).toBe('1')
   chose(q<HTMLSelectElement>(host, 'select[aria-label="Value kind"]'), 'boolean')
-  // 1 is not a yes/no value: the switch starts from No, and that is what is stored.
+  // 1 is not a true/false value: the switch starts from False, and that is what is stored.
   expect(changes).toHaveLength(3)
   expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'boolean', value: false })
   expect(q<HTMLInputElement>(host, 'input[role="switch"]').checked).toBe(false)
   q<HTMLInputElement>(host, 'input[role="switch"]').click()
   expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'boolean', value: true })
   chose(q<HTMLSelectElement>(host, 'select[aria-label="Value kind"]'), 'json')
-  // Nothing converts a yes/no value to a list or object, so the value is cleared rather than kept out of sight.
+  // Nothing converts a true/false value to a list or object, so the value is cleared rather than kept out of sight.
   expect(changes.at(-1)!.operand).toEqual({ kind: 'unset' })
   const area = q<HTMLTextAreaElement>(host, 'textarea[aria-label="Value"]')
   expect(area.value).toBe('')
@@ -501,6 +503,45 @@ it('keeps a literal null in a JSON value visible as null: it is a value there, n
   expect(summary?.classList.contains('hs-input-editor__summary--empty') ?? false).toBe(false)
   expect(valueSummary({ kind: 'json', multiple: false }, null)).toBe('null')
   expect(valueSummary({ kind: 'text', multiple: false }, null)).toBe('Not set')
+})
+
+it('reads a comma by the person\'s number format: refused where a point is the decimal separator, a decimal point where a comma is', () => {
+  const level = () => {
+    const mounted = remount({ input: field('hass_sharp_test.sectioned', 'level'), label: 'Level' })
+    return { ...mounted, input: q<HTMLInputElement>(mounted.host, 'input[aria-label="Level"]') }
+  }
+  // 1,234.5: "1,000" is a thousand, never 1; the field says why it is refused.
+  locale = { language: 'en', number_format: 'comma_decimal' }
+  let { host, changes, input } = level()
+  for (const text of ['1,000', '21,5']) {
+    type(input, text); blur(input)
+    expect(changes, text).toEqual([])
+    expect(described(host, input).at(-1)).toBe('Enter a number. Use a point for decimals.')
+  }
+  type(input, '1.5'); blur(input)
+  expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'number', value: 1.5 })
+  // 1.234,5 and 1 234,5: the comma is the decimal point; a point still is one too (pasted JSON).
+  for (const number_format of ['decimal_comma', 'space_comma']) {
+    locale = { language: 'en', number_format };
+    ({ changes, input } = level())
+    type(input, '1,000'); blur(input)
+    type(input, '21,5'); blur(input)
+    type(input, '0.25'); blur(input)
+    expect(changes.map(c => (c.operand as { value: number }).value), number_format).toEqual([1, 21.5, 0.25])
+  }
+  // By the language: German writes a comma.
+  locale = { language: 'de', number_format: 'language' };
+  ({ changes, input } = level())
+  type(input, '21,5'); blur(input)
+  expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'number', value: 21.5 })
+  // Not known: a comma before exactly three digits is ambiguous and refused; other single commas are decimal points.
+  locale = undefined;
+  ({ host, changes, input } = level())
+  type(input, '1,000'); blur(input)
+  expect(changes).toEqual([])
+  expect(described(host, input).at(-1)).toBe('Enter a number. Use a point for decimals.')
+  type(input, '21,5'); blur(input)
+  expect(changes.at(-1)!.operand).toEqual({ kind: 'literal', type: 'number', value: 21.5 })
 })
 
 it('reads a decimal comma as the decimal point when the number has no point, and refuses more than one separator', () => {

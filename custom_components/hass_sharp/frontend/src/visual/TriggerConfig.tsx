@@ -6,7 +6,7 @@ import type { VisualDiagnostic } from './api'
 import { domainWords } from './typeLabels'
 import { fitsWidget, stateField, widgetFor, WidgetControl, type Widget } from './widgets'
 import { Glyph } from './Glyph'
-import { parseNumber } from './widgets/number'
+import { parseNumber, useDecimalSeparator, type DecimalSeparator } from './widgets/number'
 
 type Config = GraphNode['config']
 type Change = (config: Config, options?: { coalesce?: string }) => void
@@ -215,8 +215,8 @@ const entityValue = (value: JsonValue | undefined) => (Array.isArray(value) && v
 /** "07:30:00" is stored as Home Assistant and HassSharp write a time of day without seconds. */
 const timeOfDay = (value: JsonValue | undefined) => (typeof value === 'string' && /^\d\d:\d\d:00$/.test(value) ? value.slice(0, 5) : value)
 /** A number stays a number; anything else (an entity holding the limit) is kept as text. */
-const numberOrText = (value: JsonValue | undefined) => {
-  const number = typeof value === 'string' ? parseNumber(value) : undefined
+const numberOrText = (value: JsonValue | undefined, decimal: DecimalSeparator | undefined) => {
+  const number = typeof value === 'string' ? parseNumber(value, decimal) : undefined
   return number !== undefined && Number.isFinite(number) ? number : value
 }
 const timeZones = (() => {
@@ -240,6 +240,7 @@ export function TriggerConfig(props: {
   diagnostics?: VisualDiagnostic[]
 }) {
   const hass = useHass()
+  const decimal = useDecimalSeparator()
   const [discovered, setDiscovered] = createSignal<Record<string, unknown>>({})
   const [discoveryError, setDiscoveryError] = createSignal('')
   const [choosing, setChoosing] = createSignal(false)
@@ -422,8 +423,8 @@ export function TriggerConfig(props: {
           <Show when={choice() === 'numeric_state'}>
             {field('entity_id', 'Entity', entityWidget(true), { required: true, map: entityValue })}
             {field('attribute', 'Attribute', text, { hint: 'Leave empty to compare the state itself.' })}
-            {field('above', 'Above', text, { map: numberOrText, hint: 'A number, or an entity holding one.' })}
-            {field('below', 'Below', text, { map: numberOrText, hint: 'A number, or an entity holding one.' })}
+            {field('above', 'Above', text, { map: v => numberOrText(v, decimal()), hint: 'A number, or an entity holding one.' })}
+            {field('below', 'Below', text, { map: v => numberOrText(v, decimal()), hint: 'A number, or an entity holding one.' })}
             {field('for', 'For', { kind: 'duration', multiple: false, objectForm: true }, { hint: 'How long the value must stay there first.' })}
           </Show>
           <Show when={choice() === 'time'}>

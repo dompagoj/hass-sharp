@@ -2,29 +2,29 @@ import { createEffect, createSignal, createUniqueId, For, Index, on, Show, type 
 import type { JsonValue } from '../contract'
 import { Chips, DraftField, dragSession, textPlaceholder, type WidgetProps } from './common'
 import { displayValue, jsonEqual } from './json'
-import { numberText, parseNumber } from './number'
+import { numberMessage, numberText, parseNumber, useDecimalSeparator } from './number'
 import { durationParts, durationSeconds, durationValue, valueKind, type ValueKind, type Widget, type WidgetKind, type WidgetOption } from './model'
 
 const items = (value: JsonValue | undefined): JsonValue[] => Array.isArray(value) ? value : value === undefined ? [] : [value]
 /** The decimal keypad has no minus sign on some phones; offer it only when values cannot be negative. */
 const decimalMode = (min: number | undefined) => min !== undefined && min >= 0 ? 'decimal' as const : undefined
 
-/** A yes/no stored as text ("true", "False", any case), as a Constant's value from before its Type set the value's type. */
-const yesNo = (text: string) => /^(true|false)$/i.test(text.trim()) ? text.trim().toLowerCase() === 'true' : undefined
+/** A true/false value stored as text ("true", "False", any case), as a Constant's value from before its Type set the value's type. */
+const trueFalse = (text: string) => /^(true|false)$/i.test(text.trim()) ? text.trim().toLowerCase() === 'true' : undefined
 export function ToggleWidget(props: WidgetProps) {
-  // A stored value that is not yes/no (see `stale`) is shown as typed, to be typed again as true or false: the switch
-  // could only show it as No, and flipping it twice to store it would be two changes.
+  // A stored value that is not true or false (see `stale`) is shown as typed, to be typed again as true or false: the switch
+  // could only show it as False, and flipping it twice to store it would be two changes.
   return <Show when={props.stale} fallback={<span class="hs-widget-row">
     <input id={props.id} type="checkbox" role="switch" class="hs-switch" aria-label={props.label} checked={props.value === true}
       aria-describedby={props.describedBy} aria-invalid={props.invalid || undefined} disabled={props.disabled}
       onChange={event => props.commit(event.currentTarget.checked)} />
-    <span class="hs-muted">{props.value === undefined ? 'Not set' : props.value === true ? 'Yes' : 'No'}</span>
+    <span class="hs-muted">{props.value === undefined ? 'Not set' : props.value === true ? 'True' : 'False'}</span>
   </span>}>
     <span class="hs-widget-row">
       <DraftField id={props.id} label={props.label} text={displayValue(props.value)} placeholder="true or false" describedBy={props.describedBy} invalid={props.invalid}
-        disabled={props.disabled} force initialError={yesNo(displayValue(props.value)) === undefined ? 'Enter true or false.' : undefined}
+        disabled={props.disabled} force initialError={trueFalse(displayValue(props.value)) === undefined ? 'Enter true or false.' : undefined}
         commit={text => {
-          const value = yesNo(text)
+          const value = trueFalse(text)
           if (value === undefined) return 'Enter true or false.'
           props.commit(value)
         }} />
@@ -48,13 +48,14 @@ export function NumberWidget(props: WidgetProps) {
   const value = () => typeof props.value === 'number' ? props.value : undefined
   const shown = () => value() === undefined ? 'Not set' : `${value()}${unit() ? ' ' + unit() : ''}`
   const session = dragSession(() => props.id, (v, o) => props.commit(v, o))
+  const decimal = useDecimalSeparator()
   return <Show when={props.widget.slider} fallback={<span class="hs-widget-row">
     <DraftField id={props.id} label={props.label} inputmode={decimalMode(props.widget.min)} text={value() === undefined ? displayValue(props.value) : String(value())}
       placeholder="Not set" describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled} force={props.stale}
-      initialError={props.stale && !Number.isFinite(parseNumber(displayValue(props.value)) ?? Number.NaN) ? 'Enter a number.' : undefined}
+      initialError={props.stale && !Number.isFinite(parseNumber(displayValue(props.value), decimal()) ?? Number.NaN) ? numberMessage(displayValue(props.value), decimal()) : undefined}
       commit={text => {
-        const parsed = parseNumber(text)
-        if (Number.isNaN(parsed)) return 'Enter a number.'
+        const parsed = parseNumber(text, decimal())
+        if (Number.isNaN(parsed)) return numberMessage(text, decimal())
         // A stored empty text is kept, with the error, until the person types or clears it (Clear in the menu).
         if (parsed === undefined && props.stale && text === displayValue(props.value)) return 'Enter a number.'
         props.commit(parsed)
@@ -135,13 +136,15 @@ export function DurationWidget(props: WidgetProps) {
   const units = () => [...(props.widget.days ? ['days'] as const : []), 'hours', 'minutes', 'seconds'] as const
   const sizes = { days: 86400, hours: 3600, minutes: 60, seconds: 1 }
   const parts = () => durationParts(props.widget, seconds() ?? 0)
+  const decimal = useDecimalSeparator()
   return <span class="hs-duration" role="group" aria-label={props.label}>
     <For each={units()}>{(unit, i) => <label class="hs-duration-part">
       <DraftField id={i() === 0 ? props.id : undefined} label={`${props.label} ${unit}`} inputmode="decimal" text={seconds() === undefined ? '' : String(parts()[unit])}
         placeholder={i() === 0 && seconds() === undefined ? 'Not set' : undefined} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
         commit={text => {
-          const parsed = parseNumber(text)
-          if (Number.isNaN(parsed) || (parsed ?? 0) < 0) return 'Enter 0 or more.'
+          const parsed = parseNumber(text, decimal())
+          if (Number.isNaN(parsed)) return numberMessage(text, decimal(), 'Enter 0 or more.')
+          if ((parsed ?? 0) < 0) return 'Enter 0 or more.'
           const next = { ...parts(), [unit]: parsed ?? 0 }
           props.commit(durationValue(props.widget, props.value, units().reduce((sum, u) => sum + next[u] * sizes[u], 0)))
         }} />
@@ -201,7 +204,7 @@ export function JsonWidget(props: WidgetProps) {
     }} />
 }
 
-const kindLabels: Record<ValueKind, string> = { text: 'Text', number: 'Number', boolean: 'Yes/No', json: 'List or object' }
+const kindLabels: Record<ValueKind, string> = { text: 'Text', number: 'Number', boolean: 'True/False', json: 'List or object' }
 const widgetKinds: Record<ValueKind, WidgetKind> = { text: 'text', number: 'number', boolean: 'toggle', json: 'json' }
 /** The value read as `kind` when that reading is unambiguous ("1" and 1, "true" and true); otherwise undefined. */
 function convert(value: JsonValue | undefined, kind: ValueKind): JsonValue | undefined {

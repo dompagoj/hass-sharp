@@ -88,7 +88,7 @@ export function valueText(value: TraceValue, option?: OptionText, side: 'in' | '
   if (typeof v === 'object') return `Object · ${plural(Object.keys(v).length, 'field')}`
   if ((typeof v === 'string' && v !== '') || typeof v === 'number') { const label = option?.(v); if (label !== undefined) return label }
   if (typeof v === 'string') return v === '' ? 'Empty text' : v
-  if (typeof v === 'boolean') return v ? 'Yes' : 'No'
+  if (typeof v === 'boolean') return v ? 'True' : 'False'
   return String(v)
 }
 /** True when the panel shows the value as a tree. */

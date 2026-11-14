@@ -33,13 +33,18 @@ it('shows typed inputs with friendly type chips and outputs, without an appearan
   const condition = branch.querySelector<HTMLElement>('.hs-insp-input[data-input-id="value"]')!
   // Label, type chip and the input's description; the chip names the type in words.
   expect(condition.textContent).toContain('Condition')
-  expect(condition.querySelector('.hs-type-chip')!.textContent).toBe('Yes/No')
-  expect(condition.textContent).toContain('Yes continues on If true, no continues on If false.')
+  expect(condition.querySelector('.hs-type-chip__name')!.textContent).toBe('True/False')
+  // Beside the friendly name, the C# type a node method declares for it, read as part of the row.
+  expect(condition.querySelector('.hs-csharp-type')!.textContent).toBe('bool')
+  expect(condition.querySelector('.hs-type-chip')!.textContent).toBe('True/False, C# type bool')
+  expect(condition.querySelector('.hs-type-chip')!.getAttribute('title')).toBe('Type: True/False · C#: bool')
+  expect(condition.textContent).toContain('True continues on If true, false continues on If false.')
   expect([...branch.querySelectorAll('h3')].map(n => n.textContent)).toContain('Inputs')
   expect([...temperature.querySelectorAll('h3')].map(n => n.textContent)).toContain('Outputs')
   const output = temperature.querySelector('.hs-insp-output')!
-  expect(output.querySelector('.hs-insp-output__type')!.textContent).toBe('Number')
-  expect(output.getAttribute('aria-label')).toContain('Number')
+  expect(output.querySelector('.hs-insp-output__friendly')!.textContent).toBe('Number')
+  expect(output.querySelector('.hs-csharp-type')!.textContent).toBe('double')
+  expect(output.getAttribute('aria-label')).toMatch(/^Output .+, Number, C# type double, (not )?connected$/)
   expect(el.querySelector('[aria-label="Appearance"]')).toBeNull()
 })
 it('offers "Leave empty" for nullable wire-only CLR types', () => {
@@ -84,7 +89,7 @@ import type { VisualDiagnostic } from '../src/visual/api'
 it('shows a validator message as it is under its field, and clears it when the problem is gone', () => {
   const el = host(),
     graph = fixture()
-  const message = 'Condition requires Yes/No; Value outputs Number'
+  const message = 'Condition requires True/False; Value outputs Number'
   const [diagnostics, setDiagnostics] = createSignal<VisualDiagnostic[]>([{ nodeId: 'branch', inputId: 'value', message, severity: 3, startLine: null, startColumn: null }])
   dispose = render(
     () => <NodeConfig graph={graph} node={graph.nodes.find(n => n.id === 'branch')!} catalog={nodeCatalog} diagnostics={diagnostics()} onChange={() => {}} onGraphChange={() => {}} />,
@@ -117,7 +122,11 @@ it('names source-derived CLR types in words on every chip and output', () => {
       </HassCtx.Provider>
     </QueryClientProvider>
   ), el)
-  const shown = [...el.querySelectorAll('.hs-type-chip, .hs-insp-output__type')].map(c => c.textContent ?? '')
+  const shown = [...el.querySelectorAll('.hs-type-chip__name, .hs-insp-output__friendly')].map(c => c.textContent ?? '')
   expect(shown.length).toBeGreaterThan(0)
   for (const text of shown) expect(text).not.toMatch(/global::|System\.|EntityStateSnapshot|Boolean|String/)
+  // The C# types beside them are written as code writes them: never with global:: or a System namespace in scope.
+  const csharp = [...el.querySelectorAll('.hs-csharp-type')].map(c => c.textContent ?? '')
+  expect(csharp.length).toBeGreaterThan(0)
+  for (const text of csharp) expect(text).not.toMatch(/global::|System\.(Boolean|Double|String|Int32|Text)/)
 })

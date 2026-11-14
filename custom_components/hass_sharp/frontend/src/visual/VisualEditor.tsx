@@ -1,4 +1,4 @@
-import { batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, Show } from 'solid-js'
+import { batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, untrack } from 'solid-js'
 import { delegateEvents } from 'solid-js/web'
 import { useQuery, useQueryClient } from '@tanstack/solid-query'
 import { Button } from '../components/Controls'
@@ -54,7 +54,7 @@ export function VisualEditor(props: {
 }) {
   const hass = useHass()
   // Unapplied code counts as unsaved: a revision saved elsewhere is then never reloaded over it.
-  const session = createVisualSession(hass, createGraph(props.name), { unsaved: () => codeDirty() })
+  const session = createVisualSession(hass, createGraph(props.name), { unsaved: () => codeDirty(), code: () => unappliedCode() })
   props.discardRef?.(session.discardDraft)
   const queryClient = useQueryClient()
   const entities = useEntities()
@@ -75,15 +75,27 @@ export function VisualEditor(props: {
   const [codeNodeId, setCodeNodeId] = createSignal<string>()
   const [codeDirty, setCodeDirty] = createSignal(false)
   const codeNode = createMemo(() => graph().nodes.find(node => node.id === codeNodeId()))
-  /** The open editor's unapplied text, if any: kept for when its step disappears under it (a reload). */
-  let codeDraft: string | undefined
+  /** The open editor's unapplied text, if any: kept in the draft, and for when its step disappears under it (a reload). */
+  const [codeDraft, setCodeDraft] = createSignal<string>()
+  /** Unapplied code taken back from a draft: the code editor opens with it. */
+  const [codeRestore, setCodeRestore] = createSignal<string>()
+  const unappliedCode = () => { const nodeId = codeNodeId(), text = codeDraft(); return codeDirty() && nodeId && text !== undefined ? { nodeId, text } : undefined }
   const [orphanCode, setOrphanCode] = createSignal<string>()
-  const closeCode = () => { setCodeNodeId(undefined); setCodeDirty(false); codeDraft = undefined }
+  const closeCode = () => batch(() => { setCodeNodeId(undefined); setCodeDirty(false); setCodeDraft(undefined); setCodeRestore(undefined) })
   createEffect(() => {
     if (!codeNodeId() || codeNode()) return
-    const draft = codeDraft
+    const draft = untrack(codeDraft)
     closeCode()
     if (draft !== undefined) setOrphanCode(draft)
+  })
+  // A restored draft's unapplied code opens in its node's code editor, once the person has chosen what to keep.
+  createEffect(() => {
+    if (!session.restoredCode() || session.conflict() || session.restoreOffer() || session.loading()) return
+    const code = session.takeRestoredCode()!
+    untrack(() => {
+      if (!graph().nodes.some(node => node.id === code.nodeId && node.kind === 'custom')) return setOrphanCode(code.text)
+      batch(() => { setCodeRestore(code.text); setCodeNodeId(code.nodeId) })
+    })
   })
   const dirty = () => session.dirty() || codeDirty()
   createEffect(() => props.onDirtyChange?.(dirty()))
@@ -109,9 +121,7 @@ export function VisualEditor(props: {
   const save = async () => {
     if (session.conflict()) return setConflictOpen(true)
     if (nothingToSave()) return
-    if (switching()) savedWhileSwitching = true
     stored(await session.save())
-    savedWhileSwitching = false
   }
   const [reloadDialog, setReloadDialog] = createSignal(false)
   const reload = () => {
@@ -305,15 +315,15 @@ export function VisualEditor(props: {
     const local = switched()
     return local?.id === doc.id ? local.enabled : doc.enabled ?? true
   }
-  // A save's reply may come from before a switch the server took after it (the switch was pressed first): the switch's
-  // own answer wins until a document says the same, another automation opens, or the saved one is read again.
-  let savedWhileSwitching = false
+  // A save's reply may hold the on/off state from before a switch the server took (whichever was pressed or answered
+  // first): the switch's own answer wins until a document says the same, another automation opens, or the saved one is
+  // read again.
   createEffect(on(() => session.document(), doc => {
     const local = switched()
     if (!local) return
-    if (!doc || doc.id !== local.id || (doc.enabled ?? true) === local.enabled || (!switching() && !savedWhileSwitching)) setSwitched(undefined)
+    if (!doc || doc.id !== local.id || (doc.enabled ?? true) === local.enabled) setSwitched(undefined)
   }, { defer: true }))
-  createEffect(on(session.loading, loading => { if (loading && !switching()) setSwitched(undefined) }, { defer: true }))
+  createEffect(on(session.loading, loading => { if (loading) batch(() => { setSwitched(undefined); setSwitching(false) }) }, { defer: true }))
   const toggleEnabled = async (wanted: boolean) => {
     const doc = session.document()
     if (!doc || switching()) return
@@ -606,6 +616,9 @@ export function VisualEditor(props: {
           {at => <p>Your unsaved changes from {draftTime(at())} were made before this automation was saved again somewhere else.</p>}
         </Show>
         <p><strong>Keep my version</strong> saves your changes over the saved one. <strong>Save as a copy</strong> saves them as a new automation, turned off, and leaves the saved one as it is. <strong>Discard my changes</strong> opens the saved version.</p>
+        <Show when={codeDirty() || session.restoredCode()}>
+          <p>Code you have not applied stays in the code editor whichever you choose: apply it there, then save.</p>
+        </Show>
       </Dialog>
       <Dialog open={!!session.restoreOffer()} title="Restore unsaved changes?" width="small" preventClose onClose={() => {}}
         footer={
@@ -622,11 +635,14 @@ export function VisualEditor(props: {
       {/* Inside the page root, so it also covers the full-screen editor. */}
       <Show when={codeNode() && codeNodeId()} keyed>
         {id => (
-          <CustomCodeEditor node={codeNode()!} catalog={session.catalog()}
+          <CustomCodeEditor node={codeNode()!} catalog={session.catalog()} draft={untrack(codeRestore)}
             onDirtyChange={(changed, source) => {
+              // Torn down with the page (its node still open in it, not closed): the unapplied code stays counted, so
+              // the page's draft keeps it.
+              if (!changed && source === undefined && untrack(codeNodeId) === id && untrack(codeNode)) return
               setCodeDirty(changed)
               // Closing reports no text: the draft is kept until it is known whether the step is still there.
-              if (source !== undefined) codeDraft = changed ? source : undefined
+              if (source !== undefined) setCodeDraft(changed ? source : undefined)
             }}
             onApply={(source, signature) => applyCode(id, source, signature)}
             onClose={closeCode} />

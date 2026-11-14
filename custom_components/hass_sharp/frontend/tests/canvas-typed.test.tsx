@@ -52,11 +52,11 @@ it('renders typed labeled handles and rejects incompatible keyboard connection w
   const source = el.querySelector<HTMLElement>('[data-id="temperature"] .source[data-handleid="data:value"]')!
   const target = el.querySelector<HTMLElement>('[data-id="branch"] [data-handleid="data:value"]')!
   expect(source?.getAttribute('aria-label')).toContain('Number')
-  expect(target?.getAttribute('aria-label')).toContain('Yes/No')
+  expect(target?.getAttribute('aria-label')).toContain('True/False')
   for (const handle of [source, target])
     handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
   expect(history.graph().edges.filter(e => e.kind === 'data')).toHaveLength(0)
-  expect(el.textContent).toContain('Condition requires Yes/No; Value outputs Number')
+  expect(el.textContent).toContain('Condition requires True/False; Value outputs Number')
   expect(target.getAttribute('aria-invalid')).toBe('true')
 })
 it('removes only an Alt-primary-clicked native edge and restores it in one undo/redo', async () => {
@@ -152,7 +152,7 @@ it('rejects a real incompatible data drag before edge creation and highlights th
   document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 200, clientY: 200 }))
   expect(graph().edges.some(e => e.kind === 'data')).toBe(false)
   expect(target.getAttribute('aria-invalid')).toBe('true')
-  expect(target.getAttribute('title')).toBe('Condition requires Yes/No; Value outputs Number')
+  expect(target.getAttribute('title')).toBe('Condition requires True/False; Value outputs Number')
   expect(el.querySelector('[aria-label="Search steps"]')).toBeNull()
 })
 it('colours pins, data wires and inspector rows by type: the five primitive tokens, the entity token for entity ids, and execution and error tokens', async () => {
@@ -420,13 +420,14 @@ it('preserves declared input labels when source-derived custom CLR Boolean outpu
   expect(el.querySelector('[data-id="r"] .hs-flow-card strong')?.textContent).toBe('Read entity')
   expect(el.querySelector('[data-id="if"]')?.getAttribute('aria-label')).toContain('If')
   const condition = [...el.querySelectorAll<HTMLElement>('.hs-insp-input')].find(r => r.dataset.inputId === 'value' && r.textContent?.includes('Condition'))!
-  expect(condition.querySelector('.hs-type-chip')?.textContent).toBe('Yes/No')
-  for (const chip of el.querySelectorAll('.hs-insp-node .hs-type-chip, .hs-insp-output__type')) expect(chip.textContent).not.toContain('Boolean')
+  expect(condition.querySelector('.hs-type-chip__name')?.textContent).toBe('True/False')
+  expect(condition.querySelector('.hs-csharp-type')?.textContent).toBe('bool')
+  for (const chip of el.querySelectorAll('.hs-insp-node .hs-type-chip__name, .hs-insp-output__friendly')) expect(chip.textContent).not.toContain('Boolean')
   expect(el.querySelector('[data-id="if"] .target[data-handleid="data:value"]')?.getAttribute('aria-label')).toBe(
-    'Input Condition, Yes/No, required, connected to Is on · Result',
+    'Input Condition, True/False, required, connected to Is on · Result',
   )
   expect(el.querySelector('[data-id="predicate"] .source[data-handleid="data:result"]')?.getAttribute('aria-label')).toBe(
-    'Output Result, Yes/No, connected',
+    'Output Result, True/False, connected',
   )
   expect(el.querySelector('[data-id="if"] [data-input-id="value"] .hs-source-chip')?.textContent).toBe('Is on · Result')
   // Connected inputs are read-only "From …" pills in the inspector.
@@ -442,7 +443,7 @@ it('names library types for people, never with CLR spelling', () => {
   const catalog = richCatalogFixture.catalog as unknown as VisualCatalogSnapshot
   const label = (id: string) => typeLabel(id, catalog)
   // A library type of a primitive kind or category reads as that primitive.
-  expect(label('global::System.Boolean')).toBe('Yes/No')
+  expect(label('global::System.Boolean')).toBe('True/False')
   expect(label('global::System.Int32')).toBe('Number')
   expect(label('global::System.Double')).toBe('Number')
   expect(label('global::System.Single')).toBe('Number')
@@ -527,14 +528,14 @@ it('connects a data pin from the keyboard and says why a refused one cannot conn
   expect(pin('b', 'target').classList).toContain('hs-pin--compatible')
   press(pin('b', 'target'))
   expect(history.graph().edges.at(-1)).toMatchObject({ kind: 'data', source: 'a', sourcePort: 'value', target: 'b', targetPort: 'value' })
-  // A Number cannot drive a Yes/No condition: nothing changes and the reason appears beside the condition's pin.
+  // A Number cannot drive a True/False condition: nothing changes and the reason appears beside the condition's pin.
   const before = history.graph()
   press(pin('a', 'source'))
   press(pin('branch', 'target'))
   expect(history.graph()).toBe(before)
   const callout = pin('branch', 'target').parentElement!.querySelector('.hs-pin-refusal')!
   expect(callout.getAttribute('role')).toBe('alert')
-  expect(callout.textContent).toBe('Condition requires Yes/No; Value outputs Number')
+  expect(callout.textContent).toBe('Condition requires True/False; Value outputs Number')
   expect(el.querySelectorAll('.hs-pin-refusal')).toHaveLength(1)
   press(el.querySelector('.hs-flow')!, 'Escape')
   expect(el.querySelector('.hs-pin-refusal')).toBeNull()

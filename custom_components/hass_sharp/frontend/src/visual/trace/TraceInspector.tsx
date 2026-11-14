@@ -4,6 +4,7 @@ import { TriggerSummary } from '../../components/TriggerSummary'
 import { Glyph } from '../Glyph'
 import { SheetBar, SheetPeek } from '../Inspector'
 import { TypeChip } from '../InputRow'
+import { csharpTypes } from '../csharpType'
 import { isPure, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../contract'
 import { durationLabel, execLabel, nodeTitle, traceStatusLabel, traceText } from '../flow/flowModel'
 import { icons, nodeIdentity } from '../icons'
@@ -290,7 +291,8 @@ function PortList(props: {
                 <li class="hs-trace-port" data-port={port}>
                   <div class="hs-trace-port__head">
                     <span class="hs-trace-port__name">{props.label(port)}</span>
-                    <TypeChip text={typeLabel(value().type, props.catalog)} color={typeColor(value().type, props.catalog)} list={typeIsList(value().type, props.catalog)} />
+                    <TypeChip text={typeLabel(value().type, props.catalog)} color={typeColor(value().type, props.catalog)} list={typeIsList(value().type, props.catalog)}
+                      csharp={csharpTypes([value().type], props.catalog)} />
                   </div>
                   {props.source?.(port, value())}
                   <ValueView value={value()} label={props.label(port)} option={props.option?.(port)} side={props.side} />

@@ -4,6 +4,7 @@ import { Glyph } from './Glyph'
 import type { InputView } from './flow/flowModel'
 import { inputValue, resolveTypeSpec, setInput, words, type GraphNode, type InputSpec, type Operand, type VisualCatalogSnapshot } from './contract'
 import { typeColor, typeIsList, typeLabel } from './typeLabels'
+import { csharpTypes } from './csharpType'
 
 type Options = { coalesce?: string }
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -54,12 +55,33 @@ export function inputTypeChip(view: InputView | undefined, spec: InputSpec | und
   return { text: names.length && names.length <= 3 ? names.join(' or ') : 'Any value', color: 'var(--hs-muted)', list: false }
 }
 
-export const TypeChip = (props: { text: string; color: string; list?: boolean }) => (
-  <span class="hs-type-chip" style={{ '--hs-chip-color': props.color }} title={`Type: ${props.text}`}>
-    <span class="hs-type-chip__dot" classList={{ 'hs-type-chip__dot--list': !!props.list }} aria-hidden="true" />
-    {props.text}
-  </span>
+/**
+ * The friendly name of a type and, in the panel's input and output rows, the C# type a node method declares for it
+ * (`csharp`, see {@link csharpType}), read as one text: "True/False, C# type bool".
+ */
+export const TypeChip = (props: { text: string; color: string; list?: boolean; csharp?: string[] }) => {
+  const csharp = () => props.csharp?.join(' or ') ?? ''
+  return (
+    <span class="hs-type-chip" style={{ '--hs-chip-color': props.color }} title={csharp() ? `Type: ${props.text} · C#: ${csharp()}` : `Type: ${props.text}`}>
+      <span class="hs-type-chip__dot" classList={{ 'hs-type-chip__dot--list': !!props.list }} aria-hidden="true" />
+      <span class="hs-type-chip__name">{props.text}</span>
+      <Show when={csharp()}>
+        <CSharpType text={csharp()} plural={(props.csharp?.length ?? 0) > 1} />
+      </Show>
+    </span>
+  )
+}
+/** A C# type in code style, read after the friendly name as ", C# type bool". */
+export const CSharpType = (props: { text: string; plural?: boolean }) => (
+  <><span class="hs-visually-hidden">, C# {props.plural ? 'types' : 'type'} </span><code class="hs-csharp-type">{props.text}</code></>
 )
+
+/** The C# types of an input: of its resolved type, else of each type it accepts (as {@link inputTypeChip}). */
+export function inputCSharpTypes(view: InputView | undefined, spec: InputSpec | undefined, catalog: VisualCatalogSnapshot) {
+  const id = view?.pin.typeId
+  if (id && resolveTypeSpec(id, catalog)) return csharpTypes([id], catalog)
+  return csharpTypes((spec?.types ?? []).filter(t => resolveTypeSpec(t, catalog)), catalog)
+}
 
 /** Validator messages, shown as they are under their field. */
 export const Errors = (props: { list: string[]; id?: string }) => (
@@ -128,7 +150,7 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
             retype={ctx.node().kind === 'constant' && row.port === 'value'} />
         )}
       </Show>
-      <TypeChip {...chip()} />
+      <TypeChip {...chip()} csharp={inputCSharpTypes(input(), inputSpec(), ctx.catalog())} />
       <Show when={row.onRemove}>
         {remove => (
           <button type="button" class="hs-button hs-button--ghost hs-insp-remove" aria-label={row.removeLabel ?? `Remove ${label()}`}

@@ -3,7 +3,8 @@ import { Menu, type MenuItem } from '../components/Menu'
 import { ServiceFields } from './ServiceFields'
 import { retypeTriggerNode, TriggerAdvanced, TriggerConfig } from './TriggerConfig'
 import { Glyph } from './Glyph'
-import { Errors, focusRow, InputRow, type RowContext } from './InputRow'
+import { CSharpType, Errors, focusRow, InputRow, type RowContext } from './InputRow'
+import { csharpType } from './csharpType'
 import { ArrayItems, Branches, Declarations, ObjectFields, type StructureContext } from './StructureEditors'
 import { buildNodeView } from './flow/flowModel'
 import { constantTypeLabels, constantTypes, retypeConstant } from './constant'
@@ -14,7 +15,7 @@ import { updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
 import { typeLabel } from './typeLabels'
 import { DraftField } from './widgets/common'
-import { parseNumber } from './widgets/number'
+import { numberMessage, parseNumber, useDecimalSeparator } from './widgets/number'
 import { stateField, WidgetControl } from './widgets'
 import type { VisualDiagnostic } from './api'
 
@@ -86,6 +87,7 @@ export function NodeConfig(props: NodeConfigProps) {
 
   // The rows' type chips and editors know the types the graph's Custom C# nodes declare.
   const types = createMemo(() => graphTypes(props.graph, props.catalog))
+  const decimal = useDecimalSeparator()
   const rows: RowContext = {
     node: () => props.node,
     catalog: types,
@@ -134,8 +136,10 @@ export function NodeConfig(props: NodeConfigProps) {
                 commit={text => {
                   if (!number()) { set(field.name, text === '' && !field.rule.required ? undefined : text); return }
                   if (text.trim() === '') { set(field.name, undefined); return }
-                  const parsed = parseNumber(text) ?? Number.NaN
-                  if (!Number.isFinite(parsed) || (field.rule.type === 'integer' && !Number.isInteger(parsed))) return field.rule.type === 'integer' ? 'Enter a whole number.' : 'Enter a number.'
+                  const parsed = parseNumber(text, decimal()) ?? Number.NaN
+                  const message = field.rule.type === 'integer' ? 'Enter a whole number.' : 'Enter a number.'
+                  if (!Number.isFinite(parsed)) return numberMessage(text, decimal(), message)
+                  if (field.rule.type === 'integer' && !Number.isInteger(parsed)) return message
                   set(field.name, parsed)
                 }} />
             }>
@@ -146,7 +150,7 @@ export function NodeConfig(props: NodeConfigProps) {
           }>
             <span class="hs-widget-row">
               <input id={id} type="checkbox" role="switch" class="hs-switch" aria-describedby={hint()} checked={value() === true} onChange={e => set(field.name, e.currentTarget.checked)} />
-              <span class="hs-muted">{value() === undefined ? 'Not set' : value() ? 'Yes' : 'No'}</span>
+              <span class="hs-muted">{value() === undefined ? 'Not set' : value() ? 'True' : 'False'}</span>
             </span>
           </Show>
         }>
@@ -275,12 +279,18 @@ export function NodeConfig(props: NodeConfigProps) {
               {pinId => {
                 const pin = () => outputs().find(p => p.id === pinId)!
                 const descId = createUniqueId()
+                const csharp = () => (pin().typeId ? csharpType(pin().typeId!, types()) : undefined)
+                // The canvas pin's name, with the C# type after the friendly one: "Output Result, True/False, C# type bool, connected".
+                const name = () => [`Output ${pin().label}`, pin().typeName, csharp() && `C# type ${csharp()}`, pin().connected ? 'connected' : 'not connected'].filter(Boolean).join(', ')
                 return (
                   <Show when={outputs().some(p => p.id === pinId)}>
-                    <li class="hs-insp-output" aria-label={pin().name} aria-describedby={pin().description ? descId : undefined} style={{ '--hs-chip-color': pin().color }}>
+                    <li class="hs-insp-output" aria-label={name()} aria-describedby={pin().description ? descId : undefined} style={{ '--hs-chip-color': pin().color }}>
                       <span class="hs-type-chip__dot" classList={{ 'hs-type-chip__dot--list': pin().list, 'hs-type-chip__dot--filled': pin().connected }} aria-hidden="true" />
                       <span class="hs-insp-output__name">{pin().label}</span>
-                      <span class="hs-insp-output__type">{pin().typeName}</span>
+                      <span class="hs-insp-output__type" title={csharp() ? `Type: ${pin().typeName} · C#: ${csharp()}` : undefined}>
+                        <span class="hs-insp-output__friendly">{pin().typeName}</span>
+                        <Show when={csharp()}>{text => <CSharpType text={text()} />}</Show>
+                      </span>
                       <Show when={pin().description}><small id={descId} class="hs-insp-output__desc">{pin().description}</small></Show>
                     </li>
                   </Show>

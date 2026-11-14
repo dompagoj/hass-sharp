@@ -60,7 +60,7 @@ export function TopBar(props: {
   onUndo?(): void
   onRedo?(): void
   canSave?: boolean
-  /** Why Save is disabled, when it is for a reason worth saying (nothing to save); its title. */
+  /** Why Save is disabled (nothing to save), or what it waits on while it still saves ("Checking…"); its title and description. */
   saveTitle?: string
   onSave?(): void
   /** The Run now button (admins only). */
@@ -156,11 +156,12 @@ export function TopBar(props: {
                 reason, tied to it, is read with it; a press does nothing. Without a reason it is simply disabled. */}
             <Button variant="primary" class="hs-topbar__save" busy={props.save?.saving} disabled={!props.canSave && !props.saveTitle}
               aria-disabled={!props.canSave && props.saveTitle ? 'true' : undefined} title={props.saveTitle}
-              aria-describedby={!props.canSave && props.saveTitle ? saveReasonId : undefined}
+              aria-describedby={props.saveTitle ? saveReasonId : undefined}
               onClick={() => { if (props.canSave) props.onSave?.() }}>
               Save
             </Button>
-            <Show when={!props.canSave && props.saveTitle}><span id={saveReasonId} class="hs-visually-hidden">{props.saveTitle}</span></Show>
+            {/* The reason, or what Save waits on while it still saves ("Checking…"), is read with it either way. */}
+            <Show when={props.saveTitle}><span id={saveReasonId} class="hs-visually-hidden">{props.saveTitle}</span></Show>
           </Show>
           {props.actions}
           <Show when={props.fullscreen}>

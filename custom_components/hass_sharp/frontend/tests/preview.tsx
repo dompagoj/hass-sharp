@@ -239,8 +239,11 @@ if (listFixture && listState !== 'empty') {
 }
 if (listFixture && listState === 'error') visualBackend.controls.homeError = true
 history.replaceState(null, '', traceFixture ? '/hass-sharp/visual/trace-demo/runs/fixture-trace-run' : libraryFixture ? '/hass-sharp/libraries' : visualFixture ? typedFixture?'/hass-sharp/visual/typed-demo':'/hass-sharp/visual/new?name=Motion%20lights' : '/hass-sharp/automations')
+// `?numberFormat=decimal_comma` (and `&language=de`): the person's number format, as Home Assistant gives it.
+const numberFormat = new URLSearchParams(location.search).get('numberFormat')
 const hass = {
   user: { is_admin: true },
+  ...(numberFormat ? { locale: { language: new URLSearchParams(location.search).get('language') ?? 'en', number_format: numberFormat, time_format: 'language' } } : {}),
   connection:visualBackend.connection,
   async callWS(message: { type: string }) {
     if (message.type === 'hass_sharp/get_entities') return { entities: Array.from({length:80},(_,i)=>({entity_id: `${i%2?'light':'binary_sensor'}.hall_${i}`, name: `Hall ${i%2?'lamp':'motion'} ${i}`})) }

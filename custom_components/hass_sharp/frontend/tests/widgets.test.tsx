@@ -260,7 +260,7 @@ describe('values', () => {
   })
   it('names types for people', () => {
     expect(['string', 'number', 'boolean', 'object', 'array', 'entity_id', 'entity_id:light', 'entity_id:binary_sensor', 'target', 'global::HassSharp.EntityStateSnapshot']
-      .map(t => typeLabel(t))).toEqual(['Text', 'Number', 'Yes/No', 'Object', 'List', 'Entity', 'Light entity', 'Binary sensor entity', 'Target', 'Entity state'])
+      .map(t => typeLabel(t))).toEqual(['Text', 'Number', 'True/False', 'Object', 'List', 'Entity', 'Light entity', 'Binary sensor entity', 'Target', 'Entity state'])
     expect(typeLabel('global::Library.Things.Gadget')).toBe('Gadget')
     expect(typeLabel('global::My.Thing', { ...nodeCatalog, types: { ...nodeCatalog.types, 'global::My.Thing': { description: 'x', label: 'My thing' } } })).toBe('My thing')
   })
