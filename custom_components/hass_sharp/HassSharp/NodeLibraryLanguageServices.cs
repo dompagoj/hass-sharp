@@ -65,7 +65,7 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
                 {
                     if (hidden(item)) continue;
                     var change = await service.GetChangeAsync(document,item,cancellationToken: cancellationToken);
-                    var edits = change.TextChanges.IsDefaultOrEmpty ? [change.TextChange] : change.TextChanges;
+                    var edits = (change.TextChanges.IsDefaultOrEmpty ? [change.TextChange] : change.TextChanges).Select(e => UsingInSource(e, offset)).ToArray();
                     var primary = edits.FirstOrDefault(e => e.Span.Start <= adjusted && e.Span.End >= adjusted);
                     if (primary.NewText == null || edits.Any(e => e.Span.Start < offset || e.Span.End > offset+source.Length)) continue;
                     results.Add(new() { DisplayText=item.DisplayText, DisplayTextPrefix=item.DisplayTextPrefix,DisplayTextSuffix=item.DisplayTextSuffix,
@@ -133,6 +133,14 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
             default: throw new ArgumentException("Unknown language operation");
         }
     }
+    // An item from a namespace the code does not import comes with its using line. Where the code has using lines Roslyn
+    // adds it to them; where it has none, Roslyn writes it above the namespace the code is wrapped in, which is not the
+    // person's code. It goes at the top of their code instead: using lines there are inside that namespace, as their own are.
+    static TextChange UsingInSource(TextChange change, int offset) =>
+        change.Span.IsEmpty && change.Span.Start < offset && change.NewText is { } text
+            && text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) is { Length: > 0 } lines
+            && lines.All(l => l.StartsWith("using ", StringComparison.Ordinal) && l.EndsWith(';'))
+            ? new TextChange(new TextSpan(offset, 0), text) : change;
     // Python.NET is in the process, so among the references, and extends every object with ToPython and ToPythonAs<T>
     // (more with its codecs). They mean nothing in node code: completion, signature help and hover leave them out. The
     // assembly stays referenced; only these are not offered.

@@ -90,6 +90,30 @@ public class NodeLibraryLanguageServicesTests
         var states=(await Request("completion",[new("main",snapshot,1)],"main",snapshot.IndexOf("EntityStat")+10)).AsArray();
         Assert.Contains(states,i=>i!["displayText"]!.GetValue<string>()=="EntityStateSnapshot");
     }
+    [Fact]
+    public async Task Completion_offers_a_type_of_a_namespace_that_code_without_using_lines_does_not_import()
+    {
+        // A type from a namespace the code does not import comes with its using line. Code with no using lines got none of
+        // these: Roslyn writes the line above the namespace the code is wrapped in, where the editor cannot put it, so the
+        // item was left out and "return jsonseria" showed "No suggestions". The line goes at the top of the person's code.
+        const string source="public static class CustomNode\n{\n    [Node(\"Check\")]\n    public static string Run(NodeContext context, string text)\n    {\n        return jsonseria;\n    }\n}";
+        var position=source.IndexOf("jsonseria")+"jsonseria".Length;
+        foreach(var custom in new[]{true,false})
+        {
+            var items=(custom?await Custom("completion",[],source,position):await Request("completion",[new("main",source,1)],"main",position)).AsArray();
+            var item=Assert.Single(items,i=>i!["displayText"]!.GetValue<string>()=="JsonSerializer")!;
+            var line=Assert.Single(item["additionalTextEdits"]!.AsArray())!;
+            Assert.Equal((0,0),(line["start"]!.GetValue<int>(),line["length"]!.GetValue<int>()));
+            Assert.StartsWith("using System.Text.Json;\n",line["newText"]!.GetValue<string>());
+            // Applied as the editor applies them (the name where it was typed, the line at the top), the code compiles.
+            var name=item["textEdit"]!;
+            Assert.Equal((source.IndexOf("jsonseria"),"jsonseria".Length,"JsonSerializer"),(name["start"]!.GetValue<int>(),name["length"]!.GetValue<int>(),name["newText"]!.GetValue<string>()));
+            var completed=line["newText"]!.GetValue<string>()+source.Replace("jsonseria","JsonSerializer.Serialize(text)");
+            var compiler=new NodeLibraryCompiler(new DiagnosticsProvider());
+            var preview=custom?compiler.Preview([],[new CustomNodeSource("check",completed)],TestContext.Current.CancellationToken):compiler.Preview([new("main",completed,1)],TestContext.Current.CancellationToken);
+            Assert.DoesNotContain(custom?preview.Snapshot.Custom["check"].Diagnostics:preview.Diagnostics,d=>d.Severity==3);
+        }
+    }
     static async Task<JsonNode> WithServices(string operation, string source, int position)
     {
         var provider = new DiagnosticsProvider();
