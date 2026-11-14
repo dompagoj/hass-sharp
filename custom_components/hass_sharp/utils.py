@@ -19,10 +19,46 @@ def get_hass_entities(hass: HomeAssistant):
     return all_entity_ids
 
 
+# The attribute that lists an entity's states, for domains whose states vary per entity.
+_ENTITY_STATE_ATTRIBUTES = {
+    "climate": "hvac_modes",
+    "select": "options",
+    "input_select": "options",
+    "water_heater": "operation_list",
+}
+
+_ON_OFF = ("on", "off")
+_OPEN_CLOSED = ("open", "opening", "closing", "closed")
+# Domains whose states are always the same, as Home Assistant's frontend lists them (FIXED_DOMAIN_STATES).
+_ENTITY_FIXED_STATES = {
+    **{domain: _ON_OFF for domain in (
+        "automation", "binary_sensor", "calendar", "fan", "humidifier", "input_boolean", "light", "remote",
+        "schedule", "script", "siren", "switch", "update")},
+    "alarm_control_panel": ("disarmed", "armed_home", "armed_away", "armed_night", "armed_vacation",
+                            "armed_custom_bypass", "pending", "arming", "disarming", "triggered"),
+    "cover": _OPEN_CLOSED,
+    "device_tracker": ("home", "not_home"),
+    "lawn_mower": ("mowing", "docked", "paused", "returning", "error"),
+    "lock": ("locked", "unlocked", "locking", "unlocking", "open", "opening", "jammed"),
+    "media_player": ("off", "on", "idle", "playing", "paused", "standby", "buffering"),
+    "person": ("home", "not_home"),
+    "sun": ("above_horizon", "below_horizon"),
+    "timer": ("idle", "active", "paused"),
+    "vacuum": ("cleaning", "docked", "idle", "paused", "returning", "error"),
+    "valve": _OPEN_CLOSED,
+}
+
+
 def _entity_state_options(domain: str, attributes: dict):
-    key = {"climate": "hvac_modes", "select": "options", "input_select": "options"}.get(domain)
+    """The states an entity can have, when they are known: from its attributes, else its domain's fixed states."""
+    key = _ENTITY_STATE_ATTRIBUTES.get(domain)
+    if domain == "sensor" and attributes.get("device_class") == "enum":
+        key = "options"
     value = attributes.get(key) if key else None
-    return list(value) if isinstance(value, (list, tuple)) else None
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    fixed = _ENTITY_FIXED_STATES.get(domain)
+    return list(fixed) if fixed else None
 
 
 def get_hass_entity_registry(hass: HomeAssistant):

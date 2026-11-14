@@ -29,10 +29,16 @@ export const stateWords = (value: JsonValue, states: readonly string[]): string 
   states.length && !(typeof value === 'string' && states.includes(value)) ? displayValue(value) : optionWords(value)
 
 /**
- * The state picker of a setting that is not a service field (a State condition's state, a state trigger's from and
- * to): the panel offers its states with this widget, and a card's summary reads them by the same rule.
+ * The state picker of a setting that is not a service field (a State condition's state): the panel offers its states
+ * with this widget, and a card's summary reads them by the same rule (also for `stateSuggestions`, which offers the same states).
  */
 export const stateField: Widget = { kind: 'state', multiple: false }
+
+/**
+ * A state that may be left empty or be one the entity does not list (`unavailable`): free text that suggests the
+ * known states (a state trigger's from and to).
+ */
+export const stateSuggestions: Widget = { ...stateField, freeText: true }
 
 /** The states a state widget offers for these entities: the rule of its picker, its card chip and its trace chip. */
 export const widgetStates = (widget: Widget, ids: readonly string[], entities: readonly StateEntity[] | undefined): string[] =>

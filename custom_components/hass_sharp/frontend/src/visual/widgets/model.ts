@@ -36,6 +36,8 @@ export interface Widget {
   stateEntities?: string[]
   hideStates?: string[]
   stateAttribute?: string
+  /** state: the known states are suggestions for free text instead of a closed choice, so the value can be cleared or be any state. */
+  freeText?: boolean
   /** duration: a days field. `objectForm`: a value that was not set is written as `{hours, minutes, seconds}`. */
   days?: boolean
   objectForm?: boolean

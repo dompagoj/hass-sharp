@@ -18,7 +18,10 @@ def entry(name=None, original_name=None, area_id=None, device_id=None, device_cl
 def load_utils():
     tree = ast.parse(Path('custom_components/hass_sharp/utils.py').read_text())
     functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)
-                 and (n.name.startswith('get_hass_entit') or n.name.startswith('_entity'))]
+                 and (n.name.startswith('get_hass_entit') or n.name.startswith('_entity'))
+                 # The private constants they read, such as the fixed states of a domain.
+                 or isinstance(n, ast.Assign) and all(isinstance(t, ast.Name) and t.id.startswith('_') and t.id.isupper()
+                                                      for t in n.targets)]
     registry = NS(entities={
         'sensor.offline': entry(name='Offline meter', original_name='Meter', device_id='dev1',
                                 original_device_class='energy', unit_of_measurement='kWh', disabled_by='user'),
@@ -28,6 +31,9 @@ def load_utils():
         'climate.living': entry(device_id='dev2'),
         'select.mode': entry(),
         'input_select.scene': entry(),
+        'binary_sensor.water': entry(),
+        'sensor.mode': entry(),
+        'lock.door': entry(),
     })
     # HA 2026.11 deprecates `devices` as a mapping: only iterate it, and look devices up with `async_get`.
     device_entries = {'dev1': NS(id='dev1', name='Hub', name_by_user='Hall hub', area_id='hall'),
@@ -47,6 +53,9 @@ def load_utils():
         'climate.living': NS(attributes={'friendly_name': 'Living', 'hvac_modes': ['off', 'heat'], 'options': ['x']}),
         'select.mode': NS(attributes={'options': ['eco', 'boost'], 'hvac_modes': ['off']}),
         'input_select.scene': NS(attributes={'options': ('day', 'night')}),
+        'binary_sensor.water': NS(attributes={'device_class': 'moisture'}),
+        'sensor.mode': NS(attributes={'device_class': 'enum', 'options': ['idle', 'washing']}),
+        'lock.door': NS(attributes={}),
     }
     hass = NS(states=NS(async_entity_ids=lambda: [i for i in states], get=states.get))
     return env, hass
@@ -72,12 +81,13 @@ class Entities(unittest.IsolatedAsyncioTestCase):
     def test_registry_shape_and_union_of_state_and_registry_entities(self):
         result, entities = self.registry()
         self.assertEqual(list(entities), sorted(entities))
-        self.assertEqual(set(entities), {'climate.living', 'input_select.scene', 'light.hall', 'select.mode',
-                                         'sensor.live', 'sensor.offline', 'sensor.unnamed'})
+        self.assertEqual(set(entities), {'binary_sensor.water', 'climate.living', 'input_select.scene', 'light.hall',
+                                         'lock.door', 'select.mode', 'sensor.live', 'sensor.mode', 'sensor.offline',
+                                         'sensor.unnamed'})
         self.assertEqual(entities['light.hall'], {
             'entity_id': 'light.hall', 'name': 'Hall lamp', 'domain': 'light', 'area_id': 'hall', 'device_id': 'dev1',
             'device_class': None, 'supported_features': 44, 'unit': None, 'icon': 'mdi:ceiling-light',
-            'disabled': False, 'state_options': None})
+            'disabled': False, 'state_options': ['on', 'off']})
         self.assertEqual(entities['sensor.live'], {
             'entity_id': 'sensor.live', 'name': None, 'domain': 'sensor', 'area_id': None, 'device_id': None,
             'device_class': 'temperature', 'supported_features': None, 'unit': '°C', 'icon': None,
@@ -107,8 +117,15 @@ class Entities(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entities['climate.living']['state_options'], ['off', 'heat'])
         self.assertEqual(entities['select.mode']['state_options'], ['eco', 'boost'])
         self.assertEqual(entities['input_select.scene']['state_options'], ['day', 'night'])
-        self.assertIsNone(entities['light.hall']['state_options'])
+        # An enum sensor lists its states; other sensors' states are open-ended.
+        self.assertEqual(entities['sensor.mode']['state_options'], ['idle', 'washing'])
+        self.assertIsNone(entities['sensor.live']['state_options'])
         self.assertIsNone(entities['sensor.offline']['state_options'])
+        # Domains with fixed states, whether or not the entity has a state now.
+        self.assertEqual(entities['light.hall']['state_options'], ['on', 'off'])
+        self.assertEqual(entities['binary_sensor.water']['state_options'], ['on', 'off'])
+        self.assertEqual(entities['lock.door']['state_options'],
+                         ['locked', 'unlocked', 'locking', 'unlocking', 'open', 'opening', 'jammed'])
 
     async def test_list_authorization_response_and_retryable_failure(self):
         env, hass = load_utils()

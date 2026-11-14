@@ -71,13 +71,16 @@ export function EntityWidget(props: WidgetProps) {
   </Show>
 }
 
-/** Contract C3 "state": the union of `state_options` of the target entities; free text without any. */
+/**
+ * Contract C3 "state": the union of `state_options` of the target entities; free text without any. A `freeText`
+ * widget stays free text and suggests them.
+ */
 export function StateWidget(props: WidgetProps) {
   const entities = useEntities()
   const options = createMemo((): WidgetOption[] => {
     return widgetStates(props.widget, props.context?.targetEntityIds ?? [], entities.data).map(value => ({ value, label: optionWords(value) }))
   })
-  return <Show when={options().length} fallback={<TextWidget {...props} widget={{ ...props.widget, kind: 'text' }} />}>
+  return <Show when={options().length && !props.widget.freeText} fallback={<TextWidget {...props} widget={{ ...props.widget, kind: 'text', options: options() }} />}>
     <SelectWidget {...props} widget={{ ...props.widget, kind: 'select', options: options() }} />
   </Show>
 }

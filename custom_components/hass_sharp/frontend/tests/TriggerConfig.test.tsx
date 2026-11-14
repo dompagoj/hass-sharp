@@ -126,6 +126,36 @@ it('preserves entity-based numeric thresholds and structured unknown trigger fie
   expect((config().trigger as any).below).toBe(30)
 })
 
+it('suggests the entity\'s known states for From and To, keeping them free text that can be cleared', async () => {
+  const entity = (entity_id: string, state_options: string[] | null) => ({ entity_id, name: null, domain: entity_id.split('.')[0], area_id: null,
+    device_id: null, device_class: null, supported_features: null, unit: null, icon: null, disabled: false, state_options })
+  const registry = { entities: [entity('binary_sensor.water_level', ['on', 'off']), entity('sensor.power', null)], areas: [], devices: [], floors: [], labels: [] }
+  const { host, config } = mount({ type: 'ha', trigger: { trigger: 'state', entity_id: 'binary_sensor.water_level', from: 'off' } },
+    { callWS: async () => registry })
+  const suggestions = (input: HTMLInputElement) => [...(document.getElementById(input.getAttribute('list') ?? '')?.querySelectorAll('option') ?? [])]
+    .map(o => [o.value, o.textContent])
+  for (const label of ['From', 'To']) {
+    await vi.waitFor(() => expect(suggestions(field(host, label)), label).toEqual([['on', 'On'], ['off', 'Off']]))
+    expect(field(host, label).tagName).toBe('INPUT')
+  }
+  expect(field(host, 'From').value).toBe('off')
+  // A state the entity does not list is still a state to trigger from; an empty field means any state.
+  type(field(host, 'From'), 'unavailable')
+  expect(config().trigger).toEqual({ trigger: 'state', entity_id: 'binary_sensor.water_level', from: 'unavailable' })
+  type(field(host, 'From'), '')
+  expect(config().trigger).toEqual({ trigger: 'state', entity_id: 'binary_sensor.water_level' })
+  type(field(host, 'To'), 'on')
+  expect(config().trigger).toEqual({ trigger: 'state', entity_id: 'binary_sensor.water_level', to: 'on' })
+  // An entity whose states are open-ended gets no suggestions.
+  dispose?.()
+  const callWS = vi.fn(async () => registry)
+  const other = mount({ type: 'ha', trigger: { trigger: 'state', entity_id: 'sensor.power' } }, { callWS })
+  await vi.waitFor(() => expect(callWS).toHaveBeenCalled())
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(field(other.host, 'To').getAttribute('list')).toBeNull()
+  expect(other.host.querySelector('datalist')).toBeNull()
+})
+
 it('starts a new trigger type from its defaults, keeping only the settings both types have', () => {
   const { host, config } = mount({ type: 'daily', time: '07:30', timeZone: 'Europe/Zagreb', mode: 'Restart', manual: false, startup: true })
   expect(field(host, 'Time of day').value).toBe('07:30')

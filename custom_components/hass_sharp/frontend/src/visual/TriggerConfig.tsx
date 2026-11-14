@@ -4,7 +4,7 @@ import { dataOutputs, isAssignable, nodeCatalog, type GraphNode, type InputSpec,
 import { nodeInputs, removeEdge, updateNode, type VisualGraph } from './graph'
 import type { VisualDiagnostic } from './api'
 import { domainWords } from './typeLabels'
-import { fitsWidget, stateField, widgetFor, WidgetControl, type Widget } from './widgets'
+import { fitsWidget, stateSuggestions, widgetFor, WidgetControl, type Widget } from './widgets'
 import { Glyph } from './Glyph'
 import { parseNumber, useDecimalSeparator, type DecimalSeparator } from './widgets/number'
 
@@ -416,8 +416,8 @@ export function TriggerConfig(props: {
           <Show when={choice() === 'state'}>
             {field('entity_id', 'Entity', entityWidget(true), { required: true, map: entityValue })}
             {field('attribute', 'Attribute', text, { hint: 'Leave empty to watch the state itself.' })}
-            {field('from', 'From', stateField, { context: { targetEntityIds: entityIds() }, hint: 'Leave empty for any state.' })}
-            {field('to', 'To', stateField, { context: { targetEntityIds: entityIds() }, hint: 'Leave empty for any state.' })}
+            {field('from', 'From', stateSuggestions, { context: { targetEntityIds: entityIds() }, hint: 'Leave empty for any state.' })}
+            {field('to', 'To', stateSuggestions, { context: { targetEntityIds: entityIds() }, hint: 'Leave empty for any state.' })}
             {field('for', 'For', { kind: 'duration', multiple: false, objectForm: true }, { hint: 'How long the new state must hold first.' })}
           </Show>
           <Show when={choice() === 'numeric_state'}>
