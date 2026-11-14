@@ -33,7 +33,7 @@ directory afterwards.
 
 Run commands from the repository root. Use `docker-compose.yaml` here; the former
 `../hass_dev` directory is no longer used. Prerequisites are a running Docker engine
-with Compose v2, the .NET 10 SDK, and Bun.
+with Compose v2, the .NET 11 SDK, and Bun.
 
 Build the integration before starting a source checkout:
 

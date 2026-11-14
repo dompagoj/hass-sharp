@@ -1,8 +1,8 @@
 """Exercise real Python.NET attributes on a managed worker thread.
 
 After dotnet build: uv run --python 3.13 --with pythonnet==3.1.0 python
-  tests/packaging/visual_values_smoke.py INTEGRATION_DIR/HassSharp/bin/Debug/net10.0/HassSharp.dll
-A compatible Python.NET/Python version and .NET 10 runtime are required.
+  tests/packaging/visual_values_smoke.py INTEGRATION_DIR/HassSharp/bin/Debug/net11.0/HassSharp.dll
+A compatible Python.NET/Python version and .NET 11 runtime are required.
 """
 from pathlib import Path
 import sys

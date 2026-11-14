@@ -100,7 +100,7 @@ packages include the compiled .NET library and frontend.
 
 Restart Home Assistant, add **HassSharp** under **Settings → Devices & services →
 Add integration**, and open **HassSharp** in the sidebar. The first start downloads
-the .NET 10 SDK into the integration directory, so it needs internet access and
+the .NET 11 SDK into the integration directory, so it needs internet access and
 takes longer than later starts. If the download fails, the log says so; restart
 Home Assistant to try again.
 
@@ -112,9 +112,9 @@ and leaves the files as they are.
 
 ## Building from source
 
-The repository contains the Python integration, a .NET 10 library and a
+The repository contains the Python integration, a .NET 11 library and a
 SolidJS/Monaco frontend, all in `custom_components/hass_sharp/`. Building a source
-checkout requires the .NET 10 SDK and Bun. From the repository root:
+checkout requires the .NET 11 SDK and Bun. From the repository root:
 
 ```sh
 dotnet publish -c Release ./custom_components/hass_sharp/HassSharp -o ./custom_components/hass_sharp/out

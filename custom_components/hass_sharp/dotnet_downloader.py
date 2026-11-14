@@ -8,7 +8,7 @@ import urllib.request
 from .const import logger
 
 # Target .NET version
-DOTNET_VERSION = "10.0.101"
+DOTNET_VERSION = "11.0.100"
 # Microsoft's current download host; dotnetcli.azureedge.net, used before, is being retired.
 DOWNLOAD_HOST = "https://builds.dotnet.microsoft.com"
 
@@ -27,7 +27,7 @@ def get_architecture():
 
 def get_download_url(version, arch):
     # This URL pattern is for the .NET SDK binaries
-    # Example: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.101/dotnet-sdk-10.0.101-linux-x64.tar.gz
+    # Example: https://builds.dotnet.microsoft.com/dotnet/Sdk/11.0.100/dotnet-sdk-11.0.100-linux-x64.tar.gz
     # Note: For non-linux platforms, this might need adjustment, but HASS usually runs on Linux.
     system = platform.system().lower()
     if system == "darwin":

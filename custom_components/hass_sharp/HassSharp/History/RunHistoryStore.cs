@@ -165,7 +165,7 @@ public sealed class RunHistoryStore
         lock (gate)
         {
             using var db = new HistoryContext(path);
-            return db.Database.ExecuteSqlInterpolated($"INSERT OR IGNORE INTO ScheduleOccurrences (Id) VALUES ({id})") == 1;
+            return db.Database.ExecuteSql($"INSERT OR IGNORE INTO ScheduleOccurrences (Id) VALUES ({id})") == 1;
         }
     }
     /// <summary>Gives back a claim whose automation stopped before it ran the occurrence.</summary>
@@ -174,7 +174,7 @@ public sealed class RunHistoryStore
         lock (gate)
         {
             using var db = new HistoryContext(path);
-            db.Database.ExecuteSqlInterpolated($"DELETE FROM ScheduleOccurrences WHERE Id = {id}");
+            db.Database.ExecuteSql($"DELETE FROM ScheduleOccurrences WHERE Id = {id}");
         }
     }
     public string Identity(string scriptPath)
@@ -217,7 +217,7 @@ public sealed class RunHistoryStore
             db.SaveChanges();
             if (snapshot != null && !knownSnapshots.Contains(snapshot.Revision))
             {
-                db.Database.ExecuteSqlInterpolated($"""
+                db.Database.ExecuteSql($"""
                     INSERT OR IGNORE INTO GraphSnapshots (Revision, VisualId, VisualRevision, Graph, Catalog, CreatedUtc)
                     VALUES ({snapshot.Revision}, {snapshot.VisualId}, {snapshot.VisualRevision}, {snapshot.Graph}, {snapshot.Catalog}, {Timestamp(DateTime.UtcNow)})
                     """);
@@ -228,16 +228,16 @@ public sealed class RunHistoryStore
             if (obsolete.Length > 0)
             {
                 db.Runs.Where(r => obsolete.Contains(r.RunId)).ExecuteDelete();
-                foreach (var id in obsolete) db.Database.ExecuteSqlInterpolated($"DELETE FROM RunTraces WHERE RunId = {id}");
+                foreach (var id in obsolete) db.Database.ExecuteSql($"DELETE FROM RunTraces WHERE RunId = {id}");
                 db.Database.ExecuteSqlRaw("DELETE FROM GraphSnapshots WHERE Revision NOT IN (SELECT Revision FROM Runs)");
             }
             // Traces are large: only the newest traced runs that have ended keep theirs. A run still going is not ranked, so
             // a long one does not lose its trace on every save and write it again at its next flush.
-            db.Database.ExecuteSqlInterpolated($"""
+            db.Database.ExecuteSql($"""
                 UPDATE Runs SET HasTrace = 0 WHERE RunId IN (SELECT t.RunId FROM RunTraces t JOIN Runs r ON r.RunId = t.RunId
                   WHERE r.EndUtc IS NOT NULL ORDER BY r.ReceivedUtc DESC, r.RunId DESC LIMIT -1 OFFSET {traceRetention})
                 """);
-            db.Database.ExecuteSqlInterpolated($"DELETE FROM RunTraces WHERE RunId IN (SELECT t.RunId FROM RunTraces t JOIN Runs r ON r.RunId = t.RunId WHERE r.HasTrace = 0)");
+            db.Database.ExecuteSql($"DELETE FROM RunTraces WHERE RunId IN (SELECT t.RunId FROM RunTraces t JOIN Runs r ON r.RunId = t.RunId WHERE r.HasTrace = 0)");
             transaction.Commit();
             if (obsolete.Length > 0) knownSnapshots.Clear();
             else if (snapshot != null) knownSnapshots.Add(snapshot.Revision);
@@ -318,8 +318,8 @@ public sealed class RunHistoryStore
         {
             using var db = new HistoryContext(path);
             using var transaction = db.Database.BeginTransaction();
-            if (db.Database.ExecuteSqlInterpolated($"UPDATE Runs SET HasTrace = 1 WHERE RunId = {runId}") == 0) return false;
-            db.Database.ExecuteSqlInterpolated($"""
+            if (db.Database.ExecuteSql($"UPDATE Runs SET HasTrace = 1 WHERE RunId = {runId}") == 0) return false;
+            db.Database.ExecuteSql($"""
                 INSERT INTO RunTraces (RunId, Format, Json, EventCount, Truncated, UpdatedUtc)
                 VALUES ({runId}, {TraceFormat}, {json}, {eventCount}, {truncated}, {Timestamp(DateTime.UtcNow)})
                 ON CONFLICT (RunId) DO UPDATE SET Format = excluded.Format, Json = excluded.Json,
