@@ -162,7 +162,8 @@ static class EntityGeneratorTests
         Check(Names("\"input_boolean\",\"input__boolean\"") == "input__boolean=InputBooleanEntity,input_boolean=InputBooleanEntity2", "collision: " + Names("\"input_boolean\",\"input__boolean\""));
         Check(Names("\"a\",\"zone\",\"input_boolean\",\"input__boolean\"").Contains("input__boolean=InputBooleanEntity,input_boolean=InputBooleanEntity2"), "names do not move");
 
-        // Type names keep clear of the hand-written types; members of the base class, State and the class's own name;
+        // Type names keep clear of the hand-written types (an enum that would take one is named after its class); members
+        // of the base class, State and the class's own name;
         // an enum member of its enum's name; and the catch-all of a listed "other". An enum EntityDomain may be: an attribute
         // name looks only for attribute classes, so [EntityDomain(...)] still means EntityDomainAttribute.
         static string Key(string key, string text) => $"\"component.entity.entity_component._.{key}\":\"{text}\"";
@@ -174,7 +175,7 @@ static class EntityGeneratorTests
             Key("state_attributes.get_type.name", "Type"), Key("state_attributes.entity_entity.name", "Self"), Key("state_attributes.attribute.name", "Attribute")) + "}}");
         var assembly = Load(reserved);
         var names = assembly.GetTypes().Select(t => t.Name).Order(StringComparer.Ordinal).ToArray();
-        Check(string.Join(",", names) == "EntityDomain,EntityDomainAttribute2,EntityEntity,EntityHandles,EntityHandles2,EntityJsonConverter2,EntityState,EntityText2,EntityTextAttribute2",
+        Check(string.Join(",", names) == "EntityDomain,EntityEntity,EntityEntityDomainAttribute,EntityEntityHandles,EntityEntityJsonConverter,EntityEntityText,EntityEntityTextAttribute,EntityHandles,EntityState",
             "reserved type names: " + string.Join(",", names));
         var properties = Class(assembly, "EntityEntity").GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly).Select(p => p.Name).Order(StringComparer.Ordinal);
         Check(string.Join(",", properties) == "Attribute2,Domain,DomainAttribute,EntityEntity2,GetType2,Handles,JsonConverter,RawState2,Snapshot2,State,State2,Text,TextAttribute", "reserved property names: " + string.Join(",", properties));
@@ -182,6 +183,30 @@ static class EntityGeneratorTests
         Check(string.Join(",", states) == "EntityState2,Other,Unknown,Unknown2,Unavailable,Other2", "enum members: " + string.Join(",", states));
         Check(EntityText.Of((Enum)Enum.Parse(Class(assembly, "EntityState"), "Unknown")) == "unknown_" && EntityText.Of((Enum)Enum.Parse(Class(assembly, "EntityState"), "Unknown2")) == "unknown", "an added state after the listed ones");
         Console.WriteLine("PASS entity generator: names are told apart in ordinal order and keep clear of the base class and the hand-written types");
+        HassSharpNames();
+    }
+
+    // Node code imports HassSharp and HassSharp.Entities: no generated type takes the name of one of HassSharp's own, so
+    // neither is ambiguous there. Automation's mode attribute is AutomationEntityMode, beside HassSharp's AutomationMode.
+    static void HassSharpNames()
+    {
+        var own = typeof(Entity).Assembly.GetExportedTypes().Where(t => t.Namespace == "HassSharp" && !t.IsNested).Select(t => t.Name.Split('`')[0]).ToHashSet(StringComparer.Ordinal);
+        Check(own.Contains("AutomationMode"), "HassSharp's own AutomationMode");
+        var assembly = Load(Source(Fixture("ha-entity-components.json")));
+        var generated = assembly.GetTypes().Where(t => !t.IsNested).Select(t => t.Name).ToArray();
+        Check(!generated.Any(own.Contains), "generated types named like HassSharp's: " + string.Join(", ", generated.Where(own.Contains)));
+        Check(Nullable.GetUnderlyingType(Member(assembly, "AutomationEntity", "Mode").PropertyType)!.Name == "AutomationEntityMode", "the automation's mode: " + string.Join(", ", generated.Where(n => n.StartsWith("Automation", StringComparison.Ordinal))));
+        var preview = new NodeLibraryCompiler(NodeLibraryFixture.EntityProvider).Preview([new("modes", """
+            public static class Modes
+            {
+                /// <summary>Restarts.</summary>
+                [Node("Restarts")] public static bool Restarts(AutomationEntity automation) => automation.Mode == AutomationEntityMode.Restart;
+                /// <summary>Queued.</summary>
+                [Node("Queued")] public static string Queued() => AutomationMode.Queued.ToString();
+            }
+            """, 1)]);
+        Check(preview.Valid && preview.Diagnostics.Length == 0, "both modes in node code: " + string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
+        Console.WriteLine("PASS entity generator: no generated type is named like one of HassSharp's, so node code can name both");
     }
 
     // Hostile text stays inside a literal (and a doc comment), and reads back as itself.

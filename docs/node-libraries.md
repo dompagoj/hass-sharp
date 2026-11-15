@@ -286,7 +286,9 @@ domain that lists no states have `string State`, the same text as `RawState`.
 property, named in PascalCase (`color_mode` is `ColorMode`):
 
 - An attribute with listed values is a nullable enum named after the domain and the
-  attribute (`LightColorMode?`). It is null when the entity has no such attribute or
+  attribute (`LightColorMode?`), or after the class and the attribute when that name
+  is already one of HassSharp's types (`AutomationEntityMode?`, since
+  `AutomationMode` is HassSharp's). It is null when the entity has no such attribute or
   its value is JSON null, and `Other` for a value that is not in the list. When
   several attributes of a domain list the same values (`color_mode` and
   `supported_color_modes`), only the shortest name gets the enum.

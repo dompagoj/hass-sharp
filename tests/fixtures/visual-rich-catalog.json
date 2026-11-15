@@ -3368,9 +3368,9 @@
           "global::System.Enum"
         ]
       },
-      "global::HassSharp.Entities.AutomationMode?": {
-        "label": "HassSharp.Entities.AutomationMode?",
-        "description": "HassSharp.Entities.AutomationMode?",
+      "global::HassSharp.Entities.AutomationEntityMode?": {
+        "label": "HassSharp.Entities.AutomationEntityMode?",
+        "description": "HassSharp.Entities.AutomationEntityMode?",
         "category": "String",
         "nullable": true,
         "literalKind": "enum",
@@ -3388,12 +3388,12 @@
         ],
         "listed": false,
         "assignableTo": [
-          "global::HassSharp.Entities.AutomationMode?"
+          "global::HassSharp.Entities.AutomationEntityMode?"
         ]
       },
-      "global::HassSharp.Entities.AutomationMode": {
-        "label": "HassSharp.Entities.AutomationMode",
-        "description": "HassSharp.Entities.AutomationMode",
+      "global::HassSharp.Entities.AutomationEntityMode": {
+        "label": "HassSharp.Entities.AutomationEntityMode",
+        "description": "HassSharp.Entities.AutomationEntityMode",
         "category": "String",
         "nullable": false,
         "literalKind": "enum",
@@ -3411,8 +3411,8 @@
         ],
         "listed": false,
         "assignableTo": [
-          "global::HassSharp.Entities.AutomationMode?",
-          "global::HassSharp.Entities.AutomationMode",
+          "global::HassSharp.Entities.AutomationEntityMode?",
+          "global::HassSharp.Entities.AutomationEntityMode",
           "global::System.IComparable",
           "global::System.IConvertible",
           "global::System.ValueType",
@@ -6088,7 +6088,7 @@
               },
               {
                 "name": "Mode",
-                "type": "global::HassSharp.Entities.AutomationMode?",
+                "type": "global::HassSharp.Entities.AutomationEntityMode?",
                 "nullable": true
               }
             ]
@@ -11111,8 +11111,8 @@
             "global::HassSharp.Entities.AlertState",
             "global::HassSharp.Entities.AssistSatelliteState",
             "global::HassSharp.Entities.AutomationState",
-            "global::HassSharp.Entities.AutomationMode?",
-            "global::HassSharp.Entities.AutomationMode",
+            "global::HassSharp.Entities.AutomationEntityMode?",
+            "global::HassSharp.Entities.AutomationEntityMode",
             "global::HassSharp.Entities.BinarySensorState",
             "global::HassSharp.Entities.CalendarState",
             "global::HassSharp.Entities.CameraState",
@@ -14333,7 +14333,7 @@
                       "global::HassSharp.Entities.AlertState",
                       "global::HassSharp.Entities.AssistSatelliteState",
                       "global::HassSharp.Entities.AutomationState",
-                      "global::HassSharp.Entities.AutomationMode",
+                      "global::HassSharp.Entities.AutomationEntityMode",
                       "global::HassSharp.Entities.BinarySensorState",
                       "global::HassSharp.Entities.CalendarState",
                       "global::HassSharp.Entities.CameraState",
@@ -14771,7 +14771,7 @@
                       "global::HassSharp.Entities.AlertState",
                       "global::HassSharp.Entities.AssistSatelliteState",
                       "global::HassSharp.Entities.AutomationState",
-                      "global::HassSharp.Entities.AutomationMode",
+                      "global::HassSharp.Entities.AutomationEntityMode",
                       "global::HassSharp.Entities.BinarySensorState",
                       "global::HassSharp.Entities.CalendarState",
                       "global::HassSharp.Entities.CameraState",

@@ -21,8 +21,10 @@ namespace HassSharp;
 /// </para>
 /// <para>
 /// Names follow <see cref="ServiceGenerator"/>'s: words in PascalCase, told apart by a numeric suffix in ordinal order
-/// of the ids, the first id of a name keeping it. Type names keep clear of the hand-written types of the namespace,
-/// property names of the base class's members, <c>State</c> and the class's own name.
+/// of the ids, the first id of a name keeping it. Type names keep clear of the hand-written types of the namespace and
+/// of the public types of namespace <c>HassSharp</c>, which node code imports too: an enum that would take one of those
+/// names is named after its class (<c>AutomationEntityMode</c>, not <c>AutomationMode</c>). Property names keep clear of
+/// the base class's members, <c>State</c> and the class's own name.
 /// </para>
 /// The output depends only on the schema: the same schema gives the same source, byte for byte.
 /// <para>
@@ -42,6 +44,10 @@ static class EntityGenerator
     const string TextState = "sensor";
     // The public types of the namespace written by hand.
     static readonly string[] OwnTypes = ["Entity", Factory, "EntityText", "EntityTextAttribute", "EntityDomainAttribute", "EntityJsonConverter"];
+    // The names no generated type takes: those, and the public types of namespace HassSharp, which node code imports beside
+    // this one (a type named in both would be ambiguous there). A fixed set: it depends on no schema.
+    static readonly HashSet<string> Taken = [.. OwnTypes, .. typeof(EntityGenerator).Assembly.GetExportedTypes()
+        .Where(t => t.Namespace == "HassSharp" && !t.IsNested).Select(t => t.Name.Split('`')[0])];
     // The members of Entity, and State, which every class has.
     static readonly string[] BaseMembers = ["EntityId", "RawState", "NumericState", "Attributes", "Attribute", "Snapshot", "State"];
     static readonly (string Text, string Label)[] Added = [("unknown", "Unknown"), ("unavailable", "Unavailable")];
@@ -78,11 +84,13 @@ static class EntityGenerator
         {
             var stem = Words(domain, pascal: true);
             typeIds.Add((domain, stem + "Entity"));
-            if (states[domain].Length > 0) typeIds.Add((StateId(domain), stem + "State"));
+            // An enum that would take a taken name is named after its class instead: AutomationEntityMode, not AutomationMode.
+            string EnumName(string name) => Taken.Contains(stem + name) ? stem + "Entity" + name : stem + name;
+            if (states[domain].Length > 0) typeIds.Add((StateId(domain), EnumName("State")));
             foreach (var (key, shape, _, _) in attributes[domain])
-                if (shape == Shape.Enum) typeIds.Add((AttributeId(domain, key), stem + Words(key, pascal: true)));
+                if (shape == Shape.Enum) typeIds.Add((AttributeId(domain, key), EnumName(Words(key, pascal: true))));
         }
-        var typeNames = Assign(typeIds, OwnTypes);
+        var typeNames = Assign(typeIds, Taken);
         var model = byDomain.Keys.Select(domain => DomainOf(domain, typeNames, states[domain], attributes[domain])).ToArray();
 
         var sb = new StringBuilder();
