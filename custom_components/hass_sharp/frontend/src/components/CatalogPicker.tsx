@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, createUniqueId, For, Show } from 'solid-js'
+import FuzzySearch from 'fuzzy-search'
 import { Button } from './Controls'
 import { Dialog } from './Dialog'
 
@@ -64,9 +65,9 @@ export function CatalogPicker(props: CatalogPickerProps) {
   const selected = (item: string) => props.multiple ? values().includes(item) : props.value === item
   const offered = createMemo(() => props.filter ? props.items.filter(item => props.filter!(item)) : props.items)
   const domains = createMemo(() => [...new Set(offered().map(item => item.id.split('.')[0]))].sort())
-  const matches = createMemo(() => offered().filter(item =>
-    (!domain() || item.id.startsWith(domain() + '.')) &&
-    `${item.id} ${item.name ?? ''} ${item.description ?? ''}`.toLocaleLowerCase().includes(search().toLocaleLowerCase())))
+  const filtered = createMemo(() => offered().filter(item => !domain() || item.id.startsWith(domain() + '.')))
+  const searcher = createMemo(() => new FuzzySearch(filtered(), ['id', 'name', 'description'], { caseSensitive: false, sort: true }))
+  const matches = createMemo(() => searcher().search(search().trim()))
   // The first matches, and every selected one after them: a selection is always there to see and untick.
   const shown = createMemo(() => matches().length > shownResults
     ? [...matches().slice(0, shownResults), ...matches().slice(shownResults).filter(item => selected(item.id))]

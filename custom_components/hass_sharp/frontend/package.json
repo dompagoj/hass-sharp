@@ -16,6 +16,7 @@
     "@solidjs/router": "^1.0.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/solid-query": "^5.104.0",
+    "fuzzy-search": "^3.3.0",
     "home-assistant-js-websocket": "9.7.0",
     "lit": "3.3.3",
     "monaco-editor": "0.57.0",
@@ -24,6 +25,7 @@
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
+    "@types/fuzzy-search": "^2.1.5",
     "@types/node": "^26.6.3",
     "happy-dom": "21.0.4",
     "typescript": "~7.0.2",

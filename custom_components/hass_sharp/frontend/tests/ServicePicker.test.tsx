@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { render } from 'solid-js/web'
+import { createSignal } from 'solid-js'
 import { HassCtx } from '../src/context'
 import { ServicePicker } from '../src/components/ServicePicker'
 import type { ServicesSection } from '../src/visual/contract'
@@ -12,16 +13,80 @@ const translations: Record<string, string> = {
   'component.light.services.turn_on.name': 'Turn on',
   'component.light.services.turn_on.description': 'Turns on one or more lights and adjusts their properties.',
 }
-function mount(value: string, options: { localize?: boolean; onRefresh?: () => void } = {}) {
+function mount(value: string, options: { localize?: boolean; onRefresh?: () => void; services?: ServicesSection } = {}) {
   const host = document.createElement('div')
   document.body.append(host)
   const callWS = vi.fn(async () => ({}))
   const change = vi.fn()
   const hass = { callWS, ...(options.localize ? { localize: (key: string) => translations[key] ?? key } : {}) }
-  dispose = render(() => <HassCtx.Provider value={hass as any}><ServicePicker value={value} services={section} onChange={change} onRefresh={options.onRefresh} /></HassCtx.Provider>, host)
+  dispose = render(() => <HassCtx.Provider value={hass as any}><ServicePicker value={value} services={options.services ?? section} onChange={change} onRefresh={options.onRefresh} /></HassCtx.Provider>, host)
   return { host, callWS, change }
 }
 const options = (host: Element) => [...host.querySelectorAll<HTMLElement>('[role="option"]')]
+const resultIds = (host: Element) => options(host).map(option => option.querySelector('small')!.textContent)
+function searchServices(host: Element, query: string) {
+  const search = host.querySelector<HTMLInputElement>('[aria-label="Search services"]')!
+  search.value = query; search.dispatchEvent(new Event('input', { bubbles: true }))
+  return search
+}
+const serviceSection = (entries: [id: string, name: string, description?: string][]): ServicesSection => ({
+  servicesGeneration: 'test',
+  items: Object.fromEntries(entries.map(([id, name, description = '']) => [id, {
+    domain: id.split('.')[0], service: id.split('.')[1], name, description, target: null, response: 'none', fields: {},
+  }])),
+})
+
+it.each(['TRN_ON', 'trn on', 'adjsts thr prprts'])('fuzzy-searches service ids, translated names and descriptions with %s', query => {
+  const { host, change } = mount('climate.set_hvac_mode', { localize: true, services: serviceSection([
+    ['climate.set_hvac_mode', 'Set HVAC mode'], ['light.turn_on', 'turn_on'],
+  ]) })
+  host.querySelector<HTMLButtonElement>('button[aria-label="Service"]')!.click()
+  searchServices(host, query)
+  expect(resultIds(host)).toEqual(['light.turn_on'])
+  expect(change).not.toHaveBeenCalled()
+})
+
+it('ranks service matches for keyboard selection and restores catalog order for whitespace', () => {
+  const { host, change } = mount('missing.old', { services: serviceSection([
+    ['script.a_long', 'Turn slowly on'], ['script.b_near', 'Turn on lights'], ['script.z_exact', 'Turn on'],
+  ]) })
+  const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="Service"]')!
+  trigger.click()
+  const original = ['script.a_long', 'script.b_near', 'script.z_exact']
+  expect(resultIds(host)).toEqual(original)
+  const search = searchServices(host, ' TURN ON ')
+  expect(resultIds(host)).toEqual(['script.z_exact', 'script.b_near', 'script.a_long'])
+  expect(change).not.toHaveBeenCalled()
+  searchServices(host, '   ')
+  expect(resultIds(host)).toEqual(original)
+  searchServices(host, 'turn on')
+  search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  expect(change).toHaveBeenCalledWith('script.z_exact')
+})
+
+it('updates fuzzy results when the service catalog changes and resets keyboard navigation', () => {
+  const host = document.createElement('div'); document.body.append(host)
+  const [services, setServices] = createSignal(serviceSection([['light.old', 'Hall Lamp'], ['switch.old', 'Hall Lamp']]))
+  const change = vi.fn()
+  dispose = render(() => <HassCtx.Provider value={{ callWS: vi.fn() } as any}>
+    <ServicePicker value="missing.old" services={services()} onChange={change} />
+  </HassCtx.Provider>, host)
+  host.querySelector<HTMLButtonElement>('button[aria-label="Service"]')!.click()
+  const search = searchServices(host, 'hll lmp')
+  const domain = host.querySelector<HTMLSelectElement>('select')!
+  domain.value = 'light'; domain.dispatchEvent(new Event('change', { bubbles: true }))
+  expect(resultIds(host)).toEqual(['light.old'])
+  search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  setServices(serviceSection([['light.new', 'Hall Lamp'], ['switch.new', 'Hall Lamp']]))
+  expect(resultIds(host)).toEqual(['light.new'])
+  expect(search.getAttribute('aria-activedescendant')).toBeNull()
+  search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  expect(change).not.toHaveBeenCalled()
+  search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  expect(change).toHaveBeenCalledWith('light.new')
+})
 
 it('lists the services section with translated names and ids, searches descriptions and returns the exact id, without asking Home Assistant', () => {
   const refresh = vi.fn()
