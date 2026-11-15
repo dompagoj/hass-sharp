@@ -36,14 +36,13 @@ export function csharpTypeParts(typeId: string, catalog: VisualCatalogSnapshot):
   const own = typeId.startsWith('global::') || typeId.startsWith('(')
   // An entity id is taken by node code as its domain's handle class (`LightEntity`), or as `Entity`.
   const handle = own ? undefined : entityClass(typeId, catalog)
-  const source = own ? typeId : handle ?? spec?.clrType
+  const source = own ? typeId : handle ? `global::${handle}` : spec?.clrType
   if (!source) return
   let parts = render(source)
   if (parts === undefined) return
-  // A built-in type written by its CLR type (`clrType`) is asked for by its own catalog id; a handle class has no
-  // definition to show yet.
-  if (handle) parts = join(parts.map(part => ({ text: part.text })))
-  else if (!own) parts = parts.map(part => (part.type ? { ...part, type: typeId } : part))
+  // A built-in type written by its CLR type (`clrType`) is asked for by its own catalog id; a handle class, which is no
+  // catalog type, by its C# id (`global::HassSharp.Entities.LightEntity`).
+  if (!own && !handle) parts = parts.map(part => (part.type ? { ...part, type: typeId } : part))
   const written = parts.map(part => part.text).join('')
   return spec?.nullable === true && !written.endsWith('?') ? join([...parts, { text: '?' }]) : parts
 }

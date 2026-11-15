@@ -14,8 +14,9 @@ public sealed record TypeDefinitionOrigin(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? File = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NodeId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Assembly = null);
-/// <param name="Kind"><c>source</c>: the declaration as written; <c>metadata</c>: rebuilt from a compiled assembly.</param>
-/// <param name="Line">The 1-based line the shown text starts on, in the library's or node's own code; null for metadata.</param>
+/// <param name="Kind"><c>source</c>: the declaration as written, or as generated for an entity class (its origin is then
+/// an assembly); <c>metadata</c>: rebuilt from a compiled assembly.</param>
+/// <param name="Line">The 1-based line the shown text starts on, in the library's or node's own code; null for metadata and generated code.</param>
 /// <param name="Truncated">The text was cut at <see cref="TypeDefinitions.MaxText"/> characters.</param>
 public sealed record TypeDefinition(string Name, string Kind, string Text, TypeDefinitionOrigin Origin,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Line,
@@ -23,7 +24,8 @@ public sealed record TypeDefinition(string Name, string Kind, string Text, TypeD
 
 /// <summary>
 /// The C# definition of a type a pin or property carries, which the panel's C# type links show (Task 31): a type declared
-/// in a node library or in a Custom C# node's code as written there, and a type of HassSharp rebuilt from its metadata.
+/// in a node library or in a Custom C# node's code as written there, an entity class or enum generated from Home
+/// Assistant's lists as generated, and a type of HassSharp rebuilt from its metadata.
 /// C#'s own types (keywords and the <c>System</c> namespaces) have none. Semantic-model work only, as a preview is:
 /// nothing is emitted or run, and no symbol outlives the request.
 /// </summary>
@@ -41,16 +43,21 @@ internal static class TypeDefinitions
     }
 
     /// <param name="snapshot">A compiled generation: the saved libraries, with the node's code when <paramref name="nodeId"/> is given.</param>
-    /// <param name="typeId">A catalog type id, such as <c>global::NodeLib.Mode</c> or <c>global::HassSharp.EntityStateSnapshot</c>.</param>
+    /// <param name="typeId">A catalog type id, such as <c>global::NodeLib.Mode</c> or <c>global::HassSharp.EntityStateSnapshot</c>,
+    /// or an entity class's (<c>global::HassSharp.Entities.LightEntity</c>), which a pin of <c>entity_id:light</c> is taken as.</param>
     /// <param name="files">The libraries' file names, by source id.</param>
+    /// <param name="entities">The entity classes whose generated source a type of theirs is shown from; a type of other entity
+    /// classes (the snapshot compiled against an older set) is shown from its metadata.</param>
     /// <exception cref="FileNotFoundException">No such type.</exception>
     /// <exception cref="ArgumentException">A built-in type, or one with no definition HassSharp can show.</exception>
-    public static TypeDefinition Find(VisualCatalogSnapshot snapshot, string typeId, string? nodeId, IReadOnlyDictionary<string, string> files, CancellationToken cancellationToken)
+    public static TypeDefinition Find(VisualCatalogSnapshot snapshot, string typeId, string? nodeId, IReadOnlyDictionary<string, string> files, GeneratedEntities? entities, CancellationToken cancellationToken)
     {
         var compilation = snapshot.Compilation ?? throw new InvalidOperationException("The libraries were not compiled");
         var hassSharp = compilation.SourceModule.ReferencedAssemblySymbols.Single(a => a.Identity.Name == typeof(NodeAttribute).Assembly.GetName().Name);
+        var generated = compilation.SourceModule.ReferencedAssemblySymbols.FirstOrDefault(a => a.Identity.Name.StartsWith(GeneratedEntities.AssemblyPrefix, StringComparison.Ordinal));
         var symbol = Lookup(snapshot, typeId, nodeId) ?? (typeId.EndsWith('?') ? Lookup(snapshot, typeId[..^1], nodeId) : Lookup(snapshot, typeId + "?", nodeId))
             ?? Declared(compilation, typeId.TrimEnd('?'), cancellationToken) ?? Metadata(hassSharp, typeId.TrimEnd('?'))
+            ?? (generated == null ? null : Metadata(generated, typeId.TrimEnd('?')))
             ?? throw new FileNotFoundException($"There is no type {Named(typeId)}; it may have been renamed or removed");
         // A value that may be empty is of the type it wraps: Point? shows Point.
         if (symbol is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable && nullable.TypeArguments[0] is INamedTypeSymbol { SpecialType: SpecialType.None, TypeKind: not TypeKind.Error } wrapped && !InSystem(wrapped)) symbol = wrapped;
@@ -76,7 +83,14 @@ internal static class TypeDefinitions
             return new(name, "source", shown, Origin(parts[0].SyntaxTree, files)!, line, truncated);
         }
         var assembly = definition.ContainingAssembly;
-        if (SymbolEqualityComparer.Default.Equals(assembly, hassSharp) || assembly?.Name.StartsWith(GeneratedServiceCalls.AssemblyPrefix, StringComparison.Ordinal) == true)
+        // An entity class or enum as generated from Home Assistant's lists: no file to open, but code to read.
+        if (assembly != null && SymbolEqualityComparer.Default.Equals(assembly, generated) && entities?.AssemblyName == assembly.Name && GeneratedParts(entities, definition, cancellationToken) is { Length: > 0 } declared)
+        {
+            var (shown, truncated) = Capped(SourceText(declared, cancellationToken).Text);
+            return new(name, "source", shown, new(Assembly: "HassSharp"), null, truncated);
+        }
+        if (SymbolEqualityComparer.Default.Equals(assembly, hassSharp) || assembly?.Name.StartsWith(GeneratedServiceCalls.AssemblyPrefix, StringComparison.Ordinal) == true
+            || assembly?.Name.StartsWith(GeneratedEntities.AssemblyPrefix, StringComparison.Ordinal) == true)
         {
             var (shown, truncated) = MetadataText(definition, cancellationToken);
             return new(name, "metadata", shown, new(Assembly: "HassSharp"), null, truncated);
@@ -110,11 +124,25 @@ internal static class TypeDefinitions
         }
         return null;
     }
-    /// <summary>A non-generic, non-nested type of HassSharp by its id (<c>global::HassSharp.NodeLibrarySource</c>).</summary>
-    static INamedTypeSymbol? Metadata(IAssemblySymbol hassSharp, string id)
+    /// <summary>A non-generic, non-nested type of an assembly by its id (<c>global::HassSharp.NodeLibrarySource</c>).</summary>
+    static INamedTypeSymbol? Metadata(IAssemblySymbol assembly, string id)
     {
         var name = id.StartsWith("global::", StringComparison.Ordinal) ? id["global::".Length..] : id;
-        return name.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_') && hassSharp.GetTypeByMetadataName(name) is { DeclaredAccessibility: Accessibility.Public } type ? type : null;
+        return name.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_') && assembly.GetTypeByMetadataName(name) is { DeclaredAccessibility: Accessibility.Public } type ? type : null;
+    }
+
+    /// <summary>
+    /// The declaration of a generated entity type in the source its assembly was built from: every one is a top-level,
+    /// non-generic type of its namespace, so it is found by name in the syntax alone, with nothing compiled.
+    /// </summary>
+    static SyntaxReference[] GeneratedParts(GeneratedEntities entities, INamedTypeSymbol type, CancellationToken cancellationToken)
+    {
+        if (type.ContainingType != null || type.Arity != 0) return [];
+        var space = type.ContainingNamespace.ToDisplayString();
+        return entities.Tree.GetRoot(cancellationToken).DescendantNodes(n => n is CompilationUnitSyntax or BaseNamespaceDeclarationSyntax)
+            .OfType<BaseTypeDeclarationSyntax>()
+            .Where(d => d.Identifier.ValueText == type.Name && d.Parent is BaseNamespaceDeclarationSyntax { Name: var owner } && owner.ToString() == space)
+            .Select(d => d.GetReference()).ToArray();
     }
 
     static bool InSystem(INamedTypeSymbol type)

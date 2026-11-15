@@ -16,7 +16,10 @@ static class AuthoringAdapterTests
         {
             await manager.Init();
             var examples=JsonNode.Parse(await File.ReadAllTextAsync("custom_components/hass_sharp/authoring_examples.json"))!;
+            // The entity classes are generated from Home Assistant's lists, which always have binary_sensor and light: the
+            // examples compile against those of the captured lists (an example takes a BinarySensorEntity).
             var exampleDiagnostics=new DiagnosticsProvider();
+            VisualExecutionTests.Check(exampleDiagnostics.UseEntitySchema([..EntitySchemaCatalog.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,"ha-entity-components.json"))).Items.Select(p=>KeyValuePair.Create(p.Key,(JsonObject)p.Value!))]).Accepted,"the captured entity lists give classes");
             // Every example must hold both at startup (no services) and in authoring preview/save, where the
             // service schemas are attached: the golden fixture is the normalised form of ha-service-descriptions.json.
             var services=ServiceSchemaCatalog.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,"ha-service-descriptions.json")),_=>{});
@@ -41,6 +44,12 @@ static class AuthoringAdapterTests
             foreach(var item in graphs) Clean(item,builtIn,"capability example "+item["name"]);
             VisualExecutionTests.Check(graphs.Any(g=>g["nodes"]!.AsArray().Any(n=>n!["kind"]!.GetValue<string>()=="custom"&&n["config"]!["source"]!.GetValue<string>().Contains("[Node(")&&n["config"]!["signature"]!["inputs"]!.AsObject().Count>0)),"capability examples include a Custom C# node with pins");
             VisualExecutionTests.Check(graphs.Any(g=>g["nodes"]!.AsArray().Any(n=>n!["kind"]!.GetValue<string>()=="service")),"capability examples include a service call");
+            // An entity handle pin: only binary sensors reach it, so the same graph with a light trigger is refused.
+            var motion=graphs.Single(g=>g["name"]!.GetValue<string>()=="Motion lights");
+            var motionPin=motion["nodes"]!.AsArray().Single(n=>n!["id"]!.GetValue<string>()=="check")!["config"]!["signature"]!["inputs"]!["motionSensor"]!;
+            VisualExecutionTests.Check(motionPin["types"]!.AsArray().Select(t=>t!.GetValue<string>()).SequenceEqual(["entity_id:binary_sensor"]),"the motion example's pin takes binary sensors only: "+motionPin.ToJsonString());
+            var lightMotion=(JsonObject)motion.DeepClone(); lightMotion["nodes"]![0]!["config"]!["entity"]="light.hallway";
+            VisualExecutionTests.Check(VisualGraphValidator.Validate(lightMotion,builtIn).Any(d=>d.Severity==3&&d.NodeId=="check"&&d.InputId=="motionSensor"),"a light's entity into the motion example's pin is refused");
             // The documented typing rule, against the examples themselves: with services attached, a plain entity_id
             // into light.turn_on's domain-filtered target is an error, as a literal and as a wire (Convert removed).
             JsonObject Example(string name)=>(JsonObject)graphs.Single(g=>g["name"]!.GetValue<string>()==name).DeepClone();

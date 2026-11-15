@@ -23,6 +23,7 @@ export const customDocumentId = '$custom'
  */
 export interface TypeDefinition {
   name: string
+  /** `source`: as written, or as generated for an entity class (its origin is then `assembly`); `metadata`: signatures only. */
   kind: 'source' | 'metadata'
   text: string
   origin: { library?: string; file?: string; nodeId?: string; assembly?: string }

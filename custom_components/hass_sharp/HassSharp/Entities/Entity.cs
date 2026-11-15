@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
@@ -7,8 +8,12 @@ using System.Text.RegularExpressions;
 
 namespace HassSharp.Entities;
 
+// The attributes and the converter are public for the generated classes; node code never names them, so the code
+// editor's completion leaves them out (they are in a namespace every node's code imports).
+
 /// <summary>The domain (<c>binary_sensor</c>) of the entities a handle class stands for.</summary>
 [AttributeUsage(AttributeTargets.Class)]
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class EntityDomainAttribute(string domain) : Attribute
 {
     public string Domain { get; } = domain;
@@ -16,6 +21,7 @@ public sealed class EntityDomainAttribute(string domain) : Attribute
 
 /// <summary>The text Home Assistant uses for an enum member, when it is not the member's name (<c>"on"</c>, <c>"heat_cool"</c>).</summary>
 [AttributeUsage(AttributeTargets.Field)]
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class EntityTextAttribute(string text) : Attribute
 {
     public string Text { get; } = text;
@@ -80,6 +86,7 @@ public class Entity : IEquatable<Entity>
 }
 
 /// <summary>Writes a handle as its id and reads one back through the (string) constructor of the type asked for.</summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class EntityJsonConverter : JsonConverterFactory
 {
     public override bool CanConvert(Type typeToConvert) => typeof(Entity).IsAssignableFrom(typeToConvert);

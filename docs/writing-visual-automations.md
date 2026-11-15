@@ -82,7 +82,7 @@ custom method.
 
 Select property (a value node, in the Data category) reads one property of a typed
 C# value. Connect a value to its Value input: a record, class or struct that a node
-library step or a Custom C# node gives, or an entity state. Its Property select then
+library step or a Custom C# node gives, an entity state, or an entity ID. Its Property select then
 lists that type's properties in the order the type declares them, each with its type
 in words and in C#, such as "UserName · Text (string)"; with more than 12 it is a
 list you can search. Choosing one gives the node's Value output that property's type,
@@ -98,10 +98,10 @@ actual user name. Choosing Age instead makes the output a Number (`int`).
 
 The properties of a type are its public instance properties you can read and its
 public instance fields, inherited ones included; static members, indexers and members
-the compiler writes for itself are not listed. Object, List, Text, numbers, entity IDs
-and enums have none: connecting one is refused with what to use instead (Get field
-for an object or a JSON list, For each for a C# list or array it can go through, Read
-entity for an entity).
+the compiler writes for itself are not listed. Object, List, Text, numbers and enums
+have none: connecting one is refused with what to use instead (Get field for an
+object or a JSON list, For each for a C# list or array it can go through). An entity
+ID has properties (see below).
 
 - Until a value is connected the select is off and says "Connect a value to choose a
   property". Until a property is chosen the output has no type, and a wire from it is
@@ -119,6 +119,30 @@ entity for an entity).
 - When the value is empty (null) at run time, the step that reads the node fails:
   "Select property (used by Log): UserName cannot be read because the value is empty".
   A property whose getter throws fails the step with the getter's own message.
+
+An entity ID has the members of its domain's entity class (see
+[Entities](node-libraries.md#entities)). Wire a trigger's Entity output on a binary
+sensor into Select property, and the select lists `EntityId`, `RawState`,
+`NumericState`, `Attributes` and `State`, whose type is `BinarySensorState`; a
+light's lists `State` and its attributes, such as `ColorMode` and `Brightness`. A
+plain `entity_id` value, or one of a domain with no class, lists the members every
+entity has. The step that reads the node reads the entity's state then (the
+trigger's state for the entity that started the run); an entity that Home Assistant
+does not have fails that step, "Entity 'binary_sensor.hall' is unavailable.", and it
+takes its Error path. Wires and the trace carry the entity ID, and an enum property's
+value is Home Assistant's text: a Log of `State` writes `on`, and `other` for a state
+Home Assistant does not list.
+
+To test such a property, wire it into one side of a **Compare**. The other side, while
+it is not wired, is then a dropdown of the enum's values, such as Off, On, Unknown
+and Unavailable for `BinarySensorState`. The pick is saved as Home Assistant's text:
+
+```json
+{"kind": "literal", "type": "global::HassSharp.Entities.BinarySensorState", "value": "on"}
+```
+
+Removing the wire makes the side an ordinary value again. A state that Home Assistant
+no longer lists is refused in the saved literal.
 
 If and State condition choose True/False paths; most actions also offer an Error path,
 which receives the failure instead of ending the run. Parallel branches and bounded
@@ -154,7 +178,10 @@ with its doc comments (every part of a `partial` type, in order), and **Open in
 library** opens the file at that line. A type that a Custom C# node's code declares
 comes from that node's code in the editor, even if the automation is not saved yet,
 and **Edit code** opens it. A HassSharp type, such as `EntityStateSnapshot`, shows its public
-members and their summaries; the code inside them is not shown. In a trace, a
+members and their summaries; the code inside them is not shown. An entity pin shows
+the class node code takes it as (`BinarySensorEntity` for `entity_id:binary_sensor`,
+`Entity` for `entity_id`), and that class and its enums, such as `BinarySensorState`,
+show the code HassSharp generated for them from this Home Assistant's lists. In a trace, a
 node library type is shown as the library is now, which may differ from what the
 run used, and a Custom C# type comes from the code that the run used. C#'s own types
 (`bool`, `string`, `double?`, `List<…>` and the rest of the `System` namespaces) are
@@ -307,7 +334,7 @@ them to their ports.
 More complete examples are in
 [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json)
 and are also returned by the MCP `get_capabilities` tool: a native event, a bounded
-loop, a Custom C# node, lights at sunset with typed fields, a heater switched off after
+loop, a Custom C# node, a light turned on by a motion sensor's entity pin, lights at sunset with typed fields, a heater switched off after
 30 minutes with a notification, a light named in an event, a service response, and
 a library with a value node. Every example validates and compiles with and without the
 service schemas. Substitute your own entities and services before saving one.
@@ -340,6 +367,25 @@ without executing it. **Edit code**, on the node's card and in its panel, opens 
 code in a full-screen editor with completion, hover, signature help and live
 diagnostics; **Apply** writes the code and its pins to the node. See
 [Custom C# nodes](node-libraries.md#custom-c-nodes).
+
+A parameter of an entity class gives the node an entity pin of that domain:
+
+```csharp
+public static class CustomNode
+{
+    [Node("Motion now")]
+    public static bool Run(BinarySensorEntity motionSensor) => motionSensor.State == BinarySensorState.On;
+}
+```
+
+The node has a pin **Motion sensor** of type `entity_id:binary_sensor`, shown as
+"Binary sensor entity · `BinarySensorEntity`". Its picker lists only binary sensors. The Entity
+output of a trigger on a binary sensor connects to it; the Entity output of a trigger
+on a light is refused, as is a light's ID saved on the pin. A `string` parameter
+still takes any entity, and `Entity` any domain. The example "Motion lights" in
+[`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json)
+wires this node between an entity trigger and a light. See
+[Entities](node-libraries.md#entities) for what the code can read.
 
 Editor and [MCP authoring](mcp-authoring.md) use the same revision-checked services.
 On a conflict, reload the current document and reconcile edits. Library changes

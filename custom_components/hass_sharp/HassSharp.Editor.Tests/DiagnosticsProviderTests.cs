@@ -28,7 +28,7 @@ public class DiagnosticsProviderTests
     }
 
     [Fact]
-    public void The_typed_entities_are_gone()
+    public void There_is_no_per_entity_tree()
     {
         var provider = new DiagnosticsProvider();
         Assert.Contains(Diagnostics(provider, "class Test { object x = Entities.Light.Kitchen; }"), d => d.Id == "CS0103" && d.GetMessage().Contains("Entities"));

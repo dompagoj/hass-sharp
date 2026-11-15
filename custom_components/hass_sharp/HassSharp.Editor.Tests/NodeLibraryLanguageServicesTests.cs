@@ -79,7 +79,7 @@ public class NodeLibraryLanguageServicesTests
         Assert.Contains("Second",results[1].ToJsonString()); Assert.DoesNotContain("First",results[1].ToJsonString());
     }
     [Fact]
-    public async Task Completion_no_longer_offers_the_typed_entities()
+    public async Task Completion_offers_no_per_entity_tree()
     {
         const string source="public class Main { void Run() { Entit } }";
         var items=(await Request("completion",[new("main",source,1)],"main",source.IndexOf("Entit")+5)).AsArray();
@@ -89,6 +89,56 @@ public class NodeLibraryLanguageServicesTests
         const string snapshot="public class Main { void Run() { EntityStat } }";
         var states=(await Request("completion",[new("main",snapshot,1)],"main",snapshot.IndexOf("EntityStat")+10)).AsArray();
         Assert.Contains(states,i=>i!["displayText"]!.GetValue<string>()=="EntityStateSnapshot");
+        // With Home Assistant's entity lists given, there is still no tree: a class per domain only.
+        const string tree="public static class CustomNode\n{\n    [Node(\"Check\")]\n    public static void Run() { Entit }\n}";
+        var withEntities=(await WithEntities("completion",tree,tree.IndexOf("Entit")+5)).AsArray();
+        Assert.DoesNotContain(withEntities,i=>i!["displayText"]!.GetValue<string>() is "Entities" or "EntityRef" or "HassServices");
+        Assert.Contains(withEntities,i=>i!["displayText"]!.GetValue<string>()=="Entity");
+    }
+    static string Fixture(string name)
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory != null; directory = directory.Parent)
+            if (File.Exists(Path.Combine(directory.FullName, "tests", "fixtures", name))) return File.ReadAllText(Path.Combine(directory.FullName, "tests", "fixtures", name));
+        throw new FileNotFoundException(name);
+    }
+    // A Custom C# node's code with the entity classes of the captured Home Assistant lists (ha-entity-components.json).
+    static async Task<JsonNode> WithEntities(string operation, string source, int position)
+    {
+        var provider = new DiagnosticsProvider();
+        var domains = EntitySchemaCatalog.Parse(Fixture("ha-entity-components.json")).Items.Select(p => KeyValuePair.Create(p.Key, (JsonObject)p.Value!)).ToArray();
+        // UseEntitySchema is internal to HassSharp: called as the manager calls it when Home Assistant sends the lists.
+        var result = typeof(DiagnosticsProvider).GetMethod("UseEntitySchema", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(provider, [domains])!;
+        Assert.True((bool)result.GetType().GetProperty("Accepted")!.GetValue(result)!, "the captured entity lists give classes");
+        return JsonSerializer.SerializeToNode(await new NodeLibraryLanguageServices(provider).RequestAsync(operation,[],new CustomNodeSource("motion",source),position,TestContext.Current.CancellationToken), VisualStore.Json)!;
+    }
+    [Fact]
+    public async Task Custom_node_code_completes_and_documents_the_entity_classes()
+    {
+        const string source="public static class CustomNode\n{\n    [Node(\"Motion\")]\n    public static bool Run(BinarySensorEntity motionSensor, Light) => motionSensor.State == BinarySensorState.On;\n}";
+        var items=(await WithEntities("completion",source,source.IndexOf("Light)")+5)).AsArray();
+        Assert.Contains(items,i=>i!["displayText"]!.GetValue<string>()=="LightEntity");
+        var hover=(await WithEntities("hover",source,source.IndexOf("State.On")+"State.".Length+1))["text"]!.GetValue<string>();
+        // Its summary: Home Assistant's label, and the text Home Assistant gives the state.
+        Assert.Contains("BinarySensorState.On",hover);
+        Assert.Contains("On (on).",hover);
+        // A member of the class reads its summary.
+        var state=(await WithEntities("hover",source,source.IndexOf("motionSensor.State")+"motionSensor.".Length+1))["text"]!.GetValue<string>();
+        Assert.Contains("BinarySensorState BinarySensorEntity.State",state);
+        Assert.Contains("Other",state);
+    }
+    [Fact]
+    public async Task Completion_does_not_offer_the_entity_helpers_node_code_never_names()
+    {
+        // The JSON converter of the handles is public in a namespace every node's code imports: it is HassSharp's, and
+        // typing "json" offers JsonSerializer (with its using line), not it.
+        const string source="public static class CustomNode\n{\n    [Node(\"Check\")]\n    public static string Run(string text)\n    {\n        return json;\n    }\n}";
+        var items=(await WithEntities("completion",source,source.IndexOf("json;")+4)).AsArray().Select(i=>i!["displayText"]!.GetValue<string>()).ToArray();
+        Assert.Contains("JsonSerializer",items);
+        Assert.DoesNotContain("EntityJsonConverter",items);
+        const string attributes="public static class CustomNode\n{\n    [Node(\"Check\")]\n    public static void Run() { EntityD }\n}";
+        Assert.DoesNotContain((await WithEntities("completion",attributes,attributes.IndexOf("EntityD")+7)).AsArray(),i=>i!["displayText"]!.GetValue<string>() is "EntityDomainAttribute" or "EntityDomain");
+        var texts=attributes.Replace("EntityD","EntityTextA");
+        Assert.DoesNotContain((await WithEntities("completion",texts,texts.IndexOf("EntityTextA")+11)).AsArray(),i=>i!["displayText"]!.GetValue<string>()=="EntityTextAttribute");
     }
     [Fact]
     public async Task Completion_offers_a_type_of_a_namespace_that_code_without_using_lines_does_not_import()

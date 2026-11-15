@@ -17,7 +17,7 @@ namespace HassSharp;
 /// gets the enum); any other attribute a <c>JsonElement?</c>. Each is null when the entity has no such attribute. A flag
 /// is also null for a value that is not JSON true or false; an enum is null for JSON null, and the catch-all for another
 /// value that is not one of the listed texts. Each enum member but the catch-all carries Home Assistant's text and label
-/// in an <see cref="Entities.EntityTextAttribute"/>.
+/// in an <see cref="Entities.EntityTextAttribute"/>, and each member a summary giving that label and text.
 /// </para>
 /// <para>
 /// Names follow <see cref="ServiceGenerator"/>'s: words in PascalCase, told apart by a numeric suffix in ordinal order
@@ -198,8 +198,12 @@ static class EntityGenerator
             Line(1, $"public enum {type.Name}");
             Line(1, "{");
             foreach (var member in type.Members)
+            {
+                Doc(2, member.Text == null ? "A value Home Assistant does not list."
+                    : Xml(member.Label) is { Length: > 0 } label && label != Xml(member.Text) ? $"{label} (<c>{Xml(member.Text)}</c>)." : $"<c>{Xml(member.Text)}</c>.");
                 Line(2, member.Text == null ? $"{Escape(member.Name)},"
                     : $"[{Global}EntityText({Literal(member.Text)}{(member.Label == null ? "" : $", Label = {Literal(member.Label)}")})] {Escape(member.Name)},");
+            }
             Line(1, "}");
         }
     }

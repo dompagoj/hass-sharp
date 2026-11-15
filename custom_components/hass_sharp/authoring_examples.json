@@ -181,6 +181,90 @@
     },
     {
       "version": 5,
+      "name": "Motion lights",
+      "nodes": [
+        {
+          "id": "motion",
+          "kind": "trigger",
+          "label": "Hallway motion changes",
+          "config": {
+            "type": "entity",
+            "entity": "binary_sensor.hallway_motion"
+          }
+        },
+        {
+          "id": "check",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode\n{\n    /// <summary>Whether the motion sensor sees motion now.</summary>\n    /// <param name=\"motionSensor\">The motion sensor; only binary sensors can be wired or picked here.</param>\n    /// <returns>True while the sensor is on.</returns>\n    [Node(\"Motion now\")]\n    public static bool Run(BinarySensorEntity motionSensor) => motionSensor.State == BinarySensorState.On;\n}",
+            "arguments": {}
+          }
+        },
+        {
+          "id": "seen",
+          "kind": "if",
+          "label": "Motion?",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "on",
+          "kind": "service",
+          "label": "Hallway light on",
+          "config": {
+            "service": "light.turn_on",
+            "target": {
+              "kind": "literal",
+              "type": "entity_id:light",
+              "value": "light.hallway"
+            },
+            "fields": {},
+            "returnResponse": false
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "flow-check",
+          "source": "motion",
+          "target": "check",
+          "port": "next"
+        },
+        {
+          "id": "flow-seen",
+          "source": "check",
+          "target": "seen",
+          "port": "next"
+        },
+        {
+          "id": "flow-on",
+          "source": "seen",
+          "target": "on",
+          "port": "true"
+        },
+        {
+          "id": "sensor",
+          "kind": "data",
+          "source": "motion",
+          "sourcePort": "entity_id",
+          "target": "check",
+          "targetPort": "motionSensor"
+        },
+        {
+          "id": "condition",
+          "kind": "data",
+          "source": "check",
+          "sourcePort": "result",
+          "target": "seen",
+          "targetPort": "value"
+        }
+      ]
+    },
+    {
+      "version": 5,
       "name": "Sunset lights",
       "nodes": [
         {

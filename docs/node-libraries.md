@@ -72,6 +72,8 @@ public static class CustomNode
   because it may be missing.
 - **Enums.** An enum pin offers its members by name in words, from the type's
   `enumLabels` (listed in the same order as `enumValues`).
+- **Entities.** A parameter of type `Entity`, or of a domain's class such as
+  `LightEntity`, is an entity pin; see [Entities](#entities).
 - **Refused.** Methods that are not public static, open generic methods or
   containers, `ref`/`in`/`out` parameters, `ref` returns, pointer and ref-like
   types, static abstract interface methods and `async void`. Two node methods of the
@@ -155,7 +157,8 @@ own scope, and the trace shows it as "Hot · Call 1".
 A Custom C# node can have flows too. Its signature then carries `execution`,
 `scopePorts` and `executionLabels`, as a library node's catalog entry does.
 
-Pins carry the CLR type, never a refined catalog type. A `string` parameter accepts an
+Pins carry the CLR type, never a refined catalog type, except for the entity classes
+(see [Entities](#entities)). A `string` parameter accepts an
 `entity_id` or `entity_id:light` value, because those refine `string`. A `string`
 result does not fit an `entity_id` input such as Read entity's, or a domain-filtered
 service target, because a string is not known to be an entity ID. Pass such a result
@@ -199,7 +202,7 @@ shows both on every pin row, such as "True/False · `bool`"):
 | Text | `string` | `string` |
 | Object | `object` | `System.Text.Json.Nodes.JsonObject` |
 | List | `array` | `System.Text.Json.Nodes.JsonArray` |
-| Entity | `entity_id`, `entity_id:<domain>` | `string` |
+| Entity | `entity_id`, `entity_id:<domain>` | `string`, `Entity`, or the domain's class (`LightEntity` for `entity_id:light`) |
 | Target | `target` | `System.Text.Json.Nodes.JsonObject` |
 | Entity state | `global::HassSharp.EntityStateSnapshot` | `HassSharp.EntityStateSnapshot` |
 
@@ -214,18 +217,130 @@ its parts, in file order. The dialog names the file, and **Open in library** ope
 the file at the declaration. The same holds for types that a Custom C# node's code
 declares, read from that node's code. HassSharp's own types show their public
 signatures and `<summary>` text, taken from the documentation file that ships with
-HassSharp. Backends and tools can ask for a definition with the `node_library`
+HassSharp. An entity class such as `LightEntity`, and its enums such as `LightState`,
+show the code HassSharp generated for this Home Assistant, with nothing to open.
+Backends and tools can ask for a definition with the `node_library`
 operation `type_definition` and `{type, nodeId?, source?}`. To ask for a Custom C#
 node's type, send that node's id and code. The reply is `{name, kind, text, origin,
-line?, truncated?}`; `kind` is `source` or `metadata`. An unknown type answers
+line?, truncated?}`; `kind` is `source` or `metadata`, and generated code is `source`
+with `origin.assembly` and no `line`. An unknown type answers
 `not_found`. C#'s own types answer `invalid_request`, as do types from other
 assemblies.
 
+## Entities
+
+A parameter can take an entity of one domain, as a handle on it with a typed state
+and attributes:
+
+```csharp
+public static class MotionLights
+{
+    /// <summary>Turns the light on when the motion sensor sees motion and the light is off.</summary>
+    /// <param name="context">Supplied by the run.</param>
+    /// <param name="motionSensor">The motion sensor.</param>
+    /// <param name="light">The light to turn on.</param>
+    /// <returns>Whether the light was turned on.</returns>
+    [Node("Motion lights")]
+    public static async Task<bool> Run(NodeContext context, BinarySensorEntity motionSensor, LightEntity light)
+    {
+        if (motionSensor.State != BinarySensorState.On || light.State == LightState.On) return false;
+        await context.Services.Light.TurnOn(light, brightnessPct: 80);
+        return true;
+    }
+}
+```
+
+`motionSensor` is a pin of type `entity_id:binary_sensor` and `light` one of
+`entity_id:light`. Only binary sensors reach `motionSensor`: the Entity output of a
+trigger on a binary sensor connects to it, a light's is refused, and the entity
+picker on the pin lists binary sensors only. The wire, a value picked on the pin and
+the run's trace carry the entity ID (`binary_sensor.hallway`); the method gets the
+handle. A handle is a service target as it is: `context.Services.Light.TurnOn(light)`.
+
+**The classes.** Each domain has one class, named after the domain in PascalCase:
+`LightEntity`, `BinarySensorEntity`, `MediaPlayerEntity`. They are in the namespace
+`HassSharp.Entities`, which every node's code has in scope. HassSharp generates them
+at startup from the states and attributes that Home Assistant lists for each domain
+(its `entity_component` translations), so they follow this Home Assistant and its
+integrations. There is no class per entity. Every class derives
+from `Entity`, which takes an entity of any domain (pin type `entity_id`) and has:
+
+- `EntityId`: the ID, such as `light.kitchen`.
+- `RawState`: the state as Home Assistant's text (`on`, `21.5`, `unavailable`).
+- `NumericState`: `RawState` as a number, or null when it is not one.
+- `Attributes`: every attribute, as a JSON object; `Attribute("name")` gives one,
+  or null when the entity has none by that name.
+- `Snapshot()`: the whole state, as an `EntityStateSnapshot`.
+
+A handle converts to its ID where a `string` is wanted: `string id = light;`,
+`context.State(light)`. A domain for which Home Assistant lists nothing has a class
+with these members and a `string State`.
+
+**State.** A domain that lists its states has an enum of them, plus `Unknown`,
+`Unavailable` and `Other`: `BinarySensorState` has `Off`, `On`, `Unknown`,
+`Unavailable` and `Other`. A state that is not in the list reads as `Other`, and
+`RawState` still has its text. `sensor`, whose state is often a measurement, and a
+domain that lists no states have `string State`, the same text as `RawState`.
+
+**Attributes.** Each attribute that Home Assistant declares for the domain is a
+property, named in PascalCase (`color_mode` is `ColorMode`):
+
+- An attribute with listed values is a nullable enum named after the domain and the
+  attribute (`LightColorMode?`). It is null when the entity has no such attribute or
+  its value is JSON null, and `Other` for a value that is not in the list. When
+  several attributes of a domain list the same values (`color_mode` and
+  `supported_color_modes`), only the shortest name gets the enum.
+- An attribute whose listed values are exactly `false` and `true` is a `bool?`, such
+  as `MediaPlayerEntity.IsVolumeMuted`. It is null when the entity has none, or when
+  its value is not JSON true or false.
+- Every other attribute is a `JsonElement?`, null when the entity has none. A JSON
+  null value is a `JsonElement` whose `ValueKind` is `Null`, so check the kind:
+
+  ```csharp
+  /// <summary>The light's brightness from 0 to 255; null while it has none.</summary>
+  [Node("Brightness", Pure = true)]
+  public static int? Brightness(LightEntity light) =>
+      light.Brightness is { ValueKind: System.Text.Json.JsonValueKind.Number } brightness ? brightness.GetInt32() : null;
+  ```
+
+**Reading.** A handle holds only the ID. Each time the code reads a member, it reads
+the entity's state at that moment, except for the entity that started the run: that
+one reads the state the trigger gave, for the whole run. An entity that Home
+Assistant does not have fails the read with "Entity 'binary_sensor.hallway' is
+unavailable.", so the step that reads it fails and takes its Error path.
+
+**Optional, returned and refused.** `LightEntity? light`, with or without `= null`, is
+an optional pin: left empty, the method gets null. A method can return a handle: its
+output is of type `entity_id:light` and goes into a Call service target or any input
+that takes lights. Refused, each with a message on the parameter or result:
+
+- a handle that may be null as a result, a tuple element or a flow's value: "A node
+  returns an entity, or nothing at all: remove the ? from this entity type";
+- a handle inside a list, an array, a generic type or a tuple-typed parameter (such
+  as `List<LightEntity>`): "An entity cannot be inside a list or another type on a
+  pin; take or return one entity".
+
+A `string` parameter still takes any entity, and `Entity` any domain. A graph saved
+with a `string` entity pin keeps working.
+
+**In the graph.** Select property on an entity wire lists the same members (see
+[writing visual automations](writing-visual-automations.md#select-property)). In the
+graph an entity enum is Home Assistant's text: Log writes `on`, the trace shows `on`,
+a Call service field or a Create object gets `"on"`, and `Other` is written `other`.
+A Compare against an enum stores its picked value as that text.
+
+The classes follow Home Assistant as the typed service calls do (see below). They are
+generated from the live lists together with those they were last generated from,
+which are kept in `.storage/hass_sharp/entity_schema.json`, so a restart has them
+before Home Assistant has sent its lists. On the first start, code that names a class
+waits for them: its automation loads by itself once they arrive. A domain whose
+generated class does not compile is left out, and the log says which.
+
 ## States and services
 
-An entity reaches node code through a pin: a `string` entity ID, or an
-`EntityStateSnapshot` wired from Read entity or a trigger. The code reads and acts
-through `NodeContext`:
+An entity reaches node code through a pin: a handle (see [Entities](#entities)), a
+`string` entity ID, or an `EntityStateSnapshot` wired from Read entity or a trigger.
+The code reads and acts through `NodeContext`:
 
 - `context.State("sensor.outdoor")` reads an entity's current state, as Read entity
   does.

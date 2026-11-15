@@ -375,6 +375,25 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         for removed in ('imports','members','kind: variable','config.output','lastError','entitiesExpression'):
             self.assertNotIn(removed,' '.join(capabilities['semantics'].values()))
 
+    async def test_node_schema_of_a_library_node_taking_an_entity_handle(self):
+        # The server's catalog (the shared rich fixture, compiled with Home Assistant's entity lists) plus a library node
+        # as NodeLibraryCompiler describes `IsOn(BinarySensorEntity sensor)` (EntityHandleTests checks that side): a pin of
+        # entity_id:binary_sensor, and the members of each domain's class under parametricTypes.entity_id.
+        catalog=json.loads((ROOT/'tests/fixtures/visual-rich-catalog.json').read_text())['catalog']
+        kind='library:motion:global%3A%3ANodeLib.Motion.IsOn'
+        catalog['nodes'][kind]={'label':'Is on','category':'Motion','minGraphVersion':5,'runtimeVersions':[5],'sourceId':'motion','argumentStorage':'arguments',
+            'config':{'arguments':{'type':'object','default':{},'description':'The values this step takes'}},
+            'inputs':{'sensor':{'types':['entity_id:binary_sensor'],'required':True,'label':'Sensor','nullable':False,'hasDefaultValue':False}},
+            'outputs':{'result':{'type':'global::System.Boolean','label':'Result'}},'execution':['next','error']}
+        self.service.node_library.return_value={'version':1,'ok':True,'result':{'catalog':catalog,'generation':'g'}}
+        result=(await self.call('get_node_schema',{'kind':kind})).data['result']
+        self.assertEqual(result['node']['inputs']['sensor']['types'],['entity_id:binary_sensor'])
+        members=result['parametricTypes']['entity_id']['members']
+        self.assertEqual(members['binary_sensor']['clrType'],'HassSharp.Entities.BinarySensorEntity')
+        self.assertIn('State',[p['name'] for p in members['binary_sensor']['properties']])
+        self.assertEqual(result['types']['global::HassSharp.Entities.BinarySensorState']['enumValues'],['off','on','unknown','unavailable'])
+        self.service.node_library.assert_awaited_with({'operation':'catalog'},is_admin=True)
+
     async def test_graph_schema_has_no_node_size(self):
         graph={'version':5,'name':'Sized','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'},'size':{'width':220,'height':112}}],'edges':[]}
         refused=(await self.call('preview',{'graph':graph})).data['error']

@@ -129,14 +129,16 @@ public partial class HassSharpManager
                 var type = RequiredString(request, "type");
                 var files = saved.Documents.ToDictionary(d => d.Id, d => d.Name, StringComparer.Ordinal);
                 var snapshot = saved.Preview.Snapshot;
+                // An entity class is shown from the source of these classes when the compile references them.
+                var entities = _diagnosticsProvider.ServiceCalls().Entities;
                 if (ApiRequest.OptionalString(request, "nodeId") is { } nodeId)
                 {
                     if (nodeId.Length == 0) throw new ArgumentException("nodeId must not be empty");
                     var code = new CustomNodeSource(nodeId, ApiRequest.String(request, "source", "the code of the Custom C# node nodeId names"));
                     snapshot = new NodeLibraryCompiler(_diagnosticsProvider).Preview(saved.Documents.Select(d => d.AsSource()), [code], _languageLifetime.Token).Snapshot;
-                    return Success(TypeDefinitions.Find(snapshot, type, nodeId, files, _languageLifetime.Token));
+                    return Success(TypeDefinitions.Find(snapshot, type, nodeId, files, entities, _languageLifetime.Token));
                 }
-                return Success(TypeDefinitions.Find(snapshot, type, null, files, _languageLifetime.Token));
+                return Success(TypeDefinitions.Find(snapshot, type, null, files, entities, _languageLifetime.Token));
             }
             // A Custom C# node's code: its pins as the compiler derives them, and the language services, beside the saved libraries.
             var customRequest = ApiRequest.OptionalBool(request, "custom") ?? false;

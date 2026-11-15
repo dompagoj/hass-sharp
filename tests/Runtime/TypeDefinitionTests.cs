@@ -72,7 +72,9 @@ static class TypeDefinitionTests
     public static async Task Run()
     {
         await Definitions();
-        Console.WriteLine("PASS type definition: library, Custom C# and HassSharp types are shown as declared or from metadata; C#'s own types and unknown ids are refused");
+        Console.WriteLine("PASS type definition: library, Custom C# and HassSharp types are shown as declared or from metadata, entity classes as generated; C#'s own types and unknown ids are refused");
+        OlderEntities();
+        Console.WriteLine("PASS type definition: an entity class of other generated classes than the ones given is shown from its metadata");
         LimitFirst();
         Console.WriteLine("PASS graph limit first: preview, deriving signatures and the entity check answer a graph past the limits, or of the wrong shape, without compiling or walking it");
         DeepSupertypes();
@@ -81,6 +83,20 @@ static class TypeDefinitionTests
         Console.WriteLine("PASS metadata definitions: summaries keep a see's own words, a failed documentation read gives none, overloads keep their own summaries, interfaces list only public members");
         MissingDocComments();
         Console.WriteLine("PASS missing doc comments are reported only on a node library's [Node] methods, and not in Custom C# code");
+    }
+
+    // A compile against entity classes other than the ones given (a push replaced them meanwhile) shows a class of its own
+    // from that assembly's metadata: never another generation's source.
+    static void OlderEntities()
+    {
+        var library = new NodeLibraryCompiler(NodeLibraryFixture.EntityProvider).Preview([new("motion", "public static class Motion { /// <summary>Is on.</summary>\n[Node(\"Is on\")] public static bool IsOn(BinarySensorEntity sensor) => sensor.State == BinarySensorState.On; }", 1)]);
+        Check(library.Valid, "the library compiles: " + string.Join(" | ", library.Diagnostics.Select(d => d.Message)));
+        var other = new DiagnosticsProvider().ServiceCalls().Entities;
+        var light = TypeDefinitions.Find(library.Snapshot, "global::HassSharp.Entities.LightEntity", null, new Dictionary<string, string>(), other, CancellationToken.None);
+        Check(light.Kind == "metadata" && light.Origin.Assembly == "HassSharp" && light.Text.Contains("public sealed class LightEntity : Entity", StringComparison.Ordinal)
+            && light.Text.Contains("public LightState State { get; }", StringComparison.Ordinal), "from metadata: " + light.Text);
+        var same = TypeDefinitions.Find(library.Snapshot, "global::HassSharp.Entities.LightEntity", null, new Dictionary<string, string>(), NodeLibraryFixture.EntityProvider.ServiceCalls().Entities, CancellationToken.None);
+        Check(same.Kind == "source", "the classes compiled against are shown as generated: " + same.Kind);
     }
 
     // A pin's type may nest 8 levels; a base type or interface of it nested deeper is left out, as a member of such a type is.
@@ -267,6 +283,36 @@ static class TypeDefinitionTests
             var level = await Definition(new { operation = "type_definition", type = "global::HassSharp.PyLogLevel" });
             Check(level["text"]!.GetValue<string>().Contains("public enum PyLogLevel", StringComparison.Ordinal) && System.Text.RegularExpressions.Regex.IsMatch(level["text"]!.GetValue<string>(), @"\n    Info = \d+,"),
                 "a HassSharp enum lists its members with values: " + level["text"]);
+
+            // The entity classes generated from Home Assistant's lists: a class or an enum as generated, from its doc comment
+            // to its closing brace (that one type only); the hand-written base class from HassSharp's metadata.
+            manager.SetEntityDescriptions(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ha-entity-components.json")));
+            var light = await Definition(new { operation = "type_definition", type = "global::HassSharp.Entities.LightEntity" });
+            var lightText = light["text"]!.GetValue<string>();
+            Check(light["kind"]!.GetValue<string>() == "source" && light["name"]!.GetValue<string>() == "LightEntity" && light["origin"]!["assembly"]!.GetValue<string>() == "HassSharp"
+                && light["origin"]!["library"] == null && light["origin"]!["nodeId"] == null && light["line"] == null, "a generated class is from its generated source: " + light.ToJsonString()[..Math.Min(400, light.ToJsonString().Length)]);
+            Check(lightText.StartsWith("/// <summary>A handle on an entity of the <c>light</c> domain.</summary>\n[global::System.Text.Json.Serialization.JsonConverter(", StringComparison.Ordinal)
+                && lightText.Contains("\npublic sealed class LightEntity : global::HassSharp.Entities.Entity\n{\n", StringComparison.Ordinal)
+                && lightText.Contains("\n    public global::HassSharp.Entities.LightState State => RawState switch\n", StringComparison.Ordinal)
+                && lightText.Contains("\n    public global::HassSharp.Entities.LightColorMode? ColorMode => Attribute(\"color_mode\") switch\n", StringComparison.Ordinal)
+                && lightText.EndsWith("\n}", StringComparison.Ordinal) && !lightText.Contains("public enum", StringComparison.Ordinal) && !lightText.Contains("namespace", StringComparison.Ordinal),
+                "the generated class as written, dedented, and nothing else: " + lightText);
+            // An enum of the classes (a catalog type), with its members' summaries; the same for one that may be empty.
+            foreach (var id in new[] { "global::HassSharp.Entities.BinarySensorState", "global::HassSharp.Entities.BinarySensorState?" })
+            {
+                var state = await Definition(new { operation = "type_definition", type = id });
+                var stateText = state["text"]!.GetValue<string>();
+                Check(state["kind"]!.GetValue<string>() == "source" && state["name"]!.GetValue<string>() == "BinarySensorState"
+                    && stateText.StartsWith("/// <summary>The states of <c>binary_sensor</c> entities.</summary>\npublic enum BinarySensorState\n{\n", StringComparison.Ordinal)
+                    && stateText.Contains("\n    /// <summary>On (<c>on</c>).</summary>\n    [global::HassSharp.Entities.EntityText(\"on\", Label = \"On\")] On,\n", StringComparison.Ordinal)
+                    && stateText.EndsWith("\n    /// <summary>A value Home Assistant does not list.</summary>\n    Other,\n}", StringComparison.Ordinal), $"{id}, a generated enum: " + stateText);
+            }
+            var handle = await Definition(new { operation = "type_definition", type = "global::HassSharp.Entities.Entity" });
+            var handleText = handle["text"]!.GetValue<string>();
+            Check(handle["kind"]!.GetValue<string>() == "metadata" && handle["name"]!.GetValue<string>() == "Entity" && handleText.Contains("namespace HassSharp.Entities;", StringComparison.Ordinal)
+                && handleText.Contains("public string RawState { get; }", StringComparison.Ordinal) && handleText.Contains("public JsonElement? Attribute(string name);", StringComparison.Ordinal), "Entity is HassSharp's, from metadata: " + handleText);
+            var (missingCode, missingDetail) = await Refused(new { operation = "type_definition", type = "global::HassSharp.Entities.MadeUpEntity" });
+            Check(missingCode == "not_found" && missingDetail == "There is no type HassSharp.Entities.MadeUpEntity; it may have been renamed or removed", "a class no domain has: " + missingDetail);
 
             // C#'s own types: keywords, the System namespaces, and composed types of them, are refused, saying why.
             foreach (var (type, name) in new[] { ("global::System.String", "string"), ("boolean", "bool"), ("number", "double"), ("global::System.Text.Json.Nodes.JsonObject", "JsonObject"),

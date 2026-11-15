@@ -104,6 +104,8 @@ const links = (id: string, types: VisualCatalogSnapshot = catalog) => (csharpTyp
 
 // Which part of each type of the rich catalog is a link to its definition: library, Custom C# and HassSharp types only.
 const linked: Record<string, string[][]> = {
+  // An entity id: the handle class node code takes it as.
+  entity_id: [['Entity', 'global::HassSharp.Entities.Entity']],
   'global::HassSharp.EntityStateSnapshot': [['EntityStateSnapshot', 'global::HassSharp.EntityStateSnapshot']],
   'global::NodeLib.Reading': [['NodeLib.Reading', 'global::NodeLib.Reading']],
   'global::NodeLib.IReading': [['NodeLib.IReading', 'global::NodeLib.IReading']],
@@ -128,8 +130,6 @@ it('links, over every type of the rich catalog, exactly the parts that name a li
 it.each([
   // C#'s keywords and the System namespaces are never links, alone or composed.
   ['boolean', []],
-  ['entity_id:light', []],
-  ['entity_id', []],
   ['target', []],
   ['global::System.Collections.Generic.List<global::System.String>', []],
   ['global::System.Text.Json.JsonElement', []],
@@ -149,6 +149,16 @@ it.each([
   ['global::HassSharp.ServiceCalls.LightServices', [['HassSharp.ServiceCalls.LightServices', 'global::HassSharp.ServiceCalls.LightServices']]],
 ])('links in %s: %j', (id, expected) => {
   expect(links(id)).toEqual(expected)
+})
+
+it('links an entity id\'s handle class to that class, which is no catalog type of its own', () => {
+  expect(links('entity_id:light')).toEqual([['LightEntity', 'global::HassSharp.Entities.LightEntity']])
+  expect(links('entity_id:binary_sensor')).toEqual([['BinarySensorEntity', 'global::HassSharp.Entities.BinarySensorEntity']])
+  expect(links('entity_id')).toEqual([['Entity', 'global::HassSharp.Entities.Entity']])
+  // A domain without a class, and the bundled catalog (which knows none), link to Entity.
+  expect(links('entity_id:made_up')).toEqual([['Entity', 'global::HassSharp.Entities.Entity']])
+  expect(links('entity_id:light', nodeCatalog)).toEqual([['Entity', 'global::HassSharp.Entities.Entity']])
+  expect(Object.hasOwn(catalog.types, 'global::HassSharp.Entities.LightEntity')).toBe(false)
 })
 
 it('decides by the namespace: NodeLib and HassSharp have definitions, keywords and System do not', () => {
