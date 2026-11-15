@@ -55,7 +55,8 @@ public static class EntityText
 [JsonConverter(typeof(EntityJsonConverter))]
 public class Entity : IEquatable<Entity>
 {
-    static readonly Regex Id = new("^[a-z0-9_]+\\.[a-z0-9_]+$", RegexOptions.CultureInvariant);
+    // \z, not $: $ also matches before a final line break.
+    static readonly Regex Id = new("^[a-z0-9_]+\\.[a-z0-9_]+\\z", RegexOptions.CultureInvariant);
 
     public Entity(string entityId)
     {

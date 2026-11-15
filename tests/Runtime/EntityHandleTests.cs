@@ -33,6 +33,8 @@ static class EntityHandleTests
             await Copied();
             await Pins();
             await ErrorPin();
+            await ConvertedToText();
+            Texts();
         }
         finally { PyInterop.Entity = entity; UserScriptManager.CurrentTrigger.Value = trigger; }
     }
@@ -50,7 +52,7 @@ static class EntityHandleTests
         Check(new Entity("sensor.t").NumericState == 21.5, "numeric");
         PyInterop.Entity = id => new() { EntityId = id, State = "NaN" };
         Check(new Entity("sensor.t").NumericState == null, "a state that is not finite is no number");
-        foreach (var bad in new[] { "not an id", "light", "Light.kitchen", "light.kitchen.x", "" })
+        foreach (var bad in new[] { "not an id", "light", "Light.kitchen", "light.kitchen.x", "", "light.kitchen\n" })
             Throws<ArgumentException>(() => _ = new Entity(bad), "bad id " + bad);
         Console.WriteLine("PASS entity handles: id, state, attributes, snapshot, equality and validation");
     }
@@ -328,5 +330,82 @@ static class EntityHandleTests
         }
         finally { PyInterop.Log = log; }
         Console.WriteLine("PASS entity handles: a missing entity fails the step reading its handle, which takes its error pin, and the run goes on");
+    }
+
+    // An entity enum goes into a text through Convert to Text, as Home Assistant's text and the catch-all as "other": into
+    // a field Home Assistant describes as text (which takes no entity enum wired straight in), and into a Log.
+    static async Task ConvertedToText()
+    {
+        var provider = NodeLibraryFixture.EntityProvider;
+        var services = ServiceSchemaCatalog.Parse("""{"script":{"note":{"fields":{"value":{"required":true,"selector":{"text":null}}}}}}""", _ => { });
+        var snapshot = new NodeLibraryCompiler(provider).Preview([]).Snapshot.WithServices(services);
+        JsonObject Converted(JsonObject use, string port)
+        {
+            var graph = G(N("sel", "select_property", new { property = "State" }), N("cv", "convert", new { type = "string", value = new { kind = "unset" } }), use);
+            graph["nodes"]![0]!["config"] = new JsonObject { ["type"] = "entity", ["entity"] = "binary_sensor.hall" };
+            foreach (var edge in new[] { D("t", "sel", "value", "entity_id"), D("sel", "cv", "value"), D("cv", use["id"]!.GetValue<string>(), port) }) graph["edges"]!.AsArray().Add(edge);
+            Check(VisualGraphValidator.Validate(graph, snapshot) is var found && found.Count == 0, "Convert to Text of a state does not validate: " + string.Join("; ", found.Select(d => d.Message)));
+            return graph;
+        }
+        var called = Converted(N("s", "service", new JsonObject { ["service"] = "script.note", ["fields"] = new JsonObject { ["value"] = new JsonObject { ["kind"] = "unset" } }, ["returnResponse"] = false }), "field:value");
+        var logged = Converted(N("l", "log", new { value = new { kind = "unset" } }), "value");
+        var made = new List<string>(); var call = PyInterop.CallService; var log = PyInterop.Log; var messages = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        PyInterop.CallService = (domain, name, json, done, _) => { lock (made) made.Add(domain + "." + name + " " + json); done?.Invoke(); };
+        PyInterop.Log = (_, m) => messages.Enqueue(m);
+        try
+        {
+            foreach (var (state, sent) in new[] { ("on", "on"), ("weird", "other") })
+            {
+                PyInterop.Entity = id => new() { EntityId = id, State = state };
+                var payload = TriggerPayload.Entity(new() { EntityId = "binary_sensor.hall", State = state, LastChanged = 1_700_000_000, LastReported = 1_700_000_000 }, null);
+                made.Clear(); messages.Clear();
+                var trace = await Traced(provider, called, snapshot, payload);
+                Check(made.Count == 1 && made[0].StartsWith("script.note ", StringComparison.Ordinal) && JsonNode.DeepEquals(JsonNode.Parse(made[0]["script.note ".Length..]), new JsonObject { ["value"] = sent }),
+                    $"the call with {state}: " + string.Join(" | ", made) + " " + Event(trace, "s").ToJsonString());
+                messages.Clear();
+                await Traced(provider, logged, snapshot, payload);
+                Check(messages.SequenceEqual([sent]), $"the log with {state}: " + string.Join(" | ", messages));
+            }
+        }
+        finally { PyInterop.CallService = call; PyInterop.Log = log; }
+        Console.WriteLine("PASS entity handles: Convert to Text of a state gives Home Assistant's text, into a described text field and a Log");
+    }
+
+    public sealed record Holder<T>(T State);
+    enum AllListed { [EntityText("a")] A }
+
+    // An entity enum in JSON is Home Assistant's text both ways: an automation's JSON reads back what it writes, a text
+    // Home Assistant does not list as the catch-all; a typed service call (context.Services) sends the text too, and any
+    // other enum by its snake_case name.
+    static void Texts()
+    {
+        var context = new System.Runtime.Loader.AssemblyLoadContext("entity-handle-texts", isCollectible: true);
+        try
+        {
+            var image = context.LoadFromStream(new MemoryStream(NodeLibraryFixture.EntityProvider.ServiceCalls().Entities.Image));
+            var state = image.GetType("HassSharp.Entities.BinarySensorState", throwOnError: true)!;
+            var weather = image.GetType("HassSharp.Entities.WeatherState", throwOnError: true)!;
+            var other = Enum.Parse(state, "Other");
+
+            var json = VisualRuntime.JsonOptions();
+            var written = JsonSerializer.Serialize(other, state, json);
+            Check(written == "\"other\"" && Equals(JsonSerializer.Deserialize(written, state, json), other), "the catch-all round trip: " + written);
+            var holder = typeof(Holder<>).MakeGenericType(state);
+            var read = JsonSerializer.Deserialize("""{"State":"jammed"}""", holder, json);
+            Check(Equals(holder.GetProperty("State")!.GetValue(read), other), "an unlisted text inside a record reads as the catch-all");
+            Check(Equals(JsonSerializer.Deserialize("\"on\"", state, json), Enum.Parse(state, "On")), "a listed text");
+            var notText = Throws<JsonException>(() => JsonSerializer.Deserialize("1", state, json), "a number");
+            Check(notText.Path == "$", "the error names its place: " + notText.Path);
+            Throws<JsonException>(() => JsonSerializer.Deserialize("\"b\"", typeof(AllListed), json), "an enum without a catch-all");
+
+            var options = ServiceData.Options();
+            var clearNight = Enum.Parse(weather, "ClearNight");
+            Check(ServiceData.Value<object>(clearNight, options)!.ToJsonString() == "\"clear-night\"", "a typed call's enum field: " + ServiceData.Value<object>(clearNight, options)!.ToJsonString());
+            Check(ServiceData.Value<object>(new { Condition = clearNight }, options)!.ToJsonString() == """{"condition":"clear-night"}""", "inside an object: " + ServiceData.Value<object>(new { Condition = clearNight }, options)!.ToJsonString());
+            Check(ServiceData.Value<object>(other, options)!.ToJsonString() == "\"other\"", "the catch-all: " + ServiceData.Value<object>(other, options)!.ToJsonString());
+            Check(ServiceData.Value<object>(FileAccess.ReadWrite, options)!.ToJsonString() == "\"read_write\"", "another enum: " + ServiceData.Value<object>(FileAccess.ReadWrite, options)!.ToJsonString());
+        }
+        finally { context.Unload(); }
+        Console.WriteLine("PASS entity handles: an entity enum is Home Assistant's text in an automation's JSON and in a typed service call");
     }
 }

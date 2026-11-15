@@ -329,6 +329,11 @@ graph an entity enum is Home Assistant's text: Log writes `on`, the trace shows 
 a Call service field or a Create object gets `"on"`, and `Other` is written `other`.
 A Compare against an enum stores its picked value as that text.
 
+An entity enum passed to a typed service call (`context.Services`), on its own or
+inside an object, is sent as Home Assistant's text too: `WeatherState.ClearNight` as
+`clear-night`, not by its member's name, and `Other` as `other`. In code, `RawState`
+or `EntityText.Of(value)` gives that text (`EntityText.Of` is null for `Other`).
+
 The classes follow Home Assistant as the typed service calls do (see below). They are
 generated from the live lists together with those they were last generated from,
 which are kept in `.storage/hass_sharp/entity_schema.json`, so a restart has them

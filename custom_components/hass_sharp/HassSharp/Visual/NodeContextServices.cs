@@ -85,7 +85,9 @@ public sealed class ServiceTarget
 }
 
 /// <summary>How the typed service calls send a field's value: as every service call does, with snake_case member names
-/// (<c>new { Minutes = 5 }</c> is sent as <c>{"minutes": 5}</c>) and enums by name.</summary>
+/// (<c>new { Minutes = 5 }</c> is sent as <c>{"minutes": 5}</c>), an entity enum as Home Assistant's text
+/// (<c>WeatherState.ClearNight</c> as <c>"clear-night"</c>, the catch-all as <c>"other"</c>) and any other enum by its
+/// snake_case name.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public static class ServiceData
 {

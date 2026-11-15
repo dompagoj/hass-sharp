@@ -201,14 +201,20 @@ public sealed class VisualRuntime
     public static JsonSerializerOptions JsonOptions()=>new(){TypeInfoResolver=new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),Converters={new EntityTextJsonConverter()}};
     /// <summary>
     /// Writes a member of an entity enum as its text (<c>"on"</c>, <c>"other"</c> for the catch-all) and reads it back from the
-    /// text; any other enum is left to the serializer. The options it is in hold what it makes per type, and they are the automation's own.
+    /// text, a text no member has (<c>"other"</c> among them) as the catch-all; any other enum is left to the serializer. It
+    /// holds nothing itself: the options it is in hold what it makes per type (an automation's own, or a load context's
+    /// typed service calls').
     /// </summary>
-    sealed class EntityTextJsonConverter:System.Text.Json.Serialization.JsonConverterFactory {
+    internal sealed class EntityTextJsonConverter:System.Text.Json.Serialization.JsonConverterFactory {
         public override bool CanConvert(Type type)=>type.IsEnum&&HassSharp.Entities.EntityText.Marked(type);
         public override System.Text.Json.Serialization.JsonConverter CreateConverter(Type type,JsonSerializerOptions options)=>(System.Text.Json.Serialization.JsonConverter)Activator.CreateInstance(typeof(Converter<>).MakeGenericType(type))!;
         sealed class Converter<T>:System.Text.Json.Serialization.JsonConverter<T> where T:struct,Enum {
+            // The member without a text; null for an enum whose members all have one.
+            readonly T? other=typeof(T).GetFields(System.Reflection.BindingFlags.Public|System.Reflection.BindingFlags.Static)
+                .FirstOrDefault(f=>!f.IsDefined(typeof(HassSharp.Entities.EntityTextAttribute),false)) is {} field?(T)field.GetValue(null)!:null;
             public override T Read(ref Utf8JsonReader reader,Type type,JsonSerializerOptions options)=>reader.TokenType==JsonTokenType.String
-                ?(T)EnumFromText(typeof(T),reader.GetString()!,"JSON",TraceJson.TypeName(typeof(T)))!:throw new JsonException($"A {TraceJson.TypeName(typeof(T))} is written as Home Assistant's text");
+                ?HassSharp.Entities.EntityText.Parse(typeof(T),reader.GetString()!) is T member?member:other??throw new JsonException($"{reader.GetString()} is not a value of {TraceJson.TypeName(typeof(T))}")
+                :throw new JsonException($"A {TraceJson.TypeName(typeof(T))} is written as Home Assistant's text");
             public override void Write(Utf8JsonWriter writer,T value,JsonSerializerOptions options)=>writer.WriteStringValue(EnumText(value));
         }
     }
@@ -375,6 +381,8 @@ public sealed class VisualRuntime
         }
         if(convert && target.IsEnum && value is string text && EnumFromText(target,text,label,TraceJson.TypeName(type)) is {} member)return member;
         if(convert && target==typeof(bool))return VisualValues.ConvertValue(value,"boolean");
+        // Convert to Text of an entity enum gives Home Assistant's text ("on"), the catch-all "other".
+        if(convert && target==typeof(string) && value is Enum entityEnum && EnumText(entityEnum) is {} enumText)return enumText;
         if(convert && target==typeof(string))return VisualValues.ConvertValue(value,"string");
         if(pin!=null && value is not null and not char && IsNumber(value.GetType()) && IsNumber(target) && target!=typeof(char) && Unfit(value,target) is {} range)
             throw new InvalidOperationException($"{pin()} needs {range}, not {Convert.ToString(value,CultureInfo.InvariantCulture)}");

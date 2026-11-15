@@ -11,12 +11,13 @@ namespace HassSharp;
 static class HassServices
 {
     // Only for JSON nodes and framework types: each load context's typed service calls write their values with a copy of it
-    // (ServiceData.Options), so that its caches never hold an automation's own types.
+    // (ServiceData.Options), so that its caches never hold an automation's own types. An entity enum is written as Home
+    // Assistant's text (the converter holds nothing itself), any other enum by its snake_case name.
     internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) },
+        Converters = { new VisualRuntime.EntityTextJsonConverter(), new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) },
     };
 
     /// <summary>Completes when Home Assistant has run the service; faults with its error.</summary>

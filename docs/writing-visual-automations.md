@@ -131,7 +131,9 @@ trigger's state for the entity that started the run); an entity that Home Assist
 does not have fails that step, "Entity 'binary_sensor.hall' is unavailable.", and it
 takes its Error path. Wires and the trace carry the entity ID, and an enum property's
 value is Home Assistant's text: a Log of `State` writes `on`, and `other` for a state
-Home Assistant does not list.
+Home Assistant does not list. A state or attribute enum goes into a text field (a
+service field Home Assistant describes as text) through a Convert to Text, which gives
+Home Assistant's text; `RawState` is the state's text without a Convert.
 
 To test such a property, wire it into one side of a **Compare**. The other side, while
 it is not wired, is then a dropdown of the enum's values, such as Off, On, Unknown
