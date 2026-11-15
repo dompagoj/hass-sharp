@@ -15,7 +15,7 @@ from homeassistant.core import Event, EventStateChangedData, HomeAssistant, call
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
 
-from . import scheduling, dotnet_downloader, dotnet_tasks, memory_report, native_triggers, services, utils, websocket
+from . import scheduling, dotnet_downloader, dotnet_tasks, entities, memory_report, native_triggers, services, utils, websocket
 from .const import logger
 
 os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "true"
@@ -280,6 +280,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
         hass.data.setdefault("hass_sharp_services", {})[entry.entry_id] = await services.async_start(hass, hass_sharp)
+        hass.data.setdefault("hass_sharp_entities", {})[entry.entry_id] = await entities.async_start(hass, hass_sharp)
 
         async def on_stop(event):
             # Home Assistant does not unload config entries when it stops: cancel the runs here, so they
@@ -305,6 +306,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         stop_services = hass.data.get("hass_sharp_services", {}).pop(entry.entry_id, None)
         if stop_services is not None:
             stop_services()
+        stop_entities = hass.data.get("hass_sharp_entities", {}).pop(entry.entry_id, None)
+        if stop_entities is not None:
+            stop_entities()
         stop_listener = hass.data.get("hass_sharp_stop", {}).pop(entry.entry_id, None)
         if stop_listener is not None:
             stop_listener()
@@ -345,6 +349,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     stop_services = hass.data.get("hass_sharp_services", {}).pop(entry.entry_id, None)
     if stop_services is not None:
         stop_services()
+    stop_entities = hass.data.get("hass_sharp_entities", {}).pop(entry.entry_id, None)
+    if stop_entities is not None:
+        stop_entities()
     stop_listener = hass.data.get("hass_sharp_stop", {}).pop(entry.entry_id, None)
     if stop_listener is not None:
         stop_listener()

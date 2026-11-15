@@ -190,6 +190,8 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
             # Listens first, then pushes once (services.async_start).
             stop=track(h,m);order.append('push');return stop
         services=types.SimpleNamespace(async_start=AsyncMock(side_effect=start))
+        stop_entities=Mock()
+        entities=types.SimpleNamespace(async_start=AsyncMock(return_value=stop_entities))
         def add_panel(hass,component,title,icon,visible,url,config,admin):
             hass.data.setdefault('frontend_panels',{})[url]=component
         def remove_panel(hass,url,warn_if_unknown=True):
@@ -209,7 +211,7 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
                  dotnet_tasks=types.SimpleNamespace(async_run_dotnet_task=runner),
                  frontend=types.SimpleNamespace(async_register_built_in_panel=panel,async_remove_panel=unpanel,DATA_PANELS='frontend_panels'),
                  llm=types.SimpleNamespace(EntryState=state_factory,register=register),AuthoringService=lambda h,m:None,
-                 services=services,memory_report=types.SimpleNamespace(enabled=lambda:False))
+                 services=services,entities=entities,memory_report=types.SimpleNamespace(enabled=lambda:False))
         exec(compile(tree,'<entry>','exec'),env)
         entry=types.SimpleNamespace(entry_id='test',disabled_by=None)
         self.assertTrue(await env['async_setup_entry'](hass,entry))
@@ -240,6 +242,8 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         services.async_start.assert_awaited_once_with(hass,manager)
         self.assertEqual(order[:2],['push','init'])
         self.assertIs(hass.data['hass_sharp_services']['test'],stops[-1])
+        entities.async_start.assert_awaited_once_with(hass,manager)
+        self.assertIs(hass.data['hass_sharp_entities']['test'],stop_entities)
         # A stop cancels the runs with the stopping reason without unloading the entry.
         event,handler,remove=listeners[-1]
         self.assertEqual('homeassistant_stop',event)
@@ -254,6 +258,8 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(state_instances[-1].closed)
         stops[-1].assert_called_once()
         self.assertNotIn('test',hass.data['hass_sharp_services'])
+        stop_entities.assert_called_once()
+        self.assertNotIn('test',hass.data['hass_sharp_entities'])
         # The reload kept the panel, and setup does not register it a second time (Home Assistant would refuse it).
         unpanel.assert_not_called()
         self.assertTrue(await env['async_setup_entry'](hass,entry))
@@ -280,5 +286,7 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('test',hass.data['hass_sharp_stop'])
         self.assertEqual((False,),unloads[-1])
         self.assertNotIn('test',hass.data['hass_sharp_services'])
+        self.assertEqual(stop_entities.call_count,3)
+        self.assertNotIn('test',hass.data['hass_sharp_entities'])
         self.assertEqual(hass.config_entries.async_unload_platforms.await_count,3)
         self.assertEqual(bridge.async_shutdown.await_count,3)
