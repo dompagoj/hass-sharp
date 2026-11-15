@@ -20,16 +20,21 @@ DEBOUNCE_SECONDS = 2
 
 
 async def async_domains(hass):
-    """Every entity domain Home Assistant knows of now, sorted.
+    """The domains that surely have entities, sorted, whatever their translations.
 
-    The platforms it defines (so a domain with nothing loaded yet still gets its typed classes), the domain of
-    every state and registry entry, and every loaded component, which may add entities of its own domain.
+    The platforms Home Assistant defines (so a domain with nothing loaded yet still gets its typed classes) and
+    the domain of every state and registry entry. Loaded components are not here: most (`http`, `frontend`) have
+    no entities, so `async_push` adds only those that have entity translations (see `components`).
     """
     domains = {platform.value for platform in Platform}
     domains.update(state.domain for state in hass.states.async_all())
     domains.update(entry.domain for entry in er.async_get(hass).entities.values())
-    domains.update(component.partition(".")[0] for component in hass.config.components)
     return sorted(domains)
+
+
+def components(hass):
+    """The top-level names of the loaded components (`sensor.template` is `sensor`), sorted: candidates for a domain."""
+    return sorted({component.partition(".")[0] for component in hass.config.components})
 
 
 async def async_translations(hass, domains):
@@ -55,14 +60,21 @@ def payload(domains, translations):
 async def async_push(hass, manager, active=lambda: True):
     """Send the domains and translations as JSON; failures are logged, never raised.
 
-    Returns the domains sent, or None when nothing was. Nothing reaches .NET once `active()` is false: the entry
+    Returns the domains sent (the entity domains, not every loaded component), or None when nothing was. Nothing reaches .NET once `active()` is false: the entry
     stopped listening while they were gathered. A push that differs from the last makes .NET rebuild the typed
     entity classes and every node library, so callers keep pushes rare.
     """
     try:
         started = hass.state is CoreState.running
         domains = await async_domains(hass)
-        translations = await async_translations(hass, domains)
+        candidates = components(hass)
+        translations = await async_translations(hass, sorted(set(domains) | set(candidates)))
+        # A component is an entity domain when Home Assistant has entity translations for it (helpers such as
+        # `input_boolean` and `timer` are no Platform); the translations of anything else are not sent.
+        domains = sorted(set(domains) | {c for c in candidates if any(
+            key.startswith(f"component.{c}.entity_component.") for key in translations)})
+        translations = {key: text for key, text in translations.items()
+                        if any(key.startswith(f"component.{d}.") for d in domains)}
         if not active():
             return None
         await hass.async_add_executor_job(manager.SetEntityDescriptions, payload(domains, translations), started)

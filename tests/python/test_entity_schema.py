@@ -19,7 +19,7 @@ class Platform(str, Enum):
     LIGHT = 'light'
 
 
-def load_entities(states=(), registered=(), components=(), unknown=()):
+def load_entities(states=(), registered=(), components=(), unknown=(), untranslated=()):
     """The module's own code, with Home Assistant replaced by fakes (as test_services does)."""
     tree = ast.parse(Path('custom_components/hass_sharp/entities.py').read_text())
     tree.body = [n for n in tree.body if not isinstance(n, ast.ImportFrom)]
@@ -31,7 +31,7 @@ def load_entities(states=(), registered=(), components=(), unknown=()):
     async def integrations(hass, domains):
         return {d: (ImportError(d) if d in unknown else NS(domain=d)) for d in domains}
     async def translations(hass, language, category, domains):
-        return {f'component.{d}.entity_component._.state.on': 'On' for d in domains}
+        return {f'component.{d}.entity_component._.state.on': 'On' for d in domains if d not in untranslated}
     env = {'Platform': Platform, 'CoreState': NS(running='running', starting='starting'),
            'EVENT_COMPONENT_LOADED': LOADED, 'EVENT_HOMEASSISTANT_STARTED': STARTED, 'EVENT_CORE_CONFIG_UPDATE': CONFIG,
            'EVENT_ENTITY_REGISTRY_UPDATED': REGISTRY, 'callback': lambda f: f, 'async_call_later': call_later, 'logger': Mock(),
@@ -61,12 +61,39 @@ class EntityDomains(unittest.IsolatedAsyncioTestCase):
         await env['async_push'](hass, manager)
         (content, _), = pushed(manager)
         # A Platform with nothing loaded, a state, a registry entry and the top-level part of a component all count.
-        for domain in ('lawn_mower', 'sun', 'light', 'sensor', 'hue'):
+        for domain in ('lawn_mower', 'sun', 'light', 'sensor', 'hue'):  # hue: a component that has entity translations
             self.assertIn(domain, content['domains'])
         self.assertEqual(content['domains'], sorted(content['domains']))
         self.assertEqual(content['translations'][ON], 'On')
         env['async_get_translations'].assert_awaited_once()
         self.assertEqual(env['async_get_translations'].await_args.args[1:3], ('en', 'entity_component'))
+
+    async def test_a_component_without_entity_translations_is_not_a_domain(self):
+        env, hass, _, _ = load_entities(components=['http', 'sensor.template'], untranslated=['http'])
+        manager = NS(SetEntityDescriptions=Mock())
+        await env['async_push'](hass, manager)
+        (content, _), = pushed(manager)
+        self.assertNotIn('http', content['domains'])
+        self.assertNotIn('sensor.template', content['domains'])
+        self.assertFalse([k for k in content['translations'] if k.startswith('component.http.')])
+
+    async def test_a_helper_component_with_entity_translations_is_a_domain(self):
+        env, hass, _, _ = load_entities(components=['input_boolean', 'http'], untranslated=['http'])
+        manager = NS(SetEntityDescriptions=Mock())
+        await env['async_push'](hass, manager)
+        (content, _), = pushed(manager)
+        self.assertIn('input_boolean', content['domains'])
+        self.assertEqual(content['translations']['component.input_boolean.entity_component._.state.on'], 'On')
+        self.assertNotIn('http', content['domains'])
+
+    async def test_a_component_in_platform_form_contributes_its_top_level_name(self):
+        env, hass, _, _ = load_entities(components=['sensor.template'])
+        manager = NS(SetEntityDescriptions=Mock())
+        await env['async_push'](hass, manager)
+        (content, _), = pushed(manager)
+        self.assertIn('sensor', content['domains'])
+        self.assertNotIn('sensor.template', content['domains'])
+        self.assertEqual(env['async_get_translations'].await_args.args[3].count('sensor'), 1)
 
     async def test_unknown_domain_is_listed_but_not_translated(self):
         env, hass, _, _ = load_entities(states=['made_up'], unknown=['made_up'])
@@ -187,12 +214,14 @@ class EntityDomains(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(timers), 2)
 
     async def test_translation_failure_sends_domains_only(self):
-        env, hass, _, _ = load_entities(states=['sun'])
+        env, hass, _, _ = load_entities(states=['sun'], components=['input_boolean'])
         env['async_get_translations'].side_effect = RuntimeError('malformed en.json')
         manager = NS(SetEntityDescriptions=Mock())
         await env['async_push'](hass, manager)
         (content, _), = pushed(manager)
         self.assertIn('sun', content['domains'])
+        self.assertIn('lawn_mower', content['domains'])
+        self.assertNotIn('input_boolean', content['domains'])
         self.assertEqual(content['translations'], {})
         env['logger'].warning.assert_called_once()
         env['logger'].exception.assert_not_called()
