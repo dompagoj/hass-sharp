@@ -600,6 +600,9 @@ public static class VisualGraphValidator
                     // A number that does not fit a narrower number type (2.5 for a C# int) says what does fit.
                     : Number(value) is not null && VisualTypes.Numeric(Root, type) && VisualTypes.Resolve(Root, type) is { } own
                         ? $"{subject} must be {Words.Range(Number(own["min"]), Number(own["max"]), Text(own, "literalKind") == "integer")}"
+                    // A text an enum does not list (a state Home Assistant no longer has) is named.
+                    : Text(VisualTypes.Resolve(Root, type), "literalKind") == "enum" && value is JsonValue listed && listed.TryGetValue<string>(out var unlisted)
+                        ? $"{subject}: {unlisted} is not a value of {Words.TypeLabel(Root, type)}"
                     : $"{subject} is not a valid {Words.TypeLabel(Root, type)} value", port);
                 if (Number(value) is { } number && (Number(spec["min"]) is { } min && number < min || Number(spec["max"]) is { } max && number > max || Bool(spec, "integer") && Math.Truncate(number) != number))
                     Error(Id(node), $"{subject} must be {Words.Range(Number(spec["min"]), Number(spec["max"]), Bool(spec, "integer"))}", port);

@@ -66,6 +66,10 @@ static class SelectPropertyTests
         Console.WriteLine("PASS select property: the validator types the output by the property and says what to choose or use instead");
         await Reads();
         Console.WriteLine("PASS select property: a run reads the chosen property of records, classes, structs, fields, entity states and Custom C# types");
+        await Entities();
+        Console.WriteLine("PASS select property: a run reads an entity's members through its handle, and reads, compares and traces the entity enums as Home Assistant's texts");
+        await DroppedState();
+        Console.WriteLine("PASS select property: a state Home Assistant no longer lists fails its automation's load on the Compare step, and the other automations run");
     }
 
     static JsonObject Graph(JsonObject[] nodes, params JsonObject[] edges) => new() { ["version"] = 5, ["name"] = "Select", ["nodes"] = new JsonArray(new[] { N("t", "trigger", new { type = "manual" }) }.Concat(nodes).ToArray<JsonNode>()), ["edges"] = new JsonArray(edges) };
@@ -365,6 +369,220 @@ static class SelectPropertyTests
             Check(messages.Any(m => m.Contains("Select property (used by Log): User has no property Ghost", StringComparison.Ordinal)), "a property the type no longer has: " + string.Join(" | ", messages));
         }
         finally { PyInterop.Log = log; PyInterop.Entity = entity; HassPath.HassConfiguration = previous; }
+    }
+
+    /// <summary>An entity trigger on <paramref name="entity"/> whose entity is wired into the Select property node <c>select</c>.</summary>
+    static JsonObject OnEntity(string entity, string property, JsonObject[] nodes, params JsonObject[] edges)
+    {
+        var graph = Graph([Select("select", property), .. nodes], [D("t", "select", "value", "entity_id"), .. edges]);
+        graph["nodes"]![0]!["config"] = new JsonObject { ["type"] = "entity", ["entity"] = entity };
+        return graph;
+    }
+    /// <summary>The member compared with a value typed in, and an If on the result that logs "true" or "false".</summary>
+    static JsonObject Compared(string entity, string property, string type, string? value) =>
+        OnEntity(entity, property, [N("cmp", "compare", new JsonObject { ["operator"] = "eq", ["left"] = new JsonObject { ["kind"] = "unset" }, ["right"] = Lit(type, value) }),
+                N("if", "if", new { value = new { kind = "unset" } }), N("yes", "log", new { value = Lit("string", "true") }), N("no", "log", new { value = Lit("string", "false") })],
+            D("select", "cmp", "left"), D("cmp", "if", "value"), E("t", "if"), E("if", "yes", "true"), E("if", "no", "false"));
+    /// <summary>The member, logged.</summary>
+    static JsonObject Logged(string entity, string property) =>
+        OnEntity(entity, property, [N("l", "log", new { value = new { kind = "unset" } })], D("select", "l", "value"), E("t", "l"));
+
+    // Task 7: a run reads an entity's members through the handle its id makes, and the entity enums are read from a value
+    // typed in, compared and traced as Home Assistant's texts.
+    static async Task Entities()
+    {
+        var provider = NodeLibraryFixture.EntityProvider;
+        var s = new NodeLibraryCompiler(provider).Preview([]).Snapshot;
+        var log = PyInterop.Log; var entity = PyInterop.Entity; var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
+        try
+        {
+            async Task<JsonObject> Run(JsonObject graph)
+            {
+                Check(VisualGraphValidator.Validate(graph, s) is var found && found.Count == 0, "the graph does not validate: " + Show(found));
+                messages.Clear();
+                var id = graph["nodes"]![0]!["config"]!["entity"]!.GetValue<string>();
+                return await EntityHandleTests.Traced(provider, graph, s, TriggerPayload.Entity(new() { EntityId = id, State = "on", LastChanged = 1_700_000_000, LastReported = 1_700_000_000 }, null));
+            }
+            async Task<string> Branch(JsonObject graph) { await Run(graph); return string.Join(" | ", messages); }
+            async Task<JsonObject> Traced(JsonObject graph, string node) => EntityHandleTests.Event(await Run(graph), node);
+            async Task<string> TraceOutput(JsonObject graph, string node, string port) => (await Traced(graph, node))["outputs"]![port]!["v"]?.ToJsonString() ?? "null";
+
+            // A binary sensor's state, compared with the text typed in.
+            var state = Compared("binary_sensor.hall", "State", "global::HassSharp.Entities.BinarySensorState", "on");
+            PyInterop.Entity = id => new() { EntityId = id, State = "on" };
+            Check(await Branch(state) == "true", "state read and compared: " + string.Join(" | ", messages));
+            Check(await TraceOutput(state, "select", "value") == "\"on\"", "trace shows the text: " + (await Traced(state, "select")).ToJsonString());
+            var compared = await Traced(state, "cmp");
+            Check(compared["inputs"]!["right"]!["v"]?.ToJsonString() == "\"on\"" && compared["inputs"]!["left"]!["v"]?.ToJsonString() == "\"on\"", "the compared values are traced as their texts: " + compared.ToJsonString());
+            Check((await Traced(state, "select"))["inputs"]!["value"]!["v"]?.GetValue<string>() == "binary_sensor.hall", "the wire into Select property carries the id");
+            PyInterop.Entity = id => new() { EntityId = id, State = "off" };
+            Check(await Branch(state) == "false", "other state: " + string.Join(" | ", messages));
+            // A state Home Assistant does not list reads Other, which equals no listed one and is traced as "other".
+            PyInterop.Entity = id => new() { EntityId = id, State = "jammed" };
+            Check(await Branch(state) == "false", "an unlisted state: " + string.Join(" | ", messages));
+            Check(await TraceOutput(state, "select", "value") == "\"other\"", "an unlisted state is traced as other: " + (await Traced(state, "select")).ToJsonString());
+            // An entity Home Assistant does not have fails the step that reads it, naming the entity.
+            PyInterop.Entity = _ => null!;
+            Exception? missing = null;
+            try { await Run(state); } catch (Exception error) { missing = error; }
+            Check(missing?.Message.Contains("Entity 'binary_sensor.hall' is unavailable.") == true, "a missing entity: " + missing?.Message);
+
+            // The raw state, and an attribute Home Assistant declares without listing its values: a JSON value, null when absent.
+            PyInterop.Entity = id => new() { EntityId = id, State = "on" };
+            Check(await TraceOutput(Logged("binary_sensor.hall", "RawState"), "select", "value") == "\"on\"" && messages.SequenceEqual(["on"]), "the raw state: " + string.Join(" | ", messages));
+            // A Log prints an entity enum as its text, the catch-all as other.
+            await Run(Logged("binary_sensor.hall", "State"));
+            Check(messages.SequenceEqual(["on"]), "the state logged: " + string.Join(" | ", messages));
+            PyInterop.Entity = id => new() { EntityId = id, State = "jammed" };
+            await Run(Logged("binary_sensor.hall", "State"));
+            Check(messages.SequenceEqual(["other"]), "an unlisted state logged: " + string.Join(" | ", messages));
+            PyInterop.Entity = id => new() { EntityId = id, State = "on" };
+            var brightness = Logged("light.hall", "Brightness");
+            PyInterop.Entity = id => new() { EntityId = id, State = "on", Attributes = new() { ["brightness"] = 128 } };
+            var read = (await Traced(brightness, "select"))["outputs"]!["value"]!;
+            Check(read["v"]?.ToJsonString() == "128" && read["type"]?.GetValue<string>() == "global::System.Text.Json.JsonElement?" && messages.SequenceEqual(["128"]), "the brightness: " + read.ToJsonString() + " " + string.Join(" | ", messages));
+            PyInterop.Entity = id => new() { EntityId = id, State = "on" };
+            Check(await TraceOutput(brightness, "select", "value") == "null", "an absent brightness is null");
+
+            // A nullable enum: an attribute with listed values, null when absent, on either side of the comparison.
+            var mode = Compared("light.hall", "ColorMode", "global::HassSharp.Entities.LightColorMode", "hs");
+            var none = Compared("light.hall", "ColorMode", "global::HassSharp.Entities.LightColorMode?", null);
+            PyInterop.Entity = id => new() { EntityId = id, State = "on", Attributes = new() { ["color_mode"] = "hs" } };
+            Check(await Branch(mode) == "true", "a nullable enum read and compared: " + string.Join(" | ", messages));
+            Check(await Branch(none) == "false", "a color mode is not null: " + string.Join(" | ", messages));
+            PyInterop.Entity = id => new() { EntityId = id, State = "on" };
+            Check(await Branch(mode) == "false", "an absent color mode is not hs: " + string.Join(" | ", messages));
+            Check(await Branch(none) == "true", "an absent color mode is null: " + string.Join(" | ", messages));
+        }
+        finally { PyInterop.Log = log; PyInterop.Entity = entity; }
+        Texts(provider);
+        await Called();
+        await HandleMembers();
+    }
+
+    // A service call's data field wired from an entity enum carries the text, the catch-all as "other".
+    static async Task Called()
+    {
+        // The field of a service Home Assistant has not described takes a value of any type; a described field takes no entity enum.
+        var provider = NodeLibraryFixture.EntityProvider;
+        var s = new NodeLibraryCompiler(provider).Preview([]).Snapshot;
+        var graph = OnEntity("binary_sensor.hall", "State", [N("s", "service", new JsonObject { ["service"] = "script.note", ["fields"] = new JsonObject { ["value"] = new JsonObject { ["kind"] = "unset" } }, ["returnResponse"] = false })],
+            D("select", "s", "field:value"), E("t", "s"));
+        Check(VisualGraphValidator.Validate(graph, s) is var found && found.Count == 0, "the call does not validate: " + Show(found));
+        var made = new List<string>(); var call = PyInterop.CallService; var entity = PyInterop.Entity;
+        PyInterop.CallService = (domain, name, json, done, _) => { lock (made) made.Add(domain + "." + name + " " + json); done?.Invoke(); };
+        try
+        {
+            foreach (var (state, sent) in new[] { ("on", "on"), ("jammed", "other") })
+            {
+                made.Clear();
+                PyInterop.Entity = id => new() { EntityId = id, State = state };
+                await EntityHandleTests.Traced(provider, graph, s, TriggerPayload.Entity(new() { EntityId = "binary_sensor.hall", State = state, LastChanged = 1_700_000_000, LastReported = 1_700_000_000 }, null));
+                Check(made.Count == 1 && made[0].StartsWith("script.note ", StringComparison.Ordinal) && JsonNode.DeepEquals(JsonNode.Parse(made[0]["script.note ".Length..]), new JsonObject { ["value"] = sent }), $"the call with {state}: " + string.Join(" | ", made));
+            }
+        }
+        finally { PyInterop.CallService = call; PyInterop.Entity = entity; }
+    }
+
+    // A member that is itself a handle (a record's LightEntity) goes on the wire as its id, and the next Select property reads its state.
+    static async Task HandleMembers()
+    {
+        var provider = NodeLibraryFixture.EntityProvider;
+        var preview = new NodeLibraryCompiler(provider).Preview([new("rooms", Rooms, 1)]);
+        Check(preview.Valid, "the rooms library compiles: " + string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
+        var s = preview.Snapshot;
+        var log = PyInterop.Log; var entity = PyInterop.Entity; var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
+        PyInterop.Entity = id => new() { EntityId = id, State = "on" };
+        try
+        {
+            var graph = new VisualGenerator(provider).DeriveSignatures(Graph([Made(s, "v", "Room"), Select("a", "Light"), Select("b", "State"), Code("c", "Logger.Info(\"read \" + got.GetType().Name + \" \" + got);", "object got"), N("l", "log", new { value = new { kind = "unset" } })],
+                E("t", "c"), E("c", "l"), D("v", "a", "value", "result"), D("a", "c", "got"), D("a", "b", "value"), D("b", "l", "value")), s);
+            Check(VisualGraphValidator.Validate(graph, s) is var found && found.Count == 0, "the graph does not validate: " + Show(found));
+            var trace = await EntityHandleTests.Traced(provider, graph, s, TriggerPayload.Manual());
+            Check(messages.SequenceEqual(["read String light.hall", "on"]), "the wire carries the id, and its state is read: " + string.Join(" | ", messages));
+            // Worked out for each step that reads it.
+            var events = trace["events"]!.AsArray().Where(e => e!["node"]!.GetValue<string>() == "a").ToArray();
+            Check(events.Length == 2 && events.All(e => e!["outputs"]!["value"]!["v"]?.GetValue<string>() == "light.hall"), "the trace shows the id: " + string.Join(" | ", events.Select(e => e!.ToJsonString())));
+        }
+        finally { PyInterop.Log = log; PyInterop.Entity = entity; }
+    }
+
+    // A text converts to its member of an entity enum, and only a text Home Assistant lists; a trace writes each member as its
+    // text, the catch-all as "other", and any other enum as its number.
+    static void Texts(DiagnosticsProvider provider)
+    {
+        var context = new System.Runtime.Loader.AssemblyLoadContext("entity-texts", isCollectible: true);
+        try
+        {
+            var state = context.LoadFromStream(new MemoryStream(provider.ServiceCalls().Entities.Image)).GetType("HassSharp.Entities.BinarySensorState", throwOnError: true)!;
+            object Member(string name) => Enum.Parse(state, name);
+            Check(Equals(VisualRuntime.Coerce("on", state, "c.value", true), Member("On")) && Equals(VisualRuntime.Coerce("off", typeof(Nullable<>).MakeGenericType(state), "c.value", true), Member("Off")), "a text converts to its member");
+            string? refused = null;
+            try { VisualRuntime.Coerce("jammed", state, "c.value", true); } catch (InvalidOperationException error) { refused = error.Message; }
+            Check(refused == "c.value: jammed is not a value of global::HassSharp.Entities.BinarySensorState", "a text Home Assistant does not list: " + refused);
+            string Traced(object value) => System.Text.Encoding.UTF8.GetString(TraceJson.Value(value, 1000).Json);
+            Check(Traced(Member("On")) == "\"on\"" && Traced(Member("Unavailable")) == "\"unavailable\"" && Traced(Member("Other")) == "\"other\"" && Traced(DayOfWeek.Monday) == "1", "traced texts: " + Traced(Member("On")) + " " + Traced(Member("Other")) + " " + Traced(DayOfWeek.Monday));
+            // An automation's JSON: the text inside a payload, read back from it; any other enum is its number.
+            var json = VisualRuntime.JsonOptions();
+            var payload = JsonSerializer.SerializeToNode(new Dictionary<string, object?> { ["on"] = Member("On"), ["other"] = Member("Other"), ["day"] = DayOfWeek.Monday }, json)!.ToJsonString();
+            Check(payload == """{"on":"on","other":"other","day":1}""", "the JSON of entity enums: " + payload);
+            Check(Equals(JsonSerializer.Deserialize("\"unavailable\"", state, json), Member("Unavailable")) && Equals(JsonSerializer.Deserialize("\"off\"", typeof(Nullable<>).MakeGenericType(state), json), Member("Off")), "read back from the text");
+        }
+        finally { context.Unload(); }
+    }
+
+    // Review Focus 3: a Home Assistant update drops a state a saved graph compares with. The validator names the value on
+    // the Compare step; after the update the automation does not load, saying why, and another automation loads and runs.
+    static async Task DroppedState()
+    {
+        var provider = NodeLibraryFixture.EntityProvider;
+        var jammed = Compared("binary_sensor.hall", "State", "global::HassSharp.Entities.BinarySensorState", "jammed");
+        var found = VisualGraphValidator.Validate(jammed, new NodeLibraryCompiler(provider).Preview([]).Snapshot);
+        Check(found.Any(d => d.NodeId == "cmp" && d.InputId == "right" && d.Severity == 3 && d.Message.Contains("jammed", StringComparison.Ordinal)), "the validator names the value on the step: " + Show(found));
+
+        // Before the update, Home Assistant listed jammed among a binary sensor's states.
+        var fixture = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ha-entity-components.json"));
+        var before = JsonNode.Parse(fixture)!; before["translations"]!["component.binary_sensor.entity_component._.state.jammed"] = "Jammed";
+        var other = Graph([N("l", "log", new { value = Lit("string", "still running") })], E("t", "l"));
+        var root = Path.Combine(Path.GetTempPath(), "select-property-dropped-" + Guid.NewGuid());
+        var previous = HassPath.HassConfiguration; var log = PyInterop.Log; var entity = PyInterop.Entity;
+        var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
+        PyInterop.Entity = id => new() { EntityId = id, State = "on" };
+        static async Task<JsonNode> Visual(HassSharpManager api, object request) => JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(request)))!;
+        try
+        {
+            var api = new HassSharpManager(root);
+            try
+            {
+                await api.Init();
+                api.SetEntityDescriptions(before.ToJsonString(), started: true);
+                foreach (var (id, graph) in new[] { ("sensor", jammed), ("other", other) })
+                {
+                    var saved = await Visual(api, new { operation = "save", id, graph, expectedRevision = 0 });
+                    Check(saved["result"]?["active"]?.GetValue<bool>() == true, id + " was not saved while Home Assistant listed jammed: " + saved.ToJsonString());
+                }
+                // The update: Home Assistant no longer lists jammed.
+                api.SetEntityDescriptions(fixture, started: true);
+            }
+            finally { await api.UnloadAsync(); }
+
+            // The next start validates the saved graphs against the new lists.
+            api = new HassSharpManager(root);
+            try
+            {
+                await api.Init();
+                var error = (await Visual(api, new { operation = "read", id = "sensor" }))["result"]!["activationError"]?.GetValue<string>();
+                Check(VisualTests.Loaded(api, "sensor") == null && error != null && error.StartsWith("cmp: ", StringComparison.Ordinal) && error.Contains("jammed", StringComparison.Ordinal), "the automation comparing with jammed loaded, or failed otherwise: " + error);
+                Check(VisualTests.Loaded(api, "other") != null, "the other automation did not load: " + (await Visual(api, new { operation = "read", id = "other" })).ToJsonString());
+                messages.Clear();
+                var run = await Visual(api, new { operation = "run", id = "other", triggerId = "t" });
+                Check(run["ok"]!.GetValue<bool>(), "run other: " + run.ToJsonString());
+                for (var i = 0; i < 300 && !messages.Contains("still running"); i++) await Task.Delay(10);
+                Check(messages.Contains("still running"), "the other automation did not run: " + string.Join(" | ", messages));
+            }
+            finally { await api.UnloadAsync(); }
+        }
+        finally { PyInterop.Log = log; PyInterop.Entity = entity; HassPath.HassConfiguration = previous; await ServiceCallTests.DeleteWhenQuiet(root); }
     }
 
     // Step 1: the members of each class, record and struct of a library, a Custom C# node and HassSharp, as the compiler finds them.

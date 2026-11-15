@@ -167,7 +167,7 @@ static class EntityHandleTests
     }
 
     /// <summary>Compiles the graph against the provider's classes, runs its trigger with the payload, and returns the run's trace.</summary>
-    static async Task<JsonObject> Traced(DiagnosticsProvider provider, JsonObject graph, VisualCatalogSnapshot snapshot, JsonElement payload)
+    internal static async Task<JsonObject> Traced(DiagnosticsProvider provider, JsonObject graph, VisualCatalogSnapshot snapshot, JsonElement payload)
     {
         var preview = new VisualGenerator(provider).Preview(graph, snapshot);
         Check(preview.Valid, "the graph does not compile: " + JsonSerializer.Serialize(preview.Diagnostics));
@@ -185,7 +185,7 @@ static class EntityHandleTests
         }
         finally { compiled.Unload(); }
     }
-    static JsonObject Event(JsonObject trace, string node) => trace["events"]!.AsArray().Select(e => e!.AsObject()).Single(e => e["node"]!.GetValue<string>() == node);
+    internal static JsonObject Event(JsonObject trace, string node) => trace["events"]!.AsArray().Select(e => e!.AsObject()).Single(e => e["node"]!.GetValue<string>() == node);
 
     // A handle type on a node method is a pin of the entity id type, of its domain for a domain's class; the wire and
     // the trace carry the id, the method gets the handle.

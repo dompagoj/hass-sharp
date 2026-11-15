@@ -197,7 +197,21 @@ public sealed class VisualRuntime
     /// types (a library record made an object, a node's enum), and with them its load context, for the life of the
     /// process. A resolver of its own makes these options equal to no other; they behave as the default ones.
     /// </summary>
-    public static JsonSerializerOptions JsonOptions()=>new(){TypeInfoResolver=new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver()};
+    /// <remarks>An entity enum is written as Home Assistant's text (<see cref="EnumText"/>) and read from it, wherever it is.</remarks>
+    public static JsonSerializerOptions JsonOptions()=>new(){TypeInfoResolver=new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),Converters={new EntityTextJsonConverter()}};
+    /// <summary>
+    /// Writes a member of an entity enum as its text (<c>"on"</c>, <c>"other"</c> for the catch-all) and reads it back from the
+    /// text; any other enum is left to the serializer. The options it is in hold what it makes per type, and they are the automation's own.
+    /// </summary>
+    sealed class EntityTextJsonConverter:System.Text.Json.Serialization.JsonConverterFactory {
+        public override bool CanConvert(Type type)=>type.IsEnum&&HassSharp.Entities.EntityText.Marked(type);
+        public override System.Text.Json.Serialization.JsonConverter CreateConverter(Type type,JsonSerializerOptions options)=>(System.Text.Json.Serialization.JsonConverter)Activator.CreateInstance(typeof(Converter<>).MakeGenericType(type))!;
+        sealed class Converter<T>:System.Text.Json.Serialization.JsonConverter<T> where T:struct,Enum {
+            public override T Read(ref Utf8JsonReader reader,Type type,JsonSerializerOptions options)=>reader.TokenType==JsonTokenType.String
+                ?(T)EnumFromText(typeof(T),reader.GetString()!,"JSON",TraceJson.TypeName(typeof(T)))!:throw new JsonException($"A {TraceJson.TypeName(typeof(T))} is written as Home Assistant's text");
+            public override void Write(Utf8JsonWriter writer,T value,JsonSerializerOptions options)=>writer.WriteStringValue(EnumText(value));
+        }
+    }
     JsonNode? Spec(string id)=>catalog["nodes"]?[Text(nodes[id],"kind")];
     bool Pure(string id)=>VisualNodeCatalog.IsPure(nodes[id],Spec(id));
     // A Custom C# node's pins are its signature's; every other node's are its kind's.
@@ -292,9 +306,23 @@ public sealed class VisualRuntime
             return JsonSerializer.SerializeToElement(value);
         }
         var effective=Nullable.GetUnderlyingType(clr)??clr;
-        if(effective.IsEnum)return Enum.ToObject(effective,JsonSerializer.Deserialize(value.ToJsonString(),Enum.GetUnderlyingType(effective))!);
+        if(effective.IsEnum) {
+            // An entity enum is saved as Home Assistant's text ("on"); any other enum as its number.
+            if(value is JsonValue saved&&saved.TryGetValue<string>(out var text)&&EnumFromText(effective,text,label,type) is {} member)return member;
+            return Enum.ToObject(effective,JsonSerializer.Deserialize(value.ToJsonString(),Enum.GetUnderlyingType(effective))!);
+        }
         return JsonSerializer.Deserialize(value.ToJsonString(),clr,serializer);
     }
+    /// <summary>
+    /// The member of an enum whose members carry Home Assistant's texts (an entity enum, <see cref="HassSharp.Entities.EntityTextAttribute"/>)
+    /// that has <paramref name="text"/>; null for an enum without texts. A text no member has fails, naming it and <paramref name="type"/>.
+    /// </summary>
+    internal static object? EnumFromText(Type enumType,string text,string label,string type)=>
+        !HassSharp.Entities.EntityText.Marked(enumType)?null:HassSharp.Entities.EntityText.Parse(enumType,text)??throw new InvalidOperationException($"{label}: {text} is not a value of {type}");
+    /// <summary>What a member of an entity enum is written as: its Home Assistant text, <c>"other"</c> for the catch-all; null for an enum without texts.</summary>
+    internal static string? EnumText(Enum value)=>HassSharp.Entities.EntityText.Of(value)??(HassSharp.Entities.EntityText.Marked(value.GetType())?"other":null);
+    /// <summary>A value as a Log writes it: an entity enum as its text, anything else as <see cref="Convert.ToString(object, IFormatProvider)"/> gives it.</summary>
+    static string LogText(object? value)=>value is Enum member&&EnumText(member) is {} text?text:Convert.ToString(value,CultureInfo.InvariantCulture)??"null";
     public void Output(VisualScope scope,string node,object? value,string port="value") {
         var declared=Text(OutputSpecs(node)?[port],"type");
         if(declared.StartsWith('$'))declared=Text(nodes[node]["config"],declared[1..]);
@@ -345,6 +373,7 @@ public sealed class VisualRuntime
             var made=(entities??(s=>new HassSharp.Entities.Entity(s)))(id);
             return target.IsInstanceOfType(made)?made:throw new InvalidOperationException($"{pin?.Invoke()??label} needs {target.Name}, and {id} is not one");
         }
+        if(convert && target.IsEnum && value is string text && EnumFromText(target,text,label,TraceJson.TypeName(type)) is {} member)return member;
         if(convert && target==typeof(bool))return VisualValues.ConvertValue(value,"boolean");
         if(convert && target==typeof(string))return VisualValues.ConvertValue(value,"string");
         if(pin!=null && value is not null and not char && IsNumber(value.GetType()) && IsNumber(target) && target!=typeof(char) && Unfit(value,target) is {} range)
@@ -373,7 +402,7 @@ public sealed class VisualRuntime
     object? ConvertTo(object? value,string type,string label,bool convert=true,Func<string>? pin=null) {
         var chain=VisualTypes.Chain(catalog,type);
         if(chain.Count==0||!types.TryGetValue(chain[^1],out var clr))throw new InvalidOperationException($"Unknown declared type {type} at {label}");
-        var root=chain[^1];var result=Coerce(value,clr,label,convert,pin,serializer);
+        var root=chain[^1];var result=Coerce(value,clr,label,convert,pin,serializer,entities);
         if(result==null && !VisualTypes.Nullable(catalog,type))throw new InvalidOperationException($"{label} requires non-null {type}, got null.");
         // A refinement narrows only when the value satisfies every pattern in its chain.
         foreach(var id in chain)if(VisualTypes.Resolve(catalog,id)?["pattern"] is JsonValue pattern && result!=null && (result is not string s || !VisualTypes.Matches(s,pattern.GetValue<string>())))throw new InvalidOperationException($"Cannot convert {label} to {type}.");
@@ -404,7 +433,7 @@ public sealed class VisualRuntime
                     case "delay":await Waiting(scope,Task.Delay(TimeSpan.FromSeconds(Number("seconds",0,4294967.294)),scope.CancellationToken));break;
                     case "wait_until":var entity=Input<string>(scope,id,"entity");var expected=Get("right");await Waiting(scope,VisualValues.WaitUntil(()=>Compare(EntityField(ReadEntity(entity,true),cfg,id),expected,Text(cfg,"operator","eq")),Number("timeout",.001,86400),Number("interval",.001,3600),scope.CancellationToken));break;
                     case "service":await Service(id,scope,cfg);break;
-                    case "log":PyInterop.Log(Text(cfg,"level","Info") switch{"Debug"=>10,"Warn"=>30,"Error"=>40,_=>20},Convert.ToString(Get("value"),CultureInfo.InvariantCulture)??"null");break;
+                    case "log":PyInterop.Log(Text(cfg,"level","Info") switch{"Debug"=>10,"Warn"=>30,"Error"=>40,_=>20},LogText(Get("value")));break;
                     case "stop":Interlocked.Exchange(ref stopped,1);try{await lifetime.CancelAsync();}catch(Exception error){stopFailures.Enqueue(error);}throw new OperationCanceledException(lifetime.Token);
                     case "parallel":await Parallel(id,scope,depth);break;
                     case "repeat":case "while":case "until":case "foreach":await Loop(id,scope,depth);break;
@@ -461,8 +490,8 @@ public sealed class VisualRuntime
                 // Both sides in the type the generator chose by widening only (C#'s numeric promotion), so neither is rounded.
                 var clr=ComparisonTypes.TryGetValue(common,out var widened)?widened:types[VisualTypes.RootId(catalog,common)];
                 var givenLeft=Read(scope,id,"left");var givenRight=Read(scope,id,"right");
-                var a=Coerce(givenLeft,clr,id+".left",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["left"],"left"),serializer);
-                var b=Coerce(givenRight,clr,id+".right",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["right"],"right"),serializer);
+                var a=Coerce(givenLeft,clr,id+".left",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["left"],"left"),serializer,entities);
+                var b=Coerce(givenRight,clr,id+".right",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["right"],"right"),serializer,entities);
                 // The trace shows the values as they came, not as they were widened.
                 if(scope.Trace!=null){Traced(scope,id,"left",givenLeft);Traced(scope,id,"right",givenRight);}
                 // As in C#, an ordering with a missing number (a nullable side that is null) is false.
@@ -475,7 +504,8 @@ public sealed class VisualRuntime
             case "last_error":Output(scope,id,scope.LastError?.Message??"","message");Output(scope,id,scope.LastErrorStep??"","step");break;
             case "get_field":var json=Input<JsonElement>(scope,id,"value");var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}Output(scope,id,ConvertTo(json,Text(cfg,"type"),id,false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(OutputSpecs(id)?["value"],"value")));break;
             // A failure is worded by Prepare, which names the node and the step reading it: the message says only what went wrong.
-            case "select_property":var property=Text(cfg,"property");Output(scope,id,SelectProperty(Get("value")??throw new InvalidOperationException($"{property} cannot be read because the value is empty"),property,id));break;
+            // Wires carry entity ids: a member that is a handle goes out as its id.
+            case "select_property":var property=Text(cfg,"property");var selected=SelectProperty(Get("value")??throw new InvalidOperationException($"{property} cannot be read because the value is empty"),property,id);Output(scope,id,selected is HassSharp.Entities.Entity handle?handle.EntityId:selected);break;
             // A value node from a library (or any other kind) is compiled.
             default:await custom(id,scope,this);break;
         }
@@ -484,10 +514,13 @@ public sealed class VisualRuntime
     /// The member a Select property node reads, as the compiler listed it for the wired value's declared type: a public
     /// instance property or field, the most derived one of that name, found from that type down to its bases. Looked up
     /// on each read, never cached by type: a type held across runs would keep its library's load context alive. A getter
-    /// that throws fails the reading step with its own exception, not one wrapping it.
+    /// that throws fails the reading step with its own exception, not one wrapping it. A wire of an entity id carries the id:
+    /// its member is read from the handle this run's factory makes of it, the class of its domain, never from the catalog.
     /// </summary>
     object? SelectProperty(object value,string name,string node) {
-        var declared=TraceInputType(node,"value") is {} id&&types.TryGetValue(VisualTypes.RootId(catalog,id),out var clr)?Nullable.GetUnderlyingType(clr)??clr:null;
+        var wired=TraceInputType(node,"value");
+        if(value is string entity&&wired!=null&&VisualTypes.Refines(catalog,wired,"entity_id"))value=entities(entity);
+        var declared=wired!=null&&types.TryGetValue(VisualTypes.RootId(catalog,wired),out var clr)?Nullable.GetUnderlyingType(clr)??clr:null;
         const BindingFlags Own=BindingFlags.Public|BindingFlags.Instance|BindingFlags.DeclaredOnly;
         for(var type=declared!=null&&declared.IsInstanceOfType(value)?declared:value.GetType();type!=null;type=type.BaseType) {
             if(type.GetProperty(name,Own) is {} member&&member.GetIndexParameters().Length==0&&member.GetMethod is {IsPublic:true} getter)return getter.Invoke(value,BindingFlags.DoNotWrapExceptions,null,null,null);

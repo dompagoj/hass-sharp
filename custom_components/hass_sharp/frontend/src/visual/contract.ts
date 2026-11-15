@@ -964,7 +964,10 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         // A number that does not fit a narrower number type (2.5 for a C# int) says what does fit.
         const ownType = typeof v === 'number' && Number.isFinite(v) && knownType(type) && numeric(type, catalog) ? resolveTypeSpec(type, catalog) : undefined
         error(node.id, typeof raw.type !== 'string' || raw.type === '' ? `${subject} has a value without a type` : !knownType(type) ? `${subject} has a value of unknown type ${words.name(type)}`
-          : ownType ? `${subject} must be ${words.range(ownType.min, ownType.max, ownType.literalKind === 'integer')}` : `${subject} is not a valid ${typeLabel(type, catalog)} value`, port)
+          : ownType ? `${subject} must be ${words.range(ownType.min, ownType.max, ownType.literalKind === 'integer')}`
+          // A text an enum does not list (a state Home Assistant no longer has) is named.
+          : resolveTypeSpec(type, catalog)?.literalKind === 'enum' && typeof v === 'string' ? `${subject}: ${v} is not a value of ${typeLabel(type, catalog)}`
+          : `${subject} is not a valid ${typeLabel(type, catalog)} value`, port)
       }
       if (typeof v === 'number' && Number.isFinite(v) && ((spec.min !== undefined && v < spec.min) || (spec.max !== undefined && v > spec.max) || (spec.integer && !Number.isInteger(v)))) error(node.id, `${subject} must be ${words.range(spec.min, spec.max, spec.integer === true)}`, port)
       // A number typed into a pin of a narrower number type (a C# int, say) must fit that type, as it must when it runs.

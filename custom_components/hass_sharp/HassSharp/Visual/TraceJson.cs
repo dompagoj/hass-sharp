@@ -316,6 +316,8 @@ static class TraceJson
                 case double d: Double(d); return;
                 case float f: Double(f); return;
                 case decimal m: if (Fits(32)) w.WriteNumberValue(m); else w.WriteNullValue(); return;
+                // An entity enum as Home Assistant's text ("on"), any other enum as its number.
+                case Enum member when VisualRuntime.EnumText(member) is { } text: String(text); return;
                 case Enum: Value(Convert.ChangeType(value, Enum.GetUnderlyingType(value.GetType()), CultureInfo.InvariantCulture), depth); return;
                 case ulong u: if (Fits(20)) w.WriteNumberValue(u); else w.WriteNullValue(); return;
                 case sbyte or byte or short or ushort or int or uint or long: if (Fits(20)) w.WriteNumberValue(Convert.ToInt64(value, CultureInfo.InvariantCulture)); else w.WriteNullValue(); return;

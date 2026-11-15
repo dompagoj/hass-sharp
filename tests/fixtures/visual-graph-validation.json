@@ -32155,5 +32155,191 @@
       "port.unknownOutput"
     ],
     "nodeId": "x"
+  },
+  {
+    "name": "an enum value its type does not list is named",
+    "catalogPatch": {
+      "types": {
+        "global::HassSharp.Entities.BinarySensorState": {
+          "label": "HassSharp.Entities.BinarySensorState",
+          "description": "HassSharp.Entities.BinarySensorState",
+          "category": "String",
+          "nullable": false,
+          "literalKind": "enum",
+          "enumValues": [
+            "off",
+            "on",
+            "unknown",
+            "unavailable"
+          ],
+          "enumLabels": [
+            "Off",
+            "On",
+            "Unknown",
+            "Unavailable"
+          ],
+          "listed": false,
+          "assignableTo": [
+            "global::HassSharp.Entities.BinarySensorState",
+            "global::System.Object"
+          ]
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "cmp",
+          "kind": "compare",
+          "config": {
+            "operator": "eq",
+            "left": {
+              "kind": "literal",
+              "type": "global::HassSharp.Entities.BinarySensorState",
+              "value": "on"
+            },
+            "right": {
+              "kind": "literal",
+              "type": "global::HassSharp.Entities.BinarySensorState",
+              "value": "jammed"
+            }
+          }
+        },
+        {
+          "id": "i",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:i",
+          "source": "t",
+          "target": "i",
+          "port": "next"
+        },
+        {
+          "id": "cmp:value:i:value",
+          "kind": "data",
+          "source": "cmp",
+          "target": "i",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "messages": [
+      "Second value: jammed is not a value of Binary sensor state"
+    ],
+    "nodeId": "cmp",
+    "inputId": "right",
+    "contains": "jammed is not a value of"
+  },
+  {
+    "name": "an enum value of the wrong kind keeps the general message",
+    "catalogPatch": {
+      "types": {
+        "global::HassSharp.Entities.BinarySensorState": {
+          "label": "HassSharp.Entities.BinarySensorState",
+          "description": "HassSharp.Entities.BinarySensorState",
+          "category": "String",
+          "nullable": false,
+          "literalKind": "enum",
+          "enumValues": [
+            "off",
+            "on",
+            "unknown",
+            "unavailable"
+          ],
+          "enumLabels": [
+            "Off",
+            "On",
+            "Unknown",
+            "Unavailable"
+          ],
+          "listed": false,
+          "assignableTo": [
+            "global::HassSharp.Entities.BinarySensorState",
+            "global::System.Object"
+          ]
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "cmp",
+          "kind": "compare",
+          "config": {
+            "operator": "eq",
+            "left": {
+              "kind": "literal",
+              "type": "global::HassSharp.Entities.BinarySensorState",
+              "value": "on"
+            },
+            "right": {
+              "kind": "literal",
+              "type": "global::HassSharp.Entities.BinarySensorState",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "i",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:i",
+          "source": "t",
+          "target": "i",
+          "port": "next"
+        },
+        {
+          "id": "cmp:value:i:value",
+          "kind": "data",
+          "source": "cmp",
+          "target": "i",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "messages": [
+      "Second value is not a valid Binary sensor state value"
+    ],
+    "nodeId": "cmp",
+    "inputId": "right",
+    "contains": "is not a valid"
   }
 ]
