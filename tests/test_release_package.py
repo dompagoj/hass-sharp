@@ -82,6 +82,33 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertIn("100 MiB", result.stderr)
         self.assertFalse(self.output.exists())
 
+    def test_ships_the_linux_native_runtimes_and_no_other_operating_systems(self):
+        # Home Assistant runs on Linux only. SQLite's packages also publish native libraries for Android, iOS, macOS,
+        # Windows and WebAssembly, which together take the package past the Marketplace's size limit.
+        linux = {
+            "out/runtimes/linux-x64/native/libe_sqlite3.so": "glibc x64",
+            "out/runtimes/linux-arm64/native/libe_sqlite3.so": "glibc arm64",
+            "out/runtimes/linux-arm/native/libe_sqlite3.so": "glibc arm",
+            "out/runtimes/linux-musl-x64/native/libe_sqlite3.so": "musl x64",
+            "out/runtimes/linux-musl-arm64/native/libe_sqlite3.so": "musl arm64",
+            "out/runtimes/linux-musl-arm/native/libe_sqlite3.so": "musl arm",
+        }
+        for name, content in linux.items():
+            self.write_file(name, content)
+        for name in ("out/runtimes/osx-arm64/native/libe_sqlite3.dylib", "out/runtimes/win-x64/native/e_sqlite3.dll",
+                     "out/runtimes/win/lib/net11.0/System.Diagnostics.EventLog.dll",
+                     "out/runtimes/ios-arm64/native/e_sqlite3.a", "out/runtimes/iossimulator-x64/native/e_sqlite3.a",
+                     "out/runtimes/android-arm64/native/libe_sqlite3.so", "out/runtimes/maccatalyst-x64/native/libe_sqlite3.dylib",
+                     "out/runtimes/browser-wasm/nativeassets/net11.0/e_sqlite3.a"):
+            self.write_file(name, "another operating system")
+        # A library of HassSharp's own that only looks like a runtime folder still ships.
+        self.write_file("out/runtimes.json", "{}")
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with ZipFile(self.output) as archive:
+            self.assertEqual(set(archive.namelist()), set(self.files) | set(linux) | {"out/runtimes.json"})
+            self.assertEqual(archive.read("out/runtimes/linux-musl-arm64/native/libe_sqlite3.so"), b"musl arm64")
+
     def test_skips_test_pages_and_the_preview_build_under_www(self):
         # The mock preview pages are served without authentication; a release built from a working copy must not hold them.
         for name in ("www/visual-v2-check-baby/tests/preview-app.html", "www/visual-v2-check-baby/assets/preview.js",

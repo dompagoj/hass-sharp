@@ -18,6 +18,18 @@ def test_page(relative: Path) -> bool:
     return parts[0] == "www" and (PREVIEW_DIRECTORY in parts[1:] or relative.suffix.lower() in PAGE_SUFFIXES)
 
 
+def foreign_runtime(relative: Path) -> bool:
+    """True for a file under out/runtimes/ that belongs to an operating system other than Linux.
+
+    The publish output holds one folder per runtime (out/runtimes/linux-musl-arm64, out/runtimes/osx-arm64, ...), and
+    HassSharp loads the one of the running process. Home Assistant runs on Linux only, so the Android, iOS, macOS,
+    Windows and WebAssembly ones are never loaded; SQLite's packages for .NET 11 ship about 33 MB of them, which
+    takes the package past the Marketplace's 100 MiB limit. Every Linux runtime stays, for each libc and architecture.
+    """
+    parts = relative.parts
+    return len(parts) > 3 and parts[:2] == ("out", "runtimes") and not parts[2].startswith("linux")
+
+
 def package_release(integration_dir: Path, output: Path, version: str) -> None:
     required = (
         "__init__.py", "manifest.json", "dotnet.runtimeconfig.json",
@@ -37,6 +49,7 @@ def package_release(integration_dir: Path, output: Path, version: str) -> None:
         and not any(part.startswith(".") or part == "__pycache__"
                     for part in path.relative_to(integration_dir).parts)
         and not test_page(path.relative_to(integration_dir))
+        and not foreign_runtime(path.relative_to(integration_dir))
     )
     manifest = json.loads((integration_dir / "manifest.json").read_text(encoding="utf-8"))
     manifest["version"] = version.removeprefix("v")

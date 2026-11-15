@@ -114,7 +114,10 @@ Keep the RID-neutral publish output's `runtimes/` directory in releases; it cont
 separate SQLite binaries for glibc/musl and x64/ARM64/ARM. Python.NET does not apply
 HassSharp's deps.json native probing paths, so `SqliteNative` resolves the matching
 runtime asset before history opens its first connection. Do not flatten one host's
-native binary into a multi-architecture release.
+native binary into a multi-architecture release. The release packager
+(`scripts/package_release.py`) ships every `runtimes/linux*` folder and leaves out the
+other operating systems' (Android, iOS, macOS, Windows, WebAssembly), which Home
+Assistant never loads and which take the package past the Marketplace's 100 MiB limit.
 
 After publishing, run with Python.NET installed (the release workflow does this):
 
