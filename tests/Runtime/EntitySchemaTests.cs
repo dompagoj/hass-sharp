@@ -85,6 +85,7 @@ static class EntitySchemaTests
     {
         var directory = Path.Combine(Path.GetTempPath(), "entity-schema-" + Guid.NewGuid());
         var path = Path.Combine(directory, "entity_schema.json");
+        var log = PyInterop.Log; var logged = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => logged.Enqueue(m);
         try
         {
             var a = new JsonObject { ["light"] = Item("on") };
@@ -105,7 +106,11 @@ static class EntitySchemaTests
             File.WriteAllText(path, "{not json");
             var corrupt = new ServiceCallSchema(path, "entity");
             Check(corrupt.Update(b, started: false)!.Select(p => p.Key).SequenceEqual(["lock"]), "a corrupt file is ignored");
+            // The log lines name the entity classes, not typed calls.
+            Check(logged.Count(l => l.StartsWith("No saved entity schema yet; the entity classes start from the live one", StringComparison.Ordinal)) == 1
+                && logged.Count(l => l.StartsWith("Ignoring the saved entity schema ", StringComparison.Ordinal) && l.Contains("; the entity classes start from the live one: ", StringComparison.Ordinal)) == 1,
+                "the log lines: " + string.Join(" | ", logged));
         }
-        finally { try { Directory.Delete(directory, true); } catch (DirectoryNotFoundException) { } }
+        finally { PyInterop.Log = log; try { Directory.Delete(directory, true); } catch (DirectoryNotFoundException) { } }
     }
 }

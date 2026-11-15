@@ -49,12 +49,15 @@ sealed class ServiceCallSchema(string path, string what = "service")
         if (json != saved) Save(json);
     }
 
+    // What starts from the live schema when none is saved, as the log lines name it.
+    string Starting => what == "entity" ? "the entity classes start from the live one" : $"the typed {what} calls start from the live one";
+
     SortedDictionary<string, JsonObject> Load()
     {
         var loaded = new SortedDictionary<string, JsonObject>(StringComparer.Ordinal);
         try
         {
-            if (!File.Exists(path)) { Log(Logger.Info, $"No saved {what} schema yet; the typed {what} calls start from the live one"); return loaded; }
+            if (!File.Exists(path)) { Log(Logger.Info, $"No saved {what} schema yet; {Starting}"); return loaded; }
             var text = File.ReadAllText(path);
             if (JsonNode.Parse(text) is not JsonObject { } root || root["version"] is not JsonValue version || !version.TryGetValue<int>(out var number) || number != 1 || root["items"] is not JsonObject items)
                 throw new JsonException($"it is not version 1 of the saved {what} schema");
@@ -64,7 +67,7 @@ sealed class ServiceCallSchema(string path, string what = "service")
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
         {
             loaded.Clear();
-            Log(Logger.Warn, $"Ignoring the saved {what} schema {path}; the typed {what} calls start from the live one: {ex.Message}");
+            Log(Logger.Warn, $"Ignoring the saved {what} schema {path}; {Starting}: {ex.Message}");
         }
         return loaded;
     }
