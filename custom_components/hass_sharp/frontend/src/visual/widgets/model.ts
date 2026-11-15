@@ -38,6 +38,8 @@ export interface Widget {
   entityString?: boolean
   /** state: entities named by the selector itself, states it hides, and the attribute it reads instead of the state. */
   stateEntities?: string[]
+  /** state: enum choices of a connected entity's State property, used when registry states are unknown. */
+  fallbackStateOptions?: WidgetOption[]
   hideStates?: string[]
   stateAttribute?: string
   /** state: the known states are suggestions for free text instead of a closed choice, so the value can be cleared or be any state. */

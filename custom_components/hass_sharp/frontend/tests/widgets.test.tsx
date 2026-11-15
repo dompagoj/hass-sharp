@@ -480,6 +480,24 @@ describe('pickers', () => {
     expect(host.querySelector('input[aria-label="HVAC mode"]')).not.toBeNull()
     expect(host.querySelector('select[aria-label="HVAC mode"]')).toBeNull()
   })
+  it('uses labeled state fallback choices only without registry choices, filtering hidden states before showing them', async () => {
+    const fallback = { ...stateField, fallbackStateOptions: [
+      { value: 'off', label: 'Powered down' }, { value: 'heat_cool', label: 'Heat/Cool' }, { value: 'unknown', label: 'Unknown' },
+    ] }
+    const [widget, setWidget] = createSignal<Widget>(fallback)
+    const commits: unknown[] = []
+    const { host } = mount(() => <WidgetControl widget={widget()} value="heat_cool" commit={value => commits.push(value)} id="state" label="State" disabled={false} compact={false} />)
+    const offered = () => [...(host.querySelector('select')?.options ?? [])].map(o => o.textContent)
+    expect(offered()).toEqual(['Powered down', 'Heat/Cool', 'Unknown'])
+    expect(stateLabel('heat_cool', fallback, [], undefined)).toBe('Heat/Cool')
+    expect(valueSummary(withStates(fallback, [], undefined), 'heat_cool')).toBe('Heat/Cool')
+    expect(withStates({ ...fallback, hideStates: ['off', 'unknown'] }, [], undefined).options).toEqual([{ value: 'heat_cool', label: 'Heat/Cool' }])
+    expect(withStates({ ...fallback, hideStates: ['off'] }, ['climate.hall'], [{ entity_id: 'climate.hall', state_options: ['off'] }]).options).toEqual([])
+    expect(withStates({ ...fallback, stateAttribute: 'preset_mode' }, [], undefined).options).toBeUndefined()
+    setWidget({ ...fallback, hideStates: ['off', 'heat_cool', 'unknown'] })
+    expect(host.querySelector('input[aria-label="State"]')).not.toBeNull()
+    expect(commits).toEqual([])
+  })
   it('searches registry items as you type and chooses with the keyboard', async () => {
     const changes: Operand[] = []
     const { host } = mount(() => <InputEditor input={selector(['string'], { area: {} })} value={undefined} onChange={o => changes.push(o)} variant="panel" label="Area" />)

@@ -1,10 +1,10 @@
 import type { JsonValue } from '../contract'
-import { displayValue, jsonEqual, optionWords, record, strings } from './json'
+import { displayValue, jsonEqual, record, strings } from './json'
 import { languageName } from './lookups'
 import { mediaTitle } from './media'
 import { durationParts, durationSeconds, type Widget } from './model'
 import { targetIds } from './pickers'
-import { stateWords, widgetStates, type StateEntity } from './states'
+import { stateWords, stateWidgetOptions, type StateEntity } from './states'
 
 /** The registry kinds whose ids a summary names. */
 export type NamedKind = 'entity' | 'device' | 'area' | 'floor' | 'label'
@@ -33,12 +33,12 @@ export function optionLabel(widget: Widget, value: JsonValue): string {
 }
 /**
  * A state widget with the options its picker offers: the states of the entities the step acts on (`ids`, from its
- * literal target or entity) and of the selector's own entities, from the registry's `state_options`. Any other widget,
- * and the state of an attribute, as it is.
+ * target or entity) and of the selector's own entities, from the registry's `state_options`, with the widget's enum
+ * fallback when those states are unknown. Any other widget, and the state of an attribute, as it is.
  */
 export function withStates(widget: Widget, ids: readonly string[], entities: readonly StateEntity[] | undefined): Widget {
   if (widget.kind !== 'state' || widget.stateAttribute) return widget
-  return { ...widget, options: widgetStates(widget, ids, entities).map(value => ({ value, label: optionWords(value) })) }
+  return { ...widget, options: stateWidgetOptions(widget, ids, entities) }
 }
 /** A widget in which null is a value someone wrote (the JSON editor), not an empty input. */
 export const keepsNull = (widget: Widget) => widget.kind === 'json'

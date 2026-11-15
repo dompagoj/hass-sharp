@@ -14,6 +14,7 @@ import {
   type VisualCatalogSnapshot,
 } from '../contract'
 import { connectionIndex, graphTypes } from '../connectionIndex'
+import { entityStateContext } from '../entityStateContext'
 import { inputType, nodeInputs, outputPort, portLabel, type VisualGraph } from '../graph'
 import { nodeIdentity, type NodeIdentity } from '../icons'
 import { nodeSummary, serviceFieldLabel, type SummaryNames } from '../nodeSummary'
@@ -344,11 +345,12 @@ export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionInd
     })
   // Unset ports resolve to undefined, which JSON would drop: keep them as null.
   const resolved = Object.entries(index.analysis.resolved.get(node.id) ?? {}).map(([port, type]) => [port, type ?? null])
+  const stateContext = node.kind === 'condition' ? entityStateContext(graph, node, 'entity', catalog) : undefined
   const diagnostics = ctx.diagnostics.filter(d => d.nodeId === node.id).map(d => [d.severity, d.message, d.inputId ?? '', d.portId ?? ''])
   const rejected = ctx.rejected?.nodeId === node.id ? ctx.rejected : undefined
   return JSON.stringify([
     node.kind, node.label ?? null, node.config, inputs, outputs, executionPorts(node, catalog), wires, unreachable(node, ctx), resolved, diagnostics,
-    rejected ?? null,
+    rejected ?? null, stateContext ?? null,
   ])
 }
 

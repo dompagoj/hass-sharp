@@ -11,6 +11,7 @@ import type { VisualDiagnostic } from '../src/visual/api'
 import { fieldOffered, filterFacts, targetEntities } from '../src/visual/ServiceFields'
 import { HassCtx } from '../src/context'
 import services from '../../../../tests/fixtures/visual-services.json'
+import richCatalogFixture from '../../../../tests/fixtures/visual-rich-catalog.json'
 
 let dispose: (() => void) | undefined
 let client: QueryClient | undefined
@@ -47,12 +48,12 @@ function type(field: HTMLInputElement | HTMLTextAreaElement, value: string) {
 }
 
 /** The inspector over a graph history (and the canvas beside it when asked), as the editor wires them. */
-function mount(graph: VisualGraph, id: string | undefined, options: { canvas?: boolean; diagnostics?: VisualDiagnostic[]; catalog?: VisualCatalogSnapshot; hass?: Record<string, unknown>; edge?: string; onEditCode?: (id: string) => void } = {}) {
+function mount(graph: VisualGraph, id: string | undefined, options: { canvas?: boolean; diagnostics?: VisualDiagnostic[]; catalog?: VisualCatalogSnapshot | (() => VisualCatalogSnapshot); hass?: Record<string, unknown>; edge?: string; onEditCode?: (id: string) => void } = {}) {
   const el = host()
   const history = createGraphHistory(graph)
   const [selected, setSelected] = createSignal(id)
   const [selection, setSelection] = createSignal<{ ids: string[]; edge?: string }>({ ids: id ? [id] : [], edge: options.edge })
-  const current = options.catalog ?? catalog
+  const current = () => typeof options.catalog === 'function' ? options.catalog() : options.catalog ?? catalog
   client = new QueryClient()
   const hass = { callWS: async (message: { type: string }) => (message.type === 'hass_sharp/get_entities' ? structuredClone(registry) : {}), ...options.hass }
   dispose = render(
@@ -61,10 +62,10 @@ function mount(graph: VisualGraph, id: string | undefined, options: { canvas?: b
         <HassCtx.Provider value={hass as any}>
           <div class="hs-visual-workspace">
             {options.canvas && (
-              <FlowAdapter graph={history.graph()} catalog={current} selectedId={selected()} onSelect={setSelected}
+              <FlowAdapter graph={history.graph()} catalog={current()} selectedId={selected()} onSelect={setSelected}
                 onSelectionChange={(ids, edge) => setSelection({ ids, edge })} onChange={history.commit} />
             )}
-            <Inspector graph={history.graph()} catalog={current} diagnostics={options.diagnostics ?? []} commit={history.commit}
+            <Inspector graph={history.graph()} catalog={current()} diagnostics={options.diagnostics ?? []} commit={history.commit}
               selected={history.graph().nodes.find(n => n.id === selected())} selectedIds={selection().ids} selectedEdgeId={selection().edge}
               onSelect={next => { setSelected(next); setSelection({ ids: next ? [next] : [] }) }} onEditCode={options.onEditCode} />
           </div>
@@ -153,6 +154,103 @@ it('shows climate.set_hvac_mode\'s hvac_mode as a select of the chosen entity\'s
   select.value = [...select.options].find(o => o.textContent === 'Heat')!.value
   select.dispatchEvent(new Event('change', { bubbles: true }))
   expect((node().config.fields as any).hvac_mode).toMatchObject({ kind: 'literal', value: 'heat' })
+})
+
+const richCatalog = richCatalogFixture.catalog as unknown as VisualCatalogSnapshot
+const dataWire = (graph: VisualGraph, source = 'trigger-1', sourcePort = 'entity_id'): VisualGraph => ({ ...graph, edges: [
+  ...graph.edges.filter(e => !(e.kind === 'data' && e.target === 'condition-1' && e.targetPort === 'entity')),
+  { id: 'entity-wire', kind: 'data', source, sourcePort, target: 'condition-1', targetPort: 'entity' },
+] })
+const stateChoices = (el: Element) => [...(row(el, 'state')?.querySelector('select')?.options ?? [])].filter(o => !o.disabled).map(o => o.textContent)
+
+it('offers connected binary sensor states and stores the raw chosen state', async () => {
+  let graph = updateNode(createGraph('Connected states'), 'trigger-1', { config: { type: 'entity', entity: 'binary_sensor.motion' } })
+  graph = updateNode(graph, 'condition-1', { config: { entity: { kind: 'unset' }, state: 'off' } })
+  const { el, node } = mount(dataWire(graph), 'condition-1', { catalog: richCatalog, canvas: true })
+  await vi.waitFor(() => expect(stateChoices(el)).toEqual(['Off', 'On', 'Unknown', 'Unavailable']))
+  const select = row(el, 'state')!.querySelector<HTMLSelectElement>('select')!
+  select.value = [...select.options].find(o => o.textContent === 'On')!.value
+  select.dispatchEvent(new Event('change', { bubbles: true }))
+  expect(node().config.state).toBe('on')
+  await vi.waitFor(() => expect(el.querySelector('[data-id="condition-1"] .hs-card__summary')?.textContent).toBe('If entity is On'))
+})
+
+it.each(['Custom C#', 'Select property'])('offers the resolved State enum of a %s entity output', async source => {
+  let graph = updateNode(createGraph('Typed entity'), 'condition-1', { config: { entity: { kind: 'unset' }, state: 'heat_cool' } })
+  const signature = {
+    title: 'Read entity', description: '', pure: true, inputs: {},
+    outputs: { result: { type: source === 'Custom C#' ? 'entity_id:climate' : 'global::NodeLib.Room', label: 'Result' } },
+    types: { 'global::NodeLib.Room': { description: 'Room', properties: [{ name: 'Thermostat', type: 'entity_id:climate', nullable: false }] } },
+  }
+  graph = updateNode(addNode(graph, 'custom', 'code'), 'code', { config: { source: '', signature, arguments: {} } })
+  if (source === 'Select property') {
+    graph = updateNode(addNode(graph, 'select_property', 'property'), 'property', { config: { property: 'Thermostat' } })
+    graph = { ...graph, edges: [...graph.edges, { id: 'room', kind: 'data', source: 'code', sourcePort: 'result', target: 'property', targetPort: 'value' }] }
+  }
+  const { el, node } = mount(dataWire(graph, source === 'Custom C#' ? 'code' : 'property', source === 'Custom C#' ? 'result' : 'value'), 'condition-1', { catalog: richCatalog, canvas: true })
+  await vi.waitFor(() => expect(stateChoices(el)).toContain('Heat/Cool'))
+  expect(el.querySelector('[data-id="condition-1"] .hs-card__summary')?.textContent).toBe(`If ${source === 'Custom C#' ? 'result' : 'value'} is Heat/Cool`)
+  expect(node().config.state).toBe('heat_cool')
+})
+
+it.each(['missing source', 'unknown type', 'string State'])('keeps state text entry for %s despite a leftover entity literal', async source => {
+  let graph = updateNode(createGraph('Unknown entity'), 'condition-1', { config: { entity: lit('entity_id', 'climate.living'), state: 'saved_state' } })
+  if (source !== 'missing source') graph = updateNode(addNode(graph, 'custom', 'code'), 'code', { config: {
+    source: '', arguments: {}, signature: { title: 'Read entity', description: '', pure: true, inputs: {}, types: {}, outputs: { result: { type: source === 'unknown type' ? 'global::Missing.Entity' : 'entity_id:sensor' } } },
+  } })
+  const { el, node } = mount(dataWire(graph, 'code', 'result'), 'condition-1', { catalog: richCatalog })
+  await vi.waitFor(() => expect(row(el, 'state')?.querySelector<HTMLInputElement>('input')?.value).toBe('saved_state'))
+  expect(row(el, 'state')?.querySelector('select')).toBeNull()
+  expect(node().config.state).toBe('saved_state')
+})
+
+it('refreshes connected entity choices on upstream edits, rewiring, disconnect, undo and redo without replacing the inspector', async () => {
+  const snapshot = { ...registry, entities: [
+    entity('climate.living', 'Living room', ['off', 'heat']), entity('climate.den', 'Den', ['off', 'cool']),
+    entity('select.scene', 'Scene', ['movie_night', 'reading']),
+  ] }
+  let graph = updateNode(createGraph('Reactive states'), 'trigger-1', { config: { type: 'entity', entity: 'climate.living' } })
+  graph = updateNode(graph, 'condition-1', { config: { entity: lit('entity_id', 'select.scene'), state: 'cool' } })
+  graph = updateNode(addNode(graph, 'constant', 'scene'), 'scene', { config: { type: 'entity_id:select', value: lit('entity_id:select', 'select.scene') } })
+  const { el, history, node } = mount(dataWire(graph), 'condition-1', { catalog: richCatalog, canvas: true,
+    hass: { callWS: async () => snapshot } })
+  await vi.waitFor(() => expect(stateChoices(el)).toEqual(['cool', 'Off', 'Heat']))
+  const inspector = el.querySelector('.hs-inspector')
+  const summary = () => el.querySelector('[data-id="condition-1"] .hs-card__summary')?.textContent
+  expect(summary()).toBe('If entity is cool')
+  history.commit(updateNode(history.graph(), 'trigger-1', { config: { type: 'entity', entity: 'climate.den' } }))
+  await vi.waitFor(() => expect(stateChoices(el)).toEqual(['Off', 'Cool']))
+  expect(summary()).toBe('If entity is Cool')
+  history.undo()
+  await vi.waitFor(() => expect(stateChoices(el)).toEqual(['cool', 'Off', 'Heat']))
+  expect(summary()).toBe('If entity is cool')
+  history.redo()
+  await vi.waitFor(() => expect(stateChoices(el)).toEqual(['Off', 'Cool']))
+  history.commit(dataWire(history.graph(), 'scene', 'value'))
+  await vi.waitFor(() => expect(stateChoices(el)).toEqual(['cool', 'Movie night', 'Reading']))
+  history.commit({ ...history.graph(), edges: history.graph().edges.filter(e => e.id !== 'entity-wire') })
+  await vi.waitFor(() => expect(stateChoices(el)).toEqual(['cool', 'Movie night', 'Reading']))
+  expect(el.querySelector('.hs-inspector')).toBe(inspector)
+  expect(node().config.state).toBe('cool')
+})
+
+it('keeps a stored state while registry and catalog choices arrive or change', async () => {
+  let finish!: (value: typeof registry) => void
+  const loaded = new Promise<typeof registry>(resolve => { finish = resolve })
+  const [current, setCatalog] = createSignal(richCatalog)
+  let graph = updateNode(createGraph('Loading states'), 'trigger-1', { config: { type: 'entity', entity: 'climate.living' } })
+  graph = updateNode(graph, 'condition-1', { config: { entity: { kind: 'unset' }, state: 'heat_cool' } })
+  const { el, node } = mount(dataWire(graph), 'condition-1', { catalog: current, canvas: true, hass: { callWS: () => loaded } })
+  expect(stateChoices(el)).toContain('Heat/Cool')
+  expect(el.querySelector('[data-id="condition-1"] .hs-card__summary')?.textContent).toBe('If entity is Heat/Cool')
+  const changed = structuredClone(richCatalog)
+  changed.types['global::HassSharp.Entities.ClimateState'].enumLabels![5] = 'Combined mode'
+  setCatalog(changed)
+  expect(stateChoices(el)).toContain('Combined mode')
+  expect(el.querySelector('[data-id="condition-1"] .hs-card__summary')?.textContent).toBe('If entity is Combined mode')
+  finish(registry)
+  await vi.waitFor(() => expect(stateChoices(el)).toEqual(['heat_cool', 'Off', 'Heat', 'Cool', 'Unavailable']))
+  expect(node().config.state).toBe('heat_cool')
 })
 
 it('adds required fields automatically and prunes fields the new service does not have', async () => {

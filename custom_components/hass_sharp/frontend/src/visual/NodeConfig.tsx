@@ -12,6 +12,7 @@ import { constantTypeLabels, constantTypes, retypeConstant } from './constant'
 import { RemoveWire } from './RemoveWire'
 import { chooseProperty, PropertyPicker } from './selectProperty'
 import { graphTypes } from './connectionIndex'
+import { entityStateContext } from './entityStateContext'
 import { customSignature, listedTypes, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
@@ -22,7 +23,6 @@ import { stateField, WidgetControl } from './widgets'
 import type { VisualDiagnostic } from './api'
 
 type Options = { coalesce?: string }
-const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((v, i) => v === b[i])
 const operators: Record<string, string> = { eq: 'is equal to', ne: 'is not equal to', lt: 'is less than', le: 'is at most', gt: 'is greater than', ge: 'is at least' }
 /** Config keys edited by a kind's own section, or not at all (`values` of a loop result are its inputs). */
@@ -126,7 +126,7 @@ export function NodeConfig(props: NodeConfigProps) {
     const constantLabels = createMemo(() => (kind() === 'constant' && field.name === 'type' ? constantTypeLabels(props.catalog, typeof value() === 'string' ? (value() as string) : undefined) : undefined))
     const optionLabel = (option: string) => (types() ? constantLabels()?.get(option) ?? typeLabel(option, props.catalog) : field.name === 'operator' ? operators[option] ?? option : words.key(option))
     const number = () => field.rule.type === 'integer' || field.rule.type === 'number'
-    const entityIds = () => { const entity = props.node.config.entity; return record(entity) && entity.kind === 'literal' && typeof entity.value === 'string' ? [entity.value] : [] }
+    const stateContext = createMemo(() => kind() === 'condition' && field.name === 'state' ? entityStateContext(props.graph, props.node, 'entity', props.catalog) : undefined)
     return (
       <div class="hs-insp-field" data-input-id={field.name} aria-invalid={errors().length > 0 || undefined}>
         <label class="hs-insp-field__label" for={id}>{label()}</label>
@@ -145,9 +145,9 @@ export function NodeConfig(props: NodeConfigProps) {
                   set(field.name, parsed)
                 }} />
             }>
-              <WidgetControl widget={stateField} value={typeof value() === 'string' ? (value() as string) : undefined} id={id} label={label()}
+              <WidgetControl widget={{ ...stateField, fallbackStateOptions: stateContext()?.fallbackStateOptions }} value={typeof value() === 'string' ? (value() as string) : undefined} id={id} label={label()}
                 describedBy={hint()} invalid={errors().length > 0} disabled={false} compact={false} required={!!field.rule.required}
-                context={{ targetEntityIds: entityIds() }} commit={v => set(field.name, typeof v === 'string' ? v : undefined)} />
+                context={{ targetEntityIds: stateContext()?.entityIds }} commit={v => set(field.name, typeof v === 'string' ? v : undefined)} />
             </Show>
           }>
             <span class="hs-widget-row">

@@ -1,6 +1,6 @@
 import type { JsonValue } from '../contract'
 import { displayValue, optionWords } from './json'
-import type { Widget } from './model'
+import type { Widget, WidgetOption } from './model'
 
 /** An entity as far as its states go (a registry entity carries more). */
 export interface StateEntity {
@@ -41,9 +41,24 @@ export const stateField: Widget = { kind: 'state', multiple: false }
 export const stateSuggestions: Widget = { ...stateField, freeText: true }
 
 /** The states a state widget offers for these entities: the rule of its picker, its card chip and its trace chip. */
+export function stateWidgetOptions(widget: Widget, ids: readonly string[], entities: readonly StateEntity[] | undefined): WidgetOption[] {
+  if (widget.stateAttribute) return []
+  // Choose the source before hiding states: hiding all known registry states must not revive fallback choices.
+  const known = stateOptions(entities, [...ids, ...(widget.stateEntities ?? [])])
+  const options = known.length ? known.map(value => ({ value, label: optionWords(value) })) : widget.fallbackStateOptions ?? []
+  const hidden = new Set(widget.hideStates), seen = new Set<string>()
+  return options.filter(option => {
+    if (typeof option.value !== 'string' || hidden.has(option.value) || seen.has(option.value)) return false
+    seen.add(option.value)
+    return true
+  })
+}
+
 export const widgetStates = (widget: Widget, ids: readonly string[], entities: readonly StateEntity[] | undefined): string[] =>
-  widget.stateAttribute ? [] : stateOptions(entities, [...ids, ...(widget.stateEntities ?? [])], widget.hideStates)
+  stateWidgetOptions(widget, ids, entities).map(option => option.value as string)
 
 /** How a state reads where it is not being picked, for a state widget and the entities its step acts on. */
-export const stateLabel = (value: JsonValue, widget: Widget, ids: readonly string[], entities: readonly StateEntity[] | undefined): string =>
-  stateWords(value, widgetStates(widget, ids, entities))
+export function stateLabel(value: JsonValue, widget: Widget, ids: readonly string[], entities: readonly StateEntity[] | undefined): string {
+  const options = stateWidgetOptions(widget, ids, entities)
+  return options.find(option => option.value === value)?.label ?? stateWords(value, options.map(option => option.value as string))
+}

@@ -1,6 +1,7 @@
 import { customSignature, dataInputs, dataOutputs, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 import { stateField, stateLabel } from './widgets/states'
+import { entityStateContext } from './entityStateContext'
 
 /** Registry names used to say "Hallway" rather than `light.hallway`; every list is optional. */
 export interface SummaryNames {
@@ -107,11 +108,6 @@ function operandText(ctx: Context, port: string): string | undefined {
 }
 /** A state of these entities as the panel's state picker (`stateField`) labels it; the stored value is left as it is. */
 const stateText = (ctx: Context, ids: string[], value: string) => stateLabel(value, stateField, ids, ctx.registry?.entities)
-/** The entity id an input holds as a typed-in value. */
-const literalEntity = (ctx: Context, port: string) => {
-  const operand = inputValue(ctx.node, port, ctx.catalog)
-  return record(operand) && operand.kind === 'literal' && typeof operand.value === 'string' ? [operand.value] : []
-}
 const entityOperand = (ctx: Context, port: string) => {
   const operand = inputValue(ctx.node, port, ctx.catalog)
   return record(operand) && operand.kind === 'literal' && typeof operand.value === 'string' ? entityName(operand.value, ctx.registry) : operandText(ctx, port)
@@ -194,8 +190,10 @@ function kindText(ctx: Context): string | undefined {
       return target ? `${service} · ${target}` : service
     }
     case 'condition': {
-      const entity = entityOperand(ctx, 'entity')
-      return entity && text(config.state) ? `If ${entity} is ${stateText(ctx, literalEntity(ctx, 'entity'), text(config.state))}` : undefined
+      const context = entityStateContext(ctx.graph ?? { version: 5, name: '', nodes: [node], edges: [] }, node, 'entity', ctx.catalog)
+      const entity = operandText(ctx, 'entity')
+      const state = stateLabel(text(config.state), { ...stateField, fallbackStateOptions: context.fallbackStateOptions }, context.entityIds, ctx.registry?.entities)
+      return entity && text(config.state) ? `If ${entity} is ${state}` : undefined
     }
     case 'if': { const value = operandText(ctx, 'value'); return value ? `If ${value}` : undefined }
     case 'compare': {

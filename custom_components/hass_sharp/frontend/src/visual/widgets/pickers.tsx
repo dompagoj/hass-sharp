@@ -6,8 +6,8 @@ import type { JsonValue } from '../contract'
 import { domainWords } from '../typeLabels'
 import { Chips, type WidgetProps } from './common'
 import { ListWidget, SelectWidget, TextWidget } from './basic'
-import { optionWords, record, strings } from './json'
-import { widgetStates } from './states'
+import { record, strings } from './json'
+import { stateWidgetOptions } from './states'
 import type { Widget, WidgetOption } from './model'
 import { SearchSelect, type SearchOption } from './SearchSelect'
 import type { NameResolver } from './summary'
@@ -72,13 +72,13 @@ export function EntityWidget(props: WidgetProps) {
 }
 
 /**
- * Contract C3 "state": the union of `state_options` of the target entities; free text without any. A `freeText`
- * widget stays free text and suggests them.
+ * Contract C3 "state": the union of `state_options` of the target entities, else the widget's enum fallback; free
+ * text without any. A `freeText` widget stays free text and suggests them.
  */
 export function StateWidget(props: WidgetProps) {
   const entities = useEntities()
   const options = createMemo((): WidgetOption[] => {
-    return widgetStates(props.widget, props.context?.targetEntityIds ?? [], entities.data).map(value => ({ value, label: optionWords(value) }))
+    return stateWidgetOptions(props.widget, props.context?.targetEntityIds ?? [], entities.data)
   })
   return <Show when={options().length && !props.widget.freeText} fallback={<TextWidget {...props} widget={{ ...props.widget, kind: 'text', options: options() }} />}>
     <SelectWidget {...props} widget={{ ...props.widget, kind: 'select', options: options() }} />
