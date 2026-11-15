@@ -52,7 +52,11 @@ public static class VisualTypes
         return result.ToString();
     }
 
-    /// <summary>An exact catalog type, or a type synthesized from <c>parametricTypes</c>; null when unknown.</summary>
+    /// <summary>
+    /// An exact catalog type, or a type synthesized from <c>parametricTypes</c>; null when unknown. A synthesized type has
+    /// the <c>properties</c> its family lists for its parameter (<c>members.&lt;param&gt;</c>, the members of a domain's
+    /// entity class), else its root's (those of <c>Entity</c>).
+    /// </summary>
     public static JsonObject? Resolve(JsonObject catalog, string id)
     {
         if (catalog["types"] is not JsonObject types) return null;
@@ -64,6 +68,8 @@ public static class VisualTypes
         var label = Text(family, "label").Replace("{Param}", char.ToUpperInvariant(param[0]) + param[1..]).Replace("{param}", param);
         var resolved = new JsonObject { ["refines"] = name, ["pattern"] = Text(family, "valuePattern").Replace("{param}", param), ["label"] = label, ["description"] = label };
         foreach (var key in new[] { "clrType", "literalKind", "category", "nullable" }) if (root[key] is { } value) resolved[key] = value.DeepClone();
+        var properties = ((family["members"] as JsonObject)?[param] as JsonObject)?["properties"] as JsonArray ?? root["properties"] as JsonArray;
+        if (properties != null) resolved["properties"] = properties.DeepClone();
         return resolved;
     }
 

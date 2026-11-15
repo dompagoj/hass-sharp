@@ -3,7 +3,7 @@ import { InputEditor } from './InputEditor'
 import { closeIcon, Errors, keepFocus, TypeChip } from './InputRow'
 import { Glyph } from './Glyph'
 import { execLabel } from './flow/flowModel'
-import { resolveTypeSpec, type GraphNode, type Operand, type VisualCatalogSnapshot } from './contract'
+import { listedTypes, resolveTypeSpec, type GraphNode, type Operand, type VisualCatalogSnapshot } from './contract'
 import type { VisualGraph } from './graph'
 import { typeColor, typeLabel } from './typeLabels'
 import { DraftField } from './widgets/common'
@@ -148,7 +148,7 @@ export function Declarations(props: { ctx: StructureContext; key: 'carry' | 'exp
   const at = (key: string) => keys().indexOf(key)
   const prefix = props.key === 'carry' ? 'carry' : 'export'
   const used = (name: string) => ctx.graph().edges.some(e => e.kind === 'data' && ((e.source === ctx.node().id && e.sourcePort === `${prefix}:${name}`) || e.targetPort === `${prefix}:${name}`))
-  const literalTypes = () => Object.keys(ctx.catalog().types).filter(t => resolveTypeSpec(t, ctx.catalog())?.literalKind)
+  const literalTypes = () => listedTypes(ctx.catalog()).filter(t => resolveTypeSpec(t, ctx.catalog())?.literalKind)
   const [name, setName] = createSignal('')
   const [type, setType] = createSignal('number')
   const [error, setError] = createSignal('')

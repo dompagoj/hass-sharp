@@ -1,5 +1,5 @@
 import { createEffect, createMemo, For, Show } from 'solid-js'
-import { validLiteral, type TypeSpec, type VisualCatalogSnapshot } from './contract'
+import { listedTypes, validLiteral, type TypeSpec, type VisualCatalogSnapshot } from './contract'
 import { typeLabel } from './typeLabels'
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -39,10 +39,11 @@ const same = (a: string, b: string, catalog: VisualCatalogSnapshot) =>
   !!catalog.types[a]?.assignableTo?.includes(b) && !!catalog.types[b]?.assignableTo?.includes(a)
 /**
  * The types a Constant can hold, as its card and its panel list them (a stored Type left out stays shown). A type that
- * is the same as an offered type of the editor's own (C#'s `double` is Number) is offered once, as that one.
+ * is the same as an offered type of the editor's own (C#'s `double` is Number) is offered once, as that one; a type the
+ * lists leave out (`listed: false`, an enum of the entity classes) is not offered.
  */
 export function constantTypes(catalog: VisualCatalogSnapshot): string[] {
-  const all = Object.keys(catalog.types).filter(id => constantType(catalog.types[id]))
+  const all = listedTypes(catalog).filter(id => constantType(catalog.types[id]))
   const own = all.filter(builtIn)
   return all.filter(id => builtIn(id) || !own.some(b => same(id, b, catalog)))
 }

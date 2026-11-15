@@ -12,7 +12,7 @@ import { constantTypeLabels, constantTypes, retypeConstant } from './constant'
 import { RemoveWire } from './RemoveWire'
 import { chooseProperty, PropertyPicker } from './selectProperty'
 import { graphTypes } from './connectionIndex'
-import { customSignature, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { customSignature, listedTypes, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
 import { typeLabel } from './typeLabels'
@@ -120,8 +120,8 @@ export function NodeConfig(props: NodeConfigProps) {
     const value = () => props.node.config[field.name]
     const errors = () => errorsFor(field.name)
     const types = () => field.rule.enumSource === 'types' || field.name === 'type' || field.name === 'itemType'
-    // A Constant offers only the types a value can be typed in for; a Convert or a loop any type.
-    const options = () => (field.rule.enumSource === 'types' ? (kind() === 'constant' && field.name === 'type' ? constantTypes(props.catalog) : Object.keys(props.catalog.types)) : (field.rule.enum ?? []).map(String))
+    // A Constant offers only the types a value can be typed in for; a Convert or a loop any listed type.
+    const options = () => (field.rule.enumSource === 'types' ? (kind() === 'constant' && field.name === 'type' ? constantTypes(props.catalog) : listedTypes(props.catalog)) : (field.rule.enum ?? []).map(String))
     // A Constant's Type list names no two entries alike ("Number (int)" beside Number).
     const constantLabels = createMemo(() => (kind() === 'constant' && field.name === 'type' ? constantTypeLabels(props.catalog, typeof value() === 'string' ? (value() as string) : undefined) : undefined))
     const optionLabel = (option: string) => (types() ? constantLabels()?.get(option) ?? typeLabel(option, props.catalog) : field.name === 'operator' ? operators[option] ?? option : words.key(option))

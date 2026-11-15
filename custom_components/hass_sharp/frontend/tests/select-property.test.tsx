@@ -12,6 +12,7 @@ import { buildNodeView } from '../src/visual/flow/flowModel'
 import { NodeConfig } from '../src/visual/NodeConfig'
 import { nodeSummary } from '../src/visual/nodeSummary'
 import { chooseProperty, propertyChoices, propertyText } from '../src/visual/selectProperty'
+import richFixture from '../../../../tests/fixtures/visual-rich-catalog.json'
 
 // Task 30: a Select property node reads one property of a typed value; the types come from stored Custom C# signatures.
 const U = { kind: 'unset' }
@@ -65,6 +66,19 @@ describe('the type of a Select property node', () => {
     expect(view(graph('Age')).typeName).toBe('Number')
     expect(view(graph('')).typeName).toBe('No property chosen')
     expect(view(graph('Level')).typeName).toBe('Unknown type')
+  })
+  it('lists the members of the domain\'s entity class for an entity id, else Entity\'s', () => {
+    const rich = richFixture.catalog as unknown as VisualCatalogSnapshot
+    const entity = (id: string): Graph => ({
+      version: 5, name: 'Entity',
+      nodes: [{ id: 't', kind: 'trigger', config: { type: 'entity', entity: id } }, select('s'), { id: 'l', kind: 'log', config: { value: U } }],
+      edges: [step('t', 'l'), wire('t', 'entity_id', 's', 'value')],
+    })
+    const names = (id: string) => { const g = entity(id); return propertyChoices(g, node(g, 's'), rich).properties.map(p => p.name) }
+    const light = names('light.hall')
+    expect(light).toEqual(expect.arrayContaining(['EntityId', 'State', 'Brightness']))
+    expect(propertyChoices(entity('light.hall'), node(entity('light.hall'), 's'), rich).type).toBe('entity_id:light')
+    expect(names('made_up.hall')).toEqual(['EntityId', 'RawState', 'NumericState', 'Attributes'])
   })
 })
 

@@ -30,6 +30,14 @@ static class VisualTypesTests
             Check(VisualTypes.IsAssignable(catalog, source, target) == expected && VisualCatalogSnapshot.BuiltIn.IsAssignable(source, target) == expected, $"assignability {source} -> {target}");
         Check(VisualTypes.ValidLiteral(catalog, "entity_id:light", JsonValue.Create("light.kitchen"), true) && !VisualTypes.ValidLiteral(catalog, "entity_id:light", JsonValue.Create("switch.x"), true)
             && !VisualTypes.ValidLiteral(catalog, "entity_id:light", JsonValue.Create("bad id"), true), "literals satisfy every pattern in the chain");
+        // An entity enum's literal is one of Home Assistant's texts: never a state it does not list, nor the member's number.
+        var entities = new NodeLibraryCompiler(NodeLibraryFixture.EntityProvider).Preview([]).Snapshot.Catalog;
+        const string sensorState = "global::HassSharp.Entities.BinarySensorState";
+        Check(VisualTypes.ValidLiteral(entities, sensorState, JsonValue.Create("on"), true) && !VisualTypes.ValidLiteral(entities, sensorState, JsonValue.Create("jammed"), true)
+            && !VisualTypes.ValidLiteral(entities, sensorState, JsonValue.Create(1), true) && !VisualTypes.ValidLiteral(entities, sensorState, JsonValue.Create("Other"), true), "an entity enum takes its texts");
+        // Resolving a domain's id gives its class's members, an unknown domain's those of Entity.
+        Check(VisualTypes.Resolve(entities, "entity_id:light")?["properties"]?.AsArray().Any(p => p!["name"]!.GetValue<string>() == "Brightness") == true
+            && VisualTypes.Resolve(entities, "entity_id:made_up")?["properties"]?.ToJsonString() == entities["types"]!["entity_id"]!["properties"]!.ToJsonString(), "a resolved entity id has its members");
 
         // A library string parameter is a root CLR type: refined wires reach it through their root.
         var library = new NodeLibraryCompiler(Diagnostics).Preview([new("types", """

@@ -217,8 +217,10 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             {
                 // A supertype nested deeper than a pin may be is left out, as a member of such a type is: comparing it
                 // for conversions would take as long as a pin of that depth.
+                // A class deriving from an entity handle brings neither the handle nor what the handle implements.
+                var handle = BaseTypes(declared).FirstOrDefault(b => EntityPin(b) != null);
                 foreach (var contract in declared.AllInterfaces)
-                    if (!Unsupported(contract) && !TooDeep(contract) && compilation.IsSymbolAccessibleWithin(contract, compilation.Assembly)) into.TryAdd(TypeIdentity(contract), contract);
+                    if (!Unsupported(contract) && !TooDeep(contract) && handle?.AllInterfaces.Contains(contract, SymbolEqualityComparer.Default) != true && compilation.IsSymbolAccessibleWithin(contract, compilation.Assembly)) into.TryAdd(TypeIdentity(contract), contract);
                 for (var baseType = declared.BaseType; baseType != null; baseType = baseType.BaseType)
                     if (!Unsupported(baseType) && !TooDeep(baseType) && EntityPin(baseType) == null && compilation.IsSymbolAccessibleWithin(baseType, compilation.Assembly)) into.TryAdd(TypeIdentity(baseType), baseType);
             }
@@ -408,16 +410,46 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         pinned.UnionWith(typeSymbols.Keys);
         var properties = new Dictionary<string, ImmutableArray<(string Name, ITypeSymbol Type, ISymbol Member)>>(StringComparer.Ordinal);
         Properties(typeSymbols, pinned, properties, null, true);
+        // What Select property reads from an entity id: the members of Entity for entity_id, those of a domain's
+        // generated class for entity_id:<domain>. Their types join the catalog (the classes never do); a type that joins
+        // only for them, as each enum of the classes does, is left out of the editor's type lists.
+        var handles = new List<(string Pin, INamedTypeSymbol Type, ImmutableArray<(string Name, ITypeSymbol Type, ISymbol Member)> Members)>();
+        if (entityBase != null) handles.Add(("entity_id", entityBase, Members(entityBase, compilation)));
+        if (compilation.SourceModule.ReferencedAssemblySymbols.FirstOrDefault(a => a.Identity.Name.StartsWith(GeneratedEntities.AssemblyPrefix, StringComparison.Ordinal)) is { } entities)
+            foreach (var (pin, handle) in TypesIn(entities.GlobalNamespace).Select(t => (EntityPin(t), t)).Where(t => t.Item1 is not (null or "entity_id")).OrderBy(t => t.Item1, StringComparer.Ordinal))
+                handles.Add((pin!, handle, Members(handle, compilation)));
+        var listed = typeSymbols.Keys.ToHashSet(StringComparer.Ordinal);
+        foreach (var (_, _, members) in handles) foreach (var member in members) Register(typeSymbols, member.Type);
         var types = root["types"]!.AsObject();
+        // Only roots are CLR conversion targets; refinements are decided by the chain before Roslyn. Home Assistant has
+        // many entity enums, and comparing each with every type would double the time a preview takes; but an enum
+        // converts implicitly only to itself, its nullable form, System.Enum with what it derives from and implements, and
+        // dynamic, and no other type converts to one but dynamic. Compared with those alone, it is listed as comparing
+        // with every type would list it.
+        var roots = typeSymbols.Where(pair => !refined(pair.Key)).ToArray();
+        var others = roots.Where(pair => !TextEnum(Scalar(pair.Value))).ToArray();
+        var enumType = compilation.GetSpecialType(SpecialType.System_Enum);
+        var enumSupertypes = new HashSet<ITypeSymbol>(enumType.AllInterfaces.Cast<ITypeSymbol>().Concat(BaseTypes(enumType)).Append(enumType), SymbolEqualityComparer.Default);
+        var aboveEnums = roots.Where(pair => pair.Value.TypeKind == TypeKind.Dynamic || enumSupertypes.Contains(pair.Value)).ToArray();
+        var forms = roots.Where(pair => TextEnum(Scalar(pair.Value))).ToLookup(pair => Scalar(pair.Value), SymbolEqualityComparer.Default);
+        IEnumerable<KeyValuePair<string, ITypeSymbol>> Targets(ITypeSymbol symbol) =>
+            symbol.TypeKind == TypeKind.Dynamic ? roots : TextEnum(Scalar(symbol)) ? forms[Scalar(symbol)].Concat(aboveEnums) : others;
         foreach (var (id, symbol) in typeSymbols)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var type = types[id] as JsonObject ?? new JsonObject();
             if (!types.ContainsKey(id)) types[id] = type;
-            // Only roots are CLR conversion targets; refinements are decided by the chain before Roslyn.
-            DescribeType(type, symbol, typeSymbols.Where(pair => !refined(pair.Key)), compilation);
-            if (properties.TryGetValue(id, out var members) && !members.IsEmpty) type["properties"] = PropertyList(members, cancellationToken);
+            DescribeType(type, symbol, Targets(symbol), compilation);
+            if (!listed.Contains(id)) type["listed"] = false;
+            if (properties.TryGetValue(id, out var members) && !members.IsEmpty) type["properties"] = PropertyList(members, PinType, cancellationToken);
         }
+        var domains = new JsonObject();
+        foreach (var (pin, handle, members) in handles)
+        {
+            if (pin == "entity_id") { if (types["entity_id"] is JsonObject entity) entity["properties"] = PropertyList(members, PinType, cancellationToken); }
+            else domains[pin["entity_id:".Length..]] = new JsonObject { ["clrType"] = handle.ToDisplayString(), ["properties"] = PropertyList(members, PinType, cancellationToken) };
+        }
+        if (domains.Count > 0 && root["parametricTypes"]?["entity_id"] is JsonObject family) family["members"] = domains;
         VisualNodeCatalog.RefreshStructuralTypes(root);
         // Keep optional CLR defaults that cannot be represented faithfully in the JSON literal editor
         // in the backend descriptor only. Omitting their argument preserves C# default semantics.
@@ -469,7 +501,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                         DescribeType(entry, symbol, generation.Concat(supertypes), compilation);
                         entry["assignableFrom"] = new JsonArray(generation.Where(pair => pair.Key != id && VisualCatalogSnapshot.StandardConversion(compilation, pair.Value, symbol))
                             .Select(pair => (JsonNode?)JsonValue.Create(pair.Key)).ToArray());
-                        if (ownProperties.TryGetValue(id, out var members) && !members.IsEmpty) entry["properties"] = PropertyList(members, cancellationToken);
+                        if (ownProperties.TryGetValue(id, out var members) && !members.IsEmpty) entry["properties"] = PropertyList(members, PinType, cancellationToken);
                         entries[id] = entry;
                     }
                     foreach (var (_, input) in described.Inputs)
@@ -521,6 +553,10 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             foreach (var argument in named.TypeArguments) yield return argument;
     }
     static IEnumerable<ITypeSymbol> BaseTypes(ITypeSymbol type) { for (var b = type.BaseType; b != null; b = b.BaseType) yield return b; }
+    /// <summary>The top-level types of a namespace and of each namespace inside it.</summary>
+    static IEnumerable<INamedTypeSymbol> TypesIn(INamespaceSymbol space) => space.GetTypeMembers().Concat(space.GetNamespaceMembers().SelectMany(TypesIn));
+    /// <summary>Whether the type is an enum of the entity classes, whose members stand for Home Assistant's texts (<c>EntityText</c>).</summary>
+    static bool TextEnum(ITypeSymbol type) => type.TypeKind == TypeKind.Enum && type.ContainingAssembly?.Name.StartsWith(GeneratedEntities.AssemblyPrefix, StringComparison.Ordinal) == true;
 
     /// <summary>
     /// The type whose members a Select property node reads from a value of <paramref name="type"/>: a class, record or
@@ -565,12 +601,13 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     }
 
     /// <summary>
-    /// The <c>properties</c> of a type entry: each member's C# name, type id and whether it may be empty, with what its
-    /// documentation says (a record's positional property is described by the record's <c>param</c>).
+    /// The <c>properties</c> of a type entry: each member's C# name, type id (<paramref name="typeId"/>: a pin's, so an
+    /// entity handle is its entity id type) and whether it may be empty, with what its documentation says (a record's
+    /// positional property is described by the record's <c>param</c>).
     /// </summary>
-    static JsonArray PropertyList(ImmutableArray<(string Name, ITypeSymbol Type, ISymbol Member)> members, CancellationToken cancellationToken) => new(members.Select(m =>
+    static JsonArray PropertyList(ImmutableArray<(string Name, ITypeSymbol Type, ISymbol Member)> members, Func<ITypeSymbol, string> typeId, CancellationToken cancellationToken) => new(members.Select(m =>
     {
-        var entry = new JsonObject { ["name"] = m.Name, ["type"] = TypeIdentity(m.Type), ["nullable"] = Nullable(m.Type) };
+        var entry = new JsonObject { ["name"] = m.Name, ["type"] = typeId(m.Type), ["nullable"] = Nullable(m.Type) };
         if (PropertyDescription(m.Member, cancellationToken) is { Length: > 0 } description) entry["description"] = description;
         return (JsonNode?)entry;
     }).ToArray());
@@ -587,11 +624,22 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         type["label"] ??= symbol.ToDisplayString(); type["description"] ??= symbol.ToDisplayString();
         if (symbol is IArrayTypeSymbol arraySymbol) type["elementType"] = TypeIdentity(arraySymbol.ElementType);
         type["category"] = Category(symbol); type["nullable"] = Nullable(symbol); type["literalKind"] = LiteralKind(symbol);
-        var scalar = symbol is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullableScalar ? nullableScalar.TypeArguments[0] : symbol;
+        var scalar = Scalar(symbol);
         if (scalar.SpecialType == SpecialType.System_Char) type["character"] = true;
         var bounds = NumericBounds(scalar.SpecialType);
         if (bounds is { } range) { type["min"] = range.Min; type["max"] = range.Max; }
-        if (scalar.TypeKind == TypeKind.Enum)
+        if (TextEnum(scalar))
+        {
+            // An entity enum's values are Home Assistant's texts, as saved graphs and traces hold them, with its labels; the
+            // catch-all has no text and is no value to type in. Such a type is left out of the editor's type lists.
+            var texts = ((INamedTypeSymbol)scalar).GetMembers().OfType<IFieldSymbol>()
+                .Select(f => (Field: f, Text: f.GetAttributes().FirstOrDefault(a => a.AttributeClass is { Name: "EntityTextAttribute" } c && c.ContainingNamespace.ToDisplayString() == "HassSharp.Entities")))
+                .Where(t => t.Text?.ConstructorArguments.FirstOrDefault().Value is string).ToArray();
+            type["enumValues"] = new JsonArray(texts.Select(t => (JsonNode?)JsonValue.Create((string)t.Text!.ConstructorArguments[0].Value!)).ToArray());
+            type["enumLabels"] = new JsonArray(texts.Select(t => (JsonNode?)JsonValue.Create(t.Text!.NamedArguments.FirstOrDefault(a => a.Key == "Label").Value.Value as string ?? InWords(t.Field.Name))).ToArray());
+            type["listed"] = false;
+        }
+        else if (scalar.TypeKind == TypeKind.Enum)
         {
             var members = ((INamedTypeSymbol)scalar).GetMembers().OfType<IFieldSymbol>().Where(f => f.HasConstantValue && Convert.ToDecimal(f.ConstantValue) is >= -9007199254740991 and <= 9007199254740991).ToArray();
             type["enumValues"] = new JsonArray(members.Select(f => JsonSerializer.SerializeToNode(f.ConstantValue)).ToArray());
@@ -609,6 +657,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         SpecialType.System_Int64 => (-9007199254740991, 9007199254740991), SpecialType.System_UInt64 => (0, 9007199254740991),
         SpecialType.System_Single => (-float.MaxValue, float.MaxValue), SpecialType.System_Decimal => (-Math.BitDecrement((double)decimal.MaxValue), Math.BitDecrement((double)decimal.MaxValue)), _ => null };
 
+    /// <summary>The type a <c>Nullable&lt;T&gt;</c> holds; any other type itself.</summary>
+    static ITypeSymbol Scalar(ITypeSymbol type) => type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable ? nullable.TypeArguments[0] : type;
     static bool Nullable(ITypeSymbol type) => type.NullableAnnotation == NullableAnnotation.Annotated || type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
     static bool Unsupported(ITypeSymbol type) => type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer or TypeKind.TypeParameter or TypeKind.Error || type.IsRefLikeType ||
         type is IArrayTypeSymbol a && Unsupported(a.ElementType) || type is INamedTypeSymbol n && (n.IsUnboundGenericType || n.TypeArguments.Any(Unsupported) || n.ContainingType != null && Unsupported(n.ContainingType));

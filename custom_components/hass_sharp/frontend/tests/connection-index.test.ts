@@ -43,7 +43,7 @@ const FALLBACKS: string[] = []
 // The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit), and the one past the limit.
 const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config',
   'select property: a chain past the graph limit answers the limit alone: past the graph limit']
-const RICH: Totals = { graphs: 33, pairs: 248, accepted: 56, rejected: 192, byValidation: 192, fallbacks: [], skipped: [] }
+const RICH: Totals = { graphs: 39, pairs: 344, accepted: 107, rejected: 237, byValidation: 237, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 
 interface Totals { graphs: number; pairs: number; accepted: number; rejected: number; byValidation: number; fallbacks: string[]; skipped: string[] }

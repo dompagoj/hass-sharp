@@ -12,7 +12,7 @@ const expected: Record<string, string> = {
   string: 'string',
   object: 'JsonObject',
   array: 'JsonArray',
-  entity_id: 'string',
+  entity_id: 'Entity',
   target: 'JsonObject',
   'global::HassSharp.EntityStateSnapshot': 'EntityStateSnapshot',
   'global::System.Boolean': 'bool',
@@ -76,8 +76,14 @@ it.each([
   expect(csharpType(id, catalog)).toBe(written)
 })
 
-it('writes a parametric entity type as its root, the nullable flag as ?, and nothing for what it cannot name', () => {
-  expect(csharpType('entity_id:light', nodeCatalog)).toBe('string')
+it('writes an entity id as its handle class, the nullable flag as ?, and nothing for what it cannot name', () => {
+  // The class of the domain the server's catalog names, else Entity (the bundled catalog knows no classes).
+  expect(csharpType('entity_id:light', catalog)).toBe('LightEntity')
+  expect(csharpType('entity_id:binary_sensor', catalog)).toBe('BinarySensorEntity')
+  expect(csharpType('entity_id:made_up', catalog)).toBe('Entity')
+  expect(csharpType('entity_id:light', nodeCatalog)).toBe('Entity')
+  expect(csharpType('entity_id', nodeCatalog)).toBe('Entity')
+  expect(csharpType('entity_id:Light', catalog)).toBeUndefined()
   const flagged = { ...catalog, types: { ...catalog.types, 'global::NodeLib.Flagged': { description: '', nullable: true } } }
   expect(csharpType('global::NodeLib.Flagged', flagged)).toBe('NodeLib.Flagged?')
   // Unknown, without a CLR type, or not a type id: none rather than a guess.
@@ -89,7 +95,8 @@ it('writes a parametric entity type as its root, the nullable flag as ?, and not
 })
 
 it('names each C# type of several types once, in order', () => {
-  expect(csharpTypes(['target', 'entity_id', 'entity_id:light', 'unknown'], nodeCatalog)).toEqual(['JsonObject', 'string'])
+  expect(csharpTypes(['target', 'entity_id', 'entity_id:light', 'unknown'], nodeCatalog)).toEqual(['JsonObject', 'Entity'])
+  expect(csharpTypes(['entity_id:light', 'entity_id', 'entity_id:switch'], catalog)).toEqual(['LightEntity', 'Entity', 'SwitchEntity'])
 })
 
 /** The links of a type's C# text: [text, the type id it asks for]. */
@@ -109,8 +116,11 @@ const linked: Record<string, string[][]> = {
   'global::System.IEquatable<global::NodeLib.Profile>': [['NodeLib.Profile', 'global::NodeLib.Profile']],
 }
 
+/** An enum of the entity classes (`LightState`, `LightColorMode?`) links its name to itself, without the `?`. */
+const entityEnum = (id: string) => { const plain = id.replace(/\?$/, ''); return [[plain.split('.').pop()!, plain]] }
+
 it('links, over every type of the rich catalog, exactly the parts that name a library, Custom C# or HassSharp type', () => {
-  for (const id of Object.keys(catalog.types)) expect(links(id), id).toEqual(linked[id] ?? [])
+  for (const id of Object.keys(catalog.types)) expect(links(id), id).toEqual(linked[id] ?? (id.startsWith('global::HassSharp.Entities.') ? entityEnum(id) : []))
   // The pieces always read as the plain C# type.
   for (const id of Object.keys(catalog.types)) expect(csharpTypeParts(id, catalog)!.map(p => p.text).join(''), id).toBe(csharpType(id, catalog))
 })
@@ -119,6 +129,7 @@ it.each([
   // C#'s keywords and the System namespaces are never links, alone or composed.
   ['boolean', []],
   ['entity_id:light', []],
+  ['entity_id', []],
   ['target', []],
   ['global::System.Collections.Generic.List<global::System.String>', []],
   ['global::System.Text.Json.JsonElement', []],

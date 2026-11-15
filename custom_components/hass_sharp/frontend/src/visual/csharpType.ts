@@ -1,13 +1,15 @@
-import { resolveTypeSpec, type VisualCatalogSnapshot } from './contract'
+import { entityClass, resolveTypeSpec, type VisualCatalogSnapshot } from './contract'
 
 /**
  * The C# type a `[Node]` method declares to take or give a value of a catalog type, written as C# code writes it: `bool`
  * for True/False, `double` for Number, `List<string>`, `double?`, `NodeLib.Mode`. Shown beside the friendly name in
  * the inspector, never on cards.
  *
- * - A built-in type (`boolean`, `number`, `entity_id:light`, `target`, …) by the CLR type the catalog gives it
- *   (`clrType`), which is the type the generated code passes to a node method: `NodeLibraryCompiler` maps `bool`,
- *   `double`, `string`, `JsonObject` and `JsonArray` back to these.
+ * - A built-in type (`boolean`, `number`, `target`, …) by the CLR type the catalog gives it (`clrType`), which is the
+ *   type the generated code passes to a node method: `NodeLibraryCompiler` maps `bool`, `double`, `string`,
+ *   `JsonObject` and `JsonArray` back to these.
+ * - An entity id by the handle class a node method takes it as: `LightEntity` for `entity_id:light` (the class the
+ *   catalog's `parametricTypes.entity_id.members` names), `Entity` for `entity_id` or a domain without a class.
  * - A library or Custom C# type by its id (`global::System.Int32` → `int`), with C#'s keywords, `T?` for
  *   `Nullable<T>`, tuples as `(a, b)`, and no namespace that every node's code already has in scope (the global usings
  *   of `DiagnosticsProvider.GlobalUsings`, and `System.Text.Json.Nodes`). A Custom C# node's own type drops its
@@ -32,12 +34,16 @@ export interface CSharpPart { text: string; type?: string }
 export function csharpTypeParts(typeId: string, catalog: VisualCatalogSnapshot): CSharpPart[] | undefined {
   const spec = resolveTypeSpec(typeId, catalog)
   const own = typeId.startsWith('global::') || typeId.startsWith('(')
-  const source = own ? typeId : spec?.clrType
+  // An entity id is taken by node code as its domain's handle class (`LightEntity`), or as `Entity`.
+  const handle = own ? undefined : entityClass(typeId, catalog)
+  const source = own ? typeId : handle ?? spec?.clrType
   if (!source) return
   let parts = render(source)
   if (parts === undefined) return
-  // A built-in type written by its CLR type (`clrType`) is asked for by its own catalog id.
-  if (!own) parts = parts.map(part => (part.type ? { ...part, type: typeId } : part))
+  // A built-in type written by its CLR type (`clrType`) is asked for by its own catalog id; a handle class has no
+  // definition to show yet.
+  if (handle) parts = join(parts.map(part => ({ text: part.text })))
+  else if (!own) parts = parts.map(part => (part.type ? { ...part, type: typeId } : part))
   const written = parts.map(part => part.text).join('')
   return spec?.nullable === true && !written.endsWith('?') ? join([...parts, { text: '?' }]) : parts
 }

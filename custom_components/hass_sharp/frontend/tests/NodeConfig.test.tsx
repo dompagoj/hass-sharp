@@ -449,8 +449,9 @@ it('names each C# type of an input that takes several, and the ? of a nullable o
   const graph = addNode(createGraph('Odd'), 'odd_step', 'odd', odd)
   const { el } = mount(graph, 'odd', { catalog: odd })
   const either = row(el, 'either')!.querySelector('.hs-type-chip')!
-  expect(either.querySelector('.hs-csharp-type')?.textContent).toBe('double or string')
-  expect(either.textContent).toContain(', C# types double or string')
+  // An entity id is taken as its handle class.
+  expect(either.querySelector('.hs-csharp-type')?.textContent).toBe('double or string or Entity')
+  expect(either.textContent).toContain(', C# types double or string or Entity')
   expect(row(el, 'maybe')!.querySelector('.hs-csharp-type')?.textContent).toBe('int?')
 })
 

@@ -120,8 +120,11 @@ public static class VisualNodeCatalog
         GraphNodes(graph).Values.Where(n => (catalog["nodes"]?[Text(n, "kind")]?["outputs"] as JsonObject ?? []).Any(o => PropertyOf(o.Value) != "")).ToList();
     /// <summary>Whether the kind's input takes a value whose type has properties (<c>$properties</c>): a value of exactly such a type, by its own entry.</summary>
     internal static bool SelectsProperties(JsonNode? spec, string port) => (spec?["inputs"]?[port]?["types"] as JsonArray ?? []).Any(t => t is JsonValue v && v.TryGetValue<string>(out var s) && s == "$properties");
-    /// <summary>The members a value of the type has, as its catalog entry lists them; empty for a type without any.</summary>
-    internal static JsonObject[] TypeProperties(JsonObject catalog, string type) => (((catalog["types"] as JsonObject)?[type] as JsonObject)?["properties"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
+    /// <summary>
+    /// The members a value of the type has, as its resolved entry lists them (<see cref="VisualTypes.Resolve"/>: an
+    /// entity id of a domain has its class's); empty for a type without any. Mirrored by <c>typeProperties</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static JsonObject[] TypeProperties(JsonObject catalog, string type) => (VisualTypes.Resolve(catalog, type)?["properties"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
     /// <summary>
     /// The type of each <c>propertyOf</c> output of the graph, under <c>resolvedOutputs</c> (node id, then port): the
     /// type of the chosen property of the type the first value wire into its input brings. A node reading another such

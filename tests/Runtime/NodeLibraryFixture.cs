@@ -44,9 +44,22 @@ public static class NodeLibraryFixture
         }
         """;
 
+    /// <summary>
+    /// A provider given the captured entity schema (<c>ha-entity-components.json</c>), so a catalog compiled with it
+    /// carries the entity classes' members and their enums. One for every caller: it is only read.
+    /// </summary>
+    internal static DiagnosticsProvider EntityProvider => Entities.Value;
+    static readonly Lazy<DiagnosticsProvider> Entities = new(() =>
+    {
+        var provider = new DiagnosticsProvider();
+        var domains = EntitySchemaCatalog.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ha-entity-components.json"))).Items.Select(p => KeyValuePair.Create(p.Key, (JsonObject)p.Value!));
+        if (!provider.UseEntitySchema([.. domains]).Accepted) throw new Exception("The captured entity schema's classes were not installed");
+        return provider;
+    });
+
     public static JsonObject Build()
     {
-        var preview = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new("shared", Source, 2)]);
+        var preview = new NodeLibraryCompiler(EntityProvider).Preview([new("shared", Source, 2)]);
         if (!preview.Valid) throw new Exception(string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
         var snapshot = preview.Snapshot;
         string Kind(string name) => snapshot.Methods.Values.Single(m => m.Method.Name == name).Kind;
@@ -116,11 +129,39 @@ public static class NodeLibraryFixture
             Wire(graph,"array","result","loop","items");
             Case("CLR array foreach "+factory+" to "+itemType,graph,valid,valid?null:"items");
         }
+        // An entity trigger's entity: Select property reads a member of its domain's class, and Compare takes a state by
+        // Home Assistant's text. A state it no longer lists, a member the domain lacks and plain text are refused.
+        JsonObject Entity(string entity, string property, string? state)
+        {
+            var graph = Graph(VisualGraphContract.CreateNode("log", "show", snapshot));
+            graph["nodes"]![0]!["config"] = new JsonObject { ["type"] = "entity", ["entity"] = entity };
+            graph["nodes"]![1]!["config"]!["value"] = new JsonObject { ["kind"] = "unset" };
+            var select = VisualGraphContract.CreateNode("select_property", "sel", snapshot); select["config"]!["property"] = property;
+            graph["nodes"]!.AsArray().Add(select);
+            Wire(graph, "t", "entity_id", "sel", "value");
+            if (state == null) { Wire(graph, "sel", "value", "show", "value"); return graph; }
+            var compare = VisualGraphContract.CreateNode("compare", "cmp", snapshot);
+            compare["config"]!["left"] = new JsonObject { ["kind"] = "unset" };
+            compare["config"]!["right"] = new JsonObject { ["kind"] = "literal", ["type"] = "global::HassSharp.Entities.BinarySensorState", ["value"] = state };
+            graph["nodes"]!.AsArray().Add(compare);
+            Wire(graph, "sel", "value", "cmp", "left"); Wire(graph, "cmp", "value", "show", "value");
+            return graph;
+        }
+        Case("entity: a binary sensor's state compared with a text Home Assistant lists", Entity("binary_sensor.hall", "State", "on"), true);
+        Case("entity: a state Home Assistant no longer lists", Entity("binary_sensor.hall", "State", "jammed"), false, "right");
+        Case("entity: a light's member", Entity("light.hall", "Brightness", null), true);
+        Case("entity: a member the domain's class lacks", Entity("binary_sensor.hall", "Brightness", null), false, "property");
+        Case("entity: an entity of a domain without a class has Entity's members", Entity("made_up.hall", "RawState", null), true);
+        var text = Entity("light.hall", "State", null);
+        text["nodes"]!.AsArray().Add(VisualGraphContract.CreateNode("constant", "c", snapshot));
+        text["edges"]!.AsArray().Single(e => e!["target"]!.GetValue<string>() == "sel")!["source"] = "c";
+        text["edges"]!.AsArray().Single(e => e!["target"]!.GetValue<string>() == "sel")!["sourcePort"] = "value";
+        Case("entity: plain text has no members", text, false, "value");
         // Custom C# nodes beside the library, with the pins the compiler writes for them (so their type ids are real).
         static JsonObject Custom(string id, string source) => new() { ["id"] = id, ["kind"] = "custom", ["config"] = new JsonObject { ["source"] = source, ["arguments"] = new JsonObject() } };
         static string Method(string returns, string parameters, string body, string before = "") =>
             before + "public static class CustomNode\n{\n    [Node(\"" + (returns == "void" ? "Take" : "Make") + "\")]\n    public static " + returns + " Run(" + parameters + ") => " + body + ";\n}";
-        JsonObject Derived(JsonObject graph) => new VisualGenerator(new DiagnosticsProvider()).DeriveSignatures(graph, snapshot);
+        JsonObject Derived(JsonObject graph) => new VisualGenerator(EntityProvider).DeriveSignatures(graph, snapshot);
         void CustomCase(string name, JsonObject from, string port, JsonObject to, string input, bool valid)
         {
             // Describe reads an entity first.
@@ -150,7 +191,7 @@ public static class NodeLibraryFixture
     public static void Verify()
     {
         var fixture = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "visual-rich-catalog.json")))!.AsObject();
-        var preview = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new(fixture["sourceId"]!.GetValue<string>(), fixture["source"]!.GetValue<string>(), fixture["revision"]!.GetValue<long>())]);
+        var preview = new NodeLibraryCompiler(EntityProvider).Preview([new(fixture["sourceId"]!.GetValue<string>(), fixture["source"]!.GetValue<string>(), fixture["revision"]!.GetValue<long>())]);
         if (!preview.Valid || !JsonNode.DeepEquals(preview.Snapshot.Catalog, fixture["catalog"])) throw new Exception("Shared catalog must match server-derived Roslyn metadata");
         foreach (var test in fixture["cases"]!.AsArray())
         {

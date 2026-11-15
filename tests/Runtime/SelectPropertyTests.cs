@@ -60,6 +60,8 @@ static class SelectPropertyTests
         Console.WriteLine("PASS select property: a chain far past the graph limit, or a cycle, is answered without recursing per node");
         TypeProperties();
         Console.WriteLine("PASS select property: type entries list the members a value of the type has");
+        EntityMembers();
+        Console.WriteLine("PASS select property: an entity id lists the members of its domain's class, and the entity enums are types of Home Assistant's texts");
         Validation();
         Console.WriteLine("PASS select property: the validator types the output by the property and says what to choose or use instead");
         await Reads();
@@ -160,7 +162,9 @@ static class SelectPropertyTests
         NoProperties(Made(s, "m", "Mode"), "Mode has no properties to select; connect a value that has some, such as a record from a node library");
         NoProperties(N("o", "constant", new { type = "object", value = Lit("object", new { name = "x" }) }), "Object has no properties to select; use Get field to take a value out of an object");
         NoProperties(N("o", "constant", new { type = "array", value = Lit("array", new[] { 1 }) }), "List has no properties to select; use Get field to take a value out of a list");
-        NoProperties(N("o", "constant", new { type = "entity_id", value = Lit("entity_id", "sensor.x") }), "Entity has no properties to select; use Read entity to get its state");
+        // An entity id has the members of Entity, even without Home Assistant's lists: one it lacks is said so.
+        var entity = Diagnose(Reading("UserName", "string got", N("o", "constant", new { type = "entity_id", value = Lit("entity_id", "sensor.x") })), s);
+        Check(entity.Any(d => d.NodeId == "sel" && d.InputId == "property" && d.Code == "property.unknown" && d.Message == "Entity has no property UserName; choose another"), "an entity id's members: " + Show(entity));
         NoProperties(N("o", "constant", new { type = "string", value = Lit("string", "x") }), "Text has no properties to select; connect a value that has some, such as a record from a node library");
         // Nothing connected: the value is required.
         var empty = Diagnose(Graph([Select("sel", ""), Reader("c", "string got")], E("t", "c"), D("sel", "c", "got")), s);
@@ -179,6 +183,97 @@ static class SelectPropertyTests
         Check(refreshed.Valid && refreshed.Graph != null && Stored(refreshed.Graph)["description"] == null, "a stored property's words are refreshed from the code: " + Show(refreshed.Diagnostics));
         var other = (JsonObject)custom.DeepClone(); other["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "mk")!["config"]!["signature"]!["types"]!["global::NodeLib.Custom_mk.Reading"]!["properties"]!.AsArray().OfType<JsonObject>().Single(p => p["name"]!.GetValue<string>() == "At")["type"] = "global::System.Int32";
         Check(new VisualGenerator(Diagnostics).Preview(other, s).Valid, "a property no node reads is not compared");
+    }
+
+    /// <summary>A library of a record holding handles, and a class deriving from <see cref="HassSharp.Entities.Entity"/>.</summary>
+    const string Rooms = """
+        public record Room(LightEntity Light, Entity Any);
+        public class Lamp : Entity { public Lamp(string entityId) : base(entityId) { } }
+        public static class Places
+        {
+            [Node("Room", Pure = true)] public static Room Room() => new(new("light.hall"), new("sensor.x"));
+            [Node("Lamp", Pure = true)] public static Lamp Lamp() => new("light.hall");
+            [Node("Maybe", Pure = true)] public static bool? Maybe() => null;
+        }
+        """;
+
+    // Task 6: an entity id lists the members of Entity, a domain's id those of its class; the enums of the classes are
+    // catalog types whose values are Home Assistant's texts, left out of the type lists.
+    static void EntityMembers()
+    {
+        var preview = new NodeLibraryCompiler(NodeLibraryFixture.EntityProvider).Preview([new("rooms", Rooms, 1)]);
+        Check(preview.Valid, "the rooms library compiles: " + string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
+        var s = preview.Snapshot; var catalog = s.Catalog; var types = catalog["types"]!.AsObject();
+        string[] Names(string type) => VisualNodeCatalog.TypeProperties(catalog, type).Select(p => p["name"]!.GetValue<string>()).ToArray();
+        string TypeOf(string type, string name) => VisualNodeCatalog.TypeProperties(catalog, type).Single(p => p["name"]!.GetValue<string>() == name)["type"]!.GetValue<string>();
+        Check(Names("entity_id").SequenceEqual(["EntityId", "RawState", "NumericState", "Attributes"]), "base members");
+        Check(Names("entity_id:light").Take(4).SequenceEqual(["EntityId", "RawState", "NumericState", "Attributes"]) && Names("entity_id:light").Contains("State") && Names("entity_id:light").Contains("Brightness"), "light members");
+        Check(Names("entity_id:made_up").SequenceEqual(Names("entity_id")), "an unknown domain has the base members");
+        var state = catalog["types"]!["global::HassSharp.Entities.BinarySensorState"]!;
+        Check(state["enumValues"]!.ToJsonString() == """["off","on","unknown","unavailable"]""" && state["listed"]!.GetValue<bool>() == false, "text enum");
+        Check(state["enumLabels"]!.ToJsonString() == """["Off","On","Unknown","Unavailable"]""" && state["literalKind"]!.GetValue<string>() == "enum", "the labels are Home Assistant's: " + state.ToJsonString());
+        // Each member's type: a domain's state enum, sensor's text, an attribute's nullable enum or JSON value.
+        Check(TypeOf("entity_id:light", "State") == "global::HassSharp.Entities.LightState" && TypeOf("entity_id:sensor", "State") == "global::System.String"
+            && TypeOf("entity_id:light", "ColorMode") == "global::HassSharp.Entities.LightColorMode?" && TypeOf("entity_id:light", "Brightness") == "global::System.Text.Json.JsonElement?", "member types");
+        Check(catalog["parametricTypes"]!["entity_id"]!["members"]!["light"]!["clrType"]!.GetValue<string>() == "HassSharp.Entities.LightEntity", "a domain's class");
+        // A nullable enum is a type of the same texts, also left out of the lists; the catch-all has no text.
+        var mode = types["global::HassSharp.Entities.LightColorMode?"]!;
+        Check(mode["listed"]!.GetValue<bool>() == false && mode["nullable"]!.GetValue<bool>() && mode["enumValues"]!.AsArray().Select(v => v!.GetValue<string>()).Contains("hs")
+            && !mode["enumValues"]!.AsArray().Any(v => v!.GetValue<string>() == "other"), "a nullable text enum: " + mode.ToJsonString());
+        Check(VisualTypes.IsAssignable(catalog, "global::HassSharp.Entities.LightColorMode", "global::HassSharp.Entities.LightColorMode?"), "an enum goes into its nullable form");
+        // An enum's entry lists what Roslyn says it converts to and from, though the compiler compared it with few types.
+        foreach (var e in new[] { "global::HassSharp.Entities.BinarySensorState", "global::HassSharp.Entities.LightColorMode", "global::HassSharp.Entities.LightColorMode?" })
+            foreach (var (other, _) in types.Where(t => t.Value!["refines"] == null))
+                foreach (var (from, to) in new[] { (e, other), (other, e) })
+                    Check(VisualTypes.IsAssignable(catalog, from, to) == s.IsAssignable(from, to), $"{from} -> {to}: the entries say {VisualTypes.IsAssignable(catalog, from, to)}, Roslyn {s.IsAssignable(from, to)}");
+        Check(VisualTypes.IsAssignable(catalog, "global::HassSharp.Entities.BinarySensorState", "global::System.Object"), "an enum goes into an object pin");
+        // Only the enums are listed out of the type lists; a handle class is no type of its own.
+        Check(!types.Any(t => t.Key.StartsWith("global::HassSharp.Entities.", StringComparison.Ordinal) && (t.Value!["listed"]?.GetValue<bool>() != false || t.Value["literalKind"]?.GetValue<string>() != "enum")), "only enums of the entities, all unlisted: "
+            + string.Join(", ", types.Select(t => t.Key).Where(k => k.Contains("Entities"))));
+        // A type only the classes' members bring is left out too; one a library uses stays in.
+        Check(types["global::System.Text.Json.JsonElement?"]!["listed"]?.GetValue<bool>() == false && types["global::System.Boolean?"]!["listed"] == null && types["global::NodeLib.Room"]!["listed"] == null,
+            "the types only the entities bring: " + string.Join(", ", types.Where(t => t.Value!["listed"] != null && !t.Key.StartsWith("global::HassSharp.Entities.", StringComparison.Ordinal)).Select(t => t.Key)));
+        // A record's handle is listed by its pin's type; a class deriving from Entity brings none of Entity's interfaces.
+        Check(SelectPropertyTests.Names(types["global::NodeLib.Room"]!["properties"]) == "Light:entity_id:light,Any:entity_id", "a record's handles: " + types["global::NodeLib.Room"]!["properties"]?.ToJsonString());
+        Check(types.ContainsKey("global::NodeLib.Lamp") && !types.ContainsKey("global::System.IEquatable<global::HassSharp.Entities.Entity>"), "a class deriving from Entity: " + string.Join(", ", types.Select(t => t.Key).Where(k => k.Contains("IEquatable"))));
+
+        // An entity trigger's entity into Select property: typed by its domain's member, refused from plain text.
+        JsonObject Triggered(string entity, string property)
+        {
+            var graph = Graph([Select("sel", property), N("l", "log", new { value = new { kind = "unset" } })], E("t", "l"), D("t", "sel", "value", "entity_id"), D("sel", "l", "value"));
+            graph["nodes"]![0]!["config"] = new JsonObject { ["type"] = "entity", ["entity"] = entity };
+            return graph;
+        }
+        var hall = Triggered("light.hall", "State");
+        var found = VisualGraphValidator.Validate(hall, s);
+        Check(!found.Any(d => d.Severity == 3), "the light's state is selected: " + Show(found));
+        Check(VisualNodeCatalog.WithGraphTypes(s.Root, hall)["resolvedOutputs"]?["sel"]?["value"]?.GetValue<string>() == "global::HassSharp.Entities.LightState", "the output is the light's state");
+        var lacking = VisualGraphValidator.Validate(Triggered("binary_sensor.hall", "Brightness"), s);
+        Check(lacking.Any(d => d.NodeId == "sel" && d.InputId == "property" && d.Code == "property.unknown"), "a member another domain has: " + Show(lacking));
+        var text = Graph([N("c", "constant", new { type = "string", value = Lit("string", "light.hall") }), Select("sel", "State"), N("l", "log", new { value = new { kind = "unset" } })], E("t", "l"), D("c", "sel", "value"), D("sel", "l", "value"));
+        var refused = VisualGraphValidator.Validate(text, s);
+        Check(refused.Any(d => d.NodeId == "sel" && d.InputId == "value" && d.Message == "Text has no properties to select; connect a value that has some, such as a record from a node library"), "plain text is refused: " + Show(refused));
+        // A state compared with a text Home Assistant lists is accepted; one it no longer lists is reported on the step.
+        JsonObject Compared(string value)
+        {
+            var graph = Triggered("binary_sensor.hall", "State");
+            graph["nodes"]!.AsArray().Add(N("cmp", "compare", new JsonObject { ["operator"] = "eq", ["left"] = new JsonObject { ["kind"] = "unset" }, ["right"] = Lit("global::HassSharp.Entities.BinarySensorState", value) }));
+            graph["edges"]!.AsArray().Add(D("sel", "cmp", "left"));
+            return graph;
+        }
+        var on = VisualGraphValidator.Validate(Compared("on"), s);
+        Check(!on.Any(d => d.NodeId == "cmp" && d.Severity == 3), "a listed state: " + Show(on));
+        var jammed = VisualGraphValidator.Validate(Compared("jammed"), s);
+        Check(jammed.Any(d => d.NodeId == "cmp" && d.InputId == "right" && d.Severity == 3), "a state Home Assistant no longer lists: " + Show(jammed));
+
+        // An automation embeds the entity enums its graph names, and the members of the domains whose id types it names.
+        var embedded = VisualGenerator.EmbeddedCatalog(hall, s);
+        Check(embedded["types"]!.AsObject().ContainsKey("global::HassSharp.Entities.LightState") && !embedded["types"]!.AsObject().ContainsKey("global::HassSharp.Entities.BinarySensorState")
+            && embedded["parametricTypes"]!["entity_id"]!["members"] == null, "an automation selecting a light's state: " + string.Join(", ", embedded["types"]!.AsObject().Select(t => t.Key).Where(k => k.Contains("Entities"))));
+        var named = Triggered("light.hall", "State");
+        named["nodes"]!.AsArray().Add(N("c", "constant", new { type = "entity_id:switch", value = Lit("entity_id:switch", "switch.fan") }));
+        var kept = VisualGenerator.EmbeddedCatalog(named, s)["parametricTypes"]!["entity_id"]!["members"]!.AsObject();
+        Check(kept.Select(p => p.Key).SequenceEqual(["switch"]), "the members of a named domain: " + string.Join(", ", kept.Select(p => p.Key)));
     }
 
     // Step 2: what a run reads, through each kind of member and value, and where a value is read again.

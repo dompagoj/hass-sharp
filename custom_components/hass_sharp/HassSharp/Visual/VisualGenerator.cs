@@ -89,8 +89,10 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     /// <summary>
     /// The catalog a graph's generated class embeds (D10): only the node kinds the graph uses, every library node
     /// kind, and the types any of them, the graph, <c>resolvedOutputs</c> or (with a trigger) the <c>triggerOutputs</c> table name, closed
-    /// over refinement chains, <c>assignableTo</c> and element types. Every other section is kept whole. Built from
-    /// the catalog root only, so service schemas never reach it (D2).
+    /// over refinement chains, <c>assignableTo</c> and element types. A type left out of the type lists (<c>listed: false</c>,
+    /// the entity enums) is kept only when named so, and an entity id's members only for the domains whose
+    /// <c>entity_id:&lt;domain&gt;</c> is such a type. Every other section is kept whole. Built from the catalog root
+    /// only, so service schemas never reach it (D2).
     /// </summary>
     public static JsonObject EmbeddedCatalog(JsonObject graph,VisualCatalogSnapshot snapshot)
     {
@@ -99,7 +101,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         var nodes=new JsonObject();
         foreach(var (kind,spec) in root["nodes"] as JsonObject??[])if(kinds.Contains(kind)||spec?["sourceId"]!=null)nodes[kind]=spec?.DeepClone();
         var types=root["types"] as JsonObject??[];var builtIn=VisualNodeCatalog.Root["types"] as JsonObject??[];
-        var pending=new Stack<string>(types.Where(t=>!builtIn.ContainsKey(t.Key)).Select(t=>t.Key));
+        static bool Unlisted(JsonNode? type)=>type?["listed"] is JsonValue listed&&listed.TryGetValue<bool>(out var on)&&!on;
+        var pending=new Stack<string>(types.Where(t=>!builtIn.ContainsKey(t.Key)&&!Unlisted(t.Value)).Select(t=>t.Key));
         void Strings(JsonNode? node){switch(node){case JsonObject o:foreach(var (_,v) in o)Strings(v);break;case JsonArray a:foreach(var v in a)Strings(v);break;case JsonValue v when v.TryGetValue<string>(out var text):pending.Push(text);break;}}
         // A Select property node's output type is its property's, under resolvedOutputs: the run reads the value as that.
         Strings(nodes);Strings(graph);Strings(root["resolvedOutputs"]);if(kinds.Contains("trigger"))Strings(root["triggerOutputs"]);
@@ -115,6 +118,10 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
             if(key=="nodes")catalog[key]=nodes;
             else if(key=="types")catalog[key]=new JsonObject(types.Where(t=>used.Contains(t.Key)).Select(t=>KeyValuePair.Create(t.Key,t.Value?.DeepClone())));
             else if(key!="triggerOutputs"||kinds.Contains("trigger"))catalog[key]=value?.DeepClone();
+        }
+        if((catalog["parametricTypes"] as JsonObject)?["entity_id"] is JsonObject entity&&entity["members"] is JsonObject members) {
+            foreach(var (domain,_) in members.ToArray())if(!used.Contains("entity_id:"+domain))members.Remove(domain);
+            if(members.Count==0)entity.Remove("members");
         }
         VisualNodeCatalog.RefreshStructuralTypes(catalog);
         return catalog;

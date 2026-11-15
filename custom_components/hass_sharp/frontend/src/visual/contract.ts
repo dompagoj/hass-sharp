@@ -34,8 +34,11 @@ export interface OutputSpec { label?: string; type: string; description?: string
 export interface NodeSpec { sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; executionLabels?: Record<string, string>; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 /** A public instance property or field a value of a C# type has, inherited ones included, as the compiler lists it. */
 export interface PropertySpec { name: string; type: string; nullable: boolean; description?: string }
-export interface TypeSpec { properties?: PropertySpec[]; clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; assignableFrom?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[]; enumLabels?: string[] }
-export interface ParametricTypeSpec { param: string; valuePattern: string; label: string }
+/** `listed: false`: a type the type lists (Constant, Convert, loops) leave out, such as an enum of the entity classes. */
+export interface TypeSpec { properties?: PropertySpec[]; clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; assignableFrom?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[]; enumLabels?: string[]; listed?: boolean }
+/** What one parameter of a family stands for: an entity domain's handle class (`clrType`) and its members. */
+export interface ParametricMember { clrType: string; properties: PropertySpec[] }
+export interface ParametricTypeSpec { param: string; valuePattern: string; label: string; members?: Record<string, ParametricMember> }
 /** Contract C4: one normalised Home Assistant service field. */
 export interface ServiceFieldSchema {
   label: string; description: string; types: string[]; required: boolean; advanced: boolean; section: string | null; order: number
@@ -67,7 +70,11 @@ const parametricId = /^([a-z_]+):([a-z0-9_]+)$/
 /** Whether the value matches; undefined when JavaScript cannot compile the pattern (never thrown out of the validator). */
 const tryMatches = (value: string, pattern: string): boolean | undefined => { let compiled: RegExp; try { compiled = new RegExp(pattern) } catch { return undefined } return compiled.test(value) }
 const matches = (value: string, pattern: string) => tryMatches(value, pattern) ?? false
-/** An exact catalog type, or a type synthesized from `parametricTypes`; undefined when unknown. */
+/**
+ * An exact catalog type, or a type synthesized from `parametricTypes`; undefined when unknown. A synthesized type has the
+ * `properties` its family lists for its parameter (`members.<param>`, the members of a domain's entity class), else its
+ * root's (those of `Entity`). Mirrors `VisualTypes.Resolve`.
+ */
 export function resolveTypeSpec(id: string, catalog: VisualCatalogSnapshot = nodeCatalog): TypeSpec | undefined {
   if (Object.hasOwn(catalog.types, id)) return catalog.types[id]
   const match = parametricId.exec(id)
@@ -79,8 +86,30 @@ export function resolveTypeSpec(id: string, catalog: VisualCatalogSnapshot = nod
   const label = family.label.replaceAll('{Param}', param[0].toUpperCase() + param.slice(1)).replaceAll('{param}', param)
   const resolved: TypeSpec = { refines: name, pattern: family.valuePattern.replaceAll('{param}', param), label, description: label }
   for (const key of ['clrType', 'literalKind', 'category', 'nullable'] as const) if (root[key] !== undefined) Object.assign(resolved, { [key]: root[key] })
+  const member = parametricMember(family, param)
+  const properties = record(member) && Array.isArray(member.properties) ? member.properties : root.properties
+  if (Array.isArray(properties)) resolved.properties = properties
   return resolved
 }
+/** The entry a family's `members` gives a parameter, when it has one. */
+function parametricMember(family: ParametricTypeSpec, param: string): ParametricMember | undefined {
+  const members = family.members
+  return record(members) && Object.hasOwn(members, param) && record(members[param]) ? members[param] : undefined
+}
+/**
+ * The handle class node code takes for a value of an entity id type: `HassSharp.Entities.LightEntity` for
+ * `entity_id:light` when the catalog has that domain's class, else `HassSharp.Entities.Entity` (as for `entity_id`);
+ * undefined for any other type.
+ */
+export function entityClass(id: string, catalog: VisualCatalogSnapshot = nodeCatalog): string | undefined {
+  if (id === 'entity_id') return 'HassSharp.Entities.Entity'
+  const match = parametricId.exec(id)
+  if (!match || match[1] !== 'entity_id' || !resolveTypeSpec(id, catalog)) return
+  const member = parametricMember(catalog.parametricTypes!.entity_id, match[2])
+  return typeof member?.clrType === 'string' ? member.clrType : 'HassSharp.Entities.Entity'
+}
+/** The ids the type lists (Constant, Convert, loops) offer: every catalog type but those marked `listed: false`. */
+export const listedTypes = (catalog: VisualCatalogSnapshot): string[] => Object.keys(catalog.types).filter(id => catalog.types[id]?.listed !== false)
 /** The type, then each type it refines, ending at its root; empty when any link is unknown or cyclic. */
 export function typeChain(id: string, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
   const chain: string[] = []
@@ -221,9 +250,12 @@ const selectingNodes = (catalog: VisualCatalogSnapshot, graph: unknown) =>
 /** Whether the kind's input takes a value whose type has properties (`$properties`): a value of exactly such a type, by its own entry. */
 export const selectsProperties = (spec: NodeSpec | undefined, port: string) =>
   !!spec && Object.hasOwn(spec.inputs, port) && Array.isArray(spec.inputs[port].types) && spec.inputs[port].types.includes('$properties')
-/** The properties a value of the type has, as its catalog entry lists them; empty for a type without any. */
+/**
+ * The properties a value of the type has, as its resolved entry lists them (`resolveTypeSpec`: an entity id of a domain
+ * has its class's); empty for a type without any. Mirrors `VisualNodeCatalog.TypeProperties`.
+ */
 export function typeProperties(catalog: VisualCatalogSnapshot, type: string): PropertySpec[] {
-  const entry = Object.hasOwn(catalog.types, type) ? catalog.types[type] : undefined
+  const entry = resolveTypeSpec(type, catalog)
   return record(entry) && Array.isArray(entry.properties) ? entry.properties.filter(record) as unknown as PropertySpec[] : []
 }
 /**

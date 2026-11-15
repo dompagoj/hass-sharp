@@ -4,6 +4,7 @@ import servicesFixture from '../../../../tests/fixtures/visual-services.json'
 import * as contract from '../src/visual/contract'
 import type { Graph } from '../src/visual/contract'
 import { connectionIndex } from '../src/visual/connectionIndex'
+import { constantTypes } from '../src/visual/constant'
 import { distinctTypeLabels, labelDepth, typeLabel } from '../src/visual/typeLabels'
 
 interface ValidationCase {
@@ -170,6 +171,40 @@ for (const fixture of rich.cases) it(`shared CLR catalog: ${fixture.name}`, () =
   const errors = contract.validateGraph(fixture.graph, richCatalog)
   expect(errors.length === 0, JSON.stringify(errors)).toBe(fixture.valid)
   if (fixture.inputId) expect(errors.some(e => e.inputId === fixture.inputId)).toBe(true)
+})
+describe('the members of an entity id and the enums of the entity classes (server catalog)', () => {
+  const names = (type: string) => contract.typeProperties(richCatalog, type).map(p => p.name)
+  const BASE = ['EntityId', 'RawState', 'NumericState', 'Attributes']
+  const STATE = 'global::HassSharp.Entities.BinarySensorState'
+  it('lists Entity\'s members for any entity id, and a domain\'s class\'s for its own', () => {
+    expect(names('entity_id')).toEqual(BASE)
+    expect(names('entity_id:light').slice(0, 4)).toEqual(BASE)
+    expect(names('entity_id:light')).toEqual(expect.arrayContaining(['State', 'Brightness']))
+    expect(names('entity_id:made_up')).toEqual(names('entity_id'))
+    const type = (domain: string, name: string) => contract.typeProperties(richCatalog, `entity_id:${domain}`).find(p => p.name === name)?.type
+    expect(type('light', 'State')).toBe('global::HassSharp.Entities.LightState')
+    expect(type('sensor', 'State')).toBe('global::System.String')
+    expect(type('light', 'ColorMode')).toBe('global::HassSharp.Entities.LightColorMode?')
+    // The bundled catalog knows no classes until the server's arrives: no members at all.
+    expect(contract.typeProperties(contract.nodeCatalog, 'entity_id:light')).toEqual([])
+  })
+  it('takes Home Assistant\'s texts as an entity enum\'s values, never a state it no longer lists or a number', () => {
+    expect(contract.validLiteral(STATE, 'on', richCatalog)).toBe(true)
+    expect(contract.validLiteral(STATE, 'jammed', richCatalog)).toBe(false)
+    expect(contract.validLiteral(STATE, 1, richCatalog)).toBe(false)
+    expect(richCatalog.types[STATE]).toMatchObject({ literalKind: 'enum', enumValues: ['off', 'on', 'unknown', 'unavailable'], enumLabels: ['Off', 'On', 'Unknown', 'Unavailable'], listed: false })
+    // Its entry lists what Roslyn says it converts to, as the C# validator decides.
+    expect(contract.isAssignable(STATE, 'global::System.Object', richCatalog)).toBe(true)
+    expect(contract.isAssignable('global::HassSharp.Entities.LightColorMode', 'global::HassSharp.Entities.LightColorMode?', richCatalog)).toBe(true)
+    expect(contract.isAssignable(STATE, 'string', richCatalog)).toBe(false)
+  })
+  it('leaves the entity enums out of the Constant, Convert and loop type lists', () => {
+    const entities = (ids: string[]) => ids.filter(id => id.startsWith('global::HassSharp.Entities.'))
+    expect(entities(constantTypes(richCatalog))).toEqual([])
+    expect(entities(contract.listedTypes(richCatalog))).toEqual([])
+    expect(contract.listedTypes(richCatalog)).toEqual(expect.arrayContaining(['global::NodeLib.Mode', 'entity_id', 'string']))
+    expect(contract.listedTypes(contract.nodeCatalog)).toEqual(Object.keys(contract.nodeCatalog.types))
+  })
 })
 it('any number goes into any numeric pin, except a nullable one into a pin that cannot hold null', () => {
   const cases: [string, string, boolean][] = [
