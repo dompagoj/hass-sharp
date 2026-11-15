@@ -81,7 +81,7 @@ it('removes only an Alt-primary-clicked native edge and restores it in one undo/
   expect(history.graph().edges).toHaveLength(original.edges.length - 1)
 })
 
-import { connectData, dataOutputs } from '../src/visual/contract'
+import { analyzeGraph, connectData, dataOutputs } from '../src/visual/contract'
 import { createSignal } from 'solid-js'
 it('colors connected and literal input rows from their actual types rather than the first accepted union type', () => {
   const el = host()
@@ -609,4 +609,46 @@ it('works out which pins a dragged wire fits once per starting pin, not on every
   for (let x = 60; x < 200; x += 20) document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: x }))
   expect(checks.mock.calls.length).toBe(once)
   document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 200, clientY: 200 }))
+})
+
+it('shows a dropdown of an enum\'s values on the other side of a Compare wired to it, and stores the pick as that enum', async () => {
+  const el = host()
+  const rich = richCatalogFixture.catalog as unknown as VisualCatalogSnapshot
+  const state = 'global::HassSharp.Entities.BinarySensorState'
+  const U = { kind: 'unset' }
+  const initial: Graph = {
+    version: 5, name: 'Compare',
+    nodes: [
+      { id: 't', kind: 'trigger', config: { type: 'entity', entity: 'binary_sensor.hall' } },
+      { id: 'sel', kind: 'select_property', config: { property: 'State' } },
+      { id: 'c', kind: 'compare', config: { operator: 'eq', left: U, right: U } },
+      { id: 'i', kind: 'if', config: { value: U } },
+    ],
+    edges: [
+      { id: 'f1', source: 't', target: 'i' },
+      { id: 'w1', kind: 'data', source: 't', sourcePort: 'entity_id', target: 'sel', targetPort: 'value' },
+      { id: 'w2', kind: 'data', source: 'sel', sourcePort: 'value', target: 'c', targetPort: 'left' },
+      { id: 'w3', kind: 'data', source: 'c', sourcePort: 'value', target: 'i', targetPort: 'value' },
+    ],
+  }
+  const [graph, setGraph] = createSignal<Graph>(initial)
+  dispose = render(() => (
+    <QueryClientProvider client={new QueryClient()}>
+      <HassCtx.Provider value={{ ...visualFixture(), user: { is_admin: true } } as any}>
+        <FlowAdapter catalog={rich} graph={graph()} onSelect={() => {}} onChange={next => setGraph(next as Graph)} />
+      </HassCtx.Provider>
+    </QueryClientProvider>
+  ), el)
+  const right = () => el.querySelector<HTMLElement>('[data-id="c"] [data-input-id="right"] .hs-card-editor')!
+  await vi.waitFor(() => expect(right().querySelector('select[aria-label="Second value"]')).not.toBeNull())
+  const pick = right().querySelector<HTMLSelectElement>('select[aria-label="Second value"]')!
+  expect([...pick.options].map(o => o.textContent)).toEqual(['Choose…', 'Off', 'On', 'Unknown', 'Unavailable'])
+  expect(right().querySelector('.hs-mixed')).toBeNull()
+  pick.value = '1'
+  pick.dispatchEvent(new Event('change', { bubbles: true }))
+  expect(graph().nodes.find(n => n.id === 'c')!.config.right).toEqual({ kind: 'literal', type: state, value: 'on' })
+  expect(analyzeGraph(graph(), rich).diagnostics.filter(d => d.severity >= 2)).toEqual([])
+  // Without the wire the value is any value again.
+  setGraph({ ...graph(), edges: graph().edges.filter(e => e.id !== 'w2') })
+  await vi.waitFor(() => expect(right().querySelector('.hs-mixed')).not.toBeNull())
 })

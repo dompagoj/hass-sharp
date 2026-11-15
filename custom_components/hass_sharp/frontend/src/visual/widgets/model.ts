@@ -195,6 +195,15 @@ export function widgetFor(input: InputSpec, catalog: VisualCatalogSnapshot = nod
   }
 }
 
+/**
+ * The input a Compare side shows when the other side is wired to an enum: the same input, taking only that enum, so
+ * it is picked from the enum's values instead of typed. Anything else is the input itself.
+ */
+export function comparedEnumInput(input: InputSpec, otherType: string | undefined, catalog: VisualCatalogSnapshot): InputSpec {
+  const type = otherType?.replace(/\?$/, '')
+  return type && resolveTypeSpec(type, catalog)?.literalKind === 'enum' ? { ...input, types: [type] } : input
+}
+
 /** Whether a widget is light enough for a node card; anything else is summarised there and edited in the panel. */
 export function inlineWidget(widget: Widget): boolean {
   switch (widget.kind) {

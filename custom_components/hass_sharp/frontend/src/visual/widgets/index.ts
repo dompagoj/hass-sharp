@@ -1,5 +1,5 @@
 export {
-  widgetFor, inlineWidget, literalFor, mixedLiteral, commitLiteral, initialValue, validForInput, fitsWidget, entityDomains, typeKind, valueKind,
+  widgetFor, comparedEnumInput, inlineWidget, literalFor, mixedLiteral, commitLiteral, initialValue, validForInput, fitsWidget, entityDomains, typeKind, valueKind,
   durationSeconds, durationParts, durationValue, lookupKinds, type LookupKind, type Widget, type WidgetKind, type WidgetOption, type ValueKind,
 } from './model'
 export { WidgetControl } from './Widget'

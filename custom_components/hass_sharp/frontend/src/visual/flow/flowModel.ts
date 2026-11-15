@@ -18,7 +18,7 @@ import { inputType, nodeInputs, outputPort, portLabel, type VisualGraph } from '
 import { nodeIdentity, type NodeIdentity } from '../icons'
 import { nodeSummary, serviceFieldLabel, type SummaryNames } from '../nodeSummary'
 import { domainWords, typeColor, typeIsList, typeLabel } from '../typeLabels'
-import { targetIds, widgetFor, type NameResolver, type StateEntity } from '../widgets'
+import { comparedEnumInput, targetIds, widgetFor, type NameResolver, type StateEntity } from '../widgets'
 import type { VisualDiagnostic } from '../api'
 import type { TraceEventStatus, TraceValue } from '../../types'
 
@@ -249,8 +249,12 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   const namedExec = execPorts.filter(p => p !== 'error' && !(p === 'next' && headerNext))
 
   // Data inputs.
-  const inputs: InputView[] = Object.entries(nodeInputs(graph, node, catalog)).map(([port, input]) => {
+  const resolvedTypes = connectionIndex(graph, ctx.catalog).analysis.resolved.get(node.id)
+  const inputs: InputView[] = Object.entries(nodeInputs(graph, node, catalog)).map(([port, declared]) => {
     const wire = incoming.find(e => e.kind === 'data' && e.targetPort === port)
+    // An unwired side of a Compare takes the enum its other side is wired to, so it is picked from that enum's values.
+    const other = node.kind === 'compare' && !wire ? { left: 'right', right: 'left' }[port] : undefined
+    const input = other && incoming.some(e => e.kind === 'data' && e.targetPort === other) ? comparedEnumInput(declared, resolvedTypes?.[other], catalog) : declared
     const sourceNode = wire ? graph.nodes.find(n => n.id === wire.source) : undefined
     const sourceOutput = wire?.kind === 'data' && sourceNode ? dataOutputs(sourceNode, catalog)[wire.sourcePort] : undefined
     const resolved = inputType(graph, node, port, input, catalog)

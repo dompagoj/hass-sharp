@@ -3,6 +3,7 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import servicesFixture from '../../../../tests/fixtures/visual-services.json'
+import richCatalogFixture from '../../../../tests/fixtures/visual-rich-catalog.json'
 import { HassCtx } from '../src/context'
 import type { EntityInfo } from '../src/entities'
 import { createRegistry } from '../src/registry'
@@ -14,7 +15,7 @@ import { dataInputs, nodeCatalog, validateGraph, validLiteral, type GraphNode, t
 import { InputEditor } from '../src/visual/InputEditor'
 import { typeLabel } from '../src/visual/typeLabels'
 import {
-  commitLiteral, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, optionLabel, optionWords, registryNames, stateField, stateLabel, stateOptions, targetValue, valueSummary, WidgetControl, widgetFor, withStates,
+  commitLiteral, comparedEnumInput, durationValue, entityPredicate, initialValue, inlineWidget, jsonEqual, literalFor, manualEntityError, optionLabel, optionWords, registryNames, stateField, stateLabel, stateOptions, targetValue, valueSummary, WidgetControl, widgetFor, withStates,
   type ValueKind, type Widget,
 } from '../src/visual/widgets'
 
@@ -509,5 +510,19 @@ describe('pickers', () => {
     const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
     host.querySelector('[role="listbox"]')!.dispatchEvent(press)
     expect(press.defaultPrevented).toBe(true)
+  })
+})
+
+describe('comparedEnumInput', () => {
+  const rich = richCatalogFixture.catalog as unknown as VisualCatalogSnapshot
+  const state = 'global::HassSharp.Entities.BinarySensorState'
+  const anyInput = spec(['$any'])
+  it('takes only the enum the other side is wired to, and leaves everything else alone', () => {
+    expect(comparedEnumInput(anyInput, state, rich).types).toEqual([state])
+    expect(comparedEnumInput(anyInput, state + '?', rich).types).toEqual([state])
+    expect(comparedEnumInput(anyInput, 'string', rich)).toBe(anyInput)
+    expect(comparedEnumInput(anyInput, undefined, rich)).toBe(anyInput)
+    expect(widgetFor(comparedEnumInput(anyInput, state, rich), rich)).toMatchObject({ kind: 'select',
+      options: [{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }, { value: 'unknown', label: 'Unknown' }, { value: 'unavailable', label: 'Unavailable' }] })
   })
 })
