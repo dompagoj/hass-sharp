@@ -266,14 +266,21 @@ static class SelectPropertyTests
         var jammed = VisualGraphValidator.Validate(Compared("jammed"), s);
         Check(jammed.Any(d => d.NodeId == "cmp" && d.InputId == "right" && d.Severity == 3), "a state Home Assistant no longer lists: " + Show(jammed));
 
-        // An automation embeds the entity enums its graph names, and the members of the domains whose id types it names.
+        // An automation embeds the entity enums its graph names, and the members of the domains whose id types it names or
+        // resolves: a trigger on light.hall gives its entity the type entity_id:light only as the graph is read, and a run's
+        // trace reads Select property's State through that domain's members.
+        static string[] Domains(JsonObject catalog) => (catalog["parametricTypes"]!["entity_id"]!["members"] as JsonObject)?.Select(p => p.Key).ToArray() ?? [];
         var embedded = VisualGenerator.EmbeddedCatalog(hall, s);
-        Check(embedded["types"]!.AsObject().ContainsKey("global::HassSharp.Entities.LightState") && !embedded["types"]!.AsObject().ContainsKey("global::HassSharp.Entities.BinarySensorState")
-            && embedded["parametricTypes"]!["entity_id"]!["members"] == null, "an automation selecting a light's state: " + string.Join(", ", embedded["types"]!.AsObject().Select(t => t.Key).Where(k => k.Contains("Entities"))));
+        Check(embedded["types"]!.AsObject().ContainsKey("global::HassSharp.Entities.LightState") && !embedded["types"]!.AsObject().ContainsKey("global::HassSharp.Entities.BinarySensorState"),
+            "an automation selecting a light's state: " + string.Join(", ", embedded["types"]!.AsObject().Select(t => t.Key).Where(k => k.Contains("Entities"))));
+        Check(Domains(embedded).SequenceEqual(["light"]), "the members of the domain a trigger resolves: " + string.Join(", ", Domains(embedded)));
+        Check(VisualNodeCatalog.WithGraphTypes(embedded, hall)["resolvedOutputs"]?["sel"]?["value"]?.GetValue<string>() == "global::HassSharp.Entities.LightState", "a run reads the light's state through its embedded catalog");
         var named = Triggered("light.hall", "State");
         named["nodes"]!.AsArray().Add(N("c", "constant", new { type = "entity_id:switch", value = Lit("entity_id:switch", "switch.fan") }));
-        var kept = VisualGenerator.EmbeddedCatalog(named, s)["parametricTypes"]!["entity_id"]!["members"]!.AsObject();
-        Check(kept.Select(p => p.Key).SequenceEqual(["switch"]), "the members of a named domain: " + string.Join(", ", kept.Select(p => p.Key)));
+        var kept = Domains(VisualGenerator.EmbeddedCatalog(named, s));
+        Check(kept.SequenceEqual(["light", "switch"]), "the members of a named domain and a resolved one: " + string.Join(", ", kept));
+        // A domain the graph neither names nor resolves is left out, and so is every domain of a graph without one.
+        Check(Domains(VisualGenerator.EmbeddedCatalog(Triggered("made_up.hall", "RawState"), s)).Length == 0, "an entity of a domain without a class embeds no members");
     }
 
     // Step 2: what a run reads, through each kind of member and value, and where a value is read again.

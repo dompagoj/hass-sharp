@@ -80,6 +80,14 @@ describe('the type of a Select property node', () => {
     expect(propertyChoices(entity('light.hall'), node(entity('light.hall'), 's'), rich).type).toBe('entity_id:light')
     expect(names('made_up.hall')).toEqual(['EntityId', 'RawState', 'NumericState', 'Attributes'])
   })
+  it('reads a light trigger\'s State through the catalog the automation embeds, as a run\'s trace does', () => {
+    // The server's EmbeddedCatalog of the graph, written into the shared fixture by `--write-node-library-fixture`.
+    const [{ graph: hall, catalog }] = richFixture.embedded as unknown as { graph: Graph; catalog: VisualCatalogSnapshot }[]
+    const s = node(hall, 'sel')
+    expect(dataOutputs(s, withGraphTypes(catalog, hall)).value.type).toBe('global::HassSharp.Entities.LightState')
+    expect(Object.keys(catalog.parametricTypes?.entity_id?.members ?? {})).toEqual(['light'])
+    expect(propertyChoices(hall, s, catalog).properties.map(p => p.name)).toContain('Brightness')
+  })
 })
 
 describe('resolving the types of a chain of Select property nodes', () => {

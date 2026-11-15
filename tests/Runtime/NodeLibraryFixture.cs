@@ -185,7 +185,10 @@ public static class NodeLibraryFixture
         foreach (var test in cases.Where(c => c!["name"]!.GetValue<string>().StartsWith("custom: ")))
             if (test!["graph"]!["nodes"]!.AsArray().Any(n => n!["kind"]!.GetValue<string>() == "custom" && n["config"]!["signature"] == null))
                 throw new Exception($"{test["name"]}: the custom node's code does not compile");
-        return new() { ["sourceId"] = "shared", ["revision"] = 2, ["source"] = Source, ["catalog"] = snapshot.Catalog, ["cases"] = cases };
+        // The catalog an automation embeds, as a run's trace reads it: a light trigger's entity into Select property State.
+        var hall = Entity("light.hall", "State", null);
+        var embedded = new JsonArray(new JsonObject { ["name"] = "a light trigger's state", ["graph"] = hall, ["catalog"] = VisualGenerator.EmbeddedCatalog(hall.DeepClone().AsObject(), snapshot) });
+        return new() { ["sourceId"] = "shared", ["revision"] = 2, ["source"] = Source, ["catalog"] = snapshot.Catalog, ["cases"] = cases, ["embedded"] = embedded };
     }
 
     public static void Verify()
@@ -199,6 +202,9 @@ public static class NodeLibraryFixture
             if ((diagnostics.Count == 0) != test["valid"]!.GetValue<bool>() || test["inputId"] is { } input && !diagnostics.Any(d => d.InputId == input.GetValue<string>()))
                 throw new Exception($"Shared rich fixture {test["name"]}: {string.Join("; ", diagnostics.Select(d => d.Message))}");
         }
-        Console.WriteLine("PASS shared rich catalog fixtures: " + fixture["cases"]!.AsArray().Count);
+        foreach (var test in fixture["embedded"]!.AsArray())
+            if (!JsonNode.DeepEquals(VisualGenerator.EmbeddedCatalog(test!["graph"]!.DeepClone().AsObject(), preview.Snapshot), test["catalog"]))
+                throw new Exception($"Shared embedded catalog {test["name"]} must match the one the server embeds");
+        Console.WriteLine("PASS shared rich catalog fixtures: " + fixture["cases"]!.AsArray().Count + ", embedded catalogs: " + fixture["embedded"]!.AsArray().Count);
     }
 }

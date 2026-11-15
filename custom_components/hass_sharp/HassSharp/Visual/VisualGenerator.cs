@@ -88,9 +88,10 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     }
     /// <summary>
     /// The catalog a graph's generated class embeds (D10): only the node kinds the graph uses, every library node
-    /// kind, and the types any of them, the graph, <c>resolvedOutputs</c> or (with a trigger) the <c>triggerOutputs</c> table name, closed
-    /// over refinement chains, <c>assignableTo</c> and element types. A type left out of the type lists (<c>listed: false</c>,
-    /// the entity enums) is kept only when named so, and an entity id's members only for the domains whose
+    /// kind, and the types any of them, the graph, <c>resolvedOutputs</c> or (with a trigger) the <c>triggerOutputs</c> table name,
+    /// or a node's output has as the graph resolves it (an entity trigger's <c>entity_id:&lt;domain&gt;</c>), closed over
+    /// refinement chains, <c>assignableTo</c> and element types. A type left out of the type lists (<c>listed: false</c>,
+    /// the entity enums) is kept only when so named or resolved, and an entity id's members only for the domains whose
     /// <c>entity_id:&lt;domain&gt;</c> is such a type. Every other section is kept whole. Built from the catalog root
     /// only, so service schemas never reach it (D2).
     /// </summary>
@@ -106,6 +107,10 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         void Strings(JsonNode? node){switch(node){case JsonObject o:foreach(var (_,v) in o)Strings(v);break;case JsonArray a:foreach(var v in a)Strings(v);break;case JsonValue v when v.TryGetValue<string>(out var text):pending.Push(text);break;}}
         // A Select property node's output type is its property's, under resolvedOutputs: the run reads the value as that.
         Strings(nodes);Strings(graph);Strings(root["resolvedOutputs"]);if(kinds.Contains("trigger"))Strings(root["triggerOutputs"]);
+        // So is each output's type as the graph's node resolves it: an entity trigger's entity is entity_id:<domain> only
+        // with the trigger's config, and a run's trace reads a Select property of it through that domain's members.
+        foreach(var node in (graph["nodes"] as JsonArray??[]).OfType<JsonObject>())
+            foreach(var (_,port) in VisualNodeCatalog.DataOutputs(node,root))if(Text(port,"type") is {Length:>0} type)pending.Push(type);
         var used=new HashSet<string>(StringComparer.Ordinal);
         while(pending.TryPop(out var id)) {
             foreach(var link in VisualTypes.Chain(root,id)) {
