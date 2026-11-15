@@ -20,7 +20,7 @@ export function CodeView(props: { text: string; label: string }) {
       readOnly: true,
       domReadOnly: true,
       ariaLabel: props.label,
-      theme: 'visual-assist',
+      theme: 'hass-sharp-dark',
       automaticLayout: true,
       fixedOverflowWidgets: true,
       fontSize: 13,

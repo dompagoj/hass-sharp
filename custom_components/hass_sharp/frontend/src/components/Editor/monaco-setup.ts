@@ -4,18 +4,20 @@ import { initVimMode, type VimAdapterInstance } from 'monaco-vim'
 
 import './monaco-worker'
 
-import visualAssistTheme from '../../visual-assist.json'
 import { useLocalStorage } from '../../hooks'
+import { csharpLanguage } from './csharp-highlighting'
+import { darkEditorTheme, lightEditorTheme } from './editor-themes'
 
-// @ts-ignore
-monaco.editor.defineTheme('visual-assist', visualAssistTheme)
+monaco.editor.defineTheme('hass-sharp-dark', darkEditorTheme)
+monaco.editor.defineTheme('hass-sharp-light', lightEditorTheme)
+monaco.languages.setMonarchTokensProvider('csharp', csharpLanguage)
 
 /** What every C# editor of the panel shares: the node library editor and a Custom C# node's code editor. */
 export const codeEditorOptions: monaco.editor.IStandaloneEditorConstructionOptions = {
   inlayHints: {
     enabled: 'on',
   },
-  theme: 'visual-assist',
+  theme: 'hass-sharp-dark',
   renderLineHighlight: 'all',
   fixedOverflowWidgets: true,
   automaticLayout: true,
@@ -78,7 +80,7 @@ export function followTheme(editor: monaco.editor.IStandaloneCodeEditor, element
     const dark = channels && channels.length >= 3 && channels[3] !== 0
       ? channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722 < 128
       : darkQuery.matches
-    editor.updateOptions({ theme: dark ? 'visual-assist' : 'vs' })
+    editor.updateOptions({ theme: dark ? 'hass-sharp-dark' : 'hass-sharp-light' })
   }
   updateTheme()
   const themeObserver = new MutationObserver(updateTheme)
