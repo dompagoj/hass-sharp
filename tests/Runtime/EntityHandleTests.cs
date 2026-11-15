@@ -32,6 +32,7 @@ static class EntityHandleTests
             OwnNames();
             await Copied();
             await Pins();
+            await ErrorPin();
         }
         finally { PyInterop.Entity = entity; UserScriptManager.CurrentTrigger.Value = trigger; }
     }
@@ -286,5 +287,46 @@ static class EntityHandleTests
         var again = new VisualGenerator(provider).DeriveSignatures(derived, snapshot)["nodes"]![1]!["config"]!["signature"]!.AsObject();
         Check(VisualGenerator.SamePins(signature, again), "deriving again changed the pins: " + again.ToJsonString());
         Console.WriteLine("PASS entity handles: a handle type is a pin of its domain's entity id; the wire and the trace carry the id");
+    }
+
+    // Review Focus 1: an entity Home Assistant does not have when a handle is read fails the reading step, naming the
+    // entity; the step takes its error pin and the run goes on. Through a node method's pin, and through Select property.
+    static async Task ErrorPin()
+    {
+        var provider = NodeLibraryFixture.EntityProvider;
+        var library = new NodeLibraryCompiler(provider).Preview([new("motion", Motion, 1)]);
+        Check(library.Valid, "the library taking handles: " + string.Join("; ", library.Diagnostics.Select(d => d.Message)));
+        var snapshot = library.Snapshot;
+        string Kind(string name) => snapshot.Methods.Values.Single(m => m.Method.Name == name).Kind;
+        var log = PyInterop.Log; var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
+        PyInterop.Entity = _ => null!;
+        try
+        {
+            // The step reading the handle; on its error pin a Log of the error, then a step after both paths.
+            async Task Recovers(JsonObject graph, string step, string what)
+            {
+                foreach (var node in new[] { N("le", "last_error"), N("err", "log", new { value = new { kind = "unset" } }), N("after", "log", new { value = Lit("string", "after") }) })
+                    graph["nodes"]!.AsArray().Add(node);
+                foreach (var edge in new[] { E("t", step), E(step, "after"), E(step, "err", "error"), E("err", "after"), D("le", "err", "value", "message") }) graph["edges"]!.AsArray().Add(edge);
+                Check(VisualGraphValidator.Validate(graph, snapshot) is var found && !found.Any(d => d.Severity == 3), what + ": the graph does not validate: " + string.Join("; ", found.Select(d => d.Message)));
+                messages.Clear();
+                var trace = await Traced(provider, graph, snapshot, TriggerPayload.Manual());
+                var failed = Event(trace, step);
+                Check(failed["status"]!.GetValue<string>() == "error" && failed["port"]!.GetValue<string>() == "error" && failed["error"]!["message"]!.GetValue<string>().Contains("binary_sensor.hall", StringComparison.Ordinal),
+                    what + ": the step did not take its error pin naming the entity: " + failed.ToJsonString());
+                Check(messages.Count(m => m.Contains("Entity 'binary_sensor.hall' is unavailable.", StringComparison.Ordinal)) == 1 && messages.Last() == "after" && Event(trace, "after")["status"]!.GetValue<string>() == "ok",
+                    what + ": the error path or the step after it did not run: " + string.Join(" | ", messages));
+            }
+            var pin = G(VisualGraphContract.CreateNode(Kind("IsOn"), "on", snapshot));
+            pin["edges"] = new JsonArray();
+            pin["nodes"]![1]!["config"]!["arguments"]!["sensor"] = Lit("entity_id:binary_sensor", "binary_sensor.hall");
+            await Recovers(pin, "on", "a node method's pin");
+            // Select property reads State from the id on its wire, as a value node of the Log that has the error pin.
+            var selected = G(N("c", "constant", new { type = "entity_id:binary_sensor", value = Lit("entity_id:binary_sensor", "binary_sensor.hall") }), N("sel", "select_property", new { property = "State" }), N("use", "log", new { value = new { kind = "unset" } }));
+            selected["edges"] = new JsonArray(D("c", "sel", "value"), D("sel", "use", "value"));
+            await Recovers(selected, "use", "Select property");
+        }
+        finally { PyInterop.Log = log; }
+        Console.WriteLine("PASS entity handles: a missing entity fails the step reading its handle, which takes its error pin, and the run goes on");
     }
 }
