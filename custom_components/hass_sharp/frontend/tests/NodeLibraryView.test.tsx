@@ -21,7 +21,8 @@ function mount(invalid = false, response?: (request: any, result: any) => any) {
       : r.operation === 'save' ? { saved: true, document: { ...documents()[0], id: r.id, name: r.name, source: r.source, revision: 2 }, generation: 'g2', catalog: rich.catalog, automations: [] }
       : { id: r.id, workspaceVersion: r.workspaceVersion, generation: r.generation, sourceGeneration: `source-${r.workspaceVersion}`, saved: false,
           data: r.operation === 'preview' ? { valid: !invalid, catalog: rich.catalog, diagnostics: invalid ? [{ sourceId: 'helper', startLine: 1, startColumn: 3, endLine: 1, endColumn: 8, severity: 3, message: 'Helper error' }] : [] }
-          : r.operation === 'format' ? r.source : r.operation === 'definition' ? [{ id: 'helper', range: { start: 13, length: 6, startLine: 1, startColumn: 14, endLine: 1, endColumn: 20 } }] : [] }
+          : r.operation === 'format' ? r.source : r.operation === 'definition' ? [{ id: 'helper', range: { start: 13, length: 6, startLine: 1, startColumn: 14, endLine: 1, endColumn: 20 } }]
+          : r.operation === 'completion' ? { items: [{ displayText: 'Reading', displayTextPrefix: '', displayTextSuffix: '', filterText: 'Reading', tags: ['Class'], textEdit: { start: 1, length: 0, newText: 'Reading' }, additionalTextEdits: [] }], incomplete: false } : [] }
     const answer = await response?.(r, result)
     // A response may give the whole envelope, to answer with an error.
     return answer?.envelope ?? { version: 1, ok: true, result: answer ?? result }
@@ -73,14 +74,17 @@ it('formats and saves the current file with its original revision, then displays
   expect(requests.find(r => r.operation === 'save')).toMatchObject({ id: 'shared', expectedRevision: 1, source: 'public class Updated {}' })
   expect(host.textContent).toContain('Revision 2'); expect(host.textContent).toContain('· Saved')
 })
-it('retains typing recovery when a library edit invalidates the workspace', async () => {
+it('keeps a completion list in flight while typing goes on, though each edit advances the library workspace', async () => {
+  // Typing on after the position asked about advances the workspace (and the file's source in it); the list is still for
+  // the code before that position, and Monaco filters it by what was typed meanwhile.
   mount(); await vi.advanceTimersByTimeAsync(900)
   const editor = editors[0]
+  const typed = editor.model.getValue()
   const result = completions[0].provideCompletionItems(editor.model, { lineNumber: 1, column: 2 }, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) })
-  editor.change('Lis'); editor.move({ lineNumber: 1, column: 4 }, 'keyboard', 0)
+  editor.change(typed.slice(0, 1) + 'R' + typed.slice(1))
   await vi.advanceTimersByTimeAsync(150)
-  expect(editor.triggers).toContain('editor.action.triggerSuggest')
-  expect((await result).suggestions).toEqual([])
+  expect((await result).suggestions.map((s: any) => s.label)).toEqual(['Reading'])
+  expect(editor.triggers).toEqual([])
 })
 it('restores each file cursor and selection when switching back to its draft', async () => {
   mount(); await vi.advanceTimersByTimeAsync(900)

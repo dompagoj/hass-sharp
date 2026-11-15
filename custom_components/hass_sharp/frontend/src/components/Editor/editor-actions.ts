@@ -1,5 +1,5 @@
 import * as monaco from 'monaco-editor'
-import type { CompletionItem, CompletionTextEdit, Diagnostic, HomeAssistant } from '../../types'
+import type { CompletionItem, CompletionList, CompletionResolution, CompletionTextEdit, Diagnostic, HomeAssistant } from '../../types'
 import { createSignal, onCleanup } from 'solid-js'
 import { customDocumentId, libraryApi, type CustomPreview, type LibraryContext, type LibraryDiagnostic, type LibraryReply, type LibraryPreview, type LibraryDefinition, type LibraryRange, type LibrarySignatureHelp } from '../../visual/library-api'
 
@@ -11,33 +11,50 @@ function itemToLabel(item: CompletionItem) {
   return res
 }
 
+/** Roslyn's kind tags (`WellKnownTags`). The rest of an item's tags say its accessibility and the like. */
 const tagToKindMap: { [key: string]: monaco.languages.CompletionItemKind } = {
   Method: monaco.languages.CompletionItemKind.Method,
-  Class: monaco.languages.CompletionItemKind.Class,
-  Property: monaco.languages.CompletionItemKind.Property,
-  Enum: monaco.languages.CompletionItemKind.Enum,
-  Delegate: monaco.languages.CompletionItemKind.Function,
-  Keyword: monaco.languages.CompletionItemKind.Keyword,
-  Structure: monaco.languages.CompletionItemKind.Struct,
   ExtensionMethod: monaco.languages.CompletionItemKind.Function,
-  Local: monaco.languages.CompletionItemKind.Variable,
+  Delegate: monaco.languages.CompletionItemKind.Function,
+  Class: monaco.languages.CompletionItemKind.Class,
+  Record: monaco.languages.CompletionItemKind.Class,
+  Structure: monaco.languages.CompletionItemKind.Struct,
+  RecordStruct: monaco.languages.CompletionItemKind.Struct,
   Interface: monaco.languages.CompletionItemKind.Interface,
-  Snippet: monaco.languages.CompletionItemKind.Snippet,
-  TypeParameter: monaco.languages.CompletionItemKind.TypeParameter,
-  Namespace: monaco.languages.CompletionItemKind.Module,
+  Enum: monaco.languages.CompletionItemKind.Enum,
+  EnumMember: monaco.languages.CompletionItemKind.EnumMember,
+  Property: monaco.languages.CompletionItemKind.Property,
   Field: monaco.languages.CompletionItemKind.Field,
+  Constant: monaco.languages.CompletionItemKind.Constant,
+  Event: monaco.languages.CompletionItemKind.Event,
+  Operator: monaco.languages.CompletionItemKind.Operator,
+  Local: monaco.languages.CompletionItemKind.Variable,
   Parameter: monaco.languages.CompletionItemKind.Variable,
+  RangeVariable: monaco.languages.CompletionItemKind.Variable,
+  Label: monaco.languages.CompletionItemKind.Reference,
+  TypeParameter: monaco.languages.CompletionItemKind.TypeParameter,
+  Keyword: monaco.languages.CompletionItemKind.Keyword,
+  Intrinsic: monaco.languages.CompletionItemKind.Keyword,
+  Namespace: monaco.languages.CompletionItemKind.Module,
+  Module: monaco.languages.CompletionItemKind.Module,
+  Assembly: monaco.languages.CompletionItemKind.Module,
+  Snippet: monaco.languages.CompletionItemKind.Snippet,
 }
 
+/**
+ * The item's kind, from the first of its tags that names one. An item of a kind not listed shows as text: the editor
+ * hides snippets (`showSnippets: false`), so taking an unknown kind for a snippet hid it (an enum's members were lost so).
+ */
 function tagsToKind(tags: string[]) {
-  const first = tags[0]
-  const found = tagToKindMap[first]
-
-  if (found !== undefined) return found
-
-  console.warn('Unknown tag: ', first)
-  return monaco.languages.CompletionItemKind.Snippet
+  for (const tag of tags) {
+    const found = tagToKindMap[tag]
+    if (found !== undefined) return found
+  }
+  return monaco.languages.CompletionItemKind.Text
 }
+
+/** What a completion list depends on besides the code before its position: the file, the saved libraries and the other drafts. */
+const completionKey = (context: LibraryContext) => JSON.stringify({ id: context.id, generation: context.generation, sources: context.sources })
 
 /** The text of a documentation element, with an empty reference (`<see cref/>`, `<paramref/>`, `<see langword/>`) read as the name it points at. */
 function documentationText(node: Node): string {
@@ -108,28 +125,27 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
     disposeRegistration?.()
     let disposed = false
     let validationTimer: ReturnType<typeof setTimeout> | undefined
-    let completionTimer: ReturnType<typeof setTimeout> | undefined
-    let completionPosition: monaco.IPosition | null = null
-    const cancelCompletionRetry = () => {
-      clearTimeout(completionTimer)
-      completionTimer = undefined
-      completionPosition = null
-    }
     let savingPromise: Promise<void> | undefined
     let markedModel = editor.getModel()
-    let observedModel = markedModel
-    let observedVersion = observedModel?.getVersionId()
     const pending = new Map<string, () => void>()
+    /** Whether the completion request in flight is still good after an edit (see `invalidate`). */
+    let completionHolds: (() => boolean) | undefined
     const latest = new Map<string, number>()
     let nextRequest = 0
     let epoch = 0
     let semanticIdentity: { context: string; sourceGeneration: string } | undefined
     type Reply<T> = { value: T; isCurrent: () => boolean }
 
-    const invalidate = () => {
+    /**
+     * Ends the requests in flight. An edit keeps a completion request: its list stays good while the person goes on
+     * typing the word (it checks that itself when it arrives), and Monaco filters it by what they typed meanwhile.
+     */
+    const invalidate = (keepCompletion = false) => {
       epoch++
-      for (const cancel of pending.values()) cancel()
-      pending.clear()
+      for (const [kind, cancel] of [...pending]) {
+        if (keepCompletion && kind === 'completion' && completionHolds?.()) continue
+        cancel(); pending.delete(kind)
+      }
     }
     const owns = (model: monaco.editor.ITextModel) =>
       !disposed && !model.isDisposed() && editor.getModel() === model
@@ -141,15 +157,24 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
       if (!owns(model) || token?.isCancellationRequested) return Promise.resolve<Reply<T> | null>(null)
       const capturedContext = library.context()
       if (!capturedContext) return Promise.resolve<Reply<T> | null>(null)
-      const contextKey = JSON.stringify(capturedContext)
+      // A completion list is for the code before its position, in the same file and workspace: typing on after that
+      // position (which advances the model and, for a library, its workspace version) leaves it good.
+      const typing = kind === 'completion'
+      const at = (fields as { position?: number }).position ?? 0
+      const before = typing ? model.getValue().slice(0, at) : ''
+      const keyOf = (context: LibraryContext) => typing ? completionKey(context) : JSON.stringify(context)
+      const contextKey = keyOf(capturedContext)
       const version = model.getVersionId()
       const requestEpoch = epoch
       let replySourceGeneration: string | undefined
       const requestId = ++nextRequest
       latest.set(kind, requestId)
-      const isCurrent = () => owns(model) && model.getVersionId() === version && epoch === requestEpoch
-        && latest.get(kind) === requestId && !token?.isCancellationRequested && JSON.stringify(library.context()) === contextKey
-        && (!replySourceGeneration || !library.sourceGeneration?.() || library.sourceGeneration() === replySourceGeneration)
+      const sameContext = () => { const context = library.context(); return !!context && keyOf(context) === contextKey }
+      if (typing) completionHolds = () => owns(model) && sameContext() && model.getValue().slice(0, at) === before
+      const isCurrent = () => owns(model) && latest.get(kind) === requestId && !token?.isCancellationRequested && sameContext()
+        && (typing ? model.getValue().slice(0, at) === before
+          : model.getVersionId() === version && epoch === requestEpoch
+            && (!replySourceGeneration || !library.sourceGeneration?.() || library.sourceGeneration() === replySourceGeneration))
       return new Promise<Reply<T> | null>((resolve, reject) => {
         let settled = false
         let subscription: monaco.IDisposable | undefined
@@ -198,6 +223,7 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
             default: reply = await api.preview(c)
           }
           if (reply.saved !== false || reply.id !== c.id || reply.workspaceVersion !== c.workspaceVersion || reply.generation !== c.generation || typeof reply.sourceGeneration !== 'string') return null
+          if (typing) return isCurrent() ? { value: reply.data as T, isCurrent } : null
           const expectedSource = library.sourceGeneration?.() ?? (semanticIdentity?.context === contextKey ? semanticIdentity.sourceGeneration : undefined)
           if (expectedSource && expectedSource !== reply.sourceGeneration) return null
           if (!isCurrent()) return null
@@ -293,34 +319,79 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
       return savingPromise
     }
 
+    // The list an item came from: the code and position it was made for, to resolve the item against the same code.
+    type ListedItem = { model: monaco.editor.ITextModel; item: CompletionItem; source: string; position: number; key: string }
+    const listed = new WeakMap<monaco.languages.CompletionItem, ListedItem>()
+    const resolveItem = async (listedItem: ListedItem, token: monaco.CancellationToken): Promise<CompletionResolution | null> => {
+      const { model, item, source, position, key } = listedItem
+      const context = library.context()
+      if (!owns(model) || token.isCancellationRequested || !context || completionKey(context) !== key) return null
+      const reply = custom
+        ? await api.customCompletionResolve({ nodeId: context.id, source, workspaceVersion: context.workspaceVersion }, position, item)
+        : await api.completionResolve({ ...context, source }, position, item)
+      const now = library.context()
+      if (!owns(model) || token.isCancellationRequested || !now || completionKey(now) !== key || reply.saved !== false || reply.id !== context.id) return null
+      return reply.data
+    }
     const completionProvider = monaco.languages.registerCompletionItemProvider('csharp', {
       triggerCharacters: ['.'],
       provideCompletionItems: async (model, position, _context, token) => {
         if (!owns(model)) return null
+        const offset = model.getOffsetAt(position)
+        const source = model.getValue()
+        const context = library.context()
         try {
-          const items = await request<CompletionItem[]>('completion', model,
-            { position: model.getOffsetAt(position) }, token)
-          if (!items?.isCurrent()) return { suggestions: [] }
-          return { incomplete: true, suggestions: items.value.map(item => {
-            const toRange = (edit: CompletionTextEdit) => {
-              const start = model.getPositionAt(edit.start)
-              const end = model.getPositionAt(edit.start + edit.length)
-              return { startLineNumber: start.lineNumber, startColumn: start.column,
-                endLineNumber: end.lineNumber, endColumn: end.column }
-            }
-            return {
-              label: itemToLabel(item),
+          const list = await request<CompletionList>('completion', model, { position: offset }, token)
+          if (!list?.isCurrent() || !context) return { suggestions: [] }
+          const toRange = (edit: CompletionTextEdit) => {
+            const start = model.getPositionAt(edit.start)
+            const end = model.getPositionAt(edit.start + edit.length)
+            return { startLineNumber: start.lineNumber, startColumn: start.column,
+              endLineNumber: end.lineNumber, endColumn: end.column }
+          }
+          // The whole list for the word: Monaco filters and sorts it as the word grows, without asking again.
+          return { incomplete: list.value.incomplete, suggestions: list.value.items.map(item => {
+            const suggestion: monaco.languages.CompletionItem = {
+              label: item.inlineDescription ? { label: itemToLabel(item), description: item.inlineDescription } : itemToLabel(item),
               filterText: item.filterText,
+              ...(item.sortText ? { sortText: item.sortText } : {}),
+              ...(item.preselect ? { preselect: true } : {}),
               kind: tagsToKind(item.tags),
               insertText: item.textEdit.newText,
               range: toRange(item.textEdit),
               additionalTextEdits: item.additionalTextEdits.map(edit => ({ range: toRange(edit), text: edit.newText })),
             }
+            listed.set(suggestion, { model, item, source, position: offset, key: completionKey(context) })
+            return suggestion
           }) }
         } catch (error) {
           console.error('Failed to get completions', error)
           return { suggestions: [] }
         }
+      },
+      // Monaco resolves the item it shows and the one inserted: its description, and the using line of a type of a
+      // namespace the code does not import (applied as it is inserted, or just after).
+      resolveCompletionItem: async (suggestion, token) => {
+        const listedItem = listed.get(suggestion)
+        if (!listedItem) return suggestion
+        try {
+          const resolved = await resolveItem(listedItem, token)
+          if (!resolved) return suggestion
+          const [detail, ...rest] = resolved.documentation.split('\n')
+          if (detail) suggestion.detail = detail
+          const documentation = rest.join('\n').trim()
+          if (documentation) suggestion.documentation = documentation
+          // The edits are offsets in the list's code: they hold while the code before the list's position is as it was.
+          const { model, source, position } = listedItem
+          if (listedItem.item.resolve && model.getValue().slice(0, position) === source.slice(0, position))
+            suggestion.additionalTextEdits = resolved.additionalTextEdits.map(edit => {
+              const start = model.getPositionAt(edit.start), end = model.getPositionAt(edit.start + edit.length)
+              return { range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column }, text: edit.newText }
+            })
+        } catch (error) {
+          console.error('Failed to resolve a completion', error)
+        }
+        return suggestion
       },
     })
     const hoverProvider = monaco.languages.registerHoverProvider('csharp', {
@@ -378,53 +449,21 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
       },
     })
     invalidateContext = () => {
-      // A library onChange may advance context before Monaco invokes this registration's
-      // content listener. Let that listener retain its pending-completion typing recovery.
-      if (observedModel === editor.getModel() && observedModel?.getVersionId() !== observedVersion) return
-      invalidate(); cancelCompletionRetry(); clearDiagnostics(); setValidating(true)
+      // A library edit advances its workspace: a completion list in flight checks its own file and workspace when it arrives.
+      invalidate(true); clearDiagnostics(); setValidating(true)
       clearTimeout(validationTimer); validationTimer = setTimeout(() => void validate(), validationDelay)
     }
     const contentSubscription = editor.onDidChangeModelContent(() => {
-      observedModel = editor.getModel(); observedVersion = observedModel?.getVersionId()
-      const retryCompletion = pending.has('completion') || completionTimer !== undefined
-      invalidate()
+      invalidate(true)
       clearDiagnostics()
-      cancelCompletionRetry()
-      if (retryCompletion) {
-        const model = editor.getModel()
-        const version = model?.getVersionId()
-        completionPosition = editor.getPosition()
-        completionTimer = setTimeout(() => {
-          completionTimer = undefined
-          const position = editor.getPosition()
-          // Asked as typing asks (auto): Monaco shows "Loading…" and "No suggestions." only for a list a person asked
-          // for, and keeps that box open over the rest of the word. A word with no suggestions closes the list quietly.
-          if (model && owns(model) && model.getVersionId() === version && editor.hasTextFocus()
-            && position && completionPosition && position.lineNumber === completionPosition.lineNumber
-            && position.column === completionPosition.column) editor.trigger('typing-recovery', 'editor.action.triggerSuggest', { auto: true })
-          completionPosition = null
-        }, 100)
-      }
       setValidating(true)
       clearTimeout(validationTimer)
       validationTimer = setTimeout(() => { void validate() }, validationDelay)
-    })
-    const keySubscription = editor.onKeyDown(event => {
-      if (event.keyCode === monaco.KeyCode.Escape) cancelCompletionRetry()
-    })
-    const cursorSubscription = editor.onDidChangeCursorPosition(event => {
-      if (completionTimer === undefined) return
-      // Ordinary typing updates the cursor after the content event; explicit navigation
-      // (including keyboard arrows), mouse movement and programmatic selection end recovery.
-      if (event.source === 'keyboard' && event.reason === monaco.editor.CursorChangeReason.NotSet) completionPosition = event.position
-      else cancelCompletionRetry()
     })
     const modelSubscription = editor.onDidChangeModel(() => {
       invalidate()
       if (markedModel && !markedModel.isDisposed()) monaco.editor.setModelMarkers(markedModel, 'csharp', [])
       markedModel = editor.getModel()
-      observedModel = markedModel; observedVersion = observedModel?.getVersionId()
-      cancelCompletionRetry()
       clearDiagnostics()
       void validate()
     })
@@ -438,14 +477,11 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
     disposeRegistration = () => {
       if (disposed) return
       disposed = true
-      cancelCompletionRetry()
       clearTimeout(validationTimer)
       invalidate()
       completionProvider.dispose()
       hoverProvider.dispose()
       signatureProvider.dispose(); definitionProvider.dispose(); formatProvider.dispose()
-      keySubscription.dispose()
-      cursorSubscription.dispose()
       contentSubscription.dispose()
       modelSubscription.dispose()
       saveAction.dispose()

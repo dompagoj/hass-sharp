@@ -278,8 +278,8 @@ static class EntityGeneratorTests
     {
         var typed = type[..^2];
         var source = "public class Main { void Run() { " + typed + " } }";
-        var items = (IEnumerable<CompletionModel>)await new NodeLibraryLanguageServices(provider).RequestAsync("completion", [new NodeLibrarySource("main", source, 1)], "main", source.IndexOf(typed, StringComparison.Ordinal) + typed.Length);
-        return items.Any(i => i.DisplayText == type);
+        var list = (CompletionListModel)await new NodeLibraryLanguageServices(provider).RequestAsync("completion", [new NodeLibrarySource("main", source, 1)], "main", source.IndexOf(typed, StringComparison.Ordinal) + typed.Length);
+        return list.Items.Any(i => i.DisplayText == type);
     }
 
     // Whether a library naming the type compiles: libraries reference the installed entities assembly.

@@ -1,4 +1,4 @@
-import type { CompletionItem, Diagnostic, HomeAssistant } from '../types'
+import type { CompletionItem, CompletionList, CompletionResolution, Diagnostic, HomeAssistant } from '../types'
 import type { VisualCatalogSnapshot } from './contract'
 import type { VisualDocument, VisualDiagnostic } from './api'
 
@@ -52,13 +52,16 @@ export function libraryApi(hass: Pick<HomeAssistant, 'callWS'>) {
     if (!response.ok) throw new LibraryApiError(response.error.code, response.error.detail, operation)
     return response.result
   }
-  const language = <T>(operation: string, context: LibraryContext, position = 0) => request<LibraryReply<T>>(operation, { ...context, position })
+  const language = <T>(operation: string, context: LibraryContext, position = 0, fields = {}) => request<LibraryReply<T>>(operation, { ...context, position, ...fields })
   // The node's own id always goes along: the namespace its code compiles in, and so its own type ids, derive from it.
-  const custom = <T>(operation: string, code: CustomCode, position = 0) =>
-    request<CustomReply<T>>(operation, { custom: true, nodeId: code.nodeId, source: code.source, workspaceVersion: code.workspaceVersion, position })
+  const custom = <T>(operation: string, code: CustomCode, position = 0, fields = {}) =>
+    request<CustomReply<T>>(operation, { custom: true, nodeId: code.nodeId, source: code.source, workspaceVersion: code.workspaceVersion, position, ...fields })
+  /** An item names itself to `completion_resolve` as the list gave it; the code and position are the list's. */
+  const itemKey = (item: CompletionItem) => ({ displayText: item.displayText, displayTextPrefix: item.displayTextPrefix, displayTextSuffix: item.displayTextSuffix, inlineDescription: item.inlineDescription ?? '' })
   return {
     customPreview: (code: Pick<CustomCode, 'nodeId' | 'source'>) => request<CustomPreview>('custom_preview', { nodeId: code.nodeId, source: code.source }),
-    customCompletion: (code: CustomCode, position: number) => custom<CompletionItem[]>('completion', code, position),
+    customCompletion: (code: CustomCode, position: number) => custom<CompletionList>('completion', code, position),
+    customCompletionResolve: (code: CustomCode, position: number, item: CompletionItem) => custom<CompletionResolution>('completion_resolve', code, position, { item: itemKey(item) }),
     customHover: (code: CustomCode, position: number) => custom<{ text?: string; range?: LibraryRange }>('hover', code, position),
     customSignature: (code: CustomCode, position: number) => custom<LibrarySignatureHelp>('signature', code, position),
     customDefinition: (code: CustomCode, position: number) => custom<LibraryDefinition[]>('definition', code, position),
@@ -71,7 +74,8 @@ export function libraryApi(hass: Pick<HomeAssistant, 'callWS'>) {
     save: (document: LibraryDocument) => request<LibraryMutation>('save', { id: document.id, name: document.name, source: document.source, expectedRevision: document.revision }),
     delete: (id: string, expectedRevision: number) => request<LibraryMutation>('delete', { id, expectedRevision }),
     preview: (context: LibraryContext) => language<LibraryPreview>('preview', context),
-    completion: (context: LibraryContext, position: number) => language<CompletionItem[]>('completion', context, position),
+    completion: (context: LibraryContext, position: number) => language<CompletionList>('completion', context, position),
+    completionResolve: (context: LibraryContext, position: number, item: CompletionItem) => language<CompletionResolution>('completion_resolve', context, position, { item: itemKey(item) }),
     hover: (context: LibraryContext, position: number) => language<{ text?: string; range?: LibraryRange }>('hover', context, position),
     signature: (context: LibraryContext, position: number) => language<LibrarySignatureHelp>('signature', context, position),
     definition: (context: LibraryContext, position: number) => language<LibraryDefinition[]>('definition', context, position),

@@ -108,6 +108,13 @@ public partial class HassSharpManager
             inputs = VisualNodeCatalog.DataInputs(node, null, snapshot), outputs = VisualNodeCatalog.DataOutputs(node, snapshot) };
     }
     static string RequiredString(JsonObject request, string key) => ApiRequest.String(request, key);
+    /// <summary>The <c>item</c> of a <c>completion_resolve</c> request: the item as the completion list gave it.</summary>
+    static CompletionItemKey CompletionKey(JsonObject request)
+    {
+        var item = ApiRequest.Object(request, "item");
+        return new(ApiRequest.String(item, "displayText"), ApiRequest.OptionalString(item, "displayTextPrefix") ?? "",
+            ApiRequest.OptionalString(item, "displayTextSuffix") ?? "", ApiRequest.OptionalString(item, "inlineDescription") ?? "");
+    }
 
     public async Task<string> NodeLibraryRequest(string requestJson)
     {
@@ -142,7 +149,7 @@ public partial class HassSharpManager
             }
             // A Custom C# node's code: its pins as the compiler derives them, and the language services, beside the saved libraries.
             var customRequest = ApiRequest.OptionalBool(request, "custom") ?? false;
-            if (operation == "custom_preview" || customRequest && operation is "completion" or "hover" or "signature" or "format" or "definition")
+            if (operation == "custom_preview" || customRequest && operation is "completion" or NodeLibraryLanguageServices.ResolveOperation or "hover" or "signature" or "format" or "definition")
             {
                 // The node's id decides the namespace its code compiles in, and so the ids of the types it declares.
                 var nodeId = ApiRequest.String(request, "nodeId", "the id of the Custom C# node whose code this is");
@@ -157,7 +164,13 @@ public partial class HassSharpManager
                 var ordered = libraries.Values.OrderBy(s => s.Id, StringComparer.Ordinal).ToArray();
                 if (operation == "custom_preview")
                 {
-                    var compiled = new NodeLibraryCompiler(_diagnosticsProvider).Preview(ordered, [code], _languageLifetime.Token);
+                    // The check compiles an immutable snapshot: outside the gate, so completion and hover do not wait for it.
+                    var previewLifetime = _languageLifetime.Token;
+                    var compiling = Task.Run(() => new NodeLibraryCompiler(_diagnosticsProvider).Preview(ordered, [code], previewLifetime));
+                    _visualGate.Release();
+                    NodeLibraryPreview compiled;
+                    try { compiled = await compiling; }
+                    finally { await _visualGate.WaitAsync(); }
                     var result = compiled.Snapshot.Custom[nodeId];
                     // The node's code compiles with the libraries: while one of them has errors, say that first.
                     var broken = compiled.Diagnostics.Where(d => d.Severity == 3 && libraries.ContainsKey(d.SourceId)).Select(d => d.SourceId).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
@@ -168,7 +181,11 @@ public partial class HassSharpManager
                 var workspace = RequiredString(request, "workspaceVersion");
                 if (ApiRequest.OptionalString(request, "generation") is { } current && current != saved.Generation) throw new VisualConflictException();
                 var lifetime = _languageLifetime.Token;
-                var request_ = new NodeLibraryLanguageServices(_diagnosticsProvider).RequestAsync(operation, ordered, code, ApiRequest.OptionalInt(request, "position") ?? 0, lifetime);
+                var services_ = new NodeLibraryLanguageServices(_diagnosticsProvider);
+                var at = ApiRequest.OptionalInt(request, "position") ?? 0;
+                var request_ = operation == NodeLibraryLanguageServices.ResolveOperation
+                    ? services_.ResolveAsync(ordered, code, at, CompletionKey(request), lifetime)
+                    : services_.RequestAsync(operation, ordered, code, at, lifetime);
                 _visualGate.Release();
                 object answer;
                 try { answer = await request_; }
@@ -178,7 +195,7 @@ public partial class HassSharpManager
             var id = RequiredString(request, "id"); NodeLibraryStore.ValidateId(id);
             var old = saved.Documents.SingleOrDefault(d => d.Id == id);
             if (operation == "read") return Success(old ?? throw new FileNotFoundException("Library document not found"));
-            if (operation is "preview" or "completion" or "hover" or "signature" or "format" or "definition")
+            if (operation is "preview" or "completion" or NodeLibraryLanguageServices.ResolveOperation or "hover" or "signature" or "format" or "definition")
             {
                 var source = RequiredString(request, "source");
                 var workspaceVersion = RequiredString(request, "workspaceVersion");
@@ -195,7 +212,13 @@ public partial class HassSharpManager
                 object data;
                 if (operation == "preview")
                 {
-                    var preview = new NodeLibraryCompiler(_diagnosticsProvider).Preview(snapshot, _languageLifetime.Token);
+                    // As for a Custom C# node's check: the snapshot is immutable, so it compiles outside the gate.
+                    var previewLifetime = _languageLifetime.Token;
+                    var compiling = Task.Run(() => new NodeLibraryCompiler(_diagnosticsProvider).Preview(snapshot, previewLifetime));
+                    _visualGate.Release();
+                    NodeLibraryPreview preview;
+                    try { preview = await compiling; }
+                    finally { await _visualGate.WaitAsync(); }
                     data = new { preview.Valid, preview.Diagnostics, catalog = preview.Snapshot.Catalog };
                 }
                 else
@@ -203,7 +226,10 @@ public partial class HassSharpManager
                     var token = _languageLifetime.Token;
                     // The immutable source snapshot remains coherent after releasing the authoring gate.
                     var services = new NodeLibraryLanguageServices(_diagnosticsProvider);
-                    var languageTask = services.RequestAsync(operation, snapshot, id, ApiRequest.OptionalInt(request, "position") ?? 0, token);
+                    var at = ApiRequest.OptionalInt(request, "position") ?? 0;
+                    var languageTask = operation == NodeLibraryLanguageServices.ResolveOperation
+                        ? services.ResolveAsync(snapshot, id, at, CompletionKey(request), token)
+                        : services.RequestAsync(operation, snapshot, id, at, token);
                     _visualGate.Release();
                     try { data = await languageTask; }
                     finally { await _visualGate.WaitAsync(); }

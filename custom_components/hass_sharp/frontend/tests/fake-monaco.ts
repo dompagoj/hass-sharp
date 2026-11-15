@@ -83,7 +83,7 @@ export const host = {
   KeyMod: { CtrlCmd: 2048 }, KeyCode: { KeyS: 49, Escape: 9 },
   MarkerSeverity: { Error: 8, Warning: 4, Info: 2 },
   languages: {
-    CompletionItemKind: { Method: 0, Function: 1, Field: 3, Variable: 4, Class: 5, Struct: 6, Interface: 7, Module: 8, Property: 9, Enum: 15, Keyword: 17, TypeParameter: 24, Snippet: 28 },
+    CompletionItemKind: { Method: 0, Function: 1, Field: 3, Variable: 4, Class: 5, Struct: 6, Interface: 7, Module: 8, Property: 9, Event: 10, Operator: 11, Constant: 14, Enum: 15, EnumMember: 16, Keyword: 17, Text: 18, Reference: 21, TypeParameter: 24, Snippet: 28 },
     registerCompletionItemProvider: (_language: string, value: any) => provider(completions, value),
     registerSignatureHelpProvider: (_language: string, value: any) => provider(signatures, value),
     registerDefinitionProvider: (_language: string, value: any) => provider(definitions, value),

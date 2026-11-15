@@ -212,7 +212,8 @@ export function visualFixture(
       const word = /[A-Za-z_][A-Za-z_0-9]*$/.exec(before)?.[0] ?? ''
       if (request.operation === 'completion') {
         const members = before.includes('entity.') || before.includes('state.') ? ['State', 'Attributes', 'EntityId', 'LastChanged', 'LastUpdated', 'LastReported'] : ['State', 'Describe', 'Make', 'Reading', 'EntityStateSnapshot']
-        return wrap(members.filter(name => name.toLowerCase().startsWith(word.toLowerCase())).map(name => ({ displayText: name, displayTextPrefix: '', displayTextSuffix: '', filterText: name, tags: ['Property'], textEdit: { start: before.length - word.length, length: word.length, newText: name }, additionalTextEdits: [] })))
+        // Every member the first letter can match: the editor narrows the list itself as the word grows.
+        return wrap({ items: members.filter(name => !word || name.toLowerCase().startsWith(word[0].toLowerCase())).map(name => ({ displayText: name, displayTextPrefix: '', displayTextSuffix: '', filterText: name, tags: ['Property'], textEdit: { start: before.length - word.length, length: word.length, newText: name }, additionalTextEdits: [] })), incomplete: false })
       }
       if (request.operation === 'hover') return wrap({ text: 'EntityStateSnapshot.State : string\nThe detached Home Assistant entity state (fixture).', range: range(request.source, before.length - word.length, Math.max(1, word.length)) })
       if (request.operation === 'signature') {

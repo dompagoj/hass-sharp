@@ -18,6 +18,8 @@ function setup(handler: (request: any) => any = vi.fn(async () => [] as any), on
     let data = await handler(r)
     if (r.operation === 'preview') data = { valid: !data.some((d: any) => d.severity === 3), diagnostics: data.map((d: any) => ({ ...d, sourceId: 'main' })) }
     if (r.operation === 'hover' && typeof data === 'string') data = { text: data }
+    // A handler answers a completion with its items; the reply is the list, complete unless the handler gives one.
+    if (r.operation === 'completion' && Array.isArray(data)) data = { items: data, incomplete: false }
     return { version: 1, ok: true, result: { id: r.id, workspaceVersion: r.workspaceVersion, generation: r.generation, sourceGeneration: 'source-1', saved: false, data } }
   })
   const editor = new FakeEditor({ value: 'Lis' })
@@ -196,79 +198,96 @@ describe('Editor feedback and typing recovery', () => {
     expect(logged).toHaveBeenCalledWith('Failed to get diagnostics', expect.any(Error))
     logged.mockRestore()
   })
-  it('reopens suggestions after typing cancels an in-flight request', async () => {
+  it('keeps an in-flight completion while typing goes on in the word, without asking again', async () => {
+    // Typing used to drop the list in flight and ask again 100 ms later. The list is for the code before its position:
+    // typing on leaves it good, and Monaco filters it by what was typed meanwhile.
     const response = deferred<any>()
-    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
+    const { editor, callWS } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
     const first = completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
     editor.change('List')
     editor.move({ lineNumber: 1, column: 5 }, 'keyboard', 0)
     await vi.advanceTimersByTimeAsync(150)
-    expect(editor.triggers).toContain('editor.action.triggerSuggest')
+    response.resolve([completion])
+    const result = await first
+    expect(result.suggestions.map((s: any) => s.insertText)).toEqual(['List'])
+    expect(result.suggestions[0].range).toEqual({ startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 4 })
+    expect(editor.triggers).toEqual([])
+    expect(callWS.mock.calls.filter(([m]) => m.request.operation === 'completion')).toHaveLength(1)
+  })
+  it('drops an in-flight completion once the code before its position changes', async () => {
+    const response = deferred<any>()
+    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
+    const first = completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
+    editor.change('Xis')
     response.resolve([completion])
     expect((await first).suggestions).toEqual([])
   })
-  it('reopens suggestions as typing does, so a word with none shows no "No suggestions" box', async () => {
-    // Monaco shows "No suggestions." (and "Loading…") only for suggestions a person asked for. The reopening follows
-    // their typing, so it asks as typing does: an empty answer then closes the list without a word.
-    const response = deferred<any>()
-    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
-    void completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
-    editor.change('motionCount')
-    editor.move({ lineNumber: 1, column: 12 }, 'keyboard', 0)
-    await vi.advanceTimersByTimeAsync(150)
-    expect(editor.triggers).toEqual(['editor.action.triggerSuggest'])
-    expect(editor.triggerPayloads).toEqual([{ auto: true }])
-    response.resolve([])
-  })
-  it('marks server-filtered lists incomplete and shows namespaces as modules', async () => {
+  it('lets Monaco filter a complete list, and asks again at the next letter only for an incomplete one', async () => {
     const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? [{ ...completion, tags: ['Namespace'] }] : []))
     const result = await completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
-    expect(result.incomplete).toBe(true)
+    expect(result.incomplete).toBe(false)
     expect(result.suggestions[0].kind).toBe(8)
+    resetHost()
+    const partial = setup(vi.fn(async (m: any) => m.operation === 'completion' ? { items: [completion], incomplete: true } : []))
+    expect((await completions[0].provideCompletionItems(partial.editor.model, position, {}, noCancellation)).incomplete).toBe(true)
+  })
+  it('shows every Roslyn kind, and an unknown one as text rather than a hidden snippet', async () => {
+    // "BinarySensorState." showed "No suggestions.": EnumMember was not mapped, fell back to Snippet, and the editor
+    // hides snippets. The kind is the first tag that names one, wherever it stands among the tags.
+    const items = [['EnumMember', 'Public'], ['Constant', 'Public'], ['Event', 'Public'], ['Public', 'Class'], ['Unheard'], ['Snippet']]
+      .map((tags, i) => ({ ...completion, displayText: `Item${i}`, filterText: `Item${i}`, tags }))
+    const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? items : []))
+    const result = await completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
+    expect(result.suggestions.map((s: any) => s.kind)).toEqual([16, 14, 10, 5, 18, 28])
+  })
+  it('resolves an item against the code of its list: the description, and the using line of an unimported type', async () => {
+    const item = { ...completion, displayText: 'JsonSerializer', displayTextSuffix: '', filterText: 'JsonSerializer', inlineDescription: 'System.Text.Json', resolve: true,
+      textEdit: { start: 0, length: 3, newText: 'JsonSerializer' } }
+    const { editor, callWS } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? [item]
+      : m.operation === 'completion_resolve' ? { documentation: 'class System.Text.Json.JsonSerializer\nSerializes objects to JSON.', additionalTextEdits: [{ start: 0, length: 0, newText: 'using System.Text.Json;\n' }] } : []))
+    const result = await completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
+    const suggestion = result.suggestions[0]
+    expect(suggestion.label).toEqual({ label: 'JsonSerializer', description: 'System.Text.Json' })
+    expect(suggestion.additionalTextEdits).toEqual([])
+    editor.change('Lisx') // typing on before the item is shown or inserted
+    const resolved = await completions[0].resolveCompletionItem(suggestion, noCancellation)
+    expect(callWS.mock.calls.at(-1)![0].request).toMatchObject({ operation: 'completion_resolve', source: 'Lis', position: 3,
+      item: { displayText: 'JsonSerializer', displayTextPrefix: '', displayTextSuffix: '', inlineDescription: 'System.Text.Json' } })
+    expect(resolved.detail).toBe('class System.Text.Json.JsonSerializer')
+    expect(resolved.documentation).toBe('Serializes objects to JSON.')
+    expect(resolved.additionalTextEdits).toEqual([{ range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 }, text: 'using System.Text.Json;\n' }])
   })
 })
 
-it('does not reopen suggestions after switching models or disposing the editor', async () => {
+it('drops an in-flight completion after switching models or disposing the editor', async () => {
   const response = deferred<any>()
   const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
-  void completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
-  editor.change('List')
-  editor.setModel(new FakeModel('another'))
-  await vi.advanceTimersByTimeAsync(150)
-  expect(editor.triggers).toEqual([])
-  void completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
-  editor.change('newer')
+  const switched = completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
+  editor.setModel(new FakeModel('Lis'))
+  response.resolve([completion])
+  expect((await switched).suggestions).toEqual([])
+  const disposed = completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
   cleanup()
-  await vi.advanceTimersByTimeAsync(150)
-  expect(editor.triggers).toEqual([])
-  response.resolve([])
-})
-
-it.each(['escape', 'cursor'])('does not reopen dismissed suggestions after %s', async kind => {
-  const response = deferred<any>()
-  const { editor } = setup(vi.fn(async (m: any) => m.operation === 'completion' ? response.promise : []))
-  void completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
-  editor.change('List')
-  if (kind === 'escape') editor.key(9)
-  else editor.move({ lineNumber: 1, column: 2 })
-  await vi.advanceTimersByTimeAsync(150)
-  expect(editor.triggers).toEqual([])
-  response.resolve([])
+  expect((await disposed).suggestions).toEqual([])
 })
 
 describe('Library workspace language services', () => {
   function librarySetup(handler: (r: any) => any) {
     let workspaceVersion = '1'
+    let helper = 'unsaved helper'
     let sourceGeneration: string | undefined
-    const context = () => ({ id: 'main', source: 'Lis', workspaceVersion, generation: 'saved', sources: [{ id: 'helper', source: 'unsaved helper' }] })
+    const context = () => ({ id: 'main', source: 'Lis', workspaceVersion, generation: 'saved', sources: [{ id: 'helper', source: helper }] })
     const callWS = vi.fn(async (message: any) => {
       const r = message.request
-      return { version: 1, ok: true, result: { id: r.id, workspaceVersion: r.workspaceVersion, generation: r.generation, sourceGeneration: `source-${r.workspaceVersion}`, saved: false, data: await handler(r) } }
+      let data = await handler(r)
+      if (r.operation === 'completion' && Array.isArray(data)) data = { items: data, incomplete: false }
+      return { version: 1, ok: true, result: { id: r.id, workspaceVersion: r.workspaceVersion, generation: r.generation, sourceGeneration: `source-${r.workspaceVersion}`, saved: false, data } }
     })
     const editor = new FakeEditor({ value: 'Lis' })
     let actions!: ReturnType<typeof useEditorActions>
     createRoot(dispose => { cleanup = dispose; actions = useEditorActions({ callWS } as any, { context, sourceGeneration: () => sourceGeneration }); actions.register(editor as any, vi.fn()) })
-    return { editor, actions, callWS, setSourceGeneration: (value: string) => { sourceGeneration = value }, changeWorkspace: () => { workspaceVersion = '2'; actions.invalidateContext() } }
+    return { editor, actions, callWS, setSourceGeneration: (value: string) => { sourceGeneration = value }, changeWorkspace: () => { workspaceVersion = '2'; helper = 'edited helper'; actions.invalidateContext() },
+      typeInThisFile: () => { workspaceVersion = '2'; actions.invalidateContext() } }
   }
   it('uses actual library transport for member edits, nullable signatures and cross-file definitions', async () => {
     const { signatures, definitions, formats } = await import('./fake-monaco')
@@ -302,10 +321,19 @@ describe('Library workspace language services', () => {
     expect(hover.contents[0].value).toBe('string State')
   })
   it('rejects a response whose source fingerprint differs from the current preview', async () => {
-    const { editor, setSourceGeneration } = librarySetup(r => r.operation === 'completion' ? [completion] : { diagnostics: [], valid: true })
+    const { editor, setSourceGeneration } = librarySetup(r => r.operation === 'hover' ? { text: 'string State' } : { diagnostics: [], valid: true })
     setSourceGeneration('current-preview')
-    const result = await completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
-    expect(result.suggestions).toEqual([])
+    expect(await hovers[0].provideHover(editor.model, position, noCancellation)).toBeNull()
+  })
+  it('keeps a completion list across a newer preview and a workspace version typing in this file advanced', async () => {
+    // The list is for the code before its position in this file, the saved libraries and the other drafts: what the
+    // preview fingerprints (the whole source) moves on with every letter typed after it.
+    const response = deferred<any>()
+    const { editor, setSourceGeneration, typeInThisFile } = librarySetup(r => r.operation === 'completion' ? response.promise : { diagnostics: [], valid: true })
+    const result = completions[0].provideCompletionItems(editor.model, position, {}, noCancellation)
+    typeInThisFile(); setSourceGeneration('current-preview')
+    response.resolve([completion])
+    expect((await result).suggestions.map((s: any) => s.insertText)).toEqual(['List'])
   })
   it('settles every provider when other-file context changes without changing selected model version', async () => {
     const { signatures, definitions, formats } = await import('./fake-monaco')

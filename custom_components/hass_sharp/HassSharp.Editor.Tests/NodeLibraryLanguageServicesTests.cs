@@ -4,13 +4,19 @@ using Xunit;
 
 namespace HassSharp.Editor.Tests;
 
+static class CompletionReply
+{
+    /// <summary>A completion reply's items (the list is <c>{ items, incomplete }</c>); any other reply as it is.</summary>
+    public static JsonNode Items(this JsonNode node) => node is JsonObject reply && reply["items"] is JsonArray items ? items : node;
+}
+
 public class NodeLibraryLanguageServicesTests
 {
     static async Task<JsonNode> Request(string operation, NodeLibrarySource[] sources, string id, int position=0)
     {
         var provider = new DiagnosticsProvider();
         var service = new NodeLibraryLanguageServices(provider);
-        return JsonSerializer.SerializeToNode(await service.RequestAsync(operation,sources,id,position,TestContext.Current.CancellationToken), VisualStore.Json)!;
+        return JsonSerializer.SerializeToNode(await service.RequestAsync(operation,sources,id,position,TestContext.Current.CancellationToken), VisualStore.Json)!.Items();
     }
     [Fact]
     public async Task Completion_uses_typed_entity_members_and_unwrapped_utf16_edits()
@@ -37,11 +43,20 @@ public class NodeLibraryLanguageServicesTests
         var signature=await Request("signature",sources,"main",source.IndexOf("null")+2);
         Assert.Contains("string?",signature.ToJsonString()); Assert.Contains("Reading",signature.ToJsonString());
     }
+    static async Task<JsonNode> Resolve(JsonNode item, string source, int position, bool custom, NodeLibrarySource[]? sources = null)
+    {
+        var service = new NodeLibraryLanguageServices(new DiagnosticsProvider());
+        var key = new CompletionItemKey(item["displayText"]!.GetValue<string>(), item["displayTextPrefix"]!.GetValue<string>(),
+            item["displayTextSuffix"]!.GetValue<string>(), item["inlineDescription"]?.GetValue<string>() ?? "");
+        return JsonSerializer.SerializeToNode(custom
+            ? await service.ResolveAsync(sources ?? [], new CustomNodeSource("check", source), position, key, TestContext.Current.CancellationToken)
+            : await service.ResolveAsync([.. sources ?? [], new("main", source, 1)], "main", position, key, TestContext.Current.CancellationToken), VisualStore.Json)!;
+    }
     static async Task<JsonNode> Custom(string operation, NodeLibrarySource[] sources, string source, int position=0)
     {
         var provider = new DiagnosticsProvider();
         var service = new NodeLibraryLanguageServices(provider);
-        return JsonSerializer.SerializeToNode(await service.RequestAsync(operation,sources,new CustomNodeSource("check",source),position,TestContext.Current.CancellationToken), VisualStore.Json)!;
+        return JsonSerializer.SerializeToNode(await service.RequestAsync(operation,sources,new CustomNodeSource("check",source),position,TestContext.Current.CancellationToken), VisualStore.Json)!.Items();
     }
     [Fact]
     public async Task Custom_node_code_gets_completion_hover_definition_and_format_beside_the_libraries_with_its_usings()
@@ -109,7 +124,7 @@ public class NodeLibraryLanguageServicesTests
         // UseEntitySchema is internal to HassSharp: called as the manager calls it when Home Assistant sends the lists.
         var result = typeof(DiagnosticsProvider).GetMethod("UseEntitySchema", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(provider, [domains])!;
         Assert.True((bool)result.GetType().GetProperty("Accepted")!.GetValue(result)!, "the captured entity lists give classes");
-        return JsonSerializer.SerializeToNode(await new NodeLibraryLanguageServices(provider).RequestAsync(operation,[],new CustomNodeSource("motion",source),position,TestContext.Current.CancellationToken), VisualStore.Json)!;
+        return JsonSerializer.SerializeToNode(await new NodeLibraryLanguageServices(provider).RequestAsync(operation,[],new CustomNodeSource("motion",source),position,TestContext.Current.CancellationToken), VisualStore.Json)!.Items();
     }
     [Fact]
     public async Task Custom_node_code_completes_and_documents_the_entity_classes()
@@ -152,7 +167,11 @@ public class NodeLibraryLanguageServicesTests
         {
             var items=(custom?await Custom("completion",[],source,position):await Request("completion",[new("main",source,1)],"main",position)).AsArray();
             var item=Assert.Single(items,i=>i!["displayText"]!.GetValue<string>()=="JsonSerializer")!;
-            var line=Assert.Single(item["additionalTextEdits"]!.AsArray())!;
+            // The list names the item only; its using line is worked out when the item is resolved (shown or inserted).
+            Assert.True(item["resolve"]!.GetValue<bool>()); Assert.Empty(item["additionalTextEdits"]!.AsArray());
+            var resolved=await Resolve(item,source,position,custom);
+            Assert.Contains("JsonSerializer",resolved["documentation"]!.GetValue<string>());
+            var line=Assert.Single(resolved["additionalTextEdits"]!.AsArray())!;
             Assert.Equal((0,0),(line["start"]!.GetValue<int>(),line["length"]!.GetValue<int>()));
             Assert.StartsWith("using System.Text.Json;\n",line["newText"]!.GetValue<string>());
             // Applied as the editor applies them (the name where it was typed, the line at the top), the code compiles.
@@ -163,6 +182,60 @@ public class NodeLibraryLanguageServicesTests
             var preview=custom?compiler.Preview([],[new CustomNodeSource("check",completed)],TestContext.Current.CancellationToken):compiler.Preview([new("main",completed,1)],TestContext.Current.CancellationToken);
             Assert.DoesNotContain(custom?preview.Snapshot.Custom["check"].Diagnostics:preview.Diagnostics,d=>d.Severity==3);
         }
+    }
+    [Fact]
+    public async Task Completion_gives_the_whole_list_for_the_word_so_the_editor_filters_it_while_typing()
+    {
+        // Roslyn's own filter kept only its best matches for the word ("B" gave a dozen items), so the editor had to ask
+        // again at every letter. The list is now everything the editor can match by the first letter, complete, and the
+        // editor narrows it itself; a type of a namespace the code does not import comes with resolve, not its using line.
+        var service=new NodeLibraryLanguageServices(new DiagnosticsProvider());
+        async Task<JsonObject> Raw(string code,int position) =>
+            JsonSerializer.SerializeToNode(await service.RequestAsync("completion",[],new CustomNodeSource("check",code),position,TestContext.Current.CancellationToken),VisualStore.Json)!.AsObject();
+        const string code="public static class CustomNode\n{\n    [Node(\"Check\")]\n    public static void Run(NodeContext context) { var x = B; var y = J; var z = ; context. }\n}";
+        var word=await Raw(code,code.IndexOf("= B;")+3);
+        Assert.False(word["incomplete"]!.GetValue<bool>());
+        var names=word["items"]!.AsArray().Select(i=>i!["displayText"]!.GetValue<string>()).ToHashSet();
+        Assert.True(names.Count>100,$"the whole list for B, not Roslyn's best matches ({names.Count})");
+        Assert.Contains("Boolean",names); Assert.Contains("BitConverter",names);
+        Assert.Contains("DBNull",names); // B at a capital: the editor matches it by camel case
+        Assert.DoesNotContain("Array",names); Assert.DoesNotContain("Object",names); // no B the editor could match first
+        var imported=(await Raw(code,code.IndexOf("= J;")+3))["items"]!.AsArray();
+        var serializer=Assert.Single(imported,i=>i!["displayText"]!.GetValue<string>()=="JsonSerializer"&&i["inlineDescription"]?.GetValue<string>()=="System.Text.Json")!;
+        Assert.True(serializer["resolve"]!.GetValue<bool>());
+        Assert.Equal("JsonSerializer",serializer["textEdit"]!["newText"]!.GetValue<string>());
+        // At an empty word the types of namespaces the code does not import wait for the first letter, which asks again.
+        var empty=await Raw(code,code.IndexOf("= ;")+2);
+        Assert.True(empty["incomplete"]!.GetValue<bool>());
+        Assert.DoesNotContain(empty["items"]!.AsArray(),i=>i!["resolve"]?.GetValue<bool>()==true);
+        Assert.Contains(empty["items"]!.AsArray(),i=>i!["displayText"]!.GetValue<string>()=="context");
+        // After a dot the members are the whole list.
+        var members=await Raw(code,code.IndexOf("context. ")+8);
+        Assert.False(members["incomplete"]!.GetValue<bool>());
+        Assert.Contains(members["items"]!.AsArray(),i=>i!["displayText"]!.GetValue<string>()=="CancellationToken");
+    }
+    [Fact]
+    public async Task A_using_line_added_beside_the_codes_own_is_not_indented_as_the_wrapping_namespace_would_have_it()
+    {
+        // The code compiles inside a namespace block, so Roslyn indented the new using line and the code's own one after it.
+        const string source="using System.Threading.Tasks;\npublic static class CustomNode\n{\n    [Node(\"Check\")]\n    public static void Run() { var j = JsonSer; }\n}";
+        var position=source.IndexOf("JsonSer;")+7;
+        foreach(var custom in new[]{true,false})
+        {
+            var item=new JsonObject{["displayText"]="JsonSerializer",["displayTextPrefix"]="",["displayTextSuffix"]="",["inlineDescription"]="System.Text.Json"};
+            var line=Assert.Single((await Resolve(item,source,position,custom))["additionalTextEdits"]!.AsArray())!;
+            Assert.Equal((0,0,"using System.Text.Json;\n"),(line["start"]!.GetValue<int>(),line["length"]!.GetValue<int>(),line["newText"]!.GetValue<string>()));
+        }
+    }
+    [Fact]
+    public async Task Completion_lists_the_members_of_an_entity_state_enum()
+    {
+        // "BinarySensorState." showed "No suggestions": the members came (tagged EnumMember), and the editor took a tag it
+        // did not know for a snippet, which it hides. Roslyn's tags reach the editor as they are.
+        const string source="public static class CustomNode\n{\n    [Node(\"Motion\")]\n    public static bool Run(BinarySensorEntity binary) { var x = BinarySensorState.; return true; }\n}";
+        var items=(await WithEntities("completion",source,source.IndexOf("State.;")+6)).AsArray();
+        Assert.Equal(["Off","On","Other","Unavailable","Unknown"],items.Select(i=>i!["displayText"]!.GetValue<string>()).Order());
+        Assert.All(items,i=>Assert.Equal("EnumMember",i!["tags"]![0]!.GetValue<string>()));
     }
     [Fact]
     public async Task Completion_offers_EntityText_and_EntityHandles()
@@ -181,7 +254,7 @@ public class NodeLibraryLanguageServicesTests
             {"light":{"turn_on":{"name":"Turn on","description":"Turns on one or more lights.","target":{"entity":{"domain":"light"}},
               "fields":{"brightness_pct":{"name":"Brightness","description":"Percentage of full brightness.","selector":{"number":{"min":0,"max":100,"unit_of_measurement":"%"}}}}}}}
             """, _ => { }));
-        return JsonSerializer.SerializeToNode(await new NodeLibraryLanguageServices(provider).RequestAsync(operation,[],new CustomNodeSource("dim",source),position,TestContext.Current.CancellationToken), VisualStore.Json)!;
+        return JsonSerializer.SerializeToNode(await new NodeLibraryLanguageServices(provider).RequestAsync(operation,[],new CustomNodeSource("dim",source),position,TestContext.Current.CancellationToken), VisualStore.Json)!.Items();
     }
     [Fact]
     public async Task Custom_node_code_completes_and_documents_the_generated_service_calls()
@@ -255,7 +328,7 @@ public class NodeLibraryLanguageServicesTests
         var service=new NodeLibraryLanguageServices(new DiagnosticsProvider());
         async Task<JsonNode> Ask(string operation,string code,int position,bool custom=true) =>
             JsonSerializer.SerializeToNode(custom?await service.RequestAsync(operation,[],new CustomNodeSource("check",code),position,TestContext.Current.CancellationToken)
-                :await service.RequestAsync(operation,[new("main",code,1)],"main",position,TestContext.Current.CancellationToken),VisualStore.Json)!;
+                :await service.RequestAsync(operation,[new("main",code,1)],"main",position,TestContext.Current.CancellationToken),VisualStore.Json)!.Items();
         async Task<string[]> Names(string code,string after,bool custom=true) =>
             (await Ask("completion",code,code.IndexOf(after)+after.Length,custom)).AsArray().Select(i=>i!["displayText"]!.GetValue<string>()).ToArray();
         foreach(var usings in new[]{"","using System.Globalization;\n","using Python.Runtime;\n"})

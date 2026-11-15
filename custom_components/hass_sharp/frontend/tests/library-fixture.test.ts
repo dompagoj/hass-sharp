@@ -7,7 +7,7 @@ it('provides realistic isolated library language envelopes and revisioned CRUD f
   const call = (operation: string, fields = {}) => fixture.callWS({ type: 'hass_sharp/node_library', request: { operation, ...fields } }) as Promise<any>
   const context = { id: 'shared', source: '// 😀\nentity.Sta', generation: 'saved-fixture', workspaceVersion: 'draft-1', sources: [] }
   const completion = await call('completion', { ...context, position: context.source.length })
-  expect(completion.result.data[0]).toMatchObject({ displayText: 'State', textEdit: { start: context.source.length - 3, length: 3, newText: 'State' } })
+  expect(completion.result.data.items[0]).toMatchObject({ displayText: 'State', textEdit: { start: context.source.length - 3, length: 3, newText: 'State' } })
   const signature = await call('signature', { ...context, source: 'Factory.Make(count: 1, label: null)', position: 21 })
   expect(signature.result.data.activeParameter).toBe(1)
   expect(signature.result).toMatchObject({ id: 'shared', generation: 'saved-fixture', workspaceVersion: 'draft-1', saved: false })

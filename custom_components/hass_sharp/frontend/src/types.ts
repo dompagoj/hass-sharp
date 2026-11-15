@@ -335,6 +335,25 @@ export interface CompletionItem {
   tags: string[]
   textEdit: CompletionTextEdit
   additionalTextEdits: CompletionTextEdit[]
+  /** Roslyn's order, where it is not the filter text. */
+  sortText?: string
+  /** Shown beside the item: the namespace of a type the code does not import, or what a snippet makes. */
+  inlineDescription?: string
+  preselect?: boolean
+  /** The item's using line comes from `completion_resolve`, when it is shown or inserted. */
+  resolve?: boolean
+}
+
+/** Everything Roslyn offers for the word at a position; `incomplete` asks the editor to ask again at the next letter. */
+export interface CompletionList {
+  items: CompletionItem[]
+  incomplete: boolean
+}
+
+/** An item resolved: its description, and the using line a type of a namespace the code does not import needs. */
+export interface CompletionResolution {
+  documentation: string
+  additionalTextEdits: CompletionTextEdit[]
 }
 
 export interface CompletionTextEdit {

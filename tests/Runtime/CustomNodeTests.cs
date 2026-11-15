@@ -534,7 +534,7 @@ static class CustomNodeTests
                 && first["severity"]!.GetValue<int>() == 3, "custom_preview says a library has errors: " + unsaved.ToJsonString());
             var position = source.IndexOf("Helper.") + "Helper.".Length;
             var completion = await Library(new { operation = "completion", custom = true, nodeId = "c", source, position, workspaceVersion = "1" });
-            Check(completion["ok"]!.GetValue<bool>() && completion["result"]!["data"]!.AsArray().Any(i => i!["displayText"]!.GetValue<string>() == "Twice"), "completion works on a custom node's code: " + completion.ToJsonString()[..Math.Min(600, completion.ToJsonString().Length)]);
+            Check(completion["ok"]!.GetValue<bool>() && completion["result"]!["data"]!["items"]!.AsArray().Any(i => i!["displayText"]!.GetValue<string>() == "Twice"), "completion works on a custom node's code: " + completion.ToJsonString()[..Math.Min(600, completion.ToJsonString().Length)]);
 
             var graph = G(Code("c", "Logger.Info(text);", "string text, System.Uri? link = null"));
             graph["nodes"]![1]!["config"]!["arguments"] = new JsonObject { ["text"] = Lit("string", "hi") };

@@ -346,6 +346,18 @@ public class CompletionModel
     public string[] Tags { get; init; } = [];
     public CompletionTextEdit TextEdit { get; init; } = new();
     public CompletionTextEdit[] AdditionalTextEdits { get; init; } = [];
+    /// <summary>Roslyn's order for the item, where it is not the filter text.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? SortText { get; init; }
+    /// <summary>Shown beside the item: the namespace of a type the code does not import, or what a snippet makes.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? InlineDescription { get; init; }
+    /// <summary>The item Roslyn selects first, such as the enum member a comparison expects.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Preselect { get; init; }
+    /// <summary>The item's using line comes from <c>completion_resolve</c>, when the item is shown or inserted.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Resolve { get; init; }
 }
 
 public class CompletionTextEdit
