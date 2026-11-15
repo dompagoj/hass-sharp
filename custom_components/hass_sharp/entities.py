@@ -17,6 +17,8 @@ from homeassistant.helpers.translation import async_get_translations
 from .const import logger
 
 DEBOUNCE_SECONDS = 2
+RETRY_SECONDS = 30
+RETRIES = 5
 
 
 async def async_domains(hass):
@@ -38,37 +40,46 @@ def components(hass):
 
 
 async def async_translations(hass, domains):
-    """The `entity_component` translations of the domains that are integrations, or none when they cannot be loaded.
+    """The `entity_component` translations of the domains that are integrations, or None when they cannot be loaded.
 
     Asking for a domain that is no integration (`sun` is one, `made_up` from a template is not) logs a warning in
-    Home Assistant, so only the domains it resolves are asked. State names are cosmetic: without them the
-    domains are still pushed.
+    Home Assistant, so only the domains it resolves are asked. The state and attribute enums are generated from
+    these names, and helper domains (`input_boolean`) are domains only through them, so an empty result is a
+    failure too: `binary_sensor` always has some.
     """
     try:
         integrations = await loader.async_get_integrations(hass, domains)
         known = [domain for domain in domains if not isinstance(integrations.get(domain), BaseException)]
-        return await async_get_translations(hass, hass.config.language, "entity_component", known)
-    except Exception as err:
-        logger.warning("Entity state names could not be translated; sending the domains without them: %s", err)
-        return {}
+        if translations := await async_get_translations(hass, hass.config.language, "entity_component", known):
+            return translations
+        err = "none were found"
+    except Exception as exception:
+        err = exception
+    logger.warning("Entity state names could not be loaded; the entity classes .NET already has are kept: %s", err)
+    return None
 
 
 def payload(domains, translations):
     return json.dumps({"domains": domains, "translations": translations})
 
 
-async def async_push(hass, manager, active=lambda: True):
+async def async_push(hass, manager, active=lambda: True, untranslated=lambda: None):
     """Send the domains and translations as JSON; failures are logged, never raised.
 
-    Returns the domains sent (the entity domains, not every loaded component), or None when nothing was. Nothing reaches .NET once `active()` is false: the entry
-    stopped listening while they were gathered. A push that differs from the last makes .NET rebuild the typed
-    entity classes and every node library, so callers keep pushes rare.
+    Returns the domains sent (the entity domains, not every loaded component), or None when nothing was. Nothing
+    reaches .NET once `active()` is false: the entry stopped listening while they were gathered. Nothing is sent
+    either when the translations cannot be loaded (.NET keeps the classes it has; `untranslated()` is called so
+    the caller can try again). A push that differs from the last makes .NET rebuild the typed entity classes and
+    every node library, so callers keep pushes rare.
     """
     try:
         started = hass.state is CoreState.running
         domains = await async_domains(hass)
         candidates = components(hass)
         translations = await async_translations(hass, sorted(set(domains) | set(candidates)))
+        if translations is None:
+            untranslated()
+            return None
         # A component is an entity domain when Home Assistant has entity translations for it (helpers such as
         # `input_boolean` and `timer` are no Platform); the translations of anything else are not sent.
         domains = sorted(set(domains) | {c for c in candidates if any(
@@ -90,10 +101,9 @@ async def async_start(hass, manager):
     Listening first means a "Home Assistant started" event that fires while the first push is still gathering
     schedules a push of its own, which then says started.
     """
-    pushed = set()
-    unsubscribe = async_track(hass, manager, pushed)
+    unsubscribe, push = tracking(hass, manager)
     try:
-        pushed.update(await async_push(hass, manager) or ())
+        await push(None)
     except BaseException:
         # Cancelled (the entry's setup was): nobody else could stop the listeners.
         unsubscribe()
@@ -101,22 +111,40 @@ async def async_start(hass, manager):
     return unsubscribe
 
 
-def async_track(hass, manager, pushed=None):
+def async_track(hass, manager):
     """Re-push once changes settle; returns the unsubscribe callback.
 
     Pushes follow a component loading, Home Assistant starting, a change of language (state names are
-    translated) and an entity registry entry of a domain the last push lacked. `pushed` holds that push's domains.
+    translated) and an entity registry entry of a domain the last push lacked.
     """
-    pushed = set() if pushed is None else pushed
+    return tracking(hass, manager)[0]
+
+
+def tracking(hass, manager):
+    """The listeners of `async_track`, and the push they schedule: (unsubscribe, push).
+
+    A push that sent nothing because the translations could not be loaded is tried again after RETRY_SECONDS,
+    at most RETRIES times in a row (a push that succeeds starts the count again), unless another push is already
+    due. `pushed` holds the domains of the last push that was sent.
+    """
+    pushed = set()
     pending = None
     stopped = False
+    retries = 0
 
     async def push(_now):
-        nonlocal pending
+        nonlocal pending, retries
         pending = None
-        if (domains := await async_push(hass, manager, lambda: not stopped)) is not None:
+        if (domains := await async_push(hass, manager, lambda: not stopped, retry)) is not None:
+            retries = 0
             pushed.clear()
             pushed.update(domains)
+
+    def retry():
+        nonlocal pending, retries
+        if not stopped and pending is None and retries < RETRIES:
+            retries += 1
+            pending = async_call_later(hass, RETRY_SECONDS, push)
 
     @callback
     def schedule(_event):
@@ -152,4 +180,4 @@ def async_track(hass, manager, pushed=None):
             pending()
             pending = None
 
-    return unsubscribe
+    return unsubscribe, push

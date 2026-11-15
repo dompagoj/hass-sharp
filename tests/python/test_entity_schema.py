@@ -150,7 +150,7 @@ class EntityDomains(unittest.IsolatedAsyncioTestCase):
         async def slow(*_args):
             gathering.set()
             await release.wait()
-            return {}
+            return {ON: 'On'}
         env['async_get_translations'].side_effect = slow
         listeners[LOADED](NS(data={}))
         push = asyncio.create_task(timers[0].action(None))
@@ -213,28 +213,81 @@ class EntityDomains(unittest.IsolatedAsyncioTestCase):
         listeners[REGISTRY](NS(data={'action': 'create', 'entity_id': 'made_up.c'}))
         self.assertEqual(len(timers), 2)
 
-    async def test_translation_failure_sends_domains_only(self):
-        env, hass, _, _ = load_entities(states=['sun'], components=['input_boolean'])
-        env['async_get_translations'].side_effect = RuntimeError('malformed en.json')
+    async def assert_nothing_sent(self, env, hass):
+        # Without the state names the classes would lose every enum (and the helper domains): .NET keeps its own.
         manager = NS(SetEntityDescriptions=Mock())
-        await env['async_push'](hass, manager)
-        (content, _), = pushed(manager)
-        self.assertIn('sun', content['domains'])
-        self.assertIn('lawn_mower', content['domains'])
-        self.assertNotIn('input_boolean', content['domains'])
-        self.assertEqual(content['translations'], {})
+        self.assertIsNone(await env['async_push'](hass, manager))
+        manager.SetEntityDescriptions.assert_not_called()
         env['logger'].warning.assert_called_once()
+        self.assertIn('kept', env['logger'].warning.call_args.args[0])
         env['logger'].exception.assert_not_called()
 
-    async def test_integration_lookup_failure_sends_domains_only(self):
+    async def test_translation_failure_sends_nothing(self):
+        env, hass, _, _ = load_entities(states=['sun'], components=['input_boolean'])
+        env['async_get_translations'].side_effect = RuntimeError('malformed en.json')
+        await self.assert_nothing_sent(env, hass)
+
+    async def test_integration_lookup_failure_sends_nothing(self):
         env, hass, _, _ = load_entities(states=['sun'])
         env['loader'].async_get_integrations.side_effect = RuntimeError('lookup failed')
-        manager = NS(SetEntityDescriptions=Mock())
-        await env['async_push'](hass, manager)
-        (content, _), = pushed(manager)
-        self.assertIn('sun', content['domains'])
-        self.assertEqual(content['translations'], {})
+        await self.assert_nothing_sent(env, hass)
         env['async_get_translations'].assert_not_called()
+
+    async def test_empty_translations_send_nothing(self):
+        env, hass, _, _ = load_entities(states=['sun'])
+        env['async_get_translations'].side_effect = None
+        env['async_get_translations'].return_value = {}
+        await self.assert_nothing_sent(env, hass)
+
+    async def test_a_push_without_translations_is_retried(self):
+        env, hass, listeners, timers = load_entities(states=['sun'])
+        manager = NS(SetEntityDescriptions=Mock())
+        env['async_get_translations'].side_effect = RuntimeError('malformed en.json')
+        unsubscribe = await env['async_start'](hass, manager)
+        # The first push failed: retried after 30 seconds, at most 5 times in a row.
+        for retry in range(5):
+            self.assertEqual([t.delay for t in timers], [30] * (retry + 1))
+            await timers[-1].action(None)
+        self.assertEqual(len(timers), 5)
+        manager.SetEntityDescriptions.assert_not_called()
+        # A debounced push that fails starts no retry of its own beyond the 5; one that succeeds resets the count.
+        listeners[LOADED](NS(data={}))
+        await timers[-1].action(None)
+        self.assertEqual(len(timers), 6)
+        env['async_get_translations'].side_effect = None
+        env['async_get_translations'].return_value = {ON: 'On'}
+        listeners[LOADED](NS(data={}))
+        await timers[-1].action(None)
+        self.assertEqual(len(pushed(manager)), 1)
+        self.assertEqual(len(timers), 7)
+        env['async_get_translations'].side_effect = RuntimeError('malformed en.json')
+        listeners[LOADED](NS(data={}))
+        await timers[-1].action(None)
+        self.assertEqual(timers[-1].delay, 30)
+        # A skipped push leaves the domains of the last good one; stopping cancels the pending retry.
+        listeners[REGISTRY](NS(data={'action': 'create', 'entity_id': 'sun.other'}))
+        self.assertEqual(len(timers), 9)
+        unsubscribe()
+        timers[-1].cancel.assert_called_once()
+
+    async def test_a_retry_after_stop_sends_nothing(self):
+        env, hass, listeners, timers = load_entities()
+        manager = NS(SetEntityDescriptions=Mock())
+        unsubscribe = env['async_track'](hass, manager)
+        gathering, release = asyncio.Event(), asyncio.Event()
+        async def slow(*_args):
+            gathering.set()
+            await release.wait()
+            raise RuntimeError('malformed en.json')
+        env['async_get_translations'].side_effect = slow
+        listeners[LOADED](NS(data={}))
+        push = asyncio.create_task(timers[0].action(None))
+        await gathering.wait()
+        unsubscribe()
+        release.set()
+        await push
+        self.assertEqual(len(timers), 1)
+        manager.SetEntityDescriptions.assert_not_called()
 
     def test_setup_starts_after_services_and_before_init(self):
         source = Path('custom_components/hass_sharp/__init__.py').read_text()
