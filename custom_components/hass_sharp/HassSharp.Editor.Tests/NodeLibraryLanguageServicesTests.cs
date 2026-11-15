@@ -164,6 +164,16 @@ public class NodeLibraryLanguageServicesTests
             Assert.DoesNotContain(custom?preview.Snapshot.Custom["check"].Diagnostics:preview.Diagnostics,d=>d.Severity==3);
         }
     }
+    [Fact]
+    public async Task Completion_offers_EntityText_and_EntityHandles()
+    {
+        // Node code gets an entity enum's Home Assistant text from EntityText.Of. EntityHandles is offered as well: it only
+        // makes a handle from an id, so offering it is harmless.
+        const string source="public static class CustomNode\n{\n    [Node(\"Check\")]\n    public static void Run() { EntityT }\n}";
+        Assert.Contains((await WithEntities("completion",source,source.IndexOf("EntityT")+7)).AsArray(),i=>i!["displayText"]!.GetValue<string>()=="EntityText");
+        var handles=source.Replace("EntityT","EntityH");
+        Assert.Contains((await WithEntities("completion",handles,handles.IndexOf("EntityH")+7)).AsArray(),i=>i!["displayText"]!.GetValue<string>()=="EntityHandles");
+    }
     static async Task<JsonNode> WithServices(string operation, string source, int position)
     {
         var provider = new DiagnosticsProvider();

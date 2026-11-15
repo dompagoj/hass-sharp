@@ -65,11 +65,14 @@ public sealed class NodeLibraryLanguageServices(DiagnosticsProvider diagnostics)
                 {
                     if (hidden(item)) continue;
                     var change = await service.GetChangeAsync(document,item,cancellationToken: cancellationToken);
-                    var edits = (change.TextChanges.IsDefaultOrEmpty ? [change.TextChange] : change.TextChanges).Select(e => UsingInSource(e, offset)).ToArray();
-                    var primary = edits.FirstOrDefault(e => e.Span.Start <= adjusted && e.Span.End >= adjusted);
-                    if (primary.NewText == null || edits.Any(e => e.Span.Start < offset || e.Span.End > offset+source.Length)) continue;
+                    // The item's own edit is the one Roslyn made at the cursor, chosen before a using line is moved to the
+                    // top of the code (where, with the cursor at the code's first character, it would contain the cursor too).
+                    TextChange[] roslyn = change.TextChanges.IsDefaultOrEmpty ? [change.TextChange] : [.. change.TextChanges];
+                    var at = Array.FindIndex(roslyn, e => e.Span.Start <= adjusted && e.Span.End >= adjusted);
+                    var edits = roslyn.Select(e => UsingInSource(e, offset)).ToArray();
+                    if (at < 0 || edits[at].NewText == null || edits.Any(e => e.Span.Start < offset || e.Span.End > offset+source.Length)) continue;
                     results.Add(new() { DisplayText=item.DisplayText, DisplayTextPrefix=item.DisplayTextPrefix,DisplayTextSuffix=item.DisplayTextSuffix,
-                        FilterText=item.FilterText,Tags=item.Tags.ToArray(),TextEdit=Edit(primary),AdditionalTextEdits=edits.Where(e=>e!=primary).Select(Edit).ToArray() });
+                        FilterText=item.FilterText,Tags=item.Tags.ToArray(),TextEdit=Edit(edits[at]),AdditionalTextEdits=edits.Where((_,i)=>i!=at).Select(Edit).ToArray() });
                 }
                 return results;
             }
