@@ -7,7 +7,7 @@ import { viewportWidth } from './media-fixture'
 let dispose: (() => void) | undefined
 afterEach(() => { dispose?.(); dispose = undefined; vi.unstubAllGlobals(); document.body.innerHTML = '' })
 
-function mount(width = 699) {
+function mount(width = 699, variant?: 'compact' | 'expanded') {
   const resize = viewportWidth(width)
   const host = document.body.appendChild(document.createElement('div'))
   const root = host.attachShadow({ mode: 'open' })
@@ -15,7 +15,7 @@ function mount(width = 699) {
   const [tab, setTab] = createSignal('first')
   dispose = render(() => <>
     <button id="before">Before drawer</button>
-    <BottomDrawer open={open()} onOpenChange={setOpen} tab={tab()} onTabChange={setTab} tabs={[
+    <BottomDrawer variant={variant} open={open()} onOpenChange={setOpen} tab={tab()} onTabChange={setTab} tabs={[
       { id: 'first', label: 'First', content: () => <Show when={tab() === 'first'}><input aria-label="Drawer field" /></Show> },
       { id: 'second', label: 'Second', content: () => <button>Panel action</button> },
     ]} />
@@ -71,4 +71,13 @@ it('follows a resize across the mobile boundary before deciding whether outside 
   tabs[0].focus()
   root.querySelector<HTMLButtonElement>('#before')!.focus()
   expect(open()).toBe(false)
+})
+
+it.each(['#before', '#after'])('keeps the compact mobile drawer open when focus moves outside to %s', destination => {
+  const { root, drawer, open } = mount(699, 'compact')
+  drawer.querySelector<HTMLInputElement>('input')!.focus()
+  const target = root.querySelector<HTMLButtonElement>(destination)!
+  target.focus()
+  expect(root.activeElement).toBe(target)
+  expect(open()).toBe(true)
 })

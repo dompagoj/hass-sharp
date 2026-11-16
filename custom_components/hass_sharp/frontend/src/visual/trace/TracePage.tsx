@@ -337,6 +337,7 @@ export function TracePage(props: {
             <Show when={model()}>
               {runs => (
                 <BottomDrawer
+                  variant="compact"
                   label="Timeline"
                   open={drawerOpen()}
                   tab="timeline"

@@ -427,6 +427,23 @@ it('says when the run cannot be loaded or the user is not an administrator', asy
   expect(user.callWS).not.toHaveBeenCalled()
 })
 
+it('uses a compact timeline that stays open while mobile focus moves to the canvas and value panel', async () => {
+  vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ matches: query.includes('max-width'), media: query, addEventListener() {}, removeEventListener() {} }) as any)
+  const { root } = mount(async () => response())
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(7))
+  const drawer = root.querySelector<HTMLElement>('.hs-drawer')!
+  expect(drawer.classList).toContain('hs-drawer--compact')
+  drawer.querySelector<HTMLButtonElement>('[role="tab"]')!.click()
+  steps(root)[0].focus()
+  card(root, 'service-1').focus()
+  expect(document.activeElement).toBe(card(root, 'service-1'))
+  expect(drawer.classList).toContain('hs-drawer--open')
+  steps(root)[0].focus()
+  panel(root).querySelector<HTMLButtonElement>('.hs-insp-peek')!.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(panel(root).querySelector('.hs-trace-node__title')))
+  expect(drawer.classList).toContain('hs-drawer--open')
+})
+
 it('below 900px: the value panel is a sheet that a canvas selection folds to its peek bar, and changes made inside it keep it open', async () => {
   vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ matches: query.includes('max-width: 899px'), media: query, addEventListener() {}, removeEventListener() {} }) as any)
   const { root } = mount(async () => response())

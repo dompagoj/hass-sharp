@@ -34,6 +34,8 @@ export function BottomDrawer(props: {
   onTabChange(id: string): void
   /** The drawer's accessible name (the editor's: "Problems, code and runs"). */
   label?: string
+  /** Compact panels share space with the canvas; the editor defaults to an expanded drawer. */
+  variant?: 'expanded' | 'compact'
 }) {
   const id = createUniqueId()
   const mobile = media('(max-width: 699px)')
@@ -58,10 +60,10 @@ export function BottomDrawer(props: {
     tabButton(tab)?.focus()
   }
   return (
-    <section class="hs-drawer" classList={{ 'hs-drawer--open': props.open }} aria-label={props.label ?? 'Problems, code and runs'}
+    <section class="hs-drawer" classList={{ 'hs-drawer--open': props.open, 'hs-drawer--compact': props.variant === 'compact', 'hs-drawer--expanded': props.variant !== 'compact' }} aria-label={props.label ?? 'Problems, code and runs'}
       on:focusout={event => {
         // Listen before Home Assistant's shadow host retargets the destination.
-        if (props.open && mobile() && event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget))
+        if (props.variant !== 'compact' && props.open && mobile() && event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget))
           props.onOpenChange(false)
       }}>
       <div ref={bar} class="hs-drawer__bar">
