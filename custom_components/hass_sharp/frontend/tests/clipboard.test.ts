@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { clipboardMarker, copySteps, customNamespace, parseSteps, pasteRefusals, pasteSteps, readSteps, writeSteps } from '../src/visual/clipboard'
-import { addNode, connectNodes, createGraph, updateNode, type VisualGraph } from '../src/visual/graph'
+import { addNode, connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import richFixture from '../../../../tests/fixtures/visual-rich-catalog.json'
 import { analyzeGraph, connectData, diagnosticCodes, nodeCatalog, validateGraph, words, type DiagnosticCode, type VisualCatalogSnapshot } from '../src/visual/contract'
 
@@ -29,6 +29,19 @@ it('copies the chosen steps with the wires between them only', () => {
   graph.nodes.find(n => n.id === 'value')!.config.type = 'string'
   expect(copy.nodes[0].config.type).toBe('number')
   expect(copySteps(graph, ['missing'])).toBeUndefined()
+})
+
+it('preserves a trigger\'s disabled history tracking through undo, redo and clipboard text', () => {
+  const graph = createGraph('Tracking')
+  const history = createGraphHistory(graph)
+  history.commit(updateNode(graph, 'trigger-1', { config: { ...graph.nodes[0].config, trackHistory: false } }))
+  history.undo()
+  expect(history.graph().nodes[0].config.trackHistory).not.toBe(false)
+  history.redo()
+  const copy = parseSteps(JSON.stringify(copySteps(history.graph(), ['trigger-1'])))!
+  const pasted = pasteSteps(graph, copy, nodeCatalog, { offset: { x: 40, y: 40 } })
+  if ('error' in pasted) throw new Error(pasted.error)
+  expect(pasted.graph.nodes.find(node => node.id === pasted.ids[0])!.config.trackHistory).toBe(false)
 })
 
 it('pastes with new ids, keeps internal wires remapped, drops outside wires and validates once like the editor', () => {

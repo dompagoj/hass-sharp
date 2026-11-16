@@ -468,6 +468,10 @@ export function TriggerConfig(props: {
           )}
         </For>
       </fieldset>
+      <label class="hs-insp-toggle">
+        <input type="checkbox" role="switch" class="hs-switch" checked={config().trackHistory !== false} onChange={e => set('trackHistory', e.currentTarget.checked)} />
+        <span><strong>Track in run history</strong><small class="hs-field-hint">Record automatic runs and their traces. Run now is always recorded.</small></span>
+      </label>
     </div>
   )
 }

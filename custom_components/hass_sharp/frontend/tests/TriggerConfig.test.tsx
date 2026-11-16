@@ -84,6 +84,21 @@ it('offers run modes in plain words', () => {
   expect(config().mode).toBe('Queued')
 })
 
+it.each([undefined, true, false])('shows run history tracking as %s, with missing settings enabled', trackHistory => {
+  const { host, config } = mount({ type: 'entity', entity: 'binary_sensor.motion', ...(trackHistory === undefined ? {} : { trackHistory }) })
+  const toggle = [...host.querySelectorAll<HTMLLabelElement>('.hs-insp-trigger label')]
+    .find(label => label.querySelector('strong')?.textContent === 'Track in run history')
+    ?.querySelector<HTMLInputElement>('input[role="switch"]')
+  expect(toggle).toBeDefined()
+  expect(toggle!.checked).toBe(trackHistory !== false)
+  toggle!.click()
+  expect(config().trackHistory).toBe(trackHistory === false)
+  expect(config().entity).toBe('binary_sensor.motion')
+  choose(host, 'startup')
+  expect(config().trackHistory).toBe(trackHistory === false)
+  expect(toggle!.checked).toBe(trackHistory === false)
+})
+
 it('subscribes to HA trigger metadata, merges additions, preserves unknown platform keys and cleans up', async () => {
   let callback!: (value: unknown) => void
   const unsubscribe = vi.fn()

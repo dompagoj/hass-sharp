@@ -14,7 +14,7 @@ public class CompiledUserScript
     public bool Enabled { get; set; } = true;
     /// <summary>The visual document id (the editor's <c>/visual/:id</c>); null for a script compiled outside the visual store.</summary>
     public string? VisualId { get; set; }
-    /// <summary>Trigger method name to its graph node id and label (null when the node has none).</summary>
+    /// <summary>Trigger method name to its graph node id, label and automatic run history setting.</summary>
     public IReadOnlyDictionary<string, VisualTrigger>? VisualTriggers { get; set; }
     /// <summary>Graph and pruned catalog JSON stored as the revision's snapshot with its first run.</summary>
     public string? VisualGraph { get; set; }
@@ -44,4 +44,4 @@ public class CompiledUserScript
     }
 }
 
-public sealed record VisualTrigger(string NodeId, string? Label);
+public sealed record VisualTrigger(string NodeId, string? Label, bool TrackHistory = true);

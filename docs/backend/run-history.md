@@ -11,6 +11,16 @@ recorded under. It survives saves, renames (a new `graph.name`) and process
 restarts; deleting and recreating an automation creates a new identity. A run's
 `revision` is the SHA-256 of the generated source that ran.
 
+Each trigger has a **Track in run history** setting (`config.trackHistory`), on
+by default, including when absent from an existing graph. Turning it off omits
+that trigger's automatic runs from history, including failed, skipped and
+cancelled attempts, and creates no trace or graph snapshot for those runs.
+Manual invocations (including Run now) always record their result and trace.
+The setting does not change execution, run modes, cancellation or error logging.
+Scheduled occurrences are still claimed persistently to prevent duplicate
+execution, independently of whether their runs are recorded. Existing history
+is retained when the setting changes.
+
 ## WebSocket commands
 
 All are administrator only, and answer `not_ready` while no HassSharp entry is
@@ -65,7 +75,7 @@ timestamp then run ID descending. Offset pages can shift as new runs arrive.
 
 ## Traces and graph snapshots
 
-Every run of a visual automation records a trace of the nodes it executed. Each
+Every recorded run of a visual automation records a trace of the nodes it executed. Each
 visual revision's graph and the catalog it was compiled against are stored once,
 keyed by the run's `revision` (the hash of the generated source), when that
 revision first runs. `run_trace` returns that snapshot as

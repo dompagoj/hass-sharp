@@ -58,7 +58,9 @@ public partial class HassSharpManager
         // What a run records: its trigger node, and the graph/catalog snapshot a trace is viewed against.
         compiled.VisualId = document.Id;
         compiled.VisualTriggers = document.Graph["nodes"]!.AsArray().OfType<JsonObject>().Where(n => VisualNodeCatalog.Text(n, "kind") == "trigger")
-            .ToDictionary(VisualNodeCatalog.EffectiveTriggerMethod, n => new VisualTrigger(VisualNodeCatalog.Text(n, "id"), VisualNodeCatalog.Text(n, "label") is { Length: > 0 } label ? label : null), StringComparer.Ordinal);
+            .ToDictionary(VisualNodeCatalog.EffectiveTriggerMethod, n => new VisualTrigger(VisualNodeCatalog.Text(n, "id"),
+                VisualNodeCatalog.Text(n, "label") is { Length: > 0 } label ? label : null,
+                n["config"]?["trackHistory"]?.GetValue<bool>() ?? true), StringComparer.Ordinal);
         compiled.VisualGraph = document.Graph.ToJsonString();
         compiled.VisualCatalog = document.EmbeddedCatalog;
         return compiled;

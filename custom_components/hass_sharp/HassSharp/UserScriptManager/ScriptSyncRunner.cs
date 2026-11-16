@@ -64,7 +64,7 @@ class ScriptSyncRunner
         if (errors.Count > 0) throw new AggregateException(errors);
     }
 
-    /// <summary>Runs the method and records the run; the script waits for it when it is unloaded (<see cref="UserScript.TrackRun"/>).</summary>
+    /// <summary>Runs the method with its trigger's history setting; the script waits for it when unloaded (<see cref="UserScript.TrackRun"/>).</summary>
     /// <param name="recorded">Completed once the run's first record is written (faulted when it cannot be), for Run now,
     /// which answers with a run id the history already has. Triggers do not wait for it.</param>
     public Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null, TaskCompletionSource? recorded = null)
@@ -95,8 +95,10 @@ class ScriptSyncRunner
             TriggerNodeId = trigger?.NodeId, TriggerLabel = trigger?.Label,
             Trigger = Summary(cause, payload), PlannedUtc = plannedUtc,
         };
-        var history = scriptClass.Script.ScriptManager.History;
-        var snapshot = compiled is { VisualId: { } visualId, VisualRevision: { } visualRevision, VisualGraph: { } graph, VisualCatalog: { } catalog }
+        // Manual runs always have a persisted result for Run now; automatic runs may opt out per trigger.
+        // Schedule occurrence claims are independent of this gate and still prevent duplicate execution.
+        var history = cause == InvocationCause.Manual || trigger?.TrackHistory != false ? scriptClass.Script.ScriptManager.History : null;
+        var snapshot = history != null && compiled is { VisualId: { } visualId, VisualRevision: { } visualRevision, VisualGraph: { } graph, VisualCatalog: { } catalog }
             ? new GraphSnapshot(record.Revision, visualId, visualRevision, graph, catalog) : null;
         // Recording stays off without a store or for code automations (C10).
         var sink = snapshot != null && history != null ? new RunTraceSink(history, record.RunId) : null;

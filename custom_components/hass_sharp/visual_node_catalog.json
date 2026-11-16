@@ -227,6 +227,12 @@
           "description": "Whether Run now can start the automation from this trigger.",
           "label": "Manual"
         },
+        "trackHistory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Record automatic runs and their traces. Run now is always recorded.",
+          "label": "Track in run history"
+        },
         "startup": {
           "type": "boolean",
           "description": "Whether to also run when Home Assistant starts; when not set, only a startup trigger runs then.",

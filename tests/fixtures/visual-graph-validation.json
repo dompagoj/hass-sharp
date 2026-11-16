@@ -32341,5 +32341,41 @@
     "nodeId": "cmp",
     "inputId": "right",
     "contains": "is not a valid"
+  },
+  {
+    "name": "trigger history tracking can be disabled",
+    "graph": {
+      "version": 5,
+      "name": "History tracking",
+      "nodes": [{ "id": "t", "kind": "trigger", "config": { "type": "startup", "trackHistory": false } }],
+      "edges": []
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "trigger history tracking can be enabled explicitly",
+    "graph": {
+      "version": 5,
+      "name": "History tracking",
+      "nodes": [{ "id": "t", "kind": "trigger", "config": { "type": "startup", "trackHistory": true } }],
+      "edges": []
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "trigger history tracking must be a boolean",
+    "graph": {
+      "version": 5,
+      "name": "History tracking",
+      "nodes": [{ "id": "t", "kind": "trigger", "config": { "type": "startup", "trackHistory": "false" } }],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "t",
+    "inputId": "trackHistory",
+    "contains": "true or false",
+    "messages": ["Track in run history must be true or false"]
   }
 ]
