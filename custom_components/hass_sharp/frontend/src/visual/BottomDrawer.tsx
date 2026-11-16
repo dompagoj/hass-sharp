@@ -5,6 +5,7 @@ import type { VisualCatalogSnapshot } from './contract'
 import { nodeTitle } from './flow/flowModel'
 import { serializeGraph, type VisualGraph } from './graph'
 import { icons, nodeIdentity } from './icons'
+import { media } from './media'
 import { RemoveWire } from './RemoveWire'
 
 export interface DrawerTab {
@@ -35,6 +36,7 @@ export function BottomDrawer(props: {
   label?: string
 }) {
   const id = createUniqueId()
+  const mobile = media('(max-width: 699px)')
   let bar!: HTMLDivElement
   const [seen, setSeen] = createSignal<ReadonlySet<string>>(new Set(props.tabs.filter(tab => !tab.lazy).map(tab => tab.id)))
   createEffect(() => {
@@ -56,7 +58,12 @@ export function BottomDrawer(props: {
     tabButton(tab)?.focus()
   }
   return (
-    <section class="hs-drawer" classList={{ 'hs-drawer--open': props.open }} aria-label={props.label ?? 'Problems, code and runs'}>
+    <section class="hs-drawer" classList={{ 'hs-drawer--open': props.open }} aria-label={props.label ?? 'Problems, code and runs'}
+      on:focusout={event => {
+        // Listen before Home Assistant's shadow host retargets the destination.
+        if (props.open && mobile() && event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget))
+          props.onOpenChange(false)
+      }}>
       <div ref={bar} class="hs-drawer__bar">
         <div class="hs-drawer__tabs" role="tablist" aria-label="Details" on:keydown={keys}>
           <For each={props.tabs}>

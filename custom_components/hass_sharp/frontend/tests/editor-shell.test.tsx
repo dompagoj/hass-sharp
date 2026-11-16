@@ -12,6 +12,7 @@ import { acceptedRun } from '../src/components/runDispatch'
 import { HassCtx } from '../src/context'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { visualFixture } from './visual-fixture'
+import { viewportWidth } from './media-fixture'
 const VisualEditor = (props: { name: string }) => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={ { ...visualFixture(), user: { is_admin: true } } as any}><RealVisualEditor {...props} /></HassCtx.Provider></QueryClientProvider>
 
 let dispose: (() => void) | undefined
@@ -257,7 +258,13 @@ it('keeps the drawer closed on load, switches its tabs without losing their stat
   expect(drawer.classList.contains('hs-drawer--open')).toBe(false)
 })
 
-it('selects the step of a problem and focuses the field it is about', async () => {
+it.each([
+  { width: 699, closes: true },
+  { width: 700, closes: false },
+  { width: 899, closes: false },
+  { width: 900, closes: false },
+])('selects the step of a problem and focuses its field at $width px (closes: $closes)', async ({ width, closes }) => {
+  viewportWidth(width)
   const { host, fixture } = mount()
   fixture.controls.preview = {
     valid: false, source: 'class A\n{\n  Run();\n}', sourceMap: [{ nodeId: 'service-1', startLine: 3, endLine: 3 }],
@@ -280,14 +287,55 @@ it('selects the step of a problem and focuses the field it is about', async () =
   drawerTab(host, 'Problems').click()
   const message = button(host, 'Choose what to turn on.')
   expect(message.closest('.hs-problems__group')!.querySelector('h3')!.textContent).toBe('Call service')
+  // Activation must work even when the drawer has never held focus.
   message.click()
   const inspector = host.querySelector('aside[aria-label="Node inspector"]')!
   await vi.waitFor(() => expect(inspector.querySelector('[data-input-id="target"]')!.contains(document.activeElement)).toBe(true))
   expect(document.activeElement!.getAttribute('aria-label')).toBe('Target entities')
-  expect(host.querySelector('.solid-flow__node[data-id="service-1"]')!.classList.contains('selected')).toBe(true)
-  button(host, 'Show line 3 of the generated C#').click()
+  const card = host.querySelector<HTMLElement>('.solid-flow__node[data-id="service-1"]')!
+  expect(card.classList.contains('selected')).toBe(true)
+  const drawer = host.querySelector('.hs-drawer')!
+  expect(drawer.classList.contains('hs-drawer--open')).toBe(!closes)
+  if (closes) expect(inspector.getAttribute('data-open')).toBe('true')
+  // Repeating navigation to the already-focused field emits no new focus transition.
+  const field = document.activeElement
+  if (closes) drawerTab(host, 'Problems').click()
+  expect(document.activeElement).toBe(field)
+  message.click()
+  expect(drawer.classList.contains('hs-drawer--open')).toBe(!closes)
+  // The step heading navigates to its canvas card, which must also be exposed.
+  if (closes) drawerTab(host, 'Problems').click()
+  const heading = button(drawer, 'Call service')
+  heading.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(card))
+  expect(drawer.classList.contains('hs-drawer--open')).toBe(!closes)
+  if (closes) drawerTab(host, 'Problems').click()
+  expect(document.activeElement).toBe(card)
+  heading.click()
+  expect(drawer.classList.contains('hs-drawer--open')).toBe(!closes)
+  // A source-line selection stays inside the drawer and leaves it open.
+  if (closes) drawerTab(host, 'Problems').click()
+  const line = button(host, 'Show line 3 of the generated C#')
+  line.focus(); line.click()
+  expect(drawer.classList.contains('hs-drawer--open')).toBe(true)
   expect(drawerTab(host, 'Generated C#').getAttribute('aria-selected')).toBe('true')
   expect(host.querySelector('[data-source-line="3"]')!.getAttribute('aria-current')).toBe('true')
+})
+
+it('keeps the mobile drawer open when a shared-code diagnostic shows its source line', async () => {
+  viewportWidth(699)
+  const { host, fixture } = mount()
+  fixture.controls.preview = {
+    valid: false, source: '// shared code', sourceMap: [],
+    diagnostics: [{ message: 'Shared code needs repair.', severity: 3, startLine: 1, startColumn: 1 }],
+  } as any
+  input(host, 'Node label', 'Motion')
+  await vi.waitFor(() => expect(drawerTab(host, 'Problems').textContent).toBe('Problems1'))
+  drawerTab(host, 'Problems').click()
+  button(host, 'Shared code needs repair.').click()
+  expect(drawerTab(host, 'Generated C#').getAttribute('aria-selected')).toBe('true')
+  expect(host.querySelector('.hs-drawer--open')).not.toBeNull()
+  expect(host.querySelector('[data-source-line="1"]')!.getAttribute('aria-current')).toBe('true')
 })
 
 it('filters the step library by name, kind id or description, and a click adds the step as one undo step', async () => {

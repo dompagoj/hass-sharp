@@ -238,6 +238,8 @@ export function VisualEditor(props: {
 
   // ---- The bottom drawer.
   const [drawerOpen, setDrawerOpen] = createSignal(!!props.drawer)
+  const mobileDrawer = media('(max-width: 699px)')
+  const leaveDrawer = () => { if (mobileDrawer()) setDrawerOpen(false) }
   const [drawerTab, setDrawerTab] = createSignal<DrawerTab>(props.drawer ?? 'problems')
   const [codeView, setCodeView] = createSignal<'code' | 'json'>('code')
   const shownProblems = () => session.diagnostics().filter(d => d.severity > 0)
@@ -276,6 +278,7 @@ export function VisualEditor(props: {
       if (diagnostic.startLine != null) showLine(diagnostic.startLine)
       return
     }
+    leaveDrawer()
     choose(nodeId)
     setSourceLine(diagnostic.startLine ?? undefined)
     const port = diagnostic.inputId ?? diagnostic.portId
@@ -559,7 +562,7 @@ export function VisualEditor(props: {
             get tone() { return errorCount() ? 'error' as const : 'warning' as const },
             content: () => (
               <ProblemsPanel diagnostics={session.diagnostics()} graph={graph()} catalog={session.catalog()} onLocate={locate}
-                onSelectStep={id => { choose(id); focusCard(id) }} onShowLine={showLine} onGraphChange={next => commit(next)} />
+                onSelectStep={id => { leaveDrawer(); choose(id); focusCard(id) }} onShowLine={showLine} onGraphChange={next => commit(next)} />
             ),
           },
           {
