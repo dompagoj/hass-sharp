@@ -35,10 +35,17 @@ static class EntityApiTests
             public BrokenPlug() { Add(new SharpSwitch("relay")); }
             protected override Task Setup() => throw new InvalidOperationException("no plug answers at this host");
         }
+        public class StubbornPlug : SharpDevice
+        {
+            public StubbornPlug() { Add(new SharpSwitch("relay")); }
+            protected override Task Start() => throw new InvalidOperationException("the plug refused to start");
+        }
         """;
+    const string Stubborn = "library:shelly:NodeLib.StubbornPlug";
 
     static readonly List<string> Synced = [], Pushed = [], Removed = [], Logged = [];
-    static volatile bool failRemoval;
+    // A removal fails, or is never answered, as Python might.
+    static volatile bool failRemoval, ignoreRemoval;
 
     static void Check(bool value, string message) { if (!value) throw new Exception(message); }
 
@@ -109,8 +116,10 @@ static class EntityApiTests
         PyInterop.BeginRemoveEntities = (id, ok, fail) =>
         {
             lock (Removed) Removed.Add(id);
+            if (ignoreRemoval) return;
             if (failRemoval) fail("the registry is busy"); else ok();
         };
+        var removalTimeout = HassSharpManager.RemovalTimeout;
         PyInterop.Log = (_, message) => { lock (Logged) Logged.Add(message); };
         HassPath.HassConfiguration = root;
         var api = new HassSharpManager(root);
@@ -127,7 +136,8 @@ static class EntityApiTests
             PyInterop.BeginRemoveEntities = remove;
             PyInterop.Log = log;
             HassPath.HassConfiguration = previous;
-            failRemoval = false;
+            HassSharpManager.RemovalTimeout = removalTimeout;
+            failRemoval = ignoreRemoval = false;
             lock (Synced) Synced.Clear();
             lock (Pushed) Pushed.Clear();
             lock (Removed) Removed.Clear();
@@ -202,10 +212,26 @@ static class EntityApiTests
         Check(Status((await Ok(new { operation = "read", id = "plug1" }))) == "running", "plug1 still runs beside plug2");
         Console.WriteLine("PASS entity api: two definitions of one class run side by side, each with its own settings");
 
+        // A resave whose Setup() now fails leaves the running revision as it is, and says why the new one does not run.
+        var batches = Pushes().Length;
+        var failedResave = await Ok(new { operation = "save", id = "plug2", expectedRevision = 1, definition = Definition("Plug two", null, Broken) });
+        var failedDocument = failedResave["document"]!.AsObject();
+        Check(failedResave["saved"]!.GetValue<bool>() && !failedResave["active"]!.GetValue<bool>()
+            && failedResave["activationError"]?.GetValue<string>().Contains("no plug answers at this host") == true
+            && failedDocument["revision"]!.GetValue<long>() == 2 && !failedDocument["currentRevisionActive"]!.GetValue<bool>()
+            && failedDocument["active"]!.GetValue<bool>() && Status(failedDocument) == "running" && failedDocument["liveEntities"]!.AsArray().Count == 2,
+            "a failed resave: " + failedResave.ToJsonString());
+        await api.EntityCommand("plug2:relay", "turn_off", null);
+        Check(Commands().Contains("turn_off 10.0.0.2") && Syncs("plug2").Length == 1, "the old revision of plug2 still takes commands: " + string.Join(", ", Commands()));
+        await Task.Delay(60);
+        Check(!Snapshots(batches).Any(s => s["uniqueId"]!.GetValue<string>().StartsWith("plug2:", StringComparison.Ordinal) && !s["available"]!.GetValue<bool>()),
+            "a failed resave showed the running entities unavailable");
+        Console.WriteLine("PASS entity api: a resave whose Setup() fails keeps the old revision running and answers the error");
+
         // Saving again needs the current revision; then a new instance replaces the old one.
         Check(await Fails(new { operation = "save", id = "plug1", expectedRevision = 0, definition = Definition("Plug one", "10.0.0.11") }) == "conflict", "a stale revision conflicts");
         Check(Syncs("plug1").Length == 1, "a conflicting save synced");
-        var batches = Pushes().Length;
+        batches = Pushes().Length;
         var resaved = await Ok(new { operation = "save", id = "plug1", expectedRevision = 1, definition = Definition("Plug one", "10.0.0.11") });
         Check(resaved["active"]!.GetValue<bool>() && resaved["document"]!["revision"]!.GetValue<long>() == 2 && Status(resaved["document"]!.AsObject()) == "running"
             && Syncs("plug1").Length == 2, "the resave runs and syncs again: " + resaved.ToJsonString());
@@ -245,9 +271,21 @@ static class EntityApiTests
         Check(!Snapshots(batches).Any(s => s["uniqueId"]!.GetValue<string>().StartsWith("broken:", StringComparison.Ordinal)), "a definition that never ran pushed states");
         Console.WriteLine("PASS entity api: a failing Setup() saves, answers the error, syncs nothing and reads off");
 
+        // A Start() that throws: loaded, so active, but failed, with the reason in the answer and in a later read.
+        var stubborn = await Ok(new { operation = "save", id = "stubborn", expectedRevision = 0, definition = Definition("Stubborn plug", null, Stubborn) });
+        Check(stubborn["saved"]!.GetValue<bool>() && stubborn["active"]!.GetValue<bool>() && Status(stubborn["document"]!.AsObject()) == "failed"
+            && stubborn["activationError"]?.GetValue<string>().Contains("the plug refused to start") == true
+            && stubborn["document"]!["activationError"]?.GetValue<string>() == stubborn["activationError"]!.GetValue<string>(), "a failing Start() is reported: " + stubborn.ToJsonString());
+        var readStubborn = await Ok(new { operation = "read", id = "stubborn" });
+        Check(Status(readStubborn) == "failed" && readStubborn["active"]!.GetValue<bool>()
+            && readStubborn["activationError"]?.GetValue<string>().Contains("the plug refused to start") == true, "a failed start reads with its reason: " + readStubborn.ToJsonString());
+        await Until(() => Snapshots().Any(s => s["uniqueId"]!.GetValue<string>() == "stubborn:relay" && !s["available"]!.GetValue<bool>()), "a failed start pushes its entities unavailable");
+        Console.WriteLine("PASS entity api: a failing Start() answers status failed with its reason, from save and from read");
+
         // list leaves the source out, read has it.
         var listed = (await Entity(new { operation = "list" }))["result"]!.AsArray().Select(d => d!.AsObject()).ToArray();
-        Check(listed.Select(d => d["id"]!.GetValue<string>()).SequenceEqual(["broken", "plug1", "plug2"])
+        Check(listed.Select(d => d["id"]!.GetValue<string>()).SequenceEqual(["broken", "plug1", "plug2", "stubborn"])
+            && listed.Single(d => d["id"]!.GetValue<string>() == "stubborn")["activationError"]?.GetValue<string>().Contains("the plug refused to start") == true
             && listed.All(d => !d.ContainsKey("source") && !d.ContainsKey("sourceMap") && d.ContainsKey("status") && d.ContainsKey("liveEntities")),
             "list: " + string.Join(", ", listed.Select(d => d.ToJsonString())));
         var read = await Ok(new { operation = "read", id = "plug1" });
@@ -276,6 +314,23 @@ static class EntityApiTests
         Check(Syncs("plug1").Length == 3, "turning on a running definition replaced it");
         Console.WriteLine("PASS entity api: set_enabled false unloads and pushes the entities unavailable in one batch; true syncs and runs it again");
 
+        // A saved definition keeps its switch through a save: enabled is refused there, and plug1 runs on.
+        Check(await Fails(new { operation = "save", id = "plug1", expectedRevision = 2, enabled = false, definition = Definition("Plug one", "10.0.0.11") }) == "invalid_request"
+            && Status(await Ok(new { operation = "read", id = "plug1" })) == "running", "a save with enabled of a saved definition");
+        // Activating a revision that is off, as a library rebuild may, unloads the running one and shows its entities unavailable.
+        batches = Pushes().Length;
+        var stored = JsonSerializer.Deserialize<EntityDefinitionDocument>((await Ok(new { operation = "read", id = "plug1" })).ToJsonString(), VisualStore.Json)!;
+        var offAnswer = JsonSerializer.SerializeToNode(await api.ActivateDefinition(stored with { Enabled = false }), VisualStore.Json)!;
+        Check(!offAnswer["active"]!.GetValue<bool>() && offAnswer["activationError"] == null && offAnswer["document"]!["status"]!.GetValue<string>() == "off",
+            "activating a revision that is off: " + offAnswer.ToJsonString());
+        Check((await Throws<InvalidOperationException>(() => api.EntityCommand("plug1:relay", "turn_on", null), "a command once off")).Message == "The entity is not running", "a command once off");
+        await Until(() => Snapshots(batches).Count(s => s["uniqueId"]!.GetValue<string>().StartsWith("plug1:", StringComparison.Ordinal) && !s["available"]!.GetValue<bool>()) == 2,
+            "both entities pushed unavailable");
+        Check(Status(await Ok(new { operation = "read", id = "plug1" })) == "off", "plug1 reads off");
+        await Ok(new { operation = "set_enabled", id = "plug1", enabled = true });
+        Check(Status(await Ok(new { operation = "read", id = "plug1" })) == "running" && Syncs("plug1").Length == 4, "plug1 runs again");
+        Console.WriteLine("PASS entity api: a save cannot turn a saved definition off; activating an off revision unloads it and pushes its entities unavailable");
+
         // A new definition saved off is stored and never runs; deleting it still removes its entities from Home Assistant.
         var dormant = await Ok(new { operation = "save", id = "plug4", expectedRevision = 0, enabled = false, definition = Definition("Plug four", "10.0.0.4") });
         Check(dormant["saved"]!.GetValue<bool>() && !dormant["active"]!.GetValue<bool>() && dormant["activationError"] == null
@@ -292,11 +347,18 @@ static class EntityApiTests
         Check(Removals().Contains("plug1") && await Fails(new { operation = "read", id = "plug1" }) == "not_found", "plug1 is gone from the store and Home Assistant");
         await Throws<InvalidOperationException>(() => api.EntityCommand("plug1:relay", "turn_on", null), "a command after delete");
         failRemoval = true;
-        Check((await Ok(new { operation = "delete", id = "plug2", expectedRevision = 1 }))["deleted"]!.GetValue<bool>(), "a failing removal still deletes");
+        Check((await Ok(new { operation = "delete", id = "plug2", expectedRevision = 2 }))["deleted"]!.GetValue<bool>(), "a failing removal still deletes");
         Check(Logs().Any(line => line.Contains("plug2") && line.Contains("the registry is busy")), "the failing removal is logged: " + string.Join(" | ", Logs()));
+        // A removal Python never answers is waited for only so long: the delete answers, and the next request is served.
+        failRemoval = false; ignoreRemoval = true;
+        HassSharpManager.RemovalTimeout = TimeSpan.FromMilliseconds(200);
+        var unanswered = await Entity(new { operation = "delete", id = "stubborn", expectedRevision = 1 }).WaitAsync(TimeSpan.FromSeconds(5));
+        Check(unanswered["result"]?["deleted"]?.GetValue<bool>() == true && Removals().Contains("stubborn"), "an unanswered removal still deletes: " + unanswered.ToJsonString());
+        Check(Logs().Any(line => line.Contains("stubborn") && line.Contains("did not answer")), "the unanswered removal is logged: " + string.Join(" | ", Logs()));
+        Check((await Entity(new { operation = "list" }).WaitAsync(TimeSpan.FromSeconds(5)))["result"]!.AsArray().Count == 1, "the next request is served");
         Check(await Fails(new { operation = "delete", id = "nothing", expectedRevision = 1 }) == "not_found" && await Fails(new { operation = "dance" }) == "invalid_request"
             && await Fails(new { operation = "read", id = "Bad Id" }) == "invalid_request", "error codes");
-        Console.WriteLine("PASS entity api: delete checks the revision, unloads, removes the entities, and logs a failing removal");
+        Console.WriteLine("PASS entity api: delete checks the revision, unloads, removes the entities, and logs a removal that fails or is never answered");
     }
 
     static Exception? Thrown(Action action)

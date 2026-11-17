@@ -170,8 +170,9 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
             lock (gate)
             {
                 if (stopped != null) return;
-                status = Failed;
+                // The error first: whoever reads the status failed without the lock then finds it.
                 error = failure.Message;
+                status = Failed;
             }
             Report($"starting failed: {failure.Message}", PyLogLevel.Error);
         }

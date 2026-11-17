@@ -17,12 +17,16 @@ public partial class HassSharpManager
     /// <summary>How long a save waits for a definition's <c>Start()</c>, so its answer says whether it runs; then it answers <c>setup</c>.</summary>
     static readonly TimeSpan StartReportWait = TimeSpan.FromSeconds(5);
 
+    /// <summary>How long a delete waits for Home Assistant to remove the definition's entities; settable for tests.</summary>
+    internal static TimeSpan RemovalTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
     // The started host of the definition; null when none is, or when it is stopping.
     DefinitionHost? RunningHost(string id) => _userScriptManager.Entities.Host(id) is { Status: not "stopped" } host ? host : null;
 
     /// <summary>
     /// The document as the API answers it: its stored fields, and how it runs now: <c>automationId</c>, <c>active</c>,
-    /// <c>currentRevisionActive</c>, <c>activationError</c>, <c>status</c> (<c>running</c>, <c>setup</c>, <c>failed</c>, or
+    /// <c>currentRevisionActive</c>, <c>activationError</c> (the load error, else why its <c>Start()</c> failed),
+    /// <c>status</c> (<c>running</c>, <c>setup</c>, <c>failed</c>, or
     /// <c>off</c> when not loaded) and its <c>liveEntities</c> (none when not loaded).
     /// </summary>
     JsonObject EntityJson(EntityDefinitionDocument document)
@@ -30,12 +34,13 @@ public partial class HassSharpManager
         var path = EntityRuntimePath(document.Id);
         var running = _userScriptManager.GetUserScripts().FirstOrDefault(s => s.CompiledScript.FilePath == path && s.Active);
         var host = RunningHost(document.Id);
+        var status = host?.Status ?? "off";
         var json = JsonSerializer.SerializeToNode(document, VisualStore.Json)!.AsObject();
         json["automationId"] = _history.Identity(path);
         json["active"] = running != null;
         json["currentRevisionActive"] = running != null && running.CompiledScript.VisualRevision == document.Revision && running.CompiledScript.SourceCode == document.Source && !_loadErrors.ContainsKey(path);
-        json["activationError"] = _loadErrors.TryGetValue(path, out var error) ? error : running != null ? null : "Not active";
-        json["status"] = host?.Status ?? "off";
+        json["activationError"] = _loadErrors.TryGetValue(path, out var error) ? error : status == "failed" ? host!.Error : running != null ? null : "Not active";
+        json["status"] = status;
         json["liveEntities"] = JsonSerializer.SerializeToNode(host?.Entities ?? [], VisualStore.Json);
         return json;
     }
@@ -53,11 +58,12 @@ public partial class HassSharpManager
     /// <summary>
     /// Runs the saved definition: compiles it and loads it, or replaces the revision running. A failure is recorded as
     /// its load error and answered as <c>activationError</c>; when no revision is left running then, the entities it
-    /// last ran are shown unavailable. A definition that is off is never started: whatever of it runs is unloaded.
+    /// last ran are shown unavailable. A definition that loaded but whose <c>Start()</c> threw answers that error as
+    /// <c>activationError</c>, and stays active. A definition that is off is never started: whatever of it runs is unloaded.
     /// </summary>
     /// <param name="services">The typed service calls the request read once, so the compile references them.</param>
     /// <returns><c>{id, saved, document, active, activationError}</c>.</returns>
-    async Task<object> ActivateDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services = null)
+    internal async Task<object> ActivateDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services = null)
     {
         var path = EntityRuntimePath(document.Id);
         string? activationError = null;
@@ -72,6 +78,8 @@ public partial class HassSharpManager
             // The answer says how the start went, unless it takes long; a publish that failed in it is the host's to log.
             if (RunningHost(document.Id) is { } host)
                 try { await host.Started.WaitAsync(StartReportWait); } catch (Exception) { }
+            // Loaded, so active, but its Start() threw: the answer says why.
+            if (activationError == null && RunningHost(document.Id) is { Status: "failed" } failed) activationError = failed.Error;
         }
         var json = EntityJson(document);
         return new { id = document.Id, saved = true, document = json, active = json["currentRevisionActive"]!.GetValue<bool>(), activationError };
@@ -157,8 +165,13 @@ public partial class HassSharpManager
                         // Whether it ran or not: Home Assistant may still have its entities from an earlier run. Its last
                         // states go out first, so none arrives after the entities are gone.
                         await _userScriptManager.Pump.FlushAsync();
-                        try { await PyInterop.RemoveEntitiesAsync(id); }
-                        catch (Exception ex) { try { Logger.Error($"Cannot remove the entities of deleted entity definition {id} from Home Assistant: {ex.Message}"); } catch { } }
+                        // Bounded: every request waits behind this one, and Python may never answer.
+                        try { await PyInterop.RemoveEntitiesAsync(id).WaitAsync(RemovalTimeout); }
+                        catch (Exception ex)
+                        {
+                            var reason = ex is TimeoutException ? $"Home Assistant did not answer within {RemovalTimeout.TotalSeconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} s" : ex.Message;
+                            try { Logger.Error($"Cannot remove the entities of deleted entity definition {id} from Home Assistant: {reason}"); } catch { }
+                        }
                         result = new { deleted = true };
                     }
                     else throw new ArgumentException("Unknown entity operation");
