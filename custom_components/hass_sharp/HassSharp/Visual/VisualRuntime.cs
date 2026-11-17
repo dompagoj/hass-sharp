@@ -220,8 +220,18 @@ public sealed class VisualRuntime
     }
     JsonNode? Spec(string id)=>catalog["nodes"]?[Text(nodes[id],"kind")];
     bool Pure(string id)=>VisualNodeCatalog.IsPure(nodes[id],Spec(id));
-    // A Custom C# node's pins are its signature's; every other node's are its kind's.
-    JsonNode? InputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["inputs"]:Spec(id)?["inputs"];
+    // A Custom C# node's pins are its signature's; a State's or Set state's its entity's (see EntityInputs); every other node's are its kind's.
+    JsonNode? InputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["inputs"]:Text(Spec(id),"dynamicInputs")=="entity"?EntityInputs(id):Spec(id)?["inputs"];
+    readonly Dictionary<string,JsonObject> entityInputs=[];
+    /// <summary>The pins of a node whose inputs are its entity's state values, as the validators resolve them from the definition the catalog carries.</summary>
+    JsonObject EntityInputs(string id) {
+        lock(entityInputs) {
+            if(!entityInputs.TryGetValue(id,out var ports))entityInputs[id]=ports=VisualNodeCatalog.DataInputs(nodes[id],null,VisualCatalogSnapshot.BuiltIn.WithRoot(catalog));
+            return ports;
+        }
+    }
+    /// <summary>Whether the step running in <paramref name="scope"/> is being cancelled: the run's own cancellation, a Stop, or its scope's.</summary>
+    bool Cancelled(VisualScope scope)=>scope.CancellationToken.IsCancellationRequested || external.IsCancellationRequested || Volatile.Read(ref stopped)!=0;
     JsonNode? OutputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["outputs"]:Spec(id)?["outputs"];
     // The name people see on the canvas, for messages about a value node and the step that used it.
     string Title(string id)=>VisualGraphValidator.Words.StepName(nodes[id],Spec(id));
@@ -295,7 +305,8 @@ public sealed class VisualRuntime
         if(port.Split(':') is [var group and ("carry" or "export"),var name])
             return (cfg?[group=="carry"?"carry":"exports"] as JsonArray??[]).OfType<JsonObject>().FirstOrDefault(d=>Text(d,"name")==name) is {} declaration?Text(declaration,"type"):null;
         // A Select property node's output has the chosen property's type, resolved for the graph under resolvedOutputs.
-        var declared=VisualNodeCatalog.PropertyOf(OutputSpecs(node)?[port])!=""?Text(catalog["resolvedOutputs"]?[node],port):Text(OutputSpecs(node)?[port],"type");
+        // So does a Setting's, which has its setting's type.
+        var declared=VisualNodeCatalog.PropertyOf(OutputSpecs(node)?[port])!=""||kind=="setting"?Text(catalog["resolvedOutputs"]?[node],port):Text(OutputSpecs(node)?[port],"type");
         if(declared.StartsWith('$'))declared=Text(cfg,declared[1..]);
         return declared==""?null:declared;
     }
@@ -429,8 +440,17 @@ public sealed class VisualRuntime
             VisualTrace.Event? Begin()=>trace==null?null:scope.Trace=trace.Start(scope.Frame,id);
             try {
                 if(Interlocked.Increment(ref steps)>100000)throw new InvalidOperationException($"Node {id}: graph execution limit 100000 steps exceeded.");
-                if(pureInputs.TryGetValue(id,out var pure))await Prepare(id,pure,scope);
-                ev=Begin();
+                // An entity node acts on the definition of the run in progress, which only an entity definition's run has.
+                var definition=EntityKinds.Contains(kind)?Definition():null;Dictionary<string,object?>? state=null;
+                if(kind=="entity_state") {
+                    // A State whose inputs cannot be worked out leaves its entity unavailable; a run cancelled meanwhile changes nothing.
+                    try {if(pureInputs.TryGetValue(id,out var inputs))await Prepare(id,inputs,scope);ev=Begin();state=EntityValues(scope,id);}
+                    catch(Exception error) when(error is not OperationCanceledException || !Cancelled(scope)) {definition!.SetAvailable(Text(cfg,"entity"),false);throw;}
+                }
+                else {
+                    if(pureInputs.TryGetValue(id,out var pure))await Prepare(id,pure,scope);
+                    ev=Begin();
+                }
                 object? Get(string p)=>Input(scope,id,p);
                 double Number(string p,double min,double max,bool integer=false) {var v=Input<double>(scope,id,p);if(!double.IsFinite(v)||v<min||v>max||integer&&Math.Truncate(v)!=v)throw new InvalidOperationException($"{Pin(id,p)} must be {(integer?"a whole number":"a number")} from {VisualGraphValidator.Words.Number(min)} to {VisualGraphValidator.Words.Number(max)}, not {Convert.ToString(v,CultureInfo.InvariantCulture)}");return v;}
                 switch(kind) {
@@ -446,6 +466,11 @@ public sealed class VisualRuntime
                     case "parallel":await Parallel(id,scope,depth);break;
                     case "repeat":case "while":case "until":case "foreach":await Loop(id,scope,depth);break;
                     case "condition_result":scope.Condition=Input<bool>(scope,id,"value");if(ev!=null)trace!.End(ev,"ok",null,null);return;
+                    case "entity_state":definition!.SetState(Text(cfg,"entity"),state!);definition.SetAvailable(Text(cfg,"entity"),true);break;
+                    // When commanded and When started only start their flows.
+                    case "entity_command":case "entity_setup":break;
+                    case "set_entity_state":definition!.SetState(Text(cfg,"entity"),EntityValues(scope,id));break;
+                    case "set_entity_available":definition!.SetAvailable(Text(cfg,"entity"),Input<bool>(scope,id,"available"));break;
                     case "loop_result":scope.Updates=(cfg["values"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get(p.Key));foreach(var edge in data.Where(p=>p.Key.Item1==id))scope.Updates[edge.Key.Item2]=Get(edge.Key.Item2);if(ev!=null)trace!.End(ev,"ok",null,null);return;
                     default:await Waiting(scope,custom(id,scope,this));break;
                 }
@@ -514,6 +539,11 @@ public sealed class VisualRuntime
             // A failure is worded by Prepare, which names the node and the step reading it: the message says only what went wrong.
             // Wires carry entity ids: a member that is a handle goes out as its id.
             case "select_property":var property=Text(cfg,"property");var selected=SelectProperty(Get("value")??throw new InvalidOperationException($"{property} cannot be read because the value is empty"),property,id);Output(scope,id,selected is HassSharp.Entities.Entity handle?handle.EntityId:selected);break;
+            // The definition's setting, of the type the graph's catalog resolved for it (resolvedOutputs).
+            case "setting":var setting=Definition().Setting(Text(cfg,"key"));Output(scope,id,Text(catalog["resolvedOutputs"]?[id],"value") is {Length:>0} settingType?ConvertTo(setting,settingType,id+".value",false):setting);break;
+            // Exactly that state, as Home Assistant stores it: an entity it does not have has none.
+            case "entity_is":var checkedEntity=Input<string>(scope,id,"entity");var wanted=Input<string>(scope,id,"state");Output(scope,id,HomeAssistantState(checkedEntity)?.State is {} has&&string.Equals(has,wanted,StringComparison.Ordinal));break;
+            case "entity_current":Output(scope,id,ReadEntity(Input<string>(scope,id,"entity")));break;
             // A value node from a library (or any other kind) is compiled.
             default:await custom(id,scope,this);break;
         }
@@ -536,10 +566,47 @@ public sealed class VisualRuntime
         }
         throw new InvalidOperationException($"{VisualGraphValidator.Words.TypeLabel(catalog,TraceInputType(node,"value")??"")} has no property {VisualGraphValidator.Words.Name(name)}");
     }
-    internal static EntityStateSnapshot ReadEntity(string entity,bool fresh=false) {
+    /// <summary>
+    /// The entity's state as the run sees it: the one the change that started the run carries, for that entity (unless
+    /// <paramref name="fresh"/>), else Home Assistant's now; null when Home Assistant has no such entity.
+    /// </summary>
+    static HasEntityState? HomeAssistantState(string entity,bool fresh=false) {
         var triggerState=UserScriptManager.CurrentTrigger.Value?.State;
-        var raw=!fresh && triggerState?.EntityId==entity ? triggerState : PyInterop.Entity(entity);
-        return EntityStateSnapshot.From(raw??throw new InvalidOperationException($"Entity '{entity}' is unavailable."));
+        return !fresh && triggerState?.EntityId==entity ? triggerState : PyInterop.Entity(entity);
+    }
+    internal static EntityStateSnapshot ReadEntity(string entity,bool fresh=false)=>
+        EntityStateSnapshot.From(HomeAssistantState(entity,fresh)??throw new InvalidOperationException($"Entity '{entity}' is unavailable."));
+    /// <summary>The definition of the run in progress, which an entity node acts on; only a run of an entity definition's graph has one.</summary>
+    static IDefinitionRuntime Definition()=>InvocationContext.Current?.Definition??throw new InvalidOperationException("This node only works in an entity definition");
+    /// <summary>The kinds that act on the definition of the run in progress (see <see cref="Definition"/>).</summary>
+    static readonly HashSet<string> EntityKinds=new(["entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting"],StringComparer.Ordinal);
+    /// <summary>
+    /// The state values a State or Set state step hands its definition: one for each of its pins (the state keys of its
+    /// entity's domain), as <see cref="EntityStateValue"/> gives it.
+    /// </summary>
+    Dictionary<string,object?> EntityValues(VisualScope scope,string id) {
+        var values=new Dictionary<string,object?>(StringComparer.Ordinal);
+        foreach(var (port,spec) in InputSpecs(id) as JsonObject??[])
+            values[port]=EntityStateValue(Input(scope,id,port),(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port));
+        return values;
+    }
+    /// <summary>
+    /// A state value as a definition takes it: true or false as a <see cref="bool"/>, a number as a <see cref="double"/>,
+    /// text as a <see cref="string"/>, each only where the pin's <paramref name="types"/> take it, and an empty value as null
+    /// (the entity's state is then unknown). A JSON value is the value it holds. Anything else fails, naming the <paramref name="pin"/>.
+    /// </summary>
+    internal static object? EntityStateValue(object? value,IReadOnlyCollection<string> types,string pin) {
+        if(value is JsonElement json)value=json.ValueKind switch{JsonValueKind.Null or JsonValueKind.Undefined=>null,JsonValueKind.True=>true,JsonValueKind.False=>false,JsonValueKind.String=>json.GetString(),JsonValueKind.Number when json.TryGetDouble(out var real)=>real,_=>value};
+        switch(value) {
+            case null:return null;
+            case bool flag when types.Contains("boolean"):return flag;
+            case string text when types.Contains("string"):return text;
+            case not (bool or string or char) when types.Contains("number")&&IsNumber(value.GetType()):
+                if(Convert.ToDouble(value,CultureInfo.InvariantCulture) is var number&&double.IsFinite(number))return number;
+                break;
+        }
+        var wanted=string.Join(" or ",types.Select(t=>t switch{"boolean"=>"true or false","number"=>"a number","string"=>"text",_=>t}).Distinct());
+        throw new InvalidOperationException($"{pin} needs {wanted}, not {LogText(value)}");
     }
     // Contract C6: each typed output reads its pointer from the normalised payload. A pointer that finds
     // nothing or JSON null, or a value of another type, produces no output; only a consumer fails, naming it.

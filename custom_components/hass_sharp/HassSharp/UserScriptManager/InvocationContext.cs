@@ -15,6 +15,12 @@ public sealed record InvocationContext(string RunId, InvocationCause Cause, Date
     /// <summary>Where a visual run's recorder writes its trace; null when the run is not traced.</summary>
     public IRunTraceSink? TraceSink { get; init; }
 
+    /// <summary>
+    /// The entity definition a run of an entity graph belongs to, which its entity nodes set the state of and read the
+    /// settings of; null for any other run (an automation's), where those nodes fail.
+    /// </summary>
+    internal IDefinitionRuntime? Definition { get; init; }
+
     /// <summary>A <c>stop</c> node ended the run; the run is recorded as <c>Stopped</c>.</summary>
     public bool Stopped { get => stopped; internal set => stopped = value; }
 
