@@ -225,13 +225,25 @@ static class EntityStoreTests
         Only(Level(new { options = new { options = new object[] { "low", 1 } } }), "definition.entityOption", "level", "level", "options");
         Only(Level(new { options = new { options = "low" } }), "definition.entityOption", "level", "level", "options");
         Only(Level(new { options = new[] { "unit" } }), "definition.entityOption", "level", "level");
+        Only(Level(new { name = 5 }), "definition.entityField", "level", "level", "name");
+        Only(Level(new { icon = true }), "definition.entityField", "level", "level", "icon");
+        Only(Level(new { deviceClass = new { kind = "power" } }), "definition.entityField", "level", "level", "deviceClass");
+        Only(Level(new { entityCategory = "sensor" }), "definition.entityField", "level", "level", "entityCategory", "config", "diagnostic");
+        Only(Level(new { entityCategory = 1 }), "definition.entityField", "level", "level", "entityCategory");
+        Only(Level(new { enabledByDefault = "yes" }), "definition.entityField", "level", "level", "enabledByDefault");
+        Only(Level(new JsonObject { ["enabledByDefault"] = null }), "definition.entityField", "level", "level", "enabledByDefault");
+        Check(generator.Preview(Level(new { name = (string?)null, icon = (string?)null, deviceClass = (string?)null, entityCategory = (string?)null, comment = 7 }), snapshot).Valid,
+            "null description fields are none, and a member no check names is kept as given");
+        foreach (var category in new[] { "config", "diagnostic" })
+            Check(generator.Preview(Level(new { entityCategory = category, enabledByDefault = false }), snapshot).Valid, $"the category {category} is accepted");
         Only(Level(settings: [Typed("offset", null)]), "definition.settingType", "offset", "offset");
         Only(Level(settings: [Typed("offset", "integer")]), "definition.settingType", "offset", "offset", "integer");
         Only(Level(settings: [Typed("offset", "number", "\"x\"")]), "definition.settingType", "offset", "offset");
         Only(Level(settings: [Typed("offset", "number"), Typed("eco", "boolean", "\"yes\"")]), "definition.settingType", "eco", "eco");
         Only(Level(settings: [Typed("offset", "number"), Typed("host", "string", "5", label: "Host name")]), "definition.settingType", "host", "Host name");
         Only(Level(settings: [Typed("offset", "number"), Typed("offset", "number")]), "definition.duplicateSetting", "offset", "offset");
-        Only(Level(settings: [Typed("offset", "number"), Typed("", "number")]), "definition.settingKey", "");
+        Only(Level(settings: [Typed("offset", "number"), Typed("", "number")]), "definition.settingKey", null);
+        Only(Level(settings: [Typed("offset", "number"), Typed(" ", "number")]), "definition.settingKey", null);
         Only(Level(settings: [Typed("offset", "number"), null!]), "definition.settingKey", null);
         Check(!generator.Preview(Body(kind: "graph", type: null), snapshot).Diagnostics.Any(d => d.Code == "definition.graphUnsupported"), "definition.graphUnsupported is gone");
         Console.WriteLine("PASS entity store: each problem of a graph definition's document gives its code, at the entity or setting it names");

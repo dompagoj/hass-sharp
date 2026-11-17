@@ -9,7 +9,7 @@ namespace HassSharp;
 /// <param name="Valid">True when no diagnostic is an error.</param>
 /// <param name="Diagnostics">Its problems, each with a <c>definition.</c> code and, for a setting, the setting's key as its input.</param>
 /// <param name="Source">The generated source; empty when the definition is not valid.</param>
-/// <param name="Type">The class it creates; null when the type is not one the libraries declare.</param>
+/// <param name="Type">The class it creates; null when the type is not one the libraries declare, and for graph logic.</param>
 public sealed record DefinitionPreview(bool Valid, List<VisualDiagnostic> Diagnostics, string Source, EntityTypeDescriptor? Type)
 {
     /// <summary>
@@ -35,8 +35,6 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
 {
     // Only a caller without one, such as a test, previews a graph with this.
     static readonly Lazy<DiagnosticsProvider> Fallback = new(() => new DiagnosticsProvider());
-    /// <summary>The form an entity key takes: a part of its unique id and of its entity id.</summary>
-    static readonly System.Text.RegularExpressions.Regex EntityKey = new(@"^[a-z][a-z0-9_]{0,39}\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>
     /// Every problem of the definition, in a fixed order; a definition whose class is unknown, or whose libraries have
@@ -52,7 +50,7 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
         if (kind is not ("class" or "graph")) Error("definition.logic", "Logic is a graph or a class");
         // An empty array is the same as none: a client may always send the field.
         if (kind == "class" && body.Entities is { Count: > 0 }) Error("definition.entitiesNotAllowed", "A class definition's entities come from its code");
-        if (kind == "graph") Document(body, snapshot.Root, Error);
+        if (kind == "graph") DefinitionDocument.Check(body, snapshot.Root, Error);
 
         EntityTypeDescriptor? type = null;
         if (snapshot.LibraryDiagnostics.Any(d => d.Severity == 3)) Error("definition.library", "The node libraries have errors; fix them first");
@@ -85,111 +83,6 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
         };
     }
 
-    /// <summary>
-    /// The problems of a graph definition's document, before its graph is looked at: it has a graph, at least one entity,
-    /// each with a key of its own of the form <see cref="EntityKey"/>, a domain the catalog's <c>entityDomains</c>
-    /// describes and only options that domain takes, each of its type; and each setting has a key of its own and a type a
-    /// graph reads, and a value of that type or none. A document without these problems composes to a definition the
-    /// validator reads (it never answers <c>definition.invalid</c>).
-    /// </summary>
-    static void Document(DefinitionBody body, JsonObject catalog, Action<string, string, string?> error)
-    {
-        if (body.Logic!.Graph == null) error("definition.graph", "Give the definition a graph: its logic is a graph of nodes, and none was given", null);
-        var domains = catalog["entityDomains"] as JsonObject ?? [];
-        var entities = body.Entities ?? [];
-        if (entities.Count == 0) error("definition.entitiesRequired", "Add an entity: a definition built from nodes creates the entities it lists, and lists none", null);
-        var keys = new HashSet<string>(StringComparer.Ordinal); var repeated = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (item, index) in entities.Select((e, i) => (e, i + 1)))
-        {
-            if (item is not JsonObject entity) { error("definition.entityKey", $"Entity {index} is not an entity: give each entity a key and a domain", null); continue; }
-            if (!IsText(entity["key"], out var key))
-            {
-                error("definition.entityKey", $"Give entity {index} a key, such as {(index == 1 ? "power" : "power_" + index)}", null);
-                continue;
-            }
-            if (!EntityKey.IsMatch(key)) error("definition.entityKey", $"Entity key {key} is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters", key);
-            if (!keys.Add(key) && repeated.Add(key)) error("definition.duplicateEntity", $"Two entities have the key {key}; give each a key of its own", key);
-            if (!IsText(entity["domain"], out var domain)) { error("definition.entityDomain", $"Choose a domain for entity {key}: {Or(domains.Select(d => d.Key))}", key); continue; }
-            if (domains[domain] is not JsonObject spec) { error("definition.entityDomain", $"Entity {key} has the domain {domain}, which a definition built from nodes cannot create; choose {Or(domains.Select(d => d.Key))}", key); continue; }
-            Options(key, spec, entity["options"], error);
-        }
-        var settings = body.Settings ?? [];
-        var settingKeys = new HashSet<string>(StringComparer.Ordinal); var repeatedSettings = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (setting, index) in settings.Select((s, i) => (s, i + 1)))
-        {
-            if (setting == null || string.IsNullOrWhiteSpace(setting.Key)) { error("definition.settingKey", $"Give setting {index} a key, such as threshold", setting?.Key); continue; }
-            var key = setting.Key; var name = string.IsNullOrWhiteSpace(setting.Label) ? key : setting.Label;
-            if (setting.Type is not ({ } type and ("string" or "boolean" or "number")))
-                error("definition.settingType", setting.Type == null
-                    ? $"Give setting {key} a type: string (a text), number or boolean (true or false)"
-                    : $"Setting {key} has the type {setting.Type}, which a graph cannot read; choose string (a text), number or boolean (true or false)", key);
-            else if (!FitsType(type, setting.Value)) error("definition.settingType", $"{name} takes {TypePhrase(type)}", key);
-            if (!settingKeys.Add(key) && repeatedSettings.Add(key)) error("definition.duplicateSetting", $"Two settings have the key {key}; give each a key of its own", key);
-        }
-    }
-
-    /// <summary>The problems of an entity's options: each must be one its domain takes, of that option's type and, with an enum, one of its values.</summary>
-    static void Options(string key, JsonObject domain, JsonNode? given, Action<string, string, string?> error)
-    {
-        if (given == null || given.GetValueKind() == JsonValueKind.Null) return;
-        var known = domain["options"] as JsonObject ?? [];
-        var label = VisualNodeCatalog.Text(domain, "label", key);
-        if (given is not JsonObject options) { error("definition.entityOption", $"The options of entity {key} are not a set of named values; give them as an object, such as {{\"unit\": \"W\"}}", key); return; }
-        foreach (var (option, value) in options)
-        {
-            if (known[option] is not JsonObject rule)
-            {
-                error("definition.entityOption", known.Count == 0
-                    ? $"Entity {key} has the option {option}, but {Article(label)} {label.ToLowerInvariant()} takes no options; remove it"
-                    : $"Entity {key} has no option {option}; {Article(label)} {label.ToLowerInvariant()} takes {Or(known.Select(o => o.Key))}", key);
-                continue;
-            }
-            if (value == null || value.GetValueKind() == JsonValueKind.Null) continue;
-            var type = VisualNodeCatalog.Text(rule, "type");
-            var allowed = (rule["enum"] as JsonArray)?.Select(v => v is JsonValue text && text.TryGetValue<string>(out var s) ? s : null).OfType<string>().ToArray();
-            bool Allowed(JsonNode? item) => allowed == null || IsText(item, out var text) && allowed.Contains(text, StringComparer.Ordinal);
-            var fits = type == "array"
-                ? value is JsonArray items && items.All(i => IsText(i, out _) && Allowed(i))
-                : FitsType(type, value) && Allowed(value);
-            if (!fits)
-                error("definition.entityOption", $"Option {option} of entity {key} takes {(allowed != null && type != "array" ? "one of " + string.Join(", ", allowed) : type == "array" ? "a list of texts" : TypePhrase(type))}", key);
-        }
-    }
-
-    static bool IsText(JsonNode? node, out string text)
-    {
-        text = "";
-        return node is JsonValue value && value.GetValueKind() == JsonValueKind.String && value.TryGetValue(out text!);
-    }
-
-    // A null value fits every type: a graph setting without one gives its graph an empty value, an option without one is not set.
-    static bool FitsType(string type, JsonNode? value)
-    {
-        if (value == null || value.GetValueKind() == JsonValueKind.Null) return true;
-        var kind = value.GetValueKind();
-        return type switch
-        {
-            "string" => kind == JsonValueKind.String,
-            "boolean" => kind is JsonValueKind.True or JsonValueKind.False,
-            "number" => kind == JsonValueKind.Number && double.TryParse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && double.IsFinite(number),
-            "integer" => kind == JsonValueKind.Number && long.TryParse(value.ToJsonString(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _),
-            "object" => kind == JsonValueKind.Object,
-            _ => false,
-        };
-    }
-
-    static string TypePhrase(string type) => type switch
-    {
-        "string" => "a text",
-        "boolean" => "true or false",
-        "number" => "a number",
-        "integer" => "a whole number",
-        _ => type,
-    };
-
-    static string Or(IEnumerable<string> items) => VisualGraphValidator.Words.Or(items);
-    static string Article(string word) => VisualGraphValidator.Words.Article(word);
-
     static void Settings(EntityTypeDescriptor type, List<DefinitionSetting> given, Action<string, string, string?> error)
     {
         var settings = given.Select(s => (Key: s?.Key ?? "", s?.Value)).ToArray();
@@ -211,26 +104,21 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
         var kind = value.GetValueKind();
         return setting.Type switch
         {
-            "string" => kind == JsonValueKind.String,
-            "boolean" => kind is JsonValueKind.True or JsonValueKind.False,
             "integer" => kind == JsonValueKind.Number && long.TryParse(value.ToJsonString(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var whole)
                 && whole >= (setting.Minimum ?? long.MinValue) && whole <= (setting.Maximum ?? long.MaxValue),
-            "number" => kind == JsonValueKind.Number && double.TryParse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && double.IsFinite(number),
             "enum" => kind == JsonValueKind.String && setting.Options.Contains(value.GetValue<string>(), StringComparer.Ordinal),
-            _ => false,
+            // Text, true or false, and a number fit as a graph setting's do.
+            var type => DefinitionDocument.Fits(type, value),
         };
     }
 
     static string Phrase(EntitySettingDescriptor setting) => setting.Type switch
     {
-        "string" => "a text",
-        "boolean" => "true or false",
         "integer" when setting.Minimum != null || setting.Maximum != null =>
             $"a whole number from {(setting.Minimum ?? long.MinValue).ToString(CultureInfo.InvariantCulture)} to {(setting.Maximum ?? long.MaxValue).ToString(CultureInfo.InvariantCulture)}",
         "integer" => "a whole number",
-        "number" => "a number",
         "enum" => "one of " + string.Join(", ", setting.Options),
-        _ => setting.Type,
+        var type => DefinitionDocument.Phrase(type),
     };
 
     // The library sections are written exactly as VisualGenerator writes an automation's.
