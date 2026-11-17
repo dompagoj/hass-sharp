@@ -23,6 +23,10 @@ PyInterop.SubscribeToEntityTracking = id => { if (!RuntimeCoreTests.Subscription
 PyInterop.UnSubscribeFromEntityTracking = id => RuntimeCoreTests.Subscriptions.Remove(id);
 PyInterop.UnSubscribeAllFromEntityTracking = () => RuntimeCoreTests.Subscriptions.Clear();
 PyInterop.Entity = id => new() { EntityId = id, State = "fresh" };
+PyInterop.BeginSyncEntities = (_, ok, _) => ok("""{"entities":{}}""");
+PyInterop.BeginRemoveEntities = (_, ok, _) => ok();
+PyInterop.BeginPruneEntities = (_, ok, _) => ok();
+PyInterop.PushEntityStates = _ => { };
 foreach (var (method, suite) in suites)
 {
     var flag = args.FirstOrDefault(arg => Matches(arg, suite.Flag));

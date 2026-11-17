@@ -197,6 +197,45 @@ public static class PyInterop
     public static Action<string> UnSubscribeFromEntityTracking { get; set; } = null!;
     public static Action<string> SubscribeToEntityTracking { get; set; } = null!;
     public static Action UnSubscribeAllFromEntityTracking { get; set; } = null!;
+
+    /// <summary>
+    /// Asks Home Assistant to create or update the entities and device of one definition, given as JSON. Python calls
+    /// the first callback with the result as JSON, or the second with an error message.
+    /// </summary>
+    public static Action<string, Action<string>, Action<string>> BeginSyncEntities { get; set; } = null!;
+    /// <summary>Asks Home Assistant to remove a definition's entities, with their registry entries and device, by definition id.</summary>
+    public static Action<string, Action, Action<string>> BeginRemoveEntities { get; set; } = null!;
+    /// <summary>Asks Home Assistant to remove the entities of every definition not in the given JSON array of definition ids.</summary>
+    public static Action<string, Action, Action<string>> BeginPruneEntities { get; set; } = null!;
+    /// <summary>Sends Home Assistant a JSON array of entity snapshots to write as their new states.</summary>
+    public static Action<string> PushEntityStates { get; set; } = null!;
+
+    /// <summary>Creates or updates a definition's entities; completes with Python's result JSON.</summary>
+    public static Task<string> SyncEntitiesAsync(string definitionJson)
+    {
+        var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try { BeginSyncEntities(definitionJson, result => completion.TrySetResult(result), message => completion.TrySetException(new InvalidOperationException(message))); }
+        catch (Exception error) { completion.TrySetException(error); }
+        return completion.Task;
+    }
+
+    /// <summary>Removes a definition's entities, registry entries and device.</summary>
+    public static Task RemoveEntitiesAsync(string definitionId)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try { BeginRemoveEntities(definitionId, () => completion.TrySetResult(), message => completion.TrySetException(new InvalidOperationException(message))); }
+        catch (Exception error) { completion.TrySetException(error); }
+        return completion.Task;
+    }
+
+    /// <summary>Removes the entities of every definition whose id is not in the given JSON array.</summary>
+    public static Task PruneEntitiesAsync(string definitionIdsJson)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try { BeginPruneEntities(definitionIdsJson, () => completion.TrySetResult(), message => completion.TrySetException(new InvalidOperationException(message))); }
+        catch (Exception error) { completion.TrySetException(error); }
+        return completion.Task;
+    }
 }
 
 /// <summary>An entry-owned subscription; disposal waits for HA loop cleanup.</summary>
