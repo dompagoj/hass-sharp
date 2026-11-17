@@ -53,39 +53,33 @@ def admin_command(handler):
     return run
 
 
+def envelope_command(service_method, subject, code):
+    """An administrator's `{request}` answered with the envelope `service_method` parses from .NET; a failure is logged
+    as "<subject> request failed" and answered as `code`."""
+    @websocket_api.decorators.async_response
+    @admin_command
+    async def run(hass, connection, msg):
+        try:
+            result = await service_method(msg["request"], is_admin=connection.user.is_admin)
+            connection.send_result(msg["id"], result)
+        except Exception:
+            logger.exception("%s request failed", subject)
+            connection.send_error(msg["id"], code, f"{subject} request failed; check integration logs")
+    return run
+
+
 def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
     authoring = AuthoringService(hass_outer, hass_sharp)
-    @websocket_api.decorators.async_response
-    @admin_command
-    async def websocket_visual(hass, connection, msg):
-        try:
-            result = await authoring.visual(msg["request"], is_admin=connection.user.is_admin)
-            connection.send_result(msg["id"], result)
-        except Exception:
-            logger.exception("Visual request failed")
-            connection.send_error(msg["id"], "visual_failed", "Visual request failed; check integration logs")
-
-    websocket_api.async_register_command(
-        hass_outer, "hass_sharp/visual", websocket_visual,
-        vol.Schema({vol.Required("id"): int, vol.Required("type"): "hass_sharp/visual",
-                    vol.Required("request"): dict})
-    )
-
-    @websocket_api.decorators.async_response
-    @admin_command
-    async def websocket_node_library(hass, connection, msg):
-        try:
-            result = await authoring.node_library(msg["request"], is_admin=connection.user.is_admin)
-            connection.send_result(msg["id"], result)
-        except Exception:
-            logger.exception("Node library request failed")
-            connection.send_error(msg["id"], "library_failed", "Node library request failed; check integration logs")
-
-    websocket_api.async_register_command(
-        hass_outer, "hass_sharp/node_library", websocket_node_library,
-        vol.Schema({vol.Required("id"): int, vol.Required("type"): "hass_sharp/node_library",
-                    vol.Required("request"): dict})
-    )
+    for command, handler in (
+        ("visual", envelope_command(authoring.visual, "Visual", "visual_failed")),
+        ("node_library", envelope_command(authoring.node_library, "Node library", "library_failed")),
+        ("entities", envelope_command(authoring.entities, "Entity", "entity_failed")),
+    ):
+        websocket_api.async_register_command(
+            hass_outer, f"hass_sharp/{command}", handler,
+            vol.Schema({vol.Required("id"): int, vol.Required("type"): f"hass_sharp/{command}",
+                        vol.Required("request"): dict})
+        )
 
     @websocket_api.decorators.async_response
     @admin_command

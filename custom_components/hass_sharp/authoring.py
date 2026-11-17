@@ -66,6 +66,9 @@ class AuthoringService:
     async def node_library(self, request, *, is_admin):
         return await self._request(self.manager.NodeLibraryRequest, request, is_admin=is_admin)
 
+    async def entities(self, request, *, is_admin):
+        return await self._request(self.manager.EntityRequest, request, is_admin=is_admin)
+
     async def run_now(self, automation_id, class_name, method, *, is_admin):
         if not is_admin:
             raise PermissionError("Administrator required")

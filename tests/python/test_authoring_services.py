@@ -58,3 +58,24 @@ class AuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.requests.clear()
         await service.visual({'operation':'preview','graph':graph},is_admin=True)
         self.assertEqual([(r['operation'],r.get('deriveSignatures')) for r in self.requests],[('preview',None)])
+    async def test_authoring_entities_returns_the_parsed_envelope(self):
+        tree=ast.parse(pathlib.Path('custom_components/hass_sharp/authoring.py').read_text())
+        tree.body=[n for n in tree.body if not isinstance(n,ast.ImportFrom)]
+        calls=[]
+        envelope={'version':1,'ok':False,'error':{'code':'validation','detail':{'valid':False,'diagnostics':[]}}}
+        async def run(hass,method,request):
+            calls.append((hass,method,request))
+            return json.dumps(envelope)
+        env={'dotnet_tasks':types.SimpleNamespace(async_run_dotnet_task=run),'native_triggers':None}
+        exec(compile(tree,'<authoring>','exec'),env)
+        hass,entity_request=object(),object()
+        service=env['AuthoringService'](hass,types.SimpleNamespace(EntityRequest=entity_request))
+        # Passed through unchanged, whatever the operation, and answered as .NET's envelope parsed.
+        request={'operation':'save','definition':{'id':'porch','source':'class Porch {}'},'expectedRevision':3}
+        self.assertEqual(await service.entities(request,is_admin=True),envelope)
+        self.assertEqual(calls,[(hass,entity_request,json.dumps(request))])
+        with self.assertRaises(PermissionError):
+            await service.entities({'operation':'list'},is_admin=False)
+        with self.assertRaises(ValueError):
+            await service.entities('{"operation":"list"}',is_admin=True)
+        self.assertEqual(len(calls),1)

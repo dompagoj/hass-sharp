@@ -137,6 +137,74 @@ class WebsocketReadinessTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(errors, [])
         self.assertEqual(calls, ['visual', 'library', 'run', 'history', 'trace'])
 
+    async def test_entities_route_passes_the_request_to_the_manager(self):
+        calls = []
+        envelope = {'version': 1, 'ok': True, 'result': [{'id': 'porch', 'enabled': True}]}
+        def entity_request(raw):
+            calls.append(json.loads(raw))
+            return json.dumps(envelope)
+        hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': EntryState(None, ready=True)}})
+        handlers, env = load_routes(types.SimpleNamespace(EntityRequest=entity_request), hass)
+        # Passed through as it came: Python does not check the operation or its fields.
+        request = {'operation': 'list', 'kind': 'device', 'extra': [1, {'nested': None}]}
+        results, errors = await self.send(handlers['hass_sharp/entities'], hass, {'request': request})
+        self.assertEqual(errors, [])
+        self.assertEqual(calls, [request])
+        self.assertEqual(results, [(1, envelope)])
+        # A refusal from .NET is an envelope like any other and is answered as a result.
+        refused = {'version': 1, 'ok': False, 'error': {'code': 'not_found', 'detail': 'No such definition'}}
+        envelope = refused
+        results, errors = await self.send(handlers['hass_sharp/entities'], hass, {'request': {'operation': 'read', 'id': 'gone'}})
+        self.assertEqual((results, errors), ([(1, refused)], []))
+        env['logger'].exception.assert_not_called()
+
+    async def test_entities_route_requires_admin(self):
+        calls = []
+        hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': EntryState(None, ready=True)}})
+        handlers, _ = load_routes(types.SimpleNamespace(
+            EntityRequest=lambda r: calls.append(r) or '{"version":1,"ok":true,"result":[]}'), hass)
+        results, errors = [], []
+        connection = types.SimpleNamespace(user=types.SimpleNamespace(is_admin=False),
+            send_result=lambda *v: results.append(v), send_error=lambda *v: errors.append(v))
+        await handlers['hass_sharp/entities'](hass, connection, {'id': 1, 'request': {'operation': 'delete', 'id': 'porch'}})
+        self.assertEqual((results, calls), ([], []))
+        self.assertEqual(errors, [(1, 'unauthorized', 'Administrator required')])
+
+    async def test_entities_route_answers_not_ready_before_setup(self):
+        calls = []
+        manager = types.SimpleNamespace(EntityRequest=lambda r: calls.append(r) or '{"version":1,"ok":true,"result":[]}')
+        state = EntryState(None)
+        hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': state}})
+        handlers, env = load_routes(manager, hass)
+        msg = {'request': {'operation': 'types'}}
+        for data in ({'hass_sharp_llm': {'entry': state}}, {}):
+            hass.data = data
+            results, errors = await self.send(handlers['hass_sharp/entities'], hass, msg)
+            self.assertEqual(results, [])
+            self.assertEqual(errors, [(1, 'not_ready', env['NOT_READY'])])
+        self.assertEqual(calls, [])
+        state.ready = True
+        hass.data = {'hass_sharp_llm': {'entry': state}}
+        results, errors = await self.send(handlers['hass_sharp/entities'], hass, msg)
+        self.assertEqual(errors, [])
+        self.assertEqual(calls, ['{"operation": "types"}'])
+
+    async def test_request_routes_answer_a_failure_as_an_internal_error(self):
+        def fail(raw):
+            raise RuntimeError('defect below the dispatch')
+        hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': EntryState(None, ready=True)}})
+        handlers, env = load_routes(types.SimpleNamespace(VisualRequest=fail, NodeLibraryRequest=fail, EntityRequest=fail), hass)
+        for command, code, subject in (('visual', 'visual_failed', 'Visual'), ('node_library', 'library_failed', 'Node library'),
+                                       ('entities', 'entity_failed', 'Entity')):
+            with self.subTest(command=command):
+                env['logger'].reset_mock()
+                results, errors = await self.send(handlers[f'hass_sharp/{command}'], hass, {'request': {'operation': 'list'}})
+                self.assertEqual(results, [])
+                self.assertEqual(errors, [(1, code, f'{subject} request failed; check integration logs')])
+                env['logger'].exception.assert_called_once()
+                args = env['logger'].exception.call_args.args
+                self.assertEqual(args[0] % args[1:], f'{subject} request failed')
+
     def test_every_refusal_run_now_answers_in_csharp_is_known(self):
         # The messages Manager.RunNow, VisualApi.DispatchVisual and UserScriptManager.DispatchManual refuse with, read
         # from the C# source, are exactly the refusals the websocket shows as they are (and does not log as defects).

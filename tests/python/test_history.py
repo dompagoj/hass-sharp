@@ -75,7 +75,7 @@ class HistoryApi(unittest.IsolatedAsyncioTestCase):
     def test_schemas_accept_status_filter_and_register_run_trace(self):
         source = pathlib.Path("custom_components/hass_sharp/websocket.py").read_text()
         tree = ast.parse(source)
-        body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "register_websocket_routes"
+        body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("envelope_command", "register_websocket_routes")
                 or isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "RUN_STATUSES" for t in n.targets)]
         commands = {}
         marker = lambda name: (lambda key, **kwargs: (name, key))
@@ -85,7 +85,7 @@ class HistoryApi(unittest.IsolatedAsyncioTestCase):
         api = types.SimpleNamespace(decorators=types.SimpleNamespace(async_response=lambda f: f),
             connection=types.SimpleNamespace(ActiveConnection=object),
             async_register_command=lambda hass, command, handler, schema: commands.__setitem__(command, schema))
-        env = {"vol": vol, "websocket_api": api, "HomeAssistant": object, "AuthoringService": lambda *args: None, "Any": object,
+        env = {"vol": vol, "websocket_api": api, "HomeAssistant": object, "AuthoringService": lambda *args: Mock(), "Any": object,
                "admin_command": lambda f: f}
         exec(compile(ast.Module(body=body, type_ignores=[]), "<websocket>", "exec"), env)
         env["register_websocket_routes"](None, None)
