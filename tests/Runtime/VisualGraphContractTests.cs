@@ -142,7 +142,7 @@ public static class VisualGraphContractTests
     static readonly System.Text.RegularExpressions.Regex Jargon = new(@"\b(?:literal|unset|operand|payload)\b|global::|System\.|\.$|\b(?:field|data):|type-checked|\b[0-9a-f]{32}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     // A case may extend the built-in catalog, e.g. with input constraints no built-in node declares yet.
-    static VisualCatalogSnapshot Patched(JsonObject patch)
+    internal static VisualCatalogSnapshot Patched(JsonObject patch)
     {
         static void Merge(JsonObject target, JsonObject source)
         {
@@ -158,7 +158,7 @@ public static class VisualGraphContractTests
     // The golden tests/fixtures/visual-services.json is the normalised form of ha-service-descriptions.json
     // (the service schema suite keeps them equal); parse the raw input and confirm it is that golden.
     static ServiceSchemaCatalog? services;
-    static ServiceSchemaCatalog Services(string name)
+    internal static ServiceSchemaCatalog Services(string name)
     {
         if (services != null) return services;
         var path = Path.Combine(AppContext.BaseDirectory, "visual-services.json");
