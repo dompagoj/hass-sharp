@@ -9,7 +9,8 @@ Every Home Assistant call runs on the event loop (spike rule 1): .NET's calls ar
 marshalled there without waiting. Sync, remove and prune run one at a time in the order .NET asked for them, and
 each answers .NET exactly once. Pushes do not wait behind them: a state for an entity that is not live yet is kept
 (the latest only) and written when it is added. Nothing here removes registry entries on unload: they stay,
-unavailable, until the next sync.
+unavailable, until the next sync. A sync removes the entries of the entities it no longer describes only once it
+succeeded: a sync that fails leaves the revision running as Home Assistant showed it.
 """
 import asyncio
 import json
@@ -72,6 +73,9 @@ class EntityBridge:
         # Assistant re-adds the same object (a changed entity id; unverified).
         self._live = {}
         self._pending = {}  # unique id -> latest snapshot pushed while the entity was not live
+        # unique id -> the messages of the state writes that failed for it since its definition was last synced: each is
+        # logged once, so a sensor given a value it cannot show does not log a traceback on every push.
+        self._write_failures = {}
         self._queue = collections.deque()
         self._current = None
         self._runner = None
@@ -122,6 +126,7 @@ class EntityBridge:
         self._platforms.clear()
         self._live.clear()
         self._pending.clear()
+        self._write_failures.clear()
         operations = ([self._current] if self._current is not None else []) + list(self._queue)
         self._queue.clear()
         for operation in operations:
@@ -203,6 +208,7 @@ class EntityBridge:
         if self._closed:
             return
         for snapshot in snapshots:
+            unique_id = None
             try:
                 unique_id = snapshot["uniqueId"]
                 entity = self._live.get(unique_id)
@@ -211,8 +217,22 @@ class EntityBridge:
                     continue
                 entity.apply_state(snapshot)
                 entity.async_write_ha_state()
-            except Exception:
-                logger.exception("Cannot write the entity state %s", snapshot)
+            except Exception as error:
+                self._write_failed(unique_id, snapshot, error)
+
+    def _write_failed(self, unique_id, snapshot, error):
+        """Log a failed state write once per unique id and message until the definition is synced again: the first for
+        the entity with its traceback, a later different one without."""
+        key = unique_id if isinstance(unique_id, str) else None
+        failures = self._write_failures.setdefault(key, set())
+        message = _message(error)
+        if message in failures:
+            return
+        if failures:
+            logger.error("Cannot write the entity state %s: %s", snapshot, message)
+        else:
+            logger.exception("Cannot write the entity state %s", snapshot)
+        failures.add(message)
 
     async def _async_sync(self, definition_json):
         """Make Home Assistant match one definition's description (spike rules 2, 5, 6, 8, 9)."""
@@ -224,11 +244,15 @@ class EntityBridge:
             raise _Refused(f"The {', '.join(missing)} platform of HassSharp is not set up")
         entities, devices = er.async_get(self.hass), dr.async_get(self.hass)
         described = {(d["domain"], d["uniqueId"]) for d in descriptions}
-        self._remove_entries(entities, definition_id, keep=described)
-        prefix = definition_id + ":"
         unique_ids = {unique_id for _, unique_id in described}
-        for unique_id in [u for u in self._pending if u.startswith(prefix) and u not in unique_ids]:
-            del self._pending[unique_id]
+        prefix = definition_id + ":"
+        # A failed sync leaves the revision running and must leave what it shows in place: only an entry whose unique
+        # id is described again under another domain goes first, as its entity cannot be updated into the new one
+        # (`_live` is keyed by unique id alone). The entries no longer described go once everything else succeeded.
+        self._remove_entries(entities, definition_id, keep=lambda entry: entry.unique_id not in unique_ids
+                             or (entry.domain, entry.unique_id) in described)
+        for unique_id in [u for u in self._write_failures if isinstance(u, str) and u.startswith(prefix)]:
+            del self._write_failures[unique_id]
         device_info, device_id = self._sync_device(entities, devices, definition_id, definition.get("device"))
         result, failed = {}, []
         for description in descriptions:
@@ -240,6 +264,9 @@ class EntityBridge:
                 result[description["uniqueId"]] = {"entityId": entity_id}
         if failed:
             raise _Refused(f"Home Assistant did not add {', '.join(failed)}; its log says why")
+        self._remove_entries(entities, definition_id, keep=lambda entry: entry.unique_id in unique_ids)
+        for unique_id in [u for u in self._pending if u.startswith(prefix) and u not in unique_ids]:
+            del self._pending[unique_id]
         return (json.dumps({"entities": result}),)
 
     def _sync_device(self, entities, devices, definition_id, device):
@@ -347,8 +374,8 @@ class EntityBridge:
         for entry in self._entries(entities, definition_id):
             entities.async_remove(entry.entity_id)
         prefix = definition_id + ":"
-        for store in (self._live, self._pending):
-            for unique_id in [u for u in store if u.startswith(prefix)]:
+        for store in (self._live, self._pending, self._write_failures):
+            for unique_id in [u for u in store if isinstance(u, str) and u.startswith(prefix)]:
                 del store[unique_id]
 
     def _entries(self, entities, definition_id):
@@ -358,10 +385,10 @@ class EntityBridge:
                 if e.unique_id.startswith(prefix)]
 
     def _remove_entries(self, entities, definition_id, keep):
-        """Remove the definition's registry entries not in `keep`, of (domain, unique id); Home Assistant removes the
-        live entity of each (spike rule 9)."""
+        """Remove the definition's registry entries that `keep(entry)` does not keep; Home Assistant removes the live
+        entity of each (spike rule 9)."""
         for entry in self._entries(entities, definition_id):
-            if (entry.domain, entry.unique_id) in keep:
+            if keep(entry):
                 continue
             if (entity := self._live.get(entry.unique_id)) is not None and entity.entity_id == entry.entity_id:
                 del self._live[entry.unique_id]

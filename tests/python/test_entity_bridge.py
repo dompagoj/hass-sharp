@@ -448,6 +448,42 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         await self.push(snapshot('plug1:power', values={'value': 3}))
         self.assertEqual(len(power.written), written)  # No longer live.
 
+    async def test_sync_that_fails_keeps_the_entities_it_dropped(self):
+        await self.sync(definition(description('relay'), description('power', 'sensor', 'Power')))
+        power = self.live('plug1:power')
+        self.platforms['switch'].refuse.add('plug1:bad')
+        # The new revision drops power and adds an entity Home Assistant refuses: the old revision keeps running.
+        answers = await self.answers(self.bridge.begin_sync, definition(description('relay'), description('bad')))
+        self.assertEqual([a[0] for a in answers], ['error'], answers)
+        self.assertIsNotNone(self.entities.async_get('sensor.plug1_power'))
+        self.assertNotIn('remove', [c[0] for c in self.entities.calls])
+        written = len(power.written)
+        await self.push(snapshot('plug1:power', values={'value': 3}))
+        self.assertEqual(len(power.written), written + 1)  # Still live.
+        # A device step that fails leaves them too.
+        self.devices.async_get_or_create = Mock(side_effect=ValueError("invalid configuration_url 'not a url'"))
+        answers = await self.answers(self.bridge.begin_sync, definition(description('relay')))
+        self.assertEqual([a[0] for a in answers], ['error'], answers)
+        self.assertIsNotNone(self.entities.async_get('sensor.plug1_power'))
+        del self.devices.async_get_or_create
+        # Once a sync succeeds, they go.
+        await self.sync(definition(description('relay')))
+        self.assertIsNone(self.entities.async_get('sensor.plug1_power'))
+        written = len(power.written)
+        await self.push(snapshot('plug1:power', values={'value': 4}))
+        self.assertEqual(len(power.written), written)
+
+    async def test_sync_of_a_key_whose_domain_changes_adds_it_anew(self):
+        await self.sync(definition(description('main', 'switch', 'Main')))
+        switch = self.live('plug1:main')
+        result = await self.sync(definition(description('main', 'sensor', 'Main')))
+        self.assertEqual(result, {'entities': {'plug1:main': {'entityId': 'sensor.plug1_main'}}})
+        self.assertIsNone(self.entities.async_get('switch.plug1_main'))
+        sensor = next(e for e in self.platforms['sensor'].added if e.unique_id == 'plug1:main')
+        self.assertIsNot(sensor, switch)
+        await self.push(snapshot('plug1:main', values={'value': 7}))
+        self.assertEqual(len(sensor.written), 2)  # The add, then the push.
+
     async def test_sync_without_device_removes_the_old_device(self):
         await self.sync(definition(description('relay', name=None)))
         relay = self.live('plug1:relay')
@@ -518,6 +554,28 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.platforms['switch'].gate.set()
         await answers
         self.assertTrue(self.live('plug1:relay').written[-1]['is_on'])
+
+    async def test_failed_state_writes_are_logged_once(self):
+        await self.sync(definition(description('relay'), description('power', 'sensor', 'Power')))
+        relay = self.live('plug1:relay')
+        relay.apply_state = Mock(side_effect=ValueError('not a number'))
+        await self.push(snapshot())
+        await self.push(snapshot())
+        self.logger.exception.assert_called_once()  # The first, with its traceback.
+        self.logger.error.assert_not_called()
+        relay.apply_state.side_effect = ValueError('too long')
+        await self.push(snapshot(), snapshot())
+        self.logger.error.assert_called_once()  # Another message: once, without the traceback.
+        self.assertIn('too long', self.logger.error.call_args.args[0] % self.logger.error.call_args.args[1:])
+        # Another entity's failure is its own.
+        self.live('plug1:power').apply_state = Mock(side_effect=ValueError('not a number'))
+        await self.push(snapshot('plug1:power'))
+        self.assertEqual(self.logger.exception.call_count, 2)
+        # Synced again, the definition's failures are logged afresh.
+        await self.sync(definition(description('relay'), description('power', 'sensor', 'Power')))
+        relay.apply_state.side_effect = ValueError('not a number')
+        await self.push(snapshot())
+        self.assertEqual(self.logger.exception.call_count, 3)
 
     async def test_push_for_unknown_entity_after_close_is_dropped(self):
         await self.sync(definition())

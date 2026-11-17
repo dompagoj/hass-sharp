@@ -73,7 +73,7 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
     for command, handler in (
         ("visual", envelope_command(authoring.visual, "Visual", "visual_failed")),
         ("node_library", envelope_command(authoring.node_library, "Node library", "library_failed")),
-        ("entities", envelope_command(authoring.entities, "Entity", "entity_failed")),
+        ("entities", envelope_command(authoring.entities, "Entity", "entity_request_failed")),
     ):
         websocket_api.async_register_command(
             hass_outer, f"hass_sharp/{command}", handler,

@@ -306,6 +306,36 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.state('switch.plug_one_relay'))
         self.assertIsNone(self.plug_device())
 
+    async def test_failed_sync_keeps_the_entities_it_dropped(self):
+        await self.sync(plug())
+        await self.push(snapshot('plug1:power', values={'value': 5}))
+        # The new revision drops power and motion, and its device has a field Home Assistant refuses.
+        answer = await self.answer(self.bridge.begin_sync,
+                                   plug(description('relay'), device=device(configurationUrl='not a url')))
+        self.assertEqual('error', answer[0], answer)
+        self.assertIn('configuration_url', answer[1])
+        # The bridge logged the failure; that is expected here.
+        self.records.records = [r for r in self.records.records
+                                if not (r.name == self.const.logger.name and 'Cannot sync' in r.getMessage())]
+        self.assertIsNotNone(self.registered('sensor', 'plug1:power'))
+        self.assertIsNotNone(self.registered('binary_sensor', 'plug1:motion'))
+        await self.push(snapshot('plug1:power', values={'value': 6}))
+        self.assertEqual('6', self.state('sensor.plug_one_power').state)  # Still live.
+        # A sync that succeeds removes them.
+        await self.sync(plug(description('relay')))
+        self.assertIsNone(self.registered('sensor', 'plug1:power'))
+        self.assertIsNone(self.state('sensor.plug_one_power'))
+        self.assertIsNone(self.registered('binary_sensor', 'plug1:motion'))
+
+    async def test_key_whose_domain_changes_is_added_anew(self):
+        await self.sync(plug(description('main', 'switch', 'Main')))
+        ids = await self.sync(plug(description('main', 'sensor', 'Main')))
+        self.assertEqual({'plug1:main': 'sensor.plug_one_main'}, ids)
+        self.assertIsNone(self.registered('switch', 'plug1:main'))
+        self.assertIsNone(self.state('switch.plug_one_main'))
+        await self.push(snapshot('plug1:main', values={'value': 3}))
+        self.assertEqual('3', self.state('sensor.plug_one_main').state)
+
     async def test_prune_removes_only_deleted_definitions(self):
         await self.sync(plug())
         await self.sync(definition(description('fan', definition='fan1'), definition_id='fan1', name='Fan',

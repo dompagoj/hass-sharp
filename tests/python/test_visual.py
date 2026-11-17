@@ -195,7 +195,7 @@ class WebsocketReadinessTests(unittest.IsolatedAsyncioTestCase):
         hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': EntryState(None, ready=True)}})
         handlers, env = load_routes(types.SimpleNamespace(VisualRequest=fail, NodeLibraryRequest=fail, EntityRequest=fail), hass)
         for command, code, subject in (('visual', 'visual_failed', 'Visual'), ('node_library', 'library_failed', 'Node library'),
-                                       ('entities', 'entity_failed', 'Entity')):
+                                       ('entities', 'entity_request_failed', 'Entity')):
             with self.subTest(command=command):
                 env['logger'].reset_mock()
                 results, errors = await self.send(handlers[f'hass_sharp/{command}'], hass, {'request': {'operation': 'list'}})
