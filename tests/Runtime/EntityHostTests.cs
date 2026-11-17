@@ -30,6 +30,7 @@ static class EntityHostTests
         lock (Logged) Logged.Clear();
         HostPlug.SetupHook = HostPlug.StartHook = HostPlug.StopHook = null;
         HostTicker.Ticks = 0;
+        HostWaiter.Gate = Task.CompletedTask;
     }
 
     // Python's answer to a sync: an entity id for each unique id, as "<domain>.<definition>_<key>".
@@ -118,6 +119,15 @@ static class EntityHostTests
             await Unloading();
             await TrackOffLock();
             await ThrowingLog();
+            await SetupTimesOut();
+            await SyncTimesOut();
+            await StopWaitsForCallbacks();
+            await SlowStart();
+            await PublishFailures();
+            await ServiceFromStop();
+            await LateAdd();
+            await UserLog();
+            await MissingJsonCacheHandler();
         }
         finally
         {
@@ -440,6 +450,258 @@ static class EntityHostTests
         Console.WriteLine("PASS entity host: a log that throws stops neither a failing timer nor the unavailable publish of a failed start");
     }
 
+    // A Setup() that never ends fails its definition within the bound, and the definitions after it still load.
+    static async Task SetupTimesOut()
+    {
+        Reset();
+        var timeout = DefinitionHost.SetupTimeout;
+        DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(200);
+        try
+        {
+            var manager = Manager();
+            HostPlug.SetupHook = _ => Task.Delay(Timeout.Infinite);
+            var failures = new List<(string Path, Exception Error)>();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            await manager.LoadUserScripts([Compiled("slow", "Slow plug", () => new HostPlug()), Compiled("lamp3", "Lamp three", () => new HostLamp())],
+                (path, error) => failures.Add((path, error))).WaitAsync(TimeSpan.FromSeconds(10));
+            Check(clock.Elapsed < TimeSpan.FromSeconds(3), $"a Setup() that never ends held the load {clock.Elapsed.TotalSeconds:F1} s");
+            Check(failures.Count == 1 && failures[0].Path == "entity_slow.cs" && failures[0].Error is TimeoutException
+                && failures[0].Error.Message == "Slow plug: Setup() did not finish within 0.2 s", "the slow setup's failure: " + string.Join(" | ", failures.Select(f => $"{f.Path} {f.Error}")));
+            Check(manager.Entities.Host("slow") == null && manager.Entities.Host("lamp3") is { } lamp && Syncs().Length == 1
+                && JsonNode.Parse(Syncs()[0])!["definitionId"]!.GetValue<string>() == "lamp3", "the definition after the slow one loads, and only it syncs");
+            await Until(() => PushedAvailable("lamp3:main", true), "the definition after the slow one runs");
+            Console.WriteLine("PASS entity host: a Setup() that never ends fails within the setup bound, naming the definition, and the definitions after it load");
+            await manager.UnloadUserScriptsAsync();
+        }
+        finally { DefinitionHost.SetupTimeout = timeout; }
+    }
+
+    // A sync Home Assistant never answers fails the new revision within the bound; the revision running goes on.
+    static async Task SyncTimesOut()
+    {
+        Reset();
+        var manager = Manager();
+        var old = await Load(manager, Compiled("plug12", "Plug twelve", () => new HostPlug()));
+        await Until(() => PushedAvailable("plug12:relay", true), "the first revision runs");
+        var (sync, timeout) = (PyInterop.BeginSyncEntities, DefinitionHost.SyncTimeout);
+        PyInterop.BeginSyncEntities = (_, _, _) => { };
+        DefinitionHost.SyncTimeout = TimeSpan.FromMilliseconds(200);
+        try
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var failure = await Throws<TimeoutException>(() => manager.UpdateUserScript(Compiled("plug12", "Plug twelve", () => new HostPlug())).WaitAsync(TimeSpan.FromSeconds(10)), "an unanswered sync");
+            Check(clock.Elapsed < TimeSpan.FromSeconds(3) && failure.Message == "Plug twelve: Home Assistant did not register the entities within 0.2 s", $"the unanswered sync ({clock.Elapsed.TotalSeconds:F1} s): {failure.Message}");
+        }
+        finally { PyInterop.BeginSyncEntities = sync; DefinitionHost.SyncTimeout = timeout; }
+        if (!manager.Entities.TryGet("plug12:relay", out var host, out var relay)) throw new Exception("the directory finds the previous revision");
+        Check(host == old && old.Status == "running", "the previous revision keeps running");
+        await host.Command(relay, "turn_on", default);
+        Check(Recorded().Contains("relay.TurnOn"), "the previous revision takes commands");
+        Console.WriteLine("PASS entity host: a sync that is never answered fails the new revision within the sync bound and the previous revision keeps running");
+        await manager.UnloadUserScriptsAsync();
+    }
+
+    // Stop() never overlaps a command or a track callback still running: it waits for them, or for the drain timeout.
+    static async Task StopWaitsForCallbacks()
+    {
+        foreach (var kind in new[] { "command", "track" })
+        {
+            Reset();
+            var manager = Manager();
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            HostWaiter.Gate = gate.Task;
+            var host = await Load(manager, Compiled("waiter", "Waiter", () => new HostWaiter()));
+            await Until(() => PushedAvailable("waiter:main", true), "started");
+            Task running = kind == "command"
+                ? host.Command(host.Entity("waiter:main")!, "turn_on", default)
+                : manager.RunEntries("sensor.w", new(new() { EntityId = "sensor.w", State = "on" }));
+            await Until(() => Recorded().Contains($"{kind} begins"), $"the {kind} began");
+            var unloading = manager.UnloadScriptAsync("entity_waiter.cs");
+            await Task.Delay(100);
+            Check(!Recorded().Contains("waiter.Stop") && !unloading.IsCompleted, $"Stop() ran while the {kind} still ran: " + string.Join(", ", Recorded()));
+            gate.SetResult();
+            await unloading.WaitAsync(TimeSpan.FromSeconds(5));
+            await running.WaitAsync(TimeSpan.FromSeconds(5));
+            var calls = Recorded();
+            Check(Array.IndexOf(calls, $"{kind} ends") >= 0 && Array.IndexOf(calls, $"{kind} ends") < Array.IndexOf(calls, "waiter.Stop"), $"the {kind} ends before Stop(): " + string.Join(", ", calls));
+        }
+
+        // One that never ends holds Stop() back only for the drain timeout, which is logged.
+        Reset();
+        UserScript.RunDrainTimeout = TimeSpan.FromMilliseconds(200);
+        try
+        {
+            var manager = Manager();
+            HostWaiter.Gate = new TaskCompletionSource().Task;
+            var host = await Load(manager, Compiled("waiter", "Waiter", () => new HostWaiter()));
+            await Until(() => PushedAvailable("waiter:main", true), "started");
+            _ = host.Command(host.Entity("waiter:main")!, "turn_on", default);
+            await Until(() => Recorded().Contains("command begins"), "the command began");
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            await manager.UnloadScriptAsync("entity_waiter.cs").WaitAsync(TimeSpan.FromSeconds(5));
+            Check(clock.Elapsed < TimeSpan.FromSeconds(2), $"a command that never ends held unloading {clock.Elapsed.TotalSeconds:F1} s");
+            await Until(() => Recorded().Contains("waiter.Stop"), "Stop() runs after the drain timeout");
+            Check(Logs().Count(m => m == "Waiter: 1 timer callback(s), track callback(s) or command(s) did not finish within 0.2 s of stopping; going on without them") == 1,
+                "the command that did not end is logged once: " + string.Join(" | ", Logs()));
+        }
+        finally { UserScript.RunDrainTimeout = TimeSpan.FromSeconds(10); }
+        Console.WriteLine("PASS entity host: Stop() starts only after a running command or track callback ends, or after the drain timeout, which is logged once");
+    }
+
+    // A Start() that does not return leaves the entities unavailable: that is logged once.
+    static async Task SlowStart()
+    {
+        Reset();
+        var warning = DefinitionHost.StartWarning;
+        DefinitionHost.StartWarning = TimeSpan.FromMilliseconds(100);
+        try
+        {
+            var manager = Manager();
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            HostPlug.StartHook = _ => release.Task;
+            await Load(manager, Compiled("plug13", "Plug thirteen", () => new HostPlug()));
+            const string expected = "Plug thirteen: Start() has not returned after 0.1 s; its entities stay unavailable until it does. Start loops with Every().";
+            await Until(() => Logs().Contains(expected), "the slow start is logged");
+            await Task.Delay(300);
+            Check(Logs().Count(m => m.Contains("has not returned")) == 1, "the slow start is logged once: " + string.Join(" | ", Logs()));
+            release.SetResult();
+            await Until(() => PushedAvailable("plug13:relay", true), "the entities are published once the start returns");
+            await manager.UnloadUserScriptsAsync();
+
+            // One that returns in time is not logged.
+            Reset();
+            manager = Manager();
+            await Load(manager, Compiled("plug13", "Plug thirteen", () => new HostPlug()));
+            await Until(() => PushedAvailable("plug13:relay", true), "started");
+            await Task.Delay(200);
+            Check(!Logs().Any(m => m.Contains("has not returned")), "a start in time is logged: " + string.Join(" | ", Logs()));
+            await manager.UnloadUserScriptsAsync();
+        }
+        finally { DefinitionHost.StartWarning = warning; }
+        Console.WriteLine("PASS entity host: a Start() that has not returned is logged once at the warning bound, one that returns in time is not");
+    }
+
+    // A state that cannot be read never reaches the user's code or Home Assistant's process: it is logged once per entity
+    // and the other entities are still published.
+    static async Task PublishFailures()
+    {
+        Reset();
+        var manager = Manager();
+        HostSnapshots? device = null;
+        await Load(manager, Compiled("snap", "Snapshots", () => device = new HostSnapshots()));
+        await Until(() => PushedAvailable("snap:loop", true) && PushedAvailable("snap:fine", true), "the entities after the failing one are published at start");
+        Check(!Snapshots().Any(s => s["uniqueId"]!.GetValue<string>() == "snap:bad"), "the entity whose snapshot throws was published");
+        const string failed = "Snapshots: publishing the state of entity 'bad' failed: no text";
+        Check(Logs().Count(m => m == failed) == 1, "the failing snapshot is logged: " + string.Join(" | ", Logs()));
+
+        var loop = Snapshots().Last(s => s["uniqueId"]!.GetValue<string>() == "snap:loop")["attributes"]!;
+        Check(loop["cycle"]!.ToJsonString() == """{"self":null,"n":1}""" && loop["mine"]!["mine"] == null, "a dictionary inside itself is null there: " + loop.ToJsonString());
+        var (depth, deep) = (0, loop["deep"]);
+        while (deep is JsonArray array) { depth++; deep = array[0]; }
+        Check(depth == SharpEntity.AttributeDepth && deep == null, $"lists nest {depth} deep, then null: " + loop["deep"]!.ToJsonString());
+
+        // From a setter, the failure stays in the host; it is not logged again for the same entity.
+        device!.Bad.Value = new ThrowingText();
+        device.Bad.Available = false;
+        device.Fine.IsOn = false;
+        await Until(() => Snapshots().Any(s => s["uniqueId"]!.GetValue<string>() == "snap:fine" && s["values"]!["is_on"]?.GetValue<bool>() == false), "the others publish on");
+        Check(Logs().Count(m => m.Contains("'bad' failed")) == 1, "the failing entity is logged again: " + string.Join(" | ", Logs()));
+        await manager.UnloadUserScriptsAsync();
+
+        // A failure whose message throws is still reported, and the entities are published unavailable.
+        Reset();
+        manager = Manager();
+        HostPlug.StartHook = _ => throw new BadMessageException();
+        var plug = await Load(manager, Compiled("plug14", "Plug fourteen", () => new HostPlug()));
+        await Until(() => PushedAvailable("plug14:relay", false) && PushedAvailable("plug14:power", false), "a failed start whose message throws publishes unavailable");
+        Check(plug.Status == "failed" && plug.Error == nameof(BadMessageException) && Logs().Contains("Plug fourteen: starting failed: BadMessageException"),
+            $"status {plug.Status}, error {plug.Error}, logs " + string.Join(" | ", Logs()));
+        await manager.UnloadUserScriptsAsync();
+        Console.WriteLine("PASS entity host: a snapshot that throws (a ToString that throws, or a message that does) is logged once and never thrown; a dictionary inside itself and lists past the depth limit are null; the other entities still publish");
+    }
+
+    // A service called from Stop() completes, and the code after it runs.
+    static async Task ServiceFromStop()
+    {
+        Reset();
+        var manager = Manager();
+        var previous = PyInterop.CallService;
+        PyInterop.CallService = (domain, service, json, done, failed) =>
+        {
+            Record($"call {domain}.{service} {json}");
+            _ = Task.Delay(50).ContinueWith(_ => done?.Invoke(), TaskScheduler.Default);
+        };
+        try
+        {
+            HostPlug.StopHook = async plug => { await plug.Call("switch.turn_off", "switch.lamp"); Record("after the call"); };
+            await Load(manager, Compiled("plug15", "Plug fifteen", () => new HostPlug()));
+            await Until(() => PushedAvailable("plug15:relay", true), "started");
+            await manager.UnloadScriptAsync("entity_plug15.cs").WaitAsync(TimeSpan.FromSeconds(5));
+            Check(Recorded().Contains("call switch.turn_off {\"entity_id\":\"switch.lamp\"}") && Recorded().Contains("after the call"),
+                "the call from Stop(): " + string.Join(", ", Recorded()));
+            Check(!Logs().Any(m => m.Contains("stopping failed")), "stopping failed: " + string.Join(" | ", Logs()));
+        }
+        finally { PyInterop.CallService = previous; }
+        Console.WriteLine("PASS entity host: CallService awaited inside Stop() completes and the code after it runs");
+    }
+
+    // An entity added once the entities are registered is refused, not silently ignored; one added in Setup() is set up.
+    static async Task LateAdd()
+    {
+        Reset();
+        var manager = Manager();
+        HostPlug.SetupHook = plug => { plug.AddLater("early"); return Task.CompletedTask; };
+        HostPlug.StartHook = plug =>
+        {
+            try { plug.AddLater("late"); Record("late added"); }
+            catch (InvalidOperationException error) { Record("late refused: " + error.Message); }
+            return Task.CompletedTask;
+        };
+        var host = await Load(manager, Compiled("plug16", "Plug sixteen", () => new HostPlug()));
+        await Until(() => Recorded().Any(c => c.StartsWith("late ")), "the late add");
+        Check(Recorded().Contains("late refused: HostPlug cannot add entity 'late' now: entities are added in the constructor or in Setup(), before they are registered with Home Assistant."),
+            "the late add: " + string.Join(", ", Recorded()));
+        Check(host.Entities.Select(e => e.Key).SequenceEqual(["relay", "power", "early"]), "an entity added in Setup() is registered: " + string.Join(", ", host.Entities.Select(e => e.Key)));
+        await manager.UnloadUserScriptsAsync();
+        Console.WriteLine("PASS entity host: SharpDevice.Add after the entities are registered throws, saying where entities are added; in Setup() it registers the entity");
+    }
+
+    // The definition's own log lines name it, as the host's do.
+    static async Task UserLog()
+    {
+        Reset();
+        var manager = Manager();
+        HostPlug.StartHook = plug => { plug.Say("polling 10.0.0.5"); return Task.CompletedTask; };
+        await Load(manager, Compiled("plug17", "Plug seventeen", () => new HostPlug()));
+        await Until(() => Logs().Contains("Plug seventeen: polling 10.0.0.5"), "the user's log line, after the definition's name: " + string.Join(" | ", Logs()));
+        await manager.UnloadUserScriptsAsync();
+        Console.WriteLine("PASS entity host: a definition's Log() lines start with the definition's name");
+    }
+
+    // Without System.Text.Json's hot-reload handler a stop cannot empty its caches: that is logged once.
+    static async Task MissingJsonCacheHandler()
+    {
+        var (handler, logged) = (DefinitionHost.JsonCacheHandler, DefinitionHost.JsonCacheHandlerMissingLogged);
+        Check(handler != null, "this .NET's System.Text.Json has its hot-reload cache handler");
+        DefinitionHost.JsonCacheHandler = null;
+        DefinitionHost.JsonCacheHandlerMissingLogged = 0;
+        try
+        {
+            Reset();
+            var manager = Manager();
+            for (var i = 0; i < 2; i++)
+            {
+                await Load(manager, Compiled("lamp4", "Lamp four", () => new HostLamp()));
+                await manager.UnloadScriptAsync("entity_lamp4.cs");
+            }
+            Check(Logs().Count(m => m.StartsWith("System.Text.Json has no cache handler for hot reload", StringComparison.Ordinal)) == 1,
+                "the missing handler is logged once: " + string.Join(" | ", Logs()));
+            await manager.UnloadUserScriptsAsync();
+        }
+        finally { (DefinitionHost.JsonCacheHandler, DefinitionHost.JsonCacheHandlerMissingLogged) = (handler, logged); }
+        Console.WriteLine("PASS entity host: a missing System.Text.Json cache handler is logged once, at warning level");
+    }
+
     static async Task Unloading()
     {
         Reset();
@@ -496,6 +758,9 @@ public class HostPlug : HostDeviceBase
 
     public HostRelay Relay { get; }
     public HostPower Power { get; }
+    public void AddLater(string key) => Add(new SharpSensor(key));
+    public void Say(string message) => Log(message);
+    public Task<JsonElement?> Call(string service, string entityId) => CallService(service, entityId);
     [Setting] public string? Address { get => address; set { address = value; EntityHostTests.Record("settings"); } }
     [Setting] public int Channel { get; set; }
     [Setting] public HostMode Mode { get; set; }
@@ -543,6 +808,62 @@ public class HostTicker : SharpSensor
             EntityHostTests.Record($"track {change.EntityId} {change.From?.State ?? "none"}>{change.To.State}");
             return Task.CompletedTask;
         });
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>A switch whose command and track callback wait on a gate, and which records when they and its Stop() run.</summary>
+public class HostWaiter : SharpSwitch
+{
+    public static Task Gate = Task.CompletedTask;
+
+    protected internal override Task Start()
+    {
+        Track("sensor.w", async _ => { EntityHostTests.Record("track begins"); await Gate; EntityHostTests.Record("track ends"); });
+        return Task.CompletedTask;
+    }
+    protected override async Task TurnOn() { EntityHostTests.Record("command begins"); await Gate; EntityHostTests.Record("command ends"); }
+    protected internal override Task Stop() { EntityHostTests.Record("waiter.Stop"); return Task.CompletedTask; }
+}
+
+/// <summary>A value whose text throws.</summary>
+public sealed class ThrowingText
+{
+    public override string ToString() => throw new InvalidOperationException("no text");
+}
+
+/// <summary>An exception whose message throws.</summary>
+public sealed class BadMessageException : Exception
+{
+    public override string Message => throw new InvalidOperationException("no message");
+}
+
+/// <summary>A device whose first entity's snapshot throws, and whose second has attributes that contain themselves or nest too deep.</summary>
+public class HostSnapshots : SharpDevice
+{
+    public HostSnapshots()
+    {
+        Bad = Add(new SharpSensor("bad"));
+        Loop = Add(new SharpSensor("loop"));
+        Fine = Add(new SharpSwitch("fine"));
+    }
+
+    public SharpSensor Bad { get; }
+    public SharpSensor Loop { get; }
+    public SharpSwitch Fine { get; }
+
+    protected internal override Task Start()
+    {
+        Bad.Attributes["text"] = new ThrowingText();
+        var cycle = new Dictionary<string, object?>();
+        cycle["self"] = cycle;
+        cycle["n"] = 1;
+        Loop.Attributes["cycle"] = cycle;
+        Loop.Attributes["mine"] = Loop.Attributes;
+        object? deep = "leaf";
+        for (var i = 0; i < 40; i++) deep = new List<object?> { deep };
+        Loop.Attributes["deep"] = deep;
+        Fine.IsOn = true;
         return Task.CompletedTask;
     }
 }

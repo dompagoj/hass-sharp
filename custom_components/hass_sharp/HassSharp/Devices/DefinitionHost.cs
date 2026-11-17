@@ -66,10 +66,22 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
     const string SettingUp = "setup", Running = "running", Failed = "failed", Stopped = "stopped";
     static readonly IDisposable Nothing = new Handle(() => { });
 
-    // Guards the status, the start and stop, and the timer and track lists.
+    /// <summary>How long the <c>Setup()</c> of a definition's device and entities may take together; settable for tests.</summary>
+    internal static TimeSpan SetupTimeout { get; set; } = TimeSpan.FromSeconds(60);
+    /// <summary>How long preparing waits for Home Assistant to register the entities; settable for tests.</summary>
+    internal static TimeSpan SyncTimeout { get; set; } = TimeSpan.FromSeconds(30);
+    /// <summary>How long the <c>Start()</c>s may take before the host warns that the entities stay unavailable; settable for tests.</summary>
+    internal static TimeSpan StartWarning { get; set; } = TimeSpan.FromSeconds(10);
+
+    // Guards the status, the start and stop, the timer and track lists, the commands and track callbacks running, and
+    // the entities whose publish failed.
     readonly object gate = new();
     readonly List<Repeating> timers = [];
     readonly List<IDisposable> tracks = [];
+    readonly HashSet<Task> running = [];
+    readonly HashSet<SharpEntity> unpublishable = new(ReferenceEqualityComparer.Instance);
+    // What the host waits on for the component, such as a service call: cancelled once stopping stops waiting.
+    readonly CancellationTokenSource calls = new();
     CancellationTokenSource stopping = new();
     SharpDevice? device;
     volatile SharpEntity[] entities = [];
@@ -92,11 +104,14 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
     internal Task Started { get { lock (gate) return starting ?? Task.CompletedTask; } }
     /// <inheritdoc/>
     public CancellationToken Stopping => stopping.Token;
+    /// <inheritdoc/>
+    public CancellationToken Calls => calls.Token;
 
     /// <summary>
-    /// Builds the device or entity, applies the settings and runs <c>Setup()</c> on the device, then on each entity; then
-    /// checks the entity keys and, last, registers the entities with Home Assistant. A failure leaves Home Assistant
-    /// untouched. Cancelled with <paramref name="lifetime"/>.
+    /// Builds the device or entity, applies the settings and runs <c>Setup()</c> on the device, then on each entity, all
+    /// within <see cref="SetupTimeout"/>; then checks the entity keys and, last, registers the entities with Home
+    /// Assistant, waiting for it no longer than <see cref="SyncTimeout"/>. A failure leaves Home Assistant untouched.
+    /// Cancelled with <paramref name="lifetime"/>.
     /// </summary>
     public async Task PrepareAsync(CancellationToken lifetime)
     {
@@ -108,10 +123,18 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
         ApplySettings((SharpComponent)root);
         device = root as SharpDevice;
         SharpEntity[] Collect() => device != null ? [.. device.Entities] : [(SharpEntity)root];
+        // One bound for every Setup() together: a device that does not answer must not hold up the definitions after it.
+        var clock = Stopwatch.StartNew();
+        async Task SetUp(SharpComponent component)
+        {
+            var left = SetupTimeout - clock.Elapsed;
+            if (!await Within(component.Setup(), left > TimeSpan.Zero ? left : TimeSpan.Zero))
+                throw new TimeoutException($"{definition.Name}: Setup() did not finish within {Seconds(SetupTimeout)} s");
+        }
         if (device != null)
         {
             device.Host = this;
-            await device.Setup().WaitAsync(Stopping);
+            await SetUp(device);
         }
         // An entity added during a Setup() is set up too.
         var setUp = new HashSet<SharpEntity>(ReferenceEqualityComparer.Instance);
@@ -119,8 +142,10 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
         {
             setUp.Add(next);
             next.Host = this;
-            await next.Setup().WaitAsync(Stopping);
+            await SetUp(next);
         }
+        // From now on the host would not see an entity added, so the device refuses one.
+        if (device != null) device.Sealed = true;
         var all = Collect();
         CheckKeys(all);
         entities = all;
@@ -131,9 +156,31 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
             ["device"] = DeviceJson(),
             ["entities"] = new JsonArray(all.Select(entity => (JsonNode?)entity.Describe(UniqueId(entity))).ToArray()),
         };
-        var result = JsonNode.Parse(await PyInterop.SyncEntitiesAsync(json.ToJsonString()).WaitAsync(Stopping))?["entities"];
+        var sync = PyInterop.SyncEntitiesAsync(json.ToJsonString());
+        if (!await Within(sync, SyncTimeout))
+            throw new TimeoutException($"{definition.Name}: Home Assistant did not register the entities within {Seconds(SyncTimeout)} s");
+        var result = JsonNode.Parse(await sync)?["entities"];
         Entities = all.Select(entity => new LiveEntity(UniqueId(entity), entity.Key, entity.Domain, entity.Name,
             result?[UniqueId(entity)]?["entityId"] is JsonValue id && id.TryGetValue<string>(out var text) ? text : null)).ToArray();
+    }
+
+    /// <summary>
+    /// Waits for <paramref name="task"/>, throwing its failure: true when it ended, false when <paramref name="timeout"/>
+    /// passed first (its later failure is observed). Throws <see cref="OperationCanceledException"/> once stopping.
+    /// </summary>
+    async Task<bool> Within(Task task, TimeSpan timeout)
+    {
+        using var timer = CancellationTokenSource.CreateLinkedTokenSource(Stopping);
+        var first = await Task.WhenAny(task, Task.Delay(timeout, timer.Token));
+        timer.Cancel();
+        if (first == task)
+        {
+            await task;
+            return true;
+        }
+        Stopping.ThrowIfCancellationRequested();
+        _ = task.ContinueWith(ended => _ = ended.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        return false;
     }
 
     /// <summary>
@@ -151,14 +198,17 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
                 starting = Task.Run(StartAsync);
             }
         }
-        catch (Exception failure) { Report($"starting failed: {failure.Message}", PyLogLevel.Error); }
+        catch (Exception failure) { Report("starting failed", failure, PyLogLevel.Error); }
     }
 
     async Task StartAsync()
     {
         var (root, all) = (device, entities);
         // A replaced revision may have sent the same states: they are sent again, as the new entities' first.
-        Manager.Pump.Forget(all.Select(UniqueId));
+        try { Manager.Pump.Forget(all.Select(UniqueId)); }
+        catch (Exception failure) { Report("forgetting the states of the replaced revision failed", failure, PyLogLevel.Warn); }
+        using var started = CancellationTokenSource.CreateLinkedTokenSource(Stopping);
+        _ = WarnSlowStart(started.Token);
         try
         {
             if (root != null) await root.Start();
@@ -167,23 +217,38 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
         }
         catch (Exception failure)
         {
+            // Read before the lock: a user exception's message is user code.
+            var message = Text(failure);
             lock (gate)
             {
                 if (stopped != null) return;
                 // The error first: whoever reads the status failed without the lock then finds it.
-                error = failure.Message;
+                error = message;
                 status = Failed;
             }
-            Report($"starting failed: {failure.Message}", PyLogLevel.Error);
+            Report($"starting failed: {message}", PyLogLevel.Error);
         }
+        finally { started.Cancel(); }
+        // Publish never throws: an entity whose snapshot fails is reported and the others are still published.
         foreach (var entity in all) Publish(entity);
+    }
+
+    // Until every Start() has returned nothing is published: a loop written in Start() rather than with Every() would
+    // leave the entities unavailable for good without a word.
+    async Task WarnSlowStart(CancellationToken started)
+    {
+        try { await Task.Delay(StartWarning, started); }
+        catch (OperationCanceledException) { return; }
+        Report($"Start() has not returned after {Seconds(StartWarning)} s; its entities stay unavailable until it does. Start loops with Every().", PyLogLevel.Warn);
     }
 
     /// <summary>
     /// Stops the definition: from now on it publishes nothing and refuses commands. Cancels <see cref="Stopping"/>, ends
-    /// its timers and tracks, waits for a start still running, then runs <c>Stop()</c> on each entity and then the
-    /// device, all within <see cref="UserScript.RunDrainTimeout"/>, and leaves the directory unless replaced. Their
-    /// failures are logged, never thrown. Pushes nothing to Home Assistant. A second call returns the first one's task.
+    /// its timers and tracks, waits for a start still running and then for the timer callbacks, track callbacks and
+    /// commands still running, then runs <c>Stop()</c> on each entity and then the device, all within
+    /// <see cref="UserScript.RunDrainTimeout"/>, and leaves the directory unless replaced. What the host waits on for the
+    /// component (<see cref="Calls"/>) ends when that time is up. Their failures are logged, never thrown. Pushes nothing
+    /// to Home Assistant. A second call returns the first one's task.
     /// </summary>
     public Task StopAsync()
     {
@@ -216,18 +281,29 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
                 var left = UserScript.RunDrainTimeout - clock.Elapsed;
                 return left > TimeSpan.Zero ? left : TimeSpan.Zero;
             }
+            // A wait the host makes for the component, such as a service call from Stop(), lasts as long as stopping waits.
+            try { calls.CancelAfter(UserScript.RunDrainTimeout); }
+            catch (Exception failure) { Report("bounding the component's calls failed", failure, PyLogLevel.Warn); }
             try { stopping.Cancel(); }
-            catch (Exception failure) { Report($"a cancellation callback failed: {failure.Message}", PyLogLevel.Warn); }
+            catch (Exception failure) { Report("a cancellation callback failed", failure, PyLogLevel.Warn); }
             foreach (var handle in following.Concat(ticking))
                 try { handle.Dispose(); }
-                catch (Exception failure) { Report($"ending a timer or track failed: {failure.Message}", PyLogLevel.Warn); }
-            if (start == null) return;
-            if (!await UserScript.Drain([start], Left()))
+                catch (Exception failure) { Report("ending a timer or track failed", failure, PyLogLevel.Warn); }
+            if (start != null && !await UserScript.Drain([start], Left()))
             {
                 Report($"Start() did not finish within {Seconds()} s of stopping; Stop() is not called", PyLogLevel.Warn);
                 return;
             }
-            await UserScript.Drain([.. ticking.Select(timer => timer.Loop)], Left());
+            // Stop() may dispose what a callback or a command still uses, so they end first; none starts any more.
+            Task[] busy;
+            lock (gate) busy = [.. running, .. ticking.Select(timer => timer.Loop)];
+            if (!await UserScript.Drain(busy, Left()))
+            {
+                int left;
+                lock (gate) left = running.Count + ticking.Count(timer => !timer.Loop.IsCompleted);
+                Report($"{left} timer callback(s), track callback(s) or command(s) did not finish within {Seconds()} s of stopping; going on without them", PyLogLevel.Warn);
+            }
+            if (start == null) return;
             var (root, all) = (device, entities);
             var stops = Task.Run(async () =>
             {
@@ -237,13 +313,19 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
             if (!await UserScript.Drain([stops], Left()))
                 Report($"Stop() did not finish within {Seconds()} s; unloading without waiting for it", PyLogLevel.Warn);
         }
-        catch (Exception failure) { Report($"stopping failed: {failure.Message}", PyLogLevel.Error); }
+        catch (Exception failure) { Report("stopping failed", failure, PyLogLevel.Error); }
         finally
         {
             Manager.Entities.Leave(this);
             // Nothing of the user's code stays reachable from the host once stopped.
             device = null;
             entities = [];
+            lock (gate)
+            {
+                running.Clear();
+                unpublishable.Clear();
+            }
+            try { calls.Cancel(); } catch { }
             ClearJsonCaches();
             completion.TrySetResult();
         }
@@ -253,8 +335,11 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
     // it) for the life of the process, so a definition that writes a type of its own library that way, as
     // JsonSerializer.Serialize(value) does, would keep its load context. Once its code has stopped those caches are
     // emptied, through the ClearCache the library declares for hot reload (MetadataUpdateHandlerAttribute, called as hot
-    // reload calls it, with null for every type); they fill again as they are used. Null when the library has none.
-    static readonly Action<Type[]?>? JsonCacheHandler = FindJsonCacheHandler();
+    // reload calls it, with null for every type); they fill again as they are used. Null when the library has none, which
+    // is logged once; settable for tests.
+    internal static Action<Type[]?>? JsonCacheHandler = FindJsonCacheHandler();
+    // Whether the missing handler was logged; settable for tests.
+    internal static int JsonCacheHandlerMissingLogged;
 
     static Action<Type[]?>? FindJsonCacheHandler()
     {
@@ -267,41 +352,66 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
         catch (Exception) { return null; }
     }
 
-    void ClearJsonCaches()
+    static void ClearJsonCaches()
     {
-        try { JsonCacheHandler?.Invoke(null); }
-        catch (Exception failure) { Report($"clearing System.Text.Json's caches failed: {failure.Message}", PyLogLevel.Warn); }
+        if (JsonCacheHandler is not { } handler)
+        {
+            if (Interlocked.Exchange(ref JsonCacheHandlerMissingLogged, 1) == 0)
+                try { Logger.Warn("System.Text.Json has no cache handler for hot reload (renamed or removed in this .NET version): an entity definition that serializes a type of its own with the default options stays in memory after it stops, until Home Assistant restarts"); }
+                catch { }
+            return;
+        }
+        try { handler(null); }
+        catch (Exception failure) { try { Logger.Warn($"Clearing System.Text.Json's caches failed: {Text(failure)}"); } catch { } }
     }
 
     async Task StopOne(SharpComponent component)
     {
         try { await component.Stop(); }
-        catch (Exception failure) { Report($"stopping failed: {failure.Message}", PyLogLevel.Error); }
+        catch (Exception failure) { Report("stopping failed", failure, PyLogLevel.Error); }
     }
 
-    static string Seconds() => UserScript.RunDrainTimeout.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
+    static string Seconds(TimeSpan? span = null) => (span ?? UserScript.RunDrainTimeout).TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
 
-    /// <summary>Runs a command Home Assistant sent to one of the definition's entities.</summary>
+    /// <summary>Runs a command Home Assistant sent to one of the definition's entities; stopping waits for it.</summary>
     /// <exception cref="InvalidOperationException">The definition is not running.</exception>
     public async Task Command(SharpEntity entity, string name, JsonElement data)
     {
-        if (Status != Running) throw new InvalidOperationException("The entity is not running");
-        await entity.Command(name, data);
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (gate)
+        {
+            // Under the lock that stopping takes: a command either is refused or is one stopping waits for.
+            if (status != Running) throw new InvalidOperationException("The entity is not running");
+            running.Add(done.Task);
+        }
+        try { await entity.Command(name, data); }
+        finally
+        {
+            lock (gate) running.Remove(done.Task);
+            done.TrySetResult();
+        }
     }
 
     /// <summary>The definition's entity with this unique id; null when it has none.</summary>
     internal SharpEntity? Entity(string uniqueId) => entities.FirstOrDefault(entity => UniqueId(entity) == uniqueId);
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Sends the entity's snapshot towards Home Assistant. Never throws: a snapshot that fails, such as an attribute
+    /// that changes while it is read, is logged once for the entity and nothing is sent for it.
+    /// </summary>
     public void Publish(SharpEntity entity)
     {
+        Exception? failed = null;
         lock (gate)
         {
             // Only once started, and never after stopping: a replaced revision must not show its entities unavailable.
             if (status is not (Running or Failed)) return;
             var id = UniqueId(entity);
-            Manager.Pump.Post(id, entity.Snapshot(id, running: status == Running));
+            try { Manager.Pump.Post(id, entity.Snapshot(id, running: status == Running)); }
+            catch (Exception failure) { if (unpublishable.Add(entity)) failed = failure; }
         }
+        // Outside the lock: logging calls into Python.
+        if (failed != null) Report($"publishing the state of entity '{entity.Key}' failed", failed, PyLogLevel.Error);
     }
 
     /// <inheritdoc/>
@@ -342,7 +452,22 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
             // On the caller's thread, as the automations' payload is: detaching attributes may take the GIL.
             try { change = new(entityId, EntityStateSnapshot.From(trigger.State), trigger.State.OldState is { } old ? EntityStateSnapshot.From(old) : null); }
             catch (Exception failure) { CallbackFailed("an entity callback", failure, token); return Task.CompletedTask; }
-            return Task.Run(() => Callback("an entity callback", () => action(change), token));
+            // Stopping waits for the callback: under the lock it takes, the callback either does not start or is counted.
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (gate)
+            {
+                if (stopped != null) return Task.CompletedTask;
+                running.Add(done.Task);
+            }
+            return Task.Run(async () =>
+            {
+                try { await Callback("an entity callback", () => action(change), token); }
+                finally
+                {
+                    lock (gate) running.Remove(done.Task);
+                    done.TrySetResult();
+                }
+            });
         }
         lock (gate) if (stopped != null) return Nothing;
         // Subscribing calls into Python, which waits for the GIL: never under the lock, which a publish from a thread
@@ -360,14 +485,24 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
         return Nothing;
     }
 
-    /// <inheritdoc/>
-    public void Log(string message, PyLogLevel level) => PyInterop.Log((int)level, message);
+    /// <summary>Writes to the Home Assistant log on behalf of the definition, after its name, as the host's own lines are.</summary>
+    public void Log(string message, PyLogLevel level) => PyInterop.Log((int)level, $"{definition.Name}: {message}");
 
     // The host's own reports of failures: a log that fails must not stop a timer or skip a publish.
     void Report(string message, PyLogLevel level)
     {
-        try { Log($"{definition.Name}: {message}", level); }
+        try { Log(message, level); }
         catch { }
+    }
+
+    // A failure, with the message of the exception, which never throws from here.
+    void Report(string what, Exception failure, PyLogLevel level) => Report($"{what}: {Text(failure)}", level);
+
+    // An exception's message: user code, which may itself throw.
+    static string Text(Exception failure)
+    {
+        try { return failure.Message; }
+        catch { return failure.GetType().Name; }
     }
 
     async Task Callback(string what, Func<Task> action, CancellationToken token)
@@ -380,7 +515,7 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
     void CallbackFailed(string what, Exception failure, CancellationToken token)
     {
         if (failure is OperationCanceledException && token.IsCancellationRequested) return;
-        Report($"{what} failed: {failure.Message}", PyLogLevel.Error);
+        Report($"{what} failed", failure, PyLogLevel.Error);
     }
 
     string UniqueId(SharpEntity entity) => $"{definition.Id}:{entity.Key}";

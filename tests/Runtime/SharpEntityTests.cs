@@ -16,6 +16,7 @@ static class SharpEntityTests
         public readonly List<SharpEntity> Published = [];
         public readonly List<string> Calls = [];
         public CancellationToken Stopping => CancellationToken.None;
+        CancellationToken IComponentHost.Calls => CancellationToken.None;
         // Set to make each publish read the snapshot, as the real host does.
         public bool Snapshots;
         public void Publish(SharpEntity entity) { if (Snapshots) entity.Snapshot("plug:" + entity.Key, true); else Published.Add(entity); }

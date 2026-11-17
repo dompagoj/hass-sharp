@@ -64,12 +64,16 @@ public abstract partial class SharpEntity : SharpComponent
 
     /// <summary>
     /// Extra attributes Home Assistant shows with the state: text, numbers, booleans, dates, JSON values, and lists or
-    /// dictionaries of them. A change here is sent with the next <see cref="Publish"/>. Safe to change from any thread,
-    /// also while another one publishes.
+    /// dictionaries of them, up to 32 levels deep (a list or dictionary deeper, or one inside itself, is sent as null). A
+    /// change here is sent with the next <see cref="Publish"/>. Safe to change from any thread, also while another one
+    /// publishes; a list or dictionary inside it is not, and one that changes while a publish reads it fails that publish.
     /// </summary>
     public IDictionary<string, object?> Attributes => attributes;
 
-    /// <summary>Sends the current state and attributes to Home Assistant; does nothing before the definition runs.</summary>
+    /// <summary>
+    /// Sends the current state and attributes to Home Assistant; does nothing before the definition runs. Never throws:
+    /// a state that cannot be read, such as a value whose text throws, is logged and not sent.
+    /// </summary>
     public void Publish() => Host?.Publish(this);
 
     /// <summary>The Home Assistant domain, such as <c>sensor</c>.</summary>
@@ -112,7 +116,8 @@ public abstract partial class SharpEntity : SharpComponent
         // The dictionary's own ToArray is one consistent copy while other threads write (a LINQ copy through ICollection
         // is not); it has no order, so sorted by key the same attributes always give the same snapshot.
         var json = new JsonObject();
-        foreach (var (name, value) in attributes.ToArray().OrderBy(attribute => attribute.Key, StringComparer.Ordinal)) json[name] = AttributeJson(value);
+        var path = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        foreach (var (name, value) in attributes.ToArray().OrderBy(attribute => attribute.Key, StringComparer.Ordinal)) json[name] = AttributeJson(value, 0, path);
         return new() { ["uniqueId"] = uniqueId, ["available"] = Available && running, ["values"] = Values(), ["attributes"] = json };
     }
 
@@ -141,21 +146,34 @@ public abstract partial class SharpEntity : SharpComponent
         _ => value.ToString(),
     };
 
-    // An attribute may also be a JSON value or a list or dictionary; written by hand rather than serialized, so that no
-    // serializer cache holds a type from the definition's load context.
-    static JsonNode? AttributeJson(object? value) => value switch
-    {
-        JsonNode node => node.DeepClone(),
-        JsonElement element => element.ValueKind == JsonValueKind.Undefined ? null : JsonNode.Parse(element.GetRawText()),
-        IDictionary dictionary => ObjectJson(dictionary),
-        IEnumerable items and not string => new JsonArray(items.Cast<object?>().Select(AttributeJson).ToArray()),
-        _ => ValueJson(value),
-    };
+    /// <summary>How deep lists and dictionaries in an attribute nest; one deeper is written as null.</summary>
+    internal const int AttributeDepth = 32;
 
-    static JsonObject ObjectJson(IDictionary dictionary)
+    // An attribute may also be a JSON value or a list or dictionary; written by hand rather than serialized, so that no
+    // serializer cache holds a type from the definition's load context. A list or dictionary that contains itself, or
+    // nests deeper than AttributeDepth, is null there: recursing on would overflow the stack and end Home Assistant.
+    static JsonNode? AttributeJson(object? value, int depth, HashSet<object> path)
+    {
+        switch (value)
+        {
+            case JsonNode node: return node.DeepClone();
+            case JsonElement element: return element.ValueKind == JsonValueKind.Undefined ? null : JsonNode.Parse(element.GetRawText());
+            case IEnumerable items and not string:
+                if (depth >= AttributeDepth || !path.Add(items)) return null;
+                try
+                {
+                    if (items is IDictionary dictionary) return ObjectJson(dictionary, depth + 1, path);
+                    return new JsonArray(items.Cast<object?>().Select(item => AttributeJson(item, depth + 1, path)).ToArray());
+                }
+                finally { path.Remove(items); }
+            default: return ValueJson(value);
+        }
+    }
+
+    static JsonObject ObjectJson(IDictionary dictionary, int depth, HashSet<object> path)
     {
         var json = new JsonObject();
-        foreach (DictionaryEntry entry in dictionary) json[Convert.ToString(entry.Key, CultureInfo.InvariantCulture) ?? ""] = AttributeJson(entry.Value);
+        foreach (DictionaryEntry entry in dictionary) json[Convert.ToString(entry.Key, CultureInfo.InvariantCulture) ?? ""] = AttributeJson(entry.Value, depth, path);
         return json;
     }
 

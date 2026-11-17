@@ -12,6 +12,11 @@ internal interface IComponentHost
 {
     /// <summary>Cancelled when the definition stops or is replaced.</summary>
     CancellationToken Stopping { get; }
+    /// <summary>
+    /// Ends what the host waits on for the component, such as a service call: cancelled only once stopping stops waiting
+    /// for the component's code, so a call from <c>Stop()</c> still completes.
+    /// </summary>
+    CancellationToken Calls { get; }
     /// <summary>Sends the entity's current snapshot towards Home Assistant.</summary>
     void Publish(SharpEntity entity);
     /// <summary>Runs <paramref name="action"/> every <paramref name="interval"/> until disposed or stopped.</summary>
@@ -55,17 +60,32 @@ public abstract class SharpComponent
 
     /// <summary>
     /// Runs once before the entities are registered, with the settings applied: the place to check settings or fetch
-    /// what the device needs. A failure leaves Home Assistant untouched.
+    /// what the device needs. A failure leaves Home Assistant untouched. The <c>Setup()</c>s of a definition's device
+    /// and entities have 60 seconds together; one that takes longer fails the definition, which is tried again when
+    /// the libraries or Home Assistant's services change.
     /// </summary>
     protected internal virtual Task Setup() => Task.CompletedTask;
 
-    /// <summary>Runs when the definition starts, after its entities are registered: the place to start timers and tracks.</summary>
+    /// <summary>
+    /// Runs when the definition starts, after its entities are registered: the place to start timers and tracks. It
+    /// must return: the entities stay unavailable until every <c>Start()</c> of the definition has, so poll in a timer
+    /// started with <see cref="Every"/>, not in a loop here.
+    /// </summary>
     protected internal virtual Task Start() => Task.CompletedTask;
 
-    /// <summary>Runs when the definition stops or is replaced. Timers and tracks started through this component stop on their own.</summary>
+    /// <summary>
+    /// Runs when the definition stops or is replaced, after its timer callbacks, track callbacks and commands have
+    /// ended; it may still call services. Timers and tracks started through this component stop on their own. Once the
+    /// definition has started it runs on the device and every entity, also on one whose own <c>Start()</c> never ran
+    /// because an earlier one threw, so it must not count on what <c>Start()</c> sets up. It does not run when Home
+    /// Assistant shuts down: then only <see cref="Stopping"/> is cancelled.
+    /// </summary>
     protected internal virtual Task Stop() => Task.CompletedTask;
 
-    /// <summary>Cancelled when the definition stops or is replaced; <see cref="CancellationToken.None"/> before it is attached.</summary>
+    /// <summary>
+    /// Cancelled when the definition stops or is replaced, and when Home Assistant shuts down; already cancelled when
+    /// <see cref="Stop"/> runs. <see cref="CancellationToken.None"/> before it is attached.
+    /// </summary>
     protected CancellationToken Stopping => Host?.Stopping ?? CancellationToken.None;
 
     /// <summary>
@@ -92,7 +112,7 @@ public abstract class SharpComponent
 
     /// <summary>
     /// Calls a Home Assistant service by its id and waits until Home Assistant has run it, as the Call service step
-    /// does. The wait ends when the definition stops.
+    /// does. Also from <see cref="Stop"/>: the wait ends only when stopping the definition stops waiting for its code.
     /// </summary>
     /// <param name="service">The service, as <c>domain.service</c>, such as <c>light.turn_on</c>.</param>
     /// <param name="target">An entity id (<c>"light.kitchen"</c>), or an object with <c>entity_id</c>, <c>device_id</c>,
@@ -104,8 +124,10 @@ public abstract class SharpComponent
     {
         var payload = data == null ? new JsonObject() : (JsonObject)data.DeepClone();
         var (domain, name) = HassServices.PrepareCall(service, payload, target, "The target");
-        if (returnResponse) return await HassServices.CallServiceAsync<JsonElement>(domain, name, payload).WaitAsync(Stopping);
-        await HassServices.CallServiceAsync(domain, name, payload).WaitAsync(Stopping);
+        // Not Stopping, which is cancelled before Stop() runs: a call from Stop() must still complete.
+        var calls = Host?.Calls ?? CancellationToken.None;
+        if (returnResponse) return await HassServices.CallServiceAsync<JsonElement>(domain, name, payload).WaitAsync(calls);
+        await HassServices.CallServiceAsync(domain, name, payload).WaitAsync(calls);
         return null;
     }
 

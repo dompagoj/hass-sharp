@@ -14,7 +14,7 @@ sealed class EntityTestHome : IAsyncDisposable
     readonly Action<string> push = PyInterop.PushEntityStates;
     readonly Action<string, Action, Action<string>> remove = PyInterop.BeginRemoveEntities, prune = PyInterop.BeginPruneEntities;
     readonly Action<int, string> log = PyInterop.Log;
-    readonly TimeSpan removalTimeout = HassSharpManager.RemovalTimeout;
+    readonly TimeSpan removalTimeout = HassSharpManager.RemovalTimeout, setupTimeout = DefinitionHost.SetupTimeout, syncTimeout = DefinitionHost.SyncTimeout;
     volatile bool failRemoval, ignoreRemoval, failPrune, ignorePrune;
 
     /// <summary>A new directory under the temporary folder, named after the suite; the fakes are installed from now on.</summary>
@@ -104,7 +104,7 @@ sealed class EntityTestHome : IAsyncDisposable
         }
     }
 
-    /// <summary>Puts back the delegates, the log, the configuration path and the removal timeout, and deletes the directory.</summary>
+    /// <summary>Puts back the delegates, the log, the configuration path and the timeouts, and deletes the directory.</summary>
     public async ValueTask DisposeAsync()
     {
         PyInterop.BeginSyncEntities = sync;
@@ -114,6 +114,8 @@ sealed class EntityTestHome : IAsyncDisposable
         PyInterop.Log = log;
         HassPath.HassConfiguration = previousPath;
         HassSharpManager.RemovalTimeout = removalTimeout;
+        DefinitionHost.SetupTimeout = setupTimeout;
+        DefinitionHost.SyncTimeout = syncTimeout;
         if (Directory.Exists(Root)) await ServiceCallTests.DeleteWhenQuiet(Root);
     }
 }
