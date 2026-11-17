@@ -213,7 +213,7 @@ public partial class HassSharpManager
         {
             if (!store.Exists())
             {
-                try { Logger.Warn("No entity definitions directory: nothing is pruned from Home Assistant"); } catch { }
+                try { Logger.Info("No entity definitions directory: nothing is pruned from Home Assistant"); } catch { }
                 return;
             }
             await PyInterop.PruneEntitiesAsync(JsonSerializer.Serialize(store.Ids())).WaitAsync(RemovalTimeout);

@@ -132,15 +132,17 @@ static class EntityStartupTests
         try { await api.Init(); }
         finally { await api.UnloadAsync(); }
         Check(home.Prunes().Length == 0, "a start without the definitions' directory prunes: " + string.Join(" | ", home.Prunes()));
-        // A partial restore of .storage is what this guards against: a user sees it only as a warning.
+        // A fresh install has no directory either, so the skip is information, and nothing at warning or above is logged.
         const string skipped = "No entity definitions directory: nothing is pruned from Home Assistant";
-        Check(home.Logs(PyLogLevel.Warn).Contains(skipped), "the skipped prune is not a warning: " + string.Join(" | ", home.Logs()));
+        Check(home.Logs(PyLogLevel.Info).Contains(skipped), "the skipped prune is not logged at info: " + string.Join(" | ", home.Logs()));
+        var louder = new[] { PyLogLevel.Warn, PyLogLevel.Error, PyLogLevel.Critical }.SelectMany(home.Logs).ToArray();
+        Check(louder.Length == 0, "a start without the definitions' directory logs at warning or above: " + string.Join(" | ", louder));
         Directory.CreateDirectory(Storage(home, "entities"));
         api = new HassSharpManager(home.Root);
         try { await api.Init(); }
         finally { await api.UnloadAsync(); }
         Check(home.Prunes().SequenceEqual(["[]"]), "a start with an empty definitions' directory prunes everything: " + string.Join(" | ", home.Prunes()));
-        Console.WriteLine("PASS entity startup: a start without the definitions' directory prunes nothing and warns; one with an empty directory prunes every definition");
+        Console.WriteLine("PASS entity startup: a start without the definitions' directory prunes nothing and logs that at info; one with an empty directory prunes every definition");
     }
 
     // A definition whose Setup() never ends fails at startup within the setup bound, and the definition after it runs.
