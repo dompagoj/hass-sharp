@@ -32399,7 +32399,7 @@
               "value": "on"
             }
           },
-          "label": "Is on ▸ motion A"
+          "label": "Entity is ▸ motion A"
         },
         {
           "id": "b",
@@ -32416,7 +32416,7 @@
               "value": "on"
             }
           },
-          "label": "Is on ▸ motion B"
+          "label": "Entity is ▸ motion B"
         },
         {
           "id": "or",
@@ -33270,7 +33270,45 @@
     ]
   },
   {
-    "name": "code definition.invalid: definition is not an object",
+    "name": "automation: a definition that is not an object is ignored: null",
+    "graph": {
+      "version": 5,
+      "name": "Not an object",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ],
+      "definition": null
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "automation: a definition that is not an object is ignored: text",
     "graph": {
       "version": 5,
       "name": "Not an object",
@@ -33304,13 +33342,8 @@
       ],
       "definition": "door"
     },
-    "valid": false,
-    "messages": [
-      "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type"
-    ],
-    "codes": [
-      "definition.invalid"
-    ]
+    "valid": true,
+    "noDiagnostics": true
   },
   {
     "name": "code node.document: entity node in an automation",
@@ -33426,6 +33459,49 @@
     ]
   },
   {
+    "name": "code node.singleton: three setups",
+    "graph": {
+      "version": 5,
+      "name": "Setups",
+      "nodes": [
+        {
+          "id": "m",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "z",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "k",
+          "kind": "entity_setup",
+          "config": {}
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "messages": [
+      "A graph can have only one When started step; delete this one",
+      "A graph can have only one When started step; delete this one"
+    ],
+    "codes": [
+      "node.singleton",
+      "node.singleton"
+    ]
+  },
+  {
     "name": "code root.incoming: order wire into a state",
     "graph": {
       "version": 5,
@@ -33509,6 +33585,93 @@
     ],
     "codes": [
       "definition.unknownEntity"
+    ]
+  },
+  {
+    "name": "code definition.unknownEntity: no entity chosen",
+    "graph": {
+      "version": 5,
+      "name": "Blank",
+      "nodes": [
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": ""
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "entity",
+    "messages": [
+      "Choose one of this definition's entities in Entity"
+    ],
+    "codes": [
+      "definition.unknownEntity"
+    ]
+  },
+  {
+    "name": "code definition.unknownCommand: no command chosen",
+    "graph": {
+      "version": 5,
+      "name": "Blank command",
+      "nodes": [
+        {
+          "id": "on",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "turn_on"
+          }
+        },
+        {
+          "id": "off",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "turn_off"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": ""
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "relay",
+            "domain": "switch"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "c",
+    "inputId": "command",
+    "messages": [
+      "Choose Turn on or Turn off in Command"
+    ],
+    "codes": [
+      "definition.unknownCommand"
     ]
   },
   {
@@ -33652,6 +33815,48 @@
       "This definition has no setting missing; choose one of its settings or add it"
     ],
     "codes": [
+      "setting.unknown"
+    ]
+  },
+  {
+    "name": "code setting.unknown: no setting chosen",
+    "graph": {
+      "version": 5,
+      "name": "Blank setting",
+      "nodes": [
+        {
+          "id": "k",
+          "kind": "setting",
+          "config": {
+            "key": ""
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": [
+          {
+            "key": "delay",
+            "type": "number"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "nodeId": "k",
+    "inputId": "key",
+    "messages": [
+      "Choose one of this definition's settings in Setting",
+      "Setting is not used"
+    ],
+    "codes": [
+      "pure.unused",
       "setting.unknown"
     ]
   },
@@ -33845,8 +34050,10 @@
       }
     },
     "valid": true,
+    "warning": "step gets its entity over a wire",
+    "warningNodeId": "is",
     "messages": [
-      "Is on gets its entity over a wire, so State is not worked out again when that entity changes; choose the entity in Entity instead"
+      "The Entity is step gets its entity over a wire, so State is not worked out again when that entity changes; choose the entity in Entity instead"
     ],
     "codes": [
       "state.dynamicSource"
@@ -33870,6 +34077,8 @@
       }
     },
     "valid": true,
+    "warning": "does nothing on",
+    "warningNodeId": null,
     "messages": [
       "Switch relay does nothing on Turn off; add a When commanded step for it",
       "Switch relay does nothing on Turn on; add a When commanded step for it"
@@ -33877,6 +34086,63 @@
     "codes": [
       "command.unhandled",
       "command.unhandled"
+    ]
+  },
+  {
+    "name": "code graph.limit: entity graph past the limit",
+    "graph": {
+      "version": 5,
+      "name": "Too many",
+      "nodes": [
+        {
+          "id": "a",
+          "kind": "setting",
+          "config": {
+            "key": "delay"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "setting",
+          "config": {
+            "key": "delay"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "setting",
+          "config": {
+            "key": "delay"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": [
+          {
+            "key": "delay",
+            "type": "number"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "catalogPatch": {
+      "limits": {
+        "nodes": 2
+      }
+    },
+    "messages": [
+      "Graph limit: at most 256 nodes and at most 512 edges"
+    ],
+    "codes": [
+      "graph.limit"
     ]
   },
   {

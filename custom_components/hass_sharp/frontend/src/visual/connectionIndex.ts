@@ -6,6 +6,7 @@ import {
   connectData,
   connectable,
   dataInputs,
+  graphDocument,
   dataOutputs,
   isAssignable,
   isPure,
@@ -156,7 +157,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       if (!diagnostics.some(d => d.code === 'graph.limit')) return full()
       return limited || edgeCount > catalog.limits.edges ? { fallback: false } : full()
     }
-    if (edgeCount > catalog.limits.edges) return { message: 'Graph limit: 1–256 nodes and at most 512 edges', fallback: false }
+    if (edgeCount > catalog.limits.edges) return { message: words.graphLimit(graphDocument(graph)), fallback: false }
     if (!source || analysis.nodes.get(sourceId) !== source || analysis.nodes.get(targetId) !== target) return full()
     const spec = Object.hasOwn(catalog.nodes, target.kind) ? catalog.nodes[target.kind] : undefined
     if (!spec || !storageIsPrivate(target, targetPort, spec)) return full()

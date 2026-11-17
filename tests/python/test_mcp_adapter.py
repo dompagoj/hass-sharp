@@ -411,6 +411,22 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((state['kind'],state['node']['documents']),('entity_state',['entity']))
         self.assertTrue(entity_only<=set(self.CATALOG['nodes']))
 
+    async def test_library_preview_leaves_out_entity_only_nodes(self):
+        # The catalog a node library's preview (or save) compiles is offered for automations, as discovery's is.
+        entity_only={kind for kind,node in self.CATALOG['nodes'].items() if 'automation' not in node.get('documents',['automation'])}
+        self.assertTrue(entity_only)
+        async def library(request,is_admin):
+            return {'version':1,'ok':True,'result':{'valid':True,'diagnostics':[],'catalog':self.CATALOG}}
+        self.service.node_library.side_effect=library
+        for name,args in (('library_preview',{'id':'lib','source':'','workspaceVersion':'1'}),('library_save',{'id':'lib','name':'Lib','source':'','expectedRevision':0})):
+            result=await self.call(name,args)
+            self.assertFalse(result.error,result.data)
+            catalog=result.data['result']['catalog']
+            self.assertFalse(entity_only&set(catalog['nodes']),(name,sorted(entity_only&set(catalog['nodes']))))
+            self.assertEqual(set(catalog['nodes']),set(self.CATALOG['nodes'])-entity_only)
+            self.assertTrue(result.data['result']['valid'])
+        self.assertTrue(entity_only<=set(self.CATALOG['nodes']))
+
     async def test_graph_schema_has_no_node_size(self):
         graph={'version':5,'name':'Sized','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'},'size':{'width':220,'height':112}}],'edges':[]}
         refused=(await self.call('preview',{'graph':graph})).data['error']

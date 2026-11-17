@@ -182,7 +182,13 @@ class HassSharpTool(llm.Tool):
         service_api = self.state.service
         operation = self.operation
         if operation.startswith("library_"):
-            return await service_api.node_library({"operation": operation.removeprefix("library_"), **args}, is_admin=True)
+            response = await service_api.node_library({"operation": operation.removeprefix("library_"), **args}, is_admin=True)
+            # A library's preview (and save) answers with the catalog compiled from it, offered for automations as
+            # get_capabilities' is.
+            result = response.get("result") if isinstance(response, dict) else None
+            if isinstance(result, dict) and isinstance(result.get("catalog"), dict):
+                return {**response, "result": {**result, "catalog": automation_catalog(result["catalog"])}}
+            return response
         if operation in ("get_capabilities", "get_node_schema"):
             response = await service_api.node_library({"operation": "catalog"}, is_admin=True)
             if not response.get("ok"):

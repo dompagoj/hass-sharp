@@ -1,0 +1,130 @@
+{
+  "description": "One entity graph whose later States, When commanded and When started nodes are not in id order when grouped by key; both validators report them in id order (see EntityDomainTests and visual-contract.test.ts).",
+  "graph": {
+    "version": 5,
+    "name": "Order",
+    "nodes": [
+      {
+        "id": "a",
+        "kind": "entity_state",
+        "config": {
+          "entity": "door",
+          "is_on": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": true
+          }
+        }
+      },
+      {
+        "id": "b",
+        "kind": "entity_state",
+        "config": {
+          "entity": "window",
+          "is_on": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": true
+          }
+        }
+      },
+      {
+        "id": "c",
+        "kind": "entity_state",
+        "config": {
+          "entity": "window",
+          "is_on": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": true
+          }
+        }
+      },
+      {
+        "id": "d",
+        "kind": "entity_state",
+        "config": {
+          "entity": "door",
+          "is_on": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": true
+          }
+        }
+      },
+      {
+        "id": "p",
+        "kind": "entity_command",
+        "config": {
+          "entity": "relay",
+          "command": "turn_on"
+        }
+      },
+      {
+        "id": "q",
+        "kind": "entity_command",
+        "config": {
+          "entity": "relay",
+          "command": "turn_off"
+        }
+      },
+      {
+        "id": "r",
+        "kind": "entity_command",
+        "config": {
+          "entity": "relay",
+          "command": "turn_off"
+        }
+      },
+      {
+        "id": "s",
+        "kind": "entity_command",
+        "config": {
+          "entity": "relay",
+          "command": "turn_on"
+        }
+      },
+      {
+        "id": "m",
+        "kind": "entity_setup",
+        "config": {}
+      },
+      {
+        "id": "z",
+        "kind": "entity_setup",
+        "config": {}
+      },
+      {
+        "id": "k",
+        "kind": "entity_setup",
+        "config": {}
+      }
+    ],
+    "edges": [],
+    "definition": {
+      "entities": [
+        {
+          "key": "door",
+          "domain": "binary_sensor"
+        },
+        {
+          "key": "window",
+          "domain": "binary_sensor"
+        },
+        {
+          "key": "relay",
+          "domain": "switch"
+        }
+      ],
+      "settings": []
+    }
+  },
+  "order": [
+    "node.singleton m",
+    "node.singleton z",
+    "state.duplicate c",
+    "state.duplicate d",
+    "command.duplicate r",
+    "command.duplicate s"
+  ]
+}

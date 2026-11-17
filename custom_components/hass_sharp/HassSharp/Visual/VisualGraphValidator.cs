@@ -366,6 +366,10 @@ public static class VisualGraphValidator
         internal static string RepeatCount(string label, double max, string maxLabel) => $"{label} must be at most {Number(max)}, as {maxLabel} is {Number(max)}";
         // An entity definition's graph: its definition (the entities and settings composed into it) and its own steps.
         /// <summary>A definition that is not an object of entities and settings of the shape a graph reads.</summary>
+        /// <summary>A graph past the catalog's limits; an entity definition's graph may also have no node.</summary>
+        internal static string GraphLimit(string document) => document == "automation"
+            ? "Graph limit: 1–256 nodes and at most 512 edges"
+            : "Graph limit: at most 256 nodes and at most 512 edges";
         internal const string DefinitionUnreadable = "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type";
         /// <summary>An entity of a domain the catalog's <c>entityDomains</c> does not describe.</summary>
         internal static string UnsupportedDomain(string key, string domain, IEnumerable<string> labels) => $"Entity {Name(key)} has the domain {Name(domain)}, which a graph cannot define; choose {Or(labels)}";
@@ -395,7 +399,7 @@ public static class VisualGraphValidator
         /// <summary>A second When commanded step for one entity and command.</summary>
         internal static string CommandDuplicate(string key, string command, string label) => $"Entity {Name(key)} already has {Article(label)} {label} step for {command}; delete this one or choose another command";
         /// <summary>An entity reader a State reads whose entity comes over a wire: what the State watches cannot be known.</summary>
-        internal static string DynamicSource(string reader, string state, string input) => $"{reader} gets its entity over a wire, so {state} is not worked out again when that entity changes; choose the entity in {input} instead";
+        internal static string DynamicSource(string reader, string state, string input) => $"The {reader} step gets its entity over a wire, so {state} is not worked out again when that entity changes; choose the entity in {input} instead";
         /// <summary>A command of an entity no When commanded step handles.</summary>
         internal static string CommandUnhandled(string domain, string key, string command, string label) => $"{domain} {Name(key)} does nothing on {command}; add {Article(label)} {label} step for it";
     }
@@ -508,8 +512,9 @@ public static class VisualGraphValidator
             if (graph["nodes"] is not JsonArray ns || graph["edges"] is not JsonArray es) { Error(null, "Nodes and edges arrays are required", code: "graph.shape"); return errors; }
             // An entity definition's graph may be empty: the definition is saved with its entities before its logic.
             document = GraphDocument(graph);
-            if (ns.Count < 1 && document == "automation" || OverLimit(Root, graph)) { Error(null, "Graph limit: 1–256 nodes and at most 512 edges", code: "graph.limit"); return errors; }
-            if (graph.ContainsKey("definition")) Definition(graph["definition"]);
+            if (ns.Count < 1 && document == "automation" || OverLimit(Root, graph)) { Error(null, Words.GraphLimit(document), code: "graph.limit"); return errors; }
+            // Only an object definition makes an entity graph; any other value of the key is ignored, as it always was.
+            if (EntityGraph) Definition(graph["definition"]);
             // The types of the graph's Custom C# nodes join the catalog's; they are compared by their entries alone. Only
             // once the graph's shape and size are known: nothing is resolved for a graph answered with graph.limit.
             if (WithGraphTypes(Root, graph) is var merged && !ReferenceEquals(merged, Root)) snapshot = snapshot.WithRoot(merged);
@@ -630,16 +635,17 @@ public static class VisualGraphValidator
         /// </summary>
         void GraphRules()
         {
-            foreach (var group in nodes.Values.Where(n => IsSingleton(Spec(n))).GroupBy(Kind, StringComparer.Ordinal))
-                foreach (var node in group.OrderBy(Id, StringComparer.Ordinal).Skip(1)) Error(Id(node), Words.Singleton(Words.Name(KindLabel(group.Key))), code: "node.singleton");
+            // Each rule reports every node after the first of its key, in id order (as the editor's copy does).
+            static IEnumerable<JsonObject> Later<T>(IEnumerable<JsonObject> list, Func<JsonObject, T> key) { var seen = new HashSet<T>(); foreach (var node in list) if (!seen.Add(key(node))) yield return node; }
+            foreach (var kind in nodes.Values.Where(n => IsSingleton(Spec(n))).Select(Kind).Distinct(StringComparer.Ordinal).ToList())
+                foreach (var node in Later(OfKind(kind), _ => kind)) Error(Id(node), Words.Singleton(Words.Name(KindLabel(kind))), code: "node.singleton");
             if (!EntityGraph) return;
             static string Choice(JsonObject node, string key) => Text(Config(node), key);
             var states = OfKind("entity_state").Where(n => DefinitionEntity(Root, Choice(n, "entity")) != null).ToList();
-            foreach (var group in states.GroupBy(n => Choice(n, "entity"), StringComparer.Ordinal))
-                foreach (var node in group.Skip(1)) Error(Id(node), Words.StateDuplicate(group.Key, KindLabel("entity_state")), "entity", code: "state.duplicate");
+            foreach (var node in Later(states, n => Choice(n, "entity"))) Error(Id(node), Words.StateDuplicate(Choice(node, "entity"), KindLabel("entity_state")), "entity", code: "state.duplicate");
             var commands = OfKind("entity_command").Where(n => EntityDomain(Root, Choice(n, "entity"))?["commands"] is JsonObject known && known.ContainsKey(Choice(n, "command"))).ToList();
-            foreach (var group in commands.GroupBy(n => (Choice(n, "entity"), Choice(n, "command"))))
-                foreach (var node in group.Skip(1)) Error(Id(node), Words.CommandDuplicate(group.Key.Item1, CommandLabel(group.Key.Item1, group.Key.Item2), KindLabel("entity_command")), "command", code: "command.duplicate");
+            foreach (var node in Later(commands, n => (Choice(n, "entity"), Choice(n, "command"))))
+                Error(Id(node), Words.CommandDuplicate(Choice(node, "entity"), CommandLabel(Choice(node, "entity"), Choice(node, "command")), KindLabel("entity_command")), "command", code: "command.duplicate");
             // A State is worked out again when an entity it reads changes; only an entity chosen in a reader can be watched.
             // The warning is the reader's own, on no input: a wire into it is allowed (connectData), at the cost it names.
             var readers = new HashSet<string>(StringComparer.Ordinal);

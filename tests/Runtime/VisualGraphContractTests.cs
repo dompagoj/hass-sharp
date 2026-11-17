@@ -24,8 +24,11 @@ public static class VisualGraphContractTests
                 (fixture["inputId"] == null || e.InputId == fixture["inputId"]!.GetValue<string>()) &&
                 (fixture["contains"] == null || e.Message.Contains(fixture["contains"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase))))
                 throw new Exception($"Visual graph {name}: expected precise diagnostic, got {string.Join("; ", errors)}");
+            // warningNodeId, when the case has the key, is the node the warning is on; null for one on no node.
+            var warningOnNode = fixture.AsObject().TryGetPropertyValue("warningNodeId", out var warningNode);
             if (fixture["warning"] is { } warning && !diagnostics.Any(d => d.Severity == 2 && d.Message.Contains(warning.GetValue<string>(), StringComparison.OrdinalIgnoreCase) &&
-                (fixture["warningInputId"] is not { } warningInput || d.InputId == warningInput.GetValue<string>())))
+                (fixture["warningInputId"] is not { } warningInput || d.InputId == warningInput.GetValue<string>()) &&
+                (!warningOnNode || d.NodeId == warningNode?.GetValue<string>())))
                 throw new Exception($"Visual graph {name}: expected warning \"{warning.GetValue<string>()}\", got {string.Join("; ", diagnostics)}");
             if (fixture["noDiagnostics"]?.GetValue<bool>() == true && diagnostics.Count > 0)
                 throw new Exception($"Visual graph {name}: expected no diagnostics, got {string.Join("; ", diagnostics)}");

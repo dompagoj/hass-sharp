@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import fixtureCases from '../../../../tests/fixtures/visual-graph-validation.json'
 import servicesFixture from '../../../../tests/fixtures/visual-services.json'
+import entityGraphOrder from '../../../../tests/fixtures/entity-graph-order.json'
 import * as contract from '../src/visual/contract'
 import type { Graph } from '../src/visual/contract'
 import { connectionIndex } from '../src/visual/connectionIndex'
@@ -9,7 +10,7 @@ import { distinctTypeLabels, labelDepth, typeLabel } from '../src/visual/typeLab
 
 interface ValidationCase {
   name: string; graph: unknown; valid: boolean; nodeId?: string; inputId?: string; contains?: string
-  warning?: string; warningInputId?: string; noDiagnostics?: boolean; services?: boolean; maxValidationMs?: number; catalogPatch?: Record<string, unknown>
+  warning?: string; warningInputId?: string; warningNodeId?: string | null; noDiagnostics?: boolean; services?: boolean; maxValidationMs?: number; catalogPatch?: Record<string, unknown>
   /** Every diagnostic message, sorted by code unit: both validators word them byte for byte alike. */
   messages?: string[]
   /** The code of every diagnostic that has one, sorted: both validators classify structural problems alike. */
@@ -52,7 +53,9 @@ describe('shared visual graph validation contract', () => {
       (!fixture.contains || e.message.toLowerCase().includes(fixture.contains.toLowerCase())))).toBe(true)
     const warning = fixture.warning
     if (warning !== undefined) expect(diagnostics.some(d => d.severity === 2 && d.message.toLowerCase().includes(warning.toLowerCase()) &&
-      (fixture.warningInputId === undefined || d.inputId === fixture.warningInputId)), `expected warning "${warning}", got ${JSON.stringify(diagnostics)}`).toBe(true)
+      (fixture.warningInputId === undefined || d.inputId === fixture.warningInputId) &&
+      // warningNodeId, when the case has the key, is the node the warning is on; null for one on no node.
+      (!('warningNodeId' in fixture) || (d.nodeId ?? null) === fixture.warningNodeId)), `expected warning "${warning}", got ${JSON.stringify(diagnostics)}`).toBe(true)
     if (fixture.noDiagnostics) expect(diagnostics).toEqual([])
     // A case without `messages` expects none: a warning only one validator raises cannot pass by omission.
     expect(diagnostics.map(d => d.message).sort()).toEqual([...(fixture.messages ?? [])].sort())
@@ -61,6 +64,13 @@ describe('shared visual graph validation contract', () => {
     for (const d of diagnostics) if (d.code !== undefined) expect(contract.diagnosticCodes as readonly string[], fixture.name).toContain(d.code)
     for (const d of diagnostics) expect(d.message, 'message wording').not.toMatch(jargon)
   })
+})
+// The shared fixture compares diagnostics sorted; the order of the later nodes a rule reports is pinned here and in the
+// runtime's --entity-graph-order, from one graph.
+it('rules allowing one node of a key report every later one in id order', () => {
+  const codes = ['node.singleton', 'state.duplicate', 'command.duplicate']
+  const got = contract.validateGraph(entityGraphOrder.graph as unknown as Graph).filter(d => codes.includes(d.code ?? '')).map(d => `${d.code} ${d.nodeId}`)
+  expect(got).toEqual(entityGraphOrder.order)
 })
 it('missing layout is deterministic and supplied positions remain unchanged', () => {
   const graph = { version: 5 as const, name: 'Layout', nodes: [

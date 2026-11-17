@@ -724,6 +724,8 @@ export const words = {
   schedulesExpression: 'Schedules expression is gone; set the time in Time of day',
   // An entity definition's graph: its definition (the entities and settings composed into it) and its own steps.
   /** A definition that is not an object of entities and settings of the shape a graph reads. */
+  /** A graph past the catalog's limits; an entity definition's graph may also have no node. */
+  graphLimit: (document: GraphDocument) => document === 'automation' ? 'Graph limit: 1–256 nodes and at most 512 edges' : 'Graph limit: at most 256 nodes and at most 512 edges',
   definitionUnreadable: "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type",
   /** An entity of a domain the catalog's `entityDomains` does not describe. */
   unsupportedDomain: (key: string, domain: string, labels: string[]) => `Entity ${words.name(key)} has the domain ${words.name(domain)}, which a graph cannot define; choose ${words.or(labels)}`,
@@ -753,7 +755,7 @@ export const words = {
   /** A second When commanded step for one entity and command. */
   commandDuplicate: (key: string, command: string, label: string) => `Entity ${words.name(key)} already has ${words.article(label)} ${label} step for ${command}; delete this one or choose another command`,
   /** An entity reader a State reads whose entity comes over a wire: what the State watches cannot be known. */
-  dynamicSource: (reader: string, state: string, input: string) => `${reader} gets its entity over a wire, so ${state} is not worked out again when that entity changes; choose the entity in ${input} instead`,
+  dynamicSource: (reader: string, state: string, input: string) => `The ${reader} step gets its entity over a wire, so ${state} is not worked out again when that entity changes; choose the entity in ${input} instead`,
   /** A command of an entity no When commanded step handles. */
   commandUnhandled: (domain: string, key: string, command: string, label: string) => `${domain} ${words.name(key)} does nothing on ${command}; add ${words.article(label)} ${label} step for it`,
 }
@@ -973,8 +975,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   const graph = value as unknown as Graph
   // An entity definition's graph may be empty: the definition is saved with its entities before its logic.
   const document = graphDocument(graph), entityGraph = document === 'entity'
-  if ((!graph.nodes.length && document === 'automation') || overLimit(catalog, graph)) { error(null, 'Graph limit: 1–256 nodes and at most 512 edges', undefined, undefined, 'graph.limit'); return analysis(false) }
-  if (Object.hasOwn(graph, 'definition')) checkDefinition(graph.definition)
+  if ((!graph.nodes.length && document === 'automation') || overLimit(catalog, graph)) { error(null, words.graphLimit(document), undefined, undefined, 'graph.limit'); return analysis(false) }
+  // Only an object definition makes an entity graph; any other value of the key is ignored, as it always was.
+  if (entityGraph) checkDefinition(graph.definition)
   // The types of the graph's Custom C# nodes join the catalog's; they are compared by their entries alone. Only once
   // the graph's shape and size are known: nothing is resolved for a graph answered with graph.limit.
   catalog = withGraphTypes(catalog, value)

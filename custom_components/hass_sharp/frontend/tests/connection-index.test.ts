@@ -38,14 +38,15 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below. No pair needs the full check: the index decides every one itself.
-const GRAPHS = 398, PAIRS = 1680, ACCEPTED = 611, BY_VALIDATION = 1069, SERVICES_ACCEPTED = 548, SERVICES_BY_VALIDATION = 1132
+const GRAPHS = 403, PAIRS = 1681, ACCEPTED = 612, BY_VALIDATION = 1069, SERVICES_ACCEPTED = 549, SERVICES_BY_VALIDATION = 1132
 const FALLBACKS: string[] = []
 // The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit), and the one past the limit.
 const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config',
   'select property: a chain past the graph limit answers the limit alone: past the graph limit',
   // Entity definitions' graphs with no node yet (their definitions are what the cases check).
   ...['entity graph: empty graph is valid', 'code definition.invalid: unknown domain', 'code definition.invalid: repeated key', 'code definition.invalid: repeated setting key',
-    'code definition.invalid: setting of an unknown type', 'code definition.invalid: entity without a domain', 'code command.unhandled: switch without flows'].map(name => `${name}: no node has an id and config`)]
+    'code definition.invalid: setting of an unknown type', 'code definition.invalid: entity without a domain', 'code command.unhandled: switch without flows'].map(name => `${name}: no node has an id and config`),
+  'code graph.limit: entity graph past the limit: past the graph limit']
 const RICH: Totals = { graphs: 39, pairs: 344, accepted: 107, rejected: 237, byValidation: 237, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 
