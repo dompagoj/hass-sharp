@@ -22,7 +22,7 @@ internal sealed class EntityStatePump(TimeSpan? debounce = null)
     // Changes on every flush and reset, so a debounce scheduled before one does nothing.
     int round;
     bool scheduled;
-    // Changes on every Forget and Reset, so a flush in flight does not remember values sent before them.
+    // Changes on every Forget and Reset, so a flush in flight forgets its batch's ids instead of remembering them.
     int forgets;
 
     /// <summary>Queues the snapshot for an id, replacing one already pending; its JSON text is taken now.</summary>
@@ -76,9 +76,12 @@ internal sealed class EntityStatePump(TimeSpan? debounce = null)
                 Logger.Error($"Sending entity states to Home Assistant failed: {error}");
                 return;
             }
+            // After a Forget or Reset during the push, the batch's ids are forgotten too, so whatever is posted for
+            // them next is sent rather than compared with a value older than the one Home Assistant now shows.
             lock (gate)
-                if (forgets == forgetsAtStart)
-                    foreach (var (id, text) in batch) sent[id] = text;
+                foreach (var (id, text) in batch)
+                    if (forgets == forgetsAtStart) sent[id] = text;
+                    else sent.Remove(id);
         }
         finally { sending.Release(); }
     }

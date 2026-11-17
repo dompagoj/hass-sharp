@@ -32,6 +32,7 @@ static class EntityPumpTests
             await Coalesces(pushed);
             await Unchanged(pushed);
             await Forgotten(pushed);
+            await ForgetDuringPush(pushed);
             await Ordered(pushed);
             await Captured(pushed);
             await Resets(pushed);
@@ -88,6 +89,30 @@ static class EntityPumpTests
         await pump.FlushAsync();
         Check(pushed.Count == 2 && Describe(Values(pushed[1])) == "plug:power=1", "after Forget the same snapshot is sent again, and only that one: " + string.Join(" | ", pushed));
         Console.WriteLine("PASS entity pump: after Forget the next post for an id is sent even when unchanged");
+    }
+
+    // A Forget for another id while a push runs must not leave the batch's ids remembered at their older values:
+    // changing back to such a value has to be sent.
+    static async Task ForgetDuringPush(List<string> pushed)
+    {
+        pushed.Clear();
+        var previous = PyInterop.PushEntityStates;
+        var pump = new EntityStatePump(Manual);
+        var forgetInPush = false;
+        PyInterop.PushEntityStates = batch => { pushed.Add(batch); if (forgetInPush) { forgetInPush = false; pump.Forget(["plug:other"]); } };
+        try
+        {
+            pump.Post("plug:power", Snapshot("plug:power", 0));
+            await pump.FlushAsync();
+            forgetInPush = true;
+            pump.Post("plug:power", Snapshot("plug:power", 1));
+            await pump.FlushAsync();
+            pump.Post("plug:power", Snapshot("plug:power", 0));
+            await pump.FlushAsync();
+            Check(pushed.Count == 3 && Describe(Values(pushed[2])) == "plug:power=0", "the change back after a Forget during the push is sent: " + string.Join(" | ", pushed));
+        }
+        finally { PyInterop.PushEntityStates = previous; }
+        Console.WriteLine("PASS entity pump: a Forget during a push does not drop a later change back to an earlier value");
     }
 
     static async Task Ordered(List<string> pushed)
