@@ -148,10 +148,14 @@ class DeviceRegistry:
 
 
 class Platform:
-    """Adds entities as EntityPlatform.async_add_entities does: registers each with its device, leaves a disabled
-    entry unadded, writes the first state of the others and logs (here: ignores) a failed add (spike rules 2, 4)."""
-    def __init__(self, domain, hass, entities, devices):
-        self.domain, self.hass, self.entities, self.devices = domain, hass, entities, devices
+    """Adds entities as EntityPlatform.async_add_entities does in Home Assistant 2026.11.1 (`_async_add_entity_impl`):
+    it registers each with its device and sets `entity_id` from the registry entry *before* it refuses one (an entity
+    id that already exists, say) or skips a disabled entry. Either way `add_to_platform_abort()` resets `hass` and
+    `platform` but leaves `entity_id`, and only an entity really added is in `entities`. Failures are logged (here:
+    ignored), not raised (spike rules 2, 4)."""
+    def __init__(self, domain, hass, registry, devices):
+        self.domain, self.hass, self.registry, self.devices = domain, hass, registry, devices
+        self.entities = {}  # entity id -> entity, as EntityPlatform.entities
         self.added = []
         self.refuse = set()
         self.gate = None
@@ -163,18 +167,22 @@ class Platform:
             await self.gate.wait()
         for entity in new:
             self.added.append(entity)
+            entity.hass, entity.platform = self.hass, self  # add_to_platform_start
             info = entity.device_info
             device = self.devices.async_get_or_create(config_entry_id=ENTRY, **info) if info else None
-            entity_id = self.entities.async_get_entity_id(self.domain, DOMAIN, entity.unique_id)
+            entity_id = self.registry.async_get_entity_id(self.domain, DOMAIN, entity.unique_id)
             if entity_id is None:
-                entry = self.entities.add(self.domain, entity.unique_id, device_id=device.id if device else None)
+                enabled = getattr(entity, '_attr_entity_registry_enabled_default', True)
+                entry = self.registry.add(self.domain, entity.unique_id, device_id=device.id if device else None,
+                                          disabled_by=None if enabled else 'integration')
             else:
-                entry = self.entities.async_get(entity_id)
+                entry = self.registry.async_get(entity_id)
                 entry.device_id = device.id if device else None
-            # Registered, then refused (an invalid attribute, say): an enabled entry and no entity id.
+            entity.entity_id = entry.entity_id
             if entry.disabled_by is not None or entity.unique_id in self.refuse:
+                entity.hass, entity.platform = None, None  # add_to_platform_abort
                 continue
-            entity.entity_id, entity.hass = entry.entity_id, self.hass
+            self.entities[entity.entity_id] = entity
             entity.async_write_ha_state()
 
 
@@ -365,6 +373,24 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         await self.sync(definition())
         self.assertEqual(len(self.platforms['switch'].added), 2)
 
+    async def test_disabled_entity_takes_pushes_and_resyncs_quietly(self):
+        request = definition(description('relay', enabledByDefault=False), description('power', 'sensor', 'Power'))
+        result = await self.sync(request)
+        self.assertEqual(self.entities.async_get('switch.plug1_relay').disabled_by, 'integration')
+        attempt = self.platforms['switch'].added[-1]
+        self.assertIsNotNone(attempt.entity_id)  # Home Assistant sets it before it skips a disabled entry.
+        await self.push(snapshot(), snapshot('plug1:power', values={'value': 5}))
+        self.assertEqual(attempt.written, [])
+        self.logger.exception.assert_not_called()
+        power = self.live('plug1:power')
+        self.assertEqual(len(power.written), 2)  # The add, then the push.
+        # The next sync passes the disabled entity and still updates the one after it.
+        self.assertEqual(await self.sync(request), result)
+        self.assertEqual(result['entities']['plug1:relay'], {'entityId': 'switch.plug1_relay'})
+        self.assertEqual(len(power.written), 3)
+        self.assertEqual(attempt.written, [])
+        self.logger.exception.assert_not_called()
+
     async def test_sync_answers_error_when_an_add_fails(self):
         self.platforms['switch'].refuse.add('plug1:bad')
         answers = await self.answers(self.bridge.begin_sync, definition(description('bad'), description('good')))
@@ -509,6 +535,17 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(e.unique_id for e in self.entities.entities.values()), ['plug1:relay', 'plug3:relay'])
         self.assertEqual(sorted(self.devices.devices), ['device-plug1', 'device-plug3'])
         self.assertEqual(list(self.bridge._pending), ['plug1:later'])
+
+    async def test_prune_refuses_a_malformed_list(self):
+        await self.sync(definition())
+        await self.sync(definition(definition_id='plug2'))
+        # A string would otherwise be a set of characters and an object a set of keys: either purges everything.
+        for request in ('"plug1"', '{"plug1": true}', '["plug1", 2]', 'null'):
+            answers = await self.answers(self.bridge.begin_prune, request)
+            self.assertEqual([a[0] for a in answers], ['error'], request)
+        self.assertEqual(sorted(e.unique_id for e in self.entities.entities.values()), ['plug1:relay', 'plug2:relay'])
+        self.assertEqual(sorted(self.devices.devices), ['device-plug1', 'device-plug2'])
+        self.assertFalse([c for c in self.entities.calls if c[0] == 'remove'])
 
     async def test_prune_ignores_entries_of_other_config_entries(self):
         self.entities.add('switch', 'other:relay', config_entry_id='entry2')

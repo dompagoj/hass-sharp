@@ -285,7 +285,9 @@ class EntityBridge:
             entity.apply_state(snapshot)  # Its first state, which the add writes.
         await platform.async_add_entities([entity])
         self._check_open()
-        if entity.entity_id is not None:
+        # Home Assistant sets `entity_id` before it refuses an entity or skips a disabled entry, and leaves it set:
+        # only one it really added is among the platform's entities.
+        if entity.entity_id is not None and platform.entities.get(entity.entity_id) is entity:
             self._live[unique_id] = entity
             latest = self._pending.pop(unique_id, None)
             if latest is not None and latest is not snapshot:  # Pushed while it was being added.
@@ -301,7 +303,11 @@ class EntityBridge:
         return ()
 
     async def _async_prune(self, definition_ids_json):
-        keep = set(json.loads(definition_ids_json))
+        ids = json.loads(definition_ids_json)
+        # Anything else read as a set (a string's characters, an object's keys) would purge nearly every definition.
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            raise _Refused("The definitions to keep are not a JSON array of strings; nothing was removed")
+        keep = set(ids)
         entities, devices = er.async_get(self.hass), dr.async_get(self.hass)
         found = {e.unique_id.split(":", 1)[0] for e in er.async_entries_for_config_entry(entities, self.entry.entry_id)
                  if ":" in e.unique_id}
