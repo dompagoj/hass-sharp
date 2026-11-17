@@ -193,14 +193,15 @@ sealed class VisualTrace
         catch (Exception error) { Fail(error); }
     }
 
-    public void Output(Event ev, string node, string port, object? value)
+    /// <summary>The node made <paramref name="value"/> on <paramref name="port"/>; with <paramref name="redact"/> it is written as <c>***</c>.</summary>
+    public void Output(Event ev, string node, string port, object? value, bool redact = false)
     {
         if (failed || !ev.Listed || ev.Stripped || ev.Node != node) return;
         try
         {
             Fault?.Invoke("output:" + node);
             var type = types.GetOrAdd((node, port, false), key => outputType(key.Item1, key.Item2)) ?? TraceJson.Kind(value);
-            var (full, bare) = TraceJson.Entry(port, type, value, null);
+            var (full, bare) = TraceJson.Entry(port, type, value, null, redact);
             lock (gate) Add(ev, ev.Outputs, port, full, bare);
         }
         catch (Exception error) { Fail(error); }

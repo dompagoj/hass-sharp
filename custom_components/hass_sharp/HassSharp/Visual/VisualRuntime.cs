@@ -232,6 +232,20 @@ public sealed class VisualRuntime
     }
     /// <summary>Whether the step running in <paramref name="scope"/> is being cancelled: the run's own cancellation, a Stop, or its scope's.</summary>
     bool Cancelled(VisualScope scope)=>scope.CancellationToken.IsCancellationRequested || external.IsCancellationRequested || Volatile.Read(ref stopped)!=0;
+    /// <summary>Ends the step running in <paramref name="scope"/> when it is being cancelled (see <see cref="Cancelled"/>), as <c>Walk</c> does between steps.</summary>
+    void ThrowIfCancelled(VisualScope scope) {
+        external.ThrowIfCancellationRequested();
+        if(Volatile.Read(ref stopped)!=0)throw new OperationCanceledException(lifetime.Token);
+        scope.CancellationToken.ThrowIfCancellationRequested();
+    }
+    /// <summary>
+    /// Marks the entity of the State <paramref name="id"/> unavailable after its inputs failed. Should that fail too (a
+    /// definition stopping), the State's own failure stays the run's, as its record and log show; this one is logged.
+    /// </summary>
+    void MarkUnavailable(IDefinitionRuntime definition,string key,string id) {
+        try {definition.SetAvailable(key,false);}
+        catch(Exception error) {try{Logger.Error($"Run {InvocationContext.Current?.RunId}: {Title(id)} could not mark {key} unavailable: {error.GetType().Name}: {error.Message}");}catch{}}
+    }
     JsonNode? OutputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["outputs"]:Spec(id)?["outputs"];
     // The name people see on the canvas, for messages about a value node and the step that used it.
     string Title(string id)=>VisualGraphValidator.Words.StepName(nodes[id],Spec(id));
@@ -445,7 +459,7 @@ public sealed class VisualRuntime
                 if(kind=="entity_state") {
                     // A State whose inputs cannot be worked out leaves its entity unavailable; a run cancelled meanwhile changes nothing.
                     try {if(pureInputs.TryGetValue(id,out var inputs))await Prepare(id,inputs,scope);ev=Begin();state=EntityValues(scope,id);}
-                    catch(Exception error) when(error is not OperationCanceledException || !Cancelled(scope)) {definition!.SetAvailable(Text(cfg,"entity"),false);throw;}
+                    catch(Exception error) when(error is not OperationCanceledException || !Cancelled(scope)) {MarkUnavailable(definition!,Text(cfg,"entity"),id);throw;}
                 }
                 else {
                     if(pureInputs.TryGetValue(id,out var pure))await Prepare(id,pure,scope);
@@ -466,11 +480,12 @@ public sealed class VisualRuntime
                     case "parallel":await Parallel(id,scope,depth);break;
                     case "repeat":case "while":case "until":case "foreach":await Loop(id,scope,depth);break;
                     case "condition_result":scope.Condition=Input<bool>(scope,id,"value");if(ev!=null)trace!.End(ev,"ok",null,null);return;
-                    case "entity_state":definition!.SetState(Text(cfg,"entity"),state!);definition.SetAvailable(Text(cfg,"entity"),true);break;
+                    // A run already cancelled (superseded or stopped) does not act on its definition.
+                    case "entity_state":ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),state!);definition.SetAvailable(Text(cfg,"entity"),true);break;
                     // When commanded and When started only start their flows.
                     case "entity_command":case "entity_setup":break;
-                    case "set_entity_state":definition!.SetState(Text(cfg,"entity"),EntityValues(scope,id));break;
-                    case "set_entity_available":definition!.SetAvailable(Text(cfg,"entity"),Input<bool>(scope,id,"available"));break;
+                    case "set_entity_state":var values=EntityValues(scope,id);ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),values);break;
+                    case "set_entity_available":var available=Input<bool>(scope,id,"available");ThrowIfCancelled(scope);definition!.SetAvailable(Text(cfg,"entity"),available);break;
                     case "loop_result":scope.Updates=(cfg["values"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get(p.Key));foreach(var edge in data.Where(p=>p.Key.Item1==id))scope.Updates[edge.Key.Item2]=Get(edge.Key.Item2);if(ev!=null)trace!.End(ev,"ok",null,null);return;
                     default:await Waiting(scope,custom(id,scope,this));break;
                 }
@@ -540,7 +555,13 @@ public sealed class VisualRuntime
             // Wires carry entity ids: a member that is a handle goes out as its id.
             case "select_property":var property=Text(cfg,"property");var selected=SelectProperty(Get("value")??throw new InvalidOperationException($"{property} cannot be read because the value is empty"),property,id);Output(scope,id,selected is HassSharp.Entities.Entity handle?handle.EntityId:selected);break;
             // The definition's setting, of the type the graph's catalog resolved for it (resolvedOutputs).
-            case "setting":var setting=Definition().Setting(Text(cfg,"key"));Output(scope,id,Text(catalog["resolvedOutputs"]?[id],"value") is {Length:>0} settingType?ConvertTo(setting,settingType,id+".value",false):setting);break;
+            // A secret setting's value reaches the nodes that use it, but its trace shows *** (those nodes' inputs still show it).
+            case "setting":
+                var settings=Definition();var key=Text(cfg,"key");var setting=settings.Setting(key);
+                if(Text(catalog["resolvedOutputs"]?[id],"value") is {Length:>0} settingType)setting=ConvertTo(setting,settingType,id+".value",false);
+                scope.SetOutput((id,"value"),setting);
+                if(scope.Trace!=null)trace!.Output(scope.Trace,id,"value",setting,settings.IsSecret(key));
+                break;
             // Exactly that state, as Home Assistant stores it: an entity it does not have has none.
             case "entity_is":var checkedEntity=Input<string>(scope,id,"entity");var wanted=Input<string>(scope,id,"state");Output(scope,id,HomeAssistantState(checkedEntity)?.State is {} has&&string.Equals(has,wanted,StringComparison.Ordinal));break;
             case "entity_current":Output(scope,id,ReadEntity(Input<string>(scope,id,"entity")));break;
@@ -601,12 +622,13 @@ public sealed class VisualRuntime
             case null:return null;
             case bool flag when types.Contains("boolean"):return flag;
             case string text when types.Contains("string"):return text;
-            case not (bool or string or char) when types.Contains("number")&&IsNumber(value.GetType()):
+            // An enum member is not a number, whatever it is stored as.
+            case not (bool or string or char or Enum) when types.Contains("number")&&IsNumber(value.GetType()):
                 if(Convert.ToDouble(value,CultureInfo.InvariantCulture) is var number&&double.IsFinite(number))return number;
                 break;
         }
         var wanted=string.Join(" or ",types.Select(t=>t switch{"boolean"=>"true or false","number"=>"a number","string"=>"text",_=>t}).Distinct());
-        throw new InvalidOperationException($"{pin} needs {wanted}, not {LogText(value)}");
+        throw new InvalidOperationException($"{pin} needs {wanted}, not {(value is bool given?(given?"true":"false"):LogText(value))}");
     }
     // Contract C6: each typed output reads its pointer from the normalised payload. A pointer that finds
     // nothing or JSON null, or a value of another type, produces no output; only a consumer fails, naming it.

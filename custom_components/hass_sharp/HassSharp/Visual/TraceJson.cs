@@ -160,9 +160,10 @@ static class TraceJson
     /// One port: <c>{type, v, trunc?, redacted?, src?}</c>, and the same without <c>v</c> for when its value does not
     /// fit. A port with a secret name records <c>"***"</c>.
     /// </summary>
-    internal static (byte[] Full, byte[] Bare) Entry(string port, string type, object? value, (string Node, string Port)? source)
+    /// <param name="redact">Write the value as <c>***</c> whatever the port is named: it is secret by what it holds (a secret setting).</param>
+    internal static (byte[] Full, byte[] Bare) Entry(string port, string type, object? value, (string Node, string Port)? source, bool redact = false)
     {
-        var secret = Secret(port);
+        var secret = redact || Secret(port);
         byte[] Write(bool full)
         {
             var buffer = new ArrayBufferWriter<byte>(64);

@@ -14,15 +14,34 @@ using static VisualExecutionTests;
 /// </summary>
 static class EntityGraphRuntimeTests
 {
-    /// <summary>The definition a run reaches: each call, in order, as text; settings by key.</summary>
+    /// <summary>
+    /// The definition a run reaches: each call, in order, as text; settings by key, those in <see cref="Secrets"/> secret.
+    /// With <see cref="FailUnavailable"/>, marking an entity unavailable fails, as a host stopping might.
+    /// </summary>
     sealed class FakeDefinition : IDefinitionRuntime
     {
         public readonly List<string> Calls = [];
         public readonly Dictionary<string, object?> Settings = new(StringComparer.Ordinal);
+        public readonly HashSet<string> Secrets = new(StringComparer.Ordinal);
+        public bool FailUnavailable;
         public void SetState(string entityKey, IReadOnlyDictionary<string, object?> values) =>
             Calls.Add($"state {entityKey} " + string.Join(" ", values.Select(p => p.Key + "=" + Typed(p.Value))));
-        public void SetAvailable(string entityKey, bool available) => Calls.Add($"available {entityKey} {(available ? "yes" : "no")}");
+        public void SetAvailable(string entityKey, bool available)
+        {
+            Calls.Add($"available {entityKey} {(available ? "yes" : "no")}");
+            if (!available && FailUnavailable) throw new InvalidOperationException("The definition is stopping");
+        }
         public object? Setting(string key) => Settings.TryGetValue(key, out var value) ? value : throw new KeyNotFoundException(key);
+        public bool IsSecret(string key) => Secrets.Contains(key);
+    }
+    /// <summary>The trace documents a run writes; the last one is its final trace.</summary>
+    sealed class TraceSink : IRunTraceSink
+    {
+        readonly List<string> writes = [];
+        public void Write(string json, int eventCount, bool truncated, bool final, bool immediate = false) { lock (writes) writes.Add(json); }
+        public JsonObject Final { get { lock (writes) return JsonNode.Parse(writes[^1])!.AsObject(); } }
+        /// <summary>The one event of the node in the final trace.</summary>
+        public JsonObject Event(string node) => Final["events"]!.AsArray().Select(e => e!.AsObject()).Single(e => e["node"]!.GetValue<string>() == node);
     }
     /// <summary>A value with its .NET type, so a number given as text is told apart: <c>double:21.5</c>, <c>string:21.5</c>, <c>null</c>.</summary>
     static string Typed(object? value) => value switch
@@ -70,6 +89,8 @@ static class EntityGraphRuntimeTests
         readonly CompiledUserScript script;
         readonly Automation instance;
         Compiled(CompiledUserScript script) { this.script = script; instance = (Automation)Activator.CreateInstance(script.Assembly.GetType("VisualAutomation")!)!; }
+        /// <summary>The compiled assembly, for a test to reach a Custom C# node's own statics.</summary>
+        public System.Reflection.Assembly Assembly => script.Assembly;
         public static async Task<Compiled> Of(JsonObject graph, string what)
         {
             graph = Derived(graph);
@@ -79,16 +100,16 @@ static class EntityGraphRuntimeTests
         }
         /// <summary>
         /// Runs the root's method as the runner would: under a run of its own that reaches <paramref name="definition"/>
-        /// (none when null), with the cancellation <paramref name="token"/>.
+        /// (none when null), with the cancellation <paramref name="token"/>, traced into <paramref name="sink"/> when given.
         /// </summary>
-        public async Task Run(string root, IDefinitionRuntime? definition, CancellationToken token = default)
+        public async Task Run(string root, IDefinitionRuntime? definition, CancellationToken token = default, IRunTraceSink? sink = null)
         {
             var method = VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = root });
             var prior = InvocationContext.Current;
             Task task;
             try
             {
-                InvocationContext.Current = new InvocationContext("run-" + Guid.NewGuid().ToString("N"), InvocationCause.Entity, null, TriggerPayload.Manual()) { Definition = definition };
+                InvocationContext.Current = new InvocationContext("run-" + Guid.NewGuid().ToString("N"), InvocationCause.Entity, null, TriggerPayload.Manual()) { Definition = definition, TraceSink = sink };
                 instance._cancellationToken.Value = token;
                 task = (Task)instance.GetType().GetMethod(method)!.Invoke(instance, null)!;
             }
@@ -123,6 +144,9 @@ static class EntityGraphRuntimeTests
                 (nameof(OrOfTwoSourcesFollowsEither), OrOfTwoSourcesFollowsEither),
                 (nameof(StateNodeMarksTheEntityUnavailableWhenASourceIsMissing), StateNodeMarksTheEntityUnavailableWhenASourceIsMissing),
                 (nameof(CancelledStateDoesNotMarkTheEntityUnavailable), CancelledStateDoesNotMarkTheEntityUnavailable),
+                (nameof(StateCancelledBeforePublishingMakesNoCall), StateCancelledBeforePublishingMakesNoCall),
+                (nameof(AFailingUnavailableKeepsTheStatesOwnFailure), AFailingUnavailableKeepsTheStatesOwnFailure),
+                (nameof(SecretSettingIsRedactedInTheTrace), SecretSettingIsRedactedInTheTrace),
                 (nameof(EntityIsIsFalseForAMissingEntity), EntityIsIsFalseForAMissingEntity),
                 (nameof(EntityIsReadsTheTriggeringEntitysFreshState), EntityIsReadsTheTriggeringEntitysFreshState),
                 (nameof(SetStateAndSetAvailableStepsCallTheDefinition), SetStateAndSetAvailableStepsCallTheDefinition),
@@ -199,6 +223,71 @@ static class EntityGraphRuntimeTests
         var error = await Fails(() => compiled.Run("s", definition, cancel.Token), "a cancelled State");
         Check(error is OperationCanceledException, "the cancelled run ends cancelled, not failed: " + error.GetType().Name + ": " + error.Message);
         Same(definition.Calls, [], "a cancelled State neither sets the state nor marks the entity unavailable");
+    }
+
+    /// <summary>
+    /// A State whose run is cancelled after its inputs were worked out, but before it hands them over, makes no call: a
+    /// run already superseded or stopped does not publish. Its one value node cancels the run and returns normally.
+    /// </summary>
+    static async Task StateCancelledBeforePublishingMakesNoCall()
+    {
+        var cancel = N("cancel", "custom", new JsonObject
+        {
+            ["source"] = "public static class CustomNode\n{\n    public static CancellationTokenSource? Source;\n    [Node(\"Cancel\", Pure = true)]\n    public static bool Run()\n    {\n        Source!.Cancel();\n        return true;\n    }\n}",
+            ["arguments"] = new JsonObject(),
+        });
+        using var compiled = await Compiled.Of(Entity([cancel, State("s", "door")], [D("cancel", "s", "is_on", "result")], [("door", "binary_sensor")]), "a State cancelled by its input");
+        using var source = new CancellationTokenSource();
+        var field = compiled.Assembly.GetTypes().Select(t => t.GetField("Source")).Single(f => f != null)!;
+        field.SetValue(null, source);
+        var definition = new FakeDefinition();
+        var error = await Fails(() => compiled.Run("s", definition, source.Token), "a State cancelled before publishing");
+        Check(error is OperationCanceledException, "the run ends cancelled: " + error.GetType().Name + ": " + error.Message);
+        Same(definition.Calls, [], "a State cancelled before publishing neither sets the state nor changes the availability");
+    }
+
+    /// <summary>
+    /// When marking the entity unavailable fails too (a definition stopping), the run still fails with the State's own
+    /// error; the second failure is logged, not lost.
+    /// </summary>
+    static async Task AFailingUnavailableKeepsTheStatesOwnFailure()
+    {
+        var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
+        var graph = Entity(
+            [Current("cur", "sensor.outside"), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), State("s", "copy")],
+            [D("cur", "f", "entity"), D("f", "s", "value")],
+            [("copy", "sensor")]);
+        using var compiled = await Compiled.Of(graph, "a sensor copying a missing one");
+        var definition = new FakeDefinition { FailUnavailable = true };
+        var error = await Fails(() => compiled.Run("s", definition), "a State whose unavailable marking fails");
+        Check(error.Message.Contains("Entity 'sensor.outside' is unavailable.", StringComparison.Ordinal) && error.GetBaseException().Message == "Entity 'sensor.outside' is unavailable.",
+            "the run fails with the State's own error, as the run record shows it: " + error.Message + " / " + error.GetBaseException().Message);
+        Same(definition.Calls, ["available copy no"], "the State tried to mark its entity unavailable");
+        Check(messages.Any(m => m.Contains("copy", StringComparison.Ordinal) && m.Contains("unavailable", StringComparison.Ordinal) && m.Contains("The definition is stopping", StringComparison.Ordinal)),
+            "the failure to mark it unavailable is logged: " + string.Join(" | ", messages));
+    }
+
+    /// <summary>
+    /// A secret setting's value is written into the trace as <c>***</c>, and the State still gets the real value; a
+    /// setting that is not secret is traced as it is.
+    /// </summary>
+    static async Task SecretSettingIsRedactedInTheTrace()
+    {
+        var graph = Entity(
+            [Setting("k1", "password"), State("s1", "label"), Setting("k2", "name"), State("s2", "plain")],
+            [D("k1", "s1", "value"), D("k2", "s2", "value")],
+            [("label", "sensor"), ("plain", "sensor")],
+            ("password", "string"), ("name", "string"));
+        using var compiled = await Compiled.Of(graph, "States of a secret and a plain setting");
+        var definition = new FakeDefinition { Settings = { ["password"] = "hunter2", ["name"] = "kitchen" }, Secrets = { "password" } };
+        var secret = new TraceSink(); var plain = new TraceSink();
+        await compiled.Run("s1", definition, sink: secret);
+        await compiled.Run("s2", definition, sink: plain);
+        Same(definition.Calls, ["state label value=string:hunter2", "available label yes", "state plain value=string:kitchen", "available plain yes"], "each State gets its setting's real value");
+        var redacted = secret.Event("k1")["outputs"]?["value"];
+        Check(JsonNode.DeepEquals(redacted, JsonNode.Parse("""{"type":"string","v":"***","redacted":true}""")), "the secret setting's value is redacted in the trace: " + redacted?.ToJsonString());
+        var shown = plain.Event("k2")["outputs"]?["value"];
+        Check(JsonNode.DeepEquals(shown, JsonNode.Parse("""{"type":"string","v":"kitchen"}""")), "a setting that is not secret is traced as it is: " + shown?.ToJsonString());
     }
 
     /// <summary>Has state is false for an entity Home Assistant does not have, and the State is worked out from the other source.</summary>
@@ -310,24 +399,48 @@ static class EntityGraphRuntimeTests
         Check(VisualRuntime.EntityStateValue(JsonSerializer.SerializeToElement(true), ["boolean"], "x") is true, "JSON true is handed over as true");
         try { VisualRuntime.EntityStateValue("on", ["boolean"], "State · On"); throw new Exception("text taken for true or false"); }
         catch (InvalidOperationException error) { Check(error.Message == "State · On needs true or false, not on", "a value of another type is refused, naming the pin: " + error.Message); }
+        try { VisualRuntime.EntityStateValue(true, both, "State · Value"); throw new Exception("true taken for a number or text"); }
+        catch (InvalidOperationException error) { Check(error.Message == "State · Value needs a number or text, not true", "true or false is worded as such when refused: " + error.Message); }
+        try { VisualRuntime.EntityStateValue(DayOfWeek.Monday, both, "State · Value"); throw new Exception("an enum member taken for a number"); }
+        catch (InvalidOperationException error) { Check(error.Message == "State · Value needs a number or text, not Monday", "an enum member is not a number: " + error.Message); }
     }
 
-    /// <summary>Every entity node needs the definition of the run in progress; without one it fails, saying so.</summary>
+    /// <summary>
+    /// Every entity node needs the definition of the run in progress; without one it fails, saying so. A State, When
+    /// commanded and When started fail as the run starts. A Setting, Set state and Set available are each reached on
+    /// their own: under a trigger of an entity definition's graph, after a step that runs first, as a run the runner has
+    /// not given a definition would reach them.
+    /// </summary>
     static async Task EntityNodesFailWithoutADefinition()
     {
         const string Message = "This node only works in an entity definition";
+        var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
+        static JsonObject Manual(string id) => N(id, "trigger", new { type = "manual" });
+        static JsonObject Said(string id, string text) => N(id, "log", new { value = Lit("string", text) });
         var graph = Entity(
-            [State("s", "door", new JsonObject { ["is_on"] = Lit("boolean", true) }), Setting("k", "flag"), State("ks", "window"),
-             N("on", "entity_command", new { entity = "relay", command = "turn_on" }), SetState("set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
-             N("setup", "entity_setup"), N("up", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) })],
-            [D("k", "ks", "is_on"), E("on", "set"), E("setup", "up")],
-            [("door", "binary_sensor"), ("window", "binary_sensor"), ("relay", "switch")],
-            ("flag", "boolean"));
+            [State("s", "door", new JsonObject { ["is_on"] = Lit("boolean", true) }),
+             N("on", "entity_command", new { entity = "relay", command = "turn_on" }), SetState("on_set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
+             N("setup", "entity_setup"), N("setup_up", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) }),
+             Manual("t1"), Setting("k", "name"), N("show", "log", new { value = Unset }),
+             Manual("t2"), Said("before_set", "before set"), SetState("set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
+             Manual("t3"), Said("before_up", "before available"), N("up", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) })],
+            [E("on", "on_set"), E("setup", "setup_up"), E("t1", "show"), D("k", "show", "value"), E("t2", "before_set"), E("before_set", "set"), E("t3", "before_up"), E("before_up", "up")],
+            [("door", "binary_sensor"), ("relay", "switch")],
+            ("name", "string"));
         using var compiled = await Compiled.Of(graph, "entity nodes of every kind");
-        foreach (var root in new[] { "s", "ks", "on", "setup" })
+        foreach (var root in new[] { "s", "on", "setup" })
         {
             var error = await Fails(() => compiled.Run(root, null), $"root {root} without a definition");
-            Check(error is InvalidOperationException && error.Message.Contains(Message, StringComparison.Ordinal), $"root {root} fails saying it needs a definition: {error.GetType().Name}: {error.Message}");
+            Check(error is InvalidOperationException && error.Message == Message, $"root {root} fails as it starts, saying it needs a definition: {error.GetType().Name}: {error.Message}");
+        }
+        var setting = await Fails(() => compiled.Run("t1", null), "a Setting without a definition");
+        Check(setting is InvalidOperationException && setting.Message == "Setting (used by Log): " + Message, "the Setting fails itself, named with the step reading it: " + setting.Message);
+        foreach (var (root, said, step) in new[] { ("t2", "before set", "Set state"), ("t3", "before available", "Set available") })
+        {
+            while (messages.TryDequeue(out _)) { }
+            var error = await Fails(() => compiled.Run(root, null), $"{step} without a definition");
+            Check(messages.Contains(said), $"the step before {step} ran: " + string.Join(" | ", messages));
+            Check(error is InvalidOperationException && error.Message == Message, $"{step} fails itself, saying it needs a definition: {error.GetType().Name}: {error.Message}");
         }
     }
 
