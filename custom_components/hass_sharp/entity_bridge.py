@@ -26,6 +26,12 @@ CLOSED = "closed"
 # How long, in seconds, unload waits for an add Home Assistant had in flight when the bridge closed.
 CLOSE_WAIT = 10
 
+# How many different state write failures are logged for one entity between syncs of its definition; then one line
+# says the rest are not.
+WRITE_FAILURES_LOGGED = 5
+# In an entity's record of failures once that line was logged.
+_SILENCED = object()
+
 # The device fields of a sync request by the keyword Home Assistant's device registry takes; a null clears one.
 DEVICE_FIELDS = {"name": "name", "manufacturer": "manufacturer", "model": "model", "swVersion": "sw_version",
                  "hwVersion": "hw_version", "configurationUrl": "configuration_url"}
@@ -74,7 +80,8 @@ class EntityBridge:
         self._live = {}
         self._pending = {}  # unique id -> latest snapshot pushed while the entity was not live
         # unique id -> the messages of the state writes that failed for it since its definition was last synced: each is
-        # logged once, so a sensor given a value it cannot show does not log a traceback on every push.
+        # logged once, so a sensor given a value it cannot show does not log a traceback on every push, and at most
+        # WRITE_FAILURES_LOGGED of them, as the message holds the value.
         self._write_failures = {}
         self._queue = collections.deque()
         self._current = None
@@ -222,11 +229,18 @@ class EntityBridge:
 
     def _write_failed(self, unique_id, snapshot, error):
         """Log a failed state write once per unique id and message until the definition is synced again: the first for
-        the entity with its traceback, a later different one without."""
+        the entity with its traceback, a later different one without. Home Assistant puts the value into the message,
+        so after WRITE_FAILURES_LOGGED messages one line says the entity's further failures are not logged."""
         key = unique_id if isinstance(unique_id, str) else None
         failures = self._write_failures.setdefault(key, set())
         message = _message(error)
         if message in failures:
+            return
+        if len(failures) >= WRITE_FAILURES_LOGGED:
+            if _SILENCED not in failures:
+                failures.add(_SILENCED)
+                logger.warning("Further state write failures of %s are not logged until its definition is synced again",
+                               key)
             return
         if failures:
             logger.error("Cannot write the entity state %s: %s", snapshot, message)

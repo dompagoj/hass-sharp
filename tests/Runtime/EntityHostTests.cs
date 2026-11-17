@@ -120,6 +120,7 @@ static class EntityHostTests
             await TrackOffLock();
             await ThrowingLog();
             await SetupTimesOut();
+            await SetupThatBlocksItsThreadTimesOut();
             await SyncTimesOut();
             await StopWaitsForCallbacks();
             await SlowStart();
@@ -474,6 +475,45 @@ static class EntityHostTests
             await manager.UnloadUserScriptsAsync();
         }
         finally { DefinitionHost.SetupTimeout = timeout; }
+    }
+
+    // A Setup() that blocks its thread (a raw connect to a device that is off, a Wait()) fails its definition within the
+    // bound too, and the definitions after it still load. The blocked thread is woken at the end.
+    static async Task SetupThatBlocksItsThreadTimesOut()
+    {
+        Reset();
+        var timeout = DefinitionHost.SetupTimeout;
+        DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(200);
+        var blocked = new List<Thread>();
+        try
+        {
+            var manager = Manager();
+            HostPlug.SetupHook = _ =>
+            {
+                lock (blocked) blocked.Add(Thread.CurrentThread);
+                Thread.Sleep(Timeout.Infinite);
+                return Task.CompletedTask;
+            };
+            var failures = new List<(string Path, Exception Error)>();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            // Called from the pool: a Setup() run on the caller's thread would block this test, not fail it.
+            await Task.Run(() => manager.LoadUserScripts([Compiled("blocking", "Blocking plug", () => new HostPlug()), Compiled("lamp5", "Lamp five", () => new HostLamp())],
+                (path, error) => failures.Add((path, error)))).WaitAsync(TimeSpan.FromSeconds(10));
+            Check(clock.Elapsed < TimeSpan.FromSeconds(3), $"a Setup() that blocks its thread held the load {clock.Elapsed.TotalSeconds:F1} s");
+            Check(failures.Count == 1 && failures[0].Path == "entity_blocking.cs" && failures[0].Error is TimeoutException
+                && failures[0].Error.Message == "Blocking plug: Setup() did not finish within 0.2 s", "the blocking setup's failure: " + string.Join(" | ", failures.Select(f => $"{f.Path} {f.Error}")));
+            Check(manager.Entities.Host("blocking") == null && manager.Entities.Host("lamp5") is not null && Syncs().Length == 1
+                && JsonNode.Parse(Syncs()[0])!["definitionId"]!.GetValue<string>() == "lamp5", "the definition after the blocking one loads, and only it syncs");
+            await Until(() => PushedAvailable("lamp5:main", true), "the definition after the blocking one runs");
+            Console.WriteLine("PASS entity host: a Setup() that blocks its thread fails within the setup bound, naming the definition, and the definitions after it load");
+            await manager.UnloadUserScriptsAsync();
+        }
+        finally
+        {
+            DefinitionHost.SetupTimeout = timeout;
+            HostPlug.SetupHook = null;
+            lock (blocked) foreach (var thread in blocked) thread.Interrupt();
+        }
     }
 
     // A sync Home Assistant never answers fails the new revision within the bound; the revision running goes on.

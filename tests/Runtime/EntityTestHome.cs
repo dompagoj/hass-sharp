@@ -8,7 +8,8 @@ using HassSharp;
 /// </summary>
 sealed class EntityTestHome : IAsyncDisposable
 {
-    readonly List<string> synced = [], pushed = [], removed = [], pruned = [], logged = [];
+    readonly List<string> synced = [], pushed = [], removed = [], pruned = [];
+    readonly List<(int Level, string Message)> logged = [];
     readonly string previousPath = HassPath.HassConfiguration;
     readonly Action<string, Action<string>, Action<string>> sync = PyInterop.BeginSyncEntities;
     readonly Action<string> push = PyInterop.PushEntityStates;
@@ -35,7 +36,7 @@ sealed class EntityTestHome : IAsyncDisposable
             if (ignorePrune) return;
             if (failPrune) fail("the registry is locked"); else ok();
         };
-        PyInterop.Log = (_, message) => { lock (logged) logged.Add(message); };
+        PyInterop.Log = (level, message) => { lock (logged) logged.Add((level, message)); };
         HassPath.HassConfiguration = Root;
     }
 
@@ -62,7 +63,9 @@ sealed class EntityTestHome : IAsyncDisposable
     /// <summary>The JSON arrays of definition ids each prune kept.</summary>
     public string[] Prunes() { lock (pruned) return [.. pruned]; }
     /// <summary>Every log line so far.</summary>
-    public string[] Logs() { lock (logged) return [.. logged]; }
+    public string[] Logs() { lock (logged) return logged.Select(line => line.Message).ToArray(); }
+    /// <summary>Every log line so far at the given level.</summary>
+    public string[] Logs(PyLogLevel level) { lock (logged) return logged.Where(line => line.Level == (int)level).Select(line => line.Message).ToArray(); }
 
     /// <summary>Every snapshot pushed in the batches from the given one on, in order.</summary>
     public JsonObject[] Snapshots(int fromBatch = 0) =>

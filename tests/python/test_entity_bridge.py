@@ -7,6 +7,7 @@ added, removing a device removes the entities on it, a via device that does not 
 import ast
 import asyncio
 import enum
+import itertools
 import json
 import threading
 import unittest
@@ -576,6 +577,33 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         relay.apply_state.side_effect = ValueError('not a number')
         await self.push(snapshot())
         self.assertEqual(self.logger.exception.call_count, 3)
+
+    async def test_write_failures_with_changing_messages_are_bounded(self):
+        # Home Assistant puts the value into the message, so a sensor fed changing text fails differently on each push.
+        await self.sync(definition(description('power', 'sensor', 'Power')))
+        power = self.live('plug1:power')
+        values = itertools.count()
+
+        def fail(_):
+            raise ValueError(f"has the non-numeric value: '{next(values)} °C'")
+        power.apply_state = fail
+
+        def lines():
+            calls = self.logger.exception.call_args_list + self.logger.error.call_args_list \
+                + self.logger.warning.call_args_list
+            return [c.args[0] % c.args[1:] for c in calls]
+
+        for _ in range(20):
+            await self.push(snapshot('plug1:power'))
+        self.assertEqual(self.logger.exception.call_count + self.logger.error.call_count, 5, lines())
+        self.assertEqual(sum('not logged' in line for line in lines()), 1, lines())
+        self.assertEqual(len(lines()), 6, lines())
+        self.assertLessEqual(len(self.bridge._write_failures['plug1:power']), 6)
+        # Synced again, the record starts afresh.
+        await self.sync(definition(description('power', 'sensor', 'Power')))
+        self.assertNotIn('plug1:power', self.bridge._write_failures)
+        await self.push(snapshot('plug1:power'))
+        self.assertEqual(self.logger.exception.call_count, 2, lines())
 
     async def test_push_for_unknown_entity_after_close_is_dropped(self):
         await self.sync(definition())

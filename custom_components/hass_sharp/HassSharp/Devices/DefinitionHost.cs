@@ -124,11 +124,13 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
         device = root as SharpDevice;
         SharpEntity[] Collect() => device != null ? [.. device.Entities] : [(SharpEntity)root];
         // One bound for every Setup() together: a device that does not answer must not hold up the definitions after it.
+        // Each runs on the pool, so one that blocks its thread (a raw connect, a Wait()) is bounded like one that awaits;
+        // one that ignores Stopping cannot be stopped, and keeps its component (and so this host) until it returns.
         var clock = Stopwatch.StartNew();
         async Task SetUp(SharpComponent component)
         {
             var left = SetupTimeout - clock.Elapsed;
-            if (!await Within(component.Setup(), left > TimeSpan.Zero ? left : TimeSpan.Zero))
+            if (!await Within(Task.Run(async () => await component.Setup()), left > TimeSpan.Zero ? left : TimeSpan.Zero))
                 throw new TimeoutException($"{definition.Name}: Setup() did not finish within {Seconds(SetupTimeout)} s");
         }
         if (device != null)

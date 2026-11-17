@@ -59,6 +59,7 @@ static class EntityStartupTests
         await Restart();
         await PruneWithoutDirectory();
         await SlowSetup();
+        await SetupThatBlocksItsThreadTimesOut();
         await PruneFails();
         await UnknownClass();
         await LibraryRebuild();
@@ -131,12 +132,15 @@ static class EntityStartupTests
         try { await api.Init(); }
         finally { await api.UnloadAsync(); }
         Check(home.Prunes().Length == 0, "a start without the definitions' directory prunes: " + string.Join(" | ", home.Prunes()));
+        // A partial restore of .storage is what this guards against: a user sees it only as a warning.
+        const string skipped = "No entity definitions directory: nothing is pruned from Home Assistant";
+        Check(home.Logs(PyLogLevel.Warn).Contains(skipped), "the skipped prune is not a warning: " + string.Join(" | ", home.Logs()));
         Directory.CreateDirectory(Storage(home, "entities"));
         api = new HassSharpManager(home.Root);
         try { await api.Init(); }
         finally { await api.UnloadAsync(); }
         Check(home.Prunes().SequenceEqual(["[]"]), "a start with an empty definitions' directory prunes everything: " + string.Join(" | ", home.Prunes()));
-        Console.WriteLine("PASS entity startup: a start without the definitions' directory prunes nothing; one with an empty directory prunes every definition");
+        Console.WriteLine("PASS entity startup: a start without the definitions' directory prunes nothing and warns; one with an empty directory prunes every definition");
     }
 
     // A definition whose Setup() never ends fails at startup within the setup bound, and the definition after it runs.
@@ -175,6 +179,60 @@ static class EntityStartupTests
             Console.WriteLine("PASS entity startup: a definition whose Setup() never ends fails within the setup bound and the definitions after it load at Init");
         }
         finally { await api.UnloadAsync(); }
+    }
+
+    // A definition whose Setup() blocks its thread (a raw connect to a device that is off, a Wait()) fails within the setup
+    // bound too, when saved and at startup, and the definition after it runs.
+    static async Task SetupThatBlocksItsThreadTimesOut()
+    {
+        const string Blocking = """
+            public class BlockingPlug : SharpDevice
+            {
+                public static readonly System.Collections.Concurrent.ConcurrentQueue<Thread> Blocked = new();
+                public BlockingPlug() { Add(new SharpSwitch("relay")); }
+                protected override Task Setup()
+                {
+                    Blocked.Enqueue(Thread.CurrentThread);
+                    Thread.Sleep(Timeout.Infinite);
+                    return Task.CompletedTask;
+                }
+            }
+            """;
+        await using var home = new EntityTestHome("entity-startup-blocking-setup");
+        DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(200);
+        const string message = "Blocking plug: Setup() did not finish within 0.2 s";
+        // Wakes each blocked Setup() once (its Sleep throws), before an unload: a Setup() still blocking the caller would
+        // otherwise hold that unload, and a thread blocked for good would keep the library's load context.
+        static void Wake()
+        {
+            foreach (var type in AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("NodeLib.BlockingPlug", false)).OfType<Type>())
+                for (var blocked = (System.Collections.Concurrent.ConcurrentQueue<Thread>)type.GetField("Blocked")!.GetValue(null)!; blocked.TryDequeue(out var thread);)
+                    thread.Interrupt();
+        }
+        var first = new HassSharpManager(home.Root);
+        try
+        {
+            await first.Init();
+            await SaveLibrary(first, "shelly", 0, EntityApiTests.Library + Blocking);
+            // Called from the pool: a Setup() run on the caller's thread would block this test, not fail it.
+            var saved = await Task.Run(() => SaveDefinition(first, "block", "Blocking plug", null, "library:shelly:NodeLib.BlockingPlug")).WaitAsync(TimeSpan.FromSeconds(30));
+            Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == message, "saving the blocking definition: " + saved.ToJsonString());
+            await SaveDefinition(first, "plug1", "Plug one", "10.0.5.1");
+        }
+        finally { Wake(); await first.UnloadAsync(); }
+
+        var api = new HassSharpManager(home.Root);
+        try
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            await Task.Run(api.Init).WaitAsync(TimeSpan.FromSeconds(30));
+            Check(clock.Elapsed < TimeSpan.FromSeconds(15), $"a Setup() that blocks its thread held startup {clock.Elapsed.TotalSeconds:F1} s");
+            var block = await Read(api, "block");
+            Check(Status(block) == "off" && block["activationError"]?.GetValue<string>() == message, "the blocking definition after the restart: " + block.ToJsonString());
+            Check(Status(await Read(api, "plug1")) == "running", "the definition after the blocking one does not run");
+            Console.WriteLine("PASS entity startup: a definition whose Setup() blocks its thread fails within the setup bound when saved and at Init, and the definitions after it load");
+        }
+        finally { Wake(); await api.UnloadAsync(); }
     }
 
     // A prune that fails, or that Python never answers, is logged; startup goes on and the definitions run.
