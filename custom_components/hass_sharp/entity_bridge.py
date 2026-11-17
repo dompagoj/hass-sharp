@@ -1,0 +1,341 @@
+# pyright: reportMissingImports=false, reportUnknownArgumentType=false, reportUnknownVariableType=false
+"""Home Assistant's side of the custom entities: the entities and device of each .NET definition.
+
+.NET asks, with JSON text, to sync a definition's entities, remove a definition, prune the definitions that no
+longer exist, and write a batch of states; Home Assistant's commands go back through `EntityCommand`. The rules
+come from the spike findings (docs/superpowers/plans/2026-11-17-custom-entities-phase-1-spike.md).
+
+Every Home Assistant call runs on the event loop (spike rule 1): .NET's calls arrive on its own threads and are
+marshalled there without waiting. Sync, remove and prune run one at a time in the order .NET asked for them, and
+each answers .NET exactly once. Pushes do not wait behind them: a state for an entity that is not live yet is kept
+(the latest only) and written when it is added. Nothing here removes registry entries on unload: they stay,
+unavailable, until the next sync.
+"""
+import json
+import collections
+
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr, entity_registry as er
+
+from . import dotnet_tasks
+from .const import DOMAIN, logger
+
+CLOSED = "closed"
+
+# The device fields of a sync request by the keyword Home Assistant's device registry takes; a null clears one.
+DEVICE_FIELDS = {"name": "name", "manufacturer": "manufacturer", "model": "model", "swVersion": "sw_version",
+                 "hwVersion": "hw_version", "configurationUrl": "configuration_url"}
+
+
+class _Closed(Exception):
+    """The bridge closed while an operation ran; close() answered it, and the rest of it is skipped."""
+
+
+class _Refused(Exception):
+    """An operation cannot complete for a reason the message gives in full: logged without a traceback."""
+
+
+class _Operation:
+    def __init__(self, action, run, success, error):
+        self.action, self.run, self.success, self.error = action, run, success, error
+        self.answered = False
+
+    def answer(self, callback, *args):
+        """Call one of .NET's callbacks unless the operation was answered; an exception from it stays here."""
+        if self.answered:
+            return
+        self.answered = True
+        try:
+            callback(*args)
+        except Exception:
+            logger.exception("Cannot answer .NET after the request to %s", self.action)
+
+
+def _message(error):
+    """The message of a .NET exception (its text also names the type and the stack), else the exception's text."""
+    message = getattr(error, "Message", None)
+    return message if isinstance(message, str) and message else str(error) or type(error).__name__
+
+
+class EntityBridge:
+    def __init__(self, hass, entry, manager):
+        self.hass = hass
+        self.entry = entry
+        self.manager = manager
+        self._closed = False
+        self._platforms = {}  # domain -> (EntityPlatform, entity class)
+        # unique id -> entity added and not removed by the bridge since: its own record, not `entity.hass`, which stays
+        # set after removal (spike rule 9), and not the entity's removal callback, which may also run when Home
+        # Assistant re-adds the same object (a changed entity id; unverified).
+        self._live = {}
+        self._pending = {}  # unique id -> latest snapshot pushed while the entity was not live
+        self._queue = collections.deque()
+        self._current = None
+        self._runner = None
+
+    def attach_platform(self, domain: str, platform, factory) -> None:
+        """On the loop, from a platform's `async_setup_entry`: where entities of `domain` are added, and their class."""
+        if not self._closed:
+            self._platforms[domain] = (platform, factory)
+
+    def begin_sync(self, definition_json, success, error) -> None:
+        self._begin("sync a definition's entities", lambda: self._async_sync(definition_json), success, error)
+
+    def begin_remove(self, definition_id, done, error) -> None:
+        self._begin(f"remove the entities of {definition_id}", lambda: self._async_remove(definition_id), done, error)
+
+    def begin_prune(self, definition_ids_json, done, error) -> None:
+        self._begin("remove the entities of deleted definitions", lambda: self._async_prune(definition_ids_json),
+                    done, error)
+
+    def push(self, batch_json) -> None:
+        """From any thread: write a JSON array of snapshots to the live entities, keep the others'. Never raises."""
+        try:
+            snapshots = json.loads(batch_json)
+        except Exception:
+            logger.exception("Cannot read entity states from .NET")
+            return
+        try:
+            self.hass.loop.call_soon_threadsafe(self._apply_push, snapshots)
+        except Exception:
+            pass  # The loop has closed: there is nothing left to write to.
+
+    async def async_command(self, unique_id: str, command: str, data: dict) -> None:
+        """Run a command Home Assistant sent to an entity; a failure fails the service call with .NET's message."""
+        try:
+            await dotnet_tasks.async_run_dotnet_task(self.hass, self.manager.EntityCommand, unique_id, command,
+                                                     json.dumps(data))
+        except Exception as error:
+            # Only HomeAssistantError keeps its message in the service call's answer (spike rule 12).
+            raise HomeAssistantError(_message(error)) from error
+
+    def close(self) -> None:
+        """On the loop, before the platforms unload. Later calls are dropped and pending ones answer error("closed").
+
+        Forgets the platforms and the live entities, so nothing is added to an unloaded platform (spike rule 3).
+        Registry entries and devices stay.
+        """
+        self._closed = True
+        self._platforms.clear()
+        self._live.clear()
+        self._pending.clear()
+        operations = ([self._current] if self._current is not None else []) + list(self._queue)
+        self._queue.clear()
+        for operation in operations:
+            operation.answer(operation.error, CLOSED)
+
+    # The queue
+
+    def _begin(self, action, run, success, error):
+        operation = _Operation(action, run, success, error)
+        try:
+            self.hass.loop.call_soon_threadsafe(self._enqueue, operation)
+        except Exception:
+            # The loop has closed, so nothing on it will answer.
+            operation.answer(operation.error, CLOSED)
+
+    def _enqueue(self, operation):
+        if self._closed:
+            operation.answer(operation.error, CLOSED)
+            return
+        self._queue.append(operation)
+        # A drain that started eagerly may have finished before its task was stored.
+        if self._runner is None or self._runner.done():
+            drain = self._async_drain()
+            try:
+                self._runner = self.hass.async_create_task(drain, name="HassSharp entity bridge")
+            except Exception as error:
+                drain.close()
+                logger.exception("Cannot start the entity bridge's task")
+                for waiting in self._queue:
+                    waiting.answer(waiting.error, _message(error))
+                self._queue.clear()
+
+    async def _async_drain(self):
+        while self._queue:
+            operation = self._current = self._queue.popleft()
+            try:
+                result = await operation.run()
+            except _Closed:
+                pass
+            except _Refused as error:
+                logger.error("Cannot %s: %s", operation.action, error)
+                operation.answer(operation.error, str(error))
+            except Exception as error:
+                logger.exception("Cannot %s", operation.action)
+                operation.answer(operation.error, _message(error))
+            except BaseException:
+                # Cancelled: Home Assistant is stopping. Nobody else would answer these.
+                for waiting in [operation, *self._queue]:
+                    waiting.answer(waiting.error, "cancelled")
+                self._queue.clear()
+                raise
+            else:
+                operation.answer(operation.success, *result)
+            finally:
+                self._current = None
+
+    def _check_open(self):
+        if self._closed:
+            raise _Closed
+
+    # Operations
+
+    def _apply_push(self, snapshots):
+        if self._closed:
+            return
+        for snapshot in snapshots:
+            try:
+                unique_id = snapshot["uniqueId"]
+                entity = self._live.get(unique_id)
+                if entity is None:
+                    self._pending[unique_id] = snapshot
+                    continue
+                entity.apply_state(snapshot)
+                entity.async_write_ha_state()
+            except Exception:
+                logger.exception("Cannot write the entity state %s", snapshot)
+
+    async def _async_sync(self, definition_json):
+        """Make Home Assistant match one definition's description (spike rules 2, 5, 6, 8, 9)."""
+        definition = json.loads(definition_json)
+        definition_id = definition["definitionId"]
+        descriptions = definition["entities"]
+        missing = sorted({d["domain"] for d in descriptions} - self._platforms.keys())
+        if missing:
+            raise _Refused(f"The {', '.join(missing)} platform of HassSharp is not set up")
+        entities, devices = er.async_get(self.hass), dr.async_get(self.hass)
+        described = {(d["domain"], d["uniqueId"]) for d in descriptions}
+        self._remove_entries(entities, definition_id, keep=described)
+        prefix = definition_id + ":"
+        unique_ids = {unique_id for _, unique_id in described}
+        for unique_id in [u for u in self._pending if u.startswith(prefix) and u not in unique_ids]:
+            del self._pending[unique_id]
+        device_info, device_id = self._sync_device(entities, devices, definition_id, definition.get("device"))
+        result, failed = {}, []
+        for description in descriptions:
+            entity_id = await self._async_sync_entity(entities, description, device_info, device_id,
+                                                      definition["name"])
+            if entity_id is None:
+                failed.append(description["uniqueId"])
+            else:
+                result[description["uniqueId"]] = {"entityId": entity_id}
+        if failed:
+            raise _Refused(f"Home Assistant did not add {', '.join(failed)}; its log says why")
+        return (json.dumps({"entities": result}),)
+
+    def _sync_device(self, entities, devices, definition_id, device):
+        """Create, update or remove the definition's device; returns its device info for new entities and its id."""
+        identifiers = {(DOMAIN, definition_id)}
+        if device is None:
+            existing = devices.async_get_device(identifiers=identifiers)
+            if existing is not None:
+                # Off it first: removing a device removes the entities on it (spike rule 9).
+                for entry in self._entries(entities, definition_id):
+                    if entry.device_id == existing.id:
+                        entities.async_update_entity(entry.entity_id, device_id=None)
+                devices.async_remove_device(existing.id)
+            return None, None
+        fields = {keyword: device.get(name) for name, keyword in DEVICE_FIELDS.items()}
+        info = {"identifiers": identifiers, **{k: v for k, v in fields.items() if v is not None}}
+        if device.get("suggestedArea") is not None:
+            info["suggested_area"] = device["suggestedArea"]
+        via = self._via(devices, device.get("via"))
+        if via is not None:
+            info["via_device"] = via
+        entry = devices.async_get_or_create(config_entry_id=self.entry.entry_id, **info)
+        # Updates in place; a field described as null is cleared separately (spike rule 8).
+        cleared = {k: None for k, v in fields.items() if v is None and getattr(entry, k, None) is not None}
+        if via is None and entry.via_device_id is not None:
+            cleared["via_device_id"] = None
+        if cleared:
+            devices.async_update_device(entry.id, **cleared)
+        return info, entry.id
+
+    @staticmethod
+    def _via(devices, via):
+        """The identifier of the parent device, or None when there is none or it does not exist."""
+        if not via:
+            return None
+        if via.get("definition") is not None:
+            identifier = (DOMAIN, via["definition"])
+            return identifier if devices.async_get_device(identifiers={identifier}) is not None else None
+        if via.get("deviceId") is not None and (parent := devices.async_get(via["deviceId"])) is not None:
+            return min(parent.identifiers, default=None)
+        return None
+
+    async def _async_sync_entity(self, entities, description, device_info, device_id, definition_name):
+        """Update a live entity in place or add a new one; returns its entity id, or None when it was not added."""
+        unique_id, domain = description["uniqueId"], description["domain"]
+        entity = self._live.get(unique_id)
+        if entity is not None:
+            entity.apply(description, device_info, definition_name)
+            entity.async_write_ha_state()
+            # Home Assistant updates the rest of the registry entry from the state write, not these (spike rule 6).
+            changes = {"original_icon": entity.icon, "entity_category": entity.entity_category,
+                       "unit_of_measurement": (description.get("options") or {}).get("unit")}
+            if (entry := entities.async_get(entity.entity_id)) is not None:
+                if entry.device_id != device_id:
+                    changes["device_id"] = device_id
+                entities.async_update_entity(entity.entity_id, **changes)
+            return entity.entity_id
+        platform, factory = self._platforms[domain]
+        entity = factory(self, description, device_info, definition_name)
+        if (snapshot := self._pending.get(unique_id)) is not None:
+            entity.apply_state(snapshot)  # Its first state, which the add writes.
+        await platform.async_add_entities([entity])
+        self._check_open()
+        if entity.entity_id is not None:
+            self._live[unique_id] = entity
+            latest = self._pending.pop(unique_id, None)
+            if latest is not None and latest is not snapshot:  # Pushed while it was being added.
+                entity.apply_state(latest)
+                entity.async_write_ha_state()
+            return entity.entity_id
+        # Not added: normal for an entry the user or the integration disabled (spike rule 4).
+        entry = entities.async_get(entities.async_get_entity_id(domain, DOMAIN, unique_id) or "")
+        return entry.entity_id if entry is not None and entry.disabled_by is not None else None
+
+    async def _async_remove(self, definition_id):
+        self._purge(er.async_get(self.hass), dr.async_get(self.hass), definition_id)
+        return ()
+
+    async def _async_prune(self, definition_ids_json):
+        keep = set(json.loads(definition_ids_json))
+        entities, devices = er.async_get(self.hass), dr.async_get(self.hass)
+        found = {e.unique_id.split(":", 1)[0] for e in er.async_entries_for_config_entry(entities, self.entry.entry_id)
+                 if ":" in e.unique_id}
+        found.update(identifier[1] for d in dr.async_entries_for_config_entry(devices, self.entry.entry_id)
+                     for identifier in d.identifiers if identifier[0] == DOMAIN)
+        for definition_id in sorted(found - keep):
+            self._purge(entities, devices, definition_id)
+        for unique_id in [u for u in self._pending if u.split(":", 1)[0] not in keep]:
+            del self._pending[unique_id]
+        return ()
+
+    def _purge(self, entities, devices, definition_id):
+        """Remove a definition's device, then the registry entries left with its prefix, and forget its entities."""
+        if (device := devices.async_get_device(identifiers={(DOMAIN, definition_id)})) is not None:
+            devices.async_remove_device(device.id)
+        for entry in self._entries(entities, definition_id):
+            entities.async_remove(entry.entity_id)
+        prefix = definition_id + ":"
+        for store in (self._live, self._pending):
+            for unique_id in [u for u in store if u.startswith(prefix)]:
+                del store[unique_id]
+
+    def _entries(self, entities, definition_id):
+        """This config entry's registry entries of a definition."""
+        prefix = definition_id + ":"
+        return [e for e in er.async_entries_for_config_entry(entities, self.entry.entry_id)
+                if e.unique_id.startswith(prefix)]
+
+    def _remove_entries(self, entities, definition_id, keep):
+        """Remove the definition's registry entries not in `keep`, of (domain, unique id); Home Assistant removes the
+        live entity of each (spike rule 9)."""
+        for entry in self._entries(entities, definition_id):
+            if (entry.domain, entry.unique_id) in keep:
+                continue
+            if (entity := self._live.get(entry.unique_id)) is not None and entity.entity_id == entry.entity_id:
+                del self._live[entry.unique_id]
+            entities.async_remove(entry.entity_id)
