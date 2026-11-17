@@ -11,9 +11,6 @@ public partial class HassSharpManager
     EntityDefinitionStore EntityDocumentsWith(GeneratedServiceCalls? services) => new(Path.Combine(AuthoringRoot, "entities"), DefinitionGeneratorWith(services));
     DefinitionGenerator DefinitionGeneratorWith(GeneratedServiceCalls? services) => new(_diagnosticsProvider, services);
 
-    // TASK 9 REPLACES THIS: until definitions built from nodes are hosted, compiling one fails with this, as its load error.
-    internal const string GraphDefinitionsCannotRun = "Definitions built from nodes cannot run yet: this one is saved, but its entities stay unavailable";
-
     /// <summary>
     /// The path a definition's compiled script is known by in the script manager, its load errors and run history. It
     /// is never written; its folder and prefix keep it apart from an automation's of the same id.
@@ -51,17 +48,52 @@ public partial class HassSharpManager
         return json;
     }
 
+    /// <summary>
+    /// The definition's source compiled, with what its host and its runs need. A class: its <c>SharpDefinition</c> factory
+    /// and setting values. A graph: its generated class, which its host runs alongside the entities the document describes,
+    /// with the run metadata an automation's graph has (its id, revision, graph, embedded catalog and one entry per root).
+    /// </summary>
     async Task<CompiledUserScript> CompileDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services)
     {
-        // TASK 9 REPLACES THIS: a graph definition is stored and previewed, but nothing hosts it yet.
-        if (document.Logic.Kind == "graph") throw new NotSupportedException(GraphDefinitionsCannotRun);
-        var compiled = await _compiler.CompileSingleFile(EntityRuntimePath(document.Id), document.Source, services);
-        compiled.DesignatedRootType = "SharpDefinition";
-        compiled.VisualRevision = document.Revision;
-        compiled.CatalogGeneration = document.CatalogGeneration;
-        compiled.Definition = new(document.Id, document.Name, document.Device, document.Settings);
-        return compiled;
+        if (document.Logic.Kind != "graph")
+        {
+            var compiled = await _compiler.CompileSingleFile(EntityRuntimePath(document.Id), document.Source, services);
+            compiled.DesignatedRootType = "SharpDefinition";
+            compiled.VisualRevision = document.Revision;
+            compiled.CatalogGeneration = document.CatalogGeneration;
+            compiled.Definition = new(document.Id, document.Name, document.Device, document.Settings);
+            return compiled;
+        }
+        // The graph as previewed and stored, with its definition composed into it, as its source embeds it.
+        var graph = DefinitionGraph.Compose(document.Body);
+        // A document read from its file carries no embedded catalog: it is worked out again from the libraries as saved.
+        var catalog = document.EmbeddedCatalog ?? VisualGenerator.EmbeddedCatalog(graph, SavedLibraries(services).Preview.Snapshot).ToJsonString();
+        var snapshot = VisualCatalogSnapshot.BuiltIn.WithRoot(JsonNode.Parse(catalog)!.AsObject());
+        var roots = DefinitionGraph.Roots(graph, snapshot);
+        var triggers = (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>().Where(n => VisualNodeCatalog.IsRoot(n, snapshot))
+            .ToDictionary(VisualNodeCatalog.EffectiveTriggerMethod, n => new VisualTrigger(VisualNodeCatalog.Text(n, "id"),
+                VisualNodeCatalog.Text(n, "label") is { Length: > 0 } label ? label : null, TrackHistory(n, snapshot)), StringComparer.Ordinal);
+        var script = await _compiler.CompileSingleFile(EntityRuntimePath(document.Id), document.Source, services);
+        script.DesignatedRootType = "VisualAutomation";
+        script.VisualRevision = document.Revision;
+        script.CatalogGeneration = document.CatalogGeneration;
+        script.VisualId = document.Id;
+        script.VisualTriggers = triggers;
+        script.VisualGraph = graph.ToJsonString();
+        script.VisualCatalog = catalog;
+        script.Definition = new(document.Id, document.Name, document.Device, document.Settings)
+            { Entities = (JsonArray?)document.Entities?.DeepClone() ?? [], Roots = roots };
+        return script;
     }
+
+    /// <summary>
+    /// Whether a root's runs are recorded: its <c>trackHistory</c>, else its kind's default as the catalog gives it (off for a
+    /// State, on for When commanded and When started); a trigger's is on unless set, as an automation's.
+    /// </summary>
+    static bool TrackHistory(JsonObject node, VisualCatalogSnapshot snapshot) =>
+        node["config"]?["trackHistory"] is JsonValue given && given.TryGetValue<bool>(out var track) ? track
+        : VisualNodeCatalog.Text(node, "kind") != "trigger" && VisualNodeCatalog.Spec(node, snapshot)?["config"]?["trackHistory"]?["default"] is JsonValue fallback && fallback.TryGetValue<bool>(out var byKind) ? byKind
+        : true;
 
     /// <summary>
     /// Runs the saved definition: compiles it and loads it, or replaces the revision running. A failure is recorded as
@@ -109,7 +141,7 @@ public partial class HassSharpManager
         try { await LoadOrReplace(await CompileDefinition(document, services)); }
         catch (Exception ex)
         {
-            RecordLoadError(path, ex);
+            RecordDefinitionLoadError(document, ex);
             if (RunningHost(document.Id) == null) PostUnavailable(known);
             return _loadErrors[path];
         }
@@ -123,7 +155,28 @@ public partial class HassSharpManager
     {
         var preview = DefinitionGeneratorWith(null).Preview(document.Body, snapshot);
         if (!preview.Valid) throw new DefinitionValidationException(preview);
-        return document with { Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = generation };
+        return document with { Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = generation, EmbeddedCatalog = preview.EmbeddedCatalog?.ToJsonString() };
+    }
+
+    /// <summary>
+    /// Records why the definition does not load, as <see cref="RecordLoadError"/> does. A graph that does not validate reads
+    /// as an automation's graph does: its errors only, each after the id of its node, and it is tried again on a push of
+    /// Home Assistant's services or entity classes only when that can cure it: a problem in a line of code (a Custom C# node
+    /// compiled against a service not there yet) or in the node libraries.
+    /// </summary>
+    void RecordDefinitionLoadError(EntityDefinitionDocument document, Exception error)
+    {
+        var path = EntityRuntimePath(document.Id);
+        if (document.Logic.Kind != "graph" || error is not DefinitionValidationException { Preview.Diagnostics: var diagnostics })
+        {
+            RecordLoadError(path, error);
+            return;
+        }
+        var errors = diagnostics.Where(d => d.Severity >= 3).ToArray();
+        if (errors.Length > 0) _loadProblems[path] = errors.Length; else _loadProblems.TryRemove(path, out _);
+        if (errors.Any(d => d.StartLine != null || d.Code == "definition.library")) _curableLoadErrors[path] = 0;
+        else _curableLoadErrors.TryRemove(path, out _);
+        _loadErrors[path] = string.Join("\n", errors.Select(d => d.NodeId is { } node ? $"{node}: {d.Message}" : d.Message));
     }
 
     /// <summary>
@@ -183,7 +236,12 @@ public partial class HassSharpManager
             var store = EntityDocumentsWith(services);
             if (operation == "types")
                 result = new { types = snapshot.EntityTypes.Values.OrderBy(t => t.Id, StringComparer.Ordinal).ToArray(), generation = libraries.Generation };
-            else if (operation == "preview") result = PreviewJson(DefinitionGeneratorWith(services).Preview(DefinitionBody(request), authoring));
+            else if (operation == "preview")
+            {
+                var preview = DefinitionGeneratorWith(services).Preview(DefinitionBody(request), authoring);
+                // A graph's entity ids that Home Assistant does not have are advice, as an automation's are.
+                result = PreviewJson(preview.Graph == null ? preview : preview with { Diagnostics = [.. preview.Diagnostics, .. EntityWarnings(preview.Graph, authoring)] });
+            }
             // Listing omits the generated source and its map; "read" returns them.
             else if (operation == "list") result = store.List().Select(document =>
             {
@@ -204,7 +262,7 @@ public partial class HassSharpManager
                     var valid = true;
                     if (enabled)
                         try { document = Regenerated(document, snapshot, libraries.Generation); StoreRegenerated(document); }
-                        catch (DefinitionValidationException ex) { RecordLoadError(EntityRuntimePath(id), ex); valid = false; }
+                        catch (DefinitionValidationException ex) { RecordDefinitionLoadError(document, ex); valid = false; }
                     bool active;
                     string? activationError;
                     if (!enabled || valid && !EntityJson(document)["currentRevisionActive"]!.GetValue<bool>())
@@ -226,13 +284,16 @@ public partial class HassSharpManager
                     if (operation == "save")
                     {
                         var document = store.Save(id, DefinitionBody(request), revision, authoring, libraries.Generation, ApiRequest.OptionalBool(request, "enabled"), out var preview);
-                        // A valid preview's diagnostics are its warnings: advice, which never stops the save or its activation.
-                        result = await ActivateDefinition(document, services, preview.Diagnostics);
+                        // A valid preview's diagnostics are its warnings: advice, which never stops the save or its activation;
+                        // so are a graph's entity ids that Home Assistant does not have (EntityWarnings never throws).
+                        result = await ActivateDefinition(document, services, preview.Graph == null ? preview.Diagnostics : [.. preview.Diagnostics, .. EntityWarnings(preview.Graph, authoring)]);
                     }
                     else if (operation == "delete")
                     {
                         store.Delete(id, revision);
-                        await _userScriptManager.UnloadScriptAsync(EntityRuntimePath(id));
+                        // As an automation's delete: its run history's identity goes too, so a definition saved later under
+                        // this id starts a history of its own.
+                        await _userScriptManager.DeleteScriptAsync(EntityRuntimePath(id));
                         ClearLoadError(EntityRuntimePath(id));
                         // Whether it ran or not: Home Assistant may still have its entities from an earlier run. Its last
                         // states go out first, so none arrives after the entities are gone.

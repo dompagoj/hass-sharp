@@ -35,12 +35,13 @@ public partial class HassSharpManager
             try
             {
                 current = Regenerated(document, snapshot, generation);
-                compiled.Add(await CompileDefinition(current, null));
+                // Stored before the compile, which may fail: what is stored is what the libraries as saved generate.
                 StoreRegenerated(current);
+                compiled.Add(await CompileDefinition(current, null));
             }
             catch (Exception ex)
             {
-                ReportLoadFailure(document.Id, () => { RecordLoadError(EntityRuntimePath(document.Id), ex); return DefinitionLoadFailure(current, ex); }, "entity definition");
+                ReportLoadFailure(document.Id, () => { RecordDefinitionLoadError(current, ex); return DefinitionLoadFailure(current, ex); }, "entity definition");
                 // Neither a definition that does not validate nor code that does not compile is a HassSharp bug; anything else is.
                 if (ex is not (DefinitionValidationException or CompilationErrorException)) try { Logger.Debug($"Loading entity definition {document.Id} failed: {ex}"); } catch { }
             }
@@ -120,7 +121,7 @@ public partial class HassSharpManager
                 if (await LoadDefinition(current) == null)
                     Logger.Info($"Entity definition {document.Id} loaded now that the typed service calls or entity classes changed");
             }
-            catch (Exception ex) { RecordLoadError(path, ex); }
+            catch (Exception ex) { RecordDefinitionLoadError(document, ex); }
         }
     }
 

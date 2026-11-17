@@ -12,8 +12,10 @@ using static VisualExecutionTests;
 /// meets types of the automations' own assemblies. Each generation also runs an entity definition whose device, a class
 /// of its own node library, starts a 20 ms timer and a track of an entity, calls a service from Start() with a record of
 /// its library serialized by System.Text.Json, and takes a command on its switch; a library save then rebuilds it (and the
-/// automations) and replaces the one Init loaded. Every generation's automation and definition load contexts must be
-/// collected, and managed memory must stop growing.
+/// automations) and replaces the one Init loaded. After the reloads, a definition built from nodes is saved 100 times,
+/// each revision replacing the one before, taking a command on its switch and working out its State from its setting.
+/// Every generation's automation and definition load contexts, and every graph revision's, must be collected, and
+/// managed memory must stop growing.
 /// <para>
 /// Python.NET's assembly manager is started as Home Assistant starts it (it records every assembly loaded into the
 /// process): before <see cref="PythonNetAssemblies"/> it held every automation assembly, so no load context unloaded.
@@ -114,6 +116,22 @@ static class ReloadMemoryTests
                 loaded.Clear();
                 if (reload >= From && (reload - From) % Window == 0) memory[reload] = Collected();
             }
+            // A definition built from nodes, replaced by a save again and again (a new setting value each time), takes a
+            // command on its switch and works out its State: every revision's load context must go too.
+            for (var revision = 0; revision < GraphRevisions; revision++)
+            {
+                var saved = await Request(manager.EntityRequest, new { operation = "save", id = "gauge", expectedRevision = revision, definition = GraphDefinition(revision) });
+                Check(saved["active"]!.GetValue<bool>(), $"graph revision {revision + 1} runs: " + saved.ToJsonString()[..Math.Min(1200, saved.ToJsonString().Length)]);
+                await manager.EntityCommand("gauge:relay", "turn_on", null);
+                var level = revision.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                await EntityTestHome.Until(() => GraphPushed(states, "level", "value") == level, $"graph revision {revision + 1}: the State pushes the setting's value {level}");
+                await EntityTestHome.Until(() => GraphPushed(states, "relay", "is_on") == "true", $"graph revision {revision + 1}: the turn on flow pushes on");
+                var gauge = Scripts(manager).Where(s => s.Host != null && s.CompiledScript.FilePath.EndsWith("entity_gauge.cs", StringComparison.Ordinal)).ToList();
+                Check(gauge.Count == 1, $"graph revision {revision + 1}: one gauge is loaded, not {gauge.Count}");
+                Watch(gauge, $"graph revision {revision + 1}");
+                gauge.Clear();
+                lock (states) states.Clear();
+            }
             await manager.UnloadAsync();
             // System.Text.Json's process-wide member accessor cache (its compiled getters and constructors of the types it
             // writes) keeps an entry about a second after its last use and drops it at its next use after that: the last
@@ -139,7 +157,7 @@ static class ReloadMemoryTests
             var samples = string.Join(", ", memory.OrderBy(m => m.Key).Select(m => $"{m.Value / 1048576.0:F1} MiB after reload {m.Key}"));
             var growth = memory.Keys.Where(reload => reload > From).Min(reload => (memory[reload] - memory[reload - Window]) / 1048576.0);
             Check(growth <= BoundMiB, $"managed memory grew in every {Window} reloads from reload {From} to reload {Reloads}, {growth:F2} MiB at the least ({samples}); a window that grows at most {BoundMiB} MiB is required");
-            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), and an entity definition rebuilt by a library save whose device runs a timer and a track, calls a service with a record of its library and takes a switch command, every load context collected; managed memory {samples}");
+            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), and an entity definition rebuilt by a library save whose device runs a timer and a track, calls a service with a record of its library and takes a switch command, then a definition built from nodes saved {GraphRevisions} times, each revision taking a command and working out its State, every load context collected; managed memory {samples}");
         }
         finally
         {
@@ -274,6 +292,29 @@ static class ReloadMemoryTests
 
     static Task MeterCalled(List<(string Service, string Json)> calls, int from, string marker, string what) =>
         EntityTestHome.Until(() => MeterCalls(calls, from).Contains(marker), $"{what}: its Start() calls light.turn_on with marker {marker}");
+
+    const int GraphRevisions = 100;
+
+    // A gauge whose level is its setting's value and whose switch's turn on flow sets it on.
+    static object GraphDefinition(int value) => new
+    {
+        name = "Gauge",
+        settings = new[] { new { key = "level", type = "number", value } },
+        entities = new object[] { new { key = "level", domain = "sensor" }, new { key = "relay", domain = "switch" } },
+        logic = new { kind = "graph", graph = new JsonObject
+        {
+            ["version"] = 5, ["name"] = "Gauge",
+            ["nodes"] = new JsonArray(N("k", "setting", new { key = "level" }), N("s", "entity_state", new { entity = "level" }),
+                N("on", "entity_command", new { entity = "relay", command = "turn_on" }), N("set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", true) })),
+            ["edges"] = new JsonArray(D("k", "s", "value"), E("on", "set")),
+        } },
+    };
+
+    // The last value pushed for one of the gauge's entities.
+    static string? GraphPushed(Dictionary<string, JsonObject> states, string key, string field)
+    {
+        lock (states) return states.GetValueOrDefault("gauge:" + key)?["values"]?[field]?.ToJsonString();
+    }
 
     // The last value pushed for one of the definition's entities.
     static string? Pushed(Dictionary<string, JsonObject> states, string key, string field)

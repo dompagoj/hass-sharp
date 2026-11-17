@@ -132,6 +132,11 @@ class ScriptSyncRunner
         }
 
         var waited = false;
+        // An entity definition's runs act on it through its host; a run of any other script has none.
+        var host = scriptClass.Script.Host;
+        // A State of a definition built from nodes fails routinely (a source missing while Home Assistant starts): its host
+        // says so once per reason, so its failure is not logged here.
+        var state = host?.IsState(methodInfo.Name) == true;
         try
         {
             // Fail closed: a run whose first record cannot be written fails before it executes, and restarts nothing.
@@ -150,7 +155,7 @@ class ScriptSyncRunner
                 var timer = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
-                    var context = new InvocationContext(record.RunId, cause, plannedUtc, payload) { TraceSink = sink };
+                    var context = new InvocationContext(record.RunId, cause, plannedUtc, payload) { TraceSink = sink, Definition = host };
                     await Execute(scriptClass, methodInfo, registration, context);
                     record.Status = context.Stopped ? "Stopped" : "Succeeded";
                 }
@@ -160,8 +165,12 @@ class ScriptSyncRunner
                     record.Error = registration.Run.CancelReason ?? registration.Run.Scope.Reason ?? scriptClass.Script.CancelReason ?? CancelReasons.Unknown;
                 }
                 catch (Exception ex)
-                { record.Status = "Failed"; record.Error = ex.GetBaseException().Message; Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}"); }
+                {
+                    record.Status = "Failed"; record.Error = ex.GetBaseException().Message;
+                    if (!state) Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}");
+                }
                 finally { record.DurationMs = timer.Elapsed.TotalMilliseconds; }
+                if (state) host!.StateEnded(methodInfo.Name, record.Status, record.Error);
             });
         }
         catch (Exception ex)

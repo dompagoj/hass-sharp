@@ -69,6 +69,11 @@ public sealed record EntityDefinitionDocument(int Version, string Id, long Revis
     public string? CatalogGeneration { get; init; }
     /// <summary>The definition as written, to preview or save again; derived, never stored.</summary>
     [JsonIgnore] public DefinitionBody Body => new(Name, Device, Settings, Entities, Logic);
+    /// <summary>
+    /// For a graph, the pruned catalog JSON <see cref="Source"/> embeds, for the run snapshot, as the preview that generated
+    /// the source gave it; derived, never stored, so null for a document read from its file.
+    /// </summary>
+    [JsonIgnore] public string? EmbeddedCatalog { get; init; }
 }
 
 /// <summary>A definition that cannot be saved, with the preview that says why.</summary>
@@ -202,7 +207,7 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             var logic = graphLogic ? body.Logic! with { Graph = DefinitionGraph.Decompose(preview.Graph!) } : body.Logic! with { Graph = (JsonObject?)body.Logic.Graph?.DeepClone() };
             var document = new EntityDefinitionDocument(1, id, checked(expectedRevision + 1), body.Name, body.Device, settings,
                 (JsonArray?)body.Entities?.DeepClone(), logic, preview.Source, preview.SourceMap)
-                { CatalogGeneration = catalogGeneration, Enabled = old?.Enabled ?? enabled ?? true, SavedUtc = DateTime.UtcNow };
+                { CatalogGeneration = catalogGeneration, Enabled = old?.Enabled ?? enabled ?? true, SavedUtc = DateTime.UtcNow, EmbeddedCatalog = preview.EmbeddedCatalog?.ToJsonString() };
             Directory.CreateDirectory(directory);
             VisualStore.Write(path, document);
             return document;
@@ -219,7 +224,8 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
         if (!preview.Valid) throw new DefinitionValidationException(preview);
         // A graph is stored as previewed, as a rebuilt automation's is, and without its definition.
         var logic = old.Logic.Kind == "graph" && preview.Graph != null ? old.Logic with { Graph = DefinitionGraph.Decompose(preview.Graph) } : old.Logic;
-        return old with { Revision = checked(old.Revision + 1), Logic = logic, Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = catalogGeneration };
+        return old with { Revision = checked(old.Revision + 1), Logic = logic, Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = catalogGeneration,
+            EmbeddedCatalog = preview.EmbeddedCatalog?.ToJsonString() };
     }
 
     /// <summary>

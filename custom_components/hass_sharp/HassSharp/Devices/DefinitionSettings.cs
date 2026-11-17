@@ -9,16 +9,17 @@ internal static class DefinitionSettings
 {
     // The saved check of the settings can be stale once a library changes, so a setting that no longer fits fails here
     // rather than leaving the definition to run on defaults.
-    internal static void Apply(CompiledDefinition definition, SharpComponent root)
+    /// <param name="name">The definition's name, which a failure starts with.</param>
+    internal static void Apply(string name, IReadOnlyList<DefinitionSetting> settings, SharpComponent root)
     {
         var type = root.GetType();
-        foreach (var setting in definition.Settings)
+        foreach (var setting in settings)
         {
             if (setting.Value == null) continue;
             var property = SettingProperty(type, setting.Key)
-                ?? throw new InvalidOperationException($"{definition.Name}: {type.Name} has no setting {setting.Key}");
+                ?? throw new InvalidOperationException($"{name}: {type.Name} has no setting {setting.Key}");
             if (!TryConvert(setting.Value, property.PropertyType, out var value))
-                throw new InvalidOperationException($"{definition.Name}: the saved value of setting {setting.Key} does not fit its type {property.PropertyType.Name}");
+                throw new InvalidOperationException($"{name}: the saved value of setting {setting.Key} does not fit its type {property.PropertyType.Name}");
             property.SetMethod!.Invoke(root, BindingFlags.DoNotWrapExceptions, null, [value], null);
         }
     }

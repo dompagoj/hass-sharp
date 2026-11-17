@@ -9,17 +9,21 @@ namespace HassSharp;
 /// <para>
 /// <b>Concurrency.</b> Calls can arrive at the same time: from the parallel branches of one run, and from overlapping
 /// runs, including two runs of the same root (a newer change restarts a State, but the older run ends only once it
-/// notices its cancellation). An implementation must be thread-safe.
+/// notices its cancellation). They arrive on thread-pool threads, never on Home Assistant's or Python's. An implementation
+/// must be thread-safe. It may not call back into the run in progress nor wait for a run of its definition from a call:
+/// the run is blocked in the call until it returns.
 /// </para>
 /// <para>
 /// <b>A State's run</b> (<c>entity_state</c>):
 /// <list type="number">
-/// <item>The runtime works out the State's value nodes, which may call <see cref="Setting"/> and <see cref="IsSecret"/>, then reads its inputs.</item>
+/// <item>The runtime works out the State's value nodes, which may call <see cref="Setting"/> (and, in a traced run only,
+/// <see cref="IsSecret"/>), then reads its inputs.</item>
 /// <item>On success it checks the run's cancellation: a run already cancelled (superseded by a newer one, or stopped) ends
 /// there and calls nothing more. Otherwise it calls <see cref="SetState"/>, then <see cref="SetAvailable"/> with true.
 /// It does so on every run, even when the values did not change.</item>
 /// <item>When working out the inputs fails, it calls <see cref="SetAvailable"/> with false and nothing else, and the run
-/// fails with that error. When the run is cancelled meanwhile, it calls neither.</item>
+/// fails with that error. When the failure is the run's own cancellation, it calls neither; an input that fails for
+/// another reason while the run is being cancelled still calls <see cref="SetAvailable"/> with false.</item>
 /// </list>
 /// </para>
 /// <para>
@@ -60,7 +64,8 @@ internal interface IDefinitionRuntime
     /// <summary>The value of the definition's setting <paramref name="key"/>: a string, bool or double; throws <see cref="KeyNotFoundException"/> for an unknown key.</summary>
     object? Setting(string key);
     /// <summary>
-    /// Whether the setting <paramref name="key"/> is marked secret; false for an unknown key. A Setting node of a secret
+    /// Whether the setting <paramref name="key"/> is marked secret; false for an unknown key. Asked only by a run that is
+    /// traced, as it writes a Setting node's output into the trace. A Setting node of a secret
     /// setting is traced as <c>***</c>, while its value still reaches the nodes that use it. The value is not followed
     /// further: a node that reads the secret value through a wire is traced with it in clear, which a later phase must
     /// handle.

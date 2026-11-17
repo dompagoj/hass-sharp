@@ -244,7 +244,7 @@ public sealed class VisualRuntime
     /// </summary>
     void MarkUnavailable(IDefinitionRuntime definition,string key,string id) {
         try {definition.SetAvailable(key,false);}
-        catch(Exception error) {try{Logger.Error($"Run {InvocationContext.Current?.RunId}: {Title(id)} could not mark {key} unavailable: {error.GetType().Name}: {error.Message}");}catch{}}
+        catch(Exception error) {try{Logger.Warn($"Run {InvocationContext.Current?.RunId}: {Title(id)} could not mark {key} unavailable: {error.GetType().Name}: {error.Message}");}catch{}}
     }
     JsonNode? OutputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["outputs"]:Spec(id)?["outputs"];
     // The name people see on the canvas, for messages about a value node and the step that used it.

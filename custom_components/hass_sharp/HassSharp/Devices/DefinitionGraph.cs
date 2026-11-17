@@ -9,7 +9,11 @@ namespace HassSharp;
 /// <param name="Setup">The When started flow's method; null when the graph has none.</param>
 /// <param name="Commands">Each When commanded flow's method, keyed <c>&lt;entity key&gt;:&lt;command&gt;</c>.</param>
 /// <param name="States">Each State's method, in node id order.</param>
-internal sealed record DefinitionRoots(string? Setup, IReadOnlyDictionary<string, string> Commands, IReadOnlyList<string> States);
+internal sealed record DefinitionRoots(string? Setup, IReadOnlyDictionary<string, string> Commands, IReadOnlyList<string> States)
+{
+    /// <summary>The key of the entity each State's method works out the state of, by method.</summary>
+    public IReadOnlyDictionary<string, string> StateEntities { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
+}
 
 /// <summary>
 /// Between a stored entity definition and the graph its nodes are checked, generated and run as: the stored graph never
@@ -49,6 +53,7 @@ internal static class DefinitionGraph
         string? setup = null;
         var commands = new Dictionary<string, string>(StringComparer.Ordinal);
         var states = new List<string>();
+        var stateEntities = new Dictionary<string, string>(StringComparer.Ordinal);
         var roots = (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>().Where(n => VisualNodeCatalog.IsRoot(n, snapshot))
             .OrderBy(n => VisualNodeCatalog.Text(n, "id"), StringComparer.Ordinal);
         // A valid graph has one When started and one flow per command; the first in id order is kept otherwise.
@@ -59,8 +64,11 @@ internal static class DefinitionGraph
                 case "entity_command":
                     commands.TryAdd(VisualNodeCatalog.Text(node["config"], "entity") + ":" + VisualNodeCatalog.Text(node["config"], "command"), VisualNodeCatalog.EffectiveTriggerMethod(node));
                     break;
-                case "entity_state": states.Add(VisualNodeCatalog.EffectiveTriggerMethod(node)); break;
+                case "entity_state":
+                    states.Add(VisualNodeCatalog.EffectiveTriggerMethod(node));
+                    stateEntities[VisualNodeCatalog.EffectiveTriggerMethod(node)] = VisualNodeCatalog.Text(node["config"], "entity");
+                    break;
             }
-        return new(setup, commands, states);
+        return new(setup, commands, states) { StateEntities = stateEntities };
     }
 }

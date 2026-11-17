@@ -142,4 +142,36 @@ internal static class SharpDomains
             if (typed.FullName == typeName) return domain;
         return null;
     }
+
+    /// <summary>
+    /// The typed entity a graph definition's document describes: its <c>key</c>, and its <c>name</c>, <c>icon</c>,
+    /// <c>deviceClass</c>, <c>entityCategory</c>, <c>enabledByDefault</c> and <c>options</c> (a sensor's <c>unit</c>,
+    /// <c>stateClass</c> and <c>options</c>), each absent or null for none. The document was checked when it was saved
+    /// (<see cref="DefinitionDocument.Check"/>); a field of another type is read as absent.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The domain is not one a definition built from nodes creates.</exception>
+    /// <exception cref="ArgumentException">The key is not an entity key.</exception>
+    internal static SharpEntity Create(string domain, JsonObject description)
+    {
+        static string? Text(JsonNode? node) => node is JsonValue value && value.GetValueKind() == JsonValueKind.String ? value.GetValue<string>() : null;
+        var key = Text(description["key"]) ?? "";
+        var name = Text(description["name"]);
+        var icon = Text(description["icon"]);
+        var deviceClass = Text(description["deviceClass"]);
+        EntityCategory? category = Text(description["entityCategory"]) switch { "config" => EntityCategory.Config, "diagnostic" => EntityCategory.Diagnostic, _ => null };
+        var enabled = description["enabledByDefault"] is not JsonValue flag || flag.GetValueKind() != JsonValueKind.False;
+        var options = description["options"] as JsonObject;
+        return domain switch
+        {
+            "binary_sensor" => new SharpBinarySensor(key, name) { Icon = icon, DeviceClass = deviceClass, Category = category, EnabledByDefault = enabled },
+            "sensor" => new SharpSensor(key, name)
+            {
+                Icon = icon, DeviceClass = deviceClass, Category = category, EnabledByDefault = enabled,
+                Unit = Text(options?["unit"]), StateClass = Text(options?["stateClass"]),
+                Options = options?["options"] is JsonArray values ? values.Select(Text).OfType<string>().ToArray() : null,
+            },
+            "switch" => new SharpSwitch(key, name) { Icon = icon, DeviceClass = deviceClass, Category = category, EnabledByDefault = enabled },
+            _ => throw new InvalidOperationException($"Entity {key} has the domain {domain}, which a definition built from nodes cannot create"),
+        };
+    }
 }
