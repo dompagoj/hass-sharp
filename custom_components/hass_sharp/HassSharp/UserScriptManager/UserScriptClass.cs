@@ -191,5 +191,28 @@ class UserScriptClass
         return Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method), action.Mode, cause, normalised, runId, recorded: recorded);
     }
 
+    /// <summary>
+    /// Runs <paramref name="method"/> as <see cref="RunMethod"/> does and completes once the run has ended, after its last
+    /// history write, with how it ended (history on for it or not). A run that fails, is skipped, cancelled (the script
+    /// unloads, even while the run is queued) or stopped is an outcome: this throws only for a method the class does not
+    /// declare, or a <see cref="InvocationCause.Manual"/> run of an action that refuses one. Awaiting it from inside a
+    /// Queued or Restart run of the same method never ends: the new run waits for the one awaiting it.
+    /// </summary>
+    internal async Task<RunOutcome> RunToEnd(string method, InvocationCause cause, System.Text.Json.JsonElement payload)
+    {
+        if (!_actions.TryGetValue(method, out var action)) throw new ArgumentException($"Unknown action {method}", nameof(method));
+        if (cause == InvocationCause.Manual && !action.Manual)
+            throw new InvalidOperationException("Manual invocation is disabled");
+        var outcome = new TaskCompletionSource<RunOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var run = Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method), action.Mode, cause, payload, outcome: outcome);
+        // The run's task fails only for a history write (the outcome already says how the run itself ended).
+        try { await run; }
+        catch (Exception error)
+        {
+            try { Logger.Error($"Invocation history failure: {error.Message}"); } catch { }
+        }
+        return await outcome.Task;
+    }
+
     internal string GetConcatedMethodNameWithClass(string methodName) => $"{ClassName}::{methodName}";
 }

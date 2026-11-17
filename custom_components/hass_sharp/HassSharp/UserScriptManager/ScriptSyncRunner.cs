@@ -12,6 +12,12 @@ static class CancelReasons
     public const string Unknown = "Invocation cancelled";
 }
 
+/// <summary>
+/// How a run ended: its run record's final <see cref="InvocationRecord.Status"/> (<c>Succeeded</c>, <c>Failed</c>,
+/// <c>Cancelled</c>, <c>Skipped</c> or <c>Stopped</c>) and <see cref="InvocationRecord.Error"/>, written to history or not.
+/// </summary>
+internal sealed record RunOutcome(string Status, string? Error);
+
 class ScriptSyncRunner
 {
     sealed class ActiveRun(CancellationTokenSource cancellation, UserScript.RunScope scope)
@@ -67,22 +73,25 @@ class ScriptSyncRunner
     /// <summary>Runs the method with its trigger's history setting; the script waits for it when unloaded (<see cref="UserScript.TrackRun"/>).</summary>
     /// <param name="recorded">Completed once the run's first record is written (faulted when it cannot be), for Run now,
     /// which answers with a run id the history already has. Triggers do not wait for it.</param>
-    public Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null, TaskCompletionSource? recorded = null)
+    /// <param name="outcome">Completed with how the run ended, after its last history write (whether history is on for it
+    /// or not), however it ended: before the returned task completes, which may still fail for a history write.</param>
+    public Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null, TaskCompletionSource? recorded = null, TaskCompletionSource<RunOutcome>? outcome = null)
     {
-        var run = RunCore(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc, recorded);
+        var run = RunCore(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc, recorded, outcome);
         scriptClass.Script.TrackRun(run);
         return run;
     }
 
-    async Task RunCore(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc, TaskCompletionSource? recorded)
+    async Task RunCore(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc, TaskCompletionSource? recorded, TaskCompletionSource<RunOutcome>? outcome)
     {
-        // Run now waits for recorded: whatever fails on the way (registering logs through Python), it must complete.
-        try { await RunRecorded(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc, recorded); }
-        catch (Exception error) { recorded?.TrySetException(error); throw; }
+        // Run now waits for recorded, RunToEnd for outcome: whatever fails on the way (registering logs through Python),
+        // they must complete. A run that got as far as its record has already given its own outcome.
+        try { await RunRecorded(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc, recorded, outcome); }
+        catch (Exception error) { recorded?.TrySetException(error); outcome?.TrySetResult(new("Failed", error.GetBaseException().Message)); throw; }
         finally { recorded?.TrySetResult(); }
     }
 
-    async Task RunRecorded(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc, TaskCompletionSource? recorded)
+    async Task RunRecorded(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc, TaskCompletionSource? recorded, TaskCompletionSource<RunOutcome>? outcome)
     {
         var compiled = scriptClass.Script.CompiledScript;
         var trigger = compiled.VisualTriggers?.GetValueOrDefault(methodInfo.Name);
@@ -117,6 +126,7 @@ class ScriptSyncRunner
             record.EndUtc = DateTime.UtcNow;
             try { history?.Save(record, snapshot); }
             catch (Exception error) { recorded?.TrySetException(error); throw; }
+            finally { outcome?.TrySetResult(new(record.Status, record.Error)); }
             recorded?.TrySetResult();
             return;
         }
@@ -178,7 +188,8 @@ class ScriptSyncRunner
                 if (!waited && registration.Predecessor is { IsCompleted: false } predecessor)
                     _ = predecessor.ContinueWith(_ => registration.Run.Completed.TrySetResult(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
                 else registration.Run.Completed.TrySetResult();
-                Save();
+                try { Save(); }
+                finally { outcome?.TrySetResult(new(record.Status, record.Error)); }
             }
         }
     }

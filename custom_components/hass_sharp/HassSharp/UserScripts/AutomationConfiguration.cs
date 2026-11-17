@@ -1,6 +1,9 @@
 namespace HassSharp;
 
-public enum InvocationCause { Startup, Entity, Manual, Schedule, HomeAssistantTrigger }
+/// <summary>What started a run. Stored by name in run history; new causes are appended, never inserted.</summary>
+/// <remarks><see cref="Command"/>: Home Assistant gave one of an entity definition's entities a command;
+/// <see cref="Setup"/>: an entity definition starts, before its entities come up.</remarks>
+public enum InvocationCause { Startup, Entity, Manual, Schedule, HomeAssistantTrigger, Command, Setup }
 
 public sealed record AutomationAction(string Method, AutomationMode Mode = AutomationMode.Single,
     bool Startup = false, bool Manual = true, EntityReference[]? Entities = null, AutomationSchedule[]? Schedules = null, HomeAssistantTrigger[]? Triggers = null);

@@ -33,6 +33,12 @@ public static class TriggerSummary
         // A manual run that carries an entity's current state names the entity only: no from/to, so it never reads as a change.
         if (kind == "manual") Add("entityId", Scalar(payload, "entity_id"));
         if (kind == "ha" && Property(payload, "event") is { ValueKind: JsonValueKind.Object } native) Add("eventType", Scalar(native, "event_type"));
+        // The command's data is left out: it may be long or hold what a summary should not show.
+        if (kind == "command")
+        {
+            Add("entity", Scalar(payload, "entity"));
+            Add("command", Scalar(payload, "command"));
+        }
         if (kind == "schedule")
         {
             Add("scheduleId", Scalar(payload, "schedule_id"));
@@ -56,7 +62,7 @@ public static class TriggerSummary
     static string Kind(InvocationCause cause) => cause switch
     {
         InvocationCause.HomeAssistantTrigger => "ha", InvocationCause.Entity => "entity", InvocationCause.Schedule => "schedule",
-        InvocationCause.Manual => "manual", _ => "startup",
+        InvocationCause.Manual => "manual", InvocationCause.Command => "command", InvocationCause.Setup => "setup", _ => "startup",
     };
 
     static JsonElement? Property(JsonElement json, string key) =>

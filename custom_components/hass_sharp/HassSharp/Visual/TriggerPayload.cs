@@ -87,6 +87,20 @@ public static class TriggerPayload
 
     public static JsonElement Startup() => Platform("startup");
 
+    /// <summary>
+    /// Home Assistant gave an entity of a definition a command: <paramref name="entity"/> is the entity's key within the
+    /// definition, <paramref name="data"/> the command's data, absent when it has none (null or undefined).
+    /// </summary>
+    internal static JsonElement Command(string entity, string command, JsonElement? data)
+    {
+        var payload = new JsonObject { ["platform"] = "command", ["entity"] = entity, ["command"] = command };
+        if (data is { ValueKind: not JsonValueKind.Undefined } value) payload["data"] = JsonNode.Parse(value.GetRawText());
+        return JsonSerializer.SerializeToElement(payload);
+    }
+
+    /// <summary>An entity definition starts, before its entities come up.</summary>
+    internal static JsonElement Setup() => Platform("setup");
+
     static JsonElement Platform(string platform) => JsonSerializer.SerializeToElement(new JsonObject { ["platform"] = platform });
 
     // The bridge does not report last_updated, so it stays null, as in EntityStateSnapshot.From.
