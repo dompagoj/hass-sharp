@@ -116,6 +116,8 @@ static class EntityHostTests
             await TimersAndTracks();
             await Stopping();
             await Unloading();
+            await TrackOffLock();
+            await ThrowingLog();
         }
         finally
         {
@@ -374,6 +376,68 @@ static class EntityHostTests
         Check(Logs().Any(m => m.Contains("Plug nine") && m.Contains("did not finish")), "the slow Stop() is logged: " + string.Join(" | ", Logs()));
         UserScript.RunDrainTimeout = TimeSpan.FromSeconds(10);
         Console.WriteLine("PASS entity host: stop waits for a running start, runs no Stop() for a host never started, is safe twice, and logs a Stop() that throws or does not end");
+    }
+
+    // A Track waiting on Python (to subscribe) must not hold up a Publish of the same host: from Home Assistant a command
+    // publishes on a thread that holds the GIL, which the subscribing thread waits for.
+    static async Task TrackOffLock()
+    {
+        Reset();
+        var manager = Manager();
+        await Load(manager, Compiled("lamp2", "Lamp two", () => new HostLamp()));
+        await Until(() => PushedAvailable("lamp2:main", true), "started");
+        if (!manager.Entities.TryGet("lamp2:main", out var host, out var lamp)) throw new Exception("the directory finds the lamp");
+        var subscribe = PyInterop.SubscribeToEntityTracking;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        PyInterop.SubscribeToEntityTracking = id => { if (id == "sensor.blocked") { entered.Set(); release.Wait(); } subscribe(id); };
+        try
+        {
+            var tracking = Task.Run(() => host.Track("sensor.blocked", _ => Task.CompletedTask));
+            Check(entered.Wait(TimeSpan.FromSeconds(5)), "the track reached the subscription");
+            var published = Task.Run(() => host.Publish(lamp));
+            var completed = published.Wait(TimeSpan.FromSeconds(2));
+            release.Set();
+            await tracking.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(completed, "a Publish waited for a Track blocked in Python");
+        }
+        finally { release.Set(); PyInterop.SubscribeToEntityTracking = subscribe; }
+        await manager.UnloadUserScriptsAsync();
+        Check(!RuntimeCoreTests.Subscriptions.Contains("sensor.blocked"), "the blocked track is unsubscribed on unload");
+        Console.WriteLine("PASS entity host: a Track waiting on Python to subscribe does not hold up a Publish of the same host");
+    }
+
+    // The host's own failure logging never throws: a failing log must not stop a timer or a failed start's publish.
+    static async Task ThrowingLog()
+    {
+        var log = PyInterop.Log;
+        Action<int, string> broken = (_, _) => throw new InvalidOperationException("log broke");
+        Reset();
+        var manager = Manager();
+        PyInterop.Log = broken;
+        try
+        {
+            var ticker = await Load(manager, Compiled("ticker2", "Ticker two", () => new HostTicker()));
+            await Until(() => HostTicker.Ticks >= 3, "the timer ticks again although logging its failure throws");
+            Check(ticker.Status == "running", "still running");
+        }
+        // Unloading logs through the same delegate, which is not what is checked here.
+        finally { PyInterop.Log = log; }
+        await manager.UnloadUserScriptsAsync();
+
+        Reset();
+        manager = Manager();
+        HostPlug.StartHook = _ => throw new InvalidOperationException("start broke");
+        PyInterop.Log = broken;
+        try
+        {
+            var plug = await Load(manager, Compiled("plug11", "Plug eleven", () => new HostPlug()));
+            await Until(() => PushedAvailable("plug11:relay", false) && PushedAvailable("plug11:power", false), "every entity pushed unavailable although logging throws");
+            Check(plug.Status == "failed" && plug.Error == "start broke", $"status {plug.Status}, error {plug.Error}");
+        }
+        finally { PyInterop.Log = log; }
+        await manager.UnloadUserScriptsAsync();
+        Console.WriteLine("PASS entity host: a log that throws stops neither a failing timer nor the unavailable publish of a failed start");
     }
 
     static async Task Unloading()

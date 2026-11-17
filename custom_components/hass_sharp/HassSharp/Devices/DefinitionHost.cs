@@ -149,7 +149,7 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
                 starting = Task.Run(StartAsync);
             }
         }
-        catch (Exception failure) { Log($"{definition.Name}: starting failed: {failure.Message}", PyLogLevel.Error); }
+        catch (Exception failure) { Report($"starting failed: {failure.Message}", PyLogLevel.Error); }
     }
 
     async Task StartAsync()
@@ -171,7 +171,7 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
                 status = Failed;
                 error = failure.Message;
             }
-            Log($"{definition.Name}: starting failed: {failure.Message}", PyLogLevel.Error);
+            Report($"starting failed: {failure.Message}", PyLogLevel.Error);
         }
         foreach (var entity in all) Publish(entity);
     }
@@ -214,14 +214,14 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
                 return left > TimeSpan.Zero ? left : TimeSpan.Zero;
             }
             try { stopping.Cancel(); }
-            catch (Exception failure) { Log($"{definition.Name}: a cancellation callback failed: {failure.Message}", PyLogLevel.Warn); }
+            catch (Exception failure) { Report($"a cancellation callback failed: {failure.Message}", PyLogLevel.Warn); }
             foreach (var handle in following.Concat(ticking))
                 try { handle.Dispose(); }
-                catch (Exception failure) { Log($"{definition.Name}: ending a timer or track failed: {failure.Message}", PyLogLevel.Warn); }
+                catch (Exception failure) { Report($"ending a timer or track failed: {failure.Message}", PyLogLevel.Warn); }
             if (start == null) return;
             if (!await UserScript.Drain([start], Left()))
             {
-                Log($"{definition.Name}: Start() did not finish within {Seconds()} s of stopping; Stop() is not called", PyLogLevel.Warn);
+                Report($"Start() did not finish within {Seconds()} s of stopping; Stop() is not called", PyLogLevel.Warn);
                 return;
             }
             await UserScript.Drain([.. ticking.Select(timer => timer.Loop)], Left());
@@ -232,9 +232,9 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
                 if (root != null) await StopOne(root);
             });
             if (!await UserScript.Drain([stops], Left()))
-                Log($"{definition.Name}: Stop() did not finish within {Seconds()} s; unloading without waiting for it", PyLogLevel.Warn);
+                Report($"Stop() did not finish within {Seconds()} s; unloading without waiting for it", PyLogLevel.Warn);
         }
-        catch (Exception failure) { Log($"{definition.Name}: stopping failed: {failure.Message}", PyLogLevel.Error); }
+        catch (Exception failure) { Report($"stopping failed: {failure.Message}", PyLogLevel.Error); }
         finally
         {
             Manager.Entities.Leave(this);
@@ -248,7 +248,7 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
     async Task StopOne(SharpComponent component)
     {
         try { await component.Stop(); }
-        catch (Exception failure) { Log($"{definition.Name}: stopping failed: {failure.Message}", PyLogLevel.Error); }
+        catch (Exception failure) { Report($"stopping failed: {failure.Message}", PyLogLevel.Error); }
     }
 
     static string Seconds() => UserScript.RunDrainTimeout.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
@@ -316,19 +316,31 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
             catch (Exception failure) { CallbackFailed("an entity callback", failure, token); return Task.CompletedTask; }
             return Task.Run(() => Callback("an entity callback", () => action(change), token));
         }
+        lock (gate) if (stopped != null) return Nothing;
+        // Subscribing calls into Python, which waits for the GIL: never under the lock, which a publish from a thread
+        // holding the GIL takes. A stop in between ends the track here, as it would have in the stop.
+        var registration = Manager.DependencyTracking.TrackDelegate(entityId, script, Changed);
+        IDisposable? handle = null;
+        handle = new Handle(() => { registration.Dispose(); lock (gate) tracks.Remove(handle!); });
         lock (gate)
-        {
-            if (stopped != null) return Nothing;
-            var registration = Manager.DependencyTracking.TrackDelegate(entityId, script, Changed);
-            IDisposable? handle = null;
-            handle = new Handle(() => { registration.Dispose(); lock (gate) tracks.Remove(handle!); });
-            tracks.Add(handle);
-            return handle;
-        }
+            if (stopped == null)
+            {
+                tracks.Add(handle);
+                return handle;
+            }
+        handle.Dispose();
+        return Nothing;
     }
 
     /// <inheritdoc/>
     public void Log(string message, PyLogLevel level) => PyInterop.Log((int)level, message);
+
+    // The host's own reports of failures: a log that fails must not stop a timer or skip a publish.
+    void Report(string message, PyLogLevel level)
+    {
+        try { Log($"{definition.Name}: {message}", level); }
+        catch { }
+    }
 
     async Task Callback(string what, Func<Task> action, CancellationToken token)
     {
@@ -340,7 +352,7 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
     void CallbackFailed(string what, Exception failure, CancellationToken token)
     {
         if (failure is OperationCanceledException && token.IsCancellationRequested) return;
-        Log($"{definition.Name}: {what} failed: {failure.Message}", PyLogLevel.Error);
+        Report($"{what} failed: {failure.Message}", PyLogLevel.Error);
     }
 
     string UniqueId(SharpEntity entity) => $"{definition.Id}:{entity.Key}";
