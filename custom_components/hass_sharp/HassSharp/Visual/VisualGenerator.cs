@@ -92,7 +92,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     /// or a node's output has as the graph resolves it (an entity trigger's <c>entity_id:&lt;domain&gt;</c>), closed over
     /// refinement chains, <c>assignableTo</c> and element types. A type left out of the type lists (<c>listed: false</c>,
     /// the entity enums) is kept only when so named or resolved, and an entity id's members only for the domains whose
-    /// <c>entity_id:&lt;domain&gt;</c> is such a type. Every other section is kept whole. Built from the catalog root
+    /// <c>entity_id:&lt;domain&gt;</c> is such a type. <c>entityDomains</c> is kept only for an entity definition's graph (one
+    /// with a <c>definition</c>), which also carries that definition. Every other section is kept whole. Built from the catalog root
     /// only, so service schemas never reach it (D2).
     /// </summary>
     public static JsonObject EmbeddedCatalog(JsonObject graph,VisualCatalogSnapshot snapshot)
@@ -122,6 +123,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         foreach(var (key,value) in root) {
             if(key=="nodes")catalog[key]=nodes;
             else if(key=="types")catalog[key]=new JsonObject(types.Where(t=>used.Contains(t.Key)).Select(t=>KeyValuePair.Create(t.Key,t.Value?.DeepClone())));
+            // The entity domains only an entity definition's graph reads: an automation's source never carries them.
+            else if(key=="entityDomains"&&graph["definition"] is not JsonObject)continue;
             else if(key!="triggerOutputs"||kinds.Contains("trigger"))catalog[key]=value?.DeepClone();
         }
         if((catalog["parametricTypes"] as JsonObject)?["entity_id"] is JsonObject entity&&entity["members"] is JsonObject members) {

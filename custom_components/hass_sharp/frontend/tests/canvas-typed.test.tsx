@@ -386,7 +386,8 @@ it('preserves declared input labels when source-derived custom CLR Boolean outpu
   const el = host(),
     catalog = richCatalogFixture.catalog as unknown as VisualCatalogSnapshot
   let graph = structuredClone(richCatalogFixture.cases[0].graph) as Graph
-  const predicateKind = Object.entries(catalog.nodes).find(([, spec]) => spec.label === 'Is on')![0]
+  // The node library's Is on, not the built-in one of that name.
+  const predicateKind = Object.entries(catalog.nodes).find(([kind, spec]) => spec.label === 'Is on' && kind.startsWith('library:'))![0]
   graph = addNode(graph, predicateKind, 'predicate', catalog)
   graph = addNode(graph, 'if', 'if', catalog)
   graph = connectNodes(graph, 'consume', 'predicate', undefined, catalog)

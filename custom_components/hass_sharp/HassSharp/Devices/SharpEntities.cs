@@ -120,6 +120,9 @@ internal static class SharpDomains
         (typeof(SharpSwitch), "switch"),
     ];
 
+    /// <summary>Each typed entity base and its domain, as the catalog's <c>entityDomains</c> describes them.</summary>
+    internal static IReadOnlyList<(Type Type, string Domain)> All => Typed;
+
     /// <summary>The domain of the nearest typed entity <paramref name="type"/> derives from, such as <c>switch</c>; null for any other type.</summary>
     public static string? Of(Type type)
     {

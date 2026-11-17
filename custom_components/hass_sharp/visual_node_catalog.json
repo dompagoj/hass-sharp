@@ -1680,6 +1680,373 @@
       "runtimeVersions": [
         5
       ]
+    },
+    "entity_state": {
+      "label": "State",
+      "category": "Entity",
+      "description": "Work out the state of one of this definition's entities from the values connected to it; it is worked out again each time an entity those values read changes.",
+      "root": true,
+      "documents": [
+        "entity"
+      ],
+      "minGraphVersion": 5,
+      "config": {
+        "entity": {
+          "type": "string",
+          "required": true,
+          "description": "The entity of this definition whose state this works out, by its key.",
+          "label": "Entity"
+        },
+        "trackHistory": {
+          "type": "boolean",
+          "default": false,
+          "description": "Record each time the state is worked out, with its trace.",
+          "label": "Track in run history"
+        }
+      },
+      "inputs": {},
+      "outputs": {},
+      "dynamicInputs": "entity",
+      "execution": [],
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "derived",
+        "template",
+        "compute"
+      ]
+    },
+    "entity_command": {
+      "label": "When commanded",
+      "category": "Entity",
+      "description": "Run the steps after it when Home Assistant gives one of this definition's entities a command, such as turning a switch on.",
+      "root": true,
+      "documents": [
+        "entity"
+      ],
+      "minGraphVersion": 5,
+      "config": {
+        "entity": {
+          "type": "string",
+          "required": true,
+          "description": "The entity of this definition that takes the command, by its key.",
+          "label": "Entity"
+        },
+        "command": {
+          "type": "string",
+          "required": true,
+          "description": "The command to handle, such as turn_on or turn_off.",
+          "label": "Command"
+        },
+        "trackHistory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Record each run and its trace.",
+          "label": "Track in run history"
+        }
+      },
+      "inputs": {},
+      "outputs": {},
+      "execution": [
+        "next"
+      ],
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "turn on",
+        "turn off",
+        "command",
+        "action"
+      ]
+    },
+    "entity_setup": {
+      "label": "When started",
+      "category": "Entity",
+      "description": "Run the steps after it once each time the definition starts, such as to set its entities' first states.",
+      "root": true,
+      "singleton": true,
+      "documents": [
+        "entity"
+      ],
+      "minGraphVersion": 5,
+      "config": {
+        "trackHistory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Record each run and its trace.",
+          "label": "Track in run history"
+        }
+      },
+      "inputs": {},
+      "outputs": {},
+      "execution": [
+        "next"
+      ],
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "setup",
+        "start",
+        "initial"
+      ]
+    },
+    "set_entity_state": {
+      "label": "Set state",
+      "category": "Entity",
+      "description": "Set the state of one of this definition's entities to the values connected to it.",
+      "documents": [
+        "entity"
+      ],
+      "minGraphVersion": 5,
+      "config": {
+        "entity": {
+          "type": "string",
+          "required": true,
+          "description": "The entity of this definition to set, by its key.",
+          "label": "Entity"
+        }
+      },
+      "inputs": {},
+      "outputs": {},
+      "dynamicInputs": "entity",
+      "execution": [
+        "next"
+      ],
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "update",
+        "publish"
+      ]
+    },
+    "set_entity_available": {
+      "label": "Set available",
+      "category": "Entity",
+      "description": "Mark one of this definition's entities as available or unavailable in Home Assistant.",
+      "documents": [
+        "entity"
+      ],
+      "minGraphVersion": 5,
+      "config": {
+        "entity": {
+          "type": "string",
+          "required": true,
+          "description": "The entity of this definition to mark, by its key.",
+          "label": "Entity"
+        }
+      },
+      "inputs": {
+        "available": {
+          "types": [
+            "boolean"
+          ],
+          "required": true,
+          "default": {
+            "kind": "literal",
+            "type": "boolean",
+            "value": true
+          },
+          "description": "True for available, false for unavailable.",
+          "label": "Available"
+        }
+      },
+      "outputs": {},
+      "execution": [
+        "next"
+      ],
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "unavailable",
+        "offline",
+        "online"
+      ]
+    },
+    "setting": {
+      "label": "Setting",
+      "category": "Entity",
+      "description": "The value of one of this definition's settings, such as a threshold or a host name.",
+      "pure": true,
+      "documents": [
+        "entity"
+      ],
+      "minGraphVersion": 5,
+      "config": {
+        "key": {
+          "type": "string",
+          "required": true,
+          "description": "The setting to read, by its key.",
+          "label": "Setting"
+        }
+      },
+      "inputs": {},
+      "outputs": {
+        "value": {
+          "type": "",
+          "description": "The setting's value, of the setting's own type.",
+          "label": "Value"
+        }
+      },
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "option",
+        "parameter",
+        "configuration"
+      ]
+    },
+    "entity_is": {
+      "label": "Is on",
+      "category": "Hass",
+      "description": "True when an entity has a given state: on, unless you choose another, such as home or open.",
+      "pure": true,
+      "minGraphVersion": 5,
+      "config": {},
+      "inputs": {
+        "entity": {
+          "types": [
+            "entity_id"
+          ],
+          "required": true,
+          "description": "The entity to check. In an entity definition's graph, choose it here rather than connecting it, so that a State reading it is worked out again when it changes.",
+          "label": "Entity"
+        },
+        "state": {
+          "types": [
+            "string"
+          ],
+          "required": true,
+          "default": {
+            "kind": "literal",
+            "type": "string",
+            "value": "on"
+          },
+          "description": "The state to compare with, as Home Assistant stores it, such as on, off or home.",
+          "label": "State"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "boolean",
+          "description": "True when the entity has that state; false when it has another or does not exist.",
+          "label": "Result"
+        }
+      },
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "state is",
+        "entity is",
+        "has state",
+        "is off"
+      ]
+    },
+    "entity_current": {
+      "label": "Current state",
+      "category": "Hass",
+      "description": "An entity's current state and attributes, read each time a step uses it.",
+      "pure": true,
+      "minGraphVersion": 5,
+      "config": {},
+      "inputs": {
+        "entity": {
+          "types": [
+            "entity_id"
+          ],
+          "required": true,
+          "description": "The entity to read. In an entity definition's graph, choose it here rather than connecting it, so that a State reading it is worked out again when it changes.",
+          "label": "Entity"
+        }
+      },
+      "outputs": {
+        "value": {
+          "type": "global::HassSharp.EntityStateSnapshot",
+          "description": "The entity's id, state, attributes and change times.",
+          "label": "Entity state"
+        }
+      },
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "read entity",
+        "attributes",
+        "state of"
+      ]
+    }
+  },
+  "entityDomains": {
+    "binary_sensor": {
+      "label": "Binary sensor",
+      "state": {
+        "is_on": {
+          "types": [
+            "boolean"
+          ],
+          "label": "On"
+        }
+      },
+      "commands": {},
+      "options": {}
+    },
+    "sensor": {
+      "label": "Sensor",
+      "state": {
+        "value": {
+          "types": [
+            "number",
+            "string"
+          ],
+          "label": "Value"
+        }
+      },
+      "commands": {},
+      "options": {
+        "unit": {
+          "type": "string",
+          "label": "Unit"
+        },
+        "stateClass": {
+          "type": "string",
+          "enum": [
+            "measurement",
+            "total",
+            "total_increasing"
+          ],
+          "label": "State class"
+        },
+        "options": {
+          "type": "array",
+          "label": "Options"
+        }
+      }
+    },
+    "switch": {
+      "label": "Switch",
+      "state": {
+        "is_on": {
+          "types": [
+            "boolean"
+          ],
+          "label": "On"
+        }
+      },
+      "commands": {
+        "turn_on": {
+          "label": "Turn on"
+        },
+        "turn_off": {
+          "label": "Turn off"
+        }
+      },
+      "options": {}
     }
   },
   "triggerOutputs": {

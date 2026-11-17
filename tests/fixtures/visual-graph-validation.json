@@ -32377,5 +32377,1615 @@
     "inputId": "trackHistory",
     "contains": "true or false",
     "messages": ["Track in run history must be true or false"]
+  },
+  {
+    "name": "entity graph: derived binary sensor",
+    "graph": {
+      "version": 5,
+      "name": "Any motion",
+      "nodes": [
+        {
+          "id": "a",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.motion_a"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          },
+          "label": "Is on ▸ motion A"
+        },
+        {
+          "id": "b",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.motion_b"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          },
+          "label": "Is on ▸ motion B"
+        },
+        {
+          "id": "or",
+          "kind": "or",
+          "config": {
+            "left": {
+              "kind": "unset"
+            },
+            "right": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "any_motion"
+          },
+          "label": "State ▸ any motion"
+        }
+      ],
+      "edges": [
+        {
+          "id": "a.value:or.left",
+          "kind": "data",
+          "source": "a",
+          "target": "or",
+          "sourcePort": "value",
+          "targetPort": "left"
+        },
+        {
+          "id": "b.value:or.right",
+          "kind": "data",
+          "source": "b",
+          "target": "or",
+          "sourcePort": "value",
+          "targetPort": "right"
+        },
+        {
+          "id": "or.value:s.is_on",
+          "kind": "data",
+          "source": "or",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "any_motion",
+            "domain": "binary_sensor",
+            "name": "Any motion"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "entity graph: empty graph is valid",
+    "graph": {
+      "version": 5,
+      "name": "Nothing yet",
+      "nodes": [],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": [
+          {
+            "key": "delay",
+            "type": "number"
+          }
+        ]
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "entity graph: trigger root sets state",
+    "graph": {
+      "version": 5,
+      "name": "Polled door",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "ha",
+            "trigger": {
+              "trigger": "time_pattern",
+              "minutes": "/5"
+            }
+          }
+        },
+        {
+          "id": "is",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.door"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        },
+        {
+          "id": "set",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "door"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:set",
+          "source": "t",
+          "target": "set",
+          "port": "next"
+        },
+        {
+          "id": "is.value:set.is_on",
+          "kind": "data",
+          "source": "is",
+          "target": "set",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "entity graph: command and setup roots",
+    "graph": {
+      "version": 5,
+      "name": "Relay",
+      "nodes": [
+        {
+          "id": "on",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "turn_on"
+          }
+        },
+        {
+          "id": "on_set",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "relay",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "off",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "turn_off"
+          }
+        },
+        {
+          "id": "off_set",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "relay",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": false
+            }
+          }
+        },
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "available",
+          "kind": "set_entity_available",
+          "config": {
+            "entity": "relay",
+            "available": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "first",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "relay",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": false
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "on:next:on_set",
+          "source": "on",
+          "target": "on_set",
+          "port": "next"
+        },
+        {
+          "id": "off:next:off_set",
+          "source": "off",
+          "target": "off_set",
+          "port": "next"
+        },
+        {
+          "id": "setup:next:available",
+          "source": "setup",
+          "target": "available",
+          "port": "next"
+        },
+        {
+          "id": "available:next:first",
+          "source": "available",
+          "target": "first",
+          "port": "next"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "relay",
+            "domain": "switch"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "entity graph: sensor state from a setting",
+    "graph": {
+      "version": 5,
+      "name": "Offset",
+      "nodes": [
+        {
+          "id": "k",
+          "kind": "setting",
+          "config": {
+            "key": "offset"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "level"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "k.value:s.value",
+          "kind": "data",
+          "source": "k",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "level",
+            "domain": "sensor"
+          }
+        ],
+        "settings": [
+          {
+            "key": "offset",
+            "type": "number"
+          }
+        ]
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "entity graph: sensor state takes text",
+    "graph": {
+      "version": 5,
+      "name": "Status",
+      "nodes": [
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "status",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "idle"
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "status",
+            "domain": "sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "entity graph: current state feeds a sensor state",
+    "graph": {
+      "version": 5,
+      "name": "Copy",
+      "nodes": [
+        {
+          "id": "cur",
+          "kind": "entity_current",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "sensor.outside_temperature"
+            }
+          }
+        },
+        {
+          "id": "f",
+          "kind": "entity_field",
+          "config": {
+            "field": "state",
+            "type": "number"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "copy"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "cur.value:f.entity",
+          "kind": "data",
+          "source": "cur",
+          "target": "f",
+          "sourcePort": "value",
+          "targetPort": "entity"
+        },
+        {
+          "id": "f.value:s.value",
+          "kind": "data",
+          "source": "f",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "copy",
+            "domain": "sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "entity graph: one state per entity",
+    "graph": {
+      "version": 5,
+      "name": "Two",
+      "nodes": [
+        {
+          "id": "s1",
+          "kind": "entity_state",
+          "config": {
+            "entity": "front",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "s2",
+          "kind": "entity_state",
+          "config": {
+            "entity": "back",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": false
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "front",
+            "domain": "binary_sensor"
+          },
+          {
+            "key": "back",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "entity graph: a setting of another type is refused by a state input",
+    "graph": {
+      "version": 5,
+      "name": "Mode",
+      "nodes": [
+        {
+          "id": "k",
+          "kind": "setting",
+          "config": {
+            "key": "mode"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "door"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "k.value:s.is_on",
+          "kind": "data",
+          "source": "k",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": [
+          {
+            "key": "mode",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "is_on",
+    "messages": [
+      "On accepts True/False, not Text"
+    ]
+  },
+  {
+    "name": "entity graph: state input of the wrong type",
+    "graph": {
+      "version": 5,
+      "name": "Wrong",
+      "nodes": [
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "door",
+            "is_on": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "is_on",
+    "messages": [
+      "On accepts True/False, not Text"
+    ]
+  },
+  {
+    "name": "entity graph: state input left unset",
+    "graph": {
+      "version": 5,
+      "name": "Unset",
+      "nodes": [
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "door"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "is_on",
+    "messages": [
+      "On is required"
+    ]
+  },
+  {
+    "name": "entity graph: step not reached from a root",
+    "graph": {
+      "version": 5,
+      "name": "Loose",
+      "nodes": [
+        {
+          "id": "set",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "door",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "set",
+    "messages": [
+      "Set state is not connected into the flow; connect a step to its execution input"
+    ],
+    "codes": [
+      "node.unreachable"
+    ]
+  },
+  {
+    "name": "entity graph: a connected entity read by a step is not a dynamic source",
+    "graph": {
+      "version": 5,
+      "name": "Step reads",
+      "nodes": [
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "entity_id",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.door"
+            }
+          }
+        },
+        {
+          "id": "is",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        },
+        {
+          "id": "set",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "door"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:set",
+          "source": "setup",
+          "target": "set",
+          "port": "next"
+        },
+        {
+          "id": "c.value:is.entity",
+          "kind": "data",
+          "source": "c",
+          "target": "is",
+          "sourcePort": "value",
+          "targetPort": "entity"
+        },
+        {
+          "id": "is.value:set.is_on",
+          "kind": "data",
+          "source": "is",
+          "target": "set",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "code definition.invalid: unknown domain",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "lamp",
+            "domain": "light"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "messages": [
+      "Entity lamp has the domain light, which a graph cannot define; choose Binary sensor, Sensor or Switch"
+    ],
+    "codes": [
+      "definition.invalid"
+    ]
+  },
+  {
+    "name": "code definition.invalid: repeated key",
+    "graph": {
+      "version": 5,
+      "name": "Doors",
+      "nodes": [],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          },
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "messages": [
+      "Two entities have the key door; give each a key of its own"
+    ],
+    "codes": [
+      "definition.invalid"
+    ]
+  },
+  {
+    "name": "code definition.invalid: repeated setting key",
+    "graph": {
+      "version": 5,
+      "name": "Settings",
+      "nodes": [],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": [
+          {
+            "key": "delay",
+            "type": "number"
+          },
+          {
+            "key": "delay",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "messages": [
+      "Two settings have the key delay; give each a key of its own"
+    ],
+    "codes": [
+      "definition.invalid"
+    ]
+  },
+  {
+    "name": "code definition.invalid: setting of an unknown type",
+    "graph": {
+      "version": 5,
+      "name": "Settings",
+      "nodes": [],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": [
+          {
+            "key": "when",
+            "type": "integer"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "messages": [
+      "Setting when has the type integer, which a graph cannot read; choose Text, Number or True/False"
+    ],
+    "codes": [
+      "definition.invalid"
+    ]
+  },
+  {
+    "name": "code definition.invalid: entity without a domain",
+    "graph": {
+      "version": 5,
+      "name": "Broken",
+      "nodes": [],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "messages": [
+      "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type"
+    ],
+    "codes": [
+      "definition.invalid"
+    ]
+  },
+  {
+    "name": "code definition.invalid: definition is not an object",
+    "graph": {
+      "version": 5,
+      "name": "Not an object",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ],
+      "definition": "door"
+    },
+    "valid": false,
+    "messages": [
+      "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type"
+    ],
+    "codes": [
+      "definition.invalid"
+    ]
+  },
+  {
+    "name": "code node.document: entity node in an automation",
+    "graph": {
+      "version": 5,
+      "name": "Automation",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "available",
+          "kind": "set_entity_available",
+          "config": {
+            "entity": "door",
+            "available": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:available",
+          "source": "t",
+          "target": "available",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "messages": [
+      "Set available only works in the graph of an entity definition; delete it from this automation",
+      "When started only works in the graph of an entity definition; delete it from this automation"
+    ],
+    "codes": [
+      "node.document",
+      "node.document"
+    ]
+  },
+  {
+    "name": "automation: entity node without a trigger",
+    "graph": {
+      "version": 5,
+      "name": "Automation",
+      "nodes": [
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "door"
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "messages": [
+      "At least one trigger is required",
+      "State only works in the graph of an entity definition; delete it from this automation"
+    ],
+    "codes": [
+      "graph.noTrigger",
+      "node.document"
+    ]
+  },
+  {
+    "name": "code node.singleton: two setups",
+    "graph": {
+      "version": 5,
+      "name": "Setups",
+      "nodes": [
+        {
+          "id": "b",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "a",
+          "kind": "entity_setup",
+          "config": {}
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "b",
+    "messages": [
+      "A graph can have only one When started step; delete this one"
+    ],
+    "codes": [
+      "node.singleton"
+    ]
+  },
+  {
+    "name": "code root.incoming: order wire into a state",
+    "graph": {
+      "version": 5,
+      "name": "Wired",
+      "nodes": [
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "door",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:s",
+          "source": "setup",
+          "target": "s",
+          "port": "next"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "s",
+    "messages": [
+      "State starts a flow of its own, so no step order wire can lead into it; remove this wire"
+    ],
+    "codes": [
+      "root.incoming"
+    ]
+  },
+  {
+    "name": "code definition.unknownEntity",
+    "graph": {
+      "version": 5,
+      "name": "Window",
+      "nodes": [
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "window"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "s",
+    "inputId": "entity",
+    "messages": [
+      "This definition has no entity window; choose one of its entities or add it"
+    ],
+    "codes": [
+      "definition.unknownEntity"
+    ]
+  },
+  {
+    "name": "code definition.unknownCommand",
+    "graph": {
+      "version": 5,
+      "name": "Toggle",
+      "nodes": [
+        {
+          "id": "on",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "turn_on"
+          }
+        },
+        {
+          "id": "off",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "turn_off"
+          }
+        },
+        {
+          "id": "toggle",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "toggle"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "relay",
+            "domain": "switch"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "toggle",
+    "inputId": "command",
+    "messages": [
+      "Entity relay has no command toggle; choose Turn on or Turn off"
+    ],
+    "codes": [
+      "definition.unknownCommand"
+    ]
+  },
+  {
+    "name": "code definition.unknownCommand: entity that takes no commands",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "c",
+          "kind": "entity_command",
+          "config": {
+            "entity": "door",
+            "command": "turn_on"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "c",
+    "inputId": "command",
+    "messages": [
+      "Entity door takes no commands; choose a switch entity instead"
+    ],
+    "codes": [
+      "definition.unknownCommand"
+    ]
+  },
+  {
+    "name": "code setting.unknown",
+    "graph": {
+      "version": 5,
+      "name": "Missing",
+      "nodes": [
+        {
+          "id": "k",
+          "kind": "setting",
+          "config": {
+            "key": "missing"
+          }
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "level"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "k.value:s.value",
+          "kind": "data",
+          "source": "k",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "level",
+            "domain": "sensor"
+          }
+        ],
+        "settings": [
+          {
+            "key": "offset",
+            "type": "number"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "nodeId": "k",
+    "inputId": "key",
+    "messages": [
+      "This definition has no setting missing; choose one of its settings or add it"
+    ],
+    "codes": [
+      "setting.unknown"
+    ]
+  },
+  {
+    "name": "code state.duplicate",
+    "graph": {
+      "version": 5,
+      "name": "Twice",
+      "nodes": [
+        {
+          "id": "s2",
+          "kind": "entity_state",
+          "config": {
+            "entity": "door",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": false
+            }
+          }
+        },
+        {
+          "id": "s1",
+          "kind": "entity_state",
+          "config": {
+            "entity": "door",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "s2",
+    "inputId": "entity",
+    "messages": [
+      "Entity door already has a State step; delete this one or choose another entity"
+    ],
+    "codes": [
+      "state.duplicate"
+    ]
+  },
+  {
+    "name": "code command.duplicate",
+    "graph": {
+      "version": 5,
+      "name": "Twice",
+      "nodes": [
+        {
+          "id": "on2",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "turn_on"
+          }
+        },
+        {
+          "id": "on1",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "turn_on"
+          }
+        },
+        {
+          "id": "off",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "turn_off"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "relay",
+            "domain": "switch"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "on2",
+    "inputId": "command",
+    "messages": [
+      "Entity relay already has a When commanded step for Turn on; delete this one or choose another command"
+    ],
+    "codes": [
+      "command.duplicate"
+    ]
+  },
+  {
+    "name": "code state.dynamicSource: connected entity",
+    "graph": {
+      "version": 5,
+      "name": "Wired entity",
+      "nodes": [
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "entity_id",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.door"
+            }
+          }
+        },
+        {
+          "id": "is",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        },
+        {
+          "id": "not",
+          "kind": "not",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "closed"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "c.value:is.entity",
+          "kind": "data",
+          "source": "c",
+          "target": "is",
+          "sourcePort": "value",
+          "targetPort": "entity"
+        },
+        {
+          "id": "is.value:not.value",
+          "kind": "data",
+          "source": "is",
+          "target": "not",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "not.value:s.is_on",
+          "kind": "data",
+          "source": "not",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "closed",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "messages": [
+      "Is on gets its entity over a wire, so State is not worked out again when that entity changes; choose the entity in Entity instead"
+    ],
+    "codes": [
+      "state.dynamicSource"
+    ]
+  },
+  {
+    "name": "code command.unhandled: switch without flows",
+    "graph": {
+      "version": 5,
+      "name": "Relay",
+      "nodes": [],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "relay",
+            "domain": "switch"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "messages": [
+      "Switch relay does nothing on Turn off; add a When commanded step for it",
+      "Switch relay does nothing on Turn on; add a When commanded step for it"
+    ],
+    "codes": [
+      "command.unhandled",
+      "command.unhandled"
+    ]
+  },
+  {
+    "name": "automation: entity_is and entity_current feed a condition",
+    "graph": {
+      "version": 5,
+      "name": "Kitchen",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "is",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.kitchen"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        },
+        {
+          "id": "i",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "cur",
+          "kind": "entity_current",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "sensor.outside_temperature"
+            }
+          }
+        },
+        {
+          "id": "f",
+          "kind": "entity_field",
+          "config": {
+            "field": "state",
+            "type": "string"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:i",
+          "source": "t",
+          "target": "i",
+          "port": "next"
+        },
+        {
+          "id": "i:true:l",
+          "source": "i",
+          "target": "l",
+          "port": "true"
+        },
+        {
+          "id": "is.value:i.value",
+          "kind": "data",
+          "source": "is",
+          "target": "i",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "cur.value:f.entity",
+          "kind": "data",
+          "source": "cur",
+          "target": "f",
+          "sourcePort": "value",
+          "targetPort": "entity"
+        },
+        {
+          "id": "f.value:l.value",
+          "kind": "data",
+          "source": "f",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true,
+    "noDiagnostics": true
   }
 ]

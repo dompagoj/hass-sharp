@@ -189,10 +189,12 @@ class HassSharpTool(llm.Tool):
                 return response
             catalog = response["result"]["catalog"]
             if operation == "get_node_schema":
-                return await node_schema(service_api, catalog, response["result"].get("generation"), args) if args else response
+                if args:
+                    return await node_schema(service_api, catalog, response["result"].get("generation"), args)
+                return {**response, "result": {**response["result"], "catalog": automation_catalog(catalog)}}
             examples = json.loads(await hass.async_add_executor_job(Path(__file__).with_name("authoring_examples.json").read_text))
             return {"version": 1, "ok": True, "result": {"graphVersions": [5], "envelopeVersion": 1, "minimumHomeAssistant": MINIMUM_HA,
-                    "catalog": catalog, "generation": response["result"]["generation"], "guidance": PROMPT,
+                    "catalog": automation_catalog(catalog), "generation": response["result"]["generation"], "guidance": PROMPT,
                     "semantics": SEMANTICS, "examples": examples}}
         if operation == "discover":
             return await discover(hass, service_api, **args)
@@ -226,6 +228,15 @@ class HassSharpTool(llm.Tool):
             for document in [data] if operation == "read" else [data.get("document")] if operation == "save" else []:
                 drop_node_sizes(document)
         return result
+
+
+def automation_catalog(catalog):
+    """The catalog without the node kinds an automation cannot use (documents that leave automation out, such as an
+    entity definition's own steps). A copy: the server's catalog is left as it is, and get_node_schema of such a kind
+    still answers."""
+    nodes = {kind: node for kind, node in (catalog.get("nodes") or {}).items()
+             if not isinstance(node, dict) or not isinstance(node.get("documents"), list) or "automation" in node["documents"]}
+    return {**catalog, "nodes": nodes}
 
 
 def summary(document):

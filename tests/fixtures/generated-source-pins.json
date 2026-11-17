@@ -3,6 +3,7 @@
   "Warn log level is supported": "d3a83aae33045026260f0f72c27eaf8466f6755f7c56020223d3c01d5a83e0d6",
   "a time kept by a trigger that is no longer daily is not checked": "6e04328dc8cddfc67c5e76bc8e2b15862de305ea2128df13dd4ae8c36ee90423",
   "ancestor snapshot can feed branch": "856aef44668b51e227c2a8437aa724affb7321085b63cb826c733f912127ed67",
+  "automation: entity_is and entity_current feed a condition": "c25a57a103a4394420fb88e326acdf2766a3bb725b4e1166b5eb82f6e83f7d8d",
   "bounded reconvergent condition DAG": "a07d06bd2b1aac6e57e4048ef354295341bd20cbf2e39d868fe16552560c6d75",
   "compare: at least with a number on the left and a CLR long on the right": "0e1b9a8250cc49cee2c3d114109b593d183cbf5cf5a22fbac99a2b1b348de3e0",
   "compare: at most with a nullable CLR int on the left and a number on the right": "777fe3bf572f9e8b7cdc6fb05bf71bba7397734b2c9d27a40c3267a95dc80824",

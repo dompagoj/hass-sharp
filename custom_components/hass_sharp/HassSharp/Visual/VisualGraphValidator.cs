@@ -37,6 +37,8 @@ public static class VisualGraphValidator
         "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
         "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult",
         "flow.pure", "pure.unused", "custom.signature", "property.unset", "property.unknown",
+        "definition.invalid", "definition.unknownEntity", "definition.unknownCommand", "node.document", "node.singleton", "root.incoming",
+        "setting.unknown", "state.duplicate", "command.duplicate", "state.dynamicSource", "command.unhandled",
     ];
 
     /// <summary>
@@ -362,6 +364,40 @@ public static class VisualGraphValidator
         }
         /// <summary>A Repeat count typed in above the loop's Maximum iterations.</summary>
         internal static string RepeatCount(string label, double max, string maxLabel) => $"{label} must be at most {Number(max)}, as {maxLabel} is {Number(max)}";
+        // An entity definition's graph: its definition (the entities and settings composed into it) and its own steps.
+        /// <summary>A definition that is not an object of entities and settings of the shape a graph reads.</summary>
+        internal const string DefinitionUnreadable = "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type";
+        /// <summary>An entity of a domain the catalog's <c>entityDomains</c> does not describe.</summary>
+        internal static string UnsupportedDomain(string key, string domain, IEnumerable<string> labels) => $"Entity {Name(key)} has the domain {Name(domain)}, which a graph cannot define; choose {Or(labels)}";
+        /// <summary>Two entities, or two settings, of one key.</summary>
+        internal static string RepeatedKey(string items, string key) => $"Two {items} have the key {Name(key)}; give each a key of its own";
+        /// <summary>A setting of a type a graph cannot read.</summary>
+        internal static string UnsupportedSettingType(string key, string type, IEnumerable<string> labels) => $"Setting {Name(key)} has the type {Name(type)}, which a graph cannot read; choose {Or(labels)}";
+        /// <summary>A node of a kind only another kind of graph takes.</summary>
+        internal static string WrongDocument(string step, string document) => document == "automation"
+            ? $"{step} only works in the graph of an entity definition; delete it from this automation"
+            : $"{step} only works in an automation; delete it from this entity definition";
+        /// <summary>A second node of a kind a graph may hold once.</summary>
+        internal static string Singleton(string label) => $"A graph can have only one {label} step; delete this one";
+        /// <summary>A step order wire into a node that starts a flow of its own (other than a trigger).</summary>
+        internal static string RootIncoming(string step) => $"{step} starts a flow of its own, so no step order wire can lead into it; remove this wire";
+        /// <summary>A step naming an entity its definition does not have.</summary>
+        internal static string UnknownEntity(string key, string label) => Trimmed(key).Length == 0 ? $"Choose one of this definition's entities in {label}" : $"This definition has no entity {Name(key)}; choose one of its entities or add it";
+        /// <summary>A When commanded step naming a command its entity's domain does not have.</summary>
+        internal static string UnknownCommand(string key, string command, IReadOnlyList<string> commands, IReadOnlyList<string> commanded, string label) =>
+            commands.Count == 0 ? $"Entity {Name(key)} takes no commands; choose {Article(commanded.FirstOrDefault() ?? "")} {Or(commanded)} entity instead"
+            : Trimmed(command).Length == 0 ? $"Choose {Or(commands)} in {label}"
+            : $"Entity {Name(key)} has no command {Name(command)}; choose {Or(commands)}";
+        /// <summary>A Setting node naming a setting its definition does not have.</summary>
+        internal static string UnknownSetting(string key, string label) => Trimmed(key).Length == 0 ? $"Choose one of this definition's settings in {label}" : $"This definition has no setting {Name(key)}; choose one of its settings or add it";
+        /// <summary>A second State step for one entity.</summary>
+        internal static string StateDuplicate(string key, string label) => $"Entity {Name(key)} already has {Article(label)} {label} step; delete this one or choose another entity";
+        /// <summary>A second When commanded step for one entity and command.</summary>
+        internal static string CommandDuplicate(string key, string command, string label) => $"Entity {Name(key)} already has {Article(label)} {label} step for {command}; delete this one or choose another command";
+        /// <summary>An entity reader a State reads whose entity comes over a wire: what the State watches cannot be known.</summary>
+        internal static string DynamicSource(string reader, string state, string input) => $"{reader} gets its entity over a wire, so {state} is not worked out again when that entity changes; choose the entity in {input} instead";
+        /// <summary>A command of an entity no When commanded step handles.</summary>
+        internal static string CommandUnhandled(string domain, string key, string command, string label) => $"{domain} {Name(key)} does nothing on {command}; add {Article(label)} {label} step for it";
     }
 
     sealed class Validation(VisualCatalogSnapshot snapshot)
@@ -470,7 +506,10 @@ public static class VisualGraphValidator
             if (graph.ContainsKey("imports")) Error(null, Words.Imports);
             if (graph.ContainsKey("members")) Error(null, Words.Members);
             if (graph["nodes"] is not JsonArray ns || graph["edges"] is not JsonArray es) { Error(null, "Nodes and edges arrays are required", code: "graph.shape"); return errors; }
-            if (ns.Count < 1 || OverLimit(Root, graph)) { Error(null, "Graph limit: 1–256 nodes and at most 512 edges", code: "graph.limit"); return errors; }
+            // An entity definition's graph may be empty: the definition is saved with its entities before its logic.
+            document = GraphDocument(graph);
+            if (ns.Count < 1 && document == "automation" || OverLimit(Root, graph)) { Error(null, "Graph limit: 1–256 nodes and at most 512 edges", code: "graph.limit"); return errors; }
+            if (graph.ContainsKey("definition")) Definition(graph["definition"]);
             // The types of the graph's Custom C# nodes join the catalog's; they are compared by their entries alone. Only
             // once the graph's shape and size are known: nothing is resolved for a graph answered with graph.limit.
             if (WithGraphTypes(Root, graph) is var merged && !ReferenceEquals(merged, Root)) snapshot = snapshot.WithRoot(merged);
@@ -508,13 +547,16 @@ public static class VisualGraphValidator
                     if (!ExecutionPorts(node).Contains(port)) Error(source, "Unknown execution port", port: port, code: "port.unknownExecution");
                     if (outgoing[source].Any(e => FlowPort(node, e) == port)) Error(source, "Only one execution edge per port", port: port, code: "port.executionTaken");
                     if (Kind(nodes[target]) == "trigger") Error(target, "Trigger cannot have incoming execution edges", code: "trigger.incoming");
+                    else if (IsRoot(nodes[target], snapshot)) Error(target, Words.RootIncoming(Words.StepName(nodes[target], Spec(nodes[target]))), code: "root.incoming");
                     outgoing[source].Add(edge);
                 }
                 else Error(source, "This wire is neither a step order wire nor a value wire", code: "edge.unknownKind");
             }
             Cycles(outgoing.Values.SelectMany(e => e).ToList(), "Execution"); Cycles(data, "Data");
-            var roots = nodes.Values.Where(n => Kind(n) == "trigger").ToArray();
-            if (roots.Length == 0) Error(null, "At least one trigger is required", code: "graph.noTrigger");
+            // Flows start at the roots: triggers, and an entity graph's State, When commanded and When started. An
+            // automation needs a trigger; an entity graph needs none (a definition may have no logic yet).
+            var roots = nodes.Values.Where(n => IsRoot(n, snapshot)).ToArray();
+            if (document == "automation" && !nodes.Values.Any(n => Kind(n) == "trigger")) Error(null, "At least one trigger is required", code: "graph.noTrigger");
             foreach (var root in roots) Scope(Id(root), []);
             // A value node is never reached by execution; it is a warning when nothing reads it.
             foreach (var (id, node) in nodes)
@@ -534,6 +576,8 @@ public static class VisualGraphValidator
                     // An output whose property is not chosen yet has no type: a wire from it says to choose one. When one is chosen
                     // but cannot be read (a property the value's type lacks), the node itself says so and the wire gets nothing.
                     if (PropertyOf(output) != "" && type == "") { if (Text(Config(source), "property") == "") Error(Id(target), Words.ChooseProperty(Words.StepName(source, Spec(source))), tp, tp, "property.unset"); }
+                    // A Setting whose setting is unknown has no type; the Setting node itself says so.
+                    else if (type == "" && Kind(source) == "setting") { }
                     // A Select property node reads a value whose own type has properties.
                     else if (SelectsProperties(Spec(target), tp) ? TypeProperties(Root, type).Length == 0 : !expected.Any(t => CompatibleTypes(type, t)))
                         Error(Id(target), WrongDomain(target, tp, type) ?? (SelectsProperties(Spec(target), tp) && KnownType(type) ? Words.NoProperties(Root, type) : Words.Incompatible(Root, Prefix(target) + Words.PortLabel(input, tp), type, expected)), tp, tp);
@@ -548,8 +592,69 @@ public static class VisualGraphValidator
                 }
             }
             foreach (var node in nodes.Values) ValidateNode(node);
+            GraphRules();
             return errors;
         }
+        /// <summary>The kind of document the graph is (<see cref="GraphDocument"/>): <c>automation</c> or <c>entity</c>.</summary>
+        string document = "automation";
+        bool EntityGraph => document == "entity";
+        static bool IsText(JsonNode? value) => value is JsonValue v && v.TryGetValue<string>(out _);
+        /// <summary>
+        /// The definition a graph carries: an object with a list of entities, each with a text key and domain, and a list of
+        /// settings, each with a text key and type; each entity of a domain <c>entityDomains</c> describes, each setting of a
+        /// type a setting can have, and no key twice in either list.
+        /// </summary>
+        void Definition(JsonNode? definition)
+        {
+            if (definition is not JsonObject d || d["entities"] is not JsonArray entities || d["settings"] is not JsonArray settings ||
+                !entities.All(e => e is JsonObject o && IsText(o["key"]) && IsText(o["domain"])) || !settings.All(s => s is JsonObject o && IsText(o["key"]) && IsText(o["type"])))
+            { Error(null, Words.DefinitionUnreadable, code: "definition.invalid"); return; }
+            var domains = Root["entityDomains"] as JsonObject ?? [];
+            var labels = domains.Select(p => Text(p.Value, "label", Words.DomainWords(p.Key))).ToList();
+            void Keys(JsonArray items, string name)
+            {
+                var keys = new HashSet<string>(StringComparer.Ordinal); var repeated = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var item in items) if (!keys.Add(Text(item, "key")) && repeated.Add(Text(item, "key"))) Error(null, Words.RepeatedKey(name, Text(item, "key")), code: "definition.invalid");
+            }
+            Keys(entities, "entities"); Keys(settings, "settings");
+            foreach (var entity in entities) if (!domains.ContainsKey(Text(entity, "domain"))) Error(null, Words.UnsupportedDomain(Text(entity, "key"), Text(entity, "domain"), labels), code: "definition.invalid");
+            foreach (var setting in settings) if (!SettingTypes.Contains(Text(setting, "type")))
+                Error(null, Words.UnsupportedSettingType(Text(setting, "key"), Text(setting, "type"), SettingTypes.Select(t => Words.TypeLabel(Root, t))), code: "definition.invalid");
+        }
+        /// <summary>The nodes of a kind, by id (ordinal): when a rule allows one, the first keeps it and each later one is reported.</summary>
+        IEnumerable<JsonObject> OfKind(string kind) => nodes.Values.Where(n => Kind(n) == kind).OrderBy(Id, StringComparer.Ordinal);
+        string KindLabel(string kind) => Text(Root["nodes"]?[kind], "label", Words.KeyWords(kind));
+        /// <summary>
+        /// The rules about the graph as a whole: a kind a graph holds once, and in an entity graph, one State per entity, one
+        /// When commanded per command, a State reading an entity given over a wire, and a command no step handles.
+        /// </summary>
+        void GraphRules()
+        {
+            foreach (var group in nodes.Values.Where(n => IsSingleton(Spec(n))).GroupBy(Kind, StringComparer.Ordinal))
+                foreach (var node in group.OrderBy(Id, StringComparer.Ordinal).Skip(1)) Error(Id(node), Words.Singleton(Words.Name(KindLabel(group.Key))), code: "node.singleton");
+            if (!EntityGraph) return;
+            static string Choice(JsonObject node, string key) => Text(Config(node), key);
+            var states = OfKind("entity_state").Where(n => DefinitionEntity(Root, Choice(n, "entity")) != null).ToList();
+            foreach (var group in states.GroupBy(n => Choice(n, "entity"), StringComparer.Ordinal))
+                foreach (var node in group.Skip(1)) Error(Id(node), Words.StateDuplicate(group.Key, KindLabel("entity_state")), "entity", code: "state.duplicate");
+            var commands = OfKind("entity_command").Where(n => EntityDomain(Root, Choice(n, "entity"))?["commands"] is JsonObject known && known.ContainsKey(Choice(n, "command"))).ToList();
+            foreach (var group in commands.GroupBy(n => (Choice(n, "entity"), Choice(n, "command"))))
+                foreach (var node in group.Skip(1)) Error(Id(node), Words.CommandDuplicate(group.Key.Item1, CommandLabel(group.Key.Item1, group.Key.Item2), KindLabel("entity_command")), "command", code: "command.duplicate");
+            // A State is worked out again when an entity it reads changes; only an entity chosen in a reader can be watched.
+            // The warning is the reader's own, on no input: a wire into it is allowed (connectData), at the cost it names.
+            var readers = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var state in OfKind("entity_state"))
+                foreach (var reader in ValueUpstream(state, nodes, data, Pure))
+                    if (Kind(reader) is "entity_is" or "entity_current" && incoming.ContainsKey((Id(reader), "entity")) && readers.Add(Id(reader)))
+                        errors.Add(new(Id(reader), Words.DynamicSource(Words.StepName(reader, Spec(reader)), Words.StepName(state, Spec(state)), Words.PortLabel(Spec(reader)?["inputs"]?["entity"], "entity")), 2, Code: "state.dynamicSource"));
+            foreach (var entity in DefinitionItems(Root, "entities"))
+                if (EntityDomain(Root, Text(entity, "key")) is { } domain)
+                    foreach (var (command, _) in domain["commands"] as JsonObject ?? [])
+                        if (!commands.Any(n => Choice(n, "entity") == Text(entity, "key") && Choice(n, "command") == command))
+                            errors.Add(new(null, Words.CommandUnhandled(Text(domain, "label", Words.DomainWords(Text(entity, "domain"))), Text(entity, "key"), CommandLabel(Text(entity, "key"), command), KindLabel("entity_command")), 2, Code: "command.unhandled"));
+        }
+        /// <summary>A command as people know it: its label in the entity's domain, else its key in words.</summary>
+        string CommandLabel(string entity, string command) => Text(EntityDomain(Root, entity)?["commands"]?[command], "label", Words.KeyWords(command));
         void Cycles(List<JsonObject> edges, string label)
         {
             var active = new HashSet<string>(); var done = new HashSet<string>();
@@ -708,6 +813,21 @@ public static class VisualGraphValidator
             var cfg = Config(node); var id = Id(node); var kind = Kind(node);
             // A statement-style Custom C# node is reported once, with what to do; nothing else about it is checked.
             if (Text(spec, "dynamicInputs") == "custom" && cfg.ContainsKey("code")) { Error(id, Words.OldCustomCode, "source"); return; }
+            // A kind that lists the documents it works in (an entity definition's steps) is refused in any other.
+            if (spec["documents"] is JsonArray documents && !Strings(documents).Contains(document)) Error(id, Words.WrongDocument(Words.StepName(node, spec), document), code: "node.document");
+            // An entity graph's steps name its definition's entities, their commands and its settings.
+            if (EntityGraph && spec["documents"] is JsonArray && spec["config"]?["entity"] != null && cfg["entity"] is JsonValue ev && ev.TryGetValue<string>(out var entityKey))
+            {
+                if (DefinitionEntity(Root, entityKey) == null) Error(id, Words.UnknownEntity(entityKey, ConfigLabel(spec["config"]?["entity"], "entity")), "entity", code: "definition.unknownEntity");
+                else if (kind == "entity_command" && EntityDomain(Root, entityKey) is { } domain && cfg["command"] is JsonValue cv && cv.TryGetValue<string>(out var command) &&
+                    (domain["commands"] as JsonObject ?? []) is var commands && !commands.ContainsKey(command))
+                {
+                    var commanded = (Root["entityDomains"] as JsonObject ?? []).Where(p => p.Value?["commands"] is JsonObject { Count: > 0 }).Select(p => Text(p.Value, "label", Words.DomainWords(p.Key)).ToLowerInvariant()).ToList();
+                    Error(id, Words.UnknownCommand(entityKey, command, commands.Select(c => Text(c.Value, "label", Words.KeyWords(c.Key))).ToList(), commanded, ConfigLabel(spec["config"]?["command"], "command")), "command", code: "definition.unknownCommand");
+                }
+            }
+            if (EntityGraph && kind == "setting" && cfg["key"] is JsonValue kv && kv.TryGetValue<string>(out var settingKey) && !DefinitionItems(Root, "settings").Any(s => Text(s, "key") == settingKey))
+                Error(id, Words.UnknownSetting(settingKey, ConfigLabel(spec["config"]?["key"], "key")), "key", code: "setting.unknown");
             foreach (var (field, rawRule) in spec["config"]!.AsObject())
             {
                 var rule = rawRule!; var value = cfg[field];

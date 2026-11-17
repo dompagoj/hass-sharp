@@ -31,6 +31,73 @@ public static class VisualNodeCatalog
     internal static bool IsPure(JsonNode? spec) => spec is JsonObject obj && obj["pure"] is JsonValue v && v.TryGetValue<bool>(out var pure) && pure;
     /// <summary>Whether this node is a value node: by its kind, or for a Custom C# node by its signature.</summary>
     internal static bool IsPure(JsonObject node, JsonNode? spec) => Text(spec, "dynamicInputs") == "custom" ? CustomSignature(node, spec)?["pure"] is JsonValue v && v.TryGetValue<bool>(out var pure) && pure : IsPure(spec);
+    static bool Flag(JsonNode? spec, string key) => spec is JsonObject obj && obj[key] is JsonValue v && v.TryGetValue<bool>(out var on) && on;
+    /// <summary>
+    /// Whether the node starts a flow of its own, from which scopes and reachability start: a trigger, or a kind whose
+    /// entry says <c>"root": true</c> (an entity definition's State, When commanded and When started). Mirrored by
+    /// <c>isRoot</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static bool IsRoot(JsonObject node, VisualCatalogSnapshot? snapshot) => Text(node, "kind") == "trigger" || Flag(Spec(node, snapshot), "root");
+    /// <summary>Whether a graph may hold at most one node of the kind (<c>"singleton": true</c>).</summary>
+    internal static bool IsSingleton(JsonNode? spec) => Flag(spec, "singleton");
+    /// <summary>
+    /// The kind of document a graph is: <c>entity</c> when it has an object <c>definition</c> (an entity definition's
+    /// logic, its entities and settings composed into it), else <c>automation</c>.
+    /// </summary>
+    internal static string GraphDocument(JsonObject graph) => graph["definition"] is JsonObject ? "entity" : "automation";
+    /// <summary>The types a graph definition's setting can have, and so the setting's value in its graph.</summary>
+    internal static readonly string[] SettingTypes = ["string", "number", "boolean"];
+    /// <summary>
+    /// The well-formed entries (an object with a text <c>key</c>) of one list of the definition the graph's catalog
+    /// carries (<see cref="WithGraphTypes"/>), the first of each key; empty without one.
+    /// </summary>
+    internal static List<JsonObject> DefinitionItems(JsonObject catalog, string list)
+    {
+        var items = new List<JsonObject>(); var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var raw in (catalog["definition"] as JsonObject)?[list] as JsonArray ?? [])
+            if (raw is JsonObject item && item["key"] is JsonValue k && k.TryGetValue<string>(out var key) && keys.Add(key)) items.Add(item);
+        return items;
+    }
+    /// <summary>The definition's entity with this key; null when it has none.</summary>
+    internal static JsonObject? DefinitionEntity(JsonObject catalog, string key) => DefinitionItems(catalog, "entities").Find(e => Text(e, "key") == key);
+    /// <summary>The <c>entityDomains</c> entry of the definition's entity with this key; null for an unknown entity or domain.</summary>
+    internal static JsonObject? EntityDomain(JsonObject catalog, string key) =>
+        DefinitionEntity(catalog, key) is { } entity && Text(entity, "domain") is { Length: > 0 } domain && catalog["entityDomains"] is JsonObject domains && domains.TryGetPropertyValue(domain, out var entry) ? entry as JsonObject : null;
+    /// <summary>The type of the definition's setting with this key, when it is one a setting can have; null otherwise.</summary>
+    internal static string? SettingType(JsonObject catalog, string key) =>
+        DefinitionItems(catalog, "settings").Find(s => Text(s, "key") == key) is { } setting && Text(setting, "type") is var type && SettingTypes.Contains(type) ? type : null;
+    /// <summary>
+    /// The value nodes upstream of <paramref name="start"/> through value wires: each once, depth first in the order of
+    /// <paramref name="data"/>, a node before those it reads; the walk stops at a step (whose output is read as it is).
+    /// <paramref name="data"/> holds the graph's value wires whose two ends are in <paramref name="nodes"/>. Mirrored by
+    /// <c>valueUpstream</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static List<JsonObject> ValueUpstream(JsonObject start, IReadOnlyDictionary<string, JsonObject> nodes, IReadOnlyList<JsonObject> data, Func<JsonObject, bool> pure)
+    {
+        var found = new List<JsonObject>(); var seen = new HashSet<string>(StringComparer.Ordinal) { Text(start, "id") };
+        var stack = new Stack<IEnumerator<JsonObject>>();
+        IEnumerator<JsonObject> Readers(JsonObject node) => data.Where(e => Text(e, "target") == Text(node, "id")).Select(e => nodes[Text(e, "source")]).GetEnumerator();
+        // An explicit stack: a long chain of value nodes must not overflow the thread's stack.
+        stack.Push(Readers(start));
+        while (stack.TryPeek(out var current))
+        {
+            if (!current.MoveNext()) { stack.Pop(); continue; }
+            var source = current.Current;
+            if (!pure(source) || !seen.Add(Text(source, "id"))) continue;
+            found.Add(source);
+            stack.Push(Readers(source));
+        }
+        return found;
+    }
+    /// <summary>The value nodes upstream of the graph's node <paramref name="id"/> (<see cref="ValueUpstream(JsonObject, IReadOnlyDictionary{string, JsonObject}, IReadOnlyList{JsonObject}, Func{JsonObject, bool})"/>), as the validators read the graph.</summary>
+    internal static List<JsonObject> ValueUpstream(JsonObject graph, string id, VisualCatalogSnapshot snapshot)
+    {
+        var nodes = GraphNodes(graph);
+        if (!nodes.TryGetValue(id, out var start)) return [];
+        var data = (graph["edges"] as JsonArray ?? []).OfType<JsonObject>().Where(e => Text(e, "id") != "" && Text(e, "kind") == "data" && !e.ContainsKey("port") && Text(e, "sourcePort") != "" && Text(e, "targetPort") != "" &&
+            nodes.ContainsKey(Text(e, "source")) && nodes.ContainsKey(Text(e, "target"))).ToList();
+        return ValueUpstream(start, nodes, data, n => IsPure(n, Spec(n, snapshot)));
+    }
     /// <summary>
     /// The pins of a Custom C# node, as the compiler derived them from its code, when the node's kind takes its pins
     /// from <c>config.signature</c> and that signature is well formed; else null. Mirrored by <c>customSignature</c> in
@@ -88,11 +155,26 @@ public static class VisualNodeCatalog
                         }
                 }
         var selecting = SelectingNodes(catalog, graph);
-        if (added.Count == 0 && selecting.Count == 0) return catalog;
+        var definition = graph["definition"] as JsonObject;
+        if (added.Count == 0 && selecting.Count == 0 && definition == null) return catalog;
         var merged = (JsonObject)catalog.DeepClone();
         foreach (var (id, entry) in added.ToArray()) { added.Remove(id); merged["types"]![id] = entry; }
         if (selecting.Count > 0) ResolveOutputs(merged, graph);
+        if (definition != null) { merged["definition"] = definition.DeepClone(); ResolveSettings(merged, graph); }
         return merged;
+    }
+    /// <summary>
+    /// An entity graph's Setting nodes: the value of each has the type of the definition's setting it names, under
+    /// <c>resolvedOutputs</c>; one naming no setting of a type a setting can have has none (an empty type).
+    /// </summary>
+    static void ResolveSettings(JsonObject catalog, JsonObject graph)
+    {
+        foreach (var node in GraphNodes(graph).Values)
+            if (Text(node, "kind") == "setting" && catalog["nodes"]?["setting"] is JsonObject && SettingType(catalog, Text(node["config"], "key")) is { } type)
+            {
+                if (catalog["resolvedOutputs"] is not JsonObject resolved) catalog["resolvedOutputs"] = resolved = new JsonObject();
+                ((resolved[Text(node, "id")] ??= new JsonObject()) as JsonObject)!["value"] = type;
+            }
     }
 
     /// <summary>
@@ -202,8 +284,9 @@ public static class VisualNodeCatalog
     {
         var spec = catalog["nodes"]?[Text(node, "kind")] as JsonObject;
         var ports = (spec?["outputs"]?.DeepClone() as JsonObject) ?? [];
+        // An output without a type of its own (a Select property's, a Setting's value) has the one the graph's catalog resolved.
         foreach (var (key, value) in ports) if (value is JsonObject port)
-            port["type"] = PropertyOf(port) != "" ? Text(catalog["resolvedOutputs"]?[Text(node, "id")], key) : ResolveType(Text(port, "type"), node);
+            port["type"] = PropertyOf(port) != "" || Text(port, "type") == "" ? Text(catalog["resolvedOutputs"]?[Text(node, "id")], key) : ResolveType(Text(port, "type"), node);
         if (Text(spec, "dynamicOutputs") == "custom" && CustomSignature(node, spec)?["outputs"] is JsonObject custom) foreach (var (key, value) in custom) ports[key] = value?.DeepClone();
         if (Text(spec, "dynamicOutputs") == "loop") foreach (var key in new[] { "carry", "exports" }) foreach (var item in Declarations(node, key))
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = new JsonObject { ["type"] = Text(item, "type"), ["description"] = (key == "carry" ? "Kept between iterations: " : "Available after the loop: ") + Text(item, "name"), ["visibility"] = key == "carry" ? "loop" : "outside" };
@@ -328,6 +411,14 @@ public static class VisualNodeCatalog
             var port = Input([Text(item, "type")], false, "New value for " + Text(item, "name")); port["label"] = Text(item, "name");
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = port;
         }
+        // The state values of the domain of the definition's entity config.entity names, each required and without a default.
+        if (dynamic == "entity" && EntityDomain(snapshot?.Root ?? Root, Text(node["config"], "entity"))?["state"] is JsonObject state)
+            foreach (var (key, value) in state)
+            {
+                var port = Input((value?["types"] as JsonArray ?? []).OfType<JsonValue>().Select(t => t.TryGetValue<string>(out var s) ? s : "").Where(s => s != ""), true, null);
+                if (Text(value, "label") is { Length: > 0 } label) port["label"] = label;
+                ports[key] = port;
+            }
         return ports;
     }
     public static JsonNode? InputValue(JsonObject node, string port, VisualCatalogSnapshot? snapshot = null) => TryGetInputValue(node, port, out var value, snapshot) ? value : null;

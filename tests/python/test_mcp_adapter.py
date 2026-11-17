@@ -394,6 +394,23 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['types']['global::HassSharp.Entities.BinarySensorState']['enumValues'],['off','on','unknown','unavailable'])
         self.service.node_library.assert_awaited_with({'operation':'catalog'},is_admin=True)
 
+    async def test_discovery_leaves_out_entity_only_nodes(self):
+        # The steps only an entity definition's graph takes (catalog documents: ["entity"]) are not offered for
+        # automations: neither the capabilities' catalog nor the whole-catalog schema lists them. Asked for by kind, the
+        # schema still answers, and the server's catalog itself is left as it was.
+        self.service.node_library.side_effect=self.library
+        entity_only={kind for kind,node in self.CATALOG['nodes'].items() if 'automation' not in node.get('documents',['automation'])}
+        self.assertEqual(entity_only,{'entity_state','entity_command','entity_setup','set_entity_state','set_entity_available','setting'})
+        capabilities=(await self.call('get_capabilities',{})).data['result']['catalog']
+        whole=(await self.call('get_node_schema',{})).data['result']['catalog']
+        for catalog in (capabilities,whole):
+            self.assertFalse(entity_only&set(catalog['nodes']),sorted(entity_only&set(catalog['nodes'])))
+            self.assertIn('entity_is',catalog['nodes']); self.assertIn('entity_current',catalog['nodes']); self.assertIn('trigger',catalog['nodes'])
+        self.assertEqual(set(capabilities['nodes']),set(self.CATALOG['nodes'])-entity_only)
+        state=(await self.call('get_node_schema',{'kind':'entity_state'})).data['result']
+        self.assertEqual((state['kind'],state['node']['documents']),('entity_state',['entity']))
+        self.assertTrue(entity_only<=set(self.CATALOG['nodes']))
+
     async def test_graph_schema_has_no_node_size(self):
         graph={'version':5,'name':'Sized','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'},'size':{'width':220,'height':112}}],'edges':[]}
         refused=(await self.call('preview',{'graph':graph})).data['error']

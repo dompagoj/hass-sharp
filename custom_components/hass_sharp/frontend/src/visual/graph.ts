@@ -12,6 +12,7 @@ import {
   resolveTypeSpec,
   nodeCatalog,
   type Graph,
+  type GraphDocument,
   type GraphNode,
   type GraphEdge,
   type Operand,
@@ -29,8 +30,12 @@ export type NodeConfigData = Record<string, unknown>
 export const literal = (type: string, value: JsonValue): Operand => ({ kind: 'literal', type, value })
 export { effectiveTriggerMethod as triggerMethod } from './contract'
 import { effectiveTriggerMethod } from './contract'
-export const catalogPalette = (catalog: VisualCatalogSnapshot = nodeCatalog) =>
-  Object.entries(catalog.nodes).map(([kind, spec]) => ({ kind, ...spec }))
+/**
+ * The steps a graph of the document can take, for the step library and quick-add: every kind but those whose
+ * `documents` leave that document out (an entity definition's own steps, in an automation).
+ */
+export const catalogPalette = (catalog: VisualCatalogSnapshot = nodeCatalog, document: GraphDocument = 'automation') =>
+  Object.entries(catalog.nodes).filter(([, spec]) => !Array.isArray(spec.documents) || spec.documents.includes(document)).map(([kind, spec]) => ({ kind, ...spec }))
 /**
  * Whether a palette item matches a search: every word of it appears in the item's label, kind, description, its
  * catalog keywords (other names people search by, "set value" for Constant) or the extra texts.
