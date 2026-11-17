@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
@@ -16,45 +15,6 @@ public sealed record CompiledDefinition(string Id, string Name, DefinitionDevice
 {
     /// <summary>Builds the definition's device or entity; null for <c>SharpDefinition.Create()</c> of the compiled assembly. A test seam.</summary>
     internal Func<object>? Factory { get; init; }
-}
-
-/// <summary>An entity of a running definition, with the entity id Home Assistant gave it.</summary>
-/// <param name="UniqueId"><c>&lt;definition id&gt;:&lt;key&gt;</c>.</param>
-/// <param name="Key">The entity's key within its definition.</param>
-/// <param name="Domain">Its Home Assistant domain, such as <c>switch</c>.</param>
-/// <param name="Name">What Home Assistant calls it; null for the device's name alone.</param>
-/// <param name="EntityId">Its entity id, such as <c>switch.plug_relay</c>; null when Home Assistant did not say.</param>
-public sealed record LiveEntity(string UniqueId, string Key, string Domain, string? Name, string? EntityId);
-
-/// <summary>The started definitions by id, so a command from Home Assistant finds its entity by unique id.</summary>
-internal sealed class EntityDirectory
-{
-    readonly object gate = new();
-    readonly Dictionary<string, DefinitionHost> hosts = new(StringComparer.Ordinal);
-
-    /// <summary>The started definition and entity with this unique id, if there is one.</summary>
-    public bool TryGet(string uniqueId, [MaybeNullWhen(false)] out DefinitionHost host, [MaybeNullWhen(false)] out SharpEntity entity)
-    {
-        // A definition id never holds a colon, so the first one ends it.
-        var colon = uniqueId.IndexOf(':');
-        host = colon < 0 ? null : Host(uniqueId[..colon]);
-        entity = host?.Entity(uniqueId);
-        if (host != null && entity != null) return true;
-        host = null;
-        return false;
-    }
-
-    /// <summary>The started host of the definition; null when none is.</summary>
-    public DefinitionHost? Host(string definitionId) { lock (gate) return hosts.GetValueOrDefault(definitionId); }
-
-    internal void Register(DefinitionHost host) { lock (gate) hosts[host.DefinitionId] = host; }
-
-    /// <summary>Removes the host, unless another revision of its definition has replaced it.</summary>
-    internal void Leave(DefinitionHost host)
-    {
-        lock (gate)
-            if (hosts.TryGetValue(host.DefinitionId, out var current) && current == host) hosts.Remove(host.DefinitionId);
-    }
 }
 
 /// <summary>
@@ -120,7 +80,7 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
         var root = (definition.Factory ?? CreateCompiled)();
         if (root is not (SharpDevice or SharpEntity))
             throw new InvalidOperationException($"{definition.Name}: {root?.GetType().Name ?? "null"} is neither a SharpDevice nor a SharpEntity");
-        ApplySettings((SharpComponent)root);
+        DefinitionSettings.Apply(definition, (SharpComponent)root);
         device = root as SharpDevice;
         SharpEntity[] Collect() => device != null ? [.. device.Entities] : [(SharpEntity)root];
         // One bound for every Setup() together: a device that does not answer must not hold up the definitions after it.
@@ -567,52 +527,6 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
                 _ => null,
             },
         };
-    }
-
-    // The saved check of the settings can be stale once a library changes, so a setting that no longer fits fails here
-    // rather than leaving the definition to run on defaults.
-    void ApplySettings(SharpComponent root)
-    {
-        var type = root.GetType();
-        foreach (var setting in definition.Settings)
-        {
-            if (setting.Value == null) continue;
-            var property = SettingProperty(type, setting.Key)
-                ?? throw new InvalidOperationException($"{definition.Name}: {type.Name} has no setting {setting.Key}");
-            if (!TryConvert(setting.Value, property.PropertyType, out var value))
-                throw new InvalidOperationException($"{definition.Name}: the saved value of setting {setting.Key} does not fit its type {property.PropertyType.Name}");
-            property.SetMethod!.Invoke(root, BindingFlags.DoNotWrapExceptions, null, [value], null);
-        }
-    }
-
-    // The public settable [Setting] property of that name, the most derived one first.
-    static PropertyInfo? SettingProperty(Type type, string key)
-    {
-        for (var current = type; current != null; current = current.BaseType)
-            foreach (var property in current.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-                if (property.Name == key && property.GetIndexParameters().Length == 0 && property.SetMethod is { IsPublic: true }
-                    && property.IsDefined(typeof(SettingAttribute), false))
-                    return property;
-        return null;
-    }
-
-    static bool TryConvert(JsonNode node, Type type, out object? value)
-    {
-        value = null;
-        var target = Nullable.GetUnderlyingType(type) ?? type;
-        using var document = JsonDocument.Parse(node.ToJsonString());
-        var json = document.RootElement;
-        switch (json.ValueKind)
-        {
-            case JsonValueKind.String when target == typeof(string): value = json.GetString(); return true;
-            case JsonValueKind.String when target.IsEnum && Enum.GetNames(target).Contains(json.GetString(), StringComparer.Ordinal):
-                value = Enum.Parse(target, json.GetString()!); return true;
-            case JsonValueKind.True or JsonValueKind.False when target == typeof(bool): value = json.GetBoolean(); return true;
-            case JsonValueKind.Number when target == typeof(int) && json.TryGetInt32(out var whole): value = whole; return true;
-            case JsonValueKind.Number when target == typeof(long) && json.TryGetInt64(out var large): value = large; return true;
-            case JsonValueKind.Number when target == typeof(double) && json.TryGetDouble(out var number): value = number; return true;
-            default: return false;
-        }
     }
 
     sealed class Handle(Action dispose) : IDisposable
