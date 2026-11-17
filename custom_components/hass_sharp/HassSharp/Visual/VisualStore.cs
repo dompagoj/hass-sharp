@@ -121,7 +121,8 @@ public sealed class VisualStore(string directory, VisualGenerator generator)
             return document;
         }
     }
-    static void Write(string path, VisualDocument document)
+    // Shared with EntityDefinitionStore: a temporary file beside the document, then moved over it.
+    internal static void Write<T>(string path, T document)
     {
         var temporary = path + "." + Guid.NewGuid() + ".tmp";
         try

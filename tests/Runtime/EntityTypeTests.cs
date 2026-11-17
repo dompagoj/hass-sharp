@@ -10,7 +10,8 @@ static class EntityTypeTests
     static void Check(bool value, string message) { if (!value) throw new Exception(message); }
     static string Messages(IEnumerable<NodeLibraryDiagnostic> diagnostics) => string.Join(" | ", diagnostics.Select(d => $"{d.SourceId} {d.StartLine}:{d.StartColumn} {d.Message}"));
 
-    const string Shelly = """
+    // Shared with EntityStoreTests, which builds definitions of these classes.
+    internal const string Shelly = """
         public enum Mode { Eco, Boost }
         /// <summary>A Shelly smart plug.</summary>
         public class ShellyPlug : SharpDevice
@@ -26,7 +27,7 @@ static class EntityTypeTests
         public class NoCtor : SharpDevice { public NoCtor(string host) { } }
         """;
 
-    const string Broken = """
+    internal const string Broken = """
         public class Odd : SharpDevice
         {
             [Setting] public DateTime When { get; set; }
