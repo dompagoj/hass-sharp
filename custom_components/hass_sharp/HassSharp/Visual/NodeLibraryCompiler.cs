@@ -516,7 +516,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             }
             customs.Add(new(custom.NodeId, signature == null ? null : descriptor, signature, own.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)).ToImmutableArray(), customErrors[custom.NodeId].ToImmutableArray()));
         }
-        var snapshot = new VisualCatalogSnapshot(root, sources, methods, typeSymbols.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)), compilation, errors, customs);
+        var entityTypes = EntityTypes(compilation, frameworkAssembly, trees, (location, message) => Report(location, message), cancellationToken);
+        var snapshot = new VisualCatalogSnapshot(root, sources, methods, typeSymbols.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)), compilation, errors, customs, entityTypes);
         return new(!errors.Any(e => e.Severity == 3), errors.ToImmutableArray(), snapshot);
     }
 
@@ -669,9 +670,92 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             if (type.DeclaredAccessibility != Accessibility.Public || type.IsGenericType) return false;
         return true;
     }
-    static XElement? Documentation(IMethodSymbol method, CancellationToken cancellationToken)
+    static XElement? Documentation(ISymbol symbol, CancellationToken cancellationToken)
     {
-        try { return XElement.Parse(method.GetDocumentationCommentXml(cancellationToken: cancellationToken) ?? "<member/>"); } catch (System.Xml.XmlException) { return null; }
+        try { return XElement.Parse(symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken) ?? "<member/>"); } catch (System.Xml.XmlException) { return null; }
+    }
+
+    /// <summary>At a <c>[Setting]</c> property of a type a setting cannot have.</summary>
+    internal static string SettingTypeMessage(string type) => $"A setting is a string, bool, int, long, double or enum; {type} cannot be one";
+    /// <summary>At a <c>[Setting]</c> property the settings form could not set.</summary>
+    internal const string SettingSetterMessage = "A setting needs a public setter";
+
+    /// <summary>
+    /// The custom device and entity classes the libraries declare: each public, concrete, non-generic top-level class of a
+    /// library source that derives <see cref="SharpDevice"/>, or a typed entity base (the domain), and has a public
+    /// parameterless constructor. The <c>[Setting]</c> properties of every library class deriving
+    /// <see cref="SharpComponent"/> are checked once, listed or not: one a setting cannot be is reported and left out.
+    /// </summary>
+    static List<EntityTypeDescriptor> EntityTypes(CSharpCompilation compilation, IAssemblySymbol hassSharp, IReadOnlyDictionary<SyntaxTree, NodeLibrarySource> trees,
+        Action<Location, string> report, CancellationToken cancellationToken)
+    {
+        var component = hassSharp.GetTypeByMetadataName("HassSharp.SharpComponent");
+        var device = hassSharp.GetTypeByMetadataName("HassSharp.SharpDevice");
+        var entity = hassSharp.GetTypeByMetadataName("HassSharp.SharpEntity");
+        var setting = hassSharp.GetTypeByMetadataName("HassSharp.SettingAttribute");
+        bool Derives(ITypeSymbol type, INamedTypeSymbol? from) => BaseTypes(type).Any(b => SymbolEqualityComparer.Default.Equals(b, from));
+        NodeLibrarySource? Source(INamedTypeSymbol type) => type.DeclaringSyntaxReferences.Select(r => trees.GetValueOrDefault(r.SyntaxTree)).FirstOrDefault(s => s != null);
+        static IEnumerable<INamedTypeSymbol> All(INamespaceOrTypeSymbol space) => space.GetTypeMembers().SelectMany(t => All(t).Prepend(t))
+            .Concat(space is INamespaceSymbol ns ? ns.GetNamespaceMembers().SelectMany(All) : Enumerable.Empty<INamedTypeSymbol>());
+        var classes = All(compilation.Assembly.GlobalNamespace).Where(t => t.TypeKind == TypeKind.Class && Derives(t, component) && Source(t) != null).ToArray();
+        // The settings each class declares itself, in declaration order.
+        var own = new Dictionary<ITypeSymbol, List<EntitySettingDescriptor>>(SymbolEqualityComparer.Default);
+        foreach (var type in classes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var settings = own[type] = [];
+            foreach (var property in type.GetMembers().OfType<IPropertySymbol>())
+            {
+                if (property.IsStatic || property.IsIndexer || property.DeclaredAccessibility != Accessibility.Public || property.Type.TypeKind == TypeKind.Error) continue;
+                if (property.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, setting)) is not { } attribute) continue;
+                var location = property.Locations.FirstOrDefault() ?? Location.None;
+                var settable = property.SetMethod is { DeclaredAccessibility: Accessibility.Public };
+                var form = SettingType(property.Type);
+                if (!settable) report(location, SettingSetterMessage);
+                if (form == null) report(location, SettingTypeMessage(property.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
+                if (!settable || form is not { } shape) continue;
+                var label = attribute.ConstructorArguments.FirstOrDefault().Value as string;
+                var description = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Description").Value.Value as string;
+                if (string.IsNullOrWhiteSpace(description)) description = DocText(Documentation(property, cancellationToken)?.Element("summary"));
+                settings.Add(new(property.Name, string.IsNullOrWhiteSpace(label) ? property.Name : label, string.IsNullOrWhiteSpace(description) ? null : description,
+                    shape.Kind, attribute.NamedArguments.FirstOrDefault(a => a.Key == "Secret").Value.Value is true, shape.Options));
+            }
+        }
+        var listed = new List<EntityTypeDescriptor>();
+        foreach (var type in classes)
+        {
+            if (type.ContainingType != null || type.DeclaredAccessibility != Accessibility.Public || type.IsAbstract || type.IsGenericType
+                || !type.InstanceConstructors.Any(c => c.Parameters.IsEmpty && c.DeclaredAccessibility == Accessibility.Public)) continue;
+            // An entity's domain is its nearest typed base's; one deriving SharpEntity itself has none and cannot be created.
+            var domain = BaseTypes(type).Where(b => SymbolEqualityComparer.Default.Equals(b.ContainingAssembly, hassSharp)).Select(b => SharpDomains.OfName(b.ToDisplayString())).FirstOrDefault(d => d != null);
+            var kind = Derives(type, device) ? "device" : Derives(type, entity) && domain != null ? "entity" : null;
+            if (kind == null) continue;
+            // A base class's settings come first; one declared again in a derived class keeps its place.
+            var settings = new List<EntitySettingDescriptor>();
+            foreach (var owner in BaseTypes(type).Reverse().Append(type))
+                foreach (var found in own.GetValueOrDefault(owner.OriginalDefinition) ?? [])
+                {
+                    var index = settings.FindIndex(s => s.Key == found.Key);
+                    if (index >= 0) settings[index] = found; else settings.Add(found);
+                }
+            var summary = DocText(Documentation(type, cancellationToken)?.Element("summary"));
+            listed.Add(new("library:" + Source(type)!.Id + ":" + type.ToDisplayString(), Source(type)!.Id, TypeIdentity(type), kind, kind == "device" ? null : domain,
+                type.Name, summary.Length == 0 ? null : summary, [.. settings]));
+        }
+        return listed;
+    }
+
+    /// <summary>A setting's form type for a property of <paramref name="type"/>, with an enum's member names; null for a type a setting cannot have.</summary>
+    static (string Kind, ImmutableArray<string> Options)? SettingType(ITypeSymbol type)
+    {
+        var scalar = Scalar(type);
+        if (scalar.TypeKind == TypeKind.Enum) return ("enum", [.. scalar.GetMembers().OfType<IFieldSymbol>().Where(f => f.IsConst).Select(f => f.Name)]);
+        string? kind = scalar.SpecialType switch
+        {
+            SpecialType.System_String => "string", SpecialType.System_Boolean => "boolean",
+            SpecialType.System_Int32 or SpecialType.System_Int64 => "integer", SpecialType.System_Double => "number", _ => null,
+        };
+        return kind == null ? null : (kind, ImmutableArray<string>.Empty);
     }
     static string DocText(XElement? element) => element == null ? "" : string.Join(" ", element.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     static string Category(ITypeSymbol type) => LiteralKind(type) switch { "boolean" => "Boolean", "number" or "integer" => "Number", "string" or "enum" => "String", "array" => "Array", _ => type is IArrayTypeSymbol ? "Array" : "Object" };

@@ -84,6 +84,14 @@ public class NodeLibraryLanguageServicesTests
         Assert.DoesNotContain("namespace",formatted); Assert.StartsWith("public static class CustomNode",formatted);
     }
     [Fact]
+    public async Task CompletionOffersSharpDeviceInLibraryCode()
+    {
+        // A library declares its custom devices and entities by deriving from the base classes, which completion offers there.
+        const string source="public class X : Sharp";
+        var names=(await Request("completion",[new("main",source,1)],"main",source.Length)).AsArray().Select(i=>i!["displayText"]!.GetValue<string>()).ToArray();
+        Assert.Contains("SharpDevice",names); Assert.Contains("SharpSwitch",names); Assert.Contains("SharpSensor",names);
+    }
+    [Fact]
     public async Task Concurrent_unsaved_snapshots_are_isolated_and_include_generated_symbols()
     {
         const string source="public class Main { void Run() { Other. } }";

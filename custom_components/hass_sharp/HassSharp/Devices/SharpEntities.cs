@@ -112,15 +112,31 @@ public class SharpSwitch : SharpEntity
 /// <summary>The Home Assistant domain of a custom entity type.</summary>
 internal static class SharpDomains
 {
+    // The typed entity bases and their domains, read both by runtime type and by the type's name.
+    static readonly (Type Type, string Domain)[] Typed =
+    [
+        (typeof(SharpBinarySensor), "binary_sensor"),
+        (typeof(SharpSensor), "sensor"),
+        (typeof(SharpSwitch), "switch"),
+    ];
+
     /// <summary>The domain of the nearest typed entity <paramref name="type"/> derives from, such as <c>switch</c>; null for any other type.</summary>
     public static string? Of(Type type)
     {
         for (var current = type; current != null; current = current.BaseType)
-        {
-            if (current == typeof(SharpBinarySensor)) return "binary_sensor";
-            if (current == typeof(SharpSensor)) return "sensor";
-            if (current == typeof(SharpSwitch)) return "switch";
-        }
+            foreach (var (typed, domain) in Typed)
+                if (current == typed) return domain;
+        return null;
+    }
+
+    /// <summary>
+    /// The domain of the typed entity base with this full name, such as <c>HassSharp.SharpSwitch</c>; null for any other
+    /// name. For a type known only by name, as the library compiler knows a base class.
+    /// </summary>
+    public static string? OfName(string typeName)
+    {
+        foreach (var (typed, domain) in Typed)
+            if (typed.FullName == typeName) return domain;
         return null;
     }
 }
