@@ -647,12 +647,16 @@ public static class VisualGraphValidator
             foreach (var node in Later(commands, n => (Choice(n, "entity"), Choice(n, "command"))))
                 Error(Id(node), Words.CommandDuplicate(Choice(node, "entity"), CommandLabel(Choice(node, "entity"), Choice(node, "command")), KindLabel("entity_command")), "command", code: "command.duplicate");
             // A State is worked out again when an entity it reads changes; only an entity chosen in a reader can be watched.
-            // The warning is the reader's own, on no input: a wire into it is allowed (connectData), at the cost it names.
+            // A reader is any value node with an input that takes only entity ids (built in, a library's or Custom C#),
+            // warned about for the first such input given over a wire, unless that wire comes from a Constant of an entity
+            // id type, whose entity is followed as chosen (StateDependencies.Of). The warning is the reader's own, on no
+            // input: a wire into it is allowed (connectData), at the cost it names.
             var readers = new HashSet<string>(StringComparer.Ordinal);
             foreach (var state in OfKind("entity_state"))
                 foreach (var reader in ValueUpstream(state, nodes, data, Pure))
-                    if (Kind(reader) is "entity_is" or "entity_current" && incoming.ContainsKey((Id(reader), "entity")) && readers.Add(Id(reader)))
-                        errors.Add(new(Id(reader), Words.DynamicSource(Words.StepName(reader, Spec(reader)), Words.StepName(state, Spec(state)), Words.PortLabel(Spec(reader)?["inputs"]?["entity"], "entity")), 2, Code: "state.dynamicSource"));
+                    if (!readers.Contains(Id(reader)) && DataInputs(reader).FirstOrDefault(p => TakesOnlyEntityIds(p.Value) && incoming.TryGetValue((Id(reader), p.Key), out var wire) &&
+                            !FollowedSource(nodes[Text(wire, "source")], snapshot)) is { Key: not null } wired && readers.Add(Id(reader)))
+                        errors.Add(new(Id(reader), Words.DynamicSource(Words.StepName(reader, Spec(reader)), Words.StepName(state, Spec(state)), Words.PortLabel(wired.Value, wired.Key)), 2, Code: "state.dynamicSource"));
             foreach (var entity in DefinitionItems(Root, "entities"))
                 if (EntityDomain(Root, Text(entity, "key")) is { } domain)
                     foreach (var (command, _) in domain["commands"] as JsonObject ?? [])

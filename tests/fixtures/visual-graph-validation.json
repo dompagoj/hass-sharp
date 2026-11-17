@@ -33972,12 +33972,12 @@
       "nodes": [
         {
           "id": "c",
-          "kind": "constant",
+          "kind": "convert",
           "config": {
             "type": "entity_id",
             "value": {
               "kind": "literal",
-              "type": "entity_id",
+              "type": "string",
               "value": "binary_sensor.door"
             }
           }
@@ -34058,6 +34058,432 @@
     "codes": [
       "state.dynamicSource"
     ]
+  },
+  {
+    "name": "entity graph: an entity from a Constant is followed without a warning",
+    "graph": {
+      "version": 5,
+      "name": "Constant entity",
+      "nodes": [
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "entity_id",
+            "value": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.door"
+            }
+          }
+        },
+        {
+          "id": "is",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        },
+        {
+          "id": "not",
+          "kind": "not",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "closed"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "c.value:is.entity",
+          "kind": "data",
+          "source": "c",
+          "target": "is",
+          "sourcePort": "value",
+          "targetPort": "entity"
+        },
+        {
+          "id": "is.value:not.value",
+          "kind": "data",
+          "source": "is",
+          "target": "not",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "not.value:s.is_on",
+          "kind": "data",
+          "source": "not",
+          "target": "s",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "closed",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "code state.dynamicSource: connected entity on a library value node",
+    "catalogPatch": {
+      "nodes": {
+        "library:lights:Lights.IsBright": {
+          "label": "Is bright",
+          "category": "Lights",
+          "description": "True when a light is bright.",
+          "minGraphVersion": 5,
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "lights",
+          "argumentStorage": "arguments",
+          "config": {
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "description": "The values this step takes"
+            }
+          },
+          "inputs": {
+            "light": {
+              "types": [
+                "entity_id:light"
+              ],
+              "required": true,
+              "label": "Light",
+              "description": "The light to check."
+            }
+          },
+          "outputs": {
+            "result": {
+              "type": "boolean",
+              "label": "Result",
+              "description": "True when the light is bright."
+            }
+          },
+          "pure": true
+        },
+        "library:lights:Lights.HallLight": {
+          "label": "Hall light",
+          "category": "Lights",
+          "description": "The hall's light.",
+          "minGraphVersion": 5,
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "lights",
+          "argumentStorage": "arguments",
+          "config": {
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "description": "The values this step takes"
+            }
+          },
+          "inputs": {},
+          "outputs": {
+            "result": {
+              "type": "entity_id:light",
+              "label": "Light",
+              "description": "The hall's light."
+            }
+          },
+          "pure": true
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Bright",
+      "nodes": [
+        {
+          "id": "pick",
+          "kind": "library:lights:Lights.HallLight",
+          "config": {
+            "arguments": {}
+          }
+        },
+        {
+          "id": "bright",
+          "kind": "library:lights:Lights.IsBright",
+          "config": {
+            "arguments": {
+              "light": {
+                "kind": "unset"
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "bright"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "pick.result:bright.light",
+          "kind": "data",
+          "source": "pick",
+          "target": "bright",
+          "sourcePort": "result",
+          "targetPort": "light"
+        },
+        {
+          "id": "bright.result:s.is_on",
+          "kind": "data",
+          "source": "bright",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "bright",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "warning": "gets its entity over a wire",
+    "warningNodeId": "bright",
+    "messages": [
+      "Is bright gets its entity over a wire, so State is not worked out again when that entity changes; choose the entity in Light instead"
+    ],
+    "codes": [
+      "state.dynamicSource"
+    ]
+  },
+  {
+    "name": "code state.dynamicSource: connected entity on a Custom C# value node",
+    "graph": {
+      "version": 5,
+      "name": "Lit",
+      "nodes": [
+        {
+          "id": "pick",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Porch lamp\", Pure = true)] public static Entity Run() => new(\"light.porch\"); }",
+            "signature": {
+              "title": "Porch lamp",
+              "description": "The porch lamp.",
+              "pure": true,
+              "inputs": {},
+              "outputs": {
+                "result": {
+                  "type": "entity_id",
+                  "label": "Lamp",
+                  "description": ""
+                }
+              },
+              "types": {}
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "lit",
+          "kind": "custom",
+          "config": {
+            "source": "public static class CustomNode { [Node(\"Is lit\", Pure = true)] public static bool Run(Entity lamp) => lamp.State == \"on\"; }",
+            "signature": {
+              "title": "Is lit",
+              "description": "True when a lamp is lit.",
+              "pure": true,
+              "inputs": {
+                "lamp": {
+                  "types": [
+                    "entity_id"
+                  ],
+                  "required": true,
+                  "label": "Lamp",
+                  "description": "",
+                  "nullable": false,
+                  "hasDefaultValue": false
+                }
+              },
+              "outputs": {
+                "result": {
+                  "type": "boolean",
+                  "label": "Result",
+                  "description": ""
+                }
+              },
+              "types": {}
+            },
+            "arguments": {
+              "lamp": {
+                "kind": "unset"
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "lit"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "pick.result:lit.lamp",
+          "kind": "data",
+          "source": "pick",
+          "target": "lit",
+          "sourcePort": "result",
+          "targetPort": "lamp"
+        },
+        {
+          "id": "lit.result:s.is_on",
+          "kind": "data",
+          "source": "lit",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "lit",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "warning": "gets its entity over a wire",
+    "warningNodeId": "lit",
+    "messages": [
+      "Is lit gets its entity over a wire, so State is not worked out again when that entity changes; choose the entity in Lamp instead"
+    ],
+    "codes": [
+      "state.dynamicSource"
+    ]
+  },
+  {
+    "name": "entity graph: an entity chosen on a library value node is followed without a warning",
+    "catalogPatch": {
+      "nodes": {
+        "library:lights:Lights.IsBright": {
+          "label": "Is bright",
+          "category": "Lights",
+          "description": "True when a light is bright.",
+          "minGraphVersion": 5,
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "lights",
+          "argumentStorage": "arguments",
+          "config": {
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "description": "The values this step takes"
+            }
+          },
+          "inputs": {
+            "light": {
+              "types": [
+                "entity_id:light"
+              ],
+              "required": true,
+              "label": "Light",
+              "description": "The light to check."
+            }
+          },
+          "outputs": {
+            "result": {
+              "type": "boolean",
+              "label": "Result",
+              "description": "True when the light is bright."
+            }
+          },
+          "pure": true
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Bright",
+      "nodes": [
+        {
+          "id": "bright",
+          "kind": "library:lights:Lights.IsBright",
+          "config": {
+            "arguments": {
+              "light": {
+                "kind": "literal",
+                "type": "entity_id:light",
+                "value": "light.hall"
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "bright"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "bright.result:s.is_on",
+          "kind": "data",
+          "source": "bright",
+          "target": "s",
+          "sourcePort": "result",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "bright",
+            "domain": "binary_sensor"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
   },
   {
     "name": "code command.unhandled: switch without flows",

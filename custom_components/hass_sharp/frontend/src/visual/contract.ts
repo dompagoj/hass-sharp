@@ -232,6 +232,22 @@ export function valueUpstream(start: GraphNode, nodes: ReadonlyMap<string, Graph
   }
   return found
 }
+/**
+ * Whether an input (as `dataInputs` gives it) takes nothing but entity ids: every one of its types is `entity_id` or
+ * `entity_id:<domain>`, built in, a node library's or a Custom C# node's alike. The entity chosen in such an input is one
+ * a State follows; one given over a wire is not. Mirrors `VisualNodeCatalog.TakesOnlyEntityIds`.
+ */
+export function takesOnlyEntityIds(input: { types?: unknown } | undefined): boolean {
+  const types = input?.types
+  return Array.isArray(types) && types.length > 0 && types.every(t => typeof t === 'string' && (t === 'entity_id' || t.startsWith('entity_id:')))
+}
+/**
+ * Whether a wire from this node into an entity id input still lets a State follow the entity: a Constant of an entity
+ * id type, whose chosen entity the State's dependencies count. Mirrors `VisualNodeCatalog.FollowedSource`.
+ */
+export function followedSource(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): boolean {
+  return node.kind === 'constant' && takesOnlyEntityIds(dataInputs(node, undefined, catalog).value)
+}
 /** The pins a Custom C# node's code gives, as the compiler wrote them into `config.signature`. */
 export interface CustomSignature {
   title: string; description: string; pure: boolean; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; types: Record<string, TypeSpec>
@@ -1348,14 +1364,22 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     for (const node of later(commands, n => [choice(n, 'entity'), choice(n, 'command')]))
       error(node.id, words.commandDuplicate(choice(node, 'entity'), commandLabel(choice(node, 'entity'), choice(node, 'command')), kindLabel('entity_command')), 'command', undefined, 'command.duplicate')
     // A State is worked out again when an entity it reads changes; only an entity chosen in a reader can be watched.
-    // The warning is the reader's own, on no input: a wire into it is allowed (connectData), at the cost it names.
+    // A reader is any value node with an input that takes only entity ids (built in, a library's or Custom C#), warned
+    // about for the first such input given over a wire, unless that wire comes from a Constant of an entity id type, whose
+    // entity is followed as chosen. The warning is the reader's own, on no input: a wire into it is allowed
+    // (connectData), at the cost it names.
     const readers = new Set<string>()
     for (const state of ofKind('entity_state'))
-      for (const reader of valueUpstream(state, nodes, data, pure))
-        if ((reader.kind === 'entity_is' || reader.kind === 'entity_current') && incoming.has(key(reader.id, 'entity')) && !readers.has(reader.id)) {
-          readers.add(reader.id)
-          errors.push({ nodeId: reader.id, message: words.dynamicSource(words.stepName(reader, catalog), words.stepName(state, catalog), words.portLabel(nodeSpec(reader.kind)?.inputs.entity, 'entity')), severity: 2, code: 'state.dynamicSource' }); origins.push(origin)
-        }
+      for (const reader of valueUpstream(state, nodes, data, pure)) {
+        if (readers.has(reader.id)) continue
+        const wired = Object.entries(dataInputs(reader)).find(([port, input]) => {
+          const wire = incoming.get(key(reader.id, port))
+          return takesOnlyEntityIds(input) && wire !== undefined && !followedSource(nodes.get(wire.source)!, catalog)
+        })
+        if (!wired) continue
+        readers.add(reader.id)
+        errors.push({ nodeId: reader.id, message: words.dynamicSource(words.stepName(reader, catalog), words.stepName(state, catalog), words.portLabel(wired[1], wired[0])), severity: 2, code: 'state.dynamicSource' }); origins.push(origin)
+      }
     for (const entity of definitionItems(catalog, 'entities')) {
       const domain = entityDomain(catalog, text(entity.key))
       if (domain) for (const command of Object.keys(record(domain.commands) ? domain.commands : {}))

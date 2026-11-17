@@ -31,6 +31,17 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
 {
     GeneratedServiceCalls ServiceCalls()=>serviceCalls??diagnostics.ServiceCalls();
     static string Text(JsonNode? n,string key,string fallback="")=>VisualNodeCatalog.Text(n,key,fallback);
+    /// <summary>
+    /// The action of each root kind that is not a trigger (a trigger's comes from its config): its mode, whether it runs
+    /// at startup and by hand, and the entities whose changes start it (from the graph, the root's id and the snapshot).
+    /// A State is worked out at startup and again whenever an entity it reads changes, a newer change restarting it; a
+    /// When commanded flow runs each command in turn; When started runs once. None is run by hand.
+    /// </summary>
+    static readonly Dictionary<string,(string Mode,bool Startup,bool Manual,Func<JsonObject,string,VisualCatalogSnapshot,IEnumerable<string>> Entities)> RootActions=new(StringComparer.Ordinal) {
+        ["entity_state"]=("Restart",true,false,StateDependencies.Of),
+        ["entity_command"]=("Queued",false,false,(_,_,_)=>[]),
+        ["entity_setup"]=("Single",false,false,(_,_,_)=>[]),
+    };
     static string Q(string value)=>JsonSerializer.Serialize(value);
     /// <summary>
     /// A long text (the graph and catalog JSON, hundreds of KB) as one expression of short literals:
@@ -340,15 +351,9 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
             for(var i=0;i<roots.Length;i++) {
                 var root=roots[i];current=Text(root,"id");var cfg=root["config"]!;var entities="[]";var schedules="[]";var triggers="[]";
                 string mode;bool startup,manual;
-                if(Text(root,"kind")!="trigger") {
-                    // A State is worked out at startup and again whenever an entity it reads changes, a newer change restarting
-                    // it; a When commanded flow runs each command in turn; When started runs once. None is run by hand.
-                    (mode,startup,manual)=Text(root,"kind") switch {
-                        "entity_state"=>("Restart",true,false),
-                        "entity_command"=>("Queued",false,false),
-                        "entity_setup"=>("Single",false,false),
-                        var other=>throw new InvalidOperationException($"No action for the root kind {other}") };
-                    if(Text(root,"kind")=="entity_state")entities=References(StateDependencies.Of(graph,current,snapshot));
+                if(Text(root,"kind") is var rootKind&&rootKind!="trigger") {
+                    if(!RootActions.TryGetValue(rootKind,out var action))throw new InvalidOperationException($"No action for the root kind {rootKind}");
+                    (mode,startup,manual)=(action.Mode,action.Startup,action.Manual);entities=References(action.Entities(graph,current,snapshot));
                 }
                 else {
                     var kind=VisualNodeCatalog.TriggerType(root,snapshot);

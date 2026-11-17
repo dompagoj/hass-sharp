@@ -97,6 +97,22 @@ public static class VisualNodeCatalog
         return ValueUpstream(start, nodes, ValueWires(graph, nodes), n => IsPure(n, Spec(n, snapshot)));
     }
     /// <summary>
+    /// Whether an input (as <see cref="DataInputs"/> gives it) takes nothing but entity ids: every one of its types is
+    /// <c>entity_id</c> or <c>entity_id:&lt;domain&gt;</c>, built in, a node library's or a Custom C# node's alike. The entity
+    /// chosen in such an input is one a State follows; one given over a wire is not. An input open to every type (a
+    /// comparison's, an object's field) holds an entity id as a value instead. Mirrored by <c>takesOnlyEntityIds</c> in
+    /// <c>contract.ts</c>.
+    /// </summary>
+    internal static bool TakesOnlyEntityIds(JsonNode? input) => input?["types"] is JsonArray { Count: > 0 } types &&
+        types.All(t => t is JsonValue v && v.TryGetValue<string>(out var type) && (type == "entity_id" || type.StartsWith("entity_id:", StringComparison.Ordinal)));
+    /// <summary>
+    /// Whether a wire from this node into an entity id input still lets a State follow the entity: a Constant of an
+    /// entity id type, whose chosen entity <see cref="StateDependencies.Of"/> counts. Mirrored by <c>followedSource</c> in
+    /// <c>contract.ts</c>.
+    /// </summary>
+    internal static bool FollowedSource(JsonObject node, VisualCatalogSnapshot? snapshot) =>
+        Text(node, "kind") == "constant" && TakesOnlyEntityIds(DataInputs(node, null, snapshot)["value"]);
+    /// <summary>
     /// The graph's value wires as the validators accept them: with an id, of kind <c>data</c> and no execution port, both
     /// ports named, and both ends among <paramref name="nodes"/> (<see cref="GraphNodes"/>).
     /// </summary>
@@ -225,10 +241,7 @@ public static class VisualNodeCatalog
         var resolved = new JsonObject(); catalog["resolvedOutputs"] = resolved;
         var nodes = GraphNodes(graph);
         var incoming = new Dictionary<(string, string), JsonObject>();
-        foreach (var raw in graph["edges"] as JsonArray ?? [])
-            if (raw is JsonObject edge && Text(edge, "id") != "" && Text(edge, "kind") == "data" && !edge.ContainsKey("port") && Text(edge, "sourcePort") != "" && Text(edge, "targetPort") != "" &&
-                nodes.ContainsKey(Text(edge, "source")) && nodes.ContainsKey(Text(edge, "target")))
-                incoming.TryAdd((Text(edge, "target"), Text(edge, "targetPort")), edge);
+        foreach (var edge in ValueWires(graph, nodes)) incoming.TryAdd((Text(edge, "target"), Text(edge, "targetPort")), edge);
         // Each propertyOf output and the wire into its input.
         List<(string Port, JsonObject Edge)> Wires(JsonObject node)
         {

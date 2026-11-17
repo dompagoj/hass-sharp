@@ -16,9 +16,14 @@ static class EntityGraphGeneratorTests
     const string Action = "new global::HassSharp.AutomationAction(";
     static readonly VisualCatalogSnapshot BuiltIn = VisualCatalogSnapshot.BuiltIn;
 
-    static JsonObject Case(string name) =>
-        JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "visual-graph-validation.json")))!.AsArray()
-            .Single(c => c!["name"]!.GetValue<string>() == name)!["graph"]!.AsObject();
+    static JsonObject Case(string name) => Fixture(name).Graph;
+    /// <summary>A case of visual-graph-validation.json: its graph and the snapshot the contract suite validates it with.</summary>
+    static (JsonObject Graph, VisualCatalogSnapshot Snapshot) Fixture(string name)
+    {
+        var fixture = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "visual-graph-validation.json")))!.AsArray()
+            .Single(c => c!["name"]!.GetValue<string>() == name)!;
+        return (fixture["graph"]!.AsObject(), fixture["catalogPatch"] is JsonObject patch ? VisualGraphContractTests.Patched(patch) : BuiltIn);
+    }
     /// <summary>An entity definition's graph: the nodes and wires, and a definition of these entities and settings.</summary>
     static JsonObject Entity(JsonObject[] nodes, JsonObject[] edges, (string Key, string Domain)[] entities, params (string Key, string Type)[] settings) => new()
     {
@@ -112,15 +117,22 @@ static class EntityGraphGeneratorTests
         Same(ActionLines(preview), [ActionLine("s", "Restart", true, false, "binary_sensor.motion_a", "binary_sensor.motion_b")], "the derived sensor's one action");
         Mapped(preview, ["s"], "the derived sensor");
         Same(await Compiled(preview, "the derived sensor"), [Describe("s", AutomationMode.Restart, true, false, "binary_sensor.motion_a", "binary_sensor.motion_b")], "the derived sensor's compiled configuration");
-        // What the next task's runtime reads a State's inputs from: the graph with its definition, and the entity domains
-        // and the specs of the kinds it uses in the embedded catalog.
+        Embeds(preview, graph, ["entity_state", "entity_is", "or"], "the derived sensor");
+    }
+
+    /// <summary>
+    /// What the runtime reads an entity graph's nodes from: the source embeds the graph with its definition, and the
+    /// embedded catalog has the entity domains whole and the spec of each kind the graph uses.
+    /// </summary>
+    static void Embeds(VisualPreview preview, JsonObject graph, string[] kinds, string what)
+    {
         var embedded = JsonNode.Parse(preview.EmbeddedCatalog!)!.AsObject();
-        Check(JsonNode.DeepEquals(embedded["entityDomains"], VisualNodeCatalog.Root["entityDomains"]), "the derived sensor's embedded catalog has the entity domains whole");
-        foreach (var kind in new[] { "entity_state", "entity_is", "or" })
-            Check(JsonNode.DeepEquals(embedded["nodes"]?[kind], VisualNodeCatalog.Root["nodes"]![kind]), $"the derived sensor's embedded catalog has the {kind} spec");
+        Check(JsonNode.DeepEquals(embedded["entityDomains"], VisualNodeCatalog.Root["entityDomains"]), $"{what}: the embedded catalog has the entity domains whole");
+        foreach (var kind in kinds)
+            Check(embedded["nodes"]?[kind] != null && JsonNode.DeepEquals(embedded["nodes"]?[kind], VisualNodeCatalog.Root["nodes"]![kind]), $"{what}: the embedded catalog has the {kind} spec");
         var embeddedGraph = preview.Graph ?? graph;
         Check(embeddedGraph["definition"] is JsonObject && preview.Source.Contains(VisualGenerator.Pieces(embeddedGraph.ToJsonString()), StringComparison.Ordinal),
-            "the derived sensor's source embeds its graph with the definition");
+            $"{what}: the source embeds the graph with its definition");
     }
 
     static async Task DependenciesComeFromChosenEntitiesOnly()
@@ -150,19 +162,42 @@ static class EntityGraphGeneratorTests
             [("any", "binary_sensor")], ("source", "string"));
         Same(StateDependencies.Of(wired, "s", BuiltIn), [], "a connected entity input, a comparison of entity ids and an object field add no dependency");
 
-        // The validator's state.dynamicSource case: the reader given its entity over a wire adds none, and the entity
-        // chosen further up that wire (an entity id Constant) is still one.
+        // The validator's state.dynamicSource case: the reader given its entity over a wire (from a Convert) adds none.
         var dynamic = Case("code state.dynamicSource: connected entity");
         Check(VisualGraphValidator.Validate(dynamic, BuiltIn).Any(d => d.Code == "state.dynamicSource" && d.NodeId == "is"), "the dynamic source case warns on its reader");
-        Same(StateDependencies.Of(dynamic, "s", BuiltIn), ["binary_sensor.door"], "the entity chosen above a wired reader is a dependency");
+        Same(StateDependencies.Of(dynamic, "s", BuiltIn), [], "an entity given over a wire is no dependency");
         var dynamicPreview = Preview(dynamic, "the dynamic source case");
-        Same(ActionLines(dynamicPreview), [ActionLine("s", "Restart", true, false, "binary_sensor.door")], "the dynamic source case's action");
-        Same(await Compiled(dynamicPreview, "the dynamic source case"), [Describe("s", AutomationMode.Restart, true, false, "binary_sensor.door")], "the dynamic source case's compiled configuration");
+        Same(ActionLines(dynamicPreview), [ActionLine("s", "Restart", true, false)], "the dynamic source case's action");
+        Same(await Compiled(dynamicPreview, "the dynamic source case"), [Describe("s", AutomationMode.Restart, true, false)], "the dynamic source case's compiled configuration");
+        // The same reader wired from an entity id Constant: the Constant's chosen entity is the dependency, so the
+        // validators do not warn.
+        var constantSource = Case("entity graph: an entity from a Constant is followed without a warning");
+        Check(VisualGraphValidator.Validate(constantSource, BuiltIn).Count == 0, "a reader wired from an entity id Constant has no warning");
+        Same(StateDependencies.Of(constantSource, "s", BuiltIn), ["binary_sensor.door"], "an entity id Constant's entity is a dependency");
+        var constantPreview = Preview(constantSource, "the Constant source case");
+        Same(ActionLines(constantPreview), [ActionLine("s", "Restart", true, false, "binary_sensor.door")], "the Constant source case's action");
+        Same(await Compiled(constantPreview, "the Constant source case"), [Describe("s", AutomationMode.Restart, true, false, "binary_sensor.door")], "the Constant source case's compiled configuration");
+        // A node library's or Custom C# value node's entity pin is a reader's like any other: chosen, it is a dependency;
+        // wired (from a node that is not a Constant), it is none, and the validators warn on the node.
+        var libraryChosen = Fixture("entity graph: an entity chosen on a library value node is followed without a warning");
+        Same(StateDependencies.Of(libraryChosen.Graph, "s", libraryChosen.Snapshot), ["light.hall"], "a library value node's chosen entity is a dependency");
+        var libraryWired = Fixture("code state.dynamicSource: connected entity on a library value node");
+        Same(StateDependencies.Of(libraryWired.Graph, "s", libraryWired.Snapshot), [], "a library value node's wired entity is no dependency");
+        Check(VisualGraphValidator.Validate(libraryWired.Graph, libraryWired.Snapshot).Any(d => d.Code == "state.dynamicSource" && d.NodeId == "bright"), "the validator warns on the library reader");
+        var customWired = Case("code state.dynamicSource: connected entity on a Custom C# value node");
+        Same(StateDependencies.Of(customWired, "s", BuiltIn), [], "a Custom C# value node's wired entity is no dependency");
+        var customChosen = (JsonObject)customWired.DeepClone();
+        customChosen["edges"]!.AsArray().RemoveAll(e => e!["target"]!.GetValue<string>() == "lit");
+        customChosen["nodes"]!.AsArray().RemoveAll(n => n!["id"]!.GetValue<string>() == "pick");
+        customChosen["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "lit")!["config"]!["arguments"]!["lamp"] = Lit("entity_id", "light.porch");
+        Check(VisualGraphValidator.Validate(customChosen, BuiltIn).Count == 0, "a Custom C# reader with its entity chosen has no warning: " + string.Join("; ", VisualGraphValidator.Validate(customChosen, BuiltIn).Select(d => d.Message)));
+        Same(StateDependencies.Of(customChosen, "s", BuiltIn), ["light.porch"], "a Custom C# value node's chosen entity is a dependency");
 
         // A State of settings only, or of a value chosen in it, still starts at startup, watching nothing.
         var setting = Case("entity graph: sensor state from a setting");
         Same(StateDependencies.Of(setting, "s", BuiltIn), [], "a State of a setting has no dependencies");
         var settingPreview = Preview(setting, "the setting State");
+        Embeds(settingPreview, setting, ["setting", "entity_state"], "the setting State");
         Same(ActionLines(settingPreview), [ActionLine("s", "Restart", true, false)], "the setting State's action");
         Same(await Compiled(settingPreview, "the setting State"), [Describe("s", AutomationMode.Restart, true, false)], "the setting State's compiled configuration");
         var constant = Entity([N("s", "entity_state", new JsonObject { ["entity"] = "door", ["is_on"] = Lit("boolean", true) })], [], [("door", "binary_sensor")]);
@@ -213,7 +248,7 @@ static class EntityGraphGeneratorTests
         // A Setting is a value node, upstream like any other, and chooses no entity.
         var setting = Case("entity graph: sensor state from a setting");
         Check(Up(setting, "s") == "k", $"a Setting is upstream: {Up(setting, "s")}");
-        // The validator's dynamic source case: the wired reader and the Constant above it.
+        // The validator's dynamic source case: the wired reader and the Convert above it.
         var dynamic = Case("code state.dynamicSource: connected entity");
         Check(Up(dynamic, "s") == "not, is, c", $"the dynamic source case's readers: {Up(dynamic, "s")}");
         // Wires the validators do not accept are not walked: without an id, of another kind, an order wire, or from a node not in the graph.
@@ -235,6 +270,7 @@ static class EntityGraphGeneratorTests
         Same(ActionLines(preview), [ActionLine("off", "Queued", false, false), ActionLine("on", "Queued", false, false), ActionLine("setup", "Single", false, false)], "the relay's actions");
         Mapped(preview, ["off", "on", "setup"], "the relay");
         Check(VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = "setup" }) == "Run_7365747570", "a root's method is Run_ and the hex of its id's UTF-8");
+        Embeds(preview, graph, ["entity_command", "entity_setup", "set_entity_state", "set_entity_available"], "the relay");
         Same(await Compiled(preview, "the relay"),
             [Describe("off", AutomationMode.Queued, false, false), Describe("on", AutomationMode.Queued, false, false), Describe("setup", AutomationMode.Single, false, false)], "the relay's compiled configuration");
     }
