@@ -505,6 +505,9 @@ static class EntityHostTests
             Check(manager.Entities.Host("blocking") == null && manager.Entities.Host("lamp5") is not null && Syncs().Length == 1
                 && JsonNode.Parse(Syncs()[0])!["definitionId"]!.GetValue<string>() == "lamp5", "the definition after the blocking one loads, and only it syncs");
             await Until(() => PushedAvailable("lamp5:main", true), "the definition after the blocking one runs");
+            // Its thread, maybe started only after the bound, is in the list before the end wakes it.
+            await Until(() => { lock (blocked) return blocked.Count == 1; }, "the Setup() blocks its thread");
+            Check(!blocked[0].IsThreadPoolThread, "the blocking Setup() holds a thread of the pool");
             Console.WriteLine("PASS entity host: a Setup() that blocks its thread fails within the setup bound, naming the definition, and the definitions after it load");
             await manager.UnloadUserScriptsAsync();
         }

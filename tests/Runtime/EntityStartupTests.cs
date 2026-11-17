@@ -204,12 +204,19 @@ static class EntityStartupTests
         DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(200);
         const string message = "Blocking plug: Setup() did not finish within 0.2 s";
         // Wakes each blocked Setup() once (its Sleep throws), before an unload: a Setup() still blocking the caller would
-        // otherwise hold that unload, and a thread blocked for good would keep the library's load context.
-        static void Wake()
+        // otherwise hold that unload, and a thread blocked for good would keep the library's load context. A Setup() not
+        // started yet when the bound passed is waited for, up to five seconds, until this many have been woken in all;
+        // answers how many have.
+        var woken = 0;
+        async Task<int> Wake(int expected)
         {
-            foreach (var type in AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("NodeLib.BlockingPlug", false)).OfType<Type>())
-                for (var blocked = (System.Collections.Concurrent.ConcurrentQueue<Thread>)type.GetField("Blocked")!.GetValue(null)!; blocked.TryDequeue(out var thread);)
-                    thread.Interrupt();
+            for (var clock = System.Diagnostics.Stopwatch.StartNew(); ; await Task.Delay(5))
+            {
+                foreach (var type in AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("NodeLib.BlockingPlug", false)).OfType<Type>())
+                    for (var blocked = (System.Collections.Concurrent.ConcurrentQueue<Thread>)type.GetField("Blocked")!.GetValue(null)!; blocked.TryDequeue(out var thread); woken++)
+                        thread.Interrupt();
+                if (woken >= expected || clock.Elapsed >= TimeSpan.FromSeconds(5)) return woken;
+            }
         }
         var first = new HassSharpManager(home.Root);
         try
@@ -219,9 +226,10 @@ static class EntityStartupTests
             // Called from the pool: a Setup() run on the caller's thread would block this test, not fail it.
             var saved = await Task.Run(() => SaveDefinition(first, "block", "Blocking plug", null, "library:shelly:NodeLib.BlockingPlug")).WaitAsync(TimeSpan.FromSeconds(30));
             Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == message, "saving the blocking definition: " + saved.ToJsonString());
+            Check(await Wake(1) == 1, "the saved definition's Setup() never blocked its thread");
             await SaveDefinition(first, "plug1", "Plug one", "10.0.5.1");
         }
-        finally { Wake(); await first.UnloadAsync(); }
+        finally { await Wake(1); await first.UnloadAsync(); }
 
         var api = new HassSharpManager(home.Root);
         try
@@ -232,9 +240,10 @@ static class EntityStartupTests
             var block = await Read(api, "block");
             Check(Status(block) == "off" && block["activationError"]?.GetValue<string>() == message, "the blocking definition after the restart: " + block.ToJsonString());
             Check(Status(await Read(api, "plug1")) == "running", "the definition after the blocking one does not run");
+            Check(await Wake(2) == 2, "the Setup() at Init never blocked its thread");
             Console.WriteLine("PASS entity startup: a definition whose Setup() blocks its thread fails within the setup bound when saved and at Init, and the definitions after it load");
         }
-        finally { Wake(); await api.UnloadAsync(); }
+        finally { await Wake(2); await api.UnloadAsync(); }
     }
 
     // A prune that fails, or that Python never answers, is logged; startup goes on and the definitions run.

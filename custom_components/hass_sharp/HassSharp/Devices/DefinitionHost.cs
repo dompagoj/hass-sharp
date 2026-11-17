@@ -124,13 +124,17 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
         device = root as SharpDevice;
         SharpEntity[] Collect() => device != null ? [.. device.Entities] : [(SharpEntity)root];
         // One bound for every Setup() together: a device that does not answer must not hold up the definitions after it.
-        // Each runs on the pool, so one that blocks its thread (a raw connect, a Wait()) is bounded like one that awaits;
-        // one that ignores Stopping cannot be stopped, and keeps its component (and so this host) until it returns.
+        // Each starts on a thread of its own, so one that blocks it (a raw connect, a Wait()) is bounded like one that
+        // awaits and takes no thread from the pool for good; the async lambda makes a null task fail rather than look
+        // cancelled. One that ignores Stopping cannot be stopped, and keeps its component (and so this host) until it
+        // returns.
         var clock = Stopwatch.StartNew();
         async Task SetUp(SharpComponent component)
         {
             var left = SetupTimeout - clock.Elapsed;
-            if (!await Within(Task.Run(async () => await component.Setup()), left > TimeSpan.Zero ? left : TimeSpan.Zero))
+            var setup = Task.Factory.StartNew(async () => await component.Setup(), CancellationToken.None,
+                TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
+            if (!await Within(setup, left > TimeSpan.Zero ? left : TimeSpan.Zero))
                 throw new TimeoutException($"{definition.Name}: Setup() did not finish within {Seconds(SetupTimeout)} s");
         }
         if (device != null)
@@ -180,8 +184,9 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
             await task;
             return true;
         }
-        Stopping.ThrowIfCancellationRequested();
+        // Observed before the stopping check, so an abandoned task's fault is observed on both paths.
         _ = task.ContinueWith(ended => _ = ended.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        Stopping.ThrowIfCancellationRequested();
         return false;
     }
 
