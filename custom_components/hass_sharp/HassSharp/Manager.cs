@@ -43,7 +43,8 @@ public partial class HassSharpManager
         _history = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "runs.db"));
         _serviceCallSchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "service_schema.json"));
         _entitySchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "entity_schema.json"), "entity");
-        _userScriptManager = new() { History = _history };
+        // One state pump carries every entity definition's states to Home Assistant.
+        _userScriptManager = new() { History = _history, Pump = new() };
     }
 
     public async Task Init()
@@ -226,7 +227,8 @@ public partial class HassSharpManager
         try
         {
             var script = _userScriptManager.GetUserScripts().FirstOrDefault(s => s.AutomationId == automationId);
-            if (script?.CompiledScript.VisualRevision == null) throw new InvalidOperationException("Automation is not active");
+            // An entity definition's script carries its revision too, but it is no automation.
+            if (script?.CompiledScript.VisualRevision == null || script.CompiledScript.Definition != null) throw new InvalidOperationException("Automation is not active");
             // Identify visuals from the active compiled metadata, not a best-effort
             // document listing: missing/corrupt saved files must fail closed.
             var id = Path.GetFileNameWithoutExtension(script.CompiledScript.FilePath)["visual_".Length..];
@@ -429,8 +431,14 @@ public partial class HassSharpManager
 
     // An entry unload is a reload or removal unless Home Assistant is stopping; runs it cancels record which.
     static string UnloadReason(bool stopping) => stopping ? CancelReasons.Stopping : CancelReasons.Reloaded;
-    public void Unload(bool stopping = false) { _languageLifetime.Cancel(); _userScriptManager.UnloadUserScripts(UnloadReason(stopping)); }
-    public Task UnloadAsync(bool stopping = false) { _languageLifetime.Cancel(); return _userScriptManager.UnloadUserScriptsAsync(UnloadReason(stopping)); }
+    // The entity states pending or remembered as sent are dropped with the scripts: after a reload every state is sent anew.
+    public void Unload(bool stopping = false) { _languageLifetime.Cancel(); _userScriptManager.UnloadUserScripts(UnloadReason(stopping)); _userScriptManager.Pump.Reset(); }
+    public async Task UnloadAsync(bool stopping = false)
+    {
+        _languageLifetime.Cancel();
+        try { await _userScriptManager.UnloadUserScriptsAsync(UnloadReason(stopping)); }
+        finally { _userScriptManager.Pump.Reset(); }
+    }
 
     /// <summary>
     /// Home Assistant is stopping (it does not unload config entries then): cancel every running and later

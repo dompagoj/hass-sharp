@@ -26,25 +26,33 @@ public partial class HassSharpManager
     async Task<object> ActivateVisualDocument(VisualDocument document, IReadOnlyList<VisualDiagnostic>? warnings = null, GeneratedServiceCalls? services = null)
     {
         string? activationError = null;
-        try
-        {
-            var compiled = await CompileVisualDocument(document, services);
-            if (!_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(document.Id)))
-            {
-                UserScript loaded;
-                try { loaded = _userScriptManager.LoadUserScript(compiled, staged: true); }
-                catch { compiled.Unload(); throw; }
-                try { await loaded.ConfigureAndStart(); }
-                catch { try { await loaded.ClearFromTrackingAsync(); } finally { loaded.Unload(); } throw; }
-            }
-            else await _userScriptManager.UpdateUserScript(compiled);
-        }
+        try { await LoadOrReplace(await CompileVisualDocument(document, services)); }
         catch (Exception ex) { RecordLoadError(VisualRuntimePath(document.Id), ex); activationError = _loadErrors[VisualRuntimePath(document.Id)]; }
-        if (activationError == null) { _loadErrors.TryRemove(VisualRuntimePath(document.Id), out _); _curableLoadErrors.TryRemove(VisualRuntimePath(document.Id), out _); }
+        if (activationError == null) ClearLoadError(VisualRuntimePath(document.Id));
         document = WithRuntimeIdentity(document);
         return warnings is { Count: > 0 } ? (object)new { id = document.Id, saved = true, document, active = document.CurrentRevisionActive, activationError, diagnostics = warnings }
             : new { id = document.Id, saved = true, document, active = document.CurrentRevisionActive, activationError };
     }
+
+    /// <summary>
+    /// Loads and starts the compiled script, or hot-replaces the one loaded from its path. A failure throws and leaves
+    /// nothing of the new compile loaded; a replaced script keeps running when its replacement fails.
+    /// </summary>
+    async Task LoadOrReplace(CompiledUserScript compiled)
+    {
+        if (!_userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == compiled.FilePath))
+        {
+            UserScript loaded;
+            try { loaded = _userScriptManager.LoadUserScript(compiled, staged: true); }
+            catch { compiled.Unload(); throw; }
+            try { await loaded.ConfigureAndStart(); }
+            catch { try { await loaded.ClearFromTrackingAsync(); } finally { loaded.Unload(); } throw; }
+        }
+        else await _userScriptManager.UpdateUserScript(compiled);
+    }
+
+    /// <summary>Forgets the load error recorded for the script at <paramref name="path"/>, if any.</summary>
+    void ClearLoadError(string path) { _loadErrors.TryRemove(path, out _); _curableLoadErrors.TryRemove(path, out _); }
 
     async Task<CompiledUserScript> CompileVisualDocument(VisualDocument document, GeneratedServiceCalls? services = null)
     {
@@ -142,7 +150,7 @@ public partial class HassSharpManager
                     {
                         store.Delete(id, revision);
                         await _userScriptManager.DeleteScriptAsync(VisualRuntimePath(id));
-                        _loadErrors.TryRemove(VisualRuntimePath(id), out _); _curableLoadErrors.TryRemove(VisualRuntimePath(id), out _);
+                        ClearLoadError(VisualRuntimePath(id));
                         result = new { deleted = true };
                     }
                     else throw new ArgumentException("Unknown visual operation");

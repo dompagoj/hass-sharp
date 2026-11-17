@@ -88,6 +88,8 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
     public string Status => status;
     /// <summary>Why the start failed; null otherwise.</summary>
     public string? Error => error;
+    /// <summary>What <see cref="Start"/> began: done once every <c>Start()</c> ended and the entities were published; a completed task before it.</summary>
+    internal Task Started { get { lock (gate) return starting ?? Task.CompletedTask; } }
     /// <inheritdoc/>
     public CancellationToken Stopping => stopping.Token;
 
