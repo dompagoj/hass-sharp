@@ -1,0 +1,484 @@
+using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using HassSharp;
+using static VisualExecutionTests;
+
+/// <summary>
+/// The definition host inside the script manager, with classes of this assembly built through
+/// <see cref="CompiledDefinition.Factory"/> and recording fakes for the entity bridge: settings, setup, sync and start
+/// run in order; the sync JSON is exact; start publishes every entity (unavailable when a start fails); a failed setup
+/// or bad keys sync nothing; a hot replace stops the old instance before starting the new one with nothing unavailable
+/// in between; commands, timers and tracks reach the instance and their failures are logged; and unloading stops the
+/// host without touching run history or Home Assistant.
+/// </summary>
+static class EntityHostTests
+{
+    static readonly List<string> Calls = [], Synced = [], Pushed = [], Logged = [];
+
+    internal static void Record(string call) { lock (Calls) Calls.Add(call); }
+    static string[] Recorded() { lock (Calls) return [.. Calls]; }
+    static string[] Syncs() { lock (Synced) return [.. Synced]; }
+    static string[] Pushes() { lock (Pushed) return [.. Pushed]; }
+    static string[] Logs() { lock (Logged) return [.. Logged]; }
+
+    static void Reset()
+    {
+        lock (Calls) Calls.Clear();
+        lock (Synced) Synced.Clear();
+        lock (Pushed) Pushed.Clear();
+        lock (Logged) Logged.Clear();
+        HostPlug.SetupHook = HostPlug.StartHook = HostPlug.StopHook = null;
+        HostTicker.Ticks = 0;
+    }
+
+    // Python's answer to a sync: an entity id for each unique id, as "<domain>.<definition>_<key>".
+    static string Answer(string json)
+    {
+        var definition = JsonNode.Parse(json)!;
+        var entities = new JsonObject();
+        foreach (var entity in definition["entities"]!.AsArray())
+            entities[entity!["uniqueId"]!.GetValue<string>()] = new JsonObject
+                { ["entityId"] = $"{entity["domain"]}.{definition["definitionId"]}_{entity["key"]}" };
+        return new JsonObject { ["entities"] = entities }.ToJsonString();
+    }
+
+    // Every snapshot pushed so far, in order.
+    static JsonNode[] Snapshots() => Pushes().SelectMany(batch => JsonNode.Parse(batch)!.AsArray()).Select(node => node!).ToArray();
+
+    static bool PushedAvailable(string uniqueId, bool available) =>
+        Snapshots().Any(s => s["uniqueId"]!.GetValue<string>() == uniqueId && s["available"]!.GetValue<bool>() == available);
+
+    static async Task Until(Func<bool> condition, string what)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (!condition())
+        {
+            Check(clock.Elapsed < TimeSpan.FromSeconds(5), "timed out waiting: " + what);
+            await Task.Delay(5);
+        }
+    }
+
+    static CompiledUserScript Compiled(string id, string name, Func<object> factory, DefinitionDevice? device = null, params DefinitionSetting[] settings) => new()
+    {
+        FilePath = $"entity_{id}.cs", FileName = $"entity_{id}", SourceCode = "", Assembly = typeof(EntityHostTests).Assembly,
+        DesignatedRootType = "SharpDefinition",
+        Definition = new(id, name, device, settings) { Factory = factory },
+    };
+
+    static UserScriptManager Manager(RunHistoryStore? history = null) =>
+        new() { History = history, Pump = new EntityStatePump(TimeSpan.FromMilliseconds(5)) };
+
+    // Loads the definition and returns its host; the failure is thrown.
+    static async Task<DefinitionHost> Load(UserScriptManager manager, CompiledUserScript compiled)
+    {
+        Exception? failure = null;
+        await manager.LoadUserScripts([compiled], (_, error) => failure = error);
+        if (failure != null) throw failure;
+        var script = manager.GetUserScripts().Single(s => s.CompiledScript.FilePath == compiled.FilePath);
+        Check(script.Classes.Length == 0, "a definition script has no automation classes");
+        return script.Host ?? throw new Exception("the definition script has no host");
+    }
+
+    static async Task<Exception> LoadFails(UserScriptManager manager, CompiledUserScript compiled)
+    {
+        Exception? failure = null;
+        await manager.LoadUserScripts([compiled], (_, error) => failure = error);
+        Check(manager.GetUserScripts().Count == 0, "a failed definition stays unloaded");
+        return failure ?? throw new Exception("the definition loaded");
+    }
+
+    static async Task<T> Throws<T>(Func<Task> action, string what) where T : Exception
+    {
+        try { await action(); }
+        catch (T error) { return error; }
+        throw new Exception($"{what}: expected {typeof(T).Name}");
+    }
+
+    [RuntimeSuite("--entity-host", Order = 13)]
+    public static async Task Run()
+    {
+        var (sync, push, log, drain) = (PyInterop.BeginSyncEntities, PyInterop.PushEntityStates, PyInterop.Log, UserScript.RunDrainTimeout);
+        PyInterop.BeginSyncEntities = (json, ok, _) => { Record("sync"); lock (Synced) Synced.Add(json); ok(Answer(json)); };
+        PyInterop.PushEntityStates = batch => { lock (Pushed) Pushed.Add(batch); };
+        PyInterop.Log = (_, message) => { lock (Logged) Logged.Add(message); };
+        try
+        {
+            await Ordered();
+            await RootEntity();
+            await DocumentDevice();
+            await Settings();
+            await StartFails();
+            await SetupFails();
+            await BadKeys();
+            await HotReplace();
+            await Commands();
+            await TimersAndTracks();
+            await Stopping();
+            await Unloading();
+        }
+        finally
+        {
+            PyInterop.BeginSyncEntities = sync;
+            PyInterop.PushEntityStates = push;
+            PyInterop.Log = log;
+            UserScript.RunDrainTimeout = drain;
+            Reset();
+        }
+    }
+
+    static async Task Ordered()
+    {
+        Reset();
+        var manager = Manager();
+        var host = await Load(manager, Compiled("plug1", "Plug one", () => new HostPlug(), null, new DefinitionSetting("Address", "10.0.0.5")));
+        await Until(() => Recorded().Length == 8, "the start of the device and its entities");
+        string[] expected = ["settings", "device.Setup", "relay.Setup", "power.Setup", "sync", "device.Start", "relay.Start", "power.Start"];
+        Check(Recorded().SequenceEqual(expected), "order: " + string.Join(", ", Recorded()));
+        var json = Syncs().Single();
+        const string expectedJson = """{"definitionId":"plug1","name":"Plug one","device":{"name":"Plug one","manufacturer":"Shelly","model":"Plug S","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null},"entities":[{"uniqueId":"plug1:relay","key":"relay","domain":"switch","name":"Relay","icon":null,"deviceClass":null,"entityCategory":null,"enabledByDefault":true,"commands":["turn_on","turn_off"],"options":{}},{"uniqueId":"plug1:power","key":"power","domain":"sensor","name":"Power","icon":null,"deviceClass":"power","entityCategory":null,"enabledByDefault":true,"commands":[],"options":{"unit":"W","stateClass":"measurement","options":null}}]}""";
+        Check(json == expectedJson, "sync JSON: " + json);
+        Check(host.DefinitionId == "plug1", "definition id");
+        var live = string.Join(";", host.Entities.Select(e => $"{e.UniqueId},{e.Key},{e.Domain},{e.Name},{e.EntityId}"));
+        Check(live == "plug1:relay,relay,switch,Relay,switch.plug1_relay;plug1:power,power,sensor,Power,sensor.plug1_power", "live entities: " + live);
+        await Until(() => PushedAvailable("plug1:relay", true) && PushedAvailable("plug1:power", true), "every entity pushed available");
+        Check(host.Status == "running" && host.Error == null, $"status {host.Status}, error {host.Error}");
+        Check(!PushedAvailable("plug1:relay", false) && !PushedAvailable("plug1:power", false), "nothing pushed unavailable");
+        Console.WriteLine("PASS entity host: settings, device setup, entity setups, sync, device start, entity starts in order; exact sync JSON; every entity pushed available");
+        await manager.UnloadUserScriptsAsync();
+    }
+
+    static async Task RootEntity()
+    {
+        Reset();
+        var manager = Manager();
+        var host = await Load(manager, Compiled("lamp", "Lamp", () => new HostLamp()));
+        var json = JsonNode.Parse(Syncs().Single())!;
+        Check(json["device"] == null && json.ToJsonString().Contains("\"device\":null"), "an entity without a document device syncs no device: " + json.ToJsonString());
+        Check(json["entities"]!.AsArray().Single()!["uniqueId"]!.GetValue<string>() == "lamp:main", "the root entity's unique id is <id>:main");
+        Check(host.Entities.Single().UniqueId == "lamp:main" && host.Entities.Single().EntityId == "switch.lamp_main", "live entity of the root entity");
+        await manager.UnloadUserScriptsAsync();
+
+        Reset();
+        manager = Manager();
+        await Load(manager, Compiled("lamp", "Lamp", () => new HostLamp(), new DefinitionDevice("Ikea", null, null, null, null, "Hall", new DefinitionVia(null, "abc123"))));
+        var device = JsonNode.Parse(Syncs().Single())!["device"]!.ToJsonString();
+        Check(device == """{"name":"Lamp","manufacturer":"Ikea","model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":"Hall","via":{"deviceId":"abc123"}}""", "an entity's document device: " + device);
+        Console.WriteLine("PASS entity host: an entity root syncs \"device\":null and the unique id <id>:main, or the document's device named as the definition");
+        await manager.UnloadUserScriptsAsync();
+    }
+
+    static async Task DocumentDevice()
+    {
+        Reset();
+        var manager = Manager();
+        await Load(manager, Compiled("plug2", "Plug two", () => new HostPlug(), new DefinitionDevice(null, "Plug S Gen3", "1.4", null, null, null, new DefinitionVia("hub", null))));
+        var device = JsonNode.Parse(Syncs().Single())!["device"]!.ToJsonString();
+        Check(device == """{"name":"Plug two","manufacturer":"Shelly","model":"Plug S Gen3","swVersion":"1.4","hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":{"definition":"hub"}}""",
+            "the document's model overrides the class's; its null manufacturer does not: " + device);
+        Console.WriteLine("PASS entity host: a document device field overrides the class's, a null one keeps it, and via names the definition");
+        await manager.UnloadUserScriptsAsync();
+    }
+
+    static async Task Settings()
+    {
+        Reset();
+        var manager = Manager();
+        HostPlug? plug = null;
+        await Load(manager, Compiled("plug3", "Plug three", () => plug = new HostPlug(), null,
+            new DefinitionSetting("Address", null), new DefinitionSetting("Channel", 3), new DefinitionSetting("Mode", "Eco"),
+            new DefinitionSetting("Factor", 1.5), new DefinitionSetting("Inherited", true)));
+        Check(plug!.Address == "default" && plug.Channel == 3 && plug.Mode == HostMode.Eco && plug.Factor == 1.5 && plug.Inherited,
+            $"settings applied: {plug.Address} {plug.Channel} {plug.Mode} {plug.Factor} {plug.Inherited}");
+        await manager.UnloadUserScriptsAsync();
+
+        foreach (var (setting, named) in new[] {
+            (new DefinitionSetting("Nope", "x"), "Nope"), (new DefinitionSetting("Channel", "x"), "Channel"), (new DefinitionSetting("Channel", 1.5), "Channel"),
+            (new DefinitionSetting("Mode", "Turbo"), "Mode"), (new DefinitionSetting("Mode", "1"), "Mode"), (new DefinitionSetting("Unmarked", "x"), "Unmarked") })
+        {
+            Reset();
+            manager = Manager();
+            var failure = await LoadFails(manager, Compiled("plug3", "Plug three", () => new HostPlug(), null, setting));
+            Check(failure is InvalidOperationException && failure.Message.Contains(named), $"setting {setting.Key}={setting.Value?.ToJsonString()}: {failure}");
+            Check(Syncs().Length == 0 && !Recorded().Contains("device.Setup"), "a bad setting fails before setup and sync");
+        }
+        Console.WriteLine("PASS entity host: settings fill [Setting] properties by type (inherited ones too) and skip nulls; an unknown or ill-typed setting fails naming it");
+    }
+
+    static async Task StartFails()
+    {
+        Reset();
+        var manager = Manager();
+        HostPlug.StartHook = _ => throw new InvalidOperationException("start broke");
+        var host = await Load(manager, Compiled("plug4", "Plug four", () => new HostPlug()));
+        await Until(() => PushedAvailable("plug4:relay", false) && PushedAvailable("plug4:power", false), "every entity pushed unavailable");
+        Check(host.Status == "failed" && host.Error == "start broke", $"status {host.Status}, error {host.Error}");
+        Check(!PushedAvailable("plug4:relay", true) && !PushedAvailable("plug4:power", true), "nothing pushed available");
+        Check(Logs().Any(m => m.Contains("Plug four") && m.Contains("start broke")), "the failed start is logged with the definition name: " + string.Join(" | ", Logs()));
+        if (!manager.Entities.TryGet("plug4:relay", out var found, out var relay)) throw new Exception("a failed definition stays in the directory");
+        Check(found == host, "the directory answers the failed host");
+        var refused = await Throws<InvalidOperationException>(() => host.Command(relay, "turn_on", default), "command to a failed definition");
+        Check(refused.Message == "The entity is not running" && !Recorded().Contains("relay.TurnOn"), "a failed definition refuses commands");
+        Console.WriteLine("PASS entity host: a Start() that throws gives status failed with its message, is logged, and every entity is pushed unavailable");
+        await manager.UnloadUserScriptsAsync();
+    }
+
+    static async Task SetupFails()
+    {
+        Reset();
+        var manager = Manager();
+        HostPlug.SetupHook = _ => throw new InvalidOperationException("setup broke");
+        var failure = await LoadFails(manager, Compiled("plug5", "Plug five", () => new HostPlug()));
+        Check(failure.Message == "setup broke", "the setup failure fails preparing: " + failure);
+        Check(Syncs().Length == 0 && !Recorded().Contains("device.Start") && Pushes().Length == 0, "nothing synced, started or pushed: " + string.Join(", ", Recorded()));
+        Check(manager.Entities.Host("plug5") == null, "a failed setup is not in the directory");
+        Reset();
+        var neither = await LoadFails(Manager(), Compiled("plug5", "Plug five", () => new object()));
+        Check(neither is InvalidOperationException && neither.Message.Contains("neither a SharpDevice nor a SharpEntity") && Syncs().Length == 0, "a root of another type: " + neither);
+        Console.WriteLine("PASS entity host: a Setup() that throws, or a root that is neither a device nor an entity, fails preparing and nothing is synced");
+    }
+
+    static async Task BadKeys()
+    {
+        var entities = typeof(SharpDevice).GetField("entities", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var key = typeof(SharpEntity).GetField("<Key>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        // The base classes refuse both already; the host checks again, so these go around them.
+        var hooks = new (Func<HostPlug, Task> Hook, string Key)[]
+        {
+            (plug => { ((List<SharpEntity>)entities.GetValue(plug)!).Add(new SharpSensor("power")); return Task.CompletedTask; }, "power"),
+            (plug => { var bad = new SharpSensor("temperature"); key.SetValue(bad, "Bad-Key"); ((List<SharpEntity>)entities.GetValue(plug)!).Add(bad); return Task.CompletedTask; }, "Bad-Key"),
+        };
+        foreach (var (hook, named) in hooks)
+        {
+            Reset();
+            var manager = Manager();
+            HostPlug.SetupHook = hook;
+            var failure = await LoadFails(manager, Compiled("plug6", "Plug six", () => new HostPlug()));
+            Check(failure is InvalidOperationException && failure.Message.Contains($"'{named}'"), $"key {named}: {failure}");
+            Check(Syncs().Length == 0 && Pushes().Length == 0, "nothing synced for a bad key");
+        }
+        Console.WriteLine("PASS entity host: a duplicate key or one added in Setup that breaks the pattern fails naming the key, with no sync");
+    }
+
+    static async Task HotReplace()
+    {
+        Reset();
+        var manager = Manager();
+        HostPlug? first = null, second = null;
+        var old = await Load(manager, Compiled("plug7", "Plug seven", () => first = new HostPlug()));
+        await Until(() => PushedAvailable("plug7:relay", true) && PushedAvailable("plug7:power", true), "the first instance pushed available");
+        var pushedBefore = Pushes().Length;
+        lock (Calls) Calls.Clear();
+        // Sends what is pending as the new device starts, so a state the old instance or the new setup posted is not
+        // hidden by the new start's states coalescing over it.
+        HostPlug.StartHook = _ => manager.Pump.FlushAsync();
+        await manager.UpdateUserScript(Compiled("plug7", "Plug seven", () => second = new HostPlug()));
+        await Until(() => Recorded().Length == 10, "the second instance started");
+        string[] expected = ["device.Setup", "relay.Setup", "power.Setup", "sync", "relay.Stop", "power.Stop", "device.Stop", "device.Start", "relay.Start", "power.Start"];
+        Check(Recorded().SequenceEqual(expected), "hot replace order: " + string.Join(", ", Recorded()));
+        bool PushedAgain(string uniqueId) => Pushes().Skip(pushedBefore).SelectMany(batch => JsonNode.Parse(batch)!.AsArray())
+            .Any(s => s!["uniqueId"]!.GetValue<string>() == uniqueId && s["available"]!.GetValue<bool>());
+        await Until(() => PushedAgain("plug7:relay") && PushedAgain("plug7:power"), "the second instance pushed every entity available again");
+        Check(!PushedAvailable("plug7:relay", false) && !PushedAvailable("plug7:power", false), "nothing pushed unavailable during the replace");
+        Check(manager.Entities.TryGet("plug7:relay", out var host, out var relay) && host != old && relay == second!.Relay && relay != first!.Relay,
+            "the directory answers the new instance");
+        Check(manager.Entities.Host("plug7") == host && old.Status != "running", "the old host is stopped and replaced");
+        Console.WriteLine("PASS entity host: a hot replace prepares the new instance, stops the old one before starting the new one, pushes nothing unavailable, and the directory finds the new one");
+        await manager.UnloadUserScriptsAsync();
+    }
+
+    static async Task Commands()
+    {
+        Reset();
+        var manager = Manager();
+        await Load(manager, Compiled("plug8", "Plug eight", () => new HostPlug()));
+        await Until(() => PushedAvailable("plug8:relay", true), "started");
+        if (!manager.Entities.TryGet("plug8:relay", out var host, out var entity)) throw new Exception("the directory finds the relay");
+        Check(!manager.Entities.TryGet("plug8:nope", out _, out _) && !manager.Entities.TryGet("other:relay", out _, out _) && !manager.Entities.TryGet("plug8", out _, out _),
+            "unknown unique ids are not found");
+        await host.Command(entity, "turn_on", default);
+        Check(Recorded().Contains("relay.TurnOn"), "the command reached the instance");
+        await Until(() => Snapshots().Any(s => s["uniqueId"]!.GetValue<string>() == "plug8:relay" && s["values"]!["is_on"]?.GetValue<bool>() == true), "the state change pushed");
+        await Throws<NotSupportedException>(() => host.Command(entity, "toggle", default), "an unknown command");
+        await host.StopAsync();
+        var error = await Throws<InvalidOperationException>(() => host.Command(entity, "turn_on", default), "a command after stop");
+        Check(error.Message == "The entity is not running", "not running message: " + error.Message);
+        Check(manager.Entities.Host("plug8") == null, "a stopped host leaves the directory");
+        Console.WriteLine("PASS entity host: a command through the directory reaches the instance and its state is pushed; after stop it is refused");
+        await manager.UnloadUserScriptsAsync();
+    }
+
+    static async Task TimersAndTracks()
+    {
+        Reset();
+        var manager = Manager();
+        var host = await Load(manager, Compiled("ticker", "Ticker", () => new HostTicker()));
+        await Until(() => HostTicker.Ticks >= 3, "the timer ticks again after throwing");
+        Check(Logs().Contains("Ticker: a timer callback failed: tick broke"), "the timer failure is logged: " + string.Join(" | ", Logs()));
+        Check(host.Status == "running", "the definition keeps running after a timer callback fails");
+        Check(RuntimeCoreTests.Subscriptions.Contains("sensor.a"), "Track subscribes the entity");
+        await manager.RunEntries("sensor.a", new(new() { EntityId = "sensor.a", State = "on", OldState = new() { EntityId = "sensor.a", State = "off" } }));
+        Check(Recorded().Contains("track sensor.a off>on"), "the track received the change: " + string.Join(", ", Recorded()));
+        await manager.RunEntries("sensor.a", new(new() { EntityId = "sensor.a", State = "bad" }));
+        Check(Logs().Contains("Ticker: an entity callback failed: track broke"), "the track failure is logged: " + string.Join(" | ", Logs()));
+        await manager.RunEntries("sensor.a", new(new() { EntityId = "sensor.a", State = "again" }));
+        Check(Recorded().Contains("track sensor.a none>again") && host.Status == "running", "the track keeps working after a failure");
+        await manager.UnloadScriptAsync("entity_ticker.cs");
+        Check(!RuntimeCoreTests.Subscriptions.Contains("sensor.a"), "unloading unsubscribes the tracked entity");
+        var ticks = HostTicker.Ticks;
+        await Task.Delay(60);
+        Check(HostTicker.Ticks == ticks, "the timer stops with the definition");
+        Console.WriteLine("PASS entity host: a timer callback that throws is logged with the definition name and ticks again; a track gets changes through RunEntries, logs failures and unsubscribes on unload");
+    }
+
+    static async Task Stopping()
+    {
+        // Stopping a host that never started runs no Stop(), and twice is harmless.
+        Reset();
+        var manager = Manager();
+        var staged = manager.LoadUserScript(Compiled("plug9", "Plug nine", () => new HostPlug()), staged: true);
+        await staged.PrepareAsync();
+        Check(staged.Host!.Status == "setup" && staged.Host.Entities.Count == 2 && manager.Entities.Host("plug9") == null, "prepared, not yet started");
+        await staged.ClearFromTrackingAsync();
+        await staged.Host!.StopAsync();
+        Check(!Recorded().Any(c => c.EndsWith(".Stop") || c.EndsWith(".Start")), "a host that never started runs no Start() or Stop(): " + string.Join(", ", Recorded()));
+        staged.Unload();
+
+        // Stop() waits for a start still running, so the two never overlap; a Stop() that throws is logged, not thrown.
+        Reset();
+        manager = Manager();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        HostPlug.StartHook = _ => release.Task;
+        HostPlug.StopHook = _ => throw new InvalidOperationException("stop broke");
+        await Load(manager, Compiled("plug9", "Plug nine", () => new HostPlug()));
+        await Until(() => Recorded().Contains("device.Start"), "the start began");
+        var unloading = manager.UnloadScriptAsync("entity_plug9.cs");
+        await Task.Delay(100);
+        Check(!Recorded().Any(c => c.EndsWith(".Stop")) && !unloading.IsCompleted, "Stop() waits for the start");
+        release.SetResult();
+        await unloading.WaitAsync(TimeSpan.FromSeconds(5));
+        string[] expected = ["device.Start", "relay.Start", "power.Start", "relay.Stop", "power.Stop", "device.Stop"];
+        Check(Recorded().Where(c => c.EndsWith(".Start") || c.EndsWith(".Stop")).SequenceEqual(expected), "stop after start: " + string.Join(", ", Recorded()));
+        Check(Logs().Any(m => m.Contains("Plug nine") && m.Contains("stop broke")), "the failed Stop() is logged with the definition name: " + string.Join(" | ", Logs()));
+
+        // A Stop() that does not end holds unloading back only for the drain timeout.
+        Reset();
+        UserScript.RunDrainTimeout = TimeSpan.FromMilliseconds(200);
+        manager = Manager();
+        HostPlug.StopHook = _ => new TaskCompletionSource().Task;
+        await Load(manager, Compiled("plug9", "Plug nine", () => new HostPlug()));
+        await Until(() => Recorded().Contains("power.Start"), "started");
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await manager.UnloadScriptAsync("entity_plug9.cs").WaitAsync(TimeSpan.FromSeconds(5));
+        Check(clock.Elapsed < TimeSpan.FromSeconds(2), $"a Stop() that never ends held unloading {clock.Elapsed.TotalSeconds:F1} s");
+        Check(Logs().Any(m => m.Contains("Plug nine") && m.Contains("did not finish")), "the slow Stop() is logged: " + string.Join(" | ", Logs()));
+        UserScript.RunDrainTimeout = TimeSpan.FromSeconds(10);
+        Console.WriteLine("PASS entity host: stop waits for a running start, runs no Stop() for a host never started, is safe twice, and logs a Stop() that throws or does not end");
+    }
+
+    static async Task Unloading()
+    {
+        Reset();
+        var folder = Path.Combine(Path.GetTempPath(), "entity-host-" + Guid.NewGuid());
+        try
+        {
+            var history = new RunHistoryStore(Path.Combine(folder, "runs.db"));
+            var manager = Manager(history);
+            var host = await Load(manager, Compiled("plug10", "Plug ten", () => new HostPlug()));
+            var id = history.Identity("entity_plug10.cs");
+            Check(manager.GetUserScripts().Single().AutomationId == id, "the definition script has a history identity");
+            await Until(() => PushedAvailable("plug10:relay", true) && PushedAvailable("plug10:power", true), "started");
+            await manager.Pump.FlushAsync();
+            var pushed = Pushes().Length;
+            await manager.UnloadScriptAsync("entity_plug10.cs");
+            Check(Recorded().Contains("device.Stop") && host.Status != "running", "unloading stops the host");
+            Check(manager.GetUserScripts().Count == 0 && manager.Entities.Host("plug10") == null, "unloaded and out of the directory");
+            Check(history.Identity("entity_plug10.cs") == id, "unloading leaves run history untouched");
+            await Task.Delay(30);
+            await manager.Pump.FlushAsync();
+            Check(Pushes().Length == pushed, "unloading pushes nothing");
+
+            await Load(manager, Compiled("plug10", "Plug ten", () => new HostPlug()));
+            await manager.DeleteScriptAsync("entity_plug10.cs");
+            Check(history.Identity("entity_plug10.cs") != id, "deleting forgets run history");
+            Console.WriteLine("PASS entity host: UnloadScriptAsync stops the host and keeps run history; DeleteScriptAsync forgets it");
+            await manager.UnloadUserScriptsAsync();
+        }
+        finally { try { Directory.Delete(folder, true); } catch (IOException) { } }
+    }
+}
+
+public enum HostMode { Normal, Eco }
+
+/// <summary>A base with a setting of its own, so the host's settings include inherited ones.</summary>
+public abstract class HostDeviceBase : SharpDevice
+{
+    [Setting] public bool Inherited { get; set; }
+}
+
+/// <summary>A plug: a device with a relay and a power reading that records its life cycle.</summary>
+public class HostPlug : HostDeviceBase
+{
+    public static Func<HostPlug, Task>? SetupHook, StartHook, StopHook;
+    string? address = "default";
+
+    public HostPlug()
+    {
+        Manufacturer = "Shelly";
+        Model = "Plug S";
+        Relay = Add(new HostRelay());
+        Power = Add(new HostPower());
+    }
+
+    public HostRelay Relay { get; }
+    public HostPower Power { get; }
+    [Setting] public string? Address { get => address; set { address = value; EntityHostTests.Record("settings"); } }
+    [Setting] public int Channel { get; set; }
+    [Setting] public HostMode Mode { get; set; }
+    [Setting] public double? Factor { get; set; }
+    public string? Unmarked { get; set; }
+
+    protected internal override async Task Setup() { EntityHostTests.Record("device.Setup"); if (SetupHook != null) await SetupHook(this); }
+    protected internal override async Task Start() { EntityHostTests.Record("device.Start"); if (StartHook != null) await StartHook(this); }
+    protected internal override async Task Stop() { EntityHostTests.Record("device.Stop"); if (StopHook != null) await StopHook(this); }
+}
+
+public class HostRelay : SharpSwitch
+{
+    public HostRelay() : base("relay", "Relay") { }
+    protected internal override Task Setup() { EntityHostTests.Record("relay.Setup"); return Task.CompletedTask; }
+    protected internal override Task Start() { EntityHostTests.Record("relay.Start"); return Task.CompletedTask; }
+    // Setting a state while stopping must publish nothing: a replaced revision never shows its entities unavailable.
+    protected internal override Task Stop() { EntityHostTests.Record("relay.Stop"); IsOn = false; return Task.CompletedTask; }
+    protected override Task TurnOn() { EntityHostTests.Record("relay.TurnOn"); IsOn = true; return Task.CompletedTask; }
+}
+
+public class HostPower : SharpSensor
+{
+    public HostPower() : base("power", "Power") { Unit = "W"; DeviceClass = "power"; StateClass = "measurement"; }
+    // Setting a state before the start publishes nothing.
+    protected internal override Task Setup() { EntityHostTests.Record("power.Setup"); Value = 0; return Task.CompletedTask; }
+    protected internal override Task Start() { EntityHostTests.Record("power.Start"); return Task.CompletedTask; }
+    protected internal override Task Stop() { EntityHostTests.Record("power.Stop"); return Task.CompletedTask; }
+}
+
+/// <summary>A switch that is its definition's only entity.</summary>
+public class HostLamp : SharpSwitch { }
+
+/// <summary>A sensor whose timer and track callbacks throw.</summary>
+public class HostTicker : SharpSensor
+{
+    public static int Ticks;
+
+    protected internal override Task Start()
+    {
+        Every(TimeSpan.FromMilliseconds(15), () => { Interlocked.Increment(ref Ticks); throw new InvalidOperationException("tick broke"); });
+        Track("sensor.a", change =>
+        {
+            if (change.To.State == "bad") throw new InvalidOperationException("track broke");
+            EntityHostTests.Record($"track {change.EntityId} {change.From?.State ?? "none"}>{change.To.State}");
+            return Task.CompletedTask;
+        });
+        return Task.CompletedTask;
+    }
+}

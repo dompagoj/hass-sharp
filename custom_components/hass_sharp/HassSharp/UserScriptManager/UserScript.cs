@@ -68,6 +68,8 @@ class UserScript
 
     public required CompiledUserScript CompiledScript { get; init; }
     public required UserScriptClass[] Classes { get; set; }
+    /// <summary>Runs the entity definition this script compiles; null for an automation script.</summary>
+    internal DefinitionHost? Host { get; set; }
 
     internal CancellationToken LifetimeToken => _lifetimeCancellation.Token;
 
@@ -98,6 +100,7 @@ class UserScript
                 LifetimeToken.ThrowIfCancellationRequested();
                 await klass.SubscribeAsync();
             }
+            if (Host != null) await Host.PrepareAsync(LifetimeToken);
         }
         finally { completion.TrySetResult(); }
     }
@@ -108,6 +111,7 @@ class UserScript
         {
             if (!Active || Invalidated || LifetimeToken.IsCancellationRequested) return;
             foreach (var klass in Classes) klass.Start();
+            Host?.Start();
         }
     }
 
@@ -142,6 +146,7 @@ class UserScript
         try { await _preparation; } catch (Exception error) { errors.Add(error); }
         try { ScriptManager.SyncRunner.Clear(this); } catch (Exception error) { errors.Add(error); }
         try { ScriptManager.DependencyTracking.RemoveScript(this); } catch (Exception error) { errors.Add(error); }
+        if (Host != null) await Host.StopAsync();
         // An attach in progress (the automation being turned on) finishes first, so its leases are removed here too.
         await NativeSwitch.WaitAsync();
         try

@@ -51,6 +51,10 @@ class UserScriptManager
     internal long ActivationEpoch { get { lock (ActivationGate) return _epoch; } }
     bool _accepting = true;
     public DependencyTracking DependencyTracking { get; } = new();
+    /// <summary>The started entity definitions, to find an entity a command is for.</summary>
+    public EntityDirectory Entities { get; } = new();
+    /// <summary>Carries the entity definitions' states to Home Assistant.</summary>
+    public EntityStatePump Pump { get; init; } = new();
     public ScriptSyncRunner SyncRunner { get; } = new();
 
     public List<UserScript> GetUserScripts() { lock (ActivationGate) return _userScripts.ToList(); }
@@ -164,6 +168,7 @@ class UserScriptManager
             .ToArray();
 
         userScript.Classes = userScriptClasses;
+        if (compiledScript.Definition is { } definition) userScript.Host = new DefinitionHost(userScript, definition);
         lock (ActivationGate)
         {
             if (!_accepting || _deletingPaths.Contains(compiledScript.FilePath))
@@ -226,13 +231,24 @@ class UserScriptManager
     {
         // Built once per change and outside the gate: detaching attributes may take the GIL.
         var payload = TriggerPayload.Entity(trigger.State, trigger.State.OldState);
+        Task runs;
+        DelegateEntry[] followers;
         lock (ActivationGate)
         {
             var entries = DependencyTracking.GetEntries(entityId);
             // While Home Assistant stops, runs are cancelled and the scripts stay active: a change then starts no run.
-            return Task.WhenAll(entries.Where(e => e.ScriptClass.Script is { Active: true, Enabled: true } script && !script.LifetimeToken.IsCancellationRequested)
+            runs = Task.WhenAll(entries.Where(e => e.ScriptClass.Script is { Active: true, Enabled: true } script && !script.LifetimeToken.IsCancellationRequested)
                 .Select(e => RunEntry(e, trigger, payload)));
+            followers = DependencyTracking.GetDelegates(entityId).Where(e => e.Owner is { Active: true, Enabled: true } owner && !owner.LifetimeToken.IsCancellationRequested).ToArray();
         }
+        // Called outside the gate: they are user callbacks (a custom entity's tracks).
+        return followers.Length == 0 ? runs : Task.WhenAll(followers.Select(e => RunDelegate(e, trigger)).Prepend(runs));
+    }
+
+    static Task RunDelegate(DelegateEntry entry, TriggerContext trigger)
+    {
+        try { return entry.Action(trigger); }
+        catch (Exception error) { return Task.FromException(error); }
     }
 
     public async Task RunEntry(DependencyEntry entry, TriggerContext trigger, System.Text.Json.JsonElement payload)
@@ -322,7 +338,12 @@ class UserScriptManager
         finally { _updates.Release(); }
     }
 
-    public async Task DeleteScriptAsync(string scriptPath)
+    public Task DeleteScriptAsync(string scriptPath) => RemoveScriptAsync(scriptPath, forgetHistory: true);
+
+    /// <summary>Unloads the scripts at <paramref name="scriptPath"/> as deleting does, but keeps their run history and identity.</summary>
+    public Task UnloadScriptAsync(string scriptPath) => RemoveScriptAsync(scriptPath, forgetHistory: false);
+
+    async Task RemoveScriptAsync(string scriptPath, bool forgetHistory)
     {
         UserScript[] deleting;
         lock (ActivationGate)
@@ -340,12 +361,12 @@ class UserScriptManager
             try
             {
                 try { await CleanupScriptsAsync(deleting); } catch (Exception error) { errors.Add(error); }
-                try { History?.Forget(scriptPath); } catch (Exception error) { errors.Add(error); }
+                if (forgetHistory) try { History?.Forget(scriptPath); } catch (Exception error) { errors.Add(error); }
             }
             finally { _updates.Release(); }
         }
         finally { lock (ActivationGate) _deletingPaths.Remove(scriptPath); }
         // The document is deleted and its scripts no longer run: a cleanup failure is logged, and the delete succeeds.
-        if (errors.Count > 0) Logger.Warn($"{Path.GetFileName(scriptPath)}: cleaning up the deleted automation failed: " + string.Join("; ", errors.Select(e => e.GetBaseException().Message)));
+        if (errors.Count > 0) Logger.Warn($"{Path.GetFileName(scriptPath)}: cleaning up the {(forgetHistory ? "deleted" : "unloaded")} automation failed: " + string.Join("; ", errors.Select(e => e.GetBaseException().Message)));
     }
 }

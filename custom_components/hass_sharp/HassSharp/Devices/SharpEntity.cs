@@ -159,6 +159,7 @@ public abstract partial class SharpEntity : SharpComponent
         return json;
     }
 
+    /// <summary>What an entity key must match.</summary>
     [GeneratedRegex(@"^[a-z][a-z0-9_]{0,39}\z")]
-    private static partial Regex KeyPattern();
+    internal static partial Regex KeyPattern();
 }

@@ -16,6 +16,8 @@ public class CompiledUserScript
     public string? VisualId { get; set; }
     /// <summary>Trigger method name to its graph node id, label and automatic run history setting.</summary>
     public IReadOnlyDictionary<string, VisualTrigger>? VisualTriggers { get; set; }
+    /// <summary>The entity definition the script runs (its <see cref="DesignatedRootType"/> is <c>SharpDefinition</c>); null for an automation.</summary>
+    public CompiledDefinition? Definition { get; set; }
     /// <summary>Graph and pruned catalog JSON stored as the revision's snapshot with its first run.</summary>
     public string? VisualGraph { get; set; }
     public string? VisualCatalog { get; set; }
