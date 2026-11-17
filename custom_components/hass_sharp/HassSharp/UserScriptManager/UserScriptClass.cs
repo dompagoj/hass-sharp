@@ -194,10 +194,25 @@ class UserScriptClass
     /// <summary>
     /// Runs <paramref name="method"/> as <see cref="RunMethod"/> does and completes once the run has ended, after its last
     /// history write, with how it ended (history on for it or not). A run that fails, is skipped, cancelled (the script
-    /// unloads, even while the run is queued) or stopped is an outcome: this throws only for a method the class does not
-    /// declare, or a <see cref="InvocationCause.Manual"/> run of an action that refuses one. Awaiting it from inside a
-    /// Queued or Restart run of the same method never ends: the new run waits for the one awaiting it.
+    /// unloads or Home Assistant stops, even while the run is queued) or stopped is an outcome: this throws only for a
+    /// method the class does not declare, or a <see cref="InvocationCause.Manual"/> run of an action that refuses one.
     /// </summary>
+    /// <remarks>
+    /// What a caller must bound itself:
+    /// <list type="bullet">
+    /// <item>It never times out: it waits for the user code, including code that ignores its cancellation.</item>
+    /// <item>It makes no Active or Enabled check: a staged script or one turned off runs it; one whose lifetime is over
+    /// reports Cancelled.</item>
+    /// <item>A wait that can never end cannot be detected. Awaited, directly or not, by a Queued or Restart run of the same
+    /// method, the new run waits for the one waiting for it. The realistic path is a command flow calling a Home
+    /// Assistant service that commands the same entity: that goes through Python, so nothing of the run's own context
+    /// survives to recognise it. The caller must bound the await (a timeout, or its own cancellation).</item>
+    /// <item>Two adjacent queued runs end in order, but their RunToEnd callers may resume in either order: each completes
+    /// after its run's last history write, and the next run may already have started.</item>
+    /// <item>The caller always resumes on the thread pool, never inline on the thread that ended the run, which may be one
+    /// cancelling it (an unload, or Home Assistant stopping from Python).</item>
+    /// </list>
+    /// </remarks>
     internal async Task<RunOutcome> RunToEnd(string method, InvocationCause cause, System.Text.Json.JsonElement payload)
     {
         if (!_actions.TryGetValue(method, out var action)) throw new ArgumentException($"Unknown action {method}", nameof(method));
@@ -205,13 +220,17 @@ class UserScriptClass
             throw new InvalidOperationException("Manual invocation is disabled");
         var outcome = new TaskCompletionSource<RunOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
         var run = Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method), action.Mode, cause, payload, outcome: outcome);
-        // The run's task fails only for a history write (the outcome already says how the run itself ended).
+        // The run's task fails for a history write, a cancellation callback that throws, or a failure before the run got
+        // as far as its record; the outcome already says how the run ended. Logged as UserScriptManager.Observe logs it.
         try { await run; }
         catch (Exception error)
         {
             try { Logger.Error($"Invocation history failure: {error.Message}"); } catch { }
         }
-        return await outcome.Task;
+        // The run (so this method) may have ended inline in a cancelling call: a stop from Python, or an unload going on
+        // to the next script. Resume the caller off that thread, so it never runs inside that call.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        return outcome.Task.Result;
     }
 
     internal string GetConcatedMethodNameWithClass(string methodName) => $"{ClassName}::{methodName}";

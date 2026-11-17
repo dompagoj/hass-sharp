@@ -14,7 +14,7 @@ static class RunOutcomeTests
     static void Check(bool ok, string message) { if (!ok) throw new Exception(message); }
     static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
-    // Every action hands its body to the test (Body), so the test decides how each run goes. Quiet and Latest have
+    // Every action hands its body to the test (Body), so the test decides how each run goes. Quiet, QuietOnce and Latest have
     // automatic history off, as an entity graph's state roots do; none but Manual can be run manually.
     const string Source = """
         public class Outcomes : Automation
@@ -24,12 +24,14 @@ static class RunOutcomeTests
                 new AutomationAction(nameof(Flow), AutomationMode.Parallel, Startup: false, Manual: false),
                 new AutomationAction(nameof(Quiet), AutomationMode.Parallel, Startup: false, Manual: false),
                 new AutomationAction(nameof(Once), AutomationMode.Single, Startup: false, Manual: false),
+                new AutomationAction(nameof(QuietOnce), AutomationMode.Single, Startup: false, Manual: false),
                 new AutomationAction(nameof(Queue), AutomationMode.Queued, Startup: false, Manual: false),
                 new AutomationAction(nameof(Latest), AutomationMode.Restart, Startup: false, Manual: false),
                 new AutomationAction(nameof(Manual), AutomationMode.Parallel));
             public Task Flow() => Body(nameof(Flow));
             public Task Quiet() => Body(nameof(Quiet));
             public Task Once() => Body(nameof(Once));
+            public Task QuietOnce() => Body(nameof(QuietOnce));
             public Task Queue() => Body(nameof(Queue));
             public Task Latest() => Body(nameof(Latest));
             public Task Manual() => Body(nameof(Manual));
@@ -49,7 +51,8 @@ static class RunOutcomeTests
         var compiled = await compiler.CompileSingleFile(Path.Combine(folder, Guid.NewGuid().ToString("N") + ".cs"), Source);
         compiled.VisualTriggers = new Dictionary<string, VisualTrigger>
         {
-            ["Quiet"] = new("quiet", null, TrackHistory: false), ["Latest"] = new("latest", null, TrackHistory: false),
+            ["Quiet"] = new("quiet", null, TrackHistory: false), ["QuietOnce"] = new("quiet-once", null, TrackHistory: false),
+            ["Latest"] = new("latest", null, TrackHistory: false),
         };
         var path = Path.Combine(folder, Guid.NewGuid().ToString("N") + ".db");
         var store = new RunHistoryStore(path);
@@ -66,6 +69,15 @@ static class RunOutcomeTests
     }
 
     static JsonElement Keyed(string key) => JsonSerializer.SerializeToElement(new { platform = "entity", entity = key });
+
+    /// <summary>The task, or a failure that names what it waited for when it does not end within <see cref="Wait"/>.</summary>
+    static async Task Within(Task task, string what)
+    {
+        try { await task.WaitAsync(Wait); }
+        catch (TimeoutException) { throw new TimeoutException($"Timed out after {Wait.TotalSeconds:0} s waiting for {what}"); }
+    }
+
+    static async Task<T> Within<T>(Task<T> task, string what) { await Within((Task)task, what); return await task; }
 
     static string Show(RunOutcome outcome) => $"({outcome.Status}, {outcome.Error ?? "null"})";
 
@@ -87,13 +99,16 @@ static class RunOutcomeTests
             var home = await Fresh();
             await RunToEndReportsSuccess(home);
             await RunToEndReportsTheErrorOfAFailedRun(home, messages);
-            await RunToEndReportsASkippedSingleRun(home);
+            await RunToEndReportsASkippedSingleRun(home, "Once");
+            await RunToEndReportsASkippedSingleRun(home, "QuietOnce");
+            await RunToEndReportsAStoppedRun(home);
             await QueuedRunsFinishInOrder(home);
             await ExistingCallersStillDoNotSeeFailures(home, messages);
             await HistoryRecordsCarryTheNewCauses(home);
             await MisuseThrows(home);
             await RestartCancelsTheOlderRunBeforeTheNewerStarts(home);
             await RunToEndReportsCancellation(await Fresh());
+            await StoppingResumesTheCallerOffTheCancellingThread(await Fresh());
         }
         finally
         {
@@ -115,7 +130,7 @@ static class RunOutcomeTests
         // Command and setup actions are declared Manual: false; they still run for their own causes.
         foreach (var (method, cause, payload) in new[] { ("Flow", InvocationCause.Command, command), ("Quiet", InvocationCause.Command, command), ("Flow", InvocationCause.Setup, TriggerPayload.Setup()), ("Quiet", InvocationCause.Setup, TriggerPayload.Setup()) })
         {
-            var outcome = await home.Class.RunToEnd(method, cause, payload).WaitAsync(Wait);
+            var outcome = await Within(home.Class.RunToEnd(method, cause, payload), $"the {method} {cause} run to end");
             Check(outcome == new RunOutcome("Succeeded", null), $"{method} {cause}: {Show(outcome)}");
         }
         var runs = seen.ToArray();
@@ -124,7 +139,8 @@ static class RunOutcomeTests
             && runs.Skip(2).All(r => r.Cause == InvocationCause.Setup && r.Payload == """{"platform":"setup"}"""), "the runs' causes and trigger data: " + string.Join("; ", runs));
         Check(command.GetRawText() == """{"platform":"command","entity":"power","command":"turn_on","data":{"brightness":3}}""", "command payload: " + command.GetRawText());
         Check(TriggerPayload.Command("power", "turn_off", null).GetRawText() == """{"platform":"command","entity":"power","command":"turn_off"}"""
-            && TriggerPayload.Command("power", "turn_off", default(JsonElement)).GetRawText() == """{"platform":"command","entity":"power","command":"turn_off"}""", "a command without data: " + TriggerPayload.Command("power", "turn_off", null).GetRawText());
+            && TriggerPayload.Command("power", "turn_off", default(JsonElement)).GetRawText() == """{"platform":"command","entity":"power","command":"turn_off"}"""
+            && TriggerPayload.Command("power", "turn_off", JsonSerializer.SerializeToElement<object?>(null)).GetRawText() == """{"platform":"command","entity":"power","command":"turn_off"}""", "a command without data: " + TriggerPayload.Command("power", "turn_off", null).GetRawText());
         Check(home.Rows("Flow").Length == 2 && home.Rows("Quiet").Length == 0, "history: Flow " + home.Rows("Flow").Length + ", Quiet " + home.Rows("Quiet").Length);
         Console.WriteLine("PASS RunToEndReportsSuccess: a command or setup run of a Manual: false action, history on or off, reports (Succeeded, null) and carries its cause and payload");
     }
@@ -135,12 +151,12 @@ static class RunOutcomeTests
         var logged = messages.Count(m => m.Contains("failed: System.InvalidOperationException: boom"));
         foreach (var method in new[] { "Flow", "Quiet" })
         {
-            var outcome = await home.Class.RunToEnd(method, InvocationCause.Command, TriggerPayload.Command("power", "turn_on", null)).WaitAsync(Wait);
+            var outcome = await Within(home.Class.RunToEnd(method, InvocationCause.Command, TriggerPayload.Command("power", "turn_on", null)), $"the failing {method} run to end");
             Check(outcome == new RunOutcome("Failed", "boom"), $"{method}: {Show(outcome)}");
         }
         // Synchronously, before the method returns a task, too.
         Body = (_, _) => throw new InvalidOperationException("at once");
-        var direct = await home.Class.RunToEnd("Quiet", InvocationCause.Setup, TriggerPayload.Setup()).WaitAsync(Wait);
+        var direct = await Within(home.Class.RunToEnd("Quiet", InvocationCause.Setup, TriggerPayload.Setup()), "the synchronously failing run to end");
         Check(direct == new RunOutcome("Failed", "at once"), "a synchronous failure: " + Show(direct));
         Check(messages.Count(m => m.Contains("failed: System.InvalidOperationException: boom")) == logged + 2, "a failed run is logged as before, history on or off");
         var failed = home.Rows("Flow").First();
@@ -149,21 +165,35 @@ static class RunOutcomeTests
         Console.WriteLine("PASS RunToEndReportsTheErrorOfAFailedRun: a failure is (Failed, its message), as its record carries it and logged as before, history on or off");
     }
 
-    static async Task RunToEndReportsASkippedSingleRun(Home home)
+    static async Task RunToEndReportsASkippedSingleRun(Home home, string method)
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Body = async (_, _) => { entered.TrySetResult(); await release.Task; };
-        var first = home.Class.RunToEnd("Once", InvocationCause.Command, TriggerPayload.Command("power", "turn_on", null));
-        await entered.Task.WaitAsync(Wait);
-        var skipped = await home.Class.RunToEnd("Once", InvocationCause.Command, TriggerPayload.Command("power", "turn_off", null)).WaitAsync(Wait);
+        var first = home.Class.RunToEnd(method, InvocationCause.Command, TriggerPayload.Command("power", "turn_on", null));
+        await Within(entered.Task, "the first Single run to enter its method");
+        var skipped = await Within(home.Class.RunToEnd(method, InvocationCause.Command, TriggerPayload.Command("power", "turn_off", null)), "the colliding Single run to be skipped");
         Check(skipped == new RunOutcome("Skipped", null), "the second Single run: " + Show(skipped));
         Check(!first.IsCompleted, "the running Single run ended when the second was skipped");
         release.SetResult();
-        var ran = await first.WaitAsync(Wait);
+        var ran = await Within(first, "the first Single run to end");
         Check(ran == new RunOutcome("Succeeded", null), "the first Single run: " + Show(ran));
-        Check(home.Rows("Once").Select(r => r.Status).Order().SequenceEqual(["Skipped", "Succeeded"]), "records: " + string.Join(",", home.Rows("Once").Select(r => r.Status)));
-        Console.WriteLine("PASS RunToEndReportsASkippedSingleRun: a Single run that collides is (Skipped, null) at once; the one running reports its own end");
+        string[] expected = method == "QuietOnce" ? [] : ["Skipped", "Succeeded"];
+        Check(home.Rows(method).Select(r => r.Status).Order().SequenceEqual(expected), method + " records: " + string.Join(",", home.Rows(method).Select(r => r.Status)));
+        Console.WriteLine($"PASS RunToEndReportsASkippedSingleRun ({method}, history {(method == "QuietOnce" ? "off" : "on")}): a Single run that collides is (Skipped, null) at once; the one running reports its own end");
+    }
+
+    static async Task RunToEndReportsAStoppedRun(Home home)
+    {
+        // What a stop node does: the run ends early and is recorded as Stopped.
+        Body = (_, _) => { InvocationContext.Current!.Stopped = true; return Task.CompletedTask; };
+        foreach (var method in new[] { "Flow", "Quiet" })
+        {
+            var outcome = await Within(home.Class.RunToEnd(method, InvocationCause.Command, TriggerPayload.Command("power", "turn_on", null)), $"the stopping {method} run to end");
+            Check(outcome == new RunOutcome("Stopped", null), $"{method}: {Show(outcome)}");
+        }
+        Check(home.Rows("Flow").First().Status == "Stopped", "the stopped run's record: " + home.Rows("Flow").First().Status);
+        Console.WriteLine("PASS RunToEndReportsAStoppedRun: a run that stops itself is (Stopped, null), history on or off");
     }
 
     static async Task QueuedRunsFinishInOrder(Home home)
@@ -182,12 +212,12 @@ static class RunOutcomeTests
         };
         var keys = Enumerable.Range(0, 5).Select(i => "k" + i).ToArray();
         var first = home.Class.RunToEnd("Queue", InvocationCause.Command, TriggerPayload.Command(keys[0], "turn_on", null));
-        await entered.Task.WaitAsync(Wait);
+        await Within(entered.Task, "the head of the queue to enter its method");
         var rest = keys.Skip(1).Select(key => home.Class.RunToEnd("Queue", InvocationCause.Command, TriggerPayload.Command(key, "turn_on", null))).ToArray();
         await Task.Delay(50);
         Check(!first.IsCompleted && rest.All(r => !r.IsCompleted), "a queued run ended before the one before it");
         release.SetResult();
-        var outcomes = await Task.WhenAll(rest.Prepend(first)).WaitAsync(Wait);
+        var outcomes = await Within(Task.WhenAll(rest.Prepend(first)), "the queued runs to end");
         Check(outcomes.All(o => o == new RunOutcome("Succeeded", null)), "outcomes: " + string.Join(",", outcomes.Select(Show)));
         Check(steps.SequenceEqual(keys.SelectMany(key => new[] { "start " + key, "end " + key })), "queued runs overlapped or ran out of order: " + string.Join(",", steps));
         Console.WriteLine("PASS QueuedRunsFinishInOrder: queued runs each report their end, run one after another in arrival order");
@@ -197,9 +227,9 @@ static class RunOutcomeTests
     {
         Body = async (_, _) => { await Task.Yield(); throw new InvalidOperationException("boom"); };
         var logged = messages.Count(m => m.Contains("failed: System.InvalidOperationException: boom"));
-        await home.Class.RunMethod("Manual").WaitAsync(Wait);
-        await home.Class.RunMethod("Flow", InvocationCause.Command, payload: TriggerPayload.Command("power", "turn_on", null)).WaitAsync(Wait);
-        await home.Class.RunMethod("Quiet", InvocationCause.Setup, payload: TriggerPayload.Setup()).WaitAsync(Wait);
+        await Within(home.Class.RunMethod("Manual"), "RunMethod of Manual to return");
+        await Within(home.Class.RunMethod("Flow", InvocationCause.Command, payload: TriggerPayload.Command("power", "turn_on", null)), "RunMethod of a command to return");
+        await Within(home.Class.RunMethod("Quiet", InvocationCause.Setup, payload: TriggerPayload.Setup()), "RunMethod of a setup to return");
         Check(messages.Count(m => m.Contains("failed: System.InvalidOperationException: boom")) == logged + 3, "RunMethod's failures are not logged as before");
         var manual = home.Rows("Manual").Single();
         Check(manual is { Status: "Failed", Error: "boom", Cause: "Manual" }, $"the manual run's record: {manual.Status} {manual.Error} {manual.Cause}");
@@ -215,10 +245,10 @@ static class RunOutcomeTests
         Check((int)InvocationCause.Command == 5 && (int)InvocationCause.Setup == 6, "the new causes were not appended");
         Body = (_, _) => Task.CompletedTask;
         var before = home.Rows("Flow").Length;
-        await home.Class.RunToEnd("Flow", InvocationCause.Command, TriggerPayload.Command("power", "turn_on", Data)).WaitAsync(Wait);
+        await Within(home.Class.RunToEnd("Flow", InvocationCause.Command, TriggerPayload.Command("power", "turn_on", Data)), "the command run to end");
         // RunToEnd completes after the run's last history write: the record is final as soon as it returns.
         var command = home.Rows("Flow").First();
-        await home.Class.RunToEnd("Flow", InvocationCause.Setup, TriggerPayload.Setup()).WaitAsync(Wait);
+        await Within(home.Class.RunToEnd("Flow", InvocationCause.Setup, TriggerPayload.Setup()), "the setup run to end");
         var setup = home.Rows("Flow").First();
         Check(home.Rows("Flow").Length == before + 2, "records written: " + (home.Rows("Flow").Length - before));
         Check(command is { Cause: "Command", Status: "Succeeded", EndUtc: not null }, $"the command record: {command.Cause} {command.Status} {command.EndUtc}");
@@ -268,14 +298,14 @@ static class RunOutcomeTests
         };
         var rowsBefore = home.Rows().Length;
         var a = home.Class.RunToEnd("Latest", InvocationCause.Entity, Keyed("a"));
-        await Entered("a").Task.WaitAsync(Wait);
+        await Within(Entered("a").Task, "the older Restart run to enter its method");
         var b = home.Class.RunToEnd("Latest", InvocationCause.Entity, Keyed("b"));
         await Until(() => tokens["a"].IsCancellationRequested, "accepting a newer Restart run did not cancel the older one");
         var c = home.Class.RunToEnd("Latest", InvocationCause.Entity, Keyed("c"));
         await Task.Delay(100);
         Check(!Entered("b").Task.IsCompleted && !Entered("c").Task.IsCompleted, "a newer Restart run's method started while the older one was still in its method");
         release.SetResult();
-        var outcomes = await Task.WhenAll(a, b, c).WaitAsync(Wait);
+        var outcomes = await Within(Task.WhenAll(a, b, c), "the three Restart runs to end");
         Check(outcomes[0] == new RunOutcome("Cancelled", CancelReasons.Restarted), "the older run: " + Show(outcomes[0]));
         Check(outcomes[1] == new RunOutcome("Cancelled", CancelReasons.Restarted), "the run between: " + Show(outcomes[1]));
         Check(outcomes[2] == new RunOutcome("Succeeded", null), "the newest run: " + Show(outcomes[2]));
@@ -302,17 +332,55 @@ static class RunOutcomeTests
         var running = Start("Flow", "a");
         var quiet = Start("Quiet", "a");
         var head = Start("Queue", "a");
-        await Task.WhenAll(Entered("Flow a").Task, Entered("Quiet a").Task, Entered("Queue a").Task).WaitAsync(Wait);
+        await Within(Task.WhenAll(Entered("Flow a").Task, Entered("Quiet a").Task, Entered("Queue a").Task), "the runs to enter their methods");
         var queued = Start("Queue", "b");
         await Task.Delay(50);
         Check(!queued.IsCompleted && !Entered("Queue b").Task.IsCompleted, "the queued run did not wait");
-        await home.Manager.UnloadUserScriptsAsync(CancelReasons.Reloaded).WaitAsync(Wait);
-        var outcomes = await Task.WhenAll(running, quiet, head, queued).WaitAsync(Wait);
+        await Within(home.Manager.UnloadUserScriptsAsync(CancelReasons.Reloaded), "the unload to finish");
+        var outcomes = await Within(Task.WhenAll(running, quiet, head, queued), "the cancelled runs to end");
         Check(outcomes.All(o => o == new RunOutcome("Cancelled", CancelReasons.Reloaded)), "outcomes: " + string.Join(",", outcomes.Select(Show)));
         Check(!bodies.Contains("Queue b"), "the queued run's method ran after the unload");
         // A run asked for once the script is gone completes too.
-        var stale = await Start("Flow", "late").WaitAsync(Wait);
+        var stale = await Within(Start("Flow", "late"), "the run asked for after the unload to end");
         Check(stale == new RunOutcome("Cancelled", CancelReasons.Reloaded), "after unload: " + Show(stale));
         Console.WriteLine("PASS RunToEndReportsCancellation: unloading completes every RunToEnd with (Cancelled, its reason): running, history off, queued behind another, and asked for after the unload");
+    }
+
+    /// <summary>
+    /// Home Assistant stopping (CancelRuns, called from Python) cancels runs synchronously, and a run blocked on its token
+    /// ends inline on that thread. The RunToEnd caller must not resume there: it would call into Python re-entrantly
+    /// inside the stop.
+    /// </summary>
+    static async Task StoppingResumesTheCallerOffTheCancellingThread(Home home)
+    {
+        var entered = new ConcurrentDictionary<string, TaskCompletionSource>();
+        TaskCompletionSource Entered(string key) => entered.GetOrAdd(key, _ => new(TaskCreationOptions.RunContinuationsAsynchronously));
+        Body = async (name, automation) =>
+        {
+            Entered(name + " " + automation.TriggerData.GetProperty("entity").GetString()).TrySetResult();
+            // Ends inline in the cancelling call, as user code waiting on its token through a registration does
+            // (Task.Delay with a token resumes on the thread pool instead).
+            var stopped = new TaskCompletionSource();
+            using var registration = automation.CancellationToken.Register(() => stopped.TrySetCanceled(automation.CancellationToken));
+            await stopped.Task;
+        };
+        async Task<(RunOutcome Outcome, Thread Resumed)> Awaiting(string method, string key)
+        {
+            var outcome = await home.Class.RunToEnd(method, InvocationCause.Command, TriggerPayload.Command(key, "turn_on", null));
+            return (outcome, Thread.CurrentThread);
+        }
+        var runs = new[] { Awaiting("Flow", "a"), Awaiting("Quiet", "a"), Awaiting("Queue", "a") };
+        await Within(Task.WhenAll(Entered("Flow a").Task, Entered("Quiet a").Task, Entered("Queue a").Task), "the runs to enter their methods");
+        var queued = Awaiting("Queue", "b");
+        Exception? failed = null;
+        var canceller = new Thread(() => { try { home.Manager.CancelRuns(CancelReasons.Stopping); } catch (Exception error) { failed = error; } }) { Name = "home-assistant-stopping", IsBackground = true };
+        canceller.Start();
+        Check(canceller.Join(Wait), "CancelRuns did not return");
+        Check(failed == null, "CancelRuns failed: " + failed);
+        var ended = await Within(Task.WhenAll(runs.Append(queued)), "the runs cancelled by the stop to end");
+        Check(ended.All(e => e.Outcome == new RunOutcome("Cancelled", CancelReasons.Stopping)), "outcomes: " + string.Join(",", ended.Select(e => Show(e.Outcome))));
+        Check(ended.All(e => !ReferenceEquals(e.Resumed, canceller)), "a RunToEnd caller resumed on the thread that cancelled its run: " + string.Join(",", ended.Select(e => e.Resumed.Name ?? e.Resumed.ManagedThreadId.ToString())));
+        Check(!entered.ContainsKey("Queue b"), "the queued run's method ran after the stop");
+        Console.WriteLine("PASS StoppingResumesTheCallerOffTheCancellingThread: Home Assistant stopping completes every RunToEnd with (Cancelled, Home Assistant stopping), running, history off or queued, and none of their callers resumes on the thread that cancelled them");
     }
 }

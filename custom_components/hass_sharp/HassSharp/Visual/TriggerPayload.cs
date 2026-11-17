@@ -89,12 +89,12 @@ public static class TriggerPayload
 
     /// <summary>
     /// Home Assistant gave an entity of a definition a command: <paramref name="entity"/> is the entity's key within the
-    /// definition, <paramref name="data"/> the command's data, absent when it has none (null or undefined).
+    /// definition, <paramref name="data"/> the command's data, absent when it has none (null, a JSON null or undefined).
     /// </summary>
     internal static JsonElement Command(string entity, string command, JsonElement? data)
     {
         var payload = new JsonObject { ["platform"] = "command", ["entity"] = entity, ["command"] = command };
-        if (data is { ValueKind: not JsonValueKind.Undefined } value) payload["data"] = JsonNode.Parse(value.GetRawText());
+        if (data is { ValueKind: not (JsonValueKind.Undefined or JsonValueKind.Null) } value) payload["data"] = JsonNode.Parse(value.GetRawText());
         return JsonSerializer.SerializeToElement(payload);
     }
 
