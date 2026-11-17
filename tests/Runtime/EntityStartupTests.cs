@@ -57,6 +57,8 @@ static class EntityStartupTests
     public static async Task Run()
     {
         await Restart();
+        await PruneWithoutDirectory();
+        await SlowSetup();
         await PruneFails();
         await UnknownClass();
         await LibraryRebuild();
@@ -73,7 +75,7 @@ static class EntityStartupTests
         try
         {
             await first.Init();
-            Check(home.Prunes().SequenceEqual(["[]"]), "a start with no definitions prunes: " + string.Join(" | ", home.Prunes()));
+            Check(home.Prunes().Length == 0, "a start without the definitions' directory prunes: " + string.Join(" | ", home.Prunes()));
             await SaveLibrary(first, "shelly", 0, EntityApiTests.Library);
             await SaveDefinition(first, "plug1", "Plug one", "10.0.1.1");
             await SaveDefinition(first, "plug2", "Plug two", "10.0.1.2");
@@ -100,10 +102,77 @@ static class EntityStartupTests
             Check(home.Syncs("plug2").Length == broken, "the unreadable definition synced");
             Console.WriteLine("PASS entity startup: an unreadable definition file is logged and skipped, its id still kept by the prune, and the others run");
 
+            // Listed again, it is not logged again; a library save, which must check every definition, names the file.
+            await Request(api.EntityRequest, new { operation = "list" });
+            await Request(api.EntityRequest, new { operation = "list" });
+            var skipped = home.Logs().Where(line => line.Contains("Skipping entity definition")).ToArray();
+            Check(skipped.Length == 1 && skipped[0].Contains("plug2.json: ") && !skipped[0].Contains("JsonException") && !skipped[0].Contains("   at "),
+                "the unreadable file is logged once, without the stack: " + string.Join(" | ", skipped));
+            var refused = await Request(api.NodeLibraryRequest, new { operation = "save", id = "shelly", name = "shelly", expectedRevision = 1, source = EntityApiTests.Library });
+            Check(refused["ok"]!.GetValue<bool>() == false && refused["error"]!["code"]!.GetValue<string>() == "invalid_request"
+                && refused["error"]!["detail"]!.GetValue<string>().StartsWith("Cannot read entity definition " + Storage(home, "entities", "plug2.json") + ": ", StringComparison.Ordinal),
+                "a library save over an unreadable definition: " + refused.ToJsonString());
+            Console.WriteLine("PASS entity startup: an unreadable definition file is logged once without its stack, and a library save it blocks names it");
+
             var plug3 = await Read(api, "plug3");
             Check(Status(plug3) == "off" && !plug3["active"]!.GetValue<bool>() && !plug3["enabled"]!.GetValue<bool>() && home.Syncs("plug3").Length == 0,
                 "a disabled definition loaded at startup: " + plug3.ToJsonString());
             Console.WriteLine("PASS entity startup: a disabled definition is not loaded at startup and is still kept by the prune");
+        }
+        finally { await api.UnloadAsync(); }
+    }
+
+    // Without the definitions' directory, as after a partial restore of .storage, nothing is pruned; with an empty one,
+    // every definition's entities are, as before.
+    static async Task PruneWithoutDirectory()
+    {
+        await using var home = new EntityTestHome("entity-startup-no-directory");
+        var api = new HassSharpManager(home.Root);
+        try { await api.Init(); }
+        finally { await api.UnloadAsync(); }
+        Check(home.Prunes().Length == 0, "a start without the definitions' directory prunes: " + string.Join(" | ", home.Prunes()));
+        Directory.CreateDirectory(Storage(home, "entities"));
+        api = new HassSharpManager(home.Root);
+        try { await api.Init(); }
+        finally { await api.UnloadAsync(); }
+        Check(home.Prunes().SequenceEqual(["[]"]), "a start with an empty definitions' directory prunes everything: " + string.Join(" | ", home.Prunes()));
+        Console.WriteLine("PASS entity startup: a start without the definitions' directory prunes nothing; one with an empty directory prunes every definition");
+    }
+
+    // A definition whose Setup() never ends fails at startup within the setup bound, and the definition after it runs.
+    static async Task SlowSetup()
+    {
+        const string Hanging = """
+            public class HangingPlug : SharpDevice
+            {
+                public HangingPlug() { Add(new SharpSwitch("relay")); }
+                protected override Task Setup() => Task.Delay(Timeout.Infinite);
+            }
+            """;
+        await using var home = new EntityTestHome("entity-startup-slow-setup");
+        DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(200);
+        const string message = "Hanging plug: Setup() did not finish within 0.2 s";
+        var first = new HassSharpManager(home.Root);
+        try
+        {
+            await first.Init();
+            await SaveLibrary(first, "shelly", 0, EntityApiTests.Library + Hanging);
+            var saved = await SaveDefinition(first, "hang", "Hanging plug", null, "library:shelly:NodeLib.HangingPlug");
+            Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == message, "saving the hanging definition: " + saved.ToJsonString());
+            await SaveDefinition(first, "plug1", "Plug one", "10.0.4.1");
+        }
+        finally { await first.UnloadAsync(); }
+
+        var api = new HassSharpManager(home.Root);
+        try
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            await api.Init().WaitAsync(TimeSpan.FromSeconds(30));
+            Check(clock.Elapsed < TimeSpan.FromSeconds(15), $"a Setup() that never ends held startup {clock.Elapsed.TotalSeconds:F1} s");
+            var hang = await Read(api, "hang");
+            Check(Status(hang) == "off" && hang["activationError"]?.GetValue<string>() == message, "the hanging definition after the restart: " + hang.ToJsonString());
+            Check(Status(await Read(api, "plug1")) == "running", "the definition after the hanging one does not run");
+            Console.WriteLine("PASS entity startup: a definition whose Setup() never ends fails within the setup bound and the definitions after it load at Init");
         }
         finally { await api.UnloadAsync(); }
     }
@@ -186,7 +255,8 @@ static class EntityStartupTests
 
             // Turned off and on again, it still does not load: it records why rather than run the code its file embeds.
             await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = false });
-            await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = true });
+            var on = await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = true });
+            Check(on.ToJsonString() == JsonSerializer.Serialize(new { id = "plug1", enabled = true, active = false, activationError = unknown }), "turning on a definition whose class is gone answers: " + on.ToJsonString());
             plug1 = await Read(api, "plug1");
             Check(Status(plug1) == "off" && plug1["activationError"]?.GetValue<string>() == unknown && Revision(plug1) == 1, "plug1 turned on with its class gone: " + plug1.ToJsonString());
             Console.WriteLine("PASS entity startup: turning on a definition whose class is gone records why and runs nothing");

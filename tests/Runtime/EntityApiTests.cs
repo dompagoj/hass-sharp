@@ -227,7 +227,7 @@ static class EntityApiTests
         // Off unloads and shows the entities unavailable; on runs it again.
         batches = home.Pushes().Length;
         var off = await Ok(new { operation = "set_enabled", id = "plug1", enabled = false });
-        Check(off.ToJsonString() == """{"id":"plug1","enabled":false}""", "set_enabled answers: " + off.ToJsonString());
+        Check(off.ToJsonString() == """{"id":"plug1","enabled":false,"active":false,"activationError":null}""", "set_enabled answers: " + off.ToJsonString());
         Check((await Throws<InvalidOperationException>(() => api.EntityCommand("plug1:relay", "turn_on", null), "a command while off")).Message == "The entity is not running", "a command while off");
         await EntityTestHome.Until(() => home.Pushes().Skip(batches).Any(batch => batch.Contains("plug1:relay") && batch.Contains("plug1:power")), "both entities pushed unavailable in one batch");
         var unavailable = home.Pushes().Skip(batches).Single(batch => batch.Contains("plug1:relay"));
@@ -238,12 +238,23 @@ static class EntityApiTests
             && readOff["revision"]!.GetValue<long>() == 2, "plug1 reads off: " + readOff.ToJsonString());
         await api.EntityCommand("plug2:relay", "turn_off", null);
         var on = await Ok(new { operation = "set_enabled", id = "plug1", enabled = true });
-        Check(on.ToJsonString() == """{"id":"plug1","enabled":true}""" && home.Syncs("plug1").Length == 3, "turning on syncs again: " + on.ToJsonString());
+        Check(on.ToJsonString() == """{"id":"plug1","enabled":true,"active":true,"activationError":null}""" && home.Syncs("plug1").Length == 3, "turning on syncs again: " + on.ToJsonString());
         Check(Status(await Ok(new { operation = "read", id = "plug1" })) == "running", "plug1 runs again");
         await api.EntityCommand("plug1:relay", "turn_on", null);
-        await Ok(new { operation = "set_enabled", id = "plug1", enabled = true });
+        var again = await Ok(new { operation = "set_enabled", id = "plug1", enabled = true });
         Check(home.Syncs("plug1").Length == 3, "turning on a running definition replaced it");
+        Check(again.ToJsonString() == """{"id":"plug1","enabled":true,"active":true,"activationError":null}""", "turning on a running definition answers: " + again.ToJsonString());
         Console.WriteLine("PASS entity api: set_enabled false unloads and pushes the entities unavailable in one batch; true syncs and runs it again");
+
+        // Turning on a definition whose activation fails says so, as a save does; one whose Start() failed, too.
+        await Ok(new { operation = "set_enabled", id = "broken", enabled = false });
+        var brokenOn = await Ok(new { operation = "set_enabled", id = "broken", enabled = true });
+        Check(!brokenOn["active"]!.GetValue<bool>() && brokenOn["enabled"]!.GetValue<bool>()
+            && brokenOn["activationError"]?.GetValue<string>().Contains("no plug answers at this host") == true, "turning on a definition whose Setup() fails: " + brokenOn.ToJsonString());
+        var stubbornOn = await Ok(new { operation = "set_enabled", id = "stubborn", enabled = true });
+        Check(stubbornOn["active"]!.GetValue<bool>() && stubbornOn["activationError"]?.GetValue<string>().Contains("the plug refused to start") == true,
+            "turning on a running definition whose Start() failed: " + stubbornOn.ToJsonString());
+        Console.WriteLine("PASS entity api: set_enabled answers whether the definition is active and why its activation failed");
 
         // A saved definition keeps its switch through a save: enabled is refused there, and plug1 runs on.
         Check(await Fails(new { operation = "save", id = "plug1", expectedRevision = 2, enabled = false, definition = Definition("Plug one", "10.0.0.11") }) == "invalid_request"

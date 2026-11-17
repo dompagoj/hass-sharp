@@ -73,6 +73,9 @@ public sealed class DefinitionValidationException(DefinitionPreview preview) : E
 public sealed class EntityDefinitionStore(string directory, DefinitionGenerator generator)
 {
     static readonly ConcurrentDictionary<string, object> Gates = new();
+    // The unreadable files List has logged, by full path, with the message logged: each is logged again only when its
+    // message changes, not on every list (a retry lists them on each push of Home Assistant's services).
+    static readonly ConcurrentDictionary<string, string> Skipped = new();
     object Gate => Gates.GetOrAdd(Path.GetFullPath(directory), _ => new());
 
     // An entity's unique id is "<definition id>:<entity key>", so an id never holds a colon.
@@ -99,7 +102,10 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
         }
     }
 
-    /// <summary>Every readable definition, by id; an unreadable file is logged and skipped, or throws when <paramref name="strict"/>.</summary>
+    /// <summary>
+    /// Every readable definition, by id. An unreadable file is logged with its message, once until that message changes,
+    /// and skipped; when <paramref name="strict"/> it throws instead, an exception of the same kind naming the file.
+    /// </summary>
     public EntityDefinitionDocument[] List(bool strict = false)
     {
         lock (Gate)
@@ -107,13 +113,33 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             var documents = new List<EntityDefinitionDocument>();
             foreach (var id in Ids())
             {
-                try { documents.Add(Read(id) ?? throw new JsonException("Invalid entity definition envelope")); }
+                var path = Path.GetFullPath(Path.Combine(directory, id + ".json"));
+                try
+                {
+                    documents.Add(Read(id) ?? throw new JsonException("Invalid entity definition envelope"));
+                    Skipped.TryRemove(path, out _);
+                }
                 catch (Exception ex) when (ex is JsonException or ArgumentException or IOException or UnauthorizedAccessException)
-                { if (strict) throw; Logger.Error($"Skipping entity definition {Path.Combine(directory, id + ".json")}: {ex}"); }
+                {
+                    var message = $"Cannot read entity definition {path}: {ex.Message}";
+                    if (strict) throw ex switch
+                    {
+                        IOException => new IOException(message, ex),
+                        UnauthorizedAccessException => new UnauthorizedAccessException(message, ex),
+                        ArgumentException => new ArgumentException(message, ex),
+                        _ => new JsonException(message, ex),
+                    };
+                    if (Skipped.TryGetValue(path, out var logged) && logged == ex.Message) continue;
+                    Skipped[path] = ex.Message;
+                    Logger.Error($"Skipping entity definition {path}: {ex.Message}");
+                }
             }
             return documents.ToArray();
         }
     }
+
+    /// <summary>Whether the directory exists: a fresh install, or a partly restored <c>.storage</c>, has none.</summary>
+    public bool Exists() { lock (Gate) return Directory.Exists(directory); }
 
     /// <summary>The id of every definition file, readable or not, in order.</summary>
     public string[] Ids()

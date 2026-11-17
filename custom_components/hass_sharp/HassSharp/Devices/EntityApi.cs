@@ -65,6 +65,13 @@ public partial class HassSharpManager
     /// <returns><c>{id, saved, document, active, activationError}</c>.</returns>
     internal async Task<object> ActivateDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services = null)
     {
+        var (json, active, activationError) = await Activate(document, services);
+        return new { id = document.Id, saved = true, document = json, active, activationError };
+    }
+
+    // ActivateDefinition's work: the document as answered, whether its revision runs now, and why not.
+    async Task<(JsonObject Json, bool Active, string? ActivationError)> Activate(EntityDefinitionDocument document, GeneratedServiceCalls? services)
+    {
         string? activationError = null;
         if (!document.Enabled) await UnloadDefinition(document.Id);
         else
@@ -77,7 +84,7 @@ public partial class HassSharpManager
             if (activationError == null && RunningHost(document.Id) is { Status: "failed" } failed) activationError = failed.Error;
         }
         var json = EntityJson(document);
-        return new { id = document.Id, saved = true, document = json, active = json["currentRevisionActive"]!.GetValue<bool>(), activationError };
+        return (json, json["currentRevisionActive"]!.GetValue<bool>(), activationError);
     }
 
     /// <summary>
@@ -195,11 +202,22 @@ public partial class HassSharpManager
     /// <summary>
     /// Tells Home Assistant which definitions exist, by the name of each stored file, readable or not, so it removes the
     /// entities of every other one. Waits no longer than <see cref="RemovalTimeout"/>; a failure is logged, never thrown,
-    /// and when the files cannot be listed nothing is pruned.
+    /// and when the files cannot be listed nothing is pruned. Without the definitions' directory nothing is pruned either:
+    /// a fresh install has nothing to prune, and a partly restored <c>.storage</c> must not lose every entity's registry
+    /// entry (an empty directory still prunes them all: its definitions were deleted).
     /// </summary>
     async Task PruneEntities()
     {
-        try { await PyInterop.PruneEntitiesAsync(JsonSerializer.Serialize(EntityDocuments.Ids())).WaitAsync(RemovalTimeout); }
+        var store = EntityDocuments;
+        try
+        {
+            if (!store.Exists())
+            {
+                try { Logger.Debug("No entity definitions directory: nothing is pruned from Home Assistant"); } catch { }
+                return;
+            }
+            await PyInterop.PruneEntitiesAsync(JsonSerializer.Serialize(store.Ids())).WaitAsync(RemovalTimeout);
+        }
         catch (Exception ex)
         {
             var reason = ex is TimeoutException ? $"Home Assistant did not answer within {RemovalTimeout.TotalSeconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} s" : ex.Message;
@@ -343,8 +361,20 @@ public partial class HassSharpManager
                     if (enabled)
                         try { document = Regenerated(document, snapshot, libraries.Generation); StoreRegenerated(document); }
                         catch (DefinitionValidationException ex) { RecordLoadError(EntityRuntimePath(id), ex); valid = false; }
-                    if (!enabled || valid && !EntityJson(document)["currentRevisionActive"]!.GetValue<bool>()) await ActivateDefinition(document, services);
-                    result = new { id, enabled = document.Enabled };
+                    bool active;
+                    string? activationError;
+                    if (!enabled || valid && !EntityJson(document)["currentRevisionActive"]!.GetValue<bool>())
+                        (_, active, activationError) = await Activate(document, services);
+                    else
+                    {
+                        // Not activated: either it is not valid, and its load error says why, or its revision already runs,
+                        // when the answer says whether its Start() failed, as a read does.
+                        var json = EntityJson(document);
+                        active = json["currentRevisionActive"]!.GetValue<bool>();
+                        activationError = valid ? (json["status"]!.GetValue<string>() == "failed" ? json["activationError"]?.GetValue<string>() : null)
+                            : json["activationError"]?.GetValue<string>();
+                    }
+                    result = new { id, enabled = document.Enabled, active, activationError };
                 }
                 else
                 {

@@ -48,7 +48,15 @@ public sealed record CustomNodeDescriptor(string NodeId, NodeMethodDescriptor? M
 /// <param name="Type">The form's type of the value: <c>string</c>, <c>boolean</c>, <c>integer</c>, <c>number</c> or <c>enum</c>.</param>
 /// <param name="Secret">Whether the value is a secret the form hides.</param>
 /// <param name="Options">The member names of an <c>enum</c> setting, in declaration order; empty for any other.</param>
-public sealed record EntitySettingDescriptor(string Key, string Label, string? Description, string Type, bool Secret, ImmutableArray<string> Options);
+public sealed record EntitySettingDescriptor(string Key, string Label, string? Description, string Type, bool Secret, ImmutableArray<string> Options)
+{
+    /// <summary>The smallest whole number an <c>integer</c> setting takes, such as an <c>int</c>'s; null for a <c>long</c> or another type.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public long? Minimum { get; init; }
+    /// <summary>The largest whole number an <c>integer</c> setting takes, such as an <c>int</c>'s; null for a <c>long</c> or another type.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public long? Maximum { get; init; }
+}
 /// <summary>
 /// A custom device or entity class a node library declares (deriving <see cref="SharpDevice"/>, or a typed entity base
 /// such as <see cref="SharpSwitch"/>), which a definition can create.

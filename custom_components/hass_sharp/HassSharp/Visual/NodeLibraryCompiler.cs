@@ -679,6 +679,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     internal static string SettingTypeMessage(string type) => $"A setting is a string, bool, int, long, double or enum; {type} cannot be one";
     /// <summary>At a <c>[Setting]</c> property the settings form could not set.</summary>
     internal const string SettingSetterMessage = "A setting needs a public setter";
+    /// <summary>At a <c>[Setting]</c> property that is static or not public, which the settings form never shows.</summary>
+    internal static string SettingAccessMessage(string property) => $"Setting {property} must be a public instance property";
 
     /// <summary>
     /// The custom device and entity classes the libraries declare: each public, concrete, non-generic top-level class of a
@@ -706,9 +708,15 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             var settings = own[type] = [];
             foreach (var property in type.GetMembers().OfType<IPropertySymbol>())
             {
-                if (property.IsStatic || property.IsIndexer || property.DeclaredAccessibility != Accessibility.Public || property.Type.TypeKind == TypeKind.Error) continue;
+                if (property.IsIndexer || property.Type.TypeKind == TypeKind.Error) continue;
                 if (property.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, setting)) is not { } attribute) continue;
                 var location = property.Locations.FirstOrDefault() ?? Location.None;
+                // The settings form fills public instance properties only: another one would be left out without a word.
+                if (property.IsStatic || property.DeclaredAccessibility != Accessibility.Public)
+                {
+                    report(location, SettingAccessMessage(property.Name));
+                    continue;
+                }
                 var settable = property.SetMethod is { DeclaredAccessibility: Accessibility.Public };
                 var form = SettingType(property.Type);
                 if (!settable) report(location, SettingSetterMessage);
@@ -718,7 +726,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 var description = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Description").Value.Value as string;
                 if (string.IsNullOrWhiteSpace(description)) description = DocText(Documentation(property, cancellationToken)?.Element("summary"));
                 settings.Add(new(property.Name, string.IsNullOrWhiteSpace(label) ? property.Name : label, string.IsNullOrWhiteSpace(description) ? null : description,
-                    shape.Kind, attribute.NamedArguments.FirstOrDefault(a => a.Key == "Secret").Value.Value is true, shape.Options));
+                    shape.Kind, attribute.NamedArguments.FirstOrDefault(a => a.Key == "Secret").Value.Value is true, shape.Options)
+                    { Minimum = shape.Minimum, Maximum = shape.Maximum });
             }
         }
         var listed = new List<EntityTypeDescriptor>();
@@ -745,17 +754,21 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         return listed;
     }
 
-    /// <summary>A setting's form type for a property of <paramref name="type"/>, with an enum's member names; null for a type a setting cannot have.</summary>
-    static (string Kind, ImmutableArray<string> Options)? SettingType(ITypeSymbol type)
+    /// <summary>
+    /// A setting's form type for a property of <paramref name="type"/>, with an enum's member names and an <c>int</c>'s
+    /// range (none for a <c>long</c>, which every whole number of the form fits); null for a type a setting cannot have.
+    /// </summary>
+    static (string Kind, ImmutableArray<string> Options, long? Minimum, long? Maximum)? SettingType(ITypeSymbol type)
     {
         var scalar = Scalar(type);
-        if (scalar.TypeKind == TypeKind.Enum) return ("enum", [.. scalar.GetMembers().OfType<IFieldSymbol>().Where(f => f.IsConst).Select(f => f.Name)]);
+        if (scalar.TypeKind == TypeKind.Enum) return ("enum", [.. scalar.GetMembers().OfType<IFieldSymbol>().Where(f => f.IsConst).Select(f => f.Name)], null, null);
+        if (scalar.SpecialType == SpecialType.System_Int32) return ("integer", ImmutableArray<string>.Empty, int.MinValue, int.MaxValue);
         string? kind = scalar.SpecialType switch
         {
             SpecialType.System_String => "string", SpecialType.System_Boolean => "boolean",
-            SpecialType.System_Int32 or SpecialType.System_Int64 => "integer", SpecialType.System_Double => "number", _ => null,
+            SpecialType.System_Int64 => "integer", SpecialType.System_Double => "number", _ => null,
         };
-        return kind == null ? null : (kind, ImmutableArray<string>.Empty);
+        return kind == null ? null : (kind, ImmutableArray<string>.Empty, null, null);
     }
     static string DocText(XElement? element) => element == null ? "" : string.Join(" ", element.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     static string Category(ITypeSymbol type) => LiteralKind(type) switch { "boolean" => "Boolean", "number" or "integer" => "Number", "string" or "enum" => "String", "array" => "Array", _ => type is IArrayTypeSymbol ? "Array" : "Object" };

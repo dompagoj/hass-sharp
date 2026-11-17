@@ -59,6 +59,9 @@ calls = {'sync': [], 'push': [], 'remove': [], 'prune': []}  # each: (thread ide
 logs, others = [], []
 # The manager's configuration directory: a failure exits at once, so it removes the directory itself.
 config = tempfile.mkdtemp(prefix='entity-bridge-smoke-')
+# Without the definitions' directory startup prunes nothing (a partly restored .storage); with an empty one it prunes
+# every definition's entities, which takes the prune through Python.NET.
+os.makedirs(os.path.join(config, '.storage', 'hass_sharp', 'entities'))
 
 
 def fail(message):

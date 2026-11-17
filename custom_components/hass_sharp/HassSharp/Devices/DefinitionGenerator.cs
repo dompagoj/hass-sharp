@@ -41,8 +41,9 @@ public sealed class DefinitionGenerator
         if (snapshot.LibraryDiagnostics.Any(d => d.Severity == 3)) Error("definition.library", "The node libraries have errors; fix them first");
         else if (kind == "class")
         {
-            var name = body.Logic!.Type ?? "";
-            if (!snapshot.EntityTypes.TryGetValue(name, out type)) Error("definition.unknownType", $"No entity class {name} in the node libraries");
+            var name = body.Logic!.Type;
+            if (string.IsNullOrWhiteSpace(name)) Error("definition.unknownType", "No entity class was given: choose the class the definition creates");
+            else if (!snapshot.EntityTypes.TryGetValue(name, out type)) Error("definition.unknownType", $"No entity class {name} in the node libraries");
             else Settings(type, body.Settings ?? [], Error);
         }
 
@@ -63,7 +64,8 @@ public sealed class DefinitionGenerator
             error("definition.duplicateSetting", $"{key} is set twice", key);
     }
 
-    // JSON null leaves the class default, so it fits every setting. A whole number is one a long holds, written without a fraction.
+    // JSON null leaves the class default, so it fits every setting. A whole number is one a long holds, written without a
+    // fraction, within the setting's range when it has one (an int's).
     static bool Fits(EntitySettingDescriptor setting, JsonNode? value)
     {
         if (value == null || value.GetValueKind() == JsonValueKind.Null) return true;
@@ -72,7 +74,8 @@ public sealed class DefinitionGenerator
         {
             "string" => kind == JsonValueKind.String,
             "boolean" => kind is JsonValueKind.True or JsonValueKind.False,
-            "integer" => kind == JsonValueKind.Number && long.TryParse(value.ToJsonString(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _),
+            "integer" => kind == JsonValueKind.Number && long.TryParse(value.ToJsonString(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var whole)
+                && whole >= (setting.Minimum ?? long.MinValue) && whole <= (setting.Maximum ?? long.MaxValue),
             "number" => kind == JsonValueKind.Number && double.TryParse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && double.IsFinite(number),
             "enum" => kind == JsonValueKind.String && setting.Options.Contains(value.GetValue<string>(), StringComparer.Ordinal),
             _ => false,
@@ -83,6 +86,8 @@ public sealed class DefinitionGenerator
     {
         "string" => "a text",
         "boolean" => "true or false",
+        "integer" when setting.Minimum != null || setting.Maximum != null =>
+            $"a whole number from {(setting.Minimum ?? long.MinValue).ToString(CultureInfo.InvariantCulture)} to {(setting.Maximum ?? long.MaxValue).ToString(CultureInfo.InvariantCulture)}",
         "integer" => "a whole number",
         "number" => "a number",
         "enum" => "one of " + string.Join(", ", setting.Options),

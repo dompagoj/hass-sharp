@@ -33,6 +33,8 @@ static class EntityTypeTests
             [Setting] public DateTime When { get; set; }
             [Setting] public string X { get; } = "";
             [Setting] public bool On { get; set; }
+            [Setting] public static string Shared { get; set; } = "";
+            [Setting] internal string Hidden { get; set; } = "";
         }
         """;
 
@@ -68,6 +70,11 @@ static class EntityTypeTests
         Check(plug.Settings[0].Label == "Host" && plug.Settings[2].Label == "Channel", "a setting's label is the attribute's, else the property name");
         Check(plug.Settings[1].Secret && !plug.Settings[0].Secret, "Token is secret and Host is not");
         Check(plug.Settings[3].Options.SequenceEqual(["Eco", "Boost"]) && plug.Settings[0].Options.IsEmpty, "an enum setting's options are its member names: " + string.Join(", ", plug.Settings[3].Options));
+        Check(plug.Settings[2] is { Minimum: int.MinValue, Maximum: int.MaxValue } && plug.Settings[0] is { Minimum: null, Maximum: null },
+            "an int setting carries its range, a string none");
+        var described = System.Text.Json.JsonSerializer.Serialize(plug.Settings, VisualStore.Json);
+        Check(described.Contains("\"key\":\"Channel\",\"label\":\"Channel\",\"description\":null,\"type\":\"integer\",\"secret\":false,\"options\":[],\"minimum\":-2147483648,\"maximum\":2147483647}")
+            && !described.Contains("\"minimum\":null"), "the types answer gives an int's range and leaves it out for the others: " + described);
         Console.WriteLine("PASS a setting carries its label, whether it is secret, and an enum's options");
 
         var relay = types["library:shelly:NodeLib.Relay"];
@@ -92,7 +99,12 @@ static class EntityTypeTests
         var setter = errors.SingleOrDefault(d => d.Message == "A setting needs a public setter");
         Check(setter is { SourceId: "broken", StartLine: 4, StartColumn: 29 }, "a setting without a public setter is reported at the property: " + Messages(errors));
         Console.WriteLine("PASS a setting without a public setter is reported at the property");
-        Check(errors.Length == 2, "no other errors: " + Messages(errors));
+        var shared = errors.SingleOrDefault(d => d.Message == "Setting Shared must be a public instance property");
+        var hidden = errors.SingleOrDefault(d => d.Message == "Setting Hidden must be a public instance property");
+        Check(shared is { SourceId: "broken", StartLine: 6, StartColumn: 36 } && hidden is { SourceId: "broken", StartLine: 7, StartColumn: 31 },
+            "a static or non-public setting is reported at the property, by name: " + Messages(errors));
+        Console.WriteLine("PASS a static or non-public [Setting] property is reported at the property, naming it");
+        Check(errors.Length == 4, "no other errors: " + Messages(errors));
         var odd = preview.Snapshot.EntityTypes["library:broken:NodeLib.Odd"];
         Check(odd.Settings.Select(s => s.Key).SequenceEqual(["On"]) && odd.Settings[0].Type == "boolean", "a class with an invalid setting is listed without it");
         Console.WriteLine("PASS a class with an invalid setting is listed without that setting");

@@ -16,6 +16,7 @@ static class EntityStoreTests
             public Heater() : base("heater") { }
             [Setting] public bool Eco { get; set; }
             [Setting("Target temperature")] public double Target { get; set; }
+            [Setting] public long Energy { get; set; }
         }
         """;
 
@@ -113,7 +114,8 @@ static class EntityStoreTests
             File.WriteAllText(Path.Combine(directory, "broken.json"), "{");
             Check(store.Ids().SequenceEqual(["broken", "plug1"]), "Ids lists every file: " + string.Join(", ", store.Ids()));
             Check(store.List().Select(d => d.Id).SequenceEqual(["plug1"]), "List skips the unreadable file");
-            Throws<JsonException>(() => store.List(strict: true), "a strict List over an unreadable file");
+            var unreadable = Throws<JsonException>(() => store.List(strict: true), "a strict List over an unreadable file");
+            Check(unreadable.Message.StartsWith($"Cannot read entity definition {Path.GetFullPath(Path.Combine(directory, "broken.json"))}: ", StringComparison.Ordinal), "a strict List names the file: " + unreadable.Message);
             Console.WriteLine("PASS entity store: Ids includes an unreadable file, List skips it and a strict List throws");
 
             Throws<VisualConflictException>(() => store.Delete("broken", 1), "deleting an unreadable file at a revision");
@@ -159,17 +161,26 @@ static class EntityStoreTests
         Only(Body(entities: [new JsonObject { ["key"] = "relay" }]), snapshot, "definition.entitiesNotAllowed", "A class definition's entities come from its code");
         Only(Body(type: "library:broken:NodeLib.Odd"), broken, "definition.library", "The node libraries have errors; fix them first");
         Only(Body(type: "library:shelly:NodeLib.Nope"), snapshot, "definition.unknownType", "No entity class library:shelly:NodeLib.Nope in the node libraries");
+        Only(Body(type: null), snapshot, "definition.unknownType", "No entity class was given: choose the class the definition creates");
+        Only(Body(type: " "), snapshot, "definition.unknownType", "No entity class was given: choose the class the definition creates");
         Only(Body(settings: [Setting("Port", "80")]), snapshot, "definition.unknownSetting", "ShellyPlug has no setting Port", "Port");
         Only(Body(settings: [Setting("Host", "\"a\""), Setting("Host", "\"b\"")]), snapshot, "definition.duplicateSetting", "Host is set twice", "Host");
         Console.WriteLine("PASS entity definitions: each problem gives its code and message");
 
-        foreach (var value in new[] { "3.5", "1e40", "\"x\"", "true", "9223372036854775808" })
-            Only(Body(settings: [Setting("Channel", value)]), snapshot, "definition.settingType", "Channel takes a whole number", "Channel");
-        Check(generator.Preview(Body(settings: [Setting("Channel", "9223372036854775807")]), snapshot).Valid, "the largest long is a whole number");
+        // Channel is an int: a whole number outside its range would save, then fail when the definition runs.
+        foreach (var value in new[] { "3.5", "1e40", "\"x\"", "true", "9223372036854775808", "2147483648", "-2147483649", "3000000000" })
+            Only(Body(settings: [Setting("Channel", value)]), snapshot, "definition.settingType", "Channel takes a whole number from -2147483648 to 2147483647", "Channel");
+        foreach (var value in new[] { "2147483647", "-2147483648", "0" })
+            Check(generator.Preview(Body(settings: [Setting("Channel", value)]), snapshot).Valid, $"{value} fits an int");
+        const string HeaterType = "library:heater:NodeLib.Heater";
+        // Energy is a long: any whole number a long holds.
+        foreach (var value in new[] { "9223372036854775807", "-9223372036854775808", "3000000000" })
+            Check(generator.Preview(Body(type: HeaterType, settings: [Setting("Energy", value)]), heater).Valid, $"{value} fits a long");
+        foreach (var value in new[] { "9223372036854775808", "1.5" })
+            Only(Body(type: HeaterType, settings: [Setting("Energy", value)]), heater, "definition.settingType", "Energy takes a whole number", "Energy");
         Only(Body(settings: [Setting("Mode", "\"Turbo\"")]), snapshot, "definition.settingType", "Mode takes one of Eco, Boost", "Mode");
         Only(Body(settings: [Setting("Mode", "1")]), snapshot, "definition.settingType", "Mode takes one of Eco, Boost", "Mode");
         Only(Body(settings: [Setting("Host", "5")]), snapshot, "definition.settingType", "Host takes a text", "Host");
-        const string HeaterType = "library:heater:NodeLib.Heater";
         Only(Body(type: HeaterType, settings: [Setting("Eco", "\"yes\"")]), heater, "definition.settingType", "Eco takes true or false", "Eco");
         Only(Body(type: HeaterType, settings: [Setting("Target", "\"20\"")]), heater, "definition.settingType", "Target temperature takes a number", "Target");
         Check(generator.Preview(Body(type: HeaterType, settings: [Setting("Eco", "false"), Setting("Target", "1e40")]), heater).Valid, "a boolean and a number that fit");
