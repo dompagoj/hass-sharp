@@ -16,7 +16,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
 
 from . import scheduling, dotnet_downloader, dotnet_tasks, entities, memory_report, native_triggers, services, utils, websocket
-from .const import logger
+from .const import PLATFORMS, logger
 
 os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "true"
 
@@ -152,6 +152,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     from . import csharp_converters, llm
     from .authoring import AuthoringService
+    from .entity_bridge import EntityBridge
 
     logger.info("Async setup entry")
 
@@ -255,6 +256,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     from System.Threading.Tasks import Task
     native_bridge = native_triggers.NativeTriggerBridge(hass)
     hass.data.setdefault("hass_sharp_native_triggers", {})[entry.entry_id] = native_bridge
+    # The platforms attach to it when they set up, so it exists before they are forwarded.
+    entity_bridge = EntityBridge(hass, entry, hass_sharp)
+    hass.data.setdefault("hass_sharp_entity_bridge", {})[entry.entry_id] = entity_bridge
 
     state = llm.EntryState(AuthoringService(hass, hass_sharp))
     hass.data.setdefault("hass_sharp_llm", {})[entry.entry_id] = state
@@ -277,8 +281,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         PyInterop.UnSubscribeFromEntityTracking = Action[String](on_loop(hass, unsub_from_entity))
         PyInterop.UnSubscribeAllFromEntityTracking = Action(on_loop(hass, unbsub_all))
         PyInterop.SubscribeToEntityTracking = Action[String](on_loop(hass, subscribe_to_entity_change))
+        # The bridge marshals these to the loop itself; Init may already sync the definitions' entities.
+        PyInterop.BeginSyncEntities = Action[String, Action[String], Action[String]](entity_bridge.begin_sync)
+        PyInterop.BeginRemoveEntities = Action[String, Action, Action[String]](entity_bridge.begin_remove)
+        PyInterop.BeginPruneEntities = Action[String, Action, Action[String]](entity_bridge.begin_prune)
+        PyInterop.PushEntityStates = Action[String](entity_bridge.push)
 
-        await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         hass.data.setdefault("hass_sharp_services", {})[entry.entry_id] = await services.async_start(hass, hass_sharp)
         hass.data.setdefault("hass_sharp_entities", {})[entry.entry_id] = await entities.async_start(hass, hass_sharp)
 
@@ -315,6 +324,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         # Nothing is behind the panel now; it may not have been registered at all.
         frontend.async_remove_panel(hass, PANEL_URL, warn_if_unknown=False)
         native_bridge.close()
+        # Nothing is added to the platforms from here; the registry entries stay, unavailable.
+        entity_bridge.close()
         try:
             await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync, hass.is_stopping)
         finally:
@@ -322,7 +333,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                 await native_bridge.async_shutdown()
             finally:
                 hass.data["hass_sharp_native_triggers"].pop(entry.entry_id, None)
-                await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+                hass.data["hass_sharp_entity_bridge"].pop(entry.entry_id, None)
+                await entity_bridge.async_wait_closed()
+                await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         raise
 
     return True
@@ -339,7 +352,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             logger.warning("Unloading HassSharp while %d command(s) still run after %s s: an automation they save may "
                            "start after the integration stopped; restart Home Assistant if one keeps running",
                            state.in_flight, UNLOAD_COMMAND_WAIT)
-    if not await hass.config_entries.async_unload_platforms(entry, ["sensor"]):
+    entity_bridge = hass.data.get("hass_sharp_entity_bridge", {}).get(entry.entry_id)
+    if entity_bridge is not None:
+        # Before the platforms unload, so nothing is added to them after (spike rule 3); registry entries stay.
+        entity_bridge.close()
+        await entity_bridge.async_wait_closed()
+    if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         if state is not None:
             state.ready = True
         return False
@@ -366,6 +384,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await dotnet_tasks.async_run_dotnet_task(hass, hass_sharp.UnloadAsync, hass.is_stopping)
     except Exception:
         logger.exception("Unloading the automations failed: some may still be running; restart Home Assistant to stop them")
+    hass.data.get("hass_sharp_entity_bridge", {}).pop(entry.entry_id, None)
     try:
         if native_bridge is not None:
             await native_bridge.async_shutdown()

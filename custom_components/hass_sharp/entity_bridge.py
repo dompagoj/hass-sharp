@@ -11,6 +11,7 @@ each answers .NET exactly once. Pushes do not wait behind them: a state for an e
 (the latest only) and written when it is added. Nothing here removes registry entries on unload: they stay,
 unavailable, until the next sync.
 """
+import asyncio
 import json
 import collections
 
@@ -21,6 +22,8 @@ from . import dotnet_tasks
 from .const import DOMAIN, logger
 
 CLOSED = "closed"
+# How long, in seconds, unload waits for an add Home Assistant had in flight when the bridge closed.
+CLOSE_WAIT = 10
 
 # The device fields of a sync request by the keyword Home Assistant's device registry takes; a null clears one.
 DEVICE_FIELDS = {"name": "name", "manufacturer": "manufacturer", "model": "model", "swVersion": "sw_version",
@@ -123,6 +126,21 @@ class EntityBridge:
         self._queue.clear()
         for operation in operations:
             operation.answer(operation.error, CLOSED)
+
+    async def async_wait_closed(self, timeout: float = CLOSE_WAIT) -> None:
+        """After close(), before the platforms unload: wait until an add that was in flight has finished.
+
+        Home Assistant finishes an add it started even after the platform unloaded, and that entity then holds its
+        unique id until a restart: the next sync could not add it again. Once closed, the bridge's own task only ever
+        waits on such an add, and stops after it. Never raises.
+        """
+        if self._runner is None or self._runner.done():
+            return
+        _, pending = await asyncio.wait({self._runner}, timeout=timeout)
+        if pending:
+            logger.warning("Home Assistant was still adding a HassSharp entity after %s s while the integration "
+                           "unloaded; if that entity stays unavailable after the next start of HassSharp, restart "
+                           "Home Assistant", timeout)
 
     # The queue
 
@@ -228,7 +246,7 @@ class EntityBridge:
         """Create, update or remove the definition's device; returns its device info for new entities and its id."""
         identifiers = {(DOMAIN, definition_id)}
         if device is None:
-            existing = devices.async_get_device(identifiers=identifiers)
+            existing = devices.async_get_device_by_identifier((DOMAIN, definition_id), self.entry.entry_id)
             if existing is not None:
                 # Off it first: removing a device removes the entities on it (spike rule 9).
                 for entry in self._entries(entities, definition_id):
@@ -242,7 +260,7 @@ class EntityBridge:
             info["suggested_area"] = device["suggestedArea"]
         via = self._via(devices, device.get("via"))
         if via is not None:
-            info["via_device"] = via
+            info["via_device_id"] = via
         entry = devices.async_get_or_create(config_entry_id=self.entry.entry_id, **info)
         # Updates in place; a field described as null is cleared separately (spike rule 8).
         cleared = {k: None for k, v in fields.items() if v is None and getattr(entry, k, None) is not None}
@@ -252,17 +270,18 @@ class EntityBridge:
             devices.async_update_device(entry.id, **cleared)
         return info, entry.id
 
-    @staticmethod
-    def _via(devices, via):
-        """The identifier of the parent device, or None when there is none or it does not exist."""
+    def _via(self, devices, via):
+        """The id of the parent device, or None when there is none or it does not exist (Home Assistant refuses an
+        unknown `via_device_id`; it deprecates `via_device` and the lookup by identifiers alone)."""
         if not via:
             return None
         if via.get("definition") is not None:
-            identifier = (DOMAIN, via["definition"])
-            return identifier if devices.async_get_device(identifiers={identifier}) is not None else None
-        if via.get("deviceId") is not None and (parent := devices.async_get(via["deviceId"])) is not None:
-            return min(parent.identifiers, default=None)
-        return None
+            parent = devices.async_get_device_by_identifier((DOMAIN, via["definition"]), self.entry.entry_id)
+        elif via.get("deviceId") is not None:
+            parent = devices.async_get(via["deviceId"])
+        else:
+            return None
+        return parent.id if parent is not None else None
 
     async def _async_sync_entity(self, entities, description, device_info, device_id, definition_name):
         """Update a live entity in place or add a new one; returns its entity id, or None when it was not added."""
@@ -271,9 +290,11 @@ class EntityBridge:
         if entity is not None:
             entity.apply(description, device_info, definition_name)
             entity.async_write_ha_state()
-            # Home Assistant updates the rest of the registry entry from the state write, not these (spike rule 6).
+            # Home Assistant updates the rest of the registry entry from the state write, not these (spike rule 6). The
+            # unit is the one the entity shows, as Home Assistant writes it on an add: a sensor re-added with another
+            # unit of its device class keeps the unit stored for it and converts to it (spike rule 7).
             changes = {"original_icon": entity.icon, "entity_category": entity.entity_category,
-                       "unit_of_measurement": (description.get("options") or {}).get("unit")}
+                       "unit_of_measurement": entity.unit_of_measurement}
             if (entry := entities.async_get(entity.entity_id)) is not None:
                 if entry.device_id != device_id:
                     changes["device_id"] = device_id
@@ -321,7 +342,7 @@ class EntityBridge:
 
     def _purge(self, entities, devices, definition_id):
         """Remove a definition's device, then the registry entries left with its prefix, and forget its entities."""
-        if (device := devices.async_get_device(identifiers={(DOMAIN, definition_id)})) is not None:
+        if (device := devices.async_get_device_by_identifier((DOMAIN, definition_id), self.entry.entry_id)) is not None:
             devices.async_remove_device(device.id)
         for entry in self._entries(entities, definition_id):
             entities.async_remove(entry.entity_id)

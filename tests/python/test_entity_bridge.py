@@ -2,7 +2,7 @@
 
 The fakes behave as the spike findings (docs/superpowers/plans/2026-11-17-custom-entities-phase-1-spike.md) say
 Home Assistant 2026.11 does: writing a state before the entity is added raises, a disabled registry entry is not
-added, removing a device removes the entities on it, a via device that does not exist is ignored.
+added, removing a device removes the entities on it, a via device that does not exist is refused.
 """
 import ast
 import asyncio
@@ -57,6 +57,10 @@ class Entity:
     @property
     def device_info(self):
         return getattr(self, '_attr_device_info', None)
+
+    @property
+    def unit_of_measurement(self):
+        return getattr(self, '_attr_unit_of_measurement', None)
 
     def async_write_ha_state(self):
         if self.hass is None:  # spike rule 11
@@ -116,18 +120,21 @@ class DeviceRegistry:
     def async_get(self, device_id):
         return self.devices.get(device_id)
 
-    def async_get_device(self, identifiers=None, connections=None):
-        return next((d for d in self.devices.values() if d.identifiers & set(identifiers or ())), None)
+    # Home Assistant 2026.11 deprecates async_get_device (identifiers are unique per config entry only) and
+    # `via_device`, and refuses a `via_device_id` that is not a registered device; this fake has neither.
+    def async_get_device_by_identifier(self, identifier, config_entry_id):
+        return next((d for d in self.devices.values()
+                     if identifier in d.identifiers and d.config_entry_id == config_entry_id), None)
 
     def async_get_or_create(self, *, config_entry_id, identifiers, **fields):
         self.calls.append(('get_or_create', dict(fields), threading.get_ident()))
-        device = self.async_get_device(identifiers=identifiers)
+        if 'via_device' in fields:
+            raise AssertionError('via_device is deprecated: pass via_device_id')
+        if fields.get('via_device_id') is not None and fields['via_device_id'] not in self.devices:
+            raise ValueError(f"via_device_id {fields['via_device_id']} is not a registered device id")
+        device = self.async_get_device_by_identifier(next(iter(identifiers)), config_entry_id)
         if device is None:
             device = self.add(next(iter(identifiers))[1], config_entry_id)
-        if 'via_device' in fields:
-            parent = self.async_get_device(identifiers={fields.pop('via_device')})
-            if parent is not None:  # A parent that does not exist is ignored (spike rule 8).
-                device.via_device_id = parent.id
         fields.pop('suggested_area', None)  # Accepted, but not a field of DeviceEntry.
         for key, value in fields.items():
             setattr(device, key, value)
@@ -235,6 +242,17 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
                 self._attr_is_on = values.get('is_on')
 
         class Sensor(base):
+            # As SensorEntity: it shows the unit Home Assistant stored for it when there is one, else its own.
+            stored_unit = None
+
+            def apply(self, description, device, definition_name):
+                super().apply(description, device, definition_name)
+                self._attr_native_unit_of_measurement = (description.get('options') or {}).get('unit')
+
+            @property
+            def unit_of_measurement(self):
+                return self.stored_unit or self._attr_native_unit_of_measurement
+
             def apply_values(self, values):
                 self._attr_native_value = values.get('value')
 
@@ -309,7 +327,7 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((relay._attr_name, power._attr_name), ('Relay', 'Power'))
         self.assertEqual(power._attr_device_class, 'power')
         self.assertEqual(relay.device_info['identifiers'], {(DOMAIN, 'plug1')})
-        plug = self.devices.async_get_device(identifiers={(DOMAIN, 'plug1')})
+        plug = self.devices.async_get_device_by_identifier((DOMAIN, 'plug1'), ENTRY)
         self.assertEqual((plug.name, plug.manufacturer, plug.model), ('Plug one', 'Shelly', 'Plug S'))
         self.assertEqual({e.device_id for e in self.entities.entities.values()}, {plug.id})
         # Unavailable until .NET says otherwise.
@@ -334,10 +352,15 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(type(changes['entity_category']), EntityCategory)
         self.assertNotIn('device_id', changes)  # The device did not change.
         self.assertIs(self.live('plug1:power')._attr_entity_category, EntityCategory.DIAGNOSTIC)
+        # The unit is the one the entity shows, as Home Assistant writes it on an add: a sensor re-added with another
+        # unit of its device class keeps showing the unit stored for it (spike rule 7).
+        self.live('plug1:power').stored_unit = 'W'
+        await self.sync(definition(description('power', 'sensor', 'Power', options={'unit': 'MW'})))
+        self.assertEqual('W', self.registry_updates('sensor.plug1_power')[-1]['unit_of_measurement'])
 
     async def test_sync_clears_a_device_field_set_to_null(self):
         await self.sync(definition(device=device(swVersion='1.2', configurationUrl='http://plug')))
-        plug = self.devices.async_get_device(identifiers={(DOMAIN, 'plug1')})
+        plug = self.devices.async_get_device_by_identifier((DOMAIN, 'plug1'), ENTRY)
         self.assertEqual((plug.sw_version, plug.configuration_url), ('1.2', 'http://plug'))
         await self.sync(definition(device=device(model=None)))
         self.assertEqual((plug.model, plug.sw_version, plug.configuration_url), (None, None, None))
@@ -406,7 +429,7 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.entities.async_get('switch.plug1_relay').device_id)
         self.assertEqual(relay._attr_name, 'Plug one')
         await self.sync(definition(description('relay', name=None)))
-        plug = self.devices.async_get_device(identifiers={(DOMAIN, 'plug1')})
+        plug = self.devices.async_get_device_by_identifier((DOMAIN, 'plug1'), ENTRY)
         self.assertEqual(self.registry_updates('switch.plug1_relay')[-1]['device_id'], plug.id)
         self.assertEqual(self.entities.async_get('switch.plug1_relay').device_id, plug.id)
         self.assertIs(self.live('plug1:relay'), relay)  # Moved, not added again (spike rule 8).
@@ -429,7 +452,7 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         await self.sync(definition(description('relay', name=None)))
         relay = self.live('plug1:relay')
         await self.sync(definition(description('relay', name=None), device=None))
-        self.assertIsNone(self.devices.async_get_device(identifiers={(DOMAIN, 'plug1')}))
+        self.assertIsNone(self.devices.async_get_device_by_identifier((DOMAIN, 'plug1'), ENTRY))
         entry = self.entities.async_get('switch.plug1_relay')
         self.assertIsNotNone(entry)  # Moved off before the device went, so it was not removed with it.
         self.assertIsNone(entry.device_id)
@@ -458,13 +481,13 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         other = self.devices.add('zigbee', config_entry_id='entry2')
         other.identifiers = {('zha', 'coordinator'), ('zha', 'b')}
         await self.sync(definition(device=device(via={'definition': 'hub'})))
-        plug = self.devices.async_get_device(identifiers={(DOMAIN, 'plug1')})
+        plug = self.devices.async_get_device_by_identifier((DOMAIN, 'plug1'), ENTRY)
         self.assertEqual(plug.via_device_id, 'device-hub')
         await self.sync(definition(device=device(via={'deviceId': other.id})))
         self.assertEqual(plug.via_device_id, other.id)
         # A parent that does not exist is left out: the device no longer has one.
         await self.sync(definition(device=device(via={'definition': 'gone'})))
-        self.assertNotIn('via_device', [c[1] for c in self.devices.calls if c[0] == 'get_or_create'][-1])
+        self.assertNotIn('via_device_id', [c[1] for c in self.devices.calls if c[0] == 'get_or_create'][-1])
         self.assertIsNone(plug.via_device_id)
 
     # Push
@@ -670,6 +693,37 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         # A platform set up after close is not used.
         self.bridge.attach_platform('switch', self.platforms['switch'], Mock())
         self.assertEqual(await self.answers(self.bridge.begin_sync, definition()), [('error', 'closed')])
+
+    async def test_wait_closed_waits_for_an_add_in_flight(self):
+        # Home Assistant finishes an add it started even after the platform unloaded (test_entity_platforms).
+        self.platforms['switch'].gate = asyncio.Event()
+        answers = []
+        self.bridge.begin_sync(definition(description('relay'), description('power', 'sensor', 'Power')),
+                               lambda *a: answers.append(('success', *a)), lambda *a: answers.append(('error', *a)))
+        await asyncio.wait_for(self.platforms['switch'].entered.wait(), 2)
+        self.bridge.close()
+        self.assertEqual(answers, [('error', 'closed')])
+        waiting = asyncio.ensure_future(self.bridge.async_wait_closed())
+        await self.settle()
+        self.assertFalse(waiting.done())
+        self.platforms['switch'].gate.set()
+        await asyncio.wait_for(waiting, 2)
+        self.assertEqual(self.platforms['sensor'].added, [])  # The rest of the sync was skipped.
+        self.assertEqual(answers, [('error', 'closed')])
+        self.logger.warning.assert_not_called()
+        # Nothing in flight: it returns at once.
+        await asyncio.wait_for(self.bridge.async_wait_closed(), 0.1)
+
+    async def test_wait_closed_gives_up_after_its_bound(self):
+        self.platforms['switch'].gate = asyncio.Event()
+        self.bridge.begin_sync(definition(), Mock(), Mock())
+        await asyncio.wait_for(self.platforms['switch'].entered.wait(), 2)
+        self.bridge.close()
+        await asyncio.wait_for(self.bridge.async_wait_closed(0.01), 1)
+        message, *args = self.logger.warning.call_args.args
+        self.assertIn('restart Home Assistant', message % tuple(args))
+        self.platforms['switch'].gate.set()
+        await self.settle()
 
     async def test_calls_after_the_loop_closed_answer_without_raising(self):
         loop = asyncio.new_event_loop()

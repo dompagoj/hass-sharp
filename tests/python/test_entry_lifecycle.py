@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, Mock
 
 from test_visual import EntryState, load_routes
 
+PLATFORMS=['binary_sensor','sensor','switch']
+
 class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_unload_unloads_platform_invalidates_tools_and_removes_panel(self):
         tree=ast.parse(pathlib.Path('custom_components/hass_sharp/__init__.py').read_text())
@@ -21,7 +23,7 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         hass=types.SimpleNamespace(is_stopping=False,data={'hass_sharp_llm':{'entry':state},'hass_sharp_native_triggers':{'entry':bridge},'hass_sharp_services':{'entry':stop_services},'hass_sharp_stop':{'entry':stop_listener}},config_entries=types.SimpleNamespace(async_unload_platforms=AsyncMock(return_value=True)))
         manager=types.SimpleNamespace(UnloadAsync=object())
         env={'utils':types.SimpleNamespace(get_hass_sharp_manager=lambda h:manager), 'dotnet_tasks':types.SimpleNamespace(async_run_dotnet_task=AsyncMock()),'frontend':types.SimpleNamespace(async_remove_panel=Mock()),
-             'logger':Mock(),'PANEL_URL':'hass-sharp','UNLOAD_COMMAND_WAIT':30}
+             'logger':Mock(),'PANEL_URL':'hass-sharp','UNLOAD_COMMAND_WAIT':30,'PLATFORMS':PLATFORMS}
         exec(compile(ast.Module(body=[fn],type_ignores=[]),'<entry>','exec'),env)
         self.assertTrue(await env['async_unload_entry'](hass,types.SimpleNamespace(entry_id='entry',disabled_by=None)))
         # A reload or removal, not a stop: the runs it cancels record "Automation reloaded".
@@ -67,7 +69,8 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
             if method is manager.UnloadAsync: order.append('UnloadAsync')
         routes['dotnet_tasks']=types.SimpleNamespace(async_run_dotnet_task=run)
         env={'utils':types.SimpleNamespace(get_hass_sharp_manager=lambda h:manager),'dotnet_tasks':routes['dotnet_tasks'],
-             'frontend':types.SimpleNamespace(async_remove_panel=Mock()),'logger':Mock(),'PANEL_URL':'hass-sharp','UNLOAD_COMMAND_WAIT':wait}
+             'frontend':types.SimpleNamespace(async_remove_panel=Mock()),'logger':Mock(),'PANEL_URL':'hass-sharp','UNLOAD_COMMAND_WAIT':wait,
+             'PLATFORMS':PLATFORMS}
         exec(compile(ast.Module(body=[fn],type_ignores=[]),'<entry>','exec'),env)
         def send(command,msg):
             answers=[]
@@ -122,7 +125,7 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
                                    config_entries=types.SimpleNamespace(async_unload_platforms=AsyncMock(return_value=True)))
         env={'utils':types.SimpleNamespace(get_hass_sharp_manager=lambda h:types.SimpleNamespace(UnloadAsync=object())),
              'dotnet_tasks':types.SimpleNamespace(async_run_dotnet_task=AsyncMock(side_effect=RuntimeError('unload failed'))),
-             'frontend':types.SimpleNamespace(async_remove_panel=Mock()),'logger':Mock(),'PANEL_URL':'hass-sharp'}
+             'frontend':types.SimpleNamespace(async_remove_panel=Mock()),'logger':Mock(),'PANEL_URL':'hass-sharp','PLATFORMS':PLATFORMS}
         exec(compile(ast.Module(body=[fn],type_ignores=[]),'<entry>','exec'),env)
         self.assertTrue(await env['async_unload_entry'](hass,types.SimpleNamespace(entry_id='entry',disabled_by='user')))
         self.assertEqual(env['logger'].exception.call_count,2)
@@ -211,7 +214,8 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
                  dotnet_tasks=types.SimpleNamespace(async_run_dotnet_task=runner),
                  frontend=types.SimpleNamespace(async_register_built_in_panel=panel,async_remove_panel=unpanel,DATA_PANELS='frontend_panels'),
                  llm=types.SimpleNamespace(EntryState=state_factory,register=register),AuthoringService=lambda h,m:None,
-                 services=services,entities=entities,memory_report=types.SimpleNamespace(enabled=lambda:False))
+                 services=services,entities=entities,memory_report=types.SimpleNamespace(enabled=lambda:False),
+                 PLATFORMS=PLATFORMS,EntityBridge=lambda h,e,m:types.SimpleNamespace(begin_sync=Mock(),begin_remove=Mock(),begin_prune=Mock(),push=Mock(),close=Mock(),async_wait_closed=AsyncMock()))
         exec(compile(tree,'<entry>','exec'),env)
         entry=types.SimpleNamespace(entry_id='test',disabled_by=None)
         self.assertTrue(await env['async_setup_entry'](hass,entry))
@@ -290,3 +294,161 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('test',hass.data['hass_sharp_entities'])
         self.assertEqual(hass.config_entries.async_unload_platforms.await_count,3)
         self.assertEqual(bridge.async_shutdown.await_count,3)
+
+
+class TypedDelegate:
+    """A .NET delegate type: `Action[String](f)` is `f`, and `made` records each delegate under its full type name."""
+    made = None
+
+    def __class_getitem__(cls, key):
+        key = key if isinstance(key, tuple) else (key,)
+        return type(f'{cls.__name__}[{", ".join(k.__name__ for k in key)}]', (cls,), {})
+
+    def __new__(cls, value=None):
+        cls.made.append((cls.__name__, value))
+        return value
+
+
+class EntityBridgeWiringTests(unittest.IsolatedAsyncioTestCase):
+    """async_setup_entry and async_unload_entry with the entity bridge, with fakes for .NET and Home Assistant."""
+
+    async def asyncSetUp(self):
+        import asyncio
+        class RemoveImports(ast.NodeTransformer):
+            def visit_ImportFrom(self, node): return None
+        tree = ast.parse(pathlib.Path('custom_components/hass_sharp/__init__.py').read_text())
+        names = ('async_setup_entry', 'async_unload_entry', 'register_panel', 'on_loop')
+        functions = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names]
+        for fn in functions:
+            fn.returns = None
+            for a in fn.args.args: a.annotation = None
+        tree = RemoveImports().visit(ast.Module(body=functions, type_ignores=[]))
+        self.order = order = []
+        self.made = []
+        Action = type('Action', (TypedDelegate,), {'made': self.made})
+        Func = type('Func', (TypedDelegate,), {'made': self.made})
+        self.bridges = []
+
+        def make_bridge(hass, entry, manager):
+            bridge = types.SimpleNamespace(begin_sync=Mock(), begin_remove=Mock(), begin_prune=Mock(), push=Mock(),
+                                           close=Mock(side_effect=lambda: order.append('close bridge')),
+                                           async_wait_closed=AsyncMock(side_effect=lambda: order.append('wait closed')),
+                                           made_with=(hass, entry, manager))
+            self.bridges.append(bridge)
+            return bridge
+        self.manager = manager = types.SimpleNamespace(Init=object(), UnloadAsync=object(), CancelRunsForShutdown=Mock())
+        self.init = AsyncMock()
+
+        async def run(hass, method, *args):
+            if method is manager.Init:
+                order.append('init')
+                await self.init()
+            elif method is manager.UnloadAsync:
+                order.append('UnloadAsync')
+                self.bridge_at_unload = hass.data.get('hass_sharp_entity_bridge', {}).get('test')
+
+        async def forward(entry, platforms):
+            order.append('forward')
+            self.bridge_at_forward = self.hass.data.get('hass_sharp_entity_bridge', {}).get('test')
+
+        async def unload_platforms(entry, platforms):
+            order.append('unload platforms')
+            return True
+
+        async def executor(fn, *args): return fn(*args)
+        self.hass = types.SimpleNamespace(
+            data={}, is_stopping=False, bus=types.SimpleNamespace(async_listen=lambda event, handler: Mock()),
+            async_add_executor_job=executor, loop=asyncio.get_running_loop(),
+            config_entries=types.SimpleNamespace(async_forward_entry_setups=AsyncMock(side_effect=forward),
+                                                 async_unload_platforms=AsyncMock(side_effect=unload_platforms)))
+        self.pyinterop = types.SimpleNamespace()
+        self.platforms = list(PLATFORMS)
+        native = types.SimpleNamespace(close=Mock(), begin_remove=Mock(), async_shutdown=AsyncMock())
+        self.env = dict(
+            json=None, EVENT_HOMEASSISTANT_STOP='homeassistant_stop', Action=Action, Func=Func,
+            Int32=type('Int32', (), {}), String=type('String', (), {}), Task=type('Task', (), {}),
+            HasEntityState=type('HasEntityState', (), {}), PyInterop=self.pyinterop, Event=object,
+            EventStateChangedData=object, callback=lambda f: f, logger=Mock(), python_log=Mock(), unsubs={},
+            PANEL_URL='hass-sharp', UNLOAD_COMMAND_WAIT=30, async_track_state_change_event=Mock(),
+            utils=types.SimpleNamespace(get_hass_sharp_manager=lambda h: manager),
+            native_triggers=types.SimpleNamespace(NativeTriggerBridge=lambda h: native),
+            dotnet_tasks=types.SimpleNamespace(async_run_dotnet_task=run),
+            frontend=types.SimpleNamespace(async_register_built_in_panel=Mock(), async_remove_panel=Mock(),
+                                           DATA_PANELS='frontend_panels'),
+            llm=types.SimpleNamespace(EntryState=lambda service: EntryState(service), register=Mock()),
+            AuthoringService=lambda h, m: None,
+            services=types.SimpleNamespace(async_start=AsyncMock(return_value=Mock())),
+            entities=types.SimpleNamespace(async_start=AsyncMock(return_value=Mock())),
+            memory_report=types.SimpleNamespace(enabled=lambda: False),
+            PLATFORMS=self.platforms, EntityBridge=make_bridge)
+        exec(compile(tree, '<entry>', 'exec'), self.env)
+        self.entry = types.SimpleNamespace(entry_id='test', disabled_by=None)
+
+    async def test_platforms_are_forwarded_from_the_constant(self):
+        self.assertTrue(await self.env['async_setup_entry'](self.hass, self.entry))
+        self.hass.config_entries.async_forward_entry_setups.assert_awaited_once_with(self.entry, self.platforms)
+        self.assertIs(self.hass.config_entries.async_forward_entry_setups.await_args.args[1], self.platforms)
+        self.assertTrue(await self.env['async_unload_entry'](self.hass, self.entry))
+        self.assertIs(self.hass.config_entries.async_unload_platforms.await_args.args[1], self.platforms)
+        # The failure path unloads the same platforms.
+        self.init.side_effect = RuntimeError('init failed')
+        with self.assertRaisesRegex(RuntimeError, 'init failed'):
+            await self.env['async_setup_entry'](self.hass, self.entry)
+        self.assertIs(self.hass.config_entries.async_unload_platforms.await_args.args[1], self.platforms)
+        self.assertNotIn('"sensor"', pathlib.Path('custom_components/hass_sharp/__init__.py').read_text())
+
+    async def test_entity_delegates_are_assigned_before_init(self):
+        delegates = ('BeginSyncEntities', 'BeginRemoveEntities', 'BeginPruneEntities', 'PushEntityStates')
+        at_init = {}
+        self.init.side_effect = lambda: at_init.update({name: getattr(self.pyinterop, name, None) for name in delegates})
+        self.assertTrue(await self.env['async_setup_entry'](self.hass, self.entry))
+        bridge, = self.bridges
+        self.assertEqual(bridge.made_with, (self.hass, self.entry, self.manager))
+        self.assertEqual(at_init, {'BeginSyncEntities': bridge.begin_sync, 'BeginRemoveEntities': bridge.begin_remove,
+                                   'BeginPruneEntities': bridge.begin_prune, 'PushEntityStates': bridge.push})
+        # With the delegate types .NET declares.
+        for made in (('Action[String, Action[String], Action[String]]', bridge.begin_sync),
+                     ('Action[String, Action, Action[String]]', bridge.begin_remove),
+                     ('Action[String, Action, Action[String]]', bridge.begin_prune),
+                     ('Action[String]', bridge.push)):
+            self.assertIn(made, self.made)
+        # The platforms find the bridge when they set up, and a sync during Init finds them attached.
+        self.assertIs(self.bridge_at_forward, bridge)
+        self.assertLess(self.order.index('forward'), self.order.index('init'))
+        self.assertIs(self.hass.data['hass_sharp_entity_bridge']['test'], bridge)
+        bridge.close.assert_not_called()
+
+    async def test_bridge_is_closed_before_platforms_unload(self):
+        self.assertTrue(await self.env['async_setup_entry'](self.hass, self.entry))
+        bridge, = self.bridges
+        self.order.clear()
+        self.assertTrue(await self.env['async_unload_entry'](self.hass, self.entry))
+        # An add Home Assistant had in flight finishes before its platform unloads.
+        self.assertEqual(['close bridge', 'wait closed', 'unload platforms', 'UnloadAsync'], self.order)
+        bridge.close.assert_called_once_with()
+        bridge.async_wait_closed.assert_awaited_once_with()
+        # Popped only after .NET unloaded, which may still ask for entity changes (the closed bridge refuses them).
+        self.assertIs(self.bridge_at_unload, bridge)
+        self.assertNotIn('test', self.hass.data['hass_sharp_entity_bridge'])
+        # A reload sets up a new bridge.
+        self.assertTrue(await self.env['async_setup_entry'](self.hass, self.entry))
+        self.assertIs(self.hass.data['hass_sharp_entity_bridge']['test'], self.bridges[-1])
+        self.assertEqual(2, len(self.bridges))
+
+    async def test_failed_setup_closes_the_bridge(self):
+        self.init.side_effect = RuntimeError('init failed')
+        with self.assertRaisesRegex(RuntimeError, 'init failed'):
+            await self.env['async_setup_entry'](self.hass, self.entry)
+        bridge, = self.bridges
+        bridge.close.assert_called_once_with()
+        self.assertLess(self.order.index('close bridge'), self.order.index('wait closed'))
+        self.assertLess(self.order.index('wait closed'), self.order.index('unload platforms'))
+        self.assertLess(self.order.index('close bridge'), self.order.index('UnloadAsync'))
+        self.assertIs(self.bridge_at_unload, bridge)
+        self.assertNotIn('test', self.hass.data['hass_sharp_entity_bridge'])
+        # A forward that fails closes it too.
+        self.hass.config_entries.async_forward_entry_setups.side_effect = RuntimeError('forward failed')
+        with self.assertRaisesRegex(RuntimeError, 'forward failed'):
+            await self.env['async_setup_entry'](self.hass, self.entry)
+        self.bridges[-1].close.assert_called_once_with()
+        self.assertNotIn('test', self.hass.data['hass_sharp_entity_bridge'])
