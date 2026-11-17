@@ -1902,7 +1902,7 @@
       ]
     },
     "entity_is": {
-      "label": "Entity is",
+      "label": "Has state",
       "category": "Hass",
       "description": "True when an entity has a given state: on unless you choose another, such as off, home or open.",
       "pure": true,
@@ -1942,10 +1942,10 @@
         5
       ],
       "keywords": [
-        "state is",
         "is on",
-        "has state",
-        "is off"
+        "is off",
+        "entity is",
+        "state is"
       ]
     },
     "entity_current": {

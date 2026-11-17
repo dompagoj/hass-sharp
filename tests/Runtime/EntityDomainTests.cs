@@ -37,9 +37,9 @@ static class EntityDomainTests
     {
         var automation = VisualGenerator.EmbeddedCatalog(VisualTests.Graph(), VisualCatalogSnapshot.BuiltIn);
         Check(!automation.ContainsKey("entityDomains") && !automation.ContainsKey("definition"), "an automation's embedded catalog has no entityDomains or definition: " + string.Join(", ", automation.Select(p => p.Key)));
-        // An automation reading entities with the nodes it may use (Entity is, Current state) embeds no more than before.
+        // An automation reading entities with the nodes it may use (Has state, Current state) embeds no more than before.
         var reads = JsonNode.Parse("""{"version":5,"name":"Reads","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}},{"id":"is","kind":"entity_is","config":{"entity":{"kind":"literal","type":"entity_id","value":"light.kitchen"},"state":{"kind":"literal","type":"string","value":"on"}}},{"id":"i","kind":"if","config":{"value":{"kind":"unset"}}}],"edges":[{"id":"t:i","source":"t","target":"i"},{"id":"is:i","kind":"data","source":"is","target":"i","sourcePort":"value","targetPort":"value"}]}""")!.AsObject();
-        Check(!VisualGenerator.EmbeddedCatalog(reads, VisualCatalogSnapshot.BuiltIn).ContainsKey("entityDomains"), "an automation using Entity is embeds no entityDomains");
+        Check(!VisualGenerator.EmbeddedCatalog(reads, VisualCatalogSnapshot.BuiltIn).ContainsKey("entityDomains"), "an automation using Has state embeds no entityDomains");
         var entity = JsonNode.Parse("""{"version":5,"name":"Entity","nodes":[{"id":"s","kind":"entity_state","config":{"entity":"door","is_on":{"kind":"literal","type":"boolean","value":true}}}],"edges":[],"definition":{"entities":[{"key":"door","domain":"binary_sensor"}],"settings":[]}}""")!.AsObject();
         var embedded = VisualGenerator.EmbeddedCatalog(entity, VisualCatalogSnapshot.BuiltIn);
         Check(embedded["entityDomains"] != null && JsonNode.DeepEquals(embedded["entityDomains"], VisualNodeCatalog.Root["entityDomains"]),"an entity graph's embedded catalog keeps entityDomains whole");

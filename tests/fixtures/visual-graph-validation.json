@@ -32399,7 +32399,7 @@
               "value": "on"
             }
           },
-          "label": "Entity is ▸ motion A"
+          "label": "Has state ▸ motion A"
         },
         {
           "id": "b",
@@ -32416,7 +32416,7 @@
               "value": "on"
             }
           },
-          "label": "Entity is ▸ motion B"
+          "label": "Has state ▸ motion B"
         },
         {
           "id": "or",
@@ -34050,10 +34050,10 @@
       }
     },
     "valid": true,
-    "warning": "step gets its entity over a wire",
+    "warning": "gets its entity over a wire",
     "warningNodeId": "is",
     "messages": [
-      "The Entity is step gets its entity over a wire, so State is not worked out again when that entity changes; choose the entity in Entity instead"
+      "Has state gets its entity over a wire, so State is not worked out again when that entity changes; choose the entity in Entity instead"
     ],
     "codes": [
       "state.dynamicSource"
@@ -34143,6 +34143,64 @@
     ],
     "codes": [
       "graph.limit"
+    ]
+  },
+  {
+    "name": "automation: an unused Has state value",
+    "graph": {
+      "version": 5,
+      "name": "Unused",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "is",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.kitchen"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "hi"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": true,
+    "messages": [
+      "Has state is not used"
+    ],
+    "codes": [
+      "pure.unused"
     ]
   },
   {

@@ -755,7 +755,7 @@ export const words = {
   /** A second When commanded step for one entity and command. */
   commandDuplicate: (key: string, command: string, label: string) => `Entity ${words.name(key)} already has ${words.article(label)} ${label} step for ${command}; delete this one or choose another command`,
   /** An entity reader a State reads whose entity comes over a wire: what the State watches cannot be known. */
-  dynamicSource: (reader: string, state: string, input: string) => `The ${reader} step gets its entity over a wire, so ${state} is not worked out again when that entity changes; choose the entity in ${input} instead`,
+  dynamicSource: (reader: string, state: string, input: string) => `${reader} gets its entity over a wire, so ${state} is not worked out again when that entity changes; choose the entity in ${input} instead`,
   /** A command of an entity no When commanded step handles. */
   commandUnhandled: (domain: string, key: string, command: string, label: string) => `${domain} ${words.name(key)} does nothing on ${command}; add ${words.article(label)} ${label} step for it`,
 }

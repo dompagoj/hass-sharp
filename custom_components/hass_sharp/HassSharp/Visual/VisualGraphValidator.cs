@@ -399,7 +399,7 @@ public static class VisualGraphValidator
         /// <summary>A second When commanded step for one entity and command.</summary>
         internal static string CommandDuplicate(string key, string command, string label) => $"Entity {Name(key)} already has {Article(label)} {label} step for {command}; delete this one or choose another command";
         /// <summary>An entity reader a State reads whose entity comes over a wire: what the State watches cannot be known.</summary>
-        internal static string DynamicSource(string reader, string state, string input) => $"The {reader} step gets its entity over a wire, so {state} is not worked out again when that entity changes; choose the entity in {input} instead";
+        internal static string DynamicSource(string reader, string state, string input) => $"{reader} gets its entity over a wire, so {state} is not worked out again when that entity changes; choose the entity in {input} instead";
         /// <summary>A command of an entity no When commanded step handles.</summary>
         internal static string CommandUnhandled(string domain, string key, string command, string label) => $"{domain} {Name(key)} does nothing on {command}; add {Article(label)} {label} step for it";
     }
