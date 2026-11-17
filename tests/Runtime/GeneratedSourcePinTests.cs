@@ -203,6 +203,20 @@ public static class GeneratedSourcePinTests
         yield return ("pin: automation beside an unused node library", VisualTests.Graph(), library);
     }
 
+    /// <summary>
+    /// The pins suite's check for <see cref="VisualTests.Graph"/> alone, for a suite that changes what the generator
+    /// emits for other graphs: the graph previews as valid against the built-in catalog, as pinned, and its source has
+    /// the pinned hash.
+    /// </summary>
+    internal static void CheckGraphPin()
+    {
+        var pins = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "generated-source-pins.json")))!.AsObject();
+        var preview = new VisualGenerator(new DiagnosticsProvider()).Preview(VisualTests.Graph(), VisualCatalogSnapshot.BuiltIn);
+        if (!preview.Valid || preview.Source.Length == 0) throw new Exception($"Generated source pins: {GraphKey} does not preview as valid: {JsonSerializer.Serialize(preview.Diagnostics)}");
+        var pinned = pins[GraphKey]!.GetValue<string>(); var now = Hash(preview.Source);
+        if (now != pinned) throw new Exception($"generated source of \"{GraphKey}\" changed (pinned {pinned}, now {now}): an existing automation's revision would change on upgrade");
+    }
+
     // The source exactly as generated, as UTF-8 without a byte order mark.
     static string Hash(string source) => Convert.ToHexStringLower(SHA256.HashData(new UTF8Encoding(false).GetBytes(source)));
 }

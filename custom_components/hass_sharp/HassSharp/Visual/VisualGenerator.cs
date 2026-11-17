@@ -327,25 +327,42 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                 if(snapshot.Types.TryGetValue(sourceType,out var from)&&snapshot.Types.TryGetValue(target,out var to) && snapshot.Compilation!.ClassifyConversion(from.Symbol,to.Symbol).IsUserDefined)
                     compiledConversions.Add(Text(node,"id"),(ClrExpression(from.Symbol),ClrExpression(to.Symbol)));
             }
-            var roots=nodes.Where(n=>Text(n,"kind")=="trigger").OrderBy(n=>Text(n,"id"),StringComparer.Ordinal).ToArray();
+            // Every node that starts a flow of its own, in id order: an automation's triggers, and an entity graph's triggers,
+            // States, When commanded and When started steps alike.
+            var roots=nodes.Where(n=>VisualNodeCatalog.IsRoot(n,snapshot)).OrderBy(n=>Text(n,"id"),StringComparer.Ordinal).ToArray();
             // Internal identifiers are deterministic and cannot shadow authored identifiers.
             var authored=graph.ToJsonString()+string.Join("\n",snapshot.Sources.Select(s=>s.Source));var prefix="__visual_";while(authored.Contains(prefix,StringComparison.Ordinal))prefix+="x";
             var embedded=EmbeddedCatalog(graph,snapshot);var embeddedTypes=embedded["types"]!.AsObject();
             var run=prefix+"run";var handler=prefix+"node";var scope=prefix+"scope";var engine=prefix+"engine";var nodeId=prefix+"id";
             Add("#nullable enable");Add("public class VisualAutomation : global::HassSharp.Automation\n{");
             Add("public override global::HassSharp.AutomationConfiguration Configure() => new(");
+            static string References(IEnumerable<string> ids)=>"["+string.Join(",",ids.Select(id=>$"new global::HassSharp.EntityReference({Q(id)})"))+"]";
             for(var i=0;i<roots.Length;i++) {
-                var root=roots[i];current=Text(root,"id");var cfg=root["config"]!;var kind=VisualNodeCatalog.TriggerType(root,snapshot);var entities="[]";var schedules="[]";var triggers="[]";
-                if(kind=="entity")entities=$"[new global::HassSharp.EntityReference({Q(Text(cfg,"entity"))})]";
-                if(kind=="daily") {
-                    // Both validators accept only HH:MM. A time zone is this machine's to know, so it is checked here, on its input.
-                    var time=TimeOnly.ParseExact(Text(cfg,"time"),"HH:mm",CultureInfo.InvariantCulture);
-                    if(!TimeZoneInfo.TryFindSystemTimeZoneById(Text(cfg,"timeZone"),out _)){errors.Add(new(current,VisualGraphValidator.Words.UnknownTimeZone(Text(cfg,"timeZone")),InputId:"timeZone"));return new(false,"",[],errors){Graph=refreshed};}
-                    schedules=$"[global::HassSharp.AutomationSchedule.Daily({Q(current)},new global::System.TimeOnly({time.Hour},{time.Minute}),{Q(Text(cfg,"timeZone"))})]";}
-                if(kind=="once") {var at=DateTimeOffset.Parse(Text(cfg,"at"),CultureInfo.InvariantCulture);schedules=$"[global::HassSharp.AutomationSchedule.Once({Q(current)},global::System.DateTimeOffset.Parse({Q(at.ToString("O"))}))]";}
-                if(kind=="ha")triggers=$"[new global::HassSharp.HomeAssistantTrigger({Q(current)},{Q(cfg["trigger"]!.ToJsonString())})]";
-                var startup=cfg["startup"]?.GetValue<bool>()??kind=="startup";var manual=cfg["manual"]?.GetValue<bool>()??true;
-                Section(current,$"new global::HassSharp.AutomationAction(nameof({VisualNodeCatalog.EffectiveTriggerMethod(root)}),global::HassSharp.AutomationMode.{Text(cfg,"mode","Single")},Startup:{startup.ToString().ToLowerInvariant()},Manual:{manual.ToString().ToLowerInvariant()},Entities:{entities},Schedules:{schedules},Triggers:{triggers}){(i+1<roots.Length?",":"")}");
+                var root=roots[i];current=Text(root,"id");var cfg=root["config"]!;var entities="[]";var schedules="[]";var triggers="[]";
+                string mode;bool startup,manual;
+                if(Text(root,"kind")!="trigger") {
+                    // A State is worked out at startup and again whenever an entity it reads changes, a newer change restarting
+                    // it; a When commanded flow runs each command in turn; When started runs once. None is run by hand.
+                    (mode,startup,manual)=Text(root,"kind") switch {
+                        "entity_state"=>("Restart",true,false),
+                        "entity_command"=>("Queued",false,false),
+                        "entity_setup"=>("Single",false,false),
+                        var other=>throw new InvalidOperationException($"No action for the root kind {other}") };
+                    if(Text(root,"kind")=="entity_state")entities=References(StateDependencies.Of(graph,current,snapshot));
+                }
+                else {
+                    var kind=VisualNodeCatalog.TriggerType(root,snapshot);
+                    if(kind=="entity")entities=References([Text(cfg,"entity")]);
+                    if(kind=="daily") {
+                        // Both validators accept only HH:MM. A time zone is this machine's to know, so it is checked here, on its input.
+                        var time=TimeOnly.ParseExact(Text(cfg,"time"),"HH:mm",CultureInfo.InvariantCulture);
+                        if(!TimeZoneInfo.TryFindSystemTimeZoneById(Text(cfg,"timeZone"),out _)){errors.Add(new(current,VisualGraphValidator.Words.UnknownTimeZone(Text(cfg,"timeZone")),InputId:"timeZone"));return new(false,"",[],errors){Graph=refreshed};}
+                        schedules=$"[global::HassSharp.AutomationSchedule.Daily({Q(current)},new global::System.TimeOnly({time.Hour},{time.Minute}),{Q(Text(cfg,"timeZone"))})]";}
+                    if(kind=="once") {var at=DateTimeOffset.Parse(Text(cfg,"at"),CultureInfo.InvariantCulture);schedules=$"[global::HassSharp.AutomationSchedule.Once({Q(current)},global::System.DateTimeOffset.Parse({Q(at.ToString("O"))}))]";}
+                    if(kind=="ha")triggers=$"[new global::HassSharp.HomeAssistantTrigger({Q(current)},{Q(cfg["trigger"]!.ToJsonString())})]";
+                    mode=Text(cfg,"mode","Single");startup=cfg["startup"]?.GetValue<bool>()??kind=="startup";manual=cfg["manual"]?.GetValue<bool>()??true;
+                }
+                Section(current,$"new global::HassSharp.AutomationAction(nameof({VisualNodeCatalog.EffectiveTriggerMethod(root)}),global::HassSharp.AutomationMode.{mode},Startup:{startup.ToString().ToLowerInvariant()},Manual:{manual.ToString().ToLowerInvariant()},Entities:{entities},Schedules:{schedules},Triggers:{triggers}){(i+1<roots.Length?",":"")}");
             }
             Add(");");
             // A library node is dispatched by its kind; a Custom C# node, exactly alike, by its own method.

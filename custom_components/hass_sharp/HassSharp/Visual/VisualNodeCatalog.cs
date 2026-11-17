@@ -94,10 +94,15 @@ public static class VisualNodeCatalog
     {
         var nodes = GraphNodes(graph);
         if (!nodes.TryGetValue(id, out var start)) return [];
-        var data = (graph["edges"] as JsonArray ?? []).OfType<JsonObject>().Where(e => Text(e, "id") != "" && Text(e, "kind") == "data" && !e.ContainsKey("port") && Text(e, "sourcePort") != "" && Text(e, "targetPort") != "" &&
-            nodes.ContainsKey(Text(e, "source")) && nodes.ContainsKey(Text(e, "target"))).ToList();
-        return ValueUpstream(start, nodes, data, n => IsPure(n, Spec(n, snapshot)));
+        return ValueUpstream(start, nodes, ValueWires(graph, nodes), n => IsPure(n, Spec(n, snapshot)));
     }
+    /// <summary>
+    /// The graph's value wires as the validators accept them: with an id, of kind <c>data</c> and no execution port, both
+    /// ports named, and both ends among <paramref name="nodes"/> (<see cref="GraphNodes"/>).
+    /// </summary>
+    internal static List<JsonObject> ValueWires(JsonObject graph, IReadOnlyDictionary<string, JsonObject> nodes) =>
+        (graph["edges"] as JsonArray ?? []).OfType<JsonObject>().Where(e => Text(e, "id") != "" && Text(e, "kind") == "data" && !e.ContainsKey("port") && Text(e, "sourcePort") != "" && Text(e, "targetPort") != "" &&
+            nodes.ContainsKey(Text(e, "source")) && nodes.ContainsKey(Text(e, "target"))).ToList();
     /// <summary>
     /// The pins of a Custom C# node, as the compiler derived them from its code, when the node's kind takes its pins
     /// from <c>config.signature</c> and that signature is well formed; else null. Mirrored by <c>customSignature</c> in
