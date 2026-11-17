@@ -22,21 +22,33 @@ public sealed record DefinitionVia(string? Definition, string? DeviceId);
 public sealed record DefinitionDevice(string? Manufacturer, string? Model, string? SwVersion, string? HwVersion,
     string? ConfigurationUrl, string? SuggestedArea, DefinitionVia? Via);
 
-/// <summary>A value for one <c>[Setting]</c> property of the definition's class.</summary>
-/// <param name="Key">The property's name.</param>
-/// <param name="Value">The value as JSON; null leaves the class default.</param>
-public sealed record DefinitionSetting(string Key, JsonNode? Value);
+/// <summary>
+/// A setting of the definition: for a class, a value for one of its <c>[Setting]</c> properties (the class declares the
+/// rest); for a graph, the setting itself, read by the graph's Setting nodes.
+/// </summary>
+/// <param name="Key">The property's name, or the graph setting's key.</param>
+/// <param name="Value">The value as JSON; null leaves the class default, or gives a graph an empty value.</param>
+public sealed record DefinitionSetting(string Key, JsonNode? Value)
+{
+    /// <summary>A graph setting's name in the panel; null for its key. A class's settings have none (the class names them).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Label { get; init; }
+    /// <summary>A graph setting's type: <c>string</c>, <c>boolean</c> or <c>number</c>. A class's settings have none (the class types them).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Type { get; init; }
+    /// <summary>A graph setting whose value is shown masked, such as a password. A class's settings have none (the class marks them).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool Secret { get; init; }
+}
 
 /// <summary>Where a definition's behaviour comes from.</summary>
-/// <param name="Kind"><c>class</c> (a class the node libraries declare) or <c>graph</c> (not available yet).</param>
+/// <param name="Kind"><c>class</c> (a class the node libraries declare) or <c>graph</c> (a graph of nodes).</param>
 /// <param name="Type">For a class, its <see cref="EntityTypeDescriptor.Id"/>, such as <c>library:shelly:NodeLib.ShellyPlug</c>.</param>
-/// <param name="Graph">For a graph, the graph.</param>
+/// <param name="Graph">For a graph, the graph, never with a <c>definition</c>: that is composed from the document's
+/// entities and settings (<see cref="DefinitionGraph.Compose"/>).</param>
 public sealed record DefinitionLogic(string Kind, string? Type, JsonObject? Graph);
 
 /// <summary>A definition as the user writes it: what is saved, before the store adds its id, revision and source.</summary>
 /// <param name="Name">What the definition and its device are called; up to 120 characters.</param>
 /// <param name="Device">What the device page shows; null for the class's own.</param>
-/// <param name="Settings">Values for the class's settings; one not given keeps the class default.</param>
+/// <param name="Settings">Values for the class's settings, one not given keeping the class default; or a graph's settings.</param>
 /// <param name="Entities">The entities of a graph definition; a class definition's come from its code.</param>
 /// <param name="Logic">The class or graph that gives it its behaviour.</param>
 public sealed record DefinitionBody(string Name, DefinitionDevice? Device, List<DefinitionSetting>? Settings,
@@ -158,7 +170,12 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
     /// <exception cref="VisualConflictException">The definition is at another revision.</exception>
     /// <exception cref="DefinitionValidationException">The definition has problems; nothing is written.</exception>
     public EntityDefinitionDocument Save(string id, DefinitionBody body, long expectedRevision, VisualCatalogSnapshot catalog,
-        string? catalogGeneration, bool? enabled = null)
+        string? catalogGeneration, bool? enabled = null) => Save(id, body, expectedRevision, catalog, catalogGeneration, enabled, out _);
+
+    /// <inheritdoc cref="Save(string, DefinitionBody, long, VisualCatalogSnapshot, string?, bool?)"/>
+    /// <param name="preview">The preview it was saved with; its diagnostics are the graph's warnings, if any.</param>
+    public EntityDefinitionDocument Save(string id, DefinitionBody body, long expectedRevision, VisualCatalogSnapshot catalog,
+        string? catalogGeneration, bool? enabled, out DefinitionPreview preview)
     {
         lock (Gate)
         {
@@ -166,11 +183,23 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             if ((old?.Revision ?? 0) != expectedRevision) throw new VisualConflictException();
             if (old != null && enabled != null)
                 throw new ArgumentException("enabled can only be given when saving a new definition; use set_enabled to turn a saved one on or off");
-            var preview = generator.Preview(body, catalog);
+            var graphLogic = body.Logic?.Kind == "graph";
+            // A graph is laid out as an automation's is, before it is previewed: the source embeds it. A definition a client
+            // put in it is never trusted. A graph of the wrong shape is the preview's to report, as it is.
+            if (graphLogic && body.Logic!.Graph is { } given)
+            {
+                var graph = DefinitionGraph.Decompose(given);
+                if (graph["nodes"] is JsonArray nodes && nodes.All(n => n is JsonObject)) graph = VisualGraphContract.FillMissingLayout(graph);
+                body = body with { Logic = body.Logic with { Graph = graph } };
+            }
+            preview = generator.Preview(body, catalog);
             if (!preview.Valid) throw new DefinitionValidationException(preview);
-            // The document keeps its own copy of the JSON values, whatever the caller does with the body afterwards.
-            var settings = (body.Settings ?? []).Select(s => new DefinitionSetting(s.Key, s.Value?.DeepClone())).ToList();
-            var logic = body.Logic with { Graph = (JsonObject?)body.Logic.Graph?.DeepClone() };
+            // The document keeps its own copy of the JSON values, whatever the caller does with the body afterwards. A
+            // class's settings are values only, as they always were; a graph's keep their label, type and secret flag.
+            var settings = (body.Settings ?? []).Select(s => graphLogic ? s with { Value = s.Value?.DeepClone() } : new DefinitionSetting(s.Key, s.Value?.DeepClone())).ToList();
+            // A graph is stored as previewed (a Custom C# signature the compile refreshed, as refreshed), without its definition.
+            // A valid preview had logic to preview.
+            var logic = graphLogic ? body.Logic! with { Graph = DefinitionGraph.Decompose(preview.Graph!) } : body.Logic! with { Graph = (JsonObject?)body.Logic.Graph?.DeepClone() };
             var document = new EntityDefinitionDocument(1, id, checked(expectedRevision + 1), body.Name, body.Device, settings,
                 (JsonArray?)body.Entities?.DeepClone(), logic, preview.Source, preview.SourceMap)
                 { CatalogGeneration = catalogGeneration, Enabled = old?.Enabled ?? enabled ?? true, SavedUtc = DateTime.UtcNow };
@@ -188,7 +217,9 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
     public EntityDefinitionDocument Rebuilt(EntityDefinitionDocument old, DefinitionPreview preview, string? catalogGeneration)
     {
         if (!preview.Valid) throw new DefinitionValidationException(preview);
-        return old with { Revision = checked(old.Revision + 1), Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = catalogGeneration };
+        // A graph is stored as previewed, as a rebuilt automation's is, and without its definition.
+        var logic = old.Logic.Kind == "graph" && preview.Graph != null ? old.Logic with { Graph = DefinitionGraph.Decompose(preview.Graph) } : old.Logic;
+        return old with { Revision = checked(old.Revision + 1), Logic = logic, Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = catalogGeneration };
     }
 
     /// <summary>

@@ -65,6 +65,95 @@ static class EntityStartupTests
         await LibraryRebuild();
         await Retry();
         await EditedOnDisk();
+        await GraphDefinitionsCannotRunYet();
+    }
+
+    // TASK 9 REPLACES THIS TEST: until definitions built from nodes are hosted, one previews fully and is stored, and each
+    // activation of it (save, set_enabled, a library save's rebuild, startup) fails cleanly with one message, its entities
+    // never synced, while the class definitions beside it run as before.
+    static async Task GraphDefinitionsCannotRunYet()
+    {
+        await using var home = new EntityTestHome("entity-startup-graph");
+        object Motion() => new { name = "Any motion", entities = EntityStoreTests.MotionEntities(), settings = Array.Empty<object>(), logic = new { kind = "graph", graph = EntityStoreTests.MotionGraph() } };
+        void NotRunning(JsonNode? answer, string what) =>
+            Check(answer?["active"]?.GetValue<bool>() == false && answer["activationError"]?.GetValue<string>() == HassSharpManager.GraphDefinitionsCannotRun, $"{what}: " + answer?.ToJsonString());
+        var first = new HassSharpManager(home.Root);
+        try
+        {
+            await first.Init();
+            await SaveLibrary(first, "shelly", 0, EntityApiTests.Library);
+            await SaveLibrary(first, "maths", 0, EntityStoreTests.Maths);
+            await SaveDefinition(first, "plug1", "Plug one", "10.0.4.1");
+
+            var preview = await Ok(first.EntityRequest, new { operation = "preview", definition = Motion() });
+            Check(preview["valid"]!.GetValue<bool>() && preview["diagnostics"]!.AsArray().Count == 0 && preview["source"]!.GetValue<string>().Contains("VisualAutomation"), "the preview: " + preview.ToJsonString()[..300]);
+            var saved = await Ok(first.EntityRequest, new { operation = "save", id = "motion", expectedRevision = 0, definition = Motion() });
+            NotRunning(saved, "the save");
+            var document = saved["document"]!.AsObject();
+            Check(saved["saved"]!.GetValue<bool>() && Revision(document) == 1 && Status(document) == "off" && document["liveEntities"]!.AsArray().Count == 0
+                && document["logic"]!["graph"] is JsonObject graph && !graph.ContainsKey("definition") && !saved.ContainsKey("diagnostics"), "the stored document: " + document.ToJsonString()[..300]);
+            Check(home.Syncs("motion").Length == 0, "a graph definition synced its entities");
+            NotRunning(await Read(first, "motion"), "a read");
+            Console.WriteLine("PASS entity startup: a graph definition previews and is saved, and answers that it cannot run yet");
+
+            // A switch whose turn_off no flow handles: valid, saved, and the warning answered with the save as with the preview.
+            object Relay() => new { name = "Relay", entities = new[] { new { key = "relay", domain = "switch" } }, logic = new { kind = "graph", graph = new
+            {
+                version = 5, name = "Relay",
+                nodes = new object[] { new { id = "on", kind = "entity_command", config = new { entity = "relay", command = "turn_on" } },
+                    new { id = "set", kind = "set_entity_state", config = new { entity = "relay", is_on = new { kind = "literal", type = "boolean", value = true } } } },
+                edges = new[] { new { id = "on:next:set", source = "on", target = "set", port = "next" } },
+            } } };
+            var warned = await Ok(first.EntityRequest, new { operation = "preview", definition = Relay() });
+            Check(warned["valid"]!.GetValue<bool>() && warned["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "command.unhandled" && d["severity"]!.GetValue<int>() == 2), "the preview's warning: " + warned["diagnostics"]!.ToJsonString());
+            var relay = await Ok(first.EntityRequest, new { operation = "save", id = "relay", expectedRevision = 0, definition = Relay() });
+            NotRunning(relay, "the relay's save");
+            Check(relay["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "command.unhandled" && d["nodeId"] == null), "the save's warning: " + relay["diagnostics"]?.ToJsonString());
+            Console.WriteLine("PASS entity startup: a graph definition's warnings come back from preview and save");
+
+            // A graph definition that uses a library node is rebuilt by a library save, and does not run either.
+            var catalog = await Ok(first.NodeLibraryRequest, new { operation = "catalog" });
+            var half = catalog["catalog"]!["nodes"]!.AsObject().Single(n => n.Key.StartsWith("library:maths:", StringComparison.Ordinal)).Key;
+            var levelGraph = new JsonObject
+            {
+                ["version"] = 5, ["name"] = "Level",
+                ["nodes"] = new JsonArray(N("k", "setting", new { key = "offset" }), N("h", half, new { arguments = new { } }), N("s", "entity_state", new { entity = "level" })),
+                ["edges"] = new JsonArray(new JsonObject { ["id"] = "k:h", ["kind"] = "data", ["source"] = "k", ["target"] = "h", ["sourcePort"] = "value", ["targetPort"] = "value" },
+                    new JsonObject { ["id"] = "h:s", ["kind"] = "data", ["source"] = "h", ["target"] = "s", ["sourcePort"] = "result", ["targetPort"] = "value" }),
+            };
+            var level = await Ok(first.EntityRequest, new { operation = "save", id = "level", expectedRevision = 0, definition = new { name = "Level",
+                entities = new[] { new { key = "level", domain = "sensor" } }, settings = new[] { new { key = "offset", type = "number", value = 4 } }, logic = new { kind = "graph", graph = levelGraph } } });
+            NotRunning(level, "the level's save");
+            Check(Status(await Read(first, "plug1")) == "running", "the class definition runs beside the graph definitions");
+            await first.EntityCommand("plug1:relay", "turn_on", null);
+            var rebuilt = await SaveLibrary(first, "maths", 1, EntityStoreTests.Maths.Replace("value / 2", "value / 2.0"));
+            var answers = rebuilt["definitions"]!.AsArray();
+            Check(Ids(answers).Order(StringComparer.Ordinal).SequenceEqual(["level", "motion", "plug1", "relay"]) && rebuilt["invalidDefinitions"]!.AsArray().Count == 0, "the rebuild: " + Ids(answers).Length);
+            var levelAnswer = answers.Single(a => a!["id"]!.GetValue<string>() == "level");
+            NotRunning(levelAnswer, "the rebuilt level");
+            Check(Revision(levelAnswer!["document"]!.AsObject()) == 2 && levelAnswer["document"]!["source"]!.GetValue<string>().Contains("value / 2.0"), "the level is rebuilt with the new library");
+            Check(answers.Single(a => a!["id"]!.GetValue<string>() == "plug1")!["active"]!.GetValue<bool>(), "the class definition is reactivated");
+            Console.WriteLine("PASS entity startup: a library save rebuilds a graph definition that uses its node; it does not run, the class definition does");
+
+            var off = await Ok(first.EntityRequest, new { operation = "set_enabled", id = "motion", enabled = false });
+            Check(off["activationError"] == null && !off["active"]!.GetValue<bool>(), "turned off: " + off.ToJsonString());
+            NotRunning(await Ok(first.EntityRequest, new { operation = "set_enabled", id = "motion", enabled = true }), "turned on");
+        }
+        finally { await first.UnloadAsync(); }
+
+        var second = new HassSharpManager(home.Root);
+        try
+        {
+            await second.Init();
+            Check(Status(await Read(second, "plug1")) == "running", "the class definition runs after a restart");
+            NotRunning(await Read(second, "motion"), "the graph definition after a restart");
+            Check(Revision(await Read(second, "motion")) == 2, "a restart changed the graph definition's revision (2, after the library save)");
+            Check(home.Logs().Any(l => l.Contains("Cannot load entity definition \"Any motion\" (motion): " + HassSharpManager.GraphDefinitionsCannotRun, StringComparison.Ordinal)),
+                "the startup log says why: " + string.Join(" | ", home.Logs()));
+            Check(home.Syncs("motion").Length == 0 && home.Syncs("level").Length == 0, "a graph definition synced its entities");
+            Console.WriteLine("PASS entity startup: after a restart the class definition runs and each graph definition records that it cannot run yet");
+        }
+        finally { await second.UnloadAsync(); }
     }
 
     // A restart runs the saved definitions again; an unreadable file is skipped, a disabled definition stays off, and the

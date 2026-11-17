@@ -6,7 +6,13 @@ namespace HassSharp;
 public partial class HassSharpManager
 {
     /// <summary>The saved entity definitions, one file each in <c>.storage/hass_sharp/entities</c>.</summary>
-    EntityDefinitionStore EntityDocuments => new(Path.Combine(AuthoringRoot, "entities"), new DefinitionGenerator());
+    EntityDefinitionStore EntityDocuments => EntityDocumentsWith(null);
+    /// <summary>The definitions, previewing a graph with the typed service calls a request read once (the current ones when null).</summary>
+    EntityDefinitionStore EntityDocumentsWith(GeneratedServiceCalls? services) => new(Path.Combine(AuthoringRoot, "entities"), DefinitionGeneratorWith(services));
+    DefinitionGenerator DefinitionGeneratorWith(GeneratedServiceCalls? services) => new(_diagnosticsProvider, services);
+
+    // TASK 9 REPLACES THIS: until definitions built from nodes are hosted, compiling one fails with this, as its load error.
+    internal const string GraphDefinitionsCannotRun = "Definitions built from nodes cannot run yet: this one is saved, but its entities stay unavailable";
 
     /// <summary>
     /// The path a definition's compiled script is known by in the script manager, its load errors and run history. It
@@ -47,6 +53,8 @@ public partial class HassSharpManager
 
     async Task<CompiledUserScript> CompileDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services)
     {
+        // TASK 9 REPLACES THIS: a graph definition is stored and previewed, but nothing hosts it yet.
+        if (document.Logic.Kind == "graph") throw new NotSupportedException(GraphDefinitionsCannotRun);
         var compiled = await _compiler.CompileSingleFile(EntityRuntimePath(document.Id), document.Source, services);
         compiled.DesignatedRootType = "SharpDefinition";
         compiled.VisualRevision = document.Revision;
@@ -62,11 +70,13 @@ public partial class HassSharpManager
     /// <c>activationError</c>, and stays active. A definition that is off is never started: whatever of it runs is unloaded.
     /// </summary>
     /// <param name="services">The typed service calls the request read once, so the compile references them.</param>
-    /// <returns><c>{id, saved, document, active, activationError}</c>.</returns>
-    internal async Task<object> ActivateDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services = null)
+    /// <param name="warnings">The save's warnings, such as a command no flow handles; answered as <c>diagnostics</c> when there is any.</param>
+    /// <returns><c>{id, saved, document, active, activationError}</c>, and <c>diagnostics</c> with warnings.</returns>
+    internal async Task<object> ActivateDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services = null, IReadOnlyList<VisualDiagnostic>? warnings = null)
     {
         var (json, active, activationError) = await Activate(document, services);
-        return new { id = document.Id, saved = true, document = json, active, activationError };
+        return warnings is { Count: > 0 } ? new { id = document.Id, saved = true, document = json, active, activationError, diagnostics = warnings }
+            : new { id = document.Id, saved = true, document = json, active, activationError };
     }
 
     // ActivateDefinition's work: the document as answered, whether its revision runs now, and why not.
@@ -109,9 +119,9 @@ public partial class HassSharpManager
 
     /// <summary>The definition with the source generated from it against these libraries.</summary>
     /// <exception cref="DefinitionValidationException">It is not valid against them.</exception>
-    static EntityDefinitionDocument Regenerated(EntityDefinitionDocument document, VisualCatalogSnapshot snapshot, string generation)
+    EntityDefinitionDocument Regenerated(EntityDefinitionDocument document, VisualCatalogSnapshot snapshot, string generation)
     {
-        var preview = new DefinitionGenerator().Preview(document.Body, snapshot);
+        var preview = DefinitionGeneratorWith(null).Preview(document.Body, snapshot);
         if (!preview.Valid) throw new DefinitionValidationException(preview);
         return document with { Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = generation };
     }
@@ -168,10 +178,12 @@ public partial class HassSharpManager
             var services = _diagnosticsProvider.ServiceCalls();
             var libraries = SavedLibraries(services);
             var snapshot = libraries.Preview.Snapshot;
-            var store = EntityDocuments;
+            // A graph is previewed and saved against the catalog an automation's is: the libraries and Home Assistant's services.
+            var authoring = AuthoringSnapshot(snapshot);
+            var store = EntityDocumentsWith(services);
             if (operation == "types")
                 result = new { types = snapshot.EntityTypes.Values.OrderBy(t => t.Id, StringComparer.Ordinal).ToArray(), generation = libraries.Generation };
-            else if (operation == "preview") result = PreviewJson(new DefinitionGenerator().Preview(DefinitionBody(request), snapshot));
+            else if (operation == "preview") result = PreviewJson(DefinitionGeneratorWith(services).Preview(DefinitionBody(request), authoring));
             // Listing omits the generated source and its map; "read" returns them.
             else if (operation == "list") result = store.List().Select(document =>
             {
@@ -213,8 +225,9 @@ public partial class HassSharpManager
                     var revision = ApiRequest.Long(request, "expectedRevision", "the revision this replaces, 0 for a new definition");
                     if (operation == "save")
                     {
-                        var document = store.Save(id, DefinitionBody(request), revision, snapshot, libraries.Generation, ApiRequest.OptionalBool(request, "enabled"));
-                        result = await ActivateDefinition(document, services);
+                        var document = store.Save(id, DefinitionBody(request), revision, authoring, libraries.Generation, ApiRequest.OptionalBool(request, "enabled"), out var preview);
+                        // A valid preview's diagnostics are its warnings: advice, which never stops the save or its activation.
+                        result = await ActivateDefinition(document, services, preview.Diagnostics);
                     }
                     else if (operation == "delete")
                     {

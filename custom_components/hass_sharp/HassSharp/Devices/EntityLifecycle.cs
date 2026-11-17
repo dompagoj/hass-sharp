@@ -140,8 +140,9 @@ public partial class HassSharpManager
     DefinitionRebuild CheckDefinitions(VisualCatalogSnapshot candidate, VisualCatalogSnapshot saved, string generation)
     {
         var store = EntityDocuments;
-        var all = store.List(strict: true).Select(d => (Document: d, Preview: new DefinitionGenerator().Preview(d.Body, candidate))).ToArray();
-        var invalidBefore = all.Where(p => !p.Preview.Valid && !new DefinitionGenerator().Preview(p.Document.Body, saved).Valid).Select(p => p.Document.Id).ToHashSet(StringComparer.Ordinal);
+        var generator = DefinitionGeneratorWith(null);
+        var all = store.List(strict: true).Select(d => (Document: d, Preview: generator.Preview(d.Body, candidate))).ToArray();
+        var invalidBefore = all.Where(p => !p.Preview.Valid && !generator.Preview(p.Document.Body, saved).Valid).Select(p => p.Document.Id).ToHashSet(StringComparer.Ordinal);
         var previews = all.Where(p => !invalidBefore.Contains(p.Document.Id)).ToArray();
         var breaking = previews.Where(p => !p.Preview.Valid).Select(p => (object)new { id = p.Document.Id, name = p.Document.Name, diagnostics = p.Preview.Diagnostics }).ToArray();
         // Such a definition is not rebuilt: a copy of it that is running keeps the previous version, with the previous library code.
