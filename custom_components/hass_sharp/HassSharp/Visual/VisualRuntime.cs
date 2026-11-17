@@ -604,22 +604,10 @@ public sealed class VisualRuntime
     internal Task<JsonElement?> CallService(VisualScope scope,string node,string service,JsonNode? target,JsonObject? data,bool returnResponse)=>
         Call(scope,service,data==null?new JsonObject():(JsonObject)data.DeepClone(),target?.DeepClone(),returnResponse,"The target");
     /// <summary>
-    /// The target into the payload (a string is an entity_id, an object is flattened), then the call; the response only
-    /// with returnResponse. A target key that a field already set is an error, as the validator reports, never a silent overwrite.
+    /// The target into the payload (<see cref="HassServices.PrepareCall"/>), then the call; the response only with returnResponse.
     /// </summary>
     async Task<JsonElement?> Call(VisualScope scope,string service,JsonObject payload,JsonNode? target,bool returnResponse,string targetLabel) {
-        if(target!=null) {
-            // A target object holds only the five target keys (the validators say the same of a target value); a field
-            // with one of them is a validation error, so the collision check below is only a defence.
-            void Set(string name,JsonNode? value){if(payload.ContainsKey(name))throw new InvalidOperationException($"{service} sets {name} both as a field and in the target");payload[name]=value;}
-            if(target is JsonValue entity && entity.TryGetValue<string>(out var entityId))Set("entity_id",entityId);
-            else if(target is JsonObject properties)foreach(var (key,value) in properties) {
-                if(!VisualGraphValidator.TargetKeys.Contains(key))throw new InvalidOperationException(VisualGraphValidator.TargetKeyMessage(key));
-                Set(key,value?.DeepClone());
-            }
-            else throw new InvalidOperationException($"{targetLabel} requires an entity id or a target object.");
-        }
-        if(service.Split('.') is not [{Length:>0} domain,{Length:>0} name])throw new InvalidOperationException($"Service {service} is not a service id such as light.turn_on.");
+        var (domain,name)=HassServices.PrepareCall(service,payload,target,targetLabel);
         if(returnResponse)return await Waiting(scope,HassServices.CallServiceAsync<JsonElement>(domain,name,payload).WaitAsync(scope.CancellationToken));
         await Waiting(scope,HassServices.CallServiceAsync(domain,name,payload).WaitAsync(scope.CancellationToken));
         return null;

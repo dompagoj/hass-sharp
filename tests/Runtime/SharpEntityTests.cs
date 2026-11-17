@@ -16,7 +16,9 @@ static class SharpEntityTests
         public readonly List<SharpEntity> Published = [];
         public readonly List<string> Calls = [];
         public CancellationToken Stopping => CancellationToken.None;
-        public void Publish(SharpEntity entity) => Published.Add(entity);
+        // Set to make each publish read the snapshot, as the real host does.
+        public bool Snapshots;
+        public void Publish(SharpEntity entity) { if (Snapshots) entity.Snapshot("plug:" + entity.Key, true); else Published.Add(entity); }
         public IDisposable Every(TimeSpan interval, Func<Task> action, bool immediately) { Calls.Add($"every {interval.TotalSeconds} {immediately}"); return new MemoryStream(); }
         public IDisposable Track(string entityId, Func<EntityChange, Task> action) { Calls.Add("track " + entityId); return new MemoryStream(); }
         public void Log(string message, PyLogLevel level) => Calls.Add($"log {level} {message}");
@@ -72,6 +74,7 @@ static class SharpEntityTests
         Duplicates();
         SensorValues();
         Domains();
+        await ConcurrentAttributes();
         await Services();
     }
 
@@ -219,7 +222,28 @@ static class SharpEntityTests
         relay.Attributes["count"] = 2; relay.Attributes["tags"] = new List<string> { "a", "b" }; relay.Attributes["when"] = new DateTime(2026, 11, 17, 0, 0, 0, DateTimeKind.Utc);
         relay.Attributes["more"] = new Dictionary<string, object?> { ["ratio"] = double.NaN, ["node"] = new JsonObject { ["x"] = 1 } };
         var attributes = relay.Snapshot("plug:relay", true)["attributes"]!.ToJsonString();
-        Check(attributes == """{"count":2,"tags":["a","b"],"when":"2026-11-17T00:00:00.0000000Z","more":{"ratio":null,"node":{"x":1}}}""", "attributes: " + attributes);
+        Check(attributes == """{"count":2,"more":{"ratio":null,"node":{"x":1}},"tags":["a","b"],"when":"2026-11-17T00:00:00.0000000Z"}""", "attributes: " + attributes);
         Console.WriteLine("PASS sharp entities: timers, tracks, logs, state reads, service calls and attributes of a component");
+    }
+
+    // A definition's timers, entity changes and commands run on different threads: one may set an attribute while
+    // another publishes, and reading the attributes for the snapshot must not fail.
+    static async Task ConcurrentAttributes()
+    {
+        var relay = new SharpSwitch("relay") { Host = new RecordingHost { Snapshots = true } };
+        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+        var writer = Task.Run(() =>
+        {
+            for (var i = 0; !stop.IsCancellationRequested; i++)
+            {
+                relay.Attributes["key" + i % 64] = i;
+                if (i % 3 == 0) relay.Attributes.Remove("key" + (i + 17) % 64);
+            }
+        });
+        var publishes = 0;
+        var publisher = Task.Run(() => { while (!stop.IsCancellationRequested) { relay.Publish(); publishes++; } });
+        await Task.WhenAll(writer, publisher);
+        Check(publishes > 0, "the publisher ran");
+        Console.WriteLine("PASS sharp entities: publishing while another thread changes the attributes does not fail");
     }
 }

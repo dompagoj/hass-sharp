@@ -20,6 +20,36 @@ static class HassServices
         Converters = { new VisualRuntime.EntityTextJsonConverter(), new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) },
     };
 
+    /// <summary>
+    /// Puts the target into the payload (a string is an entity_id, an object is flattened) and splits the service id,
+    /// for the Call service step and a custom device's <c>CallService</c> alike. A target key that a field already set
+    /// is an error, as the validator reports, never a silent overwrite.
+    /// </summary>
+    /// <param name="targetLabel">What an error calls a target that is neither an entity id nor an object.</param>
+    internal static (string Domain, string Name) PrepareCall(string service, JsonObject payload, JsonNode? target, string targetLabel)
+    {
+        if (target != null)
+        {
+            // A target object holds only the five target keys (the validators say the same of a target value); a field
+            // with one of them is a validation error, so the collision check below is only a defence.
+            void Set(string name, JsonNode? value)
+            {
+                if (payload.ContainsKey(name)) throw new InvalidOperationException($"{service} sets {name} both as a field and in the target");
+                payload[name] = value;
+            }
+            if (target is JsonValue entity && entity.TryGetValue<string>(out var entityId)) Set("entity_id", entityId);
+            else if (target is JsonObject properties)
+                foreach (var (key, value) in properties)
+                {
+                    if (!VisualGraphValidator.TargetKeys.Contains(key)) throw new InvalidOperationException(VisualGraphValidator.TargetKeyMessage(key));
+                    Set(key, value?.DeepClone());
+                }
+            else throw new InvalidOperationException($"{targetLabel} requires an entity id or a target object.");
+        }
+        if (service.Split('.') is not [{ Length: > 0 } domain, { Length: > 0 } name]) throw new InvalidOperationException($"Service {service} is not a service id such as light.turn_on.");
+        return (domain, name);
+    }
+
     /// <summary>Completes when Home Assistant has run the service; faults with its error.</summary>
     internal static Task CallServiceAsync(string domain, string service, JsonObject data)
     {

@@ -103,24 +103,7 @@ public abstract class SharpComponent
     protected async Task<JsonElement?> CallService(string service, JsonNode? target = null, JsonObject? data = null, bool returnResponse = false)
     {
         var payload = data == null ? new JsonObject() : (JsonObject)data.DeepClone();
-        // The target goes into the payload as the Call service step puts it: a string is an entity_id, an object is flattened.
-        if (target != null)
-        {
-            void Set(string name, JsonNode? value)
-            {
-                if (payload.ContainsKey(name)) throw new InvalidOperationException($"{service} sets {name} both as a field and in the target");
-                payload[name] = value;
-            }
-            if (target is JsonValue entity && entity.TryGetValue<string>(out var entityId)) Set("entity_id", entityId);
-            else if (target is JsonObject properties)
-                foreach (var (key, value) in properties)
-                {
-                    if (!VisualGraphValidator.TargetKeys.Contains(key)) throw new InvalidOperationException(VisualGraphValidator.TargetKeyMessage(key));
-                    Set(key, value?.DeepClone());
-                }
-            else throw new InvalidOperationException("The target requires an entity id or a target object.");
-        }
-        if (service.Split('.') is not [{ Length: > 0 } domain, { Length: > 0 } name]) throw new InvalidOperationException($"Service {service} is not a service id such as light.turn_on.");
+        var (domain, name) = HassServices.PrepareCall(service, payload, target, "The target");
         if (returnResponse) return await HassServices.CallServiceAsync<JsonElement>(domain, name, payload).WaitAsync(Stopping);
         await HassServices.CallServiceAsync(domain, name, payload).WaitAsync(Stopping);
         return null;

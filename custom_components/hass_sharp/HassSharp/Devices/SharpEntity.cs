@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -23,6 +24,7 @@ public enum EntityCategory
 public abstract partial class SharpEntity : SharpComponent
 {
     bool available = true;
+    readonly ConcurrentDictionary<string, object?> attributes = new();
 
     /// <summary>An entity whose key is <c>main</c>: the one entity of a definition without a device.</summary>
     protected SharpEntity() : this("main") { }
@@ -62,9 +64,10 @@ public abstract partial class SharpEntity : SharpComponent
 
     /// <summary>
     /// Extra attributes Home Assistant shows with the state: text, numbers, booleans, dates, JSON values, and lists or
-    /// dictionaries of them. A change here is sent with the next <see cref="Publish"/>.
+    /// dictionaries of them. A change here is sent with the next <see cref="Publish"/>. Safe to change from any thread,
+    /// also while another one publishes.
     /// </summary>
-    public IDictionary<string, object?> Attributes { get; } = new Dictionary<string, object?>();
+    public IDictionary<string, object?> Attributes => attributes;
 
     /// <summary>Sends the current state and attributes to Home Assistant; does nothing before the definition runs.</summary>
     public void Publish() => Host?.Publish(this);
@@ -106,9 +109,11 @@ public abstract partial class SharpEntity : SharpComponent
     /// <summary>The entity's current state as Home Assistant shows it; unavailable whenever the definition is not running.</summary>
     internal JsonObject Snapshot(string uniqueId, bool running)
     {
-        var attributes = new JsonObject();
-        foreach (var (name, value) in Attributes) attributes[name] = AttributeJson(value);
-        return new() { ["uniqueId"] = uniqueId, ["available"] = Available && running, ["values"] = Values(), ["attributes"] = attributes };
+        // The dictionary's own ToArray is one consistent copy while other threads write (a LINQ copy through ICollection
+        // is not); it has no order, so sorted by key the same attributes always give the same snapshot.
+        var json = new JsonObject();
+        foreach (var (name, value) in attributes.ToArray().OrderBy(attribute => attribute.Key, StringComparer.Ordinal)) json[name] = AttributeJson(value);
+        return new() { ["uniqueId"] = uniqueId, ["available"] = Available && running, ["values"] = Values(), ["attributes"] = json };
     }
 
     /// <summary>
