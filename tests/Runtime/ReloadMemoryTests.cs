@@ -9,8 +9,11 @@ using static VisualExecutionTests;
 /// service description push, Init) repeated with a few automations, a node library and Custom C# and library nodes that
 /// call a service. Each generation runs the automations that call services: a Custom C# node passes an enum and an
 /// anonymous object of its own to a typed call, and a library record, made an object by Convert, goes into a Call service field, so System.Text.Json
-/// meets types of the automations' own assemblies. Every generation's automation load contexts must be collected, and
-/// managed memory must stop growing.
+/// meets types of the automations' own assemblies. Each generation also runs an entity definition whose device, a class
+/// of its own node library, starts a 20 ms timer and a track of an entity, calls a service from Start() with a record of
+/// its library serialized by System.Text.Json, and takes a command on its switch; a library save then rebuilds it (and the
+/// automations) and replaces the one Init loaded. Every generation's automation and definition load contexts must be
+/// collected, and managed memory must stop growing.
 /// <para>
 /// Python.NET's assembly manager is started as Home Assistant starts it (it records every assembly loaded into the
 /// process): before <see cref="PythonNetAssemblies"/> it held every automation assembly, so no load context unloaded.
@@ -32,7 +35,10 @@ static class ReloadMemoryTests
     // level it then keeps: 100 reloads end where 50 do. One window alone therefore failed about every second run of this
     // suite on its own. A quiet window measured 0.3 MiB at most, so 0.5 MiB catches 0.05 MiB per reload. With the
     // literals whole it grew about 2 MiB per reload with four automations; with Python.NET keeping the assemblies no
-    // load context was collected at all.
+    // load context was collected at all. With the definition and its library saved each reload (which recompiles the
+    // automations too), the level is about 93 to 106 MiB after reload 20 and a step can reach about 6 MiB, but the
+    // quietest window still grew 0.1 MiB at most. With the definition's types kept by System.Text.Json, no definition
+    // load context was collected.
     const double BoundMiB = 0.5;
 
     [RuntimeSuite("--reload-memory", Order = 30)]
@@ -42,8 +48,16 @@ static class ReloadMemoryTests
         var root = Path.Combine(Path.GetTempPath(), "reload-memory-" + Guid.NewGuid());
         var log = PyInterop.Log; var schedule = PyInterop.RegisterSchedule;
         var register = PyInterop.BeginRegisterHaTriggers; var remove = PyInterop.BeginRemoveHaTriggers; var call = PyInterop.CallService;
+        var push = PyInterop.PushEntityStates;
         var calls = new List<(string Service, string Json)>();
         PyInterop.CallService = (domain, name, json, done, _) => { lock (calls) calls.Add((domain + "." + name, json ?? "")); done?.Invoke(); };
+        // Only the last snapshot pushed for each entity: the timer pushes all the time, and a list of them would be memory kept.
+        var states = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        PyInterop.PushEntityStates = batch =>
+        {
+            foreach (var snapshot in JsonNode.Parse(batch)!.AsArray())
+                lock (states) states[snapshot!["uniqueId"]!.GetValue<string>()] = snapshot.AsObject();
+        };
         PyInterop.Log = (_, _) => { };
         PyInterop.RegisterSchedule = (_, _) => () => { };
         PyInterop.BeginRegisterHaTriggers = (generation, _, _, success, _) => success(generation);
@@ -60,23 +74,43 @@ static class ReloadMemoryTests
             manager.SetServiceDescriptions(descriptions, started: true);
             await manager.RetriesDone();
             await Populate(manager);
+            await MeterCalled(calls, 0, Marker(0), "the definition's first start");
 
             Check(PythonNetAssemblies.IgnoreCollectible(), "Python.NET's assembly handler is wrapped");
             var contexts = new List<(WeakReference Context, string Name)>();
             var assemblies = new List<WeakReference>();
             var memory = new Dictionary<int, long>();
+            void Watch(IEnumerable<UserScript> scripts, string name)
+            {
+                foreach (var s in scripts)
+                {
+                    contexts.Add((new WeakReference(s.CompiledScript.LoadContext ?? throw new Exception("a compiled script without its load context")), $"{name} {s.CompiledScript.FileName}"));
+                    assemblies.Add(new WeakReference(s.CompiledScript.Assembly));
+                }
+            }
             for (var reload = 1; reload <= Reloads; reload++)
             {
+                int before; lock (calls) before = calls.Count;
+                lock (states) states.Clear();
                 // async_unload_entry, then async_setup_entry: services.async_start pushes the descriptions before Init.
                 await manager.UnloadAsync();
                 manager.SetServiceDescriptions(descriptions, started: true);
                 await manager.RetriesDone();
                 await manager.Init();
+                // Init runs the definition as the library was saved last; its Start() has run once its call is made.
+                var initial = Scripts(manager);
+                Check(initial.Count(s => s.Host != null) == 1, $"reload {reload}: Init loads the definition: " + string.Join(", ", initial.Select(s => s.CompiledScript.FileName)));
+                await MeterCalled(calls, before, Marker(reload - 1), $"reload {reload}: the definition Init loaded");
+                Watch(initial, $"reload {reload} at Init");
+                initial.Clear();
+                // A library save rebuilds the definition (and the automations, which embed every library) and replaces it.
+                var saved = await Request(manager.NodeLibraryRequest, new { operation = "save", id = "meters", name = "Meters.cs", expectedRevision = reload, source = MeterLibrary(reload) });
+                Check(saved["definitions"]!.AsArray().Single()!["active"]!.GetValue<bool>(), $"reload {reload}: the library save runs the rebuilt definition: " + saved.ToJsonString()[..Math.Min(1200, saved.ToJsonString().Length)]);
+                await Exercise(manager, calls, states, before, reload);
                 var loaded = Loaded(manager);
                 Check(loaded.Count == Automations.Length && loaded.All(s => s.Active), $"reload {reload}: all {Automations.Length} automations are active again: " + string.Join(", ", loaded.Select(s => s.CompiledScript.FileName)));
                 await RunAll(manager, calls, reload);
-                contexts.AddRange(loaded.Select(s => (new WeakReference(s.CompiledScript.LoadContext ?? throw new Exception("a compiled automation without its load context")), $"reload {reload} {s.CompiledScript.FileName}")));
-                assemblies.AddRange(loaded.Select(s => new WeakReference(s.CompiledScript.Assembly)));
+                Watch(Scripts(manager), $"reload {reload}");
                 loaded.Clear();
                 if (reload >= From && (reload - From) % Window == 0) memory[reload] = Collected();
             }
@@ -94,24 +128,25 @@ static class ReloadMemoryTests
                 Collected();
                 alive = contexts.Count(c => c.Context.IsAlive);
             }
-            Check(alive == 0, $"{alive} of {contexts.Count} automation load contexts of earlier generations are still alive after the reloads: "
+            Check(alive == 0, $"{alive} of {contexts.Count} automation and definition load contexts of earlier generations are still alive after the reloads: "
                 + string.Join(", ", contexts.Where(c => c.Context.IsAlive).Select(c => c.Name)));
             var collectible = AssemblyLoadContext.All.OfType<ScriptLoadContext>().Count();
             Check(collectible == 0, $"{collectible} automation load contexts are left after the last unload");
             var aliveAssemblies = assemblies.Count(a => a.IsAlive);
-            Check(aliveAssemblies == 0, $"{aliveAssemblies} of {assemblies.Count} automation assemblies of earlier generations are still alive after the reloads");
+            Check(aliveAssemblies == 0, $"{aliveAssemblies} of {assemblies.Count} automation and definition assemblies of earlier generations are still alive after the reloads");
             var left = CollectibleAssemblies().Count(name => !earlier.Contains(name));
             Check(left == 0, $"{left} collectible assemblies are still loaded after the last unload");
             var samples = string.Join(", ", memory.OrderBy(m => m.Key).Select(m => $"{m.Value / 1048576.0:F1} MiB after reload {m.Key}"));
             var growth = memory.Keys.Where(reload => reload > From).Min(reload => (memory[reload] - memory[reload - Window]) / 1048576.0);
             Check(growth <= BoundMiB, $"managed memory grew in every {Window} reloads from reload {From} to reload {Reloads}, {growth:F2} MiB at the least ({samples}); a window that grows at most {BoundMiB} MiB is required");
-            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), every load context collected; managed memory {samples}");
+            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), and an entity definition rebuilt by a library save whose device runs a timer and a track, calls a service with a record of its library and takes a switch command, every load context collected; managed memory {samples}");
         }
         finally
         {
             await manager.UnloadAsync();
             if (startedPythonNet) StopPythonNetAssemblies();
             PyInterop.Log = log; PyInterop.RegisterSchedule = schedule; PyInterop.BeginRegisterHaTriggers = register; PyInterop.BeginRemoveHaTriggers = remove; PyInterop.CallService = call;
+            PyInterop.PushEntityStates = push;
             HassPath.HassConfiguration = previous;
             try { Directory.Delete(root, true); } catch (IOException) { }
         }
@@ -139,8 +174,12 @@ static class ReloadMemoryTests
     static HashSet<string> CollectibleAssemblies() =>
         [.. AppDomain.CurrentDomain.GetAssemblies().Where(a => a.IsCollectible).Select(a => a.FullName ?? "")];
 
-    static List<UserScript> Loaded(HassSharpManager manager) =>
+    // Every loaded script: the automations and the definition.
+    static List<UserScript> Scripts(HassSharpManager manager) =>
         ((UserScriptManager)typeof(HassSharpManager).GetField("_userScriptManager", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(manager)!).GetUserScripts();
+
+    // The automations: a definition's script has its host.
+    static List<UserScript> Loaded(HassSharpManager manager) => [.. Scripts(manager).Where(s => s.Host == null)];
 
     // Live managed bytes after full, compacting collections (the large object heap too) and finalisers.
     static long Collected()
@@ -190,6 +229,72 @@ static class ReloadMemoryTests
         }
         // Each run records its end before the next unload, which would otherwise cancel it.
         await Task.Delay(20);
+    }
+
+    const string MeterType = "library:meters:NodeLib.MemoryMeter";
+    static string Marker(int generation) => "gen" + generation;
+
+    // The definition's node library as generation N saves it: only its marker changes, so each save rebuilds the
+    // definition. Start() starts a 20 ms timer and a track, and calls a service with a record of the library made JSON
+    // by System.Text.Json's default options; the switch's handler and the track show what they ran on the "seen" sensor.
+    static string MeterLibrary(int generation) => $$"""
+        public record Brightness(int BrightnessPct, string Marker);
+
+        public class MemoryMeter : SharpDevice
+        {
+            const string Marker = "{{Marker(generation)}}";
+            readonly SharpSwitch relay;
+            readonly SharpSensor level, seen;
+            int ticks;
+
+            public MemoryMeter()
+            {
+                relay = Add(new SharpSwitch("relay") { OnTurnOn = () => { relay.IsOn = true; seen.Value = "command " + Marker; return Task.CompletedTask; } });
+                level = Add(new SharpSensor("level"));
+                seen = Add(new SharpSensor("seen"));
+            }
+
+            protected override async Task Start()
+            {
+                Every(System.TimeSpan.FromMilliseconds(20), () => { level.Value = Marker + " tick " + (++ticks); return Task.CompletedTask; });
+                Track("sensor.memory", change => { seen.Value = "track " + change.To.State + " " + Marker; return Task.CompletedTask; });
+                var data = System.Text.Json.JsonSerializer.SerializeToNode(new Brightness(40, Marker))!.AsObject();
+                await CallService("light.turn_on", "light.memory", data);
+            }
+        }
+        """;
+
+    // The definition's calls since the given one, by marker.
+    static string[] MeterCalls(List<(string Service, string Json)> calls, int from)
+    {
+        lock (calls)
+            return [.. calls.Skip(from).Where(c => c.Service == "light.turn_on" && c.Json.Contains("\"BrightnessPct\":40"))
+                .Select(c => JsonNode.Parse(c.Json)!["Marker"]?.GetValue<string>() ?? "")];
+    }
+
+    static Task MeterCalled(List<(string Service, string Json)> calls, int from, string marker, string what) =>
+        EntityTestHome.Until(() => MeterCalls(calls, from).Contains(marker), $"{what}: its Start() calls light.turn_on with marker {marker}");
+
+    // The last value pushed for one of the definition's entities.
+    static string? Pushed(Dictionary<string, JsonObject> states, string key, string field)
+    {
+        lock (states) return states.GetValueOrDefault("meter:" + key)?["values"]?[field]?.ToJsonString();
+    }
+
+    // The rebuilt definition: its Start() called the service once, its timer ticks, its track gets a change and its
+    // switch takes a command, each seen in what it pushes.
+    static async Task Exercise(HassSharpManager manager, List<(string Service, string Json)> calls, Dictionary<string, JsonObject> states, int from, int reload)
+    {
+        var marker = Marker(reload);
+        await MeterCalled(calls, from, marker, $"reload {reload}: the rebuilt definition");
+        Check(MeterCalls(calls, from).SequenceEqual([Marker(reload - 1), marker]), $"reload {reload}: the definition's calls: " + string.Join(", ", MeterCalls(calls, from)));
+        await EntityTestHome.Until(() => Pushed(states, "level", "value") is { } level && level.StartsWith($"\"{marker} tick ", StringComparison.Ordinal)
+            && int.Parse(level.Split(' ')[^1].TrimEnd('"')) >= 2, $"reload {reload}: the rebuilt definition's timer ticks twice");
+        await manager.OnTrackedEntityChange("sensor.memory", new HasEntityState { EntityId = "sensor.memory", State = "r" + reload }, null);
+        await EntityTestHome.Until(() => Pushed(states, "seen", "value") == $"\"track r{reload} {marker}\"", $"reload {reload}: the rebuilt definition's track gets the change");
+        await manager.EntityCommand("meter:relay", "turn_on", null);
+        await EntityTestHome.Until(() => Pushed(states, "seen", "value") == $"\"command {marker}\"" && Pushed(states, "relay", "is_on") == "true",
+            $"reload {reload}: the rebuilt definition's switch takes the command");
     }
 
     // A node library whose nodes call a service and make a record, and seven automations: the first node, a Custom C# node
@@ -246,5 +351,9 @@ static class ReloadMemoryTests
             var saved = await Request(manager.VisualRequest, new { operation = "save", id, graph = graphs[id], expectedRevision = 0, deriveSignatures = true });
             Check(saved["active"]!.GetValue<bool>(), $"{id} is active after its save: " + saved.ToJsonString()[..Math.Min(1200, saved.ToJsonString().Length)]);
         }
+        // The entity definition, after the automations: its library's save would rebuild them.
+        await Request(manager.NodeLibraryRequest, new { operation = "save", id = "meters", name = "Meters.cs", expectedRevision = 0, source = MeterLibrary(0) });
+        var meter = await Request(manager.EntityRequest, new { operation = "save", id = "meter", expectedRevision = 0, definition = new { name = "Memory meter", settings = Array.Empty<object>(), logic = new { kind = "class", type = MeterType } } });
+        Check(meter["active"]!.GetValue<bool>() && meter["document"]!["status"]!.GetValue<string>() == "running", "the definition runs after its save: " + meter.ToJsonString()[..Math.Min(1200, meter.ToJsonString().Length)]);
     }
 }

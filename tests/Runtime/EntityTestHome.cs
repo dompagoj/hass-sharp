@@ -73,6 +73,16 @@ sealed class EntityTestHome : IAsyncDisposable
         .Select(assembly => assembly.GetType("NodeLib.FakePlug", false)).OfType<Type>()
         .SelectMany(type => (IEnumerable<string>)type.GetField("Calls")!.GetValue(null)!).ToArray();
 
+    /// <summary>
+    /// Empties what every <c>NodeLib.FakePlug</c> still loaded recorded, so a count after it holds only what ran since,
+    /// whether or not an unloaded assembly has been collected meanwhile (a collected one takes its calls with it).
+    /// </summary>
+    public static void ClearCommands()
+    {
+        foreach (var type in AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("NodeLib.FakePlug", false)).OfType<Type>())
+            ((System.Collections.Concurrent.ConcurrentQueue<string>)type.GetField("Calls")!.GetValue(null)!).Clear();
+    }
+
     // Python's answer to a sync: an entity id for each unique id, as "<domain>.<definition>_<key>".
     static string Answer(string json)
     {

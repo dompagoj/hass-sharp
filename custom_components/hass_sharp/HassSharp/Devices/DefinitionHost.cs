@@ -244,8 +244,33 @@ internal sealed class DefinitionHost(UserScript script, CompiledDefinition defin
             // Nothing of the user's code stays reachable from the host once stopped.
             device = null;
             entities = [];
+            ClearJsonCaches();
             completion.TrySetResult();
         }
+    }
+
+    // System.Text.Json keeps the metadata of each type it writes with JsonSerializerOptions.Default (and options equal to
+    // it) for the life of the process, so a definition that writes a type of its own library that way, as
+    // JsonSerializer.Serialize(value) does, would keep its load context. Once its code has stopped those caches are
+    // emptied, through the ClearCache the library declares for hot reload (MetadataUpdateHandlerAttribute, called as hot
+    // reload calls it, with null for every type); they fill again as they are used. Null when the library has none.
+    static readonly Action<Type[]?>? JsonCacheHandler = FindJsonCacheHandler();
+
+    static Action<Type[]?>? FindJsonCacheHandler()
+    {
+        try
+        {
+            return typeof(JsonSerializer).Assembly.GetCustomAttributes<System.Reflection.Metadata.MetadataUpdateHandlerAttribute>()
+                .Select(attribute => attribute.HandlerType.GetMethod("ClearCache", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static, [typeof(Type[])]))
+                .OfType<MethodInfo>().Select(method => method.CreateDelegate<Action<Type[]?>>()).FirstOrDefault();
+        }
+        catch (Exception) { return null; }
+    }
+
+    void ClearJsonCaches()
+    {
+        try { JsonCacheHandler?.Invoke(null); }
+        catch (Exception failure) { Report($"clearing System.Text.Json's caches failed: {failure.Message}", PyLogLevel.Warn); }
     }
 
     async Task StopOne(SharpComponent component)

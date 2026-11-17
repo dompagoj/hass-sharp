@@ -286,8 +286,10 @@ static class EntityStartupTests
 
             await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = false });
             await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = true });
+            // The assembly turned off took the first call with it if it was collected: count from here.
+            EntityTestHome.ClearCommands();
             await api.EntityCommand("plug1:relay", "turn_on", null);
-            Check(Ran("disk turn_on 10.0.3.1") == 2 && Ran("turn_on 10.0.3.1") == 0, "plug1 turned off and on: " + string.Join(", ", EntityTestHome.Commands()));
+            Check(Ran("disk turn_on 10.0.3.1") == 1 && Ran("turn_on 10.0.3.1") == 0, "plug1 turned off and on: " + string.Join(", ", EntityTestHome.Commands()));
             var plug4 = await Read(api, "plug4");
             Check(Revision(plug4) == 1 && plug4["source"]!.GetValue<string>().Contains("disk turn_on"), "the disabled plug4's stored source: " + plug4.ToJsonString());
             await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug4", enabled = true });
