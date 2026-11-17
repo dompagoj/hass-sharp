@@ -267,15 +267,19 @@ public partial class HassSharpManager
                     message = running ? "Not rebuilt, because it has errors: it is still running the previous version, with the previous library code"
                         : "Not rebuilt, because it has errors; it is not running" };
             }).ToArray();
-            if (!candidate.Valid || previews.Any(p => !p.Preview.Valid))
-                return Error("validation", new { diagnostics = candidate.Diagnostics, automations = previews.Where(p => !p.Preview.Valid).Select(p => new { id = p.Document.Id, name = AutomationName(p.Document), diagnostics = Described(p.Document.Graph, p.Preview.Diagnostics, candidate.Snapshot) }), invalid });
+            // The entity definitions embed the libraries too, and are checked alike.
+            var definitionCheck = CheckDefinitions(candidate.Snapshot, saved.Preview.Snapshot, generation);
+            if (!candidate.Valid || previews.Any(p => !p.Preview.Valid) || definitionCheck.Breaking.Length > 0)
+                return Error("validation", new { diagnostics = candidate.Diagnostics, automations = previews.Where(p => !p.Preview.Valid).Select(p => new { id = p.Document.Id, name = AutomationName(p.Document), diagnostics = Described(p.Document.Graph, p.Preview.Diagnostics, candidate.Snapshot) }), invalid, definitions = definitionCheck.Breaking });
             var rebuilt = previews.Select(p => new VisualDocument(1,p.Document.Id,checked(p.Document.Revision+1),p.Preview.Graph ?? p.Document.Graph,p.Preview.Source,p.Preview.SourceMap) { CatalogGeneration = generation, EmbeddedCatalog = p.Preview.EmbeddedCatalog, Enabled = p.Document.Enabled, SavedUtc = p.Document.SavedUtc }).ToArray();
             var changes = rebuilt.ToDictionary(d => VisualDocuments.FilePath(d.Id), d => (string?)JsonSerializer.Serialize(d, VisualStore.Json));
             changes[LibraryDocuments.DocumentPath(id)] = document == null ? null : JsonSerializer.Serialize(document, VisualStore.Json);
+            AddDefinitionChanges(changes, definitionCheck);
             AuthoringFiles.Commit(changes);
             var automations = new List<object>();
             foreach (var graph in rebuilt) automations.Add(await ActivateVisualDocument(graph));
-            return Success(new { saved = true, document, deleted = operation == "delete", generation, catalog = candidate.Snapshot.Catalog, automations, invalid });
+            var definitions = await ReactivateDefinitions(definitionCheck);
+            return Success(new { saved = true, document, deleted = operation == "delete", generation, catalog = candidate.Snapshot.Catalog, automations, invalid, definitions, invalidDefinitions = definitionCheck.Invalid });
         }
         catch (VisualConflictException ex) { return Error("conflict", ex.Message); }
         catch (FileNotFoundException ex) { return Error("not_found", ex.Message); }

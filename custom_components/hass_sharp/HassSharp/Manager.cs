@@ -19,6 +19,7 @@ public partial class HassSharpManager
         {
             CompilationErrorException compilation => compilation.Errors.Length,
             VisualValidationException visual => visual.Preview.Diagnostics.Count(d => d.Severity >= 3),
+            DefinitionValidationException definition => definition.Preview.Diagnostics.Count(d => d.Severity >= 3),
             _ => 0,
         };
         if (problems > 0) _loadProblems[path] = problems; else _loadProblems.TryRemove(path, out _);
@@ -31,6 +32,7 @@ public partial class HassSharpManager
         _loadErrors[path] = error is CompilationErrorException compiled
             ? string.Join("\n", compiled.Errors) : error is VisualValidationException invalid
                 ? string.Join("\n", invalid.Preview.Diagnostics.Select(d => $"{d.NodeId ?? "graph"}: {d.Message}"))
+                : error is DefinitionValidationException rejected ? string.Join("\n", rejected.Preview.Diagnostics.Select(d => d.Message))
                 : error.GetBaseException().Message;
     }
 
@@ -87,14 +89,16 @@ public partial class HassSharpManager
                     if (ex is not (VisualValidationException or CompilationErrorException)) Logger.Debug($"Loading visual document {document.Id} failed: {ex}");
                 }
             }
+            var definitions = await CompileSavedDefinitions(libraries.Preview.Snapshot, libraries.Generation);
 
             await _userScriptManager.UnloadUserScriptsAsync(CancelReasons.Reloaded); // Just in case, shouldnt be needed
 
             if (assemblies.Count == 0)
                 Logger.Info("No automations found on initialization");
 
-            await _userScriptManager.LoadUserScripts(assemblies, RecordLoadError);
+            await _userScriptManager.LoadUserScripts([.. assemblies, .. definitions], RecordLoadError);
             _userScriptManager.DependencyTracking.Debug();
+            await PruneEntities();
         }
         finally { _visualGate.Release(); }
     }
@@ -112,14 +116,15 @@ public partial class HassSharpManager
     /// Logs why an automation does not load, as <paramref name="describe"/> says it. Whatever goes wrong while describing
     /// it is logged in a plain line instead: it never stops the automations after this one from loading.
     /// </summary>
-    internal static void ReportLoadFailure(string id, Func<string> describe)
+    /// <param name="what">What does not load, as the plain line names it: an automation, or an entity definition.</param>
+    internal static void ReportLoadFailure(string id, Func<string> describe, string what = "automation")
     {
         string line;
         try { line = describe(); }
         catch (Exception ex)
         {
-            line = $"Cannot load automation {id}; see the debug log for why";
-            try { Logger.Debug($"Cannot describe why automation {id} does not load: {ex}"); } catch { }
+            line = $"Cannot load {what} {id}; see the debug log for why";
+            try { Logger.Debug($"Cannot describe why {what} {id} does not load: {ex}"); } catch { }
         }
         try { Logger.Error(line); } catch { }
     }
@@ -132,15 +137,6 @@ public partial class HassSharpManager
     internal static string LoadFailure(VisualDocument document, Exception error, VisualCatalogSnapshot snapshot)
     {
         var name = AutomationName(document) is { } named ? $"\"{named}\" ({document.Id})" : document.Id;
-        static string Capped(string problem)
-        {
-            if (problem.Length <= LoggedProblemLength) return problem;
-            var length = LoggedProblemLength - 1;
-            if (char.IsHighSurrogate(problem[length - 1])) length--;
-            return problem[..length].TrimEnd() + "…";
-        }
-        static string Listed(IReadOnlyCollection<string> problems) =>
-            string.Join("; ", problems.Take(LoggedProblems).Select(Capped)) + (problems.Count > LoggedProblems ? $"; and {problems.Count - LoggedProblems} more" : "");
         var nodes = (document.Graph["nodes"] as JsonArray ?? []).OfType<JsonObject>()
             .GroupBy(n => VisualNodeCatalog.Text(n, "id"), StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
         string? Step(string? id) => id != null && nodes.TryGetValue(id, out var node)
@@ -171,6 +167,19 @@ public partial class HassSharpManager
         }
         return $"Cannot load automation {name}: {Capped(error.GetBaseException().Message)}";
     }
+
+    /// <summary>One problem as the startup log names it: cut with an ellipsis past <see cref="LoggedProblemLength"/>.</summary>
+    static string Capped(string problem)
+    {
+        if (problem.Length <= LoggedProblemLength) return problem;
+        var length = LoggedProblemLength - 1;
+        if (char.IsHighSurrogate(problem[length - 1])) length--;
+        return problem[..length].TrimEnd() + "…";
+    }
+
+    /// <summary>The first <see cref="LoggedProblems"/> problems, each <see cref="Capped"/>, and how many more there are.</summary>
+    static string Listed(IReadOnlyCollection<string> problems) =>
+        string.Join("; ", problems.Take(LoggedProblems).Select(Capped)) + (problems.Count > LoggedProblems ? $"; and {problems.Count - LoggedProblems} more" : "");
 
     static readonly System.Text.RegularExpressions.Regex CompilerError = new(@"\((?<line>\d+),\d+\): error (?<code>[A-Z]+\d+): (?<message>.*)$",
         System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
@@ -381,8 +390,9 @@ public partial class HassSharpManager
     /// After the typed service calls changed to add or change a service, or the entity classes to add or change a domain:
     /// tries again to activate each saved automation whose last load failed and that is not loaded (one that did not
     /// compile against a service or an entity class that was missing, or whose Home Assistant trigger
-    /// could not attach before its integration was set up, say), except a graph error naming no line of code. Loaded
-    /// automations are left alone. Runs after anything queued before it, under the same gate as every other activation.
+    /// could not attach before its integration was set up, say), except a graph error naming no line of code; then each
+    /// enabled entity definition alike. Loaded automations and definitions are left alone. Runs after anything queued
+    /// before it, under the same gate as every other activation.
     /// </summary>
     internal Task RetryFailedLoads()
     {
@@ -423,6 +433,7 @@ public partial class HassSharpManager
                     }
                     catch (Exception ex) { RecordLoadError(path, ex); }
                 }
+                await RetryFailedDefinitions(libraries.Preview.Snapshot, libraries.Generation);
             }
             finally { _visualGate.Release(); }
         }
