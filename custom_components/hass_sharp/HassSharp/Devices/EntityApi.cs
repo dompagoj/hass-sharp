@@ -110,9 +110,21 @@ public partial class HassSharpManager
     }
 
     /// <summary>
+    /// Stores the definition's regenerated source, so the revision that runs it is recognised as current and a later
+    /// activation compiles it, not the code its file embedded before (see <see cref="EntityDefinitionStore.RefreshDerived"/>).
+    /// A failure is logged, never thrown.
+    /// </summary>
+    void StoreRegenerated(EntityDefinitionDocument current)
+    {
+        try { EntityDocuments.RefreshDerived(current.Id, current.Revision, current.Source, current.SourceMap, current.CatalogGeneration); }
+        catch (Exception ex) { try { Logger.Error($"Cannot refresh stored source of entity definition {current.Id}: {ex}"); } catch { } }
+    }
+
+    /// <summary>
     /// At startup: each enabled saved definition, regenerated against the saved libraries and compiled, for the loader to
-    /// load with the automations. One that does not is recorded and logged, and the others are compiled; an unreadable
-    /// file is logged and skipped. A definition that is off is never compiled.
+    /// load with the automations, its regenerated source stored. One that does not is recorded and logged, and the others
+    /// are compiled; an unreadable file is logged and skipped. A definition that is off is never compiled: only its
+    /// source is regenerated and stored, when it is valid, so turning it on later runs the libraries as saved.
     /// </summary>
     async Task<List<CompiledUserScript>> CompileSavedDefinitions(VisualCatalogSnapshot snapshot, string generation)
     {
@@ -124,14 +136,23 @@ public partial class HassSharpManager
             try { Logger.Error($"Cannot read the entity definitions; none is loaded: {ex.Message}"); } catch { }
             return compiled;
         }
-        foreach (var document in documents.Where(d => d.Enabled))
+        foreach (var document in documents)
         {
+            if (!document.Enabled)
+            {
+                // One that is not valid keeps its stored source; turning it on says why.
+                try { StoreRegenerated(Regenerated(document, snapshot, generation)); }
+                catch (DefinitionValidationException) { }
+                catch (Exception ex) { try { Logger.Debug($"Regenerating entity definition {document.Id} failed: {ex}"); } catch { } }
+                continue;
+            }
             // The source map of the code that was compiled names the library of a compiler error.
             var current = document;
             try
             {
                 current = Regenerated(document, snapshot, generation);
                 compiled.Add(await CompileDefinition(current, null));
+                StoreRegenerated(current);
             }
             catch (Exception ex)
             {
@@ -199,7 +220,9 @@ public partial class HassSharpManager
             if (!_loadErrors.ContainsKey(path) || !_curableLoadErrors.ContainsKey(path) || _userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == path)) continue;
             try
             {
-                if (await LoadDefinition(Regenerated(document, snapshot, generation)) == null)
+                var current = Regenerated(document, snapshot, generation);
+                StoreRegenerated(current);
+                if (await LoadDefinition(current) == null)
                     Logger.Info($"Entity definition {document.Id} loaded now that the typed service calls or entity classes changed");
             }
             catch (Exception ex) { RecordLoadError(path, ex); }
@@ -314,8 +337,13 @@ public partial class HassSharpManager
                 {
                     var enabled = ApiRequest.Bool(request, "enabled");
                     var document = store.SetEnabled(id, enabled);
-                    // Turning on a definition whose saved revision already runs leaves it running as it is.
-                    if (!enabled || !EntityJson(document)["currentRevisionActive"]!.GetValue<bool>()) await ActivateDefinition(document, services);
+                    // Turned on, it runs the libraries as saved now, never the code its file embeds from before; one not
+                    // valid against them records why and does not load. One whose saved revision already runs is left as it is.
+                    var valid = true;
+                    if (enabled)
+                        try { document = Regenerated(document, snapshot, libraries.Generation); StoreRegenerated(document); }
+                        catch (DefinitionValidationException ex) { RecordLoadError(EntityRuntimePath(id), ex); valid = false; }
+                    if (!enabled || valid && !EntityJson(document)["currentRevisionActive"]!.GetValue<bool>()) await ActivateDefinition(document, services);
                     result = new { id, enabled = document.Enabled };
                 }
                 else

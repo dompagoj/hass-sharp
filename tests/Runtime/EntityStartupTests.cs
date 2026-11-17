@@ -61,6 +61,7 @@ static class EntityStartupTests
         await UnknownClass();
         await LibraryRebuild();
         await Retry();
+        await EditedOnDisk();
     }
 
     // A restart runs the saved definitions again; an unreadable file is skipped, a disabled definition stays off, and the
@@ -183,6 +184,13 @@ static class EntityStartupTests
             Check(home.Prunes()[^1] == """["plug1","spare"]""", "the prune: " + home.Prunes()[^1]);
             Console.WriteLine("PASS entity startup: a definition whose class is gone records why and the other definitions and automations load");
 
+            // Turned off and on again, it still does not load: it records why rather than run the code its file embeds.
+            await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = false });
+            await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = true });
+            plug1 = await Read(api, "plug1");
+            Check(Status(plug1) == "off" && plug1["activationError"]?.GetValue<string>() == unknown && Revision(plug1) == 1, "plug1 turned on with its class gone: " + plug1.ToJsonString());
+            Console.WriteLine("PASS entity startup: turning on a definition whose class is gone records why and runs nothing");
+
             var saved = await SaveLibrary(api, "extra", 2, Extra);
             var listed = saved["invalidDefinitions"]!.AsArray().Single()!;
             Check(listed["id"]!.GetValue<string>() == "plug1" && !listed["running"]!.GetValue<bool>()
@@ -236,6 +244,66 @@ static class EntityStartupTests
             Check(libraries["documents"]![0]!["revision"]!.GetValue<long>() == 2 && Revision(await Read(api, "plug1")) == 2 && Status(await Read(api, "plug1")) == "running",
                 "the library or definition after the refusal: " + libraries.ToJsonString());
             Console.WriteLine("PASS entity startup: a library save that breaks a valid definition is refused and leaves the library and definitions as they were");
+        }
+        finally { await api.UnloadAsync(); }
+    }
+
+    // A library edited on disk, then a restart: every definition runs the code of the libraries as now saved, whether it
+    // was on at the restart, turned off and on after it, or turned on only after it; the stored revision stays.
+    static async Task EditedOnDisk()
+    {
+        await using var home = new EntityTestHome("entity-startup-edited");
+        var first = new HassSharpManager(home.Root);
+        try
+        {
+            await first.Init();
+            await SaveLibrary(first, "shelly", 0, EntityApiTests.Library);
+            await SaveDefinition(first, "plug1", "Plug one", "10.0.3.1");
+            await SaveDefinition(first, "plug4", "Plug four", "10.0.3.4", enabled: false);
+        }
+        finally { await first.UnloadAsync(); }
+
+        // FakePlug as a direct file edit leaves it: same revision, another turn_on.
+        void Edit(string word)
+        {
+            var path = Storage(home, "libraries", "shelly.json");
+            var library = JsonNode.Parse(File.ReadAllText(path))!;
+            library["source"] = EntityApiTests.Library.Replace("Calls.Enqueue(\"turn_on \" + Host)", $"Calls.Enqueue(\"{word} turn_on \" + Host)");
+            File.WriteAllText(path, library.ToJsonString());
+        }
+        int Ran(string command) => EntityTestHome.Commands().Count(c => c == command);
+        Edit("disk");
+        var api = new HassSharpManager(home.Root);
+        try
+        {
+            await api.Init();
+            var plug1 = await Read(api, "plug1");
+            Check(Status(plug1) == "running" && plug1["currentRevisionActive"]!.GetValue<bool>() && Revision(plug1) == 1 && plug1["source"]!.GetValue<string>().Contains("disk turn_on"),
+                "plug1 after the restart: " + plug1.ToJsonString());
+            await api.EntityCommand("plug1:relay", "turn_on", null);
+            Check(Ran("disk turn_on 10.0.3.1") == 1 && Ran("turn_on 10.0.3.1") == 0, "plug1 after the restart: " + string.Join(", ", EntityTestHome.Commands()));
+            Console.WriteLine("PASS entity startup: a restart after a library edited on disk runs and stores the new code at the same revision");
+
+            await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = false });
+            await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = true });
+            await api.EntityCommand("plug1:relay", "turn_on", null);
+            Check(Ran("disk turn_on 10.0.3.1") == 2 && Ran("turn_on 10.0.3.1") == 0, "plug1 turned off and on: " + string.Join(", ", EntityTestHome.Commands()));
+            var plug4 = await Read(api, "plug4");
+            Check(Revision(plug4) == 1 && plug4["source"]!.GetValue<string>().Contains("disk turn_on"), "the disabled plug4's stored source: " + plug4.ToJsonString());
+            await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug4", enabled = true });
+            await api.EntityCommand("plug4:relay", "turn_on", null);
+            Check(Ran("disk turn_on 10.0.3.4") == 1 && Ran("turn_on 10.0.3.4") == 0 && (await Read(api, "plug4"))["currentRevisionActive"]!.GetValue<bool>(),
+                "plug4 turned on after the restart: " + string.Join(", ", EntityTestHome.Commands()));
+            Console.WriteLine("PASS entity startup: after that restart, a definition turned off and on, or on for the first time, runs the new code");
+
+            // Edited again while running: turning it off and on runs the libraries as saved now.
+            Edit("again");
+            await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = false });
+            await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = true });
+            await api.EntityCommand("plug1:relay", "turn_on", null);
+            plug1 = await Read(api, "plug1");
+            Check(Ran("again turn_on 10.0.3.1") == 1 && plug1["currentRevisionActive"]!.GetValue<bool>() && Revision(plug1) == 1, "plug1 turned on after another edit: " + plug1.ToJsonString());
+            Console.WriteLine("PASS entity startup: turning a definition on runs the libraries as saved at that moment");
         }
         finally { await api.UnloadAsync(); }
     }

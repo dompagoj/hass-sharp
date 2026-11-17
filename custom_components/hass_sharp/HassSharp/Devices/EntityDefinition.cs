@@ -165,6 +165,24 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
         return old with { Revision = checked(old.Revision + 1), Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = catalogGeneration };
     }
 
+    /// <summary>
+    /// Stores the source generated from the definition again, such as against libraries changed on disk, so the revision
+    /// running is recognised as current. Only when it is still at <paramref name="expectedRevision"/> and something
+    /// changed; the body, revision, flag and save time stay as they are.
+    /// </summary>
+    /// <returns>Whether the file was written.</returns>
+    internal bool RefreshDerived(string id, long expectedRevision, string source, List<VisualSourceMap> sourceMap, string? catalogGeneration)
+    {
+        lock (Gate)
+        {
+            var path = FilePath(id); var old = Read(id);
+            if (old == null || old.Revision != expectedRevision) return false;
+            if (old.Source == source && old.SourceMap.SequenceEqual(sourceMap) && old.CatalogGeneration == catalogGeneration) return false;
+            VisualStore.Write(path, old with { Source = source, SourceMap = sourceMap, CatalogGeneration = catalogGeneration });
+            return true;
+        }
+    }
+
     /// <summary>Turns the definition on or off at its current revision; the body, revision and save time stay as they are.</summary>
     /// <exception cref="FileNotFoundException">There is no such definition.</exception>
     public EntityDefinitionDocument SetEnabled(string id, bool enabled)
