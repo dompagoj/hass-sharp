@@ -20,6 +20,10 @@ dotnet test custom_components/hass_sharp/HassSharp.Editor.Tests
 (cd custom_components/hass_sharp/frontend && bun run test)
 ```
 
+After publishing, `python tests/packaging/entity_bridge_smoke.py custom_components/hass_sharp [DOTNET_ROOT]`
+(needs Python.NET, not Home Assistant; CI runs it) drives a custom entity definition
+through the real assembly and the four entity delegates.
+
 Without Home Assistant 2026.11 or later on the host, the MCP adapter tests skip (they need its
 `probatio` package) and so do the native class-trigger tests; an older Home Assistant, such as
 2025.12, still skips them.

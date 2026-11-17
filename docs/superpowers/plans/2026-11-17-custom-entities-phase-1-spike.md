@@ -82,6 +82,24 @@ were not run. The spike source was throwaway and is not in the repository.
     element by element (10–30 ms for 200 KB); instead allocate `Array.CreateInstance(Byte, n)` and fill it with
     `memoryview(arr)[:] = data` (0.07 ms). Base64 costs about 0.4 ms per 200 KB each way and is only a fallback.
 
+## Erratum (found while building the bridge)
+
+The rules above stand, with these corrections from the bridge (`entity_bridge.py`) and its tests against Home
+Assistant 2026.11.1 (`tests/python/test_entity_platforms.py`, which fail on any warning Home Assistant logs):
+
+- **Rule 8, device lookups and via.** `DeviceRegistry.async_get_device` and the `via_device` device-info key are
+  deprecated (Home Assistant reports their use; removal is due in 2027.8). The bridge looks a definition's device up
+  with `async_get_device_by_identifier((domain, definition_id), config_entry_id)` and links a parent with
+  `via_device_id`; neither logs a warning.
+- **Rule 8, a via device that does not exist** is refused, not ignored: `async_get_or_create` raises
+  `DeviceInfoError` ("via_device_id … is not a registered device id"). The bridge leaves an unknown parent out, so
+  the device has no `via_device_id` (`test_via_device_links_and_unlinks`).
+- **Rule 7, sticky units,** holds when the entity is added again, as after a reload: it keeps the unit stored in
+  its registry entry and converts to it (`1.5 kW` shows as `1500.0 W`; `test_unit_change_across_a_reload_keeps_the_first_unit`).
+  A unit changed while the entity stays live shows the new unit, in the state and the registry
+  (`test_unit_change_of_a_live_sensor_shows_the_new_unit`), and a unit with nothing to convert is taken on a re-add
+  too (`test_unit_change_without_conversion_shows_the_new_unit`).
+
 ## Unverified
 
 - What the Home Assistant UI shows for a restored registry entry.

@@ -59,6 +59,7 @@ jobs:
           /tmp/hass-sharp-pythonnet/bin/pip install pythonnet==3.1.0
           /tmp/hass-sharp-pythonnet/bin/python tests/packaging/sqlite_smoke.py custom_components/hass_sharp
           /tmp/hass-sharp-pythonnet/bin/python tests/packaging/visual_values_smoke.py custom_components/hass_sharp/out/HassSharp.dll
+          /tmp/hass-sharp-pythonnet/bin/python tests/packaging/entity_bridge_smoke.py custom_components/hass_sharp
 
   frontend:
     name: Frontend
