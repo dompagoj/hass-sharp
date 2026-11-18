@@ -105,7 +105,9 @@ static class EntityGraphTests
             (nameof(AFrameFlowWithoutShowFrameKeepsTheFrame), AFrameFlowWithoutShowFrameKeepsTheFrame),
             (nameof(APushedFrameIsAnsweredWithoutRunningAnything), APushedFrameIsAnsweredWithoutRunningAnything),
             (nameof(AFrameFlowPastItsLimitIsCancelledAndTheCameraRecovers), AFrameFlowPastItsLimitIsCancelledAndTheCameraRecovers),
-            (nameof(ARevisionSavedWhileAFrameFlowRunsServesFrames), ARevisionSavedWhileAFrameFlowRunsServesFrames) })
+            (nameof(ARevisionSavedWhileAFrameFlowRunsServesFrames), ARevisionSavedWhileAFrameFlowRunsServesFrames),
+            (nameof(APushedFrameStaysAcrossASave), APushedFrameStaysAcrossASave),
+            (nameof(AFrameFlowCancelledAsHomeAssistantStopsIsNoFailure), AFrameFlowCancelledAsHomeAssistantStopsIsNoFailure) })
         {
             try
             {
@@ -2510,6 +2512,8 @@ static class EntityGraphTests
         Next("frame", "snap"), Next("snap", "show"), Data("snap", "rect", "image", "image"), Data("rect", "label", "image", "image"), Data("label", "show", "image", "image")), [Camera()]);
     static Task<byte[]> Frame(Rig rig, string uniqueId = "annotated:annotated") => rig.Api.CameraImage(uniqueId);
     static bool Same(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
+    static (DefinitionHost Host, SharpCamera Camera) Annotating(Rig rig, string uniqueId = "annotated:annotated") =>
+        rig.Scripts.Entities.TryGet(uniqueId, out var host, out var entity) ? (host, (SharpCamera)entity) : throw new Exception(uniqueId + " is not running");
     static string[] Problems(Rig rig) => [.. rig.Home.Logs(PyLogLevel.Error), .. rig.Home.Logs(PyLogLevel.Warn)];
 
     /// <summary>
@@ -2650,7 +2654,7 @@ static class EntityGraphTests
                 $"request {i} past the limit answers the last good frame ({clock.ElapsedMilliseconds} ms)");
             await EntityTestHome.Until(() => Cancelled().Length == i, $"flow {i} past the limit is cancelled");
             // Its end reaches the camera through a pool continuation.
-            await Task.Delay(50);
+            await EntityTestHome.Until(() => !Annotating(rig).Camera.Frames.Busy, $"flow {i} has ended for the camera");
         }
         Check(rig.Home.Pictures().Length == 3, $"the second request started a flow of its own: {rig.Home.Pictures().Length} pictures");
         Check(Cancelled().All(r => r["error"]?.GetValue<string>() == "Took longer than 0.2 s"), "the runs say why they were cancelled: " + Lines(Cancelled().Select(r => r.ToJsonString())));
@@ -2675,12 +2679,67 @@ static class EntityGraphTests
         rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
         var clock = System.Diagnostics.Stopwatch.StartNew();
         var replaced = await rig.Save("annotated", Annotated(), saved["document"]!["revision"]!.GetValue<long>());
-        Check(replaced["active"]!.GetValue<bool>() && clock.Elapsed < TimeSpan.FromSeconds(2), $"the new revision runs, saved in {clock.ElapsedMilliseconds} ms: " + replaced.ToJsonString());
+        // Well within the 10 s that stopping would wait for the flow, with room for a compile on a slow machine.
+        Check(replaced["active"]!.GetValue<bool>() && clock.Elapsed < TimeSpan.FromSeconds(5), $"the new revision runs, saved in {clock.ElapsedMilliseconds} ms: " + replaced.ToJsonString());
         var ended = await Throws<InvalidOperationException>(() => waiting, "the request to the replaced revision");
         Check(ended.Message == "The entity is not running", "the request to the replaced revision ends: " + ended.Message);
         await rig.Started("annotated");
         var frame = await Frame(rig);
         Check(frame is [0xFF, 0xD8, ..] && !Same(frame, front) && rig.Home.Pictures().Length == 2, "the new revision serves frames");
         Check(Problems(rig).Length == 0, "the cancelled flow is no failure: " + Lines(Problems(rig)));
+    }
+
+    /// <summary>
+    /// A camera whose frames a trigger's flow shows (Take a picture → Show frame) keeps its picture across a save: the
+    /// request right after it gets the frame the replaced revision showed, before the trigger fires again.
+    /// </summary>
+    static async Task APushedFrameStaysAcrossASave()
+    {
+        await using var rig = await Rig.Start("frame-pushed-saved", ("binary_sensor.motion", "off"), ("camera.front", "idle"));
+        var front = Front();
+        rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
+        var graph = Graph("Pushed", [N("seen", "trigger", new { type = "entity", entity = "binary_sensor.motion" }), Snap("snap"), Rect("mark"), ShowFrame("show")],
+            Next("seen", "snap"), Next("snap", "show"), Data("snap", "mark", "image", "image"), Data("mark", "show", "image", "image"));
+        var saved = await rig.Save("annotated", Definition("Annotated", graph, [Camera()]));
+        await rig.Started("annotated");
+        await rig.Change("binary_sensor.motion", "on");
+        await EntityTestHome.Until(() => rig.Home.Pictures().Length == 1, "the trigger's flow takes its picture");
+        var shown = await Frame(rig);
+        var replaced = await rig.Save("annotated", Definition("Annotated", graph, [Camera()]), saved["document"]!["revision"]!.GetValue<long>());
+        Check(replaced["active"]!.GetValue<bool>(), "the new revision runs: " + replaced.ToJsonString());
+        await rig.Started("annotated");
+        Check(Same(await Frame(rig), shown) && rig.Home.Pictures().Length == 1, "the request right after the save gets the frame the replaced revision showed, and nothing runs");
+        Check(Problems(rig).Length == 0, "nothing fails: " + Lines(Problems(rig)));
+    }
+
+    /// <summary>
+    /// Home Assistant stopping cancels the script's lifetime before the host's own stop: a frame flow cancelled that way is
+    /// no failure of the camera (no Error line), the request gets the last good frame, and the run is still recorded
+    /// Cancelled with the reason. The order is made certain here by unlinking the host's stop from the lifetime.
+    /// </summary>
+    static async Task AFrameFlowCancelledAsHomeAssistantStopsIsNoFailure()
+    {
+        await using var rig = await Rig.Start("frame-stopping", ("camera.front", "idle"));
+        CameraFrames.IntervalSecond = TimeSpan.FromMilliseconds(20);
+        var front = Front();
+        rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
+        var saved = await rig.Save("annotated", Annotated(trackHistory: true));
+        var automationId = saved["document"]!["automationId"]!.GetValue<string>();
+        await rig.Started("annotated");
+        var good = await Frame(rig);
+        rig.Home.AnswerPictures = (_, _, _, _) => { };
+        var (host, _) = Annotating(rig);
+        await Task.Delay(50);
+        var waiting = Frame(rig);
+        await EntityTestHome.Until(() => rig.Home.Pictures().Length == 2, "the frame flow asks for its picture");
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        typeof(DefinitionHost).GetField("stopping", flags)!.SetValue(host, new CancellationTokenSource());
+        var script = (UserScript)typeof(DefinitionHost).GetFields(flags).Single(field => field.FieldType == typeof(UserScript)).GetValue(host)!;
+        script.CancelLifetime(CancelReasons.Stopping);
+        Check(Same(await waiting, good), "the request gets the last good frame");
+        await EntityTestHome.Until(() => rig.History(automationId).Any(r => r["status"]!.GetValue<string>() == "Cancelled"), "the run is recorded");
+        var run = rig.History(automationId).Single(r => r["status"]!.GetValue<string>() == "Cancelled");
+        Check(run["error"]?.GetValue<string>() == CancelReasons.Stopping, "the run says why it was cancelled: " + run.ToJsonString());
+        Check(!Problems(rig).Any(line => line.Contains("could not make a frame", StringComparison.Ordinal)), "a flow cancelled as Home Assistant stops is no failure: " + Lines(Problems(rig)));
     }
 }

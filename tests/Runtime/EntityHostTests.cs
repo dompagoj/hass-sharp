@@ -695,7 +695,7 @@ static class EntityHostTests
             await manager.UnloadScriptAsync("entity_waiter.cs").WaitAsync(TimeSpan.FromSeconds(5));
             Check(clock.Elapsed < TimeSpan.FromSeconds(2), $"a command that never ends held unloading {clock.Elapsed.TotalSeconds:F1} s");
             await Until(() => Recorded().Contains("waiter.Stop"), "Stop() runs after the drain timeout");
-            Check(Logs().Count(m => m == "Waiter: 1 timer callback(s), track callback(s) or command(s) did not finish within 0.2 s of stopping; going on without them") == 1,
+            Check(Logs().Count(m => m == "Waiter: 1 timer callback(s), track callback(s), command(s) or frame(s) did not finish within 0.2 s of stopping; going on without them") == 1,
                 "the command that did not end is logged once: " + string.Join(" | ", Logs()));
         }
         finally { UserScript.RunDrainTimeout = TimeSpan.FromSeconds(10); }

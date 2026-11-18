@@ -40,8 +40,10 @@ static class SharpImageTests
         WarningThenFatal();
         ManyScans();
         HugeHeader();
+        NoSize();
         Allocation();
         Threads();
+        Pooled();
         HandlesEndWithTheirThread();
         WithoutTheLibrary();
         UserCode();
@@ -366,6 +368,22 @@ static class SharpImageTests
         Console.WriteLine("PASS sharp image: a picture whose header says 9000 × 9000 is refused by a message naming 40 megapixels, before any pixel buffer is rented");
     }
 
+    // A size of 0 or less is refused before the library sees it: libjpeg-turbo reads 0 as "the picture's own size", which
+    // the buffer given need not hold. The buffer here holds the whole picture, so that nothing is overrun if it is not.
+    static void NoSize()
+    {
+        var jpeg = SharpImage.Blank(64, 48).ToJpeg();
+        var rgb = new byte[64 * 48 * 3];
+        foreach (var (w, h) in new[] { (0, 48), (64, 0), (0, 0), (-1, 48), (64, -1) })
+        {
+            var read = Throws<InvalidDataException>(() => TurboJpeg.Decode(jpeg, rgb, w, h), $"decoding at {w} × {h}");
+            Check(read.Message == "The picture could not be read: it has no size", $"decoding at {w} × {h}: " + read.Message);
+            var written = Throws<InvalidDataException>(() => TurboJpeg.Encode(rgb, w, h, 80), $"encoding at {w} × {h}");
+            Check(written.Message == "The picture could not be written: it has no size", $"encoding at {w} × {h}: " + written.Message);
+        }
+        Console.WriteLine("PASS sharp image: decoding or encoding at a width or height of 0 or less is refused with a plain sentence");
+    }
+
     static byte[] Frame(byte[] source)
     {
         var image = SharpImage.Load(source);
@@ -408,6 +426,42 @@ static class SharpImageTests
         threads.ForEach(thread => thread.Join());
         Check(failures.IsEmpty, "threads drawing at once: " + string.Join("; ", failures));
         Console.WriteLine("PASS sharp image: 8 threads drawing at once all give correct pictures");
+    }
+
+    // Eight threads that each made a 1920 × 1080 frame (a pixel buffer of 6 MB, pooled in the 8 MiB bucket) and are still
+    // alive keep at most two buffers between them: the pool has no buffer of each thread's own, as the shared pool has.
+    // Eight threads that each made a 2560 × 1920 frame (a pixel buffer of 14 MB, in the pool's largest size, 16 MiB, so
+    // that no larger one stands in) and are still alive keep at most two buffers between them: the pool keeps two of a
+    // size, and none of each thread's own, as the shared pool does (one per thread, 128 MiB here).
+    static void Pooled()
+    {
+        var source = Busy(2560, 1920);
+        const long buffer = 16 * 1024 * 1024;
+        var failures = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using var start = new Barrier(9);
+        using var made = new Barrier(9);
+        using var done = new ManualResetEventSlim();
+        var before = GC.GetTotalMemory(forceFullCollection: true);
+        var threads = Enumerable.Range(0, 8).Select(t => new Thread(() =>
+        {
+            try
+            {
+                start.SignalAndWait();
+                for (var round = 0; round < 2; round++) SharpImage.Load(source).DrawRect(10, 10, 100, 100, SharpColor.Red).ToJpeg();
+            }
+            catch (Exception error) { failures.Enqueue($"thread {t}: {error}"); }
+            made.SignalAndWait();
+            done.Wait();
+        })).ToList();
+        threads.ForEach(thread => thread.Start());
+        start.SignalAndWait();
+        made.SignalAndWait();
+        var kept = GC.GetTotalMemory(forceFullCollection: true) - before;
+        done.Set();
+        threads.ForEach(thread => thread.Join());
+        Check(failures.IsEmpty, "threads making frames: " + string.Join("; ", failures));
+        Check(kept < 3 * buffer, $"eight live threads that made 2560 × 1920 frames keep at most two pixel buffers of 16 MiB, not {kept / 1048576.0:F1} MiB");
+        Console.WriteLine($"PASS sharp image: eight threads that made 2560 × 1920 frames and are still alive keep at most two pixel buffers between them ({kept / 1048576.0:F1} MiB)");
     }
 
     static void HandlesEndWithTheirThread()

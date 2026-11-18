@@ -14,9 +14,11 @@ using static VisualExecutionTests;
 /// its library serialized by System.Text.Json, reads a value with its HTTP client from a loopback server and leaves a
 /// request open to a server that never answers (it does not pass Stopping, so only disposing the client ends it, which
 /// every reload must see happen), and takes a command on its switch; its camera shows a frame, and a frame request is
-/// left waiting across the reload, which the stop ends; a library save then rebuilds it
+/// left waiting across the reload, which the stop answers with that frame; a library save then rebuilds it
 /// (and the automations) and replaces the one Init loaded. After the reloads, a definition built from nodes is saved 100 times,
-/// each revision replacing the one before, taking a command on its switch and working out its State from its setting.
+/// each revision replacing the one before, taking a command on its switch and working out its State from its setting;
+/// its camera shows a picture as it starts, and a request leaves its frame flow waiting across the save, which the
+/// stop cancels and answers with that picture; last it is turned off while a frame flow waits.
 /// Every generation's automation and definition load contexts, and every graph revision's, must be collected, and
 /// managed memory must stop growing.
 /// <para>
@@ -54,6 +56,10 @@ static class ReloadMemoryTests
         var log = PyInterop.Log; var schedule = PyInterop.RegisterSchedule;
         var register = PyInterop.BeginRegisterHaTriggers; var remove = PyInterop.BeginRemoveHaTriggers; var call = PyInterop.CallService;
         var push = PyInterop.PushEntityStates;
+        // The picture the gauge's camera takes as it starts.
+        var snapshot = PyInterop.BeginCameraSnapshot;
+        var picture = SharpImage.Blank(24, 16).ToJpeg();
+        PyInterop.BeginCameraSnapshot = (_, _, ok, _) => ok(picture);
         // A camera's interval of half a second lasts 5 ms here.
         var second = CameraFrames.IntervalSecond;
         CameraFrames.IntervalSecond = TimeSpan.FromMilliseconds(10);
@@ -109,7 +115,7 @@ static class ReloadMemoryTests
                 lock (states) states.Clear();
                 // async_unload_entry, then async_setup_entry: services.async_start pushes the descriptions before Init.
                 await manager.UnloadAsync();
-                if (pending != null) await NotRunning(pending, $"reload {reload}");
+                if (pending != null) await Answered(pending, null, $"reload {reload}");
                 // The requests the stopped definitions left open end as their clients are disposed. The servers forget what
                 // they recorded, so that they keep no memory across the reloads.
                 await EntityTestHome.Until(() => silent.Open == 0, $"reload {reload}: the requests the stopped definitions left open are cancelled ({silent.Open} open)");
@@ -136,11 +142,15 @@ static class ReloadMemoryTests
                 if (reload >= From && (reload - From) % Window == 0) memory[reload] = Collected();
             }
             // A definition built from nodes, replaced by a save again and again (a new setting value each time), takes a
-            // command on its switch and works out its State: every revision's load context must go too.
+            // command on its switch and works out its State, and leaves a frame flow waiting across the save: every
+            // revision's load context must go too.
+            Task<byte[]>? flowing = null;
             for (var revision = 0; revision < GraphRevisions; revision++)
             {
                 var saved = await Request(manager.EntityRequest, new { operation = "save", id = "gauge", expectedRevision = revision, definition = GraphDefinition(revision) });
                 Check(saved["active"]!.GetValue<bool>(), $"graph revision {revision + 1} runs: " + saved.ToJsonString()[..Math.Min(1200, saved.ToJsonString().Length)]);
+                if (flowing != null) await Answered(flowing, picture, $"graph revision {revision + 1}");
+                flowing = await Waiting(manager, "gauge:view", $"graph revision {revision + 1}");
                 await manager.EntityCommand("gauge:relay", "turn_on", null);
                 var level = revision.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 await EntityTestHome.Until(() => GraphPushed(states, "level", "value") == level, $"graph revision {revision + 1}: the State pushes the setting's value {level}");
@@ -151,8 +161,14 @@ static class ReloadMemoryTests
                 gauge.Clear();
                 lock (states) states.Clear();
             }
+            // Turned off while its frame flow waits: the request gets the picture, a later one is refused.
+            await Request(manager.EntityRequest, new { operation = "set_enabled", id = "gauge", enabled = false });
+            if (flowing != null) await Answered(flowing, picture, "the gauge turned off");
+            flowing = null;
+            try { await manager.CameraImage("gauge:view"); throw new Exception("a request to the gauge turned off was answered"); }
+            catch (InvalidOperationException refused) when (refused.Message == "The entity is not running") { }
             await manager.UnloadAsync();
-            if (pending != null) await NotRunning(pending, "the last unload");
+            if (pending != null) await Answered(pending, null, "the last unload");
             pending = null;
             // System.Text.Json's process-wide member accessor cache (its compiled getters and constructors of the types it
             // writes) keeps an entry about a second after its last use and drops it at its next use after that: the last
@@ -186,6 +202,7 @@ static class ReloadMemoryTests
             if (startedPythonNet) StopPythonNetAssemblies();
             PyInterop.Log = log; PyInterop.RegisterSchedule = schedule; PyInterop.BeginRegisterHaTriggers = register; PyInterop.BeginRemoveHaTriggers = remove; PyInterop.CallService = call;
             PyInterop.PushEntityStates = push;
+            PyInterop.BeginCameraSnapshot = snapshot;
             CameraFrames.IntervalSecond = second;
             HassPath.HassConfiguration = previous;
             try { Directory.Delete(root, true); } catch (IOException) { }
@@ -332,18 +349,22 @@ static class ReloadMemoryTests
 
     const int GraphRevisions = 100;
 
-    // A gauge whose level is its setting's value and whose switch's turn on flow sets it on.
+    // A gauge whose level is its setting's value and whose switch's turn on flow sets it on; its camera shows a picture
+    // as it starts, and its frame flow waits an hour.
     static object GraphDefinition(int value) => new
     {
         name = "Gauge",
         settings = new[] { new { key = "level", type = "number", value } },
-        entities = new object[] { new { key = "level", domain = "sensor" }, new { key = "relay", domain = "switch" } },
+        entities = new object[] { new { key = "level", domain = "sensor" }, new { key = "relay", domain = "switch" }, new { key = "view", domain = "camera" } },
         logic = new { kind = "graph", graph = new JsonObject
         {
             ["version"] = 5, ["name"] = "Gauge",
             ["nodes"] = new JsonArray(N("k", "setting", new { key = "level" }), N("s", "entity_state", new { entity = "level" }),
-                N("on", "entity_command", new { entity = "relay", command = "turn_on" }), N("set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", true) })),
-            ["edges"] = new JsonArray(D("k", "s", "value"), E("on", "set")),
+                N("on", "entity_command", new { entity = "relay", command = "turn_on" }), N("set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", true) }),
+                N("setup", "entity_setup"), N("snap", "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.memory") }),
+                N("show", "show_frame", new JsonObject { ["entity"] = "view", ["image"] = new JsonObject { ["kind"] = "unset" } }),
+                N("frame", "camera_frame", new { entity = "view" }), N("wait", "delay", new { seconds = Lit("number", 3600) })),
+            ["edges"] = new JsonArray(D("k", "s", "value"), E("on", "set"), E("setup", "snap"), E("snap", "show"), D("snap", "show", "image", "image"), E("frame", "wait")),
         } },
     };
 
@@ -386,12 +407,22 @@ static class ReloadMemoryTests
         return pending;
     }
 
-    // A frame request to a definition that has stopped since ended, saying it no longer runs.
-    static async Task NotRunning(Task<byte[]> request, string when)
+    // A frame request to a definition that has stopped since, answered with the camera's last good frame (this one when given).
+    static async Task Answered(Task<byte[]> request, byte[]? frame, string when)
     {
-        try { await request.WaitAsync(TimeSpan.FromSeconds(5)); }
-        catch (InvalidOperationException ended) when (ended.Message == "The entity is not running") { return; }
-        throw new Exception($"{when}: the camera's request in flight did not end as its definition stopped: {request.Status}");
+        byte[] answer;
+        try { answer = await request.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception failure) { throw new Exception($"{when}: the camera's request in flight was not answered with its frame as its definition stopped: {failure.Message}"); }
+        Check(answer is [0xFF, 0xD8, ..] && (frame == null || answer.AsSpan().SequenceEqual(frame)), $"{when}: the camera's request in flight is answered with its last good frame");
+    }
+
+    // A frame request that waits for the camera's frame flow, which waits an hour.
+    static async Task<Task<byte[]>> Waiting(HassSharpManager manager, string uniqueId, string when)
+    {
+        var waiting = manager.CameraImage(uniqueId);
+        await Task.Delay(10);
+        Check(!waiting.IsCompleted, $"{when}: the camera's request waits for its frame flow");
+        return waiting;
     }
 
     // A node library whose nodes call a service and make a record, and seven automations: the first node, a Custom C# node

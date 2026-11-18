@@ -19,10 +19,25 @@ static class HassCameras
         cancellation.ThrowIfCancellationRequested();
         // Python answers on its event loop: what follows runs elsewhere.
         var completion = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-        try { begin(definitionId, entityId, bytes => completion.TrySetResult(bytes), message => completion.TrySetException(new InvalidOperationException(message))); }
+        try { begin(definitionId, entityId, bytes => completion.TrySetResult(bytes), message => completion.TrySetException(StoppingAnswers.Contains(message) ? new Stopped(message) : new InvalidOperationException(message))); }
         catch (Exception error) { completion.TrySetException(error); }
         var picture = await completion.Task.WaitAsync(cancellation);
         if (picture is not { Length: > 0 }) throw new InvalidOperationException($"{entityId} gave no picture");
         return SharpImage.Load(picture);
+    }
+
+    // What Python answers when Home Assistant or HassSharp stops while a picture is taken (entity_bridge.py's
+    // SNAPSHOT_STOPPED and SNAPSHOT_CLOSED): no failure of the camera asking, which is stopping too.
+    static readonly string[] StoppingAnswers = ["Home Assistant is stopping, so no picture was taken", "HassSharp is stopping, so no picture was taken"];
+
+    /// <summary>No picture was taken because Home Assistant or HassSharp is stopping; the code asking sees an <see cref="InvalidOperationException"/>.</summary>
+    internal sealed class Stopped(string message) : InvalidOperationException(message);
+
+    /// <summary>The failure, or one it wraps, that says a picture was not taken because Home Assistant or HassSharp is stopping; null when it is none.</summary>
+    internal static Stopped? Stopping(Exception? failure)
+    {
+        for (; failure != null; failure = failure.InnerException)
+            if (failure is Stopped stopped) return stopped;
+        return null;
     }
 }

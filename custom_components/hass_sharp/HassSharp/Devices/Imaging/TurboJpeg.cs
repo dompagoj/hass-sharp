@@ -123,10 +123,12 @@ internal static unsafe class TurboJpeg
 
     /// <summary>Decodes a JPEG of the size <see cref="Header"/> read into <paramref name="rgb"/>.</summary>
     /// <exception cref="InvalidOperationException">The library is missing: <see cref="Missing"/>.</exception>
-    /// <exception cref="InvalidDataException">The picture cannot be read; a truncated or damaged one is decoded as far as it goes.</exception>
+    /// <exception cref="InvalidDataException">The picture cannot be read, or the size given is not one; a truncated or damaged one is decoded as far as it goes.</exception>
     internal static void Decode(ReadOnlySpan<byte> jpeg, Span<byte> rgb, int width, int height)
     {
         var api = Require();
+        // The library reads a size of 0 as the picture's own, which the buffer may not hold.
+        if (width <= 0 || height <= 0) throw new InvalidDataException("The picture could not be read: it has no size");
         if (rgb.Length < (long)width * height * 3) throw new ArgumentException("The pixel buffer is smaller than the picture");
         int result;
         var handle = Decompressor(api);
@@ -138,10 +140,11 @@ internal static unsafe class TurboJpeg
 
     /// <summary>Encodes RGB pixels as a JPEG with 4:2:0 subsampling.</summary>
     /// <exception cref="InvalidOperationException">The library is missing: <see cref="Missing"/>.</exception>
-    /// <exception cref="InvalidDataException">The library could not encode it.</exception>
+    /// <exception cref="InvalidDataException">The library could not encode it, or the size given is not one.</exception>
     internal static byte[] Encode(ReadOnlySpan<byte> rgb, int width, int height, int quality, int flags = 0)
     {
         var api = Require();
+        if (width <= 0 || height <= 0) throw new InvalidDataException("The picture could not be written: it has no size");
         if (rgb.Length < (long)width * height * 3) throw new ArgumentException("The pixel buffer is smaller than the picture");
         byte* output = null;
         var size = new CULong(0);

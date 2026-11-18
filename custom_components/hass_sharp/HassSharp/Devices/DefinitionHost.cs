@@ -65,6 +65,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     HttpClient? http;
     SharpFiles? files;
     bool released;
+    // Stopped because a new revision replaces this one: its cameras still answer their good frame until it has left.
+    volatile bool replacing;
     // The clock of the Setup()s or the When started flow while the definition prepares, which a download's receiving stops; null after.
     volatile SetupClock? setupClock;
     // Why the When started flow last failed, as FlowFailed words it (the step's sentence, with its cause), for its start's error.
@@ -193,6 +195,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         }
         var all = Collect();
         CheckKeys(all);
+        // A revision that replaces a running one takes over its cameras' frames as that one stops (Inherit).
+        Replaced();
         entities = all;
         return all;
     }
@@ -348,9 +352,11 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             tracks.Clear();
             (next, successor) = (successor, null);
             final = next != null ? CurrentStates() : [];
+            replacing = next != null;
         }
-        // The revision replacing this one gets what changed while it was prepared; outside the lock, as it takes its own.
-        next?.Inherit(this, final);
+        // The revision replacing this one gets what changed while it was prepared, and its cameras the frames of these;
+        // outside the lock, as it takes its own, and as each camera takes its own.
+        next?.Inherit(this, final, next != null ? HandedFrames() : []);
         _ = StopCoreAsync(completion, start, ticking, following);
         return completion.Task;
     }
@@ -385,7 +391,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             {
                 int left;
                 lock (gate) left = running.Count + ticking.Count(timer => !timer.Loop.IsCompleted);
-                Report($"{left} timer callback(s), track callback(s) or command(s) did not finish within {Seconds()} s of stopping; going on without them", PyLogLevel.Warn);
+                Report($"{left} timer callback(s), track callback(s), command(s) or frame(s) did not finish within {Seconds()} s of stopping; going on without them", PyLogLevel.Warn);
             }
             if (start == null) return;
             var (root, all) = (device, entities);
@@ -514,36 +520,55 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// for a camera that makes its frames (a class's <c>Frame()</c> or <c>OnFrame</c>, a graph's frame flow,
     /// <see cref="FrameNeeded"/>), its current frame once the making the request shares has ended; for any other, its
     /// current frame. A frame that cannot be made or encoded is logged at Error once for each new reason, naming the
-    /// camera, and the first picture after one says once that it makes frames again. Waits no longer than the definition
-    /// runs; stopping cancels the frame being made (through <see cref="Stopping"/>) and waits for it as for a command.
+    /// camera, and the first picture of a frame made or shown after one says once that it makes frames again; a frame
+    /// that cannot be encoded leaves the last good one as the answer for a while. While the definition starts, the
+    /// current frame (one the revision it replaces handed over) is the answer and none is made. Stopping cancels the
+    /// frame being made (through <see cref="Stopping"/>) and waits for it as for a command; a request then waiting is
+    /// answered with the last good frame while there is one, as when making one failed, and so is a request while a
+    /// revision that a new one replaces is still stopping. One turned off or deleted refuses every later request.
     /// </summary>
-    /// <exception cref="InvalidOperationException">The definition is not running (or stopped meanwhile), the camera has not shown a frame, or making or encoding one failed and the last good one is too old.</exception>
+    /// <exception cref="InvalidOperationException">The definition is not running (or stopped meanwhile, with no good frame), the camera has not shown a frame, or making or encoding one failed and the last good one is too old.</exception>
     /// <exception cref="TimeoutException">Making one took longer than <see cref="CameraFrames.MakeLimit"/> and the last good one is too old.</exception>
     public async Task<byte[]> CameraImage(SharpCamera camera)
     {
         var stopping = Stopping;
-        if (status != Running) throw NotRunning();
         var frames = camera.Frames;
         var what = $"{camera.Called} could not make a frame";
+        var interval = CameraFrames.IntervalSecond * camera.FrameInterval;
+        var goodFor = CameraFrames.GoodWithin(interval);
+        // The same frame fails the same way for every request: its whole failure is logged with its first line.
+        string Unencoded(Exception failure) => Failing(frames.Failures, what, failure, everyTime: false);
+        if (status == SettingUp)
+        {
+            // Starting: what the camera has, made by none, within the time a good frame is given when it makes its frames.
+            try { return (await frames.Picture(camera.Called, Maker(camera) != null ? Starting : null, goodFor, Unencoded)).Jpeg; }
+            catch (Exception) { throw NotRunning(); }
+        }
+        // Replaced by a new revision, still stopping (it may wait for a Stop() or a frame): the good frame, none made.
+        if (status == Stopped && replacing) return await Overtaken(camera, goodFor, Unencoded);
+        if (status != Running) throw NotRunning();
         try
         {
             CameraFrames.Outcome? outcome = null;
+            Task<CameraFrames.Outcome>? shared = null;
             if (Maker(camera) is { } make)
-                outcome = await frames.Share(CameraFrames.IntervalSecond * camera.FrameInterval, () => Make(camera, make, what)).WaitAsync(stopping);
+                outcome = await (shared = frames.Share(interval, () => Make(camera, make, what))).WaitAsync(stopping);
             // Also when the making saw the stop first.
-            if (stopping.IsCancellationRequested) throw NotRunning();
-            var encoding = frames.Picture(camera.Called, outcome);
-            byte[] jpeg;
-            try { jpeg = await encoding.WaitAsync(stopping); }
-            catch (Exception failure) when (failure is not OperationCanceledException)
-            {
-                // The same frame fails the same way for every request: its whole failure is logged with its first line.
-                throw new InvalidOperationException($"{what}: {Failing(frames.Failures, what, failure, everyTime: false)}");
-            }
-            if (outcome is null or { Failure: null }) Working(frames.Failures, $"{camera.Called} makes frames again");
+            if (stopping.IsCancellationRequested) return await Overtaken(camera, goodFor, Unencoded);
+            var (jpeg, current) = await frames.Picture(camera.Called, outcome, goodFor, Unencoded);
+            // Not after a newer attempt failed meanwhile: the one this request shared is then no longer the news.
+            if (current && (shared == null || outcome is { Failure: null } && frames.IsLast(shared))) Working(frames.Failures, $"{camera.Called} makes frames again");
             return jpeg;
         }
-        catch (OperationCanceledException) when (stopping.IsCancellationRequested) { throw NotRunning(); }
+        catch (Exception) when (stopping.IsCancellationRequested) { return await Overtaken(camera, goodFor, Unencoded); }
+    }
+
+    // A request the definition's stop overtook: the camera's good frame, while there is one, else the refusal of a camera
+    // whose definition is not running.
+    static async Task<byte[]> Overtaken(SharpCamera camera, TimeSpan goodFor, Func<Exception, string> unencoded)
+    {
+        try { return (await camera.Frames.Picture(camera.Called, Cancelled, goodFor, unencoded)).Jpeg; }
+        catch (Exception) { throw NotRunning(); }
     }
 
     static InvalidOperationException NotRunning() => new("The entity is not running");
@@ -582,9 +607,13 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 
     // How making the frame ended, within CameraFrames.MakeLimit: a picture becomes the current frame (a copy, as Show
     // keeps one), none keeps it; a failure, or a frame later than the limit (left to finish, what it gives not shown), is
-    // logged once per reason. A cancellation because the definition stops is no failure, and no request waits for it.
+    // logged once per reason. A stop is no failure, and no request waits for it: the definition's (a cancellation through
+    // Stopping, or its flow cancelled because its script's lifetime ended, as when Home Assistant stops), or a picture
+    // Python did not take because Home Assistant or HassSharp is stopping.
     async Task<CameraFrames.Outcome> Ended(SharpCamera camera, Task<SharpImage?> made, string what)
     {
+        // Off the camera's lock, which Share holds as it begins this: nothing of the user's, nor a log line, runs under it.
+        await Task.Yield();
         var token = Stopping;
         using (var timer = CancellationTokenSource.CreateLinkedTokenSource(token))
         {
@@ -606,12 +635,21 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         }
         catch (Exception failure)
         {
-            if (failure is OperationCanceledException && token.IsCancellationRequested) return Cancelled;
+            if (failure is OperationCanceledException && (token.IsCancellationRequested || script.LifetimeToken.IsCancellationRequested)) return Cancelled;
+            // The request still says why there is no new frame; nothing is logged.
+            if (HassCameras.Stopping(failure) is { } stopped) return new(stopped.Message);
             return new(Failing(camera.Frames.Failures, what, failure));
         }
     }
 
-    static readonly CameraFrames.Outcome Cancelled = new("the definition stopped");
+    static readonly CameraFrames.Outcome Cancelled = new("the definition stopped"), Starting = new("the definition is starting");
+
+    // Each of this revision's cameras' frames, by key, for the revision that replaces it (CameraFrames.TakeOver). Never throws.
+    (string Key, CameraFrames.Handover Frames)[] HandedFrames()
+    {
+        try { return [.. entities.OfType<SharpCamera>().Select(camera => (camera.Key, camera.Frames.Handed()))]; }
+        catch (Exception) { return []; }
+    }
 
     /// <summary>The definition's entity with this unique id; null when it has none.</summary>
     internal SharpEntity? Entity(string uniqueId) => entities.FirstOrDefault(entity => UniqueId(entity) == uniqueId);

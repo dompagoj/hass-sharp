@@ -20,6 +20,11 @@ public sealed class SharpImage : IVisualSnapshot
     const int MinTextSize = 8, MaxTextSize = 200;
     const int MinThickness = 1, MaxThickness = 50;
     const int Quality = 80;
+    // The pixel buffers of the pictures decoded, kept for the next: two of each size up to 16 MiB (a picture of up to
+    // about 5.6 megapixels), whichever thread asks, so that a pool thread does not keep one of its own for good; a larger
+    // one is made for its picture alone.
+    const int PooledBytes = 16 * 1024 * 1024;
+    static readonly ArrayPool<byte> Buffers = ArrayPool<byte>.Create(maxArrayLength: PooledBytes, maxArraysPerBucket: 2);
 
     abstract record Drawing;
     sealed record Rectangle(int X, int Y, int Width, int Height, SharpColor Color, int Thickness) : Drawing;
@@ -139,12 +144,13 @@ public sealed class SharpImage : IVisualSnapshot
         ReadSize();
         if ((long)width * height > MaxPixels) throw new ArgumentException("The picture is larger than 40 megapixels");
         var length = width * height * 3;
-        var pixels = ArrayPool<byte>.Shared.Rent(length);
+        var pooled = length <= PooledBytes;
+        var pixels = pooled ? Buffers.Rent(length) : GC.AllocateUninitializedArray<byte>(length);
         try
         {
             var rgb = pixels.AsSpan(0, length);
-            // Cleared first: the pooled array holds an earlier picture, which a decode that warns and then fails leaves
-            // as it was — what did not decode is black, never someone else's frame.
+            // Cleared first: a pooled array holds an earlier picture, which a decode that warns and then fails leaves as
+            // it was — what did not decode is black, never someone else's frame (nor what an unset array held).
             if (jpeg != null) { rgb.Clear(); TurboJpeg.Decode(jpeg, rgb, width, height); }
             else ImagePainter.Fill(rgb, width, height, fill);
             foreach (var drawing in drawings)
@@ -157,7 +163,7 @@ public sealed class SharpImage : IVisualSnapshot
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(pixels);
+            if (pooled) Buffers.Return(pixels);
         }
     }
 

@@ -165,17 +165,22 @@ internal sealed partial class DefinitionHost
     /// The revision this one was to replace stops, with <paramref name="final"/> its entities' last states: each value that
     /// changed there since <see cref="HandOver"/> reaches the entity here that took that revision's state
     /// (<see cref="Carry"/>), unless a run here has set that value itself; a value the entity here refuses is left out.
-    /// Nothing once this one stops. Never throws.
+    /// Each camera here whose key was a camera's there takes over its current and last good frame
+    /// (<see cref="CameraFrames.TakeOver"/>), so that a picture being watched stays; nothing else of it. Nothing once this
+    /// one stops. Never throws.
     /// </summary>
-    internal void Inherit(DefinitionHost from, GraphEntityState[] final)
+    /// <param name="cameras">The frames of the replaced revision's cameras, by key.</param>
+    internal void Inherit(DefinitionHost from, GraphEntityState[] final, (string Key, CameraFrames.Handover Frames)[] cameras)
     {
         List<string> dropped = [];
+        var live = false;
         try
         {
             lock (gate)
             {
                 if (predecessor == from) predecessor = null;
                 if (stopped != null) return;
+                live = true;
                 foreach (var was in final)
                 {
                     var first = handed.FirstOrDefault(state => state.Key == was.Key && state.Domain == was.Domain);
@@ -186,6 +191,11 @@ internal sealed partial class DefinitionHost
             }
         }
         catch (Exception) { }
+        // Outside the lock: each camera takes its own.
+        if (live)
+            foreach (var (key, frames) in cameras)
+                try { if (entities.FirstOrDefault(entity => entity.Key == key) is SharpCamera camera) camera.Frames.TakeOver(frames); }
+                catch (Exception) { }
         foreach (var line in dropped) Report(line, PyLogLevel.Debug);
     }
 
@@ -296,7 +306,8 @@ internal sealed partial class DefinitionHost
     /// that hangs (a camera that never answers) does not keep its camera from making the next frame; its record says why.
     /// Completes when the flow succeeded or ended at a Stop step; otherwise throws, for the camera to log once per reason:
     /// the flow's failure as <see cref="FlowFailed"/> words it, wrapping what the run threw; a
-    /// <see cref="TimeoutException"/> past the limit; an <see cref="OperationCanceledException"/> when the definition stops.
+    /// <see cref="TimeoutException"/> past the limit; an <see cref="OperationCanceledException"/> when the definition stops,
+    /// or its script's lifetime ends.
     /// </summary>
     async Task RunFrame(string method)
     {
@@ -310,7 +321,8 @@ internal sealed partial class DefinitionHost
             case "Succeeded" or "Stopped": return;
             case "Failed" when failed.Failure != null: throw new InvalidOperationException(failed.Reason, failed.Failure);
             case "Failed": throw new InvalidOperationException(outcome.Error is { Length: > 0 } error ? error.Split('\n')[0].TrimEnd('\r') : "its flow failed");
-            case "Cancelled" when Stopping.IsCancellationRequested: throw new OperationCanceledException(Stopping);
+            // The script's lifetime ends before the host's Stopping is cancelled from it (Home Assistant stopping): a stop too.
+            case "Cancelled" when Stopping.IsCancellationRequested || script.LifetimeToken.IsCancellationRequested: throw new OperationCanceledException(Stopping);
             case "Cancelled" when limit.IsCancellationRequested: throw new TimeoutException(late);
             case "Cancelled": throw new OperationCanceledException($"its flow was cancelled because {Because(outcome.Error)}");
             default: throw new InvalidOperationException("its flow did not run");

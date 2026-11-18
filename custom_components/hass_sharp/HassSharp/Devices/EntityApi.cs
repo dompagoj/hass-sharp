@@ -202,12 +202,12 @@ public partial class HassSharpManager
     /// as an automation's graph does: its errors only, each after the id of its node, and it is tried again on a push of
     /// Home Assistant's services or entity classes only when that can cure it: a problem in a line of code (a Custom C# node
     /// compiled against a service not there yet) or in the node libraries. Code that does not compile reads as each compiler
-    /// error's message, code and node library (<see cref="Located"/>), never the generated file's path. Both problems and
-    /// compiler errors are listed as an automation's startup line lists them (<see cref="Listed"/>): the first few, each
-    /// cut short, and how many more, as its <c>activationError</c> and its one warning say them. A failure that is
-    /// neither a problem nor a compiler error (its setup failed) reads as the host words a failure
-    /// (<see cref="DefinitionHost.Reason"/>): what was thrown, with the failure underneath when it does not say it already,
-    /// not the innermost failure alone.
+    /// error's message, code and node library (<see cref="Located"/>), never the generated file's path. Problems (a class
+    /// definition's too) and compiler errors are listed as an automation's startup line lists them (<see cref="Listed"/>):
+    /// the first few, each cut short, and how many more, as its <c>activationError</c> and its one warning say them. A
+    /// failure that is neither a problem nor a compiler error (its setup failed) reads as the host words a failure
+    /// (<see cref="DefinitionHost.Reason"/>), cut short as one problem is (<see cref="Capped"/>): what was thrown, with the
+    /// failure underneath when it does not say it already, not the innermost failure alone.
     /// </summary>
     void RecordDefinitionLoadError(EntityDefinitionDocument document, Exception error)
     {
@@ -216,7 +216,8 @@ public partial class HassSharpManager
         {
             RecordLoadError(path, error);
             if (error is CompilationErrorException compilation) _loadErrors[path] = Listed([.. compilation.Errors.Select(e => Located(document, e))]);
-            else if (error is not DefinitionValidationException) _loadErrors[path] = Reason(error);
+            else if (error is DefinitionValidationException rejected) _loadErrors[path] = Listed([.. rejected.Preview.Diagnostics.Select(d => d.Message)]);
+            else _loadErrors[path] = Capped(Reason(error));
             return;
         }
         var errors = diagnostics.Where(d => d.Severity >= 3).ToArray();
