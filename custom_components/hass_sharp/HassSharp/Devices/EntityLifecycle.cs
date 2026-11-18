@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace HassSharp;
 
@@ -168,11 +169,32 @@ public partial class HassSharpManager
     }
 
     /// <summary>Runs each rebuilt definition that is on, in place of the revision running; one that is off stays off.</summary>
-    /// <returns>Each one's activation answer, as <see cref="ActivateDefinition"/> gives it.</returns>
-    async Task<List<object>> ReactivateDefinitions(DefinitionRebuild rebuild)
+    /// <param name="snapshot">The libraries the definitions were rebuilt with, which say which of a class's settings are secret.</param>
+    /// <returns>Each one's activation answer, as <see cref="ActivateDefinition"/> gives it, but that a secret setting has no value in it (<see cref="WithoutSecretValues"/>).</returns>
+    async Task<List<object>> ReactivateDefinitions(DefinitionRebuild rebuild, VisualCatalogSnapshot snapshot)
     {
         var answers = new List<object>();
-        foreach (var document in rebuild.Rebuilt.Where(d => d.Enabled)) answers.Add(await ActivateDefinition(document));
+        foreach (var document in rebuild.Rebuilt.Where(d => d.Enabled))
+        {
+            var (json, active, activationError) = await Activate(document, null);
+            WithoutSecretValues(json, document, snapshot);
+            answers.Add(new { id = document.Id, saved = true, document = json, active, activationError });
+        }
         return answers;
+    }
+
+    /// <summary>
+    /// Sets the value of each secret setting of the answered document to null, keeping its other fields: a graph's
+    /// setting the document marks <c>secret</c>, a class's setting its class marks secret (<see cref="SettingAttribute.Secret"/>).
+    /// A library's answer reaches clients, such as an assistant over MCP, that have no business with them.
+    /// </summary>
+    static void WithoutSecretValues(JsonObject json, EntityDefinitionDocument document, VisualCatalogSnapshot snapshot)
+    {
+        var secret = document.Logic.Kind == "graph"
+            ? document.Settings.Where(s => s.Secret).Select(s => s.Key).ToHashSet(StringComparer.Ordinal)
+            : (document.Logic.Type is { } type && snapshot.EntityTypes.TryGetValue(type, out var described) ? described.Settings : [])
+                .Where(s => s.Secret).Select(s => s.Key).ToHashSet(StringComparer.Ordinal);
+        foreach (var setting in (json["settings"] as JsonArray ?? []).OfType<JsonObject>())
+            if (setting["key"] is JsonValue key && key.TryGetValue<string>(out var name) && secret.Contains(name)) setting["value"] = null;
     }
 }

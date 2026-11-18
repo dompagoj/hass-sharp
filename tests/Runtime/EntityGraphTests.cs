@@ -48,7 +48,9 @@ static class EntityGraphTests
             (nameof(SensorValuesAreCheckedAsHomeAssistantTakesThem), SensorValuesAreCheckedAsHomeAssistantTakesThem),
             (nameof(ATriggerFlowInADefinitionCanSetState), ATriggerFlowInADefinitionCanSetState),
             (nameof(AnUnknownSourceIsWarnedOfInPreviewAndSave), AnUnknownSourceIsWarnedOfInPreviewAndSave),
-            (nameof(AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried), AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried) })
+            (nameof(AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried), AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried),
+            (nameof(AnAutomationSentWithADefinitionStaysAnAutomation), AnAutomationSentWithADefinitionStaysAnAutomation),
+            (nameof(ALibrarySaveAnswersNoSecretSettingValues), ALibrarySaveAnswersNoSecretSettingValues) })
         {
             try
             {
@@ -883,5 +885,84 @@ static class EntityGraphTests
             && l.Contains("; " + error.Split('\n')[1], StringComparison.Ordinal)), "the startup log line has the problems as the load error does: " + Lines(rig.Home.Logs(PyLogLevel.Error)));
         var curable = (System.Collections.Concurrent.ConcurrentDictionary<string, byte>)typeof(HassSharpManager).GetField("_curableLoadErrors", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(rig.Api)!;
         Check(!curable.Keys.Any(k => k.EndsWith("entity_level.cs", StringComparison.Ordinal)), "a graph that does not validate is retried on every push: " + string.Join(", ", curable.Keys));
+    }
+
+    /// <summary>
+    /// An automation's graph that a client sends with an object <c>definition</c>, over the automation API, is the same
+    /// automation as without it: preview and save give the same diagnostics and generated source, the stored graph has no
+    /// <c>definition</c>, it still needs a trigger, and a node only an entity definition takes is still refused.
+    /// </summary>
+    static async Task AnAutomationSentWithADefinitionStaysAnAutomation()
+    {
+        await using var rig = await Rig.Start("automation-definition");
+        async Task<JsonNode> Visual(object request) => JsonNode.Parse(await rig.Api.VisualRequest(JsonSerializer.Serialize(request)))!;
+        var stray = new JsonObject { ["entities"] = new JsonArray(Entity("door", "binary_sensor")), ["settings"] = new JsonArray() };
+        JsonObject With(JsonObject graph) { var sent = graph.DeepClone().AsObject(); sent["definition"] = stray.DeepClone(); return sent; }
+        var plain = Graph("Plain", [N("t", "trigger", new { type = "manual" }), N("say", "log", new { value = Lit("string", "hi") })], Next("t", "say"));
+
+        var alone = (await Visual(new { operation = "preview", graph = plain }))["result"]!;
+        var sent = (await Visual(new { operation = "preview", graph = With(plain) }))["result"]!;
+        Check(alone["valid"]!.GetValue<bool>() && sent["valid"]!.GetValue<bool>(), "both preview as valid: " + sent.ToJsonString());
+        Check(sent["diagnostics"]!.ToJsonString() == alone["diagnostics"]!.ToJsonString(), "the same diagnostics: " + sent["diagnostics"]!.ToJsonString() + " / " + alone["diagnostics"]!.ToJsonString());
+        Check(sent["source"]!.GetValue<string>() == alone["source"]!.GetValue<string>(), "the same generated source");
+
+        var saved = await Visual(new { operation = "save", id = "plain", expectedRevision = 0, graph = With(plain) });
+        var savedAlone = await Visual(new { operation = "save", id = "alone", expectedRevision = 0, graph = plain });
+        Check(saved["ok"]!.GetValue<bool>() && saved["result"]!["active"]!.GetValue<bool>(), "the automation saves and runs: " + saved.ToJsonString());
+        var (document, plainDocument) = (saved["result"]!["document"]!, savedAlone["result"]!["document"]!);
+        Check(!document["graph"]!.AsObject().ContainsKey("definition") && document["graph"]!.ToJsonString() == plainDocument["graph"]!.ToJsonString(),
+            "the stored automation is the graph without the definition: " + document["graph"]!.ToJsonString());
+        Check(document["source"]!.GetValue<string>() == plainDocument["source"]!.GetValue<string>() && saved["result"]!["diagnostics"]?.ToJsonString() == savedAlone["result"]!["diagnostics"]?.ToJsonString(),
+            "the save generates the source of the graph without the definition, with the same diagnostics");
+
+        static string[] Codes(JsonNode answer) => answer["error"]?["detail"]?["diagnostics"]?.AsArray().Select(d => d!["code"]?.GetValue<string>() ?? "").ToArray() ?? [];
+        var state = Graph("State", [N("t", "trigger", new { type = "manual" }), State("s", "door", On(true))]);
+        var refused = await Visual(new { operation = "save", id = "state", expectedRevision = 0, graph = With(state) });
+        Check(!refused["ok"]!.GetValue<bool>() && refused["error"]!["code"]!.GetValue<string>() == "validation" && Codes(refused).Contains("node.document"),
+            "a State in an automation is refused: " + refused.ToJsonString());
+        var preview = (await Visual(new { operation = "preview", graph = With(state) }))["result"]!;
+        Check(!preview["valid"]!.GetValue<bool>() && preview["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "node.document"), "the preview refuses it too: " + preview["diagnostics"]!.ToJsonString());
+        var untriggered = await Visual(new { operation = "save", id = "untriggered", expectedRevision = 0, graph = With(Graph("Untriggered", [N("say", "log", new { value = Lit("string", "hi") })])) });
+        Check(!untriggered["ok"]!.GetValue<bool>() && Codes(untriggered).Contains("graph.noTrigger"), "an automation still needs a trigger: " + untriggered.ToJsonString());
+    }
+
+    /// <summary>
+    /// A library save answers each definition it rebuilt without the value of a secret setting: a class's setting its
+    /// class marks secret, a graph's setting the document marks secret. Their other settings' values are there.
+    /// </summary>
+    static async Task ALibrarySaveAnswersNoSecretSettingValues()
+    {
+        await using var rig = await Rig.Start("library-secrets");
+        const string library = """
+            public class SecretPlug : SharpDevice
+            {
+                [Setting] public string Host { get; set; } = "";
+                [Setting(Secret = true)] public string Password { get; set; } = "";
+                public SecretPlug() { Add(new SharpSwitch("relay") { OnTurnOn = () => Task.CompletedTask }); }
+            }
+            """;
+        Check((await rig.Library("secret", 0, library))["ok"]!.GetValue<bool>(), "the library saves");
+        await rig.Ok(new { operation = "save", id = "plug", expectedRevision = 0, definition = new
+        {
+            name = "Plug", settings = new object[] { new { key = "Host", value = "10.0.0.7" }, new { key = "Password", value = "class-hunter2" } },
+            logic = new { kind = "class", type = "library:secret:NodeLib.SecretPlug" },
+        } });
+        var graph = Graph("Level", [N("k", "setting", new { key = "offset" }), State("s", "level")], Data("k", "s", "value"));
+        await rig.Save("level", Definition("Level", graph, [Entity("level", "sensor")], [
+            new JsonObject { ["key"] = "offset", ["type"] = "number", ["value"] = 4 },
+            new JsonObject { ["key"] = "token", ["type"] = "string", ["label"] = "Token", ["value"] = "graph-hunter2", ["secret"] = true }]));
+        var rebuilt = await rig.Library("secret", 1, library.Replace("\"\";\n    [Setting(Secret", "\"\"; // rebuilt\n    [Setting(Secret"));
+        Check(rebuilt["ok"]!.GetValue<bool>(), "the library saves again: " + rebuilt.ToJsonString());
+        var definitions = rebuilt["result"]!["definitions"]!.AsArray();
+        var text = definitions.ToJsonString();
+        Check(definitions.Count == 2 && !text.Contains("hunter2", StringComparison.Ordinal), "the answer has no secret value: " + text);
+        JsonArray Settings(string id) => definitions.Single(d => d!["id"]!.GetValue<string>() == id)!["document"]!["settings"]!.AsArray();
+        Check(Settings("plug").Select(s => s!.ToJsonString()).SequenceEqual(["""{"key":"Host","value":"10.0.0.7"}""", """{"key":"Password","value":null}"""]),
+            "the class's secret setting has no value, the other keeps its own: " + Settings("plug").ToJsonString());
+        Check(Settings("level").Select(s => s!.ToJsonString()).SequenceEqual(["""{"key":"offset","value":4,"type":"number"}""", """{"key":"token","value":null,"label":"Token","type":"string","secret":true}"""]),
+            "the graph's secret setting has no value and is still marked secret, the other keeps its own: " + Settings("level").ToJsonString());
+        // The stored documents keep the values.
+        Check((await rig.Read("plug"))["settings"]!.ToJsonString().Contains("class-hunter2", StringComparison.Ordinal), "the class definition still has its value");
+        Check((await rig.Read("level"))["settings"]!.ToJsonString().Contains("graph-hunter2", StringComparison.Ordinal), "the graph definition still has its value");
     }
 }

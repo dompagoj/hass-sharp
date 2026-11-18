@@ -278,7 +278,7 @@ public partial class HassSharpManager
             AuthoringFiles.Commit(changes);
             var automations = new List<object>();
             foreach (var graph in rebuilt) automations.Add(await ActivateVisualDocument(graph));
-            var definitions = await ReactivateDefinitions(definitionCheck);
+            var definitions = await ReactivateDefinitions(definitionCheck, candidate.Snapshot);
             return Success(new { saved = true, document, deleted = operation == "delete", generation, catalog = candidate.Snapshot.Catalog, automations, invalid, definitions, invalidDefinitions = definitionCheck.Invalid });
         }
         catch (VisualConflictException ex) { return Error("conflict", ex.Message); }

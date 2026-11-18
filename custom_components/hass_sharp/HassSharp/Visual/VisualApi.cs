@@ -106,7 +106,7 @@ public partial class HassSharpManager
             var derive = ApiRequest.OptionalBool(request, "deriveSignatures") ?? false;
             // What deriving removed (values and wires of pins the code no longer has) is reported as warnings.
             List<VisualDiagnostic> removed = [];
-            JsonObject Graph() => derive ? new VisualGenerator(_diagnosticsProvider, services).DeriveSignatures(ApiRequest.Object(request, "graph"), authoring, out removed) : ApiRequest.Object(request, "graph");
+            JsonObject Graph() => derive ? new VisualGenerator(_diagnosticsProvider, services).DeriveSignatures(AutomationGraph(request), authoring, out removed) : AutomationGraph(request);
             if (operation == "preview")
             {
                 var graph = Graph(); var preview = new VisualGenerator(_diagnosticsProvider, services).Preview(graph, authoring);
@@ -169,6 +169,19 @@ public partial class HassSharpManager
         catch (NullReferenceException ex) { return InternalError("Visual", ex); }
         finally { _visualGate.Release(); }
     }
+    /// <summary>
+    /// The request's <c>graph</c> as an automation's: an object <c>definition</c> would make it an entity definition's
+    /// graph, which only the entity API composes, so it is removed here, as the entity store removes it. Any other
+    /// <c>definition</c> is left as it is: the validator and the generator ignore it, and removing it would change the
+    /// source of an automation stored with it.
+    /// </summary>
+    static JsonObject AutomationGraph(JsonObject request)
+    {
+        var graph = ApiRequest.Object(request, "graph");
+        if (graph["definition"] is JsonObject) graph.Remove("definition");
+        return graph;
+    }
+
     /// <summary>
     /// <see cref="UnknownEntities"/> with Home Assistant's lookup, as advice: whatever goes wrong while looking (a graph
     /// shape it does not expect, a failing lookup) gives no warnings and is logged at debug, never failing a preview or a
