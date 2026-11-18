@@ -218,7 +218,7 @@ static class EntityStartupTests
             await api.Init().WaitAsync(TimeSpan.FromSeconds(30));
             Check(clock.Elapsed < TimeSpan.FromSeconds(15), $"a Setup() that never ends held startup {clock.Elapsed.TotalSeconds:F1} s");
             var hang = await Read(api, "hang");
-            Check(Status(hang) == "off" && hang["activationError"]?.GetValue<string>() == message, "the hanging definition after the restart: " + hang.ToJsonString());
+            Check(Status(hang) == "failed" && hang["activationError"]?.GetValue<string>() == message, "the hanging definition after the restart: " + hang.ToJsonString());
             Check(Status(await Read(api, "plug1")) == "running", "the definition after the hanging one does not run");
             Console.WriteLine("PASS entity startup: a definition whose Setup() never ends fails within the setup bound and the definitions after it load at Init");
         }
@@ -280,7 +280,7 @@ static class EntityStartupTests
             await Task.Run(api.Init).WaitAsync(TimeSpan.FromSeconds(30));
             Check(clock.Elapsed < TimeSpan.FromSeconds(15), $"a Setup() that blocks its thread held startup {clock.Elapsed.TotalSeconds:F1} s");
             var block = await Read(api, "block");
-            Check(Status(block) == "off" && block["activationError"]?.GetValue<string>() == message, "the blocking definition after the restart: " + block.ToJsonString());
+            Check(Status(block) == "failed" && block["activationError"]?.GetValue<string>() == message, "the blocking definition after the restart: " + block.ToJsonString());
             Check(Status(await Read(api, "plug1")) == "running", "the definition after the blocking one does not run");
             Check(await Wake(2) == 2, "the Setup() at Init never blocked its thread");
             Console.WriteLine("PASS entity startup: a definition whose Setup() blocks its thread fails within the setup bound when saved and at Init, and the definitions after it load");
@@ -357,7 +357,7 @@ static class EntityStartupTests
             await api.Init();
             var plug1 = await Read(api, "plug1");
             var unknown = $"No entity class {EntityApiTests.Plug} in the node libraries";
-            Check(Status(plug1) == "off" && !plug1["active"]!.GetValue<bool>() && plug1["activationError"]?.GetValue<string>() == unknown,
+            Check(Status(plug1) == "failed" && !plug1["active"]!.GetValue<bool>() && plug1["activationError"]?.GetValue<string>() == unknown,
                 "plug1's load error: " + plug1.ToJsonString());
             Check(home.Logs().Contains($"Cannot load entity definition \"Plug one\" (plug1): 1 problem: {unknown}"), "the load failure is not logged: " + string.Join(" | ", home.Logs()));
             Check(Status(await Read(api, "spare")) == "running" && VisualTests.Loaded(api, "auto") != null, "the other definition or the automation does not run");
@@ -369,7 +369,7 @@ static class EntityStartupTests
             var on = await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = true });
             Check(on.ToJsonString() == JsonSerializer.Serialize(new { id = "plug1", enabled = true, active = false, activationError = unknown }), "turning on a definition whose class is gone answers: " + on.ToJsonString());
             plug1 = await Read(api, "plug1");
-            Check(Status(plug1) == "off" && plug1["activationError"]?.GetValue<string>() == unknown && Revision(plug1) == 1, "plug1 turned on with its class gone: " + plug1.ToJsonString());
+            Check(Status(plug1) == "failed" && plug1["activationError"]?.GetValue<string>() == unknown && Revision(plug1) == 1, "plug1 turned on with its class gone: " + plug1.ToJsonString());
             Console.WriteLine("PASS entity startup: turning on a definition whose class is gone records why and runs nothing");
 
             var saved = await SaveLibrary(api, "extra", 2, Extra);
@@ -400,9 +400,15 @@ static class EntityStartupTests
             await SaveDefinition(api, "plug3", "Plug three", "10.0.2.3", enabled: false);
 
             var changed = await SaveLibrary(api, "shelly", 1, Changed);
-            var activation = changed["definitions"]!.AsArray().Single()!;
-            Check(activation["id"]!.GetValue<string>() == "plug1" && activation["active"]!.GetValue<bool>() && activation["activationError"] == null
+            Check(Ids(changed["definitions"]).SequenceEqual(["plug1", "plug3"]), "the library save lists every definition it rebuilt: " + changed.ToJsonString());
+            var activation = changed["definitions"]![0]!;
+            Check(activation["id"]!.GetValue<string>() == "plug1" && activation["enabled"]!.GetValue<bool>() && activation["active"]!.GetValue<bool>() && activation["activationError"] == null
                 && Revision(activation["document"]!.AsObject()) == 2 && changed["invalidDefinitions"]!.AsArray().Count == 0, "the rebuild: " + changed.ToJsonString());
+            // One that is off is rebuilt and listed, off: it does not run, and nothing says it failed.
+            var dormant = changed["definitions"]![1]!;
+            Check(!dormant["enabled"]!.GetValue<bool>() && !dormant["active"]!.GetValue<bool>() && dormant["activationError"] == null
+                && Revision(dormant["document"]!.AsObject()) == 2 && Status(dormant["document"]!.AsObject()) == "off" && home.Syncs("plug3").Length == 0,
+                "the library save lists a definition that is off: " + dormant.ToJsonString());
             var plug1 = await Read(api, "plug1");
             Check(Revision(plug1) == 2 && Status(plug1) == "running" && plug1["currentRevisionActive"]!.GetValue<bool>() && plug1["source"]!.GetValue<string>().Contains("v2 turn_on"),
                 "plug1 after the rebuild: " + plug1.ToJsonString());
@@ -513,7 +519,7 @@ static class EntityStartupTests
         {
             await api.Init();
             var failed = await Read(api, "lamp1");
-            Check(Status(failed) == "off" && failed["activationError"]?.GetValue<string>().Contains("The node libraries have errors") == true,
+            Check(Status(failed) == "failed" && failed["activationError"]?.GetValue<string>().Contains("The node libraries have errors") == true,
                 "lamp1 loaded without the entity classes: " + failed.ToJsonString());
             api.SetEntityDescriptions(Fixture("ha-entity-components.json"), started: true);
             Check(api.RetriesQueued == 1, "the push did not retry: " + api.RetriesQueued);

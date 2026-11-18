@@ -178,14 +178,22 @@ public partial class HassSharpManager
 
     /// <summary>Runs each rebuilt definition that is on, in place of the revision running; one that is off stays off.</summary>
     /// <param name="snapshot">The libraries the definitions were rebuilt with, which say which of a class's settings are secret.</param>
-    /// <returns>Each one's activation answer, as <see cref="ActivateDefinition"/> gives it, a secret setting without its value (<see cref="WithoutSecretValues"/>).</returns>
+    /// <returns>
+    /// Every rebuilt definition's answer, on or off, with <c>enabled</c>: one that is on as <see cref="ActivateDefinition"/>
+    /// answers it, one that is off not active and with no error; each a secret setting without its value (<see cref="WithoutSecretValues"/>).
+    /// </returns>
     async Task<List<object>> ReactivateDefinitions(DefinitionRebuild rebuild, VisualCatalogSnapshot snapshot)
     {
         var answers = new List<object>();
-        foreach (var document in rebuild.Rebuilt.Where(d => d.Enabled))
+        foreach (var document in rebuild.Rebuilt)
         {
+            if (!document.Enabled)
+            {
+                answers.Add(new { id = document.Id, saved = true, document = EntityJson(document, snapshot), active = false, activationError = (string?)null, enabled = false });
+                continue;
+            }
             var (json, active, activationError) = await Activate(document, null, snapshot);
-            answers.Add(new { id = document.Id, saved = true, document = json, active, activationError });
+            answers.Add(new { id = document.Id, saved = true, document = json, active, activationError, enabled = true });
         }
         return answers;
     }

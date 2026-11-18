@@ -681,6 +681,12 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     internal const string SettingSetterMessage = "A setting needs a public setter";
     /// <summary>At a <c>[Setting]</c> property that is static or not public, which the settings form never shows.</summary>
     internal static string SettingAccessMessage(string property) => $"Setting {property} must be a public instance property";
+    /// <summary>At a <c>[Setting]</c> property with a <c>Minimum</c> or <c>Maximum</c> that is not a number.</summary>
+    internal static string SettingRangeTypeMessage(string type) => $"Minimum and Maximum are for an int, long or double setting; {type} cannot have them";
+    /// <summary>At a <c>[Setting]</c> property whose <c>Minimum</c> is above its <c>Maximum</c>, which no value fits.</summary>
+    internal const string SettingRangeOrderMessage = "The setting's Minimum is above its Maximum";
+    /// <summary>At an <c>int</c> or <c>long</c> <c>[Setting]</c> property whose <c>Minimum</c> or <c>Maximum</c> has a fraction.</summary>
+    internal const string SettingRangeWholeMessage = "A whole-number setting's Minimum and Maximum are whole numbers";
 
     /// <summary>
     /// The custom device and entity classes the libraries declare: each public, concrete, non-generic top-level class of a
@@ -695,6 +701,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         var device = hassSharp.GetTypeByMetadataName("HassSharp.SharpDevice");
         var entity = hassSharp.GetTypeByMetadataName("HassSharp.SharpEntity");
         var setting = hassSharp.GetTypeByMetadataName("HassSharp.SettingAttribute");
+        var node = hassSharp.GetTypeByMetadataName("HassSharp.NodeAttribute");
         bool Derives(ITypeSymbol type, INamedTypeSymbol? from) => BaseTypes(type).Any(b => SymbolEqualityComparer.Default.Equals(b, from));
         NodeLibrarySource? Source(INamedTypeSymbol type) => type.DeclaringSyntaxReferences.Select(r => trees.GetValueOrDefault(r.SyntaxTree)).FirstOrDefault(s => s != null);
         static IEnumerable<INamedTypeSymbol> All(INamespaceOrTypeSymbol space) => space.GetTypeMembers().SelectMany(t => All(t).Prepend(t))
@@ -722,13 +729,41 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 if (!settable) report(location, SettingSetterMessage);
                 if (form == null) report(location, SettingTypeMessage(property.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
                 if (!settable || form is not { } shape) continue;
+                if (Range(attribute, property.Type, shape, location) is not { } range) continue;
                 var label = attribute.ConstructorArguments.FirstOrDefault().Value as string;
                 var description = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Description").Value.Value as string;
                 if (string.IsNullOrWhiteSpace(description)) description = DocText(Documentation(property, cancellationToken)?.Element("summary"));
                 settings.Add(new(property.Name, string.IsNullOrWhiteSpace(label) ? property.Name : label, string.IsNullOrWhiteSpace(description) ? null : description,
                     shape.Kind, attribute.NamedArguments.FirstOrDefault(a => a.Key == "Secret").Value.Value is true, shape.Options)
-                    { Minimum = shape.Minimum, Maximum = shape.Maximum });
+                    { Minimum = range.Minimum, Maximum = range.Maximum });
             }
+        }
+        // The range a setting takes: its attribute's Minimum and Maximum (NaN for none, as a named argument must be a
+        // constant), else the type's own (an int's). Null, with the problem reported, for a range on a property that is not
+        // a number, upside down, or with a fraction on a whole number.
+        (double? Minimum, double? Maximum)? Range(AttributeData attribute, ITypeSymbol type, (string Kind, ImmutableArray<string> Options, double? Minimum, double? Maximum) shape, Location location)
+        {
+            double? Given(string name) => attribute.NamedArguments.FirstOrDefault(a => a.Key == name).Value.Value is double value && !double.IsNaN(value) ? value : null;
+            var (minimum, maximum) = (Given("Minimum"), Given("Maximum"));
+            if (minimum == null && maximum == null) return (shape.Minimum, shape.Maximum);
+            if (shape.Kind is not ("integer" or "number"))
+            {
+                report(location, SettingRangeTypeMessage(type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
+                return null;
+            }
+            if (shape.Kind == "integer" && new[] { minimum, maximum }.Any(bound => bound is { } value && Math.Floor(value) != value))
+            {
+                report(location, SettingRangeWholeMessage);
+                return null;
+            }
+            // An int takes nothing beyond its own range, whatever the attribute says.
+            (minimum, maximum) = (shape.Minimum is { } low && !(minimum > low) ? low : minimum, shape.Maximum is { } high && !(maximum < high) ? high : maximum);
+            if (minimum > maximum)
+            {
+                report(location, SettingRangeOrderMessage);
+                return null;
+            }
+            return (minimum, maximum);
         }
         var listed = new List<EntityTypeDescriptor>();
         foreach (var type in classes)
@@ -748,8 +783,10 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                     if (index >= 0) settings[index] = found; else settings.Add(found);
                 }
             var summary = DocText(Documentation(type, cancellationToken)?.Element("summary"));
+            // Its title: a [Node] on the class itself (which makes no step: only methods are nodes), else its name in words.
+            var title = type.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, node))?.ConstructorArguments.FirstOrDefault().Value as string;
             listed.Add(new("library:" + Source(type)!.Id + ":" + type.ToDisplayString(), Source(type)!.Id, TypeIdentity(type), kind, kind == "device" ? null : domain,
-                type.Name, summary.Length == 0 ? null : summary, [.. settings]));
+                string.IsNullOrWhiteSpace(title) ? InWords(type.Name) : title, summary.Length == 0 ? null : summary, [.. settings]));
         }
         return listed;
     }
@@ -758,7 +795,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     /// A setting's form type for a property of <paramref name="type"/>, with an enum's member names and an <c>int</c>'s
     /// range (none for a <c>long</c>, which every whole number of the form fits); null for a type a setting cannot have.
     /// </summary>
-    static (string Kind, ImmutableArray<string> Options, long? Minimum, long? Maximum)? SettingType(ITypeSymbol type)
+    static (string Kind, ImmutableArray<string> Options, double? Minimum, double? Maximum)? SettingType(ITypeSymbol type)
     {
         var scalar = Scalar(type);
         if (scalar.TypeKind == TypeKind.Enum) return ("enum", [.. scalar.GetMembers().OfType<IFieldSymbol>().Where(f => f.IsConst).Select(f => f.Name)], null, null);

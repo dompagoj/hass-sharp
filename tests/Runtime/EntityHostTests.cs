@@ -15,21 +15,25 @@ using static VisualExecutionTests;
 static class EntityHostTests
 {
     static readonly List<string> Calls = [], Synced = [], Pushed = [], Logged = [];
+    static readonly List<(PyLogLevel Level, string Message)> Levelled = [];
 
     internal static void Record(string call) { lock (Calls) Calls.Add(call); }
     static string[] Recorded() { lock (Calls) return [.. Calls]; }
     static string[] Syncs() { lock (Synced) return [.. Synced]; }
     static string[] Pushes() { lock (Pushed) return [.. Pushed]; }
     static string[] Logs() { lock (Logged) return [.. Logged]; }
+    static string[] Logs(PyLogLevel level) { lock (Logged) return Levelled.Where(line => line.Level == level).Select(line => line.Message).ToArray(); }
 
     static void Reset()
     {
         lock (Calls) Calls.Clear();
         lock (Synced) Synced.Clear();
         lock (Pushed) Pushed.Clear();
-        lock (Logged) Logged.Clear();
+        lock (Logged) { Logged.Clear(); Levelled.Clear(); }
         HostPlug.SetupHook = HostPlug.StartHook = HostPlug.StopHook = null;
         HostTicker.Ticks = 0;
+        HostPoller.Ticks = 0;
+        HostPoller.Failure = null;
         HostWaiter.Gate = Task.CompletedTask;
     }
 
@@ -102,7 +106,7 @@ static class EntityHostTests
         var (sync, push, log, drain) = (PyInterop.BeginSyncEntities, PyInterop.PushEntityStates, PyInterop.Log, UserScript.RunDrainTimeout);
         PyInterop.BeginSyncEntities = (json, ok, _) => { Record("sync"); lock (Synced) Synced.Add(json); ok(Answer(json)); };
         PyInterop.PushEntityStates = batch => { lock (Pushed) Pushed.Add(batch); };
-        PyInterop.Log = (_, message) => { lock (Logged) Logged.Add(message); };
+        PyInterop.Log = (level, message) => { lock (Logged) { Logged.Add(message); Levelled.Add(((PyLogLevel)level, message)); } };
         try
         {
             await Ordered();
@@ -116,6 +120,7 @@ static class EntityHostTests
             await Commands();
             await Controls();
             await TimersAndTracks();
+            await AFailingEveryLogsOncePerReason();
             await Stopping();
             await Unloading();
             await TrackOffLock();
@@ -217,7 +222,25 @@ static class EntityHostTests
             Check(failure is InvalidOperationException && failure.Message.Contains(named), $"setting {setting.Key}={setting.Value?.ToJsonString()}: {failure}");
             Check(Syncs().Length == 0 && !Recorded().Contains("device.Setup"), "a bad setting fails before setup and sync");
         }
-        Console.WriteLine("PASS entity host: settings fill [Setting] properties by type (inherited ones too) and skip nulls; an unknown or ill-typed setting fails naming it");
+        // A saved value outside its setting's range (a file edited by hand, say) fails as the definition is applied, naming
+        // the setting and the range, never the value.
+        foreach (var (setting, message) in new[] {
+            (new DefinitionSetting("Interval", 0), "Plug three: the saved value of setting Poll interval is not a whole number from 1 to 3600"),
+            (new DefinitionSetting("Interval", 3601), "Plug three: the saved value of setting Poll interval is not a whole number from 1 to 3600"),
+            (new DefinitionSetting("Gain", 0.25), "Plug three: the saved value of setting Gain is not a number of at least 0.5") })
+        {
+            Reset();
+            manager = Manager();
+            var failure = await LoadFails(manager, Compiled("plug3", "Plug three", () => new HostPlug(), null, setting));
+            Check(failure is InvalidOperationException && failure.Message == message, $"setting {setting.Key}={setting.Value?.ToJsonString()}: {failure.Message}");
+            Check(Syncs().Length == 0 && !Recorded().Contains("device.Setup"), "a setting outside its range fails before setup and sync");
+        }
+        Reset();
+        manager = Manager();
+        await Load(manager, Compiled("plug3", "Plug three", () => plug = new HostPlug(), null, new DefinitionSetting("Interval", 3600), new DefinitionSetting("Gain", 0.5)));
+        Check(plug.Interval == 3600 && plug.Gain == 0.5, $"values within their range are applied: {plug.Interval} {plug.Gain}");
+        await manager.UnloadUserScriptsAsync();
+        Console.WriteLine("PASS entity host: settings fill [Setting] properties by type (inherited ones too) and skip nulls; an unknown or ill-typed setting, or one outside its range, fails naming it");
     }
 
     static async Task StartFails()
@@ -370,13 +393,48 @@ static class EntityHostTests
         await manager.UnloadUserScriptsAsync();
     }
 
+    /// <summary>
+    /// A poll that keeps failing (a device that does not answer) logs one error per new reason, naming the definition and
+    /// the timer, then each failure whole at Debug only; once it works again, one line says so.
+    /// </summary>
+    static async Task AFailingEveryLogsOncePerReason()
+    {
+        Reset();
+        var manager = Manager();
+        await Load(manager, Compiled("poller", "Poller", () => new HostPoller()));
+        async Task Ticks(int more)
+        {
+            var from = HostPoller.Ticks;
+            await Until(() => HostPoller.Ticks >= from + more, $"{more} more ticks");
+        }
+        string[] Errors() => Logs(PyLogLevel.Error).Where(l => l.StartsWith("Poller: ", StringComparison.Ordinal)).ToArray();
+        HostPoller.Failure = "the plug did not answer";
+        await Ticks(3);
+        Check(Errors().SequenceEqual(["Poller: the timer callback every 10 ms failed: the plug did not answer"]), "one error for three failures: " + string.Join(" | ", Errors()));
+        Check(Logs(PyLogLevel.Debug).Count(l => l.StartsWith("Poller: the timer callback every 10 ms failed: System.InvalidOperationException: the plug did not answer", StringComparison.Ordinal)) >= 3,
+            "each failure whole at Debug: " + string.Join(" | ", Logs(PyLogLevel.Debug)));
+        HostPoller.Failure = "the plug refused the connection";
+        await Ticks(3);
+        Check(Errors().SequenceEqual(["Poller: the timer callback every 10 ms failed: the plug did not answer", "Poller: the timer callback every 10 ms failed: the plug refused the connection"]),
+            "a second reason, a second error: " + string.Join(" | ", Errors()));
+        HostPoller.Failure = null;
+        await Ticks(3);
+        Check(Logs(PyLogLevel.Info).Where(l => l.StartsWith("Poller: ", StringComparison.Ordinal)).SequenceEqual(["Poller: the timer callback every 10 ms works again"]),
+            "one line says it works again: " + string.Join(" | ", Logs(PyLogLevel.Info)));
+        HostPoller.Failure = "the plug did not answer";
+        await Ticks(2);
+        Check(Errors().Length == 3 && Logs(PyLogLevel.Warn).Length == 0, "a failure after it worked again is an error again, and nothing warns: " + string.Join(" | ", Logs()));
+        await manager.UnloadUserScriptsAsync();
+        Console.WriteLine("PASS entity host: a failing timer callback logs one error per new reason and one line once it works again, each failure whole at Debug");
+    }
+
     static async Task TimersAndTracks()
     {
         Reset();
         var manager = Manager();
         var host = await Load(manager, Compiled("ticker", "Ticker", () => new HostTicker()));
         await Until(() => HostTicker.Ticks >= 3, "the timer ticks again after throwing");
-        Check(Logs().Contains("Ticker: a timer callback failed: tick broke"), "the timer failure is logged: " + string.Join(" | ", Logs()));
+        Check(Logs().Contains("Ticker: the timer callback every 15 ms failed: tick broke"), "the timer failure is logged: " + string.Join(" | ", Logs()));
         Check(host.Status == "running", "the definition keeps running after a timer callback fails");
         Check(RuntimeCoreTests.Subscriptions.Contains("sensor.a"), "Track subscribes the entity");
         await manager.RunEntries("sensor.a", new(new() { EntityId = "sensor.a", State = "on", OldState = new() { EntityId = "sensor.a", State = "off" } }));
@@ -913,6 +971,8 @@ public class HostPlug : HostDeviceBase
     [Setting] public int Channel { get; set; }
     [Setting] public HostMode Mode { get; set; }
     [Setting] public double? Factor { get; set; }
+    [Setting("Poll interval", Minimum = 1, Maximum = 3600)] public int Interval { get; set; } = 30;
+    [Setting(Minimum = 0.5)] public double Gain { get; set; } = 1;
     public string? Unmarked { get; set; }
 
     protected internal override async Task Setup() { EntityHostTests.Record("device.Setup"); if (SetupHook != null) await SetupHook(this); }
@@ -1014,6 +1074,24 @@ public class HostTicker : SharpSensor
             if (change.To.State == "bad") throw new InvalidOperationException("track broke");
             EntityHostTests.Record($"track {change.EntityId} {change.From?.State ?? "none"}>{change.To.State}");
             return Task.CompletedTask;
+        });
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>A sensor that polls every 10 ms and fails with <see cref="Failure"/> while it is set.</summary>
+public class HostPoller : SharpSensor
+{
+    public static int Ticks;
+    public static volatile string? Failure;
+
+    protected internal override Task Start()
+    {
+        Every(TimeSpan.FromMilliseconds(10), () =>
+        {
+            var failure = Failure;
+            Interlocked.Increment(ref Ticks);
+            return failure == null ? Task.CompletedTask : throw new InvalidOperationException(failure);
         });
         return Task.CompletedTask;
     }

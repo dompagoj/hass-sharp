@@ -97,29 +97,46 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
     }
 
     // JSON null leaves the class default, so it fits every setting. A whole number is one a long holds, written without a
-    // fraction, within the setting's range when it has one (an int's).
+    // fraction; it and a number are within the setting's range when it has one (its [Setting]'s, or an int's).
     static bool Fits(EntitySettingDescriptor setting, JsonNode? value)
     {
         if (value == null || value.GetValueKind() == JsonValueKind.Null) return true;
         var kind = value.GetValueKind();
         return setting.Type switch
         {
-            "integer" => kind == JsonValueKind.Number && long.TryParse(value.ToJsonString(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var whole)
-                && whole >= (setting.Minimum ?? long.MinValue) && whole <= (setting.Maximum ?? long.MaxValue),
+            "integer" => kind == JsonValueKind.Number && long.TryParse(value.ToJsonString(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var whole) && Within(setting, whole),
+            "number" => DefinitionDocument.Fits("number", value) && Within(setting, double.Parse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture)),
             "enum" => kind == JsonValueKind.String && setting.Options.Contains(value.GetValue<string>(), StringComparer.Ordinal),
-            // Text, true or false, and a number fit as a graph setting's do.
+            // Text, and true or false, fit as a graph setting's do.
             var type => DefinitionDocument.Fits(type, value),
         };
     }
 
-    static string Phrase(EntitySettingDescriptor setting) => setting.Type switch
+    /// <summary>Whether a number is within the setting's range: no smaller than its minimum and no larger than its maximum, each when it has one.</summary>
+    internal static bool Within(EntitySettingDescriptor setting, double value) => !(value < setting.Minimum) && !(value > setting.Maximum);
+
+    /// <summary>
+    /// What a setting takes, in words after "takes": its kind and, for a number, its range, such as <c>a whole number from 1
+    /// to 3600</c> or <c>a number of at least 0.5</c>.
+    /// </summary>
+    internal static string Phrase(EntitySettingDescriptor setting)
     {
-        "integer" when setting.Minimum != null || setting.Maximum != null =>
-            $"a whole number from {(setting.Minimum ?? long.MinValue).ToString(CultureInfo.InvariantCulture)} to {(setting.Maximum ?? long.MaxValue).ToString(CultureInfo.InvariantCulture)}",
-        "integer" => "a whole number",
-        "enum" => "one of " + string.Join(", ", setting.Options),
-        var type => DefinitionDocument.Phrase(type),
-    };
+        static string Number(double value) => value.ToString(CultureInfo.InvariantCulture);
+        var what = setting.Type switch
+        {
+            "integer" => "a whole number",
+            "enum" => "one of " + string.Join(", ", setting.Options),
+            var type => DefinitionDocument.Phrase(type),
+        };
+        if (setting.Type is not ("integer" or "number")) return what;
+        return (setting.Minimum, setting.Maximum) switch
+        {
+            ({ } minimum, { } maximum) => $"{what} from {Number(minimum)} to {Number(maximum)}",
+            ({ } minimum, null) => $"{what} of at least {Number(minimum)}",
+            (null, { } maximum) => $"{what} of at most {Number(maximum)}",
+            _ => what,
+        };
+    }
 
     // The library sections are written exactly as VisualGenerator writes an automation's.
     static DefinitionPreview Generate(EntityTypeDescriptor type, VisualCatalogSnapshot snapshot)

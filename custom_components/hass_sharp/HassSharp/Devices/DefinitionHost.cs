@@ -484,13 +484,14 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             if (stopped != null) { timer.Dispose(); return Nothing; }
             var repeating = new Repeating(timer, this);
             timers.Add(repeating);
+            var what = $"the timer callback every {Interval(interval)}";
             repeating.Loop = Task.Run(async () =>
             {
                 try
                 {
                     // One call at a time: a tick that comes while the action runs is taken after it.
-                    if (immediately) await Callback("a timer callback", action, token);
-                    while (await timer.WaitForNextTickAsync(token)) await Callback("a timer callback", action, token);
+                    if (immediately) await Tick(repeating, what, action, token);
+                    while (await timer.WaitForNextTickAsync(token)) await Tick(repeating, what, action, token);
                 }
                 catch (OperationCanceledException) { }
             });
@@ -564,6 +565,43 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         catch { return failure.GetType().Name; }
     }
 
+    // A timer's interval as its log lines name it: in seconds, or in milliseconds below one.
+    static string Interval(TimeSpan interval) => interval >= TimeSpan.FromSeconds(1) ? $"{Seconds(interval)} s"
+        : $"{interval.TotalMilliseconds.ToString("0.#", CultureInfo.InvariantCulture)} ms";
+
+    /// <summary>
+    /// One call of a timer's callback. A poll of a device that does not answer fails on every tick: the first failure
+    /// logs an error naming the definition and the timer, and one for another reason does again, as a State's warning
+    /// does; each failure is logged whole at Debug. A call that works after a failure says so, once. Only the timer's own
+    /// loop calls it, one call at a time, so what it last logged needs no lock.
+    /// </summary>
+    async Task Tick(Repeating repeating, string what, Func<Task> action, CancellationToken token)
+    {
+        try { await action(); }
+        catch (Exception failure)
+        {
+            // A cancellation because the definition stops is no failure.
+            if (failure is OperationCanceledException && token.IsCancellationRequested) return;
+            // Worked out first: an exception's members are user code.
+            string reason;
+            try { reason = Reason(failure) ?? failure.GetType().Name; } catch { reason = "it failed"; }
+            if (repeating.Failing != reason)
+            {
+                repeating.Failing = reason;
+                Report($"{what} failed: {reason}", PyLogLevel.Error);
+            }
+            string whole;
+            try { whole = failure.ToString(); } catch { whole = failure.GetType().FullName ?? "an exception"; }
+            Report($"{what} failed: {whole}", PyLogLevel.Debug);
+            return;
+        }
+        if (repeating.Failing != null)
+        {
+            repeating.Failing = null;
+            Report($"{what} works again", PyLogLevel.Info);
+        }
+    }
+
     async Task Callback(string what, Func<Task> action, CancellationToken token)
     {
         try { await action(); }
@@ -631,6 +669,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     sealed class Repeating(PeriodicTimer timer, DefinitionHost host) : IDisposable
     {
         public Task Loop { get; set; } = Task.CompletedTask;
+        /// <summary>Why its callback last failed, as last logged; null while it works. Its loop's alone.</summary>
+        public string? Failing { get; set; }
         public void Dispose()
         {
             timer.Dispose();

@@ -23,9 +23,9 @@ export const shownEntities = 6
 
 export type DefinitionTone = 'running' | 'starting' | 'failed' | 'stopped' | 'off'
 /**
- * A definition's status in words: Off (turned off: no error), Running, Starting, Failed (its start threw; its entities
- * exist and are unavailable) or Not running (on, but it could not be loaded), with the reason when there is one; and
- * "Changes not applied" while an older revision runs.
+ * A definition's status in words: Off (turned off: no error), Running, Starting, Failed (it could not be prepared, or
+ * its start threw and its entities exist and are unavailable) or Not running (on, and not loaded for no reason the
+ * backend recorded), with the reason when there is one; and "Changes not applied" while an older revision runs.
  */
 export function definitionStatus(item: Pick<HomeDefinition, 'enabled' | 'activationError' | 'status' | 'currentRevisionActive'>): { label: string; tone: DefinitionTone; error?: string; stale?: string } {
   if (!item.enabled) return { label: 'Off', tone: 'off' }

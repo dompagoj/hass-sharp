@@ -47,6 +47,14 @@ public sealed class SettingAttribute(string? label = null) : Attribute
     public string? Description { get; set; }
     /// <summary>Whether the value is a secret, such as a password or token: the form hides it and logs never show it.</summary>
     public bool Secret { get; set; }
+    /// <summary>
+    /// The smallest value an <c>int</c>, <c>long</c> or <c>double</c> setting takes, such as <c>1</c> for a poll interval in
+    /// seconds; <see cref="double.NaN"/>, the default, for none (an <c>int</c> then still takes none below its own smallest).
+    /// A save outside it is refused, and so is a saved value outside it when the definition starts.
+    /// </summary>
+    public double Minimum { get; set; } = double.NaN;
+    /// <summary>The largest value an <c>int</c>, <c>long</c> or <c>double</c> setting takes; <see cref="double.NaN"/>, the default, for none. As <see cref="Minimum"/>.</summary>
+    public double Maximum { get; set; } = double.NaN;
 }
 
 /// <summary>
@@ -90,7 +98,9 @@ public abstract class SharpComponent
 
     /// <summary>
     /// Runs <paramref name="action"/> every <paramref name="interval"/> until the definition stops or the returned
-    /// handle is disposed. Only once the component is attached, such as from <see cref="Start"/>.
+    /// handle is disposed. Only once the component is attached, such as from <see cref="Start"/>. A run that throws is
+    /// logged as an error once for each new reason (a device that does not answer is not logged on every tick), and a run
+    /// that works after one that threw is logged once.
     /// </summary>
     /// <param name="interval">The time between runs.</param>
     /// <param name="action">What to run, such as polling the device.</param>

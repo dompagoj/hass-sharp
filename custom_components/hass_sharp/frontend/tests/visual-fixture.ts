@@ -142,8 +142,9 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  *   its host's: `running`; `setup` (loaded, its start still running: `status: 'setup'`, `active: true`, no error);
  *   `failed` (loaded, its start threw: `status: 'failed'`, `active: true`, `activationError`); `stopped` (loaded, its
  *   host stopping, which counts as none: `status: 'off'`, `active: true`, no live entities, no error); `notLoaded`
- *   (no host: `status: 'off'`, `active: false`, `activationError`). `controls.activationError` is the text of `failed`
- *   and `notLoaded`. A definition off by the user is `off`, `active: false`, `activationError: 'Not active'` in
+ *   (no host: `status: 'failed'` as it could not be prepared, `active: false`, `activationError`; `status: 'off'` when
+ *   that error is the backend's `Not active`, as for no recorded reason). `controls.activationError` is the text of
+ *   `failed` and `notLoaded`. A definition off by the user is `off`, `active: false`, `activationError: 'Not active'` in
  *   documents and `null` in the save and `set_enabled` answers.
  * - `controls.classChecks` (off by default): a class definition's class and setting values are checked as the real
  *   preview and save check them; `controls.libraryErrors`: the node libraries do not compile (`definition.library`,
@@ -221,13 +222,18 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     })
     const problems: VisualDiagnostic[] = []
     for (const key of new Set(given.map(s => s.key))) if (!type.settings.some(s => s.key === key)) problems.push(problem('definition.unknownSetting', `${type.title} has no setting ${key}`, key))
+    // A number's range as `DefinitionGenerator.Phrase` words it: from … to …, of at least …, or of at most ….
+    const range = (s: (typeof type.settings)[number]) =>
+      s.minimum !== undefined && s.maximum !== undefined ? ` from ${s.minimum} to ${s.maximum}` : s.minimum !== undefined ? ` of at least ${s.minimum}` : s.maximum !== undefined ? ` of at most ${s.maximum}` : ''
     const phrase = (s: (typeof type.settings)[number]) =>
-      s.type === 'integer' ? (s.minimum !== undefined || s.maximum !== undefined ? `a whole number from ${s.minimum ?? '-9223372036854775808'} to ${s.maximum ?? '9223372036854775807'}` : 'a whole number')
-        : s.type === 'enum' ? `one of ${s.options.join(', ')}` : s.type === 'boolean' ? 'true or false' : s.type === 'number' ? 'a number' : 'a text'
+      s.type === 'integer' ? `a whole number${range(s)}` : s.type === 'number' ? `a number${range(s)}`
+        : s.type === 'enum' ? `one of ${s.options.join(', ')}` : s.type === 'boolean' ? 'true or false' : 'a text'
+    const within = (s: (typeof type.settings)[number], value: number) => value >= (s.minimum ?? -Infinity) && value <= (s.maximum ?? Infinity)
     const fits = (s: (typeof type.settings)[number], value: unknown) =>
-      empty(value) || (s.type === 'integer' ? Number.isInteger(value) && (value as number) >= (s.minimum ?? -Infinity) && (value as number) <= (s.maximum ?? Infinity)
+      empty(value) || (s.type === 'integer' ? Number.isInteger(value) && within(s, value as number)
+        : s.type === 'number' ? typeof value === 'number' && Number.isFinite(value) && within(s, value)
         : s.type === 'enum' ? typeof value === 'string' && s.options.includes(value)
-        : s.type === 'boolean' ? typeof value === 'boolean' : s.type === 'number' ? typeof value === 'number' && Number.isFinite(value) : typeof value === 'string')
+        : s.type === 'boolean' ? typeof value === 'boolean' : typeof value === 'string')
     for (const { key, value } of given) {
       const setting = type.settings.find(s => s.key === key)
       if (setting && !fits(setting, value)) problems.push(problem('definition.settingType', `${setting.label} takes ${phrase(setting)}`, key))
@@ -252,14 +258,16 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     return {
       automationId: `entity:${id}`, active: loaded, currentRevisionActive: loaded,
       activationError: activation === 'off' ? 'Not active' : activation === 'notLoaded' || host === 'failed' ? controls.activationError : null,
-      status: host ?? 'off',
+      // On with no host: failed when it could not be prepared (a load error is recorded), else off (`EntityApi.EntityJson`).
+      status: host ?? (activation === 'notLoaded' && controls.activationError !== 'Not active' ? 'failed' : 'off'),
       liveEntities: host ? made.map(e => ({ uniqueId: `${id}:${e.key}`, key: e.key, domain: e.domain, name: (e.name as string | null | undefined) ?? null, entityId: `${e.domain}.${id}_${e.key}` })) : [],
     }
   }
   /** Keeps the document; a loaded one's entities as the registry has them from then on, disabled as their entries were. */
   const keep = (document: EntityDocument) => {
     documents.set(document.id, document)
-    if (document.status !== 'off') {
+    // Only one that has a host made its entities: not one off, stopping, or failed for want of loading.
+    if (document.status !== 'off' && !(document.status === 'failed' && !document.active)) {
       const before = registry.get(document.id) ?? published.get(document.id) ?? []
       published.set(document.id, document.liveEntities.map(e => ({
         uniqueId: e.uniqueId, entityId: e.entityId ?? `${e.domain}.${document.id}_${e.key}`, domain: e.domain, name: e.name,

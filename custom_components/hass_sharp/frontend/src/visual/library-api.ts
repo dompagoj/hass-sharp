@@ -36,10 +36,11 @@ export interface LibraryActivation { id: string; saved: true; document: VisualDo
 /** An automation a library save did not rebuild, because it already had errors; `message` says whether it still runs. */
 export interface LibraryNotRebuilt { id: string; name?: string | null; running: boolean; message: string }
 /**
- * An entity definition a library save or delete rebuilt and runs again (`EntityLifecycle.ReactivateDefinitions`): only
- * those that are on are listed. Its document is answered without any secret setting's value.
+ * An entity definition a library save or delete rebuilt (`EntityLifecycle.ReactivateDefinitions`): every one, with
+ * `enabled`; those that are on run again, those that are off stay off (not active, no error). Its document is answered
+ * without any secret setting's value.
  */
-export interface LibraryDefinitionActivation { id: string; saved: true; document: EntityDocument; active: boolean; activationError: string | null }
+export interface LibraryDefinitionActivation { id: string; saved: true; document: EntityDocument; active: boolean; activationError: string | null; enabled?: boolean }
 /** An entity definition a library save did not rebuild, because it already had errors; `message` says whether it still runs. */
 export interface LibraryDefinitionNotRebuilt { id: string; name: string; diagnostics: VisualDiagnostic[]; running: boolean; message: string }
 /** An entity definition a refused save or delete would break, with the problems it would have. */

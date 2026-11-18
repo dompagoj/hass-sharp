@@ -11,6 +11,8 @@ internal sealed partial class DefinitionHost
 {
     /// <summary>How long a command waits for the flow of a definition built from nodes that handles it; settable for tests.</summary>
     internal static TimeSpan CommandTimeout { get; set; } = TimeSpan.FromSeconds(30);
+    /// <summary>How long a run of a State may take before the host warns that it has not finished; settable for tests.</summary>
+    internal static TimeSpan SlowStateWarning { get; set; } = TimeSpan.FromSeconds(30);
 
     // A graph's entities by key; empty for a class, and once stopped.
     Dictionary<string, SharpEntity> graphEntities = new(StringComparer.Ordinal);
@@ -19,6 +21,8 @@ internal sealed partial class DefinitionHost
     readonly HashSet<string> awaiting = new(StringComparer.Ordinal);
     // Why each failing State's entity is unavailable, by key, as last warned.
     readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
+    // Why each failing trigger flow last failed, by method, as last logged.
+    readonly Dictionary<string, string> failingFlows = new(StringComparer.Ordinal);
     // A graph's settings by key, as its Setting nodes read them; read from the definition as it prepares, before any run.
     volatile IReadOnlyDictionary<string, (object? Value, bool Secret)> graphSettings = new Dictionary<string, (object?, bool)>();
     // The keys of a graph's entities a State works out; none for a class.
@@ -452,8 +456,10 @@ internal sealed partial class DefinitionHost
     /// How a run of one of the graph's other flows failed, which the runner leaves to the host: a When commanded flow, the
     /// When started flow, or a trigger's flow. Logs one line naming the definition, the flow and why (as a State's
     /// warning says why), with no stack: a command's at warning, as whoever gave it is answered the error and Home
-    /// Assistant logs it too; the When started flow's and a trigger flow's at error. Then the whole failure at Debug.
-    /// Takes no lock and keeps nothing of the failure. Never throws.
+    /// Assistant logs it too, each time, as someone asked for each; the When started flow's at error. A trigger flow's
+    /// at error once per reason, as a State's warning is: a poll of a device that does not answer fails on every tick,
+    /// and only a failure for another reason logs again, until a run works (<see cref="FlowSucceeded"/>). Then, for every
+    /// failure, the whole of it at Debug. Keeps the reason of a trigger flow's failure only. Never throws.
     /// </summary>
     /// <param name="method">The flow's method.</param>
     /// <param name="cause">What started the run.</param>
@@ -465,27 +471,102 @@ internal sealed partial class DefinitionHost
             // Worked out first: an exception's members are user code.
             string reason;
             try { reason = Reason(failure) ?? failure.GetType().Name; } catch { reason = "it failed"; }
-            var level = PyLogLevel.Error;
-            string flow;
-            var roots = definition.Roots;
-            if (roots?.Commands.FirstOrDefault(command => command.Value == method).Key is { } handled)
-            {
-                // Keyed <entity key>:<command>; an entity key has no colon.
-                var colon = handled.IndexOf(':');
-                var key = handled[..colon];
-                var domain = definition.Entities?.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == key) is { } entity ? VisualNodeCatalog.Text(entity, "domain") : "";
-                flow = $"{Named(key)}: {CommandLabel(domain, handled[(colon + 1)..])}";
-                level = PyLogLevel.Warn;
-            }
-            else if (roots?.Setup == method || cause == InvocationCause.Setup) flow = "When started";
-            else flow = script.CompiledScript.VisualTriggers?.GetValueOrDefault(method) is { } trigger ? trigger.Label ?? $"Trigger ({trigger.NodeId})" : method;
-            Report($"{flow} failed: {reason}", level);
+            var (flow, kind) = Flow(method, cause);
+            var log = true;
+            if (kind == FlowKind.Trigger)
+                lock (gate)
+                {
+                    log = !failingFlows.TryGetValue(method, out var last) || last != reason;
+                    failingFlows[method] = reason;
+                }
+            if (log) Report($"{flow} failed: {reason}", kind == FlowKind.Command ? PyLogLevel.Warn : PyLogLevel.Error);
             // The whole failure after its line: ToString() is user code, and builds the stack.
             string whole;
             try { whole = failure.ToString(); } catch { whole = failure.GetType().FullName ?? "an exception"; }
             Report($"{flow} failed: {whole}", PyLogLevel.Debug);
         }
         catch { }
+    }
+
+    /// <summary>A run of a graph's flow other than a State worked: a trigger flow that failed before says, once, that it works again. Never throws.</summary>
+    /// <param name="method">The flow's method.</param>
+    internal void FlowSucceeded(string method)
+    {
+        try
+        {
+            bool recovered;
+            lock (gate) recovered = failingFlows.Remove(method);
+            if (recovered) Report($"{Flow(method, InvocationCause.Entity).Name} works again", PyLogLevel.Info);
+        }
+        catch { }
+    }
+
+    enum FlowKind { Command, Setup, Trigger }
+
+    // A flow as its log lines name it: an entity's command, When started, or a trigger by its label (else its node).
+    (string Name, FlowKind Kind) Flow(string method, InvocationCause cause)
+    {
+        var roots = definition.Roots;
+        if (roots?.Commands.FirstOrDefault(command => command.Value == method).Key is { } handled)
+        {
+            // Keyed <entity key>:<command>; an entity key has no colon.
+            var colon = handled.IndexOf(':');
+            var key = handled[..colon];
+            var domain = definition.Entities?.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == key) is { } entity ? VisualNodeCatalog.Text(entity, "domain") : "";
+            return ($"{Named(key)}: {CommandLabel(domain, handled[(colon + 1)..])}", FlowKind.Command);
+        }
+        if (roots?.Setup == method || cause == InvocationCause.Setup) return ("When started", FlowKind.Setup);
+        return (script.CompiledScript.VisualTriggers?.GetValueOrDefault(method) is { } trigger ? trigger.Label ?? $"Trigger ({trigger.NodeId})" : method, FlowKind.Trigger);
+    }
+
+    /// <summary>
+    /// Watches a run of the graph's State <paramref name="method"/> until the returned handle is disposed, as it ends: one
+    /// that has not ended after <see cref="SlowStateWarning"/> warns once, naming the entity (a State waits on what it
+    /// reads, which should not take that long); when it then ends, Debug says after how long. Nothing for another method,
+    /// or once the definition stops. Never throws.
+    /// </summary>
+    internal IDisposable WatchState(string method)
+    {
+        try
+        {
+            if (definition.Roots?.StateEntities.TryGetValue(method, out var key) != true) return Nothing;
+            return new SlowState(this, key!);
+        }
+        catch { return Nothing; }
+    }
+
+    // A State's run being watched: 0 while it runs in time, 1 once warned of, 2 once ended.
+    sealed class SlowState : IDisposable
+    {
+        readonly DefinitionHost host;
+        readonly string key;
+        readonly CancellationTokenSource ended;
+        readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+        int state;
+
+        public SlowState(DefinitionHost host, string key)
+        {
+            (this.host, this.key) = (host, key);
+            ended = CancellationTokenSource.CreateLinkedTokenSource(host.Stopping);
+            _ = Watch();
+        }
+
+        async Task Watch()
+        {
+            try { await Task.Delay(SlowStateWarning, ended.Token); }
+            catch (OperationCanceledException) { return; }
+            if (host.Ignoring || Interlocked.CompareExchange(ref state, 1, 0) != 0) return;
+            host.Report($"the State of {host.Named(key)} has not finished after {Seconds(SlowStateWarning)} s", PyLogLevel.Warn);
+        }
+
+        public void Dispose()
+        {
+            var was = Interlocked.Exchange(ref state, 2);
+            if (was == 2) return;
+            try { ended.Cancel(); } catch { }
+            ended.Dispose();
+            if (was == 1) host.Report($"the State of {host.Named(key)} finished after {clock.Elapsed.TotalSeconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} s", PyLogLevel.Debug);
+        }
     }
 
     // What a State's failure says, as the person reads it: the message of what the run threw, past any wrapper of the

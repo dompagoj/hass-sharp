@@ -244,7 +244,7 @@ it('counts one error and one warning in the workspace header in the singular', a
 const definitionAnswers = {
   definitions: [
     { id: 'plug', saved: true, active: true, activationError: null, document: { version: 1, id: 'plug', name: 'Plug', revision: 3, settings: [{ key: 'password', type: 'string', secret: true, value: null, hasValue: true }] } },
-    { id: 'lamp', saved: true, active: false, activationError: 'Lamp could not start', document: { version: 1, id: 'lamp', name: 'Lamp', revision: 2, settings: [] } },
+    { id: 'lamp', saved: true, active: false, activationError: 'Lamp could not start', enabled: true, document: { version: 1, id: 'lamp', name: 'Lamp', revision: 2, settings: [] } },
   ],
   invalidDefinitions: [{ id: 'old_sensor', name: 'Old sensor', running: true, diagnostics: [], message: 'Not rebuilt, because the definition has errors: it is still running the previous version, with the previous library code' }],
 }
@@ -278,8 +278,7 @@ it('says how many entity definitions a library save rebuilt, and names the ones 
   expect(section).not.toBeNull()
   const lines = [...section.querySelectorAll('p')].map(p => p.textContent)
   expect(lines).toEqual([
-    // The answer lists only the rebuilt definitions that are on (those it started): the count says so.
-    'Rebuilt 2 entity definitions that are on',
+    'Rebuilt 2 entity definitions',
     'Lamp: Saved; activation failed: Lamp could not start',
     'Old sensor: Not rebuilt, because the definition has errors: it is still running the previous version, with the previous library code',
   ])
@@ -294,7 +293,7 @@ it('counts one entity definition rebuilt in the singular', async () => {
   mountRouted(r => r.operation === 'save' ? { saved: true, document: { ...documents()[0], source: r.source, revision: 2 }, generation: 'g2', catalog: rich.catalog, automations: [], definitions: definitionAnswers.definitions.slice(0, 1), invalidDefinitions: [] } : undefined)
   await vi.advanceTimersByTimeAsync(900)
   await saveEdit()
-  expect(host.querySelector('[aria-label="Dependent entity definitions"]')!.textContent).toBe('Rebuilt 1 entity definition that is on')
+  expect(host.querySelector('[aria-label="Dependent entity definitions"]')!.textContent).toBe('Rebuilt 1 entity definition')
 })
 it('says that a library change touches the entity definitions too, and words a definition that did not start with no reason plainly', async () => {
   const quiet = { ...definitionAnswers.definitions[1], activationError: null }
@@ -308,8 +307,24 @@ it('says that a library change touches the entity definitions too, and words a d
   ;[...document.querySelectorAll<HTMLButtonElement>('dialog[open] button')].find(b => b.textContent === 'Keep editing')!.click()
   await saveEdit()
   const lines = [...host.querySelector('[aria-label="Dependent entity definitions"]')!.querySelectorAll('p')].map(p => p.textContent)
-  expect(lines).toEqual(['Rebuilt 1 entity definition that is on', 'Lamp: Saved, but it is not running'])
+  expect(lines).toEqual(['Rebuilt 1 entity definition', 'Lamp: Saved, but it is not running'])
   expect(host.textContent).not.toContain('current revision is not active')
+})
+it('counts the rebuilt entity definitions that are off, and says nothing else of them', async () => {
+  const off = (id: string, name: string) => ({ id, saved: true, active: false, activationError: null, enabled: false, document: { version: 1, id, name, revision: 4, settings: [] } })
+  mountRouted(r => r.operation === 'save' ? { saved: true, document: { ...documents()[0], source: r.source, revision: 2 }, generation: 'g2', catalog: rich.catalog, automations: [],
+    definitions: [...definitionAnswers.definitions, off('heater', 'Heater'), off('fan', 'Fan')], invalidDefinitions: [] } : undefined)
+  await vi.advanceTimersByTimeAsync(900)
+  await saveEdit()
+  const lines = [...host.querySelector('[aria-label="Dependent entity definitions"]')!.querySelectorAll('p')].map(p => p.textContent)
+  expect(lines).toEqual(['Rebuilt 4 entity definitions (2 are off)', 'Lamp: Saved; activation failed: Lamp could not start'])
+})
+it('counts one rebuilt entity definition that is off in the singular', async () => {
+  const heater = { id: 'heater', saved: true, active: false, activationError: null, enabled: false, document: { version: 1, id: 'heater', name: 'Heater', revision: 4, settings: [] } }
+  mountRouted(r => r.operation === 'save' ? { saved: true, document: { ...documents()[0], source: r.source, revision: 2 }, generation: 'g2', catalog: rich.catalog, automations: [], definitions: [heater], invalidDefinitions: [] } : undefined)
+  await vi.advanceTimersByTimeAsync(900)
+  await saveEdit()
+  expect(host.querySelector('[aria-label="Dependent entity definitions"]')!.textContent).toBe('Rebuilt 1 entity definition (1 is off)')
 })
 it('lists the entity definitions a refused save would break under the refusal, linked, and counts their problems', async () => {
   const refusal = { version: 1, ok: false, error: { code: 'validation', detail: { diagnostics: [], automations: [], invalid: [],

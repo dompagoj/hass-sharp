@@ -624,7 +624,7 @@ static class EntityStoreTests
         Only(Body(type: "library:shelly:NodeLib.Nope"), snapshot, "definition.unknownType", "No entity class library:shelly:NodeLib.Nope in the node libraries");
         Only(Body(type: null), snapshot, "definition.unknownType", "No entity class was given: choose the class the definition creates");
         Only(Body(type: " "), snapshot, "definition.unknownType", "No entity class was given: choose the class the definition creates");
-        Only(Body(settings: [Setting("Port", "80")]), snapshot, "definition.unknownSetting", "ShellyPlug has no setting Port", "Port");
+        Only(Body(settings: [Setting("Port", "80")]), snapshot, "definition.unknownSetting", "Shelly plug has no setting Port", "Port");
         Only(Body(settings: [Setting("Host", "\"a\""), Setting("Host", "\"b\"")]), snapshot, "definition.duplicateSetting", "Host is set twice", "Host");
         Console.WriteLine("PASS entity definitions: each problem gives its code and message");
 
@@ -646,6 +646,18 @@ static class EntityStoreTests
         Only(Body(type: HeaterType, settings: [Setting("Target", "\"20\"")]), heater, "definition.settingType", "Target temperature takes a number", "Target");
         Check(generator.Preview(Body(type: HeaterType, settings: [Setting("Eco", "false"), Setting("Target", "1e40")]), heater).Valid, "a boolean and a number that fit");
         Console.WriteLine("PASS entity definitions: a value that does not fit its setting is reported at the setting");
+
+        // A setting that declares a range takes only a value within it, said by its label and the range.
+        var ranged = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new NodeLibrarySource("ranged", EntityTypeTests.Ranged, 1)]).Snapshot;
+        const string PollerType = "library:ranged:NodeLib.Poller";
+        foreach (var value in new[] { "0", "3601", "-5", "1.5" })
+            Only(Body(type: PollerType, settings: [Setting("Interval", value)]), ranged, "definition.settingType", "Poll interval takes a whole number from 1 to 3600", "Interval");
+        Only(Body(type: PollerType, settings: [Setting("Gain", "0.25")]), ranged, "definition.settingType", "Gain takes a number of at least 0.5", "Gain");
+        Only(Body(type: PollerType, settings: [Setting("Count", "11")]), ranged, "definition.settingType", "Count takes a whole number of at most 10", "Count");
+        Only(Body(type: PollerType, settings: [Setting("Plain", "2147483648")]), ranged, "definition.settingType", "Plain takes a whole number from -2147483648 to 2147483647", "Plain");
+        foreach (var (key, value) in new[] { ("Interval", "1"), ("Interval", "3600"), ("Gain", "0.5"), ("Gain", "1e40"), ("Count", "10"), ("Count", "-9223372036854775808"), ("Plain", "-2147483648") })
+            Check(generator.Preview(Body(type: PollerType, settings: [Setting(key, value)]), ranged).Valid, $"{key} {value} is within its range");
+        Console.WriteLine("PASS entity definitions: a value outside its setting's range is refused naming the setting's label and the range");
 
         foreach (var key in new[] { "Host", "Token", "Channel", "Mode" })
             Check(generator.Preview(Body(settings: [Setting(key, null)]), snapshot).Valid, $"a null {key} leaves the class default");

@@ -211,11 +211,11 @@ static class EntityApiTests
             && broken["activationError"]?.GetValue<string>().Contains("no plug answers at this host") == true, "a failing setup is reported: " + broken.ToJsonString());
         Check(home.Syncs("broken").Length == 0, "a failing setup synced");
         var readBroken = await Ok(new { operation = "read", id = "broken" });
-        Check(Status(readBroken) == "off" && readBroken["liveEntities"]!.AsArray().Count == 0 && !readBroken["active"]!.GetValue<bool>()
-            && readBroken["activationError"]!.GetValue<string>() == broken["activationError"]!.GetValue<string>(), "the failed definition reads off: " + readBroken.ToJsonString());
+        Check(Status(broken["document"]!.AsObject()) == "failed" && Status(readBroken) == "failed" && readBroken["liveEntities"]!.AsArray().Count == 0 && !readBroken["active"]!.GetValue<bool>()
+            && readBroken["activationError"]!.GetValue<string>() == broken["activationError"]!.GetValue<string>(), "the failed definition reads failed: " + readBroken.ToJsonString());
         await Task.Delay(60);
         Check(!home.Snapshots(batches).Any(s => s["uniqueId"]!.GetValue<string>().StartsWith("broken:", StringComparison.Ordinal)), "a definition that never ran pushed states");
-        Console.WriteLine("PASS entity api: a failing Setup() saves, answers the error, syncs nothing and reads off");
+        Console.WriteLine("PASS entity api: a failing Setup() saves, answers the error, syncs nothing and reads failed");
 
         // A Start() that throws: loaded, so active, but failed, with the reason in the answer and in a later read.
         var stubborn = await Ok(new { operation = "save", id = "stubborn", expectedRevision = 0, definition = Definition("Stubborn plug", null, Stubborn) });

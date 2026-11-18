@@ -94,11 +94,14 @@ const LibraryWorkspace = (props: LibraryWorkspaceProps) => {
     <Show when={session.activations().length || session.notRebuilt().length}><section class="hs-library-activations" aria-label="Dependent automations"><For each={session.activations()}>{activation => <p class={activation.active ? 'hs-notice' : 'hs-notice hs-notice--danger'} role={activation.active ? 'status' : 'alert'}>{activation.document?.graph?.name || activation.id}: {activation.active ? 'Saved and active' : `Saved; activation failed: ${activation.activationError ?? 'current revision is not active'}`}</p>}</For>
       {/* Those that already had errors were left as they were: say so, or the person never learns they were not rebuilt. */}
       <For each={session.notRebuilt()}>{automation => <p class="hs-notice hs-notice--danger" role="alert">{automation.name || automation.id}: {automation.message}</p>}</For></section></Show>
-    {/* The entity definitions that use the libraries, alike: how many were rebuilt and started (the answer lists only
-        those that are on), and each that did not start or was left as it was. */}
+    {/* The entity definitions that use the libraries, alike: how many were rebuilt, and how many of them are off (the
+        answer lists every one, those that are off too), and each that is on and did not start or was left as it was. */}
     <Show when={session.definitions().length || session.definitionsNotRebuilt().length}><section class="hs-library-activations" aria-label="Dependent entity definitions">
-      <Show when={session.definitions().length}>{count => <p class="hs-notice" role="status">Rebuilt {plural(count(), 'entity definition')} that {count() === 1 ? 'is' : 'are'} on</p>}</Show>
-      <For each={session.definitions().filter(definition => !definition.active)}>{definition => <p class="hs-notice hs-notice--danger" role="alert">
+      <Show when={session.definitions().length}>{count => {
+        const off = () => session.definitions().filter(definition => definition.enabled === false).length
+        return <p class="hs-notice" role="status">Rebuilt {plural(count(), 'entity definition')}{off() ? ` (${off()} ${off() === 1 ? 'is' : 'are'} off)` : ''}</p>
+      }}</Show>
+      <For each={session.definitions().filter(definition => definition.enabled !== false && !definition.active)}>{definition => <p class="hs-notice hs-notice--danger" role="alert">
         <DefinitionName id={definition.id} name={definition.document?.name} />: {definition.activationError ? `Saved; activation failed: ${definition.activationError}` : 'Saved, but it is not running'}</p>}</For>
       <For each={session.definitionsNotRebuilt()}>{definition => <p class="hs-notice hs-notice--danger" role="alert"><DefinitionName id={definition.id} name={definition.name} />: {definition.message}</p>}</For>
     </section></Show>

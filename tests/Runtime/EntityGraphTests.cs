@@ -81,6 +81,10 @@ static class EntityGraphTests
             (nameof(ACommandFlowThatEndsAtAStopStepSucceeds), ACommandFlowThatEndsAtAStopStepSucceeds),
             (nameof(FailingSetupAndTriggerFlowsAreLoggedByName), FailingSetupAndTriggerFlowsAreLoggedByName),
             (nameof(AnAutomationsFailureIsLoggedAsBefore), AnAutomationsFailureIsLoggedAsBefore),
+            (nameof(AFailingPollLogsOncePerReason), AFailingPollLogsOncePerReason),
+            (nameof(ASlowStateWarnsOnce), ASlowStateWarnsOnce),
+            (nameof(ADefinitionThatCannotStartIsFailed), ADefinitionThatCannotStartIsFailed),
+            (nameof(ADefinitionThatCannotStartIsOffWhenTurnedOff), ADefinitionThatCannotStartIsOffWhenTurnedOff),
             (nameof(ASecretStaysHiddenInTheStepsThatReadIt), ASecretStaysHiddenInTheStepsThatReadIt),
             (nameof(TextBuiltFromASecretIsHiddenWhereItIsMadeAndUsed), TextBuiltFromASecretIsHiddenWhereItIsMadeAndUsed),
             (nameof(OnlyWhatASecretReachesIsHidden), OnlyWhatASecretReachesIsHidden),
@@ -520,7 +524,7 @@ static class EntityGraphTests
             await rig.Until("stopped:level", s => Available(s) && Is(s, "value", 6.0), "the state the flow set before its Stop step");
 
             var fresh = await rig.Save("fresh", Level(Read("read", "sensor.gone")));
-            Check(!fresh["active"]!.GetValue<bool>() && fresh["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable." && Status(fresh["document"]!.AsObject()) == "off",
+            Check(!fresh["active"]!.GetValue<bool>() && fresh["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable." && Status(fresh["document"]!.AsObject()) == "failed",
                 "a new definition whose flow fails does not run: " + fresh.ToJsonString());
             Check(rig.Home.Syncs("fresh").Length == 0, "a new definition whose flow fails registered its entities");
         }
@@ -945,7 +949,7 @@ static class EntityGraphTests
         await rig.Restart();
         var level = await rig.Read("level");
         var error = level["activationError"]!.GetValue<string>();
-        Check(Status(level) == "off" && error.Split('\n').All(line => line.StartsWith("h: ", StringComparison.Ordinal) || line.StartsWith("s: ", StringComparison.Ordinal) || line.StartsWith("k: ", StringComparison.Ordinal)),
+        Check(Status(level) == "failed" && error.Split('\n').All(line => line.StartsWith("h: ", StringComparison.Ordinal) || line.StartsWith("s: ", StringComparison.Ordinal) || line.StartsWith("k: ", StringComparison.Ordinal)),
             "the problems are each after their node's id: " + level.ToJsonString());
         Check(rig.Home.Logs(PyLogLevel.Error).Any(l => l.StartsWith("Cannot load entity definition \"Level\" (level): ", StringComparison.Ordinal) && l.Contains(": " + error.Split('\n')[0], StringComparison.Ordinal)
             && l.Contains("; " + error.Split('\n')[1], StringComparison.Ordinal)), "the startup log line has the problems as the load error does: " + Lines(rig.Home.Logs(PyLogLevel.Error)));
@@ -1883,6 +1887,128 @@ static class EntityGraphTests
         var errors = rig.Home.Logs(PyLogLevel.Error);
         Check(errors.Length == 1 && System.Text.RegularExpressions.Regex.IsMatch(errors[0], @"^Invocation [0-9a-f]{32} \(VisualAutomation::Run_[0-9]+\) failed: System\.InvalidOperationException: Entity 'sensor\.gone' is unavailable\.")
             && errors[0].Contains("   at ", StringComparison.Ordinal), "the automation's failure line: " + Lines(errors));
+    }
+
+    /// <summary>
+    /// A trigger flow that keeps failing (a poll of a device that does not answer) logs one error per new reason, naming
+    /// the definition and the trigger, and each failure whole at Debug; once it works again, one line says so.
+    /// </summary>
+    static async Task AFailingPollLogsOncePerReason()
+    {
+        await using var rig = await Rig.Start("poll", ("sensor.tick", "0"), ("sensor.reading", "unavailable"));
+        var trigger = N("t", "trigger", new { type = "entity", entity = "sensor.tick" });
+        trigger["label"] = "Poll";
+        var graph = Graph("Level", [trigger, N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.reading") }),
+            N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), SetState("set", "level", new JsonObject())],
+            Next("t", "set"), Data("cur", "f", "entity"), Data("f", "set", "value"));
+        await rig.Save("level", Definition("Level", graph, [Entity("level", "sensor")]));
+        string[] Errors() => rig.Home.Logs(PyLogLevel.Error).Where(l => l.StartsWith("Level: ", StringComparison.Ordinal)).ToArray();
+        var tick = 0;
+        Task Poll() => rig.Change("sensor.tick", (++tick).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        for (var i = 0; i < 3; i++) await Poll();
+        Check(Errors().Length == 1 && Errors()[0].StartsWith("Level: Poll failed: ", StringComparison.Ordinal) && Errors()[0].Contains("'unavailable'", StringComparison.Ordinal)
+            && !Errors()[0].Contains("   at ", StringComparison.Ordinal), "three failures, one error naming the definition and the trigger: " + Lines(rig.Home.Logs()));
+        Check(rig.Home.Logs(PyLogLevel.Debug).Count(l => l.StartsWith("Level: Poll failed: ", StringComparison.Ordinal) && l.Contains("   at ", StringComparison.Ordinal)) == 3,
+            "each failure whole at Debug: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
+        rig.States["sensor.reading"] = "unknown";
+        await Poll();
+        await Poll();
+        Check(Errors().Length == 2 && Errors()[1].StartsWith("Level: Poll failed: ", StringComparison.Ordinal) && Errors()[1].Contains("'unknown'", StringComparison.Ordinal),
+            "a second reason, a second error: " + Lines(Errors()));
+        rig.States["sensor.reading"] = "21";
+        var batches = rig.Batches;
+        await Poll();
+        await Poll();
+        await rig.Flush();
+        Check(rig.Pushed("level:level", batches).LastOrDefault() is { } set && Is(set, "value", 21.0), "the poll set the state: " + Lines(rig.Home.Pushes().Skip(batches)));
+        Check(rig.Home.Logs(PyLogLevel.Info).Where(l => l.StartsWith("Level: ", StringComparison.Ordinal)).SequenceEqual(["Level: Poll works again"]),
+            "one line says it works again: " + Lines(rig.Home.Logs(PyLogLevel.Info)));
+        rig.States["sensor.reading"] = "unavailable";
+        await Poll();
+        Check(Errors().Length == 3 && rig.Home.Logs(PyLogLevel.Warn).Length == 0, "a failure after it worked again is an error again, and nothing warns: " + Lines(rig.Home.Logs()));
+    }
+
+    /// <summary>
+    /// A State whose run has not finished after <see cref="DefinitionHost.SlowStateWarning"/> warns once, naming the
+    /// definition and the entity; when it then finishes, Debug says so; a State that finishes in time says nothing.
+    /// </summary>
+    static async Task ASlowStateWarnsOnce()
+    {
+        await using var rig = await Rig.Start("slow", ("sensor.level", "0"));
+        DefinitionHost.SlowStateWarning = TimeSpan.FromMilliseconds(100);
+        var graph = Derived(Graph("Slow",
+            [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.level") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), Custom("slow", SlowValue), State("s", "quick")],
+            Data("cur", "f", "entity"), Data("f", "slow", "value"), Data("slow", "s", "value", "result")));
+        await rig.Save("slow", Definition("Slow", graph, [Entity("quick", "sensor", new { name = "Quick" })]));
+        var (gate, entered) = (rig.Static<SemaphoreSlim>("slow", "Gate"), rig.Static<SemaphoreSlim>("slow", "Entered"));
+        await Reached(entered, "the startup run reaches the value node");
+        string[] Warnings() => rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Slow: ", StringComparison.Ordinal)).ToArray();
+        string[] Late() => rig.Home.Logs(PyLogLevel.Debug).Where(l => l.StartsWith("Slow: the State of Quick (quick) finished after ", StringComparison.Ordinal)).ToArray();
+        await EntityTestHome.Until(() => Warnings().Length == 1, "the warning: " + Lines(rig.Home.Logs()));
+        await Task.Delay(300);
+        Check(Warnings().SequenceEqual(["Slow: the State of Quick (quick) has not finished after 0.1 s"]) && Late().Length == 0, "one warning names the entity: " + Lines(rig.Home.Logs()));
+        gate.Release();
+        await rig.Until("slow:quick", s => Available(s) && Is(s, "value", 0.0), "the late state");
+        await EntityTestHome.Until(() => Late().Length == 1, "the late finish at Debug: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
+        Check(Warnings().Length == 1, "the late finish warned: " + Lines(Warnings()));
+        // In time: nothing.
+        gate.Release();
+        var batches = rig.Batches;
+        await rig.Change("sensor.level", "1");
+        await rig.Until("slow:quick", s => Available(s) && Is(s, "value", 1.0), "the quick state", batches);
+        await Task.Delay(300);
+        Check(Warnings().Length == 1 && Late().Length == 1, "a State that finished in time logged: " + Lines(rig.Home.Logs()));
+    }
+
+    /// <summary>
+    /// A definition that is on and cannot start answers <c>failed</c> with why, read or saved: a graph whose When started
+    /// flow fails, a class whose <c>Setup()</c> throws. A save that meets it warns once, naming the definition and why;
+    /// a save for the same reason again does not; a library save that meets it for another reason does.
+    /// </summary>
+    static async Task ADefinitionThatCannotStartIsFailed()
+    {
+        await using var rig = await Rig.Start("cannot-start");
+        string[] Warnings() => rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Entity definition ", StringComparison.Ordinal)).ToArray();
+        var setup = Definition("Level", Graph("Level", [N("start", "entity_setup"), Read("read", "sensor.gone")], Next("start", "read")), [Entity("level", "sensor")]);
+        var saved = await rig.Save("level", setup);
+        Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable."
+            && Status(saved["document"]!.AsObject()) == "failed" && saved["document"]!["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable.",
+            "a graph whose When started flow fails is failed: " + saved.ToJsonString());
+        var read = await rig.Read("level");
+        Check(Status(read) == "failed" && read["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable." && read["liveEntities"]!.AsArray().Count == 0,
+            "it reads failed: " + read.ToJsonString());
+        Check(Warnings().SequenceEqual(["Entity definition \"Level\" (level) cannot start: Entity 'sensor.gone' is unavailable."]), "one warning names it and why: " + Lines(rig.Home.Logs()));
+        await rig.Save("level", setup, 1);
+        Check(Warnings().Length == 1, "a save for the same reason warned again: " + Lines(Warnings()));
+
+        Check((await rig.Library("shelly", 0, EntityApiTests.Library))["ok"]!.GetValue<bool>(), "the class library saves");
+        var broken = await rig.Ok(new { operation = "save", id = "broken", expectedRevision = 0, definition = EntityApiTests.Definition("Broken plug", null, "library:shelly:NodeLib.BrokenPlug") });
+        Check(!broken["active"]!.GetValue<bool>() && Status(broken["document"]!.AsObject()) == "failed"
+            && broken["document"]!["activationError"]?.GetValue<string>() == "no plug answers at this host", "a class whose Setup() throws is failed: " + broken.ToJsonString());
+        Check(Status(await rig.Read("broken")) == "failed", "it reads failed");
+        Check(Warnings().Length == 2 && Warnings()[1] == "Entity definition \"Broken plug\" (broken) cannot start: no plug answers at this host", "the class's warning: " + Lines(Warnings()));
+
+        // A library save rebuilds both: one fails for the same reason, which says nothing; the other for a new one, which warns.
+        var library = await rig.Library("shelly", 1, EntityApiTests.Library.Replace("no plug answers at this host", "the plug refused the connection"));
+        var rebuilt = library["result"]!["definitions"]!.AsArray();
+        Check(rebuilt.Count == 2 && rebuilt.All(d => d!["document"]!["status"]!.GetValue<string>() == "failed" && d["enabled"]!.GetValue<bool>()), "the library save answers both failed: " + library.ToJsonString());
+        Check(Warnings().Length == 3 && Warnings()[2] == "Entity definition \"Broken plug\" (broken) cannot start: the plug refused the connection",
+            "a library save that meets a new reason warns: " + Lines(Warnings()));
+        Check(!rig.Home.Logs(PyLogLevel.Warn).Concat(rig.Home.Logs(PyLogLevel.Error)).Any(l => l.Contains("   at ", StringComparison.Ordinal)), "a stack trace was logged above Debug: " + Lines(rig.Home.Logs()));
+    }
+
+    /// <summary>A definition that cannot start answers <c>off</c> once turned off, and <c>failed</c> again once turned on, which warns no more.</summary>
+    static async Task ADefinitionThatCannotStartIsOffWhenTurnedOff()
+    {
+        await using var rig = await Rig.Start("cannot-start-off");
+        await rig.Save("level", Definition("Level", Graph("Level", [N("start", "entity_setup"), Read("read", "sensor.gone")], Next("start", "read")), [Entity("level", "sensor")]));
+        await rig.Ok(new { operation = "set_enabled", id = "level", enabled = false });
+        var off = await rig.Read("level");
+        Check(Status(off) == "off" && !off["enabled"]!.GetValue<bool>() && off["activationError"]?.GetValue<string>() == "Not active", "turned off, it is off: " + off.ToJsonString());
+        var on = await rig.Ok(new { operation = "set_enabled", id = "level", enabled = true });
+        Check(!on["active"]!.GetValue<bool>() && on["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable." && Status(await rig.Read("level")) == "failed",
+            "turned on again, it is failed: " + on.ToJsonString());
+        Check(rig.Home.Logs(PyLogLevel.Warn).Count(l => l.StartsWith("Entity definition ", StringComparison.Ordinal)) == 1, "turning it on warned again: " + Lines(rig.Home.Logs(PyLogLevel.Warn)));
     }
 
     // ---- A secret setting's value stays out of the steps that read it ----

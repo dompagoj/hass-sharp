@@ -26,12 +26,17 @@ public partial class HassSharpManager
     // The started host of the definition; null when none is, or when it is stopping.
     DefinitionHost? RunningHost(string id) => _userScriptManager.Entities.Host(id) is { Status: not "stopped" } host ? host : null;
 
+    // Why each definition that cannot start last could not, by id, as a save last warned of it (see WarnCannotStart).
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _cannotStart = new(StringComparer.Ordinal);
+
     /// <summary>
     /// The document as the API answers it: its stored fields, and how it runs now: <c>automationId</c>, <c>active</c>,
     /// <c>currentRevisionActive</c>, <c>activationError</c> (the load error, else why its <c>Start()</c> failed),
-    /// <c>status</c> (<c>running</c>, <c>setup</c>, <c>failed</c>, or
-    /// <c>off</c> when not loaded) and its <c>liveEntities</c> (none when not loaded). A secret setting is answered without
-    /// its value (<see cref="WithoutSecretValues"/>): every answer of a definition is built here.
+    /// <c>status</c> (<c>running</c>, <c>setup</c>, <c>failed</c> when its <c>Start()</c> threw or, on and not loaded,
+    /// when it could not be prepared: its setup failed, it does not compile, its libraries are broken; <c>off</c> when
+    /// turned off, or on and not loaded for no recorded reason) and its <c>liveEntities</c> (none when not loaded). A
+    /// secret setting is answered without its value (<see cref="WithoutSecretValues"/>): every answer of a definition is
+    /// built here.
     /// </summary>
     /// <param name="libraries">The libraries the definition is answered against, which say which of a class's settings are secret.</param>
     JsonObject EntityJson(EntityDefinitionDocument document, VisualCatalogSnapshot libraries)
@@ -39,7 +44,7 @@ public partial class HassSharpManager
         var path = EntityRuntimePath(document.Id);
         var running = _userScriptManager.GetUserScripts().FirstOrDefault(s => s.CompiledScript.FilePath == path && s.Active);
         var host = RunningHost(document.Id);
-        var status = host?.Status ?? "off";
+        var status = host?.Status ?? (document.Enabled && _loadErrors.ContainsKey(path) ? "failed" : "off");
         var json = JsonSerializer.SerializeToNode(document, VisualStore.Json)!.AsObject();
         WithoutSecretValues(json, document, libraries);
         json["automationId"] = _history.Identity(path);
@@ -127,6 +132,7 @@ public partial class HassSharpManager
         else
         {
             activationError = await LoadDefinition(document, services);
+            WarnCannotStart(document, activationError);
             // The answer says how the start went, unless it takes long; a publish that failed in it is the host's to log.
             if (RunningHost(document.Id) is { } host)
                 try { await host.Started.WaitAsync(StartReportWait); } catch (Exception) { }
@@ -155,6 +161,31 @@ public partial class HassSharpManager
         }
         ClearLoadError(path);
         return null;
+    }
+
+    /// <summary>
+    /// After a save (or a library save, or turning it on) loaded the definition: when it could not, one warning names it and
+    /// says why, in the words its <c>activationError</c> answers (a setup's own message is user code, which the person
+    /// wrote; a setting's value is never in it), and whether the revision before it keeps running. Once per reason: the
+    /// same reason again says nothing, until it loads. Never throws.
+    /// </summary>
+    /// <param name="error">The load error; null when it loaded.</param>
+    void WarnCannotStart(EntityDefinitionDocument document, string? error)
+    {
+        try
+        {
+            if (error == null)
+            {
+                _cannotStart.TryRemove(document.Id, out _);
+                return;
+            }
+            if (_cannotStart.TryGetValue(document.Id, out var last) && last == error) return;
+            _cannotStart[document.Id] = error;
+            var name = $"\"{document.Name}\" ({document.Id})";
+            Logger.Warn(RunningHost(document.Id) == null ? $"Entity definition {name} cannot start: {error}"
+                : $"Entity definition {name} cannot start its saved revision, so the one before keeps running: {error}");
+        }
+        catch { }
     }
 
     /// <summary>The definition with the source generated from it against these libraries.</summary>
@@ -361,6 +392,7 @@ public partial class HassSharpManager
                     else if (operation == "delete")
                     {
                         store.Delete(id, revision);
+                        _cannotStart.TryRemove(id, out _);
                         // As an automation's delete: its run history's identity goes too, so a definition saved later under
                         // this id starts a history of its own.
                         await _userScriptManager.DeleteScriptAsync(EntityRuntimePath(id));

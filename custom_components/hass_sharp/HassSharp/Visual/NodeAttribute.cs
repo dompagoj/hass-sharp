@@ -1,10 +1,14 @@
 namespace HassSharp;
 
-/// <summary>Makes a public static method a node: each parameter is an input pin, the return value is the output pin.</summary>
-[AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
+/// <summary>
+/// Makes a public static method a node: each parameter is an input pin, the return value is the output pin. On a custom
+/// device or entity class it is only the class's title, which the entity panel shows (<see cref="Category"/> and
+/// <see cref="Pure"/> mean nothing there); without it the title is the class's name in words.
+/// </summary>
+[AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
 public sealed class NodeAttribute(string title) : Attribute
 {
-    /// <summary>The node's name on the canvas and in the node list.</summary>
+    /// <summary>The node's name on the canvas and in the node list; on a class, the class's title.</summary>
     public string Title { get; } = title;
     /// <summary>The group the node is listed under. A Custom C# node ignores it.</summary>
     public string Category { get; set; } = "Custom";

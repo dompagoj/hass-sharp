@@ -204,14 +204,14 @@ it('says why a definition is not running, starting, or running an older revision
     f.entities.seed('station', many)
   } })
   await loaded(root)
-  // Enabled and not loaded: why, and no entities until it has started once.
+  // Enabled and it could not be prepared: failed, why, and no entities until it has started once.
   const broken = card(root, 'broken')
-  expect(status(broken)).toBe('Not running')
+  expect(status(broken)).toBe('Failed')
   expect(error(broken)).toBe('The library cams does not compile')
   expect(broken.classList.contains('hs-home-card--attention')).toBe(true)
   expect(broken.querySelector('.hs-ent-card__none')?.textContent).toBe('Its entities appear after it has started once.')
   expect(broken.querySelector('.hs-ent-row')).toBeNull()
-  // The backend's "Not active" is no reason: Not running alone.
+  // On and not loaded for no recorded reason, which the backend answers off with "Not active": Not running alone.
   const idle = card(root, 'idle')
   expect(status(idle)).toBe('Not running')
   expect(error(idle)).toBeNull()

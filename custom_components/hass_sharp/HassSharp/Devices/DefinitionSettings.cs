@@ -20,6 +20,9 @@ internal static class DefinitionSettings
                 ?? throw new InvalidOperationException($"{name}: {type.Name} has no setting {setting.Key}");
             if (!TryConvert(setting.Value, property.PropertyType, out var value))
                 throw new InvalidOperationException($"{name}: the saved value of setting {setting.Key} does not fit its type {property.PropertyType.Name}");
+            // The value is not quoted: it may be a secret.
+            if (Range(property) is { } range && value is int or long or double && !DefinitionGenerator.Within(range, Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture)))
+                throw new InvalidOperationException($"{name}: the saved value of setting {range.Label} is not {DefinitionGenerator.Phrase(range)}");
             property.SetMethod!.Invoke(root, BindingFlags.DoNotWrapExceptions, null, [value], null);
         }
     }
@@ -33,6 +36,22 @@ internal static class DefinitionSettings
                     && property.IsDefined(typeof(SettingAttribute), false))
                     return property;
         return null;
+    }
+
+    // The range the property's [Setting] declares, as the types answer gives it (an int's own bounds where it declares
+    // one side only, or one beyond them); null when it declares none.
+    static EntitySettingDescriptor? Range(PropertyInfo property)
+    {
+        var attribute = property.GetCustomAttribute<SettingAttribute>(false)!;
+        if (double.IsNaN(attribute.Minimum) && double.IsNaN(attribute.Maximum)) return null;
+        var type = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+        var whole = type == typeof(int) || type == typeof(long);
+        var isInt = type == typeof(int);
+        return new(property.Name, string.IsNullOrWhiteSpace(attribute.Label) ? property.Name : attribute.Label, null, whole ? "integer" : "number", attribute.Secret, [])
+        {
+            Minimum = double.IsNaN(attribute.Minimum) ? isInt ? int.MinValue : null : isInt ? Math.Max(attribute.Minimum, int.MinValue) : attribute.Minimum,
+            Maximum = double.IsNaN(attribute.Maximum) ? isInt ? int.MaxValue : null : isInt ? Math.Min(attribute.Maximum, int.MaxValue) : attribute.Maximum,
+        };
     }
 
     static bool TryConvert(JsonNode node, Type type, out object? value)

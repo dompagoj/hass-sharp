@@ -290,7 +290,8 @@ describe('the in-memory entities backend', () => {
     fixture.entities.controls.activation = 'notLoaded'
     fixture.entities.controls.activationError = 'The node libraries have errors; fix them first'
     saved = await api.save('motion', body(), 2)
-    expect([saved.active, saved.activationError, ...state(saved.document)]).toEqual([false, 'The node libraries have errors; fix them first', 'off', false, false, 'The node libraries have errors; fix them first'])
+    // On and not loaded, for a reason: failed, as EntityApi.EntityJson answers it.
+    expect([saved.active, saved.activationError, ...state(saved.document)]).toEqual([false, 'The node libraries have errors; fix them first', 'failed', false, false, 'The node libraries have errors; fix them first'])
     expect(saved.document.enabled).toBe(true)
     // Off by the user: "Not active" in the document, no error in the switch's answer.
     await expect(api.setEnabled('motion', false)).resolves.toEqual({ id: 'motion', enabled: false, active: false, activationError: null })
@@ -360,7 +361,7 @@ describe('the in-memory entities backend', () => {
     expect(await api.read('plug1')).toMatchObject({ status: 'off', liveEntities: [], registeredEntities: registered })
     fixture.entities.controls.activation = 'notLoaded'
     await api.setEnabled('plug1', true)
-    expect(await api.read('plug1')).toMatchObject({ status: 'off', liveEntities: [], registeredEntities: registered })
+    expect(await api.read('plug1')).toMatchObject({ status: 'failed', liveEntities: [], registeredEntities: registered })
     // Entries a test seeds win; a delete forgets them all.
     fixture.entities.registry.set('plug1', [{ ...registered[1], disabled: true }])
     expect((await api.read('plug1')).registeredEntities).toEqual([{ ...registered[1], disabled: true }])

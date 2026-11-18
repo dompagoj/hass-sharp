@@ -50,12 +50,15 @@ public sealed record CustomNodeDescriptor(string NodeId, NodeMethodDescriptor? M
 /// <param name="Options">The member names of an <c>enum</c> setting, in declaration order; empty for any other.</param>
 public sealed record EntitySettingDescriptor(string Key, string Label, string? Description, string Type, bool Secret, ImmutableArray<string> Options)
 {
-    /// <summary>The smallest whole number an <c>integer</c> setting takes, such as an <c>int</c>'s; null for a <c>long</c> or another type.</summary>
+    /// <summary>
+    /// The smallest value an <c>integer</c> or <c>number</c> setting takes: its <c>[Setting]</c>'s <c>Minimum</c>, else an
+    /// <c>int</c>'s own smallest; null for none.
+    /// </summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    public long? Minimum { get; init; }
-    /// <summary>The largest whole number an <c>integer</c> setting takes, such as an <c>int</c>'s; null for a <c>long</c> or another type.</summary>
+    public double? Minimum { get; init; }
+    /// <summary>The largest value an <c>integer</c> or <c>number</c> setting takes, as <see cref="Minimum"/>.</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    public long? Maximum { get; init; }
+    public double? Maximum { get; init; }
 }
 /// <summary>
 /// A custom device or entity class a node library declares (deriving <see cref="SharpDevice"/>, or a typed entity base

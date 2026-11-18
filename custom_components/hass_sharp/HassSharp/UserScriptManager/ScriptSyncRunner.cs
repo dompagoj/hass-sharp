@@ -155,6 +155,8 @@ class ScriptSyncRunner
                 record.Status = "Running";
                 Save();
                 var timer = System.Diagnostics.Stopwatch.StartNew();
+                // A State that takes long is warned of by its host, which names its entity.
+                var slow = state ? host!.WatchState(methodInfo.Name) : null;
                 try
                 {
                     var context = new InvocationContext(record.RunId, cause, plannedUtc, payload) { TraceSink = sink, Definition = host };
@@ -175,8 +177,14 @@ class ScriptSyncRunner
                     else if (host != null) host.FlowFailed(methodInfo.Name, cause, ex);
                     else Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}");
                 }
-                finally { record.DurationMs = timer.Elapsed.TotalMilliseconds; }
+                finally
+                {
+                    record.DurationMs = timer.Elapsed.TotalMilliseconds;
+                    slow?.Dispose();
+                }
                 if (state) host!.StateEnded(methodInfo.Name, record.Status, record.Error, stateFailure);
+                // A flow that failed before and works now says so, once (see DefinitionHost.FlowFailed).
+                else if (host != null && record.Status is "Succeeded" or "Stopped") host.FlowSucceeded(methodInfo.Name);
             });
         }
         catch (Exception ex)

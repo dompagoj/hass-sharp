@@ -64,7 +64,7 @@ public partial class HassSharpManager
             try { RefreshEntities(); }
             catch (Exception ex) { try { Logger.Error($"Cannot generate the entity classes; node code compiles without the new ones: {ex}"); } catch { } }
             var libraries = SavedLibraries();
-            _loadErrors.Clear(); _curableLoadErrors.Clear();
+            _loadErrors.Clear(); _curableLoadErrors.Clear(); _cannotStart.Clear();
             ReportLegacyUserScripts();
             List<CompiledUserScript> assemblies = [];
             var store = VisualDocuments;
