@@ -68,6 +68,119 @@ static class EntityStartupTests
         await ForgetsTheStatesOfDefinitionsGone();
         await CannotStartWarnsOnceInPlainWords();
         await DoesNotCompileWarnsWithoutAPath();
+        LocatesAStepWithoutALibrary();
+        await ManyCompilerErrorsAreCapped();
+        await ManyGraphProblemsAreCapped();
+    }
+
+    /// <summary>
+    /// A compiler error on a line the source map gives to a graph step, whose id is short or long and never starts with
+    /// <c>$library:</c>, is worded as any other: no exception, and no node library is named.
+    /// </summary>
+    static void LocatesAStepWithoutALibrary()
+    {
+        var located = typeof(HassSharpManager).GetMethod("Located", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static,
+            [typeof(EntityDefinitionDocument), typeof(string)])!;
+        var document = new EntityDefinitionDocument(1, "steps", 1, "Steps", null, [], null, new DefinitionLogic("graph", null, null), "",
+            [new VisualSourceMap("n1", 1, 2), new VisualSourceMap("a_step_with_a_long_id", 3, 4), new VisualSourceMap("$library:maths", 5, 6)]);
+        string Located(int line) => (string)located.Invoke(null, [document, $"/config/.storage/entity_steps.cs({line},5): error CS0103: The name 'x' does not exist in the current context"])!;
+        Check(Located(1) == "The name 'x' does not exist in the current context (CS0103)", "a short step id: " + Located(1));
+        Check(Located(3) == "The name 'x' does not exist in the current context (CS0103)", "a long step id: " + Located(3));
+        Check(Located(5) == "The name 'x' does not exist in the current context (CS0103, node library maths)", "a library: " + Located(5));
+        Console.WriteLine("PASS entity startup: a compiler error on a graph step's line, whatever its id, names no node library and throws nothing");
+    }
+
+    // The wording and limits an automation's startup line uses: the first 3, each cut with an ellipsis to 200 characters
+    // (each of these is longer, and its cut part all its own), then how many more.
+    static void CheckCapped(string? reason, string[] starts, int more, string what)
+    {
+        var length = HassSharpManager.LoggedProblemLength - 1;
+        Check(starts.Length == 3 && starts.All(s => s.Length >= length), $"{what}: the test's starts are too short");
+        var expected = string.Join("; ", starts.Select(s => s[..length] + "\u2026")) + $"; and {more} more";
+        Check(reason == expected, $"{what}: not the first 3, each cut at {HassSharpManager.LoggedProblemLength} characters, and {more} more: {reason}");
+    }
+
+    /// <summary>
+    /// A class definition whose code has 12 compiler errors (a library class with 12 required members, each with a long
+    /// name, which the definition's code creates without setting them), loaded at startup: one warning with the first 3
+    /// errors, each cut at 200 characters, and "; and 9 more"; its <c>activationError</c> is the same.
+    /// </summary>
+    static async Task ManyCompilerErrorsAreCapped()
+    {
+        await using var home = new EntityTestHome("entity-startup-many-errors");
+        var members = Enumerable.Range(1, 12).Select(i => $"Part{i:00}_" + new string('x', 200)).ToArray();
+        var library = "public class NeedyPlug : SharpDevice { public NeedyPlug() { Add(new SharpSwitch(\"relay\")); } "
+            + string.Concat(members.Select(m => $"public required string {m} {{ get; set; }} ")) + "}";
+        var first = new HassSharpManager(home.Root);
+        try
+        {
+            await first.Init();
+            await SaveLibrary(first, "needy", 0, library);
+            await SaveDefinition(first, "needy", "Needy plug", null, "library:needy:NodeLib.NeedyPlug");
+        }
+        finally { await first.UnloadAsync(); }
+
+        var mark = home.Logs(PyLogLevel.Warn).Length;
+        var api = new HassSharpManager(home.Root);
+        try
+        {
+            await api.Init();
+            var read = await Read(api, "needy");
+            var reason = read["activationError"]?.GetValue<string>();
+            Check(Status(read) == "failed", "the definition answers: " + read.ToJsonString());
+            CheckCapped(reason, [.. members.Take(3).Select(m => $"Required member 'NeedyPlug.{m}")], 9, "its activationError");
+            var warned = home.Logs(PyLogLevel.Warn).Skip(mark).Where(l => l.StartsWith("Entity definition ", StringComparison.Ordinal)).ToArray();
+            Check(warned.SequenceEqual([$"Entity definition \"Needy plug\" (needy) cannot start: {reason}"]), "one warning: " + string.Join(" | ", warned));
+        }
+        finally { await api.UnloadAsync(); }
+        Console.WriteLine("PASS entity startup: a definition with 12 compiler errors warns once at startup with the first 3, each cut at 200 characters, and how many more; its activationError is the same");
+    }
+
+    /// <summary>
+    /// A graph definition edited on disk to 12 problems (12 steps not connected into a flow, each with a long id), loaded
+    /// at startup: one warning with the first 3, each cut at 200 characters, and "; and 9 more"; its <c>activationError</c>
+    /// is the same.
+    /// </summary>
+    static async Task ManyGraphProblemsAreCapped()
+    {
+        await using var home = new EntityTestHome("entity-startup-many-problems");
+        var definition = new
+        {
+            name = "Graph power",
+            settings = Array.Empty<object>(),
+            entities = new[] { new { key = "power", domain = "sensor", name = "Power" } },
+            logic = new { kind = "graph", graph = new JsonObject { ["version"] = 5, ["name"] = "Graph power", ["edges"] = new JsonArray(),
+                ["nodes"] = new JsonArray(N("p", "entity_state", new JsonObject { ["entity"] = "power", ["value"] = Lit("number", 42) })) } },
+        };
+        var first = new HassSharpManager(home.Root);
+        try
+        {
+            await first.Init();
+            var saved = await Ok(first.EntityRequest, new { operation = "save", id = "power", expectedRevision = 0, definition });
+            Check(saved["active"]!.GetValue<bool>(), "the graph does not run: " + saved.ToJsonString());
+        }
+        finally { await first.UnloadAsync(); }
+
+        var ids = Enumerable.Range(1, 12).Select(i => $"gone{i:00}_" + new string('x', 220)).ToArray();
+        var path = Storage(home, "entities", "power.json");
+        var stored = JsonNode.Parse(File.ReadAllText(path))!;
+        foreach (var id in ids) stored["logic"]!["graph"]!["nodes"]!.AsArray().Add(N(id, "log", new JsonObject { ["value"] = Lit("string", "hi") }));
+        File.WriteAllText(path, stored.ToJsonString());
+
+        var mark = home.Logs(PyLogLevel.Warn).Length;
+        var api = new HassSharpManager(home.Root);
+        try
+        {
+            await api.Init();
+            var read = await Read(api, "power");
+            var reason = read["activationError"]?.GetValue<string>();
+            Check(Status(read) == "failed", "the definition answers: " + read.ToJsonString());
+            CheckCapped(reason, [.. ids.Take(3)], 9, "its activationError");
+            var warned = home.Logs(PyLogLevel.Warn).Skip(mark).Where(l => l.StartsWith("Entity definition ", StringComparison.Ordinal)).ToArray();
+            Check(warned.SequenceEqual([$"Entity definition \"Graph power\" (power) cannot start: {reason}"]), "one warning: " + string.Join(" | ", warned));
+        }
+        finally { await api.UnloadAsync(); }
+        Console.WriteLine("PASS entity startup: a graph definition with 12 problems warns once at startup with the first 3, each cut at 200 characters, and how many more; its activationError is the same");
     }
 
     // A library that compiles, whose class cannot be created: its constructor is obsolete as an error, so the definition's

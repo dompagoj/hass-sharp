@@ -85,7 +85,9 @@ public partial class HassSharpManager
         var match = CompilerError.Match(text);
         if (!match.Success) return text;
         var line = int.Parse(match.Groups["line"].Value, System.Globalization.CultureInfo.InvariantCulture);
-        var library = document.SourceMap.FirstOrDefault(m => line >= m.StartLine && line <= m.EndLine)?.NodeId?["$library:".Length..];
+        // A graph step's section is no library's: only a "$library:" id names one.
+        var library = document.SourceMap.FirstOrDefault(m => line >= m.StartLine && line <= m.EndLine)?.NodeId is { } id && id.StartsWith("$library:", StringComparison.Ordinal)
+            ? id["$library:".Length..] : null;
         return $"{match.Groups["message"].Value} ({match.Groups["code"].Value}{(library == null ? "" : ", node library " + library)})";
     }
 
