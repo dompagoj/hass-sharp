@@ -1,10 +1,14 @@
-"""Real Python.NET entity bridge boundary: a device class from a node library becomes a running definition. No Home Assistant.
+"""Real Python.NET entity bridge boundary: a device class from a node library, and a graph of nodes, each become a running
+definition. No Home Assistant.
 
 Run in a fresh process against the published library: python tests/packaging/entity_bridge_smoke.py INTEGRATION_DIR [DOTNET_ROOT]
 Python callables stand in for Home Assistant's bridge on the four entity delegates (sync, push, remove, prune), and the
 sync is answered from Python as the bridge answers it, or the definition never becomes active. A manager runs over a
-temporary configuration directory. Checks that the sync, the pushed states and a command's effect arrive in Python as
-str on .NET's threads, that a command the class rejects fails with its message, and that delete removes the entities.
+temporary configuration directory. For each definition, checks that the sync, the pushed states and a command's effect
+arrive in Python as str on .NET's threads, and that delete removes the entities. For the class, that a command it
+rejects fails with its message. For the graph, that its binary sensor follows a source entity Python answers for (through
+PyInterop.Entity, changed through the manager as the bridge reports a change), that a switch's turn on and turn off flows
+set its state, and that a command no flow handles fails naming the entity and the command.
 Exits non-zero with a message on the first mismatch.
 """
 import json
@@ -25,7 +29,8 @@ sys.path.insert(0, str(root / 'out'))
 import clr
 clr.AddReference('HassSharp')
 from HassSharp import HasEntityState, HassSharpManager, PyInterop
-from System import Action, Func, Int32, String
+from System import Action, Func, Int32, Object, String
+from System.Collections.Generic import Dictionary
 from System.Threading.Tasks import Task
 
 DEFINITION = 'smoke_plug'
@@ -52,6 +57,41 @@ public class SmokePlug : SharpDevice
 }
 '''
 EXPECTED = [('relay', 'switch'), ('power', 'sensor'), ('problem', 'binary_sensor'), ('guard', 'switch')]
+
+# The graph definition: a binary sensor on while SOURCE is, a switch whose turn on and turn off flows set its state, and a
+# switch with only a turn off flow, so that turning it on has no flow.
+GRAPH_DEFINITION = 'smoke_graph'
+SOURCE = 'binary_sensor.smoke_source'
+NO_FLOW = 'Bare has no flow for Turn on'
+
+
+def literal(type_, value):
+    return {'kind': 'literal', 'type': type_, 'value': value}
+
+
+def node(id_, kind, config):
+    return {'id': id_, 'kind': kind, 'config': config}
+
+
+def data(source, target, target_port):
+    return {'id': f'{source}.value:{target}.{target_port}', 'kind': 'data', 'source': source, 'target': target, 'sourcePort': 'value', 'targetPort': target_port}
+
+
+def next_(source, target):
+    return {'id': f'{source}:next:{target}', 'source': source, 'target': target, 'port': 'next'}
+
+
+GRAPH = {'version': 5, 'name': 'Smoke graph', 'nodes': [
+    node('source', 'entity_is', {'entity': literal('entity_id', SOURCE), 'state': literal('string', 'on')}),
+    node('motion', 'entity_state', {'entity': 'motion'}),
+    node('on', 'entity_command', {'entity': 'relay', 'command': 'turn_on'}),
+    node('set_on', 'set_entity_state', {'entity': 'relay', 'is_on': literal('boolean', True)}),
+    node('off', 'entity_command', {'entity': 'relay', 'command': 'turn_off'}),
+    node('set_off', 'set_entity_state', {'entity': 'relay', 'is_on': literal('boolean', False)}),
+    node('bare_off', 'entity_command', {'entity': 'bare', 'command': 'turn_off'}),
+    node('bare_set_off', 'set_entity_state', {'entity': 'bare', 'is_on': literal('boolean', False)}),
+], 'edges': [data('source', 'motion', 'is_on'), next_('on', 'set_on'), next_('off', 'set_off'), next_('bare_off', 'bare_set_off')]}
+GRAPH_ENTITIES = [('motion', 'binary_sensor', 'Motion', []), ('relay', 'switch', 'Relay', ['turn_on', 'turn_off']), ('bare', 'switch', 'Bare', ['turn_on', 'turn_off'])]
 
 lock = threading.Lock()
 python_threads = {threading.get_ident()}  # every thread Python started: a delegate called on one of these is a mismatch
@@ -141,8 +181,25 @@ PyInterop.BeginPruneEntities = Action[String, Action, Action[String]](prune)
 PyInterop.PushEntityStates = Action[String](push)
 PyInterop.Log = Action[Int32, String](log)
 PyInterop.LogLevel = 20
+sources = {SOURCE: 'off'}  # Home Assistant's states, as the graph's State reads them; under the lock
+
+
+def entity_state(entity_id, state):
+    entity = HasEntityState()
+    entity.EntityId, entity.State = entity_id, state
+    entity.Domain, entity.ObjectId = entity_id.split('.', 1)
+    entity.Attributes = Dictionary[String, Object]()
+    return entity
+
+
+def entity(entity_id):
+    with lock:
+        state = sources.get(entity_id)
+    return None if state is None else entity_state(entity_id, state)
+
+
+PyInterop.Entity = Func[String, HasEntityState](entity)
 # Harmless stand-ins for the rest: a library and a definition use none of them, and Init and unload need them set.
-PyInterop.Entity = Func[String, HasEntityState](lambda entity_id: None)
 PyInterop.CallService = Action[String, String, String, Action, Action[String]](other('CallService'))
 PyInterop.CallServiceWithResponse = Action[String, String, String, Action[String], Action[String]](other('CallServiceWithResponse'))
 PyInterop.SubscribeToEntityTracking = Action[String](other('SubscribeToEntityTracking'))
@@ -210,6 +267,23 @@ def shows(unique_id, field, value):
     return lambda: any(s['uniqueId'] == unique_id and s['available'] is True and s['values'].get(field) == value for s in snapshots())
 
 
+def lasts(unique_id, field, value):
+    """Whether the last snapshot pushed for the unique id is available with the value."""
+    def holds():
+        pushed = [s for s in snapshots() if s['uniqueId'] == unique_id]
+        return bool(pushed) and pushed[-1]['available'] is True and pushed[-1]['values'].get(field) == value
+    return holds
+
+
+def change(entity_id, state):
+    """The source changes in Home Assistant: the bridge hands .NET the new and old state; completes once the runs it started ended."""
+    with lock:
+        old = sources.get(entity_id)
+        sources[entity_id] = state
+    call(lambda: manager.OnTrackedEntityChange(entity_id, entity_state(entity_id, state), None if old is None else entity_state(entity_id, old)),
+         f'the change of {entity_id} to {state}')
+
+
 try:
     manager = HassSharpManager(config)
     try:
@@ -267,6 +341,62 @@ try:
         else:
             fail('a command after delete succeeded')
         check(len(recorded('sync')) == 1, f"syncs after the save: {recorded('sync')}")
+
+        # ---- A definition whose logic is a graph of nodes ----
+        saved = request(manager.EntityRequest, {'operation': 'save', 'id': GRAPH_DEFINITION, 'expectedRevision': 0, 'definition': {
+            'name': 'Smoke graph', 'device': None, 'settings': [],
+            'entities': [{'key': key, 'domain': domain, 'name': name} for key, domain, name, _ in GRAPH_ENTITIES],
+            'logic': {'kind': 'graph', 'graph': GRAPH}}}, 'the graph definition save')
+        check(saved.get('active') is True and saved['document']['status'] == 'running', f'the graph definition does not run: {saved}')
+        # The saved libraries' compiler warnings come along (the class above has some); of the graph, only the one command.
+        own = [d.get('code') for d in saved.get('diagnostics') or [] if not str(d.get('nodeId')).startswith('$library:')]
+        check(own == ['command.unhandled'], f"the save warns only of the command no flow handles: {saved.get('diagnostics')}")
+        live = {e['uniqueId']: e['entityId'] for e in saved['document']['liveEntities']}
+        check(live == {f'{GRAPH_DEFINITION}:{key}': f'{domain}.{GRAPH_DEFINITION}_{key}' for key, domain, _, _ in GRAPH_ENTITIES},
+              f"the graph's live entities are not the entity ids Python answered: {saved['document']['liveEntities']}")
+
+        synced = arguments('sync')
+        check(len(synced) == 2, f'the graph save synced {len(synced) - 1} times')
+        definition = json.loads(synced[1])
+        check(definition['definitionId'] == GRAPH_DEFINITION and definition['name'] == 'Smoke graph' and definition['device'] is None,
+              f'the graph sync: {definition}')
+        described = [(e['uniqueId'], e['key'], e['domain'], e['name'], e['commands']) for e in definition['entities']]
+        check(described == [(f'{GRAPH_DEFINITION}:{key}', key, domain, name, commands) for key, domain, name, commands in GRAPH_ENTITIES],
+              f'the graph sync describes {described}')
+
+        # The State's first run reads the source through PyInterop.Entity; each change of it runs the State again.
+        motion = f'{GRAPH_DEFINITION}:motion'
+        until(lasts(motion, 'is_on', False), 'the motion sensor pushed off from the source as it starts')
+        change(SOURCE, 'on')
+        until(lasts(motion, 'is_on', True), 'the motion sensor pushed on after the source turned on')
+        change(SOURCE, 'off')
+        until(lasts(motion, 'is_on', False), 'the motion sensor pushed off after the source turned off')
+
+        relay = f'{GRAPH_DEFINITION}:relay'
+        call(lambda: manager.EntityCommand(relay, 'turn_on', '{}'), 'the graph turn_on')
+        until(lasts(relay, 'is_on', True), "the graph relay pushed on after its turn on flow")
+        call(lambda: manager.EntityCommand(relay, 'turn_off', '{}'), 'the graph turn_off')
+        until(lasts(relay, 'is_on', False), "the graph relay pushed off after its turn off flow")
+
+        try:
+            call(lambda: manager.EntityCommand(f'{GRAPH_DEFINITION}:bare', 'turn_on', '{}'), 'the turn_on with no flow')
+        except Exception as error:
+            check(getattr(error, 'Message', None) == NO_FLOW, f'the command with no flow failed with {getattr(error, "Message", error)!r}, not {NO_FLOW!r}')
+        else:
+            fail('a command with no flow succeeded')
+        call(lambda: manager.EntityCommand(f'{GRAPH_DEFINITION}:bare', 'turn_off', '{}'), "the bare switch's turn_off")
+        until(lasts(f'{GRAPH_DEFINITION}:bare', 'is_on', False), 'the bare switch pushed off after its turn off flow')
+
+        deleted = request(manager.EntityRequest, {'operation': 'delete', 'id': GRAPH_DEFINITION, 'expectedRevision': 1}, 'the graph delete')
+        check(deleted == {'deleted': True}, f'the graph delete answered {deleted}')
+        check(arguments('remove') == [DEFINITION, GRAPH_DEFINITION], f"the graph delete asked to remove {recorded('remove')}")
+        try:
+            call(lambda: manager.EntityCommand(relay, 'turn_on', '{}'), 'a graph command after delete')
+        except Exception as error:
+            check(getattr(error, 'Message', None) == 'The entity is not running', f'a graph command after delete failed with {error}')
+        else:
+            fail('a graph command after delete succeeded')
+        check(len(recorded('sync')) == 2, f"syncs after the graph save: {recorded('sync')}")
     finally:
         call(lambda: manager.UnloadAsync(False), 'unload')
     errors = [line for level, line in logs if level >= 40]
