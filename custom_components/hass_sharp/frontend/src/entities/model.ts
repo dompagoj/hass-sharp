@@ -138,7 +138,8 @@ export interface EditorDefinition {
   device: DefinitionDevice | null
 }
 
-const entityKeyPattern = /^[a-z][a-z0-9_]{0,39}$/
+/** What an entity's key looks like (`^[a-z][a-z0-9_]{0,39}$`); the definition form holds graph settings' keys to it too. */
+export const entityKeyPattern = /^[a-z][a-z0-9_]{0,39}$/
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const editorDefinition = (graph: Graph) => graph.definition as unknown as EditorDefinition
 
@@ -198,7 +199,7 @@ const slug = (name: string) =>
 const trimEnd = (text: string) => text.replace(/[_-]+$/, '')
 
 /** An entity key from a name: it starts with a letter and has at most 40 characters; `entity` when the name gives none. */
-const entityKey = (name: string) => {
+export const entityKey = (name: string) => {
   const key = trimEnd(slug(name).replace(/^[^a-z]+/, '').slice(0, 40))
   return entityKeyPattern.test(key) ? key : 'entity'
 }

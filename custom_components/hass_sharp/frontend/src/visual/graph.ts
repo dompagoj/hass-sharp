@@ -290,6 +290,11 @@ export function createGraphHistory(initial: VisualGraph) {
       setFuture([])
       setGraph(next)
     },
+    /** Puts `next` in place of the present graph without an undo step (what was saved, as the editor goes on with it). */
+    replace(next: VisualGraph) {
+      coalescing = undefined
+      setGraph(next)
+    },
     canUndo: () => past().length > 0,
     canRedo: () => future().length > 0,
     /**

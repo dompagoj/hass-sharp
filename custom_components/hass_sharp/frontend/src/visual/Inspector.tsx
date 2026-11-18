@@ -47,6 +47,11 @@ export interface InspectorProps {
   /** The overview's accessible name (default: an automation's). */
   overviewLabel?: string
   /**
+   * Where the panel is a sheet or floats, the title of a peek bar that opens the overview when nothing is selected.
+   * Without it (an automation's) nothing is shown there with nothing selected.
+   */
+  overviewPeek?: string
+  /**
    * Docked: a side panel beside the canvas, always shown, with the overview when nothing is selected. Otherwise
    * (below 900px, or floating over a full-screen canvas) it is a sheet in two stages: a peek bar naming the
    * selection, and the panel; `open` is then the page's choice of the panel (default: while something is selected,
@@ -78,7 +83,7 @@ export function Inspector(props: InspectorProps) {
   const [dismissed, setDismissed] = createSignal(false)
   // A new selection brings the sheet back.
   createEffect(on(() => [props.selected?.id, props.selectedEdgeId, ids().join(' ')], () => setDismissed(false), { defer: true }))
-  const hasContent = () => !!(props.selected || many() || edge())
+  const hasContent = () => !!(props.selected || many() || edge() || props.overviewPeek)
   // Docked, the panel is always there (the overview when nothing is selected).
   const open = () => !!props.docked || (props.open === undefined ? hasContent() && !dismissed() : props.open && hasContent())
   const peek = () => !props.docked && hasContent() && !open()
@@ -201,7 +206,9 @@ export function Inspector(props: InspectorProps) {
       if (many()) return `${ids().length} steps selected`
       const current = node()
       if (current) return nodeTitle(current, props.catalog)
-      return edge()?.kind === 'data' ? 'Value wire' : 'Flow wire'
+      const wire = edge()
+      if (!wire && props.overviewPeek) return props.overviewPeek
+      return wire?.kind === 'data' ? 'Value wire' : 'Flow wire'
     }
     const line = () => {
       const current = node(), wire = edge()
@@ -217,7 +224,7 @@ export function Inspector(props: InspectorProps) {
       setDismissed(false)
     }
     return (
-      <SheetPeek title={title()} line={line()} icon={identity()?.icon ?? (many() ? icons.flow : icons.data)} color={identity()?.color} verb="Edit" onOpen={expand} />
+      <SheetPeek title={title()} line={line()} icon={identity()?.icon ?? (many() ? icons.flow : !edge() && props.overviewPeek ? icons.entity : icons.data)} color={identity()?.color} verb="Edit" onOpen={expand} />
     )
   }
 

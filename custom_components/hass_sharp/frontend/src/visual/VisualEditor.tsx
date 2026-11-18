@@ -453,7 +453,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
         onOpenLibrary={props.onOpenLibrary} onEditCode={editCode}>
       <TopBar
         name={graph().name}
-        onRename={(name, options) => commit({ ...graph(), name }, options)}
+        onRename={(name, options) => commit(adapter.rename ? adapter.rename(graph(), name, { saved: !!session.document() }) : { ...graph(), name }, options)}
         onBack={props.onBack}
         backLabel={texts.back}
         nameLabel={texts.nameLabel}
@@ -546,6 +546,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
           lastRun={lastRun()}
           overview={select => adapter.overview?.(context(select))}
           overviewLabel={texts.overviewLabel}
+          overviewPeek={texts.overviewPeek}
           docked={!floating()}
           open={panelOpen()}
           onClose={() => setPanelOpen(false)}
@@ -575,7 +576,8 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
             id: 'code',
             label: 'Generated C#',
             content: () => (
-              <CodePanel graph={graph()} preview={session.preview()} previewError={session.previewError()} onRetry={session.retryPreview}
+              // The graph as a draft keeps it: a definition's typed secrets are not shown here either.
+              <CodePanel graph={adapter.draft ? adapter.draft(graph()) : graph()} preview={session.preview()} previewError={session.previewError()} onRetry={session.retryPreview}
                 view={codeView()} onViewChange={setCodeView} sourceLine={sourceLine()} selectedId={selectedId()}
                 onSelectLine={(line, nodeId) => {
                   // The line's step; a line of the shared C# belongs to none.

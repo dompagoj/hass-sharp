@@ -416,9 +416,12 @@ export function createVisualSession<D extends EditorDocument = VisualDocument>(
   }
   const saved = (result: EditorSaveResult<D>, snapshot: VisualGraph) => {
     const before = draftKey
+    // What the editor goes on with: the graph sent, unless the adapter says what it now stands for.
+    const kept = adapter.savedGraph ? adapter.savedGraph(snapshot, result.document) : snapshot
     batch(() => {
+      if (kept !== snapshot && serializeGraph(history.graph()) === serializeGraph(snapshot)) history.replace(kept)
       setDocument(() => result.document)
-      setBaseline(serializeGraph(snapshot))
+      setBaseline(serializeGraph(kept))
       setConflict(false)
       setConflictDraft(undefined)
       setActivationError(

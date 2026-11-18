@@ -8,6 +8,7 @@ import { HassCtx } from './context'
 import { AutomationsListView } from './views/AutomationsListView'
 import { VisualAutomationView } from './views/VisualAutomationView'
 import { RunTraceView } from './views/RunTraceView'
+import { EntityDefinitionView } from './views/EntityDefinitionView'
 import { findCustomComponent } from './utils'
 import { lazyView } from './components/LazyLoad'
 
@@ -46,6 +47,7 @@ function App(props: { hass: HomeAssistant }) {
           <Route path="/libraries" component={NodeLibraryView} />
           <Route path="/devices" component={TODOView} />
           <Route path="/entities" component={TODOView} />
+          <Route path="/entities/:id" component={EntityDefinitionView} />
         </Router>
       </HassCtx.Provider>
     </QueryClientProvider>

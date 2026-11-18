@@ -40,6 +40,9 @@ export class EntityApiError extends VisualApiError {
           : `Entity definition request failed (${code}).`
   }
 }
+/** The query key of every list of entity definitions (the entities page's): a save, a switch or a delete makes them stale. */
+export const definitionsQueryKey = ['entity-definitions'] as const
+
 /** What to tell the user about a failed request: as `visualError` does for automations. */
 export const entityError = visualError
 

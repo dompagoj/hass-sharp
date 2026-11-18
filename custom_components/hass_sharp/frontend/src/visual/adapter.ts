@@ -78,6 +78,11 @@ export interface EditorTexts {
   conflictDraft(time: string): string
   /** What "Save as a copy" makes, in "saves them as …, turned off" ("a new automation"). */
   copyNoun: string
+  /**
+   * The title of the bar that opens the overview where the inspector is a sheet and nothing is selected. Without it
+   * (an automation) the overview is not offered there.
+   */
+  overviewPeek?: string
 }
 
 /**
@@ -138,6 +143,13 @@ export interface EditorAdapter<D extends EditorDocument = EditorDocument> {
   initialSelection?: string
   /** The graph as a draft keeps it in this browser, and as Export graph downloads it (an entity definition drops its secret values). */
   draft?(graph: VisualGraph): VisualGraph
+  /**
+   * The graph the editor goes on with once `sent` has been saved as `document`, in its place and without an undo step
+   * (an entity definition's typed secrets become saved ones). Without it, `sent`.
+   */
+  savedGraph?(sent: VisualGraph, document: D): VisualGraph
+  /** The graph renamed to `name` from the name field (an entity definition's first entity follows its name). Without it, only `name` changes. */
+  rename?(graph: VisualGraph, name: string, state: { saved: boolean }): VisualGraph
   listHref: string
   editorHref(id: string): string
   runHref(id: string, runId: string): string

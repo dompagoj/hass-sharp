@@ -1,0 +1,45 @@
+/* Entity definitions: the definition form in the editor's inspector (≈320px beside the canvas, or the narrow layout's
+   sheet) and the class definition's page. Colours from tokens.css only, so both colour schemes follow the theme. */
+.hs-app .hs-def { display: grid; gap: 20px; min-width: 0; }
+.hs-app .hs-def-section { display: grid; gap: 10px; min-width: 0; }
+.hs-app .hs-def-rows { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; min-width: 0; }
+.hs-app .hs-def-row { display: grid; min-width: 0; border: 1px solid var(--hs-line); border-radius: 8px; background: var(--hs-surface); }
+.hs-app .hs-def-row--problem { border-color: color-mix(in oklab, var(--hs-danger) 45%, var(--hs-line)); }
+.hs-app .hs-def-row__head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px 10px; border: 0; border-radius: 8px; background: none; color: var(--hs-text); font: inherit; text-align: left; cursor: pointer; }
+.hs-app .hs-def-row__head:hover { background: var(--hs-soft); }
+.hs-app .hs-def-row__head[aria-expanded="true"] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.hs-app .hs-def-row__icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: var(--hs-cat-entity); background: color-mix(in oklab, var(--hs-cat-entity) 14%, var(--hs-surface)); }
+.hs-app .hs-def-row__title { display: grid; min-width: 0; }
+.hs-app .hs-def-row__title > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-def-row__title strong { font-weight: 650; }
+.hs-app .hs-def-row__title small { color: var(--hs-muted); font-size: 12px; }
+.hs-app .hs-def-row__mark { display: inline-grid; color: var(--hs-danger); }
+.hs-app .hs-def-row__id { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; padding: 0 10px 8px 48px; min-width: 0; color: var(--hs-muted); font-size: 12px; }
+.hs-app .hs-def-row__id code { overflow-wrap: anywhere; color: var(--hs-text); }
+.hs-app .hs-def-row__show { min-height: 28px; padding: 2px 8px; }
+.hs-app .hs-def-row__body { display: grid; gap: 12px; min-width: 0; padding: 12px 10px; border-top: 1px solid var(--hs-line); }
+.hs-app .hs-def-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.hs-app .hs-def-actions .hs-button { min-height: 36px; padding: 6px 12px; }
+.hs-app .hs-def-device { display: grid; gap: 12px; min-width: 0; }
+.hs-app .hs-def-field textarea.hs-input { resize: vertical; }
+.hs-app .hs-def-secret { display: flex; gap: 8px; min-width: 0; }
+.hs-app .hs-def-secret > .hs-input { flex: 1; }
+.hs-app .hs-def-secret > .hs-button { flex: none; }
+.hs-app .hs-def-errors { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.hs-app .hs-def-problems { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.hs-app .hs-def-problems__item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px; border: 1px solid color-mix(in oklab, var(--hs-danger) 40%, var(--hs-line)); border-radius: 8px; background: color-mix(in oklab, var(--hs-danger) 8%, var(--hs-surface)); }
+.hs-app .hs-def-problems__item .hs-insp-glyph { color: var(--hs-danger); margin-top: 2px; }
+.hs-app .hs-def-problems__item--warning { border-color: color-mix(in oklab, var(--hs-warning) 45%, var(--hs-line)); background: color-mix(in oklab, var(--hs-warning) 9%, var(--hs-surface)); }
+.hs-app .hs-def-problems__item--warning .hs-insp-glyph { color: var(--hs-warning); }
+.hs-app .hs-def-delete { display: grid; gap: 4px; justify-items: start; padding-top: 12px; border-top: 1px solid var(--hs-line); }
+.hs-app .hs-def-class { display: grid; gap: 12px; }
+
+@media (max-width: 699px) {
+  /* The sheet: rows use its full width; touch targets stay 44px high. */
+  .hs-app .hs-def-row__head { min-height: 52px; }
+  .hs-app .hs-def-row__id { padding-left: 10px; }
+  .hs-app .hs-def-actions .hs-button { min-height: 44px; }
+}
+@media (forced-colors: active) {
+  .hs-app .hs-def-row, .hs-app .hs-def-problems__item { border-color: CanvasText; }
+}
