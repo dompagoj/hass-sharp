@@ -385,3 +385,73 @@ it('reads the newest runs again every 2 s for a minute, then every 15 s while on
     expect(runHistoryInterval('automation-2', [])).toBe(false)
   } finally { forgetAcceptedRun('automation-1') }
 })
+
+// An entity definition's runs: a command to one of its entities, or the definition starting.
+const commandTrigger = { kind: 'command', entity: 'relay', command: 'turn_on' } as const
+const setupTrigger = { kind: 'setup' } as const
+/** The run list as an entity definition's editor shows it: in its words, naming its entities and their commands. */
+function setupDefinition(callWS: (message: any) => Promise<any>, props: Partial<Parameters<typeof AutomationRuns>[0]> = {}) {
+  const root = document.createElement('div'); document.body.append(root)
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const history = createMemoryHistory()
+  history.set({ value: '/entities/plug' })
+  dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={{ callWS, user: { is_admin: true } } as any}>
+    <MemoryRouter history={history}><Route path="*" component={() => <AutomationRuns automationId="entity:plug" {...props} />} /></MemoryRouter>
+  </HassCtx.Provider></QueryClientProvider>, root)
+  return { root }
+}
+const plugNames = {
+  entities: [{ key: 'relay', domain: 'switch', name: 'Main relay' }, { key: 'power', domain: 'sensor', name: null }],
+  domains: { switch: { label: 'Switch', state: {}, options: {}, commands: { turn_on: { label: 'Turn on' }, turn_off: { label: 'Turn off' } } } },
+}
+
+it('summarises a command run by its entity and command, named when the definition is known, and a setup run', () => {
+  // Without the definition: the key, and the command with its underscores as spaces.
+  expect(summarizeTrigger(commandTrigger)).toBe('relay: turn on')
+  expect(summarizeTrigger(setupTrigger)).toBe('Definition started')
+  // With it: the entity's name, and the command's label from its type.
+  expect(summarizeTrigger(commandTrigger, plugNames)).toBe('Main relay: Turn on')
+  // An entity with no name of its own, or of a type whose commands are not described, falls back as before.
+  expect(summarizeTrigger({ kind: 'command', entity: 'power', command: 'reset_energy' }, plugNames)).toBe('power: reset energy')
+  expect(summarizeTrigger({ kind: 'command', entity: 'gone', command: 'turn_off' }, plugNames)).toBe('gone: turn off')
+})
+
+it('labels a definition\'s Command and Setup causes, and words its empty state and revision for the definition', async () => {
+  let runs: unknown[] = []
+  const { root } = setupDefinition(async () => page(runs), {
+    emptyHint: 'Runs appear here when one of its entities is commanded, when it starts, or when a trigger with run history fires.',
+    revisionLabel: 'Revision', triggerNames: plugNames,
+    runHref: run => `/entities/${run.visualId}/runs/${run.runId}`,
+  })
+  await vi.waitFor(() => expect(root.textContent).toContain('No runs yet'))
+  expect(root.textContent).toContain('Runs appear here when one of its entities is commanded, when it starts, or when a trigger with run history fires.')
+  expect(root.textContent).not.toContain('Run it now')
+  dispose(); document.body.innerHTML = ''
+  runs = [
+    record({ runId: 'run-2', automationId: 'entity:plug', visualId: 'plug', cause: 'Command', trigger: commandTrigger, actionLabel: 'When commanded ▸ Main relay: Turn on' }),
+    record({ runId: 'run-1', automationId: 'entity:plug', visualId: 'plug', cause: 'Setup', trigger: setupTrigger, actionLabel: 'When started' }),
+  ]
+  const again = setupDefinition(async () => page(runs), { revisionLabel: 'Revision', triggerNames: plugNames, runHref: run => `/entities/${run.visualId}/runs/${run.runId}` })
+  await vi.waitFor(() => expect(rows(again.root)).toHaveLength(2))
+  expect(rows(again.root)[0].querySelector('.hs-run-cause')!.textContent).toBe('Command · Main relay: Turn on')
+  expect(rows(again.root)[1].querySelector('.hs-run-cause')!.textContent).toBe('Started · Definition started')
+  expect(rows(again.root)[0].querySelector('a.hs-run-trace')!.getAttribute('href')).toBe('/entities/plug/runs/run-2')
+  toggle(rows(again.root)[0]).click()
+  await vi.waitFor(() => expect(rows(again.root)[0].querySelector('.hs-run-body')).not.toBeNull())
+  const body = rows(again.root)[0].querySelector('.hs-run-body')!
+  expect(body.querySelector('.hs-trigger-headline')!.textContent).toBe('Main relay: Turn on')
+  expect([...body.querySelectorAll('dt')].map(dt => dt.textContent)).toContain('Revision')
+  expect(body.textContent).not.toContain('Automation revision')
+  // The trigger's own fields: the entity's key and the command, as recorded.
+  expect(body.querySelector('.hs-trigger-summary')!.textContent).toContain('relay')
+  expect(body.querySelector('.hs-trigger-summary')!.textContent).toContain('turn_on')
+})
+
+it('labels the two causes in an automation\'s list too, without the definition\'s names', async () => {
+  const { root } = setup(async () => page([
+    record({ runId: 'run-2', cause: 'Command', trigger: commandTrigger }), record({ runId: 'run-1', cause: 'Setup', trigger: setupTrigger }),
+  ]))
+  await vi.waitFor(() => expect(rows(root)).toHaveLength(2))
+  expect(rows(root)[0].querySelector('.hs-run-cause')!.textContent).toBe('Command · relay: turn on')
+  expect(rows(root)[1].querySelector('.hs-run-cause')!.textContent).toBe('Started · Definition started')
+})

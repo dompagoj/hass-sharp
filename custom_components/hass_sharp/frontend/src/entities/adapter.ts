@@ -33,6 +33,15 @@ export const entityTexts: EditorTexts = {
   conflictDraft: time => `Your unsaved changes from ${time} were made before this entity definition was saved again somewhere else.`,
   copyNoun: 'a new entity definition',
   overviewPeek: 'Entities, device and settings',
+  runsNone: 'Runs appear here when one of its entities is commanded, when it starts, or when a trigger with run history fires.',
+  runRevision: 'Revision',
+  traceBack: 'Back to the entity definition’s runs',
+  traceUntitled: 'Entity definition run',
+  traceEarlier: 'The canvas shows the entity definition as it was for this run, not as it is now.',
+  traceMissing: 'The entity definition as it was for this run is no longer stored. Its summary is below.',
+  traceNoRecord: 'No step-by-step record was kept for this run (records are kept for the newest 1,000 runs). The canvas shows the entity definition as it was for this run.',
+  traceForeign: 'This run is not one of this entity definition’s runs.',
+  traceDeleted: 'This entity definition no longer exists.',
 }
 
 /** The code of the error `read` throws for a definition built from a class, which this editor does not edit. */

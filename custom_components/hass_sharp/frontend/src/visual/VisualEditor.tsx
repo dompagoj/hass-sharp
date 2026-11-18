@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/solid-query'
 import { Button } from '../components/Controls'
 import type { MenuItem } from '../components/Menu'
 import { AutomationRuns } from '../components/AutomationRuns'
+import { definitionNames } from '../components/TriggerSummary'
 import { Dialog } from '../components/Dialog'
 import { useEntities } from '../entities'
 import { useHass } from '../context'
@@ -612,7 +613,8 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
             lazy: true,
             content: () => (
               <Show when={session.document()} fallback={<p class="hs-drawer__empty">{texts.runsEmpty}</p>}>
-                {doc => <AutomationRuns automationId={doc().automationId} runHref={run => adapter.runHref(run.visualId ?? doc().id, run.runId)} />}
+                {doc => <AutomationRuns automationId={doc().automationId} runHref={run => adapter.runHref(run.visualId ?? doc().id, run.runId)}
+                  emptyHint={texts.runsNone} revisionLabel={texts.runRevision} triggerNames={definitionNames(doc().graph, session.catalog())} />}
               </Show>
             ),
           },
@@ -672,7 +674,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
       {/* Inside the page root, so it also covers the full-screen editor. */}
       <Show when={codeNode() && codeNodeId()} keyed>
         {id => (
-          <CustomCodeEditor node={codeNode()!} catalog={session.catalog()} draft={untrack(codeRestore)}
+          <CustomCodeEditor node={codeNode()!} catalog={session.catalog()} document={adapter.document} draft={untrack(codeRestore)}
             onDirtyChange={(changed, source) => {
               // Torn down with the page (its node still open in it, not closed): the unapplied code stays counted, so
               // the page's draft keeps it.

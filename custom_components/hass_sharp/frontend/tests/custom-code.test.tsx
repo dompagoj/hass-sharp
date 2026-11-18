@@ -676,3 +676,17 @@ it('keeps unapplied code in the draft of a panel torn down, and opens it in the 
   await vi.waitFor(() => expect(dirty.at(-1)).toBe(true))
   expect(graphOf(host).nodes.find(n => n.id === 'code')!.config.source).toBe(template)
 })
+
+it('words the help\'s note on services for an entity definition when the code is one of its steps', async () => {
+  const fixture = visualFixture({ catalog })
+  const node = sample().nodes.find(n => n.id === 'code')!
+  dispose = render(() => <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <HassCtx.Provider value={{ ...fixture, user: { is_admin: true } } as any}>
+      <CustomCodeEditor node={node} catalog={catalog} document="entity" onApply={() => {}} onClose={() => {}} />
+    </HassCtx.Provider></QueryClientProvider>, root())
+  await vi.waitFor(() => expect(dialog()?.open).toBe(true))
+  button(dialog()!, 'How to write a node')!.click()
+  const help = [...dialog()!.querySelectorAll('dialog')].find(d => d.open)!
+  expect(help.textContent).toContain('If a service goes away, code that calls it stops compiling at its next compile; what is already running keeps running.')
+  expect(help.textContent).not.toContain('automation')
+})

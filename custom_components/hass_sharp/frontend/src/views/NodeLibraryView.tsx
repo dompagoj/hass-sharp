@@ -1,5 +1,5 @@
-import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js'
-import { useBeforeLeave, useSearchParams } from '@solidjs/router'
+import { createEffect, createSignal, For, onCleanup, Show, useContext } from 'solid-js'
+import { A, RouterContext, useBeforeLeave, useSearchParams } from '@solidjs/router'
 import { useHass } from '../context'
 import { Button, Icon } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
@@ -7,7 +7,7 @@ import { Editor } from '../components/Editor/Editor'
 import { libraryApi, type LibraryDefinition, type LibraryRange } from '../visual/library-api'
 import { createLibrarySession } from '../visual/library-session'
 import { LibraryPreview } from '../visual/LibraryPreview'
-import { errorWarningCounts } from '../utils'
+import { errorWarningCounts, plural } from '../utils'
 
 export const NodeLibraryView = () => {
   const [dirty, setDirty] = createSignal(false)
@@ -24,6 +24,11 @@ export const NodeLibraryView = () => {
       <Button onClick={() => setLeave(undefined)}>Keep editing</Button><Button variant="danger" onClick={() => { const retry = leave(); setLeave(undefined); retry?.() }}>Discard changes</Button>
     </>}><p>Leaving discards unsaved changes in all library files. Save them or download your drafts first.</p></Dialog>
   </>
+}
+/** An entity definition by its name, linked to its page where the page has the panel's router. */
+const DefinitionName = (props: { id: string; name?: string | null }) => {
+  const routed = !!useContext(RouterContext)
+  return <Show when={routed} fallback={props.name || props.id}><A href={`/entities/${encodeURIComponent(props.id)}`}>{props.name || props.id}</A></Show>
 }
 interface LibraryWorkspaceProps {
   onDirtyChange?: (dirty: boolean) => void
@@ -79,9 +84,23 @@ const LibraryWorkspace = (props: LibraryWorkspaceProps) => {
     <Show when={missing()}><p class="hs-notice" role="status">The library file to open is not there; it may have been renamed or deleted.</p></Show>
     <Show when={session.conflict() && !session.error()}><div class="hs-notice hs-notice--danger" role="alert">This saved file changed elsewhere. Your draft and original revision are preserved. Download your drafts, then reload to resolve the conflict. <Button onClick={() => setConfirm('reload')}>Reload selected file</Button></div></Show>
     <Show when={session.error()}><div class="hs-notice hs-notice--danger" role="alert">{session.error()} <Show when={session.conflict()}>Your draft is preserved. Download it before reloading.</Show><Button onClick={() => setConfirm('reload')}>Reload selected file</Button><Button onClick={() => void session.refresh()}>Refresh file list</Button></div></Show>
+    {/* A refused save or delete: the entity definitions it would break, each by its first error (all of them are under Workspace diagnostics). */}
+    <Show when={session.error() && session.blockingDefinitions().length}><section class="hs-library-activations" aria-label="Entity definitions this would break">
+      <For each={session.blockingDefinitions()}>{definition => {
+        const reason = () => (definition.diagnostics.find(d => d.severity === 3) ?? definition.diagnostics[0])?.message
+        return <p class="hs-notice hs-notice--danger"><DefinitionName id={definition.id} name={definition.name} /><Show when={reason()}>: {reason()}</Show></p>
+      }}</For>
+    </section></Show>
     <Show when={session.activations().length || session.notRebuilt().length}><section class="hs-library-activations" aria-label="Dependent automations"><For each={session.activations()}>{activation => <p class={activation.active ? 'hs-notice' : 'hs-notice hs-notice--danger'} role={activation.active ? 'status' : 'alert'}>{activation.document?.graph?.name || activation.id}: {activation.active ? 'Saved and active' : `Saved; activation failed: ${activation.activationError ?? 'current revision is not active'}`}</p>}</For>
       {/* Those that already had errors were left as they were: say so, or the person never learns they were not rebuilt. */}
       <For each={session.notRebuilt()}>{automation => <p class="hs-notice hs-notice--danger" role="alert">{automation.name || automation.id}: {automation.message}</p>}</For></section></Show>
+    {/* The entity definitions that use the libraries, alike: how many were rebuilt, and each that did not start or was left as it was. */}
+    <Show when={session.definitions().length || session.definitionsNotRebuilt().length}><section class="hs-library-activations" aria-label="Dependent entity definitions">
+      <Show when={session.definitions().length}><p class="hs-notice" role="status">{plural(session.definitions().length, 'entity definition')} rebuilt</p></Show>
+      <For each={session.definitions().filter(definition => !definition.active)}>{definition => <p class="hs-notice hs-notice--danger" role="alert">
+        <DefinitionName id={definition.id} name={definition.document?.name} />: Saved; activation failed: {definition.activationError ?? 'current revision is not active'}</p>}</For>
+      <For each={session.definitionsNotRebuilt()}>{definition => <p class="hs-notice hs-notice--danger" role="alert"><DefinitionName id={definition.id} name={definition.name} />: {definition.message}</p>}</For>
+    </section></Show>
     <Show when={session.loading()}><p role="status">Loading library files…</p></Show>
     <div class="hs-library-layout">
       <aside class="hs-library-files" aria-label="Library files"><h2>Files</h2><ul><For each={session.files()}>{file => <li><button type="button" classList={{ 'hs-library-file--selected': file.id === session.selectedId() }} aria-current={file.id === session.selectedId() ? 'page' : undefined} onClick={() => session.select(file.id)}>
@@ -106,6 +125,7 @@ const LibraryWorkspace = (props: LibraryWorkspaceProps) => {
       <ul><For each={session.workspace()}>{entry => {
         const mark = entry.severity === 3 ? 'Error' : 'Warning'
         if (entry.kind === 'automation') return <li>{mark} · {entry.automation}{entry.diagnostic.step ? ` · ${entry.diagnostic.step}` : ''}: {entry.diagnostic.message}</li>
+        if (entry.kind === 'definition') return <li>{mark} · {entry.definition}: {entry.diagnostic.message}</li>
         const d = entry.diagnostic
         return <li><button type="button" onClick={() => locate({ id: d.sourceId, range: { start: 0, length: 0, startLine: d.startLine, startColumn: d.startColumn, endLine: d.endLine, endColumn: d.endColumn } })}>{mark} · {session.files().find(f => f.id === d.sourceId)?.name ?? d.sourceId} {d.startLine}:{d.startColumn} · {d.message}</button></li>
       }}</For></ul>

@@ -3,7 +3,10 @@ import { render } from 'solid-js/web'
 import { createMemoryHistory, MemoryRouter, Route } from '@solidjs/router'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
-import { RunTraceView } from '../src/views/RunTraceView'
+import { EntityRunTraceView, RunTraceView } from '../src/views/RunTraceView'
+import { AppRoutes } from '../src/App'
+import type { DefinitionBody } from '../src/entities/model'
+import { visualFixture } from './visual-fixture'
 import { nodeCatalog, type Graph } from '../src/visual/contract'
 import { addNode, connectNodes, createGraph, updateNode } from '../src/visual/graph'
 import type { RunTrace, RunTraceResponse, TraceEvent } from '../src/types'
@@ -613,4 +616,175 @@ it('reads an empty value (null) as "Not set" in the muted style in the trigger d
   expect(value.textContent).toBe('Not set')
   expect(value.classList).toContain('hs-trace-value--muted')
   expect(root.querySelector('.hs-trace-page, .hs-visual')?.textContent ?? root.textContent).not.toMatch(/\bnull\b/)
+})
+
+const button = (root: Element, name: string) => {
+  const found = [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === name)
+  expect(found, name).toBeDefined()
+  return found!
+}
+
+// ---- An entity definition's run, at /entities/:id/runs/:runId: the definition is read through the entity API.
+
+/** The plug as stored: a secret password, a relay and a power sensor; When commanded turn_on logs the password's step. */
+const plugBody = (): DefinitionBody => ({
+  name: 'Plug', device: null,
+  settings: [{ key: 'host', label: 'Host', type: 'string', value: '10.0.0.7' }, { key: 'password', label: 'Password', type: 'string', secret: true, value: 'stored-secret' }],
+  entities: [{ key: 'relay', domain: 'switch', name: 'Main relay' }, { key: 'power', domain: 'sensor', name: 'Power' }],
+  logic: { kind: 'graph', graph: plugGraph() },
+})
+function plugGraph(): Graph {
+  return { version: 5, name: 'Plug',
+    nodes: [
+      { id: 'on', kind: 'entity_command', config: { entity: 'relay', command: 'turn_on' }, position: { x: 60, y: 100 } },
+      { id: 'set', kind: 'set_entity_state', config: { entity: 'relay', is_on: lit('boolean', true) }, position: { x: 400, y: 100 } },
+      { id: 'pw', kind: 'setting', config: { key: 'password' }, position: { x: 400, y: 300 } },
+      { id: 'say', kind: 'log', config: { value: { kind: 'unset' } }, position: { x: 700, y: 100 } },
+    ],
+    edges: [
+      { id: 'on->set', kind: 'execution', source: 'on', sourcePort: 'next', target: 'set', targetPort: 'in' },
+      { id: 'set->say', kind: 'execution', source: 'set', sourcePort: 'next', target: 'say', targetPort: 'in' },
+      { id: 'pw.value:say.value', kind: 'data', source: 'pw', sourcePort: 'value', target: 'say', targetPort: 'value' },
+    ] } as unknown as Graph
+}
+/** The graph a definition's run stores: its logic graph with the definition composed in (settings by key and type only). */
+const storedGraph = (entities = plugBody().entities!) => ({ ...plugGraph(), definition: { entities, settings: [{ key: 'host', type: 'string' }, { key: 'password', type: 'string' }] } }) as unknown as Graph
+function definitionResponse(overrides: Partial<RunTraceResponse> = {}): RunTraceResponse {
+  const list: TraceEvent[] = [
+    { seq: 1, node: 'on', frame: '', t: 0, ms: 1, status: 'ok', port: 'next' },
+    { seq: 2, node: 'set', frame: '', t: 1, ms: 1, status: 'ok', port: 'next', inputs: { is_on: { type: 'boolean', v: true } } },
+    // The recorder hides a setting step's value (it may be secret).
+    { seq: 3, node: 'say', frame: '', t: 2, ms: 1, status: 'ok', port: 'next', inputs: { value: { type: 'string', v: '***', redacted: true, src: { node: 'pw', port: 'value' } } } },
+  ]
+  const summary: RunTrace['summary'] = {}
+  for (const event of list) { const row = (summary[event.node] ??= { count: 0, failed: 0, last: 'ok' }); row.count++; row.last = event.status }
+  return {
+    version: 1, live: false,
+    run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'on', cause: 'Command', actionLabel: 'When commanded ▸ Main relay: Turn on', trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }),
+    snapshot: { revision: 'rev', visualId: 'plug', visualRevision: 1, graph: storedGraph(), catalog: nodeCatalog },
+    trace: { format: 1, runId: 'run-7', rootNodeId: 'on', startedUtc: '2026-11-12T01:00:01Z', complete: true, truncated: false, dropped: 0, trigger: { platform: 'command', entity: 'relay', command: 'turn_on' }, events: list, summary },
+    ...overrides,
+  }
+}
+function mountDefinition(trace: (message: any) => Promise<unknown>, options: { path?: string; prepare?: (fixture: ReturnType<typeof visualFixture>) => void; app?: boolean } = {}) {
+  layout()
+  const fixture = visualFixture()
+  fixture.entities.seed('plug', plugBody())
+  options.prepare?.(fixture)
+  const root = document.createElement('div'); root.className = 'hs-app'; document.body.append(root)
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const history = createMemoryHistory()
+  history.set({ value: options.path ?? '/entities/plug/runs/run-7' })
+  const callWS = vi.fn(async (message: any) => {
+    if (message.type === 'hass_sharp/run_trace') return trace(message)
+    if (message.type === 'hass_sharp/entities') return fixture.callWS(message)
+    if (message.type === 'hass_sharp/visual') throw new Error('An entity definition is not read through the automations API')
+    return []
+  })
+  dispose = render(() => (
+    <QueryClientProvider client={client!}>
+      <HassCtx.Provider value={{ callWS, user: { is_admin: true } } as any}>
+        <MemoryRouter history={history}>
+          {options.app ? <AppRoutes /> : <>
+            <Route path="/entities/:id/runs/:runId" component={EntityRunTraceView} />
+            <Route path="/entities/:id" component={() => <p class="editor-page">Editor page</p>} />
+            <Route path="/entities" component={() => <h1>Entities</h1>} />
+          </>}
+        </MemoryRouter>
+      </HassCtx.Provider>
+    </QueryClientProvider>
+  ), root)
+  return { root, callWS, history, fixture }
+}
+
+it('shows a definition\'s run on its own graph, its entity steps by name, and goes back to the definition\'s Runs tab', async () => {
+  const { root, callWS, history, fixture } = mountDefinition(async () => definitionResponse())
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
+  expect(root.querySelector('h1')!.textContent).toBe('Plug')
+  // The entity steps name the definition's entities, as the editor does.
+  expect(card(root, 'on').textContent).toContain('Main relay')
+  expect(card(root, 'set').textContent).toContain('Main relay')
+  expect(root.querySelector('.hs-trace-strip')!.textContent).toContain('When commanded ▸ Main relay: Turn on · Main relay: Turn on')
+  expect(root.querySelector<HTMLAnchorElement>('a.hs-trace-open')!.getAttribute('href')).toBe('/entities/plug')
+  await vi.waitFor(() => expect(fixture.entities.requests.some(r => r.operation === 'read' && r.id === 'plug')).toBe(true))
+  expect(callWS.mock.calls.some(([message]) => message.type === 'hass_sharp/visual')).toBe(false)
+  // The overview names the command too.
+  expect(panel(root).textContent).toContain('Main relay: Turn on')
+  // Nothing on the page is worded for an automation.
+  expect(['automation', 'Automation', '/visual/'].filter(word => root.innerHTML.includes(word))).toEqual([])
+  const back = root.querySelector<HTMLButtonElement>('[aria-label="Back to the entity definition’s runs"]')!
+  expect(back).not.toBeNull()
+  back.click()
+  await vi.waitFor(() => expect(history.get()).toBe('/entities/plug?drawer=runs'))
+})
+
+it('routes a definition\'s run address to its trace page in the panel', async () => {
+  const { root } = mountDefinition(async () => definitionResponse(), { app: true })
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
+  expect(root.querySelector<HTMLAnchorElement>('a.hs-trace-open')!.getAttribute('href')).toBe('/entities/plug')
+})
+
+it('says a definition\'s run used an earlier version once the definition changed, in the definition\'s words', async () => {
+  const { root } = mountDefinition(async () => definitionResponse(), { prepare: fixture => {
+    const stored = fixture.entities.documents.get('plug')!
+    fixture.entities.documents.set('plug', { ...stored, revision: 3, entities: [{ key: 'relay', domain: 'switch', name: 'Renamed relay' }, stored.entities![1]] })
+  } })
+  await vi.waitFor(() => expect(root.textContent).toContain('This run used an earlier version.'))
+  expect(root.querySelector('.hs-trace-strip__note[title]')!.getAttribute('title')).toBe('The canvas shows the entity definition as it was for this run, not as it is now.')
+  // The canvas is the run's own: the entity as it was named then.
+  expect(card(root, 'on').textContent).toContain('Main relay')
+  expect(root.textContent).not.toContain('Renamed relay')
+})
+
+it('words a definition\'s run without a trace, or without its graph, for the definition', async () => {
+  const { root } = mountDefinition(async () => definitionResponse({ trace: null }))
+  await vi.waitFor(() => expect(root.textContent).toContain('No step-by-step record was kept for this run (records are kept for the newest 1,000 runs). The canvas shows the entity definition as it was for this run.'))
+  dispose?.(); document.body.innerHTML = ''
+  const second = mountDefinition(async () => definitionResponse({ trace: null, snapshot: null }))
+  await vi.waitFor(() => expect(second.root.textContent).toContain('The entity definition as it was for this run is no longer stored. Its summary is below.'))
+  // Without the run's graph its entities' names are not known: the key and the command as recorded, in words.
+  expect(second.root.textContent).toContain('relay: turn on')
+})
+
+it('never shows a definition\'s secret setting value on its run\'s page', async () => {
+  const { root, fixture } = mountDefinition(async () => definitionResponse())
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
+  await vi.waitFor(() => expect(fixture.entities.requests.some(r => r.operation === 'read')).toBe(true))
+  // The step that read the password, chosen: its value is hidden by the recorder, and the page adds none.
+  steps(root)[2].click()
+  await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')).not.toBeNull())
+  card(root, 'pw').click()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(root.innerHTML).not.toContain('stored-secret')
+  expect(document.body.innerHTML).not.toContain('stored-secret')
+  expect(fixture.entities.documents.get('plug')!.settings[1].value).toBe('stored-secret')
+})
+
+it('shows the not-found state for a run of another definition, a definition that is gone, and one built from a class', async () => {
+  // A run that belongs to another definition (or an automation).
+  const foreign = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:lamp', visualId: 'lamp', cause: 'Setup', trigger: { kind: 'setup' } }) }))
+  await vi.waitFor(() => expect(foreign.root.textContent).toContain('This run is not one of this entity definition’s runs.'))
+  expect(foreign.root.querySelector('.hs-flow')).toBeNull()
+  expect(foreign.root.querySelector('[role="alert"] h2')!.textContent).toBe('This run couldn’t load')
+  button(foreign.root, 'Open in editor').click()
+  await vi.waitFor(() => expect(foreign.history.get()).toBe('/entities/plug'))
+  dispose?.(); document.body.innerHTML = ''
+  // The definition is gone (the run may still be stored).
+  const gone = mountDefinition(async () => definitionResponse(), { path: '/entities/gone/runs/run-7' })
+  await vi.waitFor(() => expect(gone.root.textContent).toContain('This entity definition no longer exists.'))
+  expect(gone.root.querySelector('.hs-flow')).toBeNull()
+  button(gone.root, 'Back to entities').click()
+  await vi.waitFor(() => expect(gone.history.get()).toBe('/entities'))
+  dispose?.(); document.body.innerHTML = ''
+  // A class's definition records no runs.
+  const lamp = mountDefinition(async () => { throw { code: 'not_found', message: 'Run run-7 was not found.' } }, { path: '/entities/lamp/runs/run-7', prepare: fixture => fixture.entities.seed('lamp', { name: 'Lamp', device: null, settings: [], entities: null, logic: { kind: 'class', type: 'library:lib:Lamp' } }) })
+  await vi.waitFor(() => expect(lamp.root.textContent).toContain('This entity definition is built from a class in a node library, not from steps.'))
+  button(lamp.root, 'Open in editor').click()
+  await vi.waitFor(() => expect(lamp.history.get()).toBe('/entities/lamp'))
+  dispose?.(); document.body.innerHTML = ''
+  // A run that cannot be read at all, of a definition that is there: the run's own error, and the way to the editor.
+  const missing = mountDefinition(async () => { throw { code: 'not_found', message: 'Run run-7 was not found.' } })
+  await vi.waitFor(() => expect(missing.root.textContent).toContain('Run run-7 was not found.'))
+  button(missing.root, 'Open in editor').click()
+  await vi.waitFor(() => expect(missing.history.get()).toBe('/entities/plug'))
 })

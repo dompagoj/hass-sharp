@@ -4,6 +4,8 @@ import { A, MemoryRouter, Route, createMemoryHistory } from '@solidjs/router'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
 import { EntityDefinitionView } from '../src/views/EntityDefinitionView'
+import { EntityRunTraceView } from '../src/views/RunTraceView'
+import { nodeCatalog } from '../src/visual/contract'
 import { newGraphDefinition, type DefinitionBody } from '../src/entities/model'
 import { visualFixture } from './visual-fixture'
 import { icons } from '../src/visual/icons'
@@ -783,4 +785,100 @@ it('shows a save refused with a setting\'s problem on its row, and the Problems 
   ;[...root.querySelectorAll<HTMLButtonElement>('.hs-problem__message')].find(b => b.textContent === 'Setting host is not a text')!.click()
   await vi.waitFor(() => expect(document.activeElement).toBe(control(settingRow(root, 'host'), 'key')))
   expect(inspector(root).querySelector('.hs-insp-node')).toBeNull()
+})
+
+// ---- The Runs tab: the definition's runs, in its words, each linked to its run's page under /entities.
+const runRecord = (overrides: Record<string, unknown>) => ({
+  runId: 'run-1', automationId: 'entity:plug', revision: 'rev-1', action: 'VisualAutomation::On', actionLabel: 'When commanded ▸ Relay: Turn on', triggerNodeId: 'on',
+  visualId: 'plug', visualRevision: 1, cause: 'Command', trigger: { kind: 'command', entity: 'relay', command: 'turn_on' }, plannedUtc: null,
+  receivedUtc: '2026-11-12T01:00:00Z', startUtc: '2026-11-12T01:00:01Z', endUtc: '2026-11-12T01:00:02Z', durationMs: 1000, status: 'Succeeded', error: null, hasTrace: true, ...overrides,
+})
+const plugRuns = () => [
+  runRecord({ runId: 'run-2' }),
+  runRecord({ runId: 'run-1', cause: 'Setup', trigger: { kind: 'setup' }, actionLabel: 'When started', triggerNodeId: 'start' }),
+]
+/** The plug's page with its run history answered from `runs` (by its run history key), and its runs' pages routed. */
+async function openPlugRuns(runs: () => unknown[], path = '/entities/plug?drawer=runs') {
+  const fixture = visualFixture()
+  fixture.entities.seed('plug', plugBody())
+  const inner = fixture.callWS
+  const history_: any[] = []
+  const callWS = async (message: any) => {
+    if (message.type === 'hass_sharp/get_entities') return structuredClone(registry)
+    if (message.type === 'hass_sharp/run_history') { history_.push(message); return { version: 2, offset: 0, limit: 20, runs: message.automationId === 'entity:plug' ? runs() : [] } }
+    if (message.type === 'hass_sharp/run_trace') {
+      const found = runs().find((r: any) => r.runId === message.runId) as any
+      if (!found) throw { code: 'not_found', message: `Run ${message.runId} was not found.` }
+      const stored = fixture.entities.documents.get('plug')!
+      return { version: 1, live: false, run: found, trace: null,
+        snapshot: { revision: 'rev-1', visualId: 'plug', visualRevision: 1, catalog: nodeCatalog,
+          graph: { ...structuredClone(stored.logic.graph), definition: { entities: structuredClone(stored.entities), settings: stored.settings.map(s => ({ key: s.key, type: s.type })) } } } }
+    }
+    return inner(message)
+  }
+  const hass = { ...fixture, callWS, user: { is_admin: true, id: 'u1' } }
+  const root = document.createElement('div')
+  root.className = 'hs-app'
+  document.body.append(root)
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const history = createMemoryHistory()
+  history.set({ value: path })
+  dispose = render(() => (
+    <QueryClientProvider client={client!}><HassCtx.Provider value={hass as any}>
+      <MemoryRouter history={history}>
+        <Route path="/entities/:id" component={EntityDefinitionView} />
+        <Route path="/entities/:id/runs/:runId" component={EntityRunTraceView} />
+        <Route path="/entities" component={() => <h1>Entities</h1>} />
+      </MemoryRouter>
+    </HassCtx.Provider></QueryClientProvider>
+  ), root)
+  await vi.waitFor(() => expect(root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
+  return { root, fixture, history, requests: history_ }
+}
+const card = (root: Element, id: string) => root.querySelector<HTMLElement>(`.solid-flow__node[data-id="${id}"]`)!
+const runRows = (root: Element) => [...root.querySelectorAll<HTMLLIElement>('.hs-run-row')]
+
+it('lists the definition\'s runs in its Runs tab: its causes, its entities and commands by name, and its own words', async () => {
+  const { root, requests } = await openPlugRuns(plugRuns)
+  await vi.waitFor(() => expect(runRows(root)).toHaveLength(2))
+  expect(requests[0]).toMatchObject({ type: 'hass_sharp/run_history', automationId: 'entity:plug' })
+  expect(runRows(root)[0].querySelector('.hs-run-cause')!.textContent).toBe('Command · Relay: Turn on')
+  expect(runRows(root)[1].querySelector('.hs-run-cause')!.textContent).toBe('Started · Definition started')
+  expect(runRows(root).map(row => row.querySelector('a.hs-run-trace')!.getAttribute('href'))).toEqual(['/entities/plug/runs/run-2', '/entities/plug/runs/run-1'])
+  expectClean(root)
+  // A run's details; its raw record keeps the backend's own field names (automationId) and is left out of the check.
+  runRows(root)[0].querySelector<HTMLButtonElement>('.hs-run-toggle')!.click()
+  await vi.waitFor(() => expect(runRows(root)[0].querySelector('.hs-run-body')).not.toBeNull())
+  expect([...runRows(root)[0].querySelectorAll('dt')].map(dt => dt.textContent)).toContain('Revision')
+  expect(runRows(root)[0].querySelector('.hs-trigger-headline')!.textContent).toBe('Relay: Turn on')
+  runRows(root)[0].querySelector('.hs-run-raw')!.remove()
+  expectClean(root)
+})
+
+it('says when a saved definition\'s runs appear, in its Runs tab with none yet', async () => {
+  const { root } = await openPlugRuns(() => [])
+  await vi.waitFor(() => expect(root.textContent).toContain('No runs yet'))
+  expect(root.textContent).toContain('Runs appear here when one of its entities is commanded, when it starts, or when a trigger with run history fires.')
+  expectClean(root)
+})
+
+it('opens a run of the definition on its run page and comes back to its Runs tab, with no secret on the way, typed or stored', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const { root, history } = await openPlugRuns(plugRuns)
+  // A replacement password typed, not saved: the page is left without it.
+  type(control(expand(settingRow(root, 'password')), 'value'), 'typed-secret')
+  await vi.advanceTimersByTimeAsync(600)
+  await vi.waitFor(() => expect(runRows(root)).toHaveLength(2))
+  runRows(root)[0].querySelector<HTMLAnchorElement>('a.hs-run-trace')!.click()
+  await vi.waitFor(() => expect(document.querySelector('dialog[open]')?.textContent).toContain('Unsaved changes'))
+  button(document.querySelector('dialog[open]')!, 'Discard changes').click()
+  await vi.waitFor(() => expect(history.get()).toBe('/entities/plug/runs/run-2'))
+  await vi.waitFor(() => expect(root.querySelector('a.hs-trace-open')).not.toBeNull())
+  expect(root.querySelector('a.hs-trace-open')!.getAttribute('href')).toBe('/entities/plug')
+  expect(card(root, 'on').textContent).toContain('Relay')
+  for (const secret of ['typed-secret', 'stored-secret']) expect(document.body.innerHTML).not.toContain(secret)
+  root.querySelector<HTMLButtonElement>('[aria-label="Back to the entity definition’s runs"]')!.click()
+  await vi.waitFor(() => expect(runRows(root)).toHaveLength(2))
+  expect(history.get()).toBe('/entities/plug')
+  for (const secret of ['typed-secret', 'stored-secret']) expect(document.body.innerHTML).not.toContain(secret)
 })

@@ -201,3 +201,59 @@ it('starts a new file from a template the compiler has no warning about (its cla
   // The runtime suite compiles this same text (tests/fixtures/node-library-template.json) and expects no diagnostic.
   expect(libraryTemplate).toBe(template.source)
 })
+
+// What a save or delete did to the entity definitions that use the libraries (NodeLibraryApi.cs, EntityLifecycle.cs).
+const rebuiltDefinitions = [
+  { id: 'plug', saved: true, active: true, activationError: null,
+    document: { version: 1, id: 'plug', name: 'Plug', revision: 3, enabled: true, settings: [{ key: 'password', label: 'Password', type: 'string', secret: true, value: null, hasValue: true }] } },
+  { id: 'lamp', saved: true, active: false, activationError: 'Lamp could not start',
+    document: { version: 1, id: 'lamp', name: 'Lamp', revision: 2, enabled: true, settings: [] } },
+]
+const leftDefinitions = [{ id: 'old_sensor', name: 'Old sensor', running: true, diagnostics: [{ nodeId: 'a', message: 'Unknown node kind', severity: 3 }],
+  message: 'Not rebuilt, because the definition has errors: it is still running the previous version, with the previous library code' }]
+it('keeps what a save did to the entity definitions, says the libraries changed though no automation did, and drops it on the next save', async () => {
+  let answer: any = { definitions: rebuiltDefinitions, invalidDefinitions: leftDefinitions }
+  setup(r => r.operation === 'save' ? { saved: true, document: doc(r.id, r.source, r.expectedRevision + 1), generation: `g${r.expectedRevision + 1}`, catalog: rich.catalog, automations: [], invalid: [], ...answer } : undefined)
+  await flush(); session.edit('draft'); await flush()
+  let changed = 0; const listener = () => changed++; window.addEventListener('hass-sharp-libraries-changed', listener)
+  try { await session.save() } finally { window.removeEventListener('hass-sharp-libraries-changed', listener) }
+  expect(changed).toBe(1)
+  expect(session.activations()).toEqual([])
+  expect(session.definitions().map(d => [d.id, d.document.name, d.active, d.activationError])).toEqual([['plug', 'Plug', true, null], ['lamp', 'Lamp', false, 'Lamp could not start']])
+  expect(session.definitionsNotRebuilt()).toEqual(leftDefinitions)
+  // An answer from a backend without entity definitions has neither member.
+  answer = {}
+  session.edit('second draft'); await flush(); await session.save()
+  expect(session.definitions()).toEqual([]); expect(session.definitionsNotRebuilt()).toEqual([])
+})
+it('keeps what a delete did to the entity definitions', async () => {
+  setup(r => r.operation === 'delete' ? { saved: true, deleted: true, document: null, generation: 'g2', catalog: rich.catalog, automations: [], invalid: [], definitions: rebuiltDefinitions.slice(0, 1), invalidDefinitions: [] } : undefined)
+  await flush()
+  let changed = 0; const listener = () => changed++; window.addEventListener('hass-sharp-libraries-changed', listener)
+  try { await session.remove() } finally { window.removeEventListener('hass-sharp-libraries-changed', listener) }
+  expect(changed).toBe(1)
+  expect(session.definitions().map(d => d.id)).toEqual(['plug'])
+})
+const blocking = [{ id: 'plug', name: 'Plug', diagnostics: [{ nodeId: 'on', inputId: null, message: 'Relay has no command toggle', severity: 3 }, { nodeId: null, message: 'An unused setting', severity: 2 }] }]
+it('names the entity definitions a refused save would break, and counts their problems in the workspace', async () => {
+  setup(r => r.operation === 'save' ? { ok: false, error: { code: 'validation', detail: { diagnostics: [], automations: [], invalid: [], definitions: blocking } } } : undefined)
+  await flush(); session.edit('draft'); await flush(); await session.save()
+  expect(session.error()).toBe('Saving would break Plug. Fix the library or that entity definition first; Workspace diagnostics says what is wrong.')
+  expect(session.blockingDefinitions()).toEqual(blocking)
+  expect(session.workspace()).toEqual([
+    { kind: 'definition', severity: 3, definition: 'Plug', id: 'plug', diagnostic: blocking[0].diagnostics[0] },
+    { kind: 'definition', severity: 2, definition: 'Plug', id: 'plug', diagnostic: blocking[0].diagnostics[1] },
+  ])
+  expect(session.definitions()).toEqual([])
+  // The next edit is checked again: the refusal's list goes with it.
+  session.edit('another draft'); expect(session.blockingDefinitions()).toEqual([])
+})
+it('names automations and entity definitions together in a refusal, and a refused delete as a delete', async () => {
+  const { LibraryApiError } = await import('../src/visual/library-api')
+  const both = { automations: [{ id: 'visual-1', name: 'Night mode', diagnostics: [] }], definitions: [...blocking, { id: 'lamp', name: '', diagnostics: [] }] }
+  expect(new LibraryApiError('validation', both, 'save').message).toBe('Saving would break Night mode, Plug, lamp. Fix the library or those automations and entity definitions first; Workspace diagnostics says what is wrong.')
+  expect(new LibraryApiError('validation', { definitions: blocking }, 'delete').message).toBe('Deleting this library would break Plug. Change that entity definition first; Workspace diagnostics says what is wrong.')
+  expect(new LibraryApiError('validation', { definitions: [...blocking, ...blocking] }, 'delete').message).toBe('Deleting this library would break Plug, Plug. Change those entity definitions first; Workspace diagnostics says what is wrong.')
+  // Automations alone read as before.
+  expect(new LibraryApiError('validation', { automations: both.automations }, 'save').message).toBe('Saving would break Night mode. Fix the library or that automation first; Workspace diagnostics says what is wrong.')
+})

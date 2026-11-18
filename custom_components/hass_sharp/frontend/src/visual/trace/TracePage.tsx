@@ -2,14 +2,14 @@ import { batch, createEffect, createMemo, createSignal, on, Show } from 'solid-j
 import { delegateEvents } from 'solid-js/web'
 import { A } from '@solidjs/router'
 import type { MenuItem } from '../../components/Menu'
-import { summarizeTrigger } from '../../components/TriggerSummary'
+import { definitionNames, summarizeTrigger } from '../../components/TriggerSummary'
 import { BottomDrawer } from '../BottomDrawer'
 import { FlowAdapter, type FlowControls } from '../flow/FlowAdapter'
 import { createFullscreen, createFullscreenPage, FullscreenButton } from '../fullscreen'
 import { Glyph } from '../Glyph'
 import { icons } from '../icons'
 import { media } from '../media'
-import { nodeCatalog, type ServicesSection } from '../contract'
+import { graphDocument, nodeCatalog, type ServicesSection } from '../contract'
 import { TopBar } from '../TopBar'
 import { CustomCodeEditor } from '../CustomCodeEditor'
 import { libraryApi } from '../library-api'
@@ -25,6 +25,29 @@ import { useLoadedRegistry } from '../../registry'
 /** Focus is where keys mean text or a choice in a list: the page's shortcuts leave those keys alone. */
 const typing = (target: Element) =>
   !!target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="menu"], [role="listbox"], dialog')
+/** The page's words about the document the run belongs to: an automation's unless an adapter's texts give others. */
+export interface TraceTexts {
+  /** The back button ("Back to the automation’s runs"). */
+  back: string
+  /** The title when the run's graph has no name and the run no label ("Automation run"). */
+  untitled: string
+  /** The tooltip of "This run used an earlier version." */
+  earlier: string
+  /** The run's graph is no longer stored. */
+  missing: string
+  /** The run has no step-by-step record. */
+  noRecord: string
+  /** The canvas's accessible name ("Automation canvas"); ", read only" follows it. */
+  canvas: string
+}
+export const automationTraceTexts: TraceTexts = {
+  back: 'Back to the automation’s runs',
+  untitled: 'Automation run',
+  earlier: 'The canvas shows the automation as it was for this run, not as it is now.',
+  missing: 'The automation as it was for this run is no longer stored. Its summary is below.',
+  noRecord: 'No step-by-step record was kept for this run (records are kept for the newest 1,000 runs). The canvas shows the automation as it was for this run.',
+  canvas: 'Automation canvas',
+}
 /** The run status chip's tone, from the save-state chip's tones. */
 const tones: Record<RunStatus, string> = {
   Succeeded: 'saved', Failed: 'danger', Interrupted: 'danger', Cancelled: 'dirty', Stopped: 'dirty', Skipped: 'dirty', Running: 'busy', Pending: 'busy',
@@ -54,6 +77,8 @@ export function TracePage(props: {
   services?: ServicesSection
   /** Opens a node library file at a line (a type's definition was declared there); not offered without it. */
   onOpenLibrary?(id: string, line?: number): void
+  /** Words for the document the run belongs to (default: an automation's, {@link automationTraceTexts}). */
+  texts?: Partial<TraceTexts>
 }) {
   const hass = useHass()
   let root!: HTMLElement
@@ -80,7 +105,8 @@ export function TracePage(props: {
     const trace = props.response.trace, current = graph()
     return trace && current ? traceModel(trace, current, stored()) : undefined
   })
-  const name = () => graph()?.name || run().actionLabel || 'Automation run'
+  const texts = (): TraceTexts => ({ ...automationTraceTexts, ...props.texts })
+  const name = () => graph()?.name || run().actionLabel || texts().untitled
 
   // ---- Selection: a step, the run of it on view, and the frame (iteration or branch; "" the whole run) the canvas shows.
   const [nodeId, setNodeId] = createSignal<string>()
@@ -209,7 +235,8 @@ export function TracePage(props: {
   const menu = (): MenuItem[] => (fullscreen.active() ? [] : [{ label: 'Full screen', onSelect: fullscreenPage.enter }])
 
   const earlier = () => props.currentRevision !== undefined && snapshot() !== undefined && snapshot()!.visualRevision !== props.currentRevision
-  const triggerLine = () => [run().actionLabel, run().trigger && summarizeTrigger(run().trigger!)].filter(Boolean).join(' · ')
+  // An entity definition's command run names its entity and command as the run's own graph has them.
+  const triggerLine = () => [run().actionLabel, run().trigger && summarizeTrigger(run().trigger!, definitionNames(graph(), stored()))].filter(Boolean).join(' · ')
   const reason = () => (run().error && run().status !== 'Succeeded' ? run().error!.split('\n', 1)[0] : undefined)
   const dropped = () => props.response.trace?.dropped ?? 0
   const status = () => (
@@ -238,7 +265,7 @@ export function TracePage(props: {
       <TopBar
         name={name()}
         onBack={() => props.onBack()}
-        backLabel="Back to the automation’s runs"
+        backLabel={texts().back}
         status={status()}
         actions={<A class="hs-button hs-button--secondary hs-fs-hide hs-trace-open" href={props.editorHref}>Open in editor</A>}
         fullscreen={fullscreen.active()}
@@ -270,7 +297,7 @@ export function TracePage(props: {
           </p>}
         </Show>
         <Show when={earlier()}>
-          <p class="hs-trace-strip__note" title="The canvas shows the automation as it was for this run, not as it is now.">This run used an earlier version.</p>
+          <p class="hs-trace-strip__note" title={texts().earlier}>This run used an earlier version.</p>
         </Show>
         <Show when={props.response.trace?.truncated}>
           <p class="hs-trace-strip__note hs-trace-strip__note--warning">
@@ -286,7 +313,7 @@ export function TracePage(props: {
         fallback={
           <div class="hs-trace-missing" role="note">
             <h2>This run can no longer be shown on the canvas</h2>
-            <p>The automation as it was for this run is no longer stored. Its summary is below.</p>
+            <p>{texts().missing}</p>
             <div class="hs-trace-missing__panel">
               <TraceInspector run={run()} catalog={catalog()} frame="" onSelectNode={() => {}} onSelectEvent={() => {}} onSelectWholeRun={() => {}} docked open onOpen={() => {}} onClose={() => {}} />
             </div>
@@ -297,7 +324,7 @@ export function TracePage(props: {
           <>
             <Show when={!props.response.trace}>
               <p class="hs-visual-alert hs-visual-alert--quiet hs-trace-notrace" role="note">
-                No step-by-step record was kept for this run (records are kept for the newest 1,000 runs). The canvas shows the automation as it was for this run.
+                {texts().noRecord}
               </p>
             </Show>
             <div class="hs-visual-workspace">
@@ -306,6 +333,7 @@ export function TracePage(props: {
                   graph={current()}
                   catalog={catalog()}
                   readOnly
+                  label={texts().canvas}
                   trace={trace()}
                   selectedId={nodeId()}
                   onSelect={selectNode}
@@ -361,7 +389,7 @@ export function TracePage(props: {
         )}
       </Show>
       <Show when={codeNode() && codeNodeId()} keyed>
-        {_id => <CustomCodeEditor node={codeNode()!} catalog={catalog()} readOnly onClose={() => setCodeNodeId(undefined)} />}
+        {_id => <CustomCodeEditor node={codeNode()!} catalog={catalog()} document={graphDocument(graph())} readOnly onClose={() => setCodeNodeId(undefined)} />}
       </Show>
       </TypeDefinitions>
     </section>

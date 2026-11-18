@@ -1,6 +1,7 @@
 import type { CompletionItem, CompletionList, CompletionResolution, Diagnostic, HomeAssistant } from '../types'
 import type { VisualCatalogSnapshot } from './contract'
 import type { VisualDocument, VisualDiagnostic } from './api'
+import type { EntityDocument } from '../entities/model'
 
 export interface LibraryDocument { version: 1; id: string; name: string; revision: number; source: string }
 export interface LibraryDiagnostic extends Diagnostic { sourceId: string }
@@ -34,12 +35,34 @@ export interface TypeDefinition {
 export interface LibraryActivation { id: string; saved: true; document: VisualDocument; active: boolean; activationError: string | null }
 /** An automation a library save did not rebuild, because it already had errors; `message` says whether it still runs. */
 export interface LibraryNotRebuilt { id: string; name?: string | null; running: boolean; message: string }
-export interface LibraryMutation { saved: true; document: LibraryDocument | null; deleted: boolean; generation: string; catalog: VisualCatalogSnapshot; automations: LibraryActivation[]; invalid?: LibraryNotRebuilt[] }
-/** A refused save or delete names the automations it would break, by the names people know them by, and says which it was. */
+/**
+ * An entity definition a library save or delete rebuilt and runs again (`EntityLifecycle.ReactivateDefinitions`): only
+ * those that are on are listed. Its document is answered without any secret setting's value.
+ */
+export interface LibraryDefinitionActivation { id: string; saved: true; document: EntityDocument; active: boolean; activationError: string | null }
+/** An entity definition a library save did not rebuild, because it already had errors; `message` says whether it still runs. */
+export interface LibraryDefinitionNotRebuilt { id: string; name: string; diagnostics: VisualDiagnostic[]; running: boolean; message: string }
+/** An entity definition a refused save or delete would break, with the problems it would have. */
+export interface LibraryBlockingDefinition { id: string; name: string; diagnostics: VisualDiagnostic[] }
+export interface LibraryMutation {
+  saved: true; document: LibraryDocument | null; deleted: boolean; generation: string; catalog: VisualCatalogSnapshot; automations: LibraryActivation[]; invalid?: LibraryNotRebuilt[]
+  /** Absent from a backend without entity definitions. */
+  definitions?: LibraryDefinitionActivation[]
+  invalidDefinitions?: LibraryDefinitionNotRebuilt[]
+}
+/**
+ * A refused save or delete names the automations and entity definitions it would break, by the names people know them
+ * by, and says which it was.
+ */
 const refusal = (detail: unknown, operation?: string) => {
-  const names = ((detail as LibraryValidationDetail | null)?.automations ?? []).map(a => a.name || a.id)
+  const refused = detail as LibraryValidationDetail | null
+  const automations = (refused?.automations ?? []).map(a => a.name || a.id), definitions = (refused?.definitions ?? []).map(d => d.name || d.id)
+  const names = [...automations, ...definitions]
   const deleting = operation === 'delete'
-  return names.length ? `${deleting ? 'Deleting this library' : 'Saving'} would break ${names.join(', ')}. ${deleting ? 'Change' : 'Fix the library or'} ${names.length === 1 ? 'that automation' : 'those automations'} first; Workspace diagnostics says what is wrong.`
+  const those = !definitions.length ? (names.length === 1 ? 'that automation' : 'those automations')
+    : !automations.length ? (names.length === 1 ? 'that entity definition' : 'those entity definitions')
+    : 'those automations and entity definitions'
+  return names.length ? `${deleting ? 'Deleting this library' : 'Saving'} would break ${names.join(', ')}. ${deleting ? 'Change' : 'Fix the library or'} ${those} first; Workspace diagnostics says what is wrong.`
     : deleting ? 'Fix dependent automation errors before deleting this library.' : 'Fix library or dependent automation errors before saving.'
 }
 export class LibraryApiError extends Error {
@@ -85,7 +108,12 @@ export function libraryApi(hass: Pick<HomeAssistant, 'callWS'>) {
 export type LibraryApi = ReturnType<typeof libraryApi>
 /** A problem a refused save would cause in an automation; `step` is the step's title, as the editor names it. */
 export interface LibraryAutomationDiagnostic extends VisualDiagnostic { step?: string | null }
-export interface LibraryValidationDetail { diagnostics?: LibraryDiagnostic[]; automations?: { id: string; name?: string | null; diagnostics: LibraryAutomationDiagnostic[] }[] }
+export interface LibraryValidationDetail {
+  diagnostics?: LibraryDiagnostic[]
+  automations?: { id: string; name?: string | null; diagnostics: LibraryAutomationDiagnostic[] }[]
+  /** The entity definitions it would break. */
+  definitions?: LibraryBlockingDefinition[]
+}
 /** The node library view with a file open at a line (`?file=<id>&line=<n>`), as a type's "Open in library" goes there. */
 export const libraryHref = (id: string, line?: number) => `/libraries?file=${encodeURIComponent(id)}${line ? `&line=${line}` : ''}`
 export const librariesChanged = () => window.dispatchEvent(new Event('hass-sharp-libraries-changed'))

@@ -239,3 +239,81 @@ it('counts one error and one warning in the workspace header in the singular', a
   host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
   expect(host.querySelector('[aria-label="Library workspace diagnostics"] p')!.textContent).toBe('1 error · 1 warning')
 })
+
+// What a save did to the entity definitions that use the libraries, beside the automations, each linked to its page.
+const definitionAnswers = {
+  definitions: [
+    { id: 'plug', saved: true, active: true, activationError: null, document: { version: 1, id: 'plug', name: 'Plug', revision: 3, settings: [{ key: 'password', type: 'string', secret: true, value: null, hasValue: true }] } },
+    { id: 'lamp', saved: true, active: false, activationError: 'Lamp could not start', document: { version: 1, id: 'lamp', name: 'Lamp', revision: 2, settings: [] } },
+  ],
+  invalidDefinitions: [{ id: 'old_sensor', name: 'Old sensor', running: true, diagnostics: [], message: 'Not rebuilt, because the definition has errors: it is still running the previous version, with the previous library code' }],
+}
+function mountRouted(response: (request: any) => any) {
+  requests = []
+  const callWS = async (message: any) => {
+    const r = message.request; requests.push(r)
+    const answer = response(r)
+    if (answer) return answer.envelope ?? { version: 1, ok: true, result: answer }
+    const result = r.operation === 'list' ? { documents: documents(), generation: 'g1' }
+      : r.operation === 'catalog' ? { catalog: rich.catalog, generation: 'g1', saved: true, valid: true, diagnostics: [] }
+      : { id: r.id, workspaceVersion: r.workspaceVersion, generation: r.generation, sourceGeneration: `source-${r.workspaceVersion}`, saved: false, data: r.operation === 'preview' ? { valid: true, catalog: rich.catalog, diagnostics: [] } : [] }
+    return { version: 1, ok: true, result }
+  }
+  const history = createMemoryHistory()
+  history.set({ value: '/libraries' })
+  dispose = render(() => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={{ callWS, user: { is_admin: true } } as any}>
+    <MemoryRouter history={history}><Route path="/libraries" component={NodeLibraryView} /><Route path="/entities/:id" component={() => <p class="definition-page">Definition</p>} /></MemoryRouter>
+  </HassCtx.Provider></QueryClientProvider>, host)
+  return history
+}
+const saveEdit = async () => {
+  editors[0].change('public class Updated {}'); await vi.advanceTimersByTimeAsync(900)
+  host.querySelector<HTMLButtonElement>('[data-save]')!.click(); await vi.advanceTimersByTimeAsync(0)
+}
+it('says how many entity definitions a library save rebuilt, and names the ones that failed or were left as they were, each linked', async () => {
+  const history = mountRouted(r => r.operation === 'save' ? { saved: true, document: { ...documents()[0], source: r.source, revision: 2 }, generation: 'g2', catalog: rich.catalog, automations: [], invalid: [], ...definitionAnswers } : undefined)
+  await vi.advanceTimersByTimeAsync(900)
+  await saveEdit()
+  const section = host.querySelector('[aria-label="Dependent entity definitions"]')!
+  expect(section).not.toBeNull()
+  const lines = [...section.querySelectorAll('p')].map(p => p.textContent)
+  expect(lines).toEqual([
+    '2 entity definitions rebuilt',
+    'Lamp: Saved; activation failed: Lamp could not start',
+    'Old sensor: Not rebuilt, because the definition has errors: it is still running the previous version, with the previous library code',
+  ])
+  expect([...section.querySelectorAll('a')].map(a => [a.textContent, a.getAttribute('href')])).toEqual([['Lamp', '/entities/lamp'], ['Old sensor', '/entities/old_sensor']])
+  // No automation was rebuilt: nothing is said of automations.
+  expect(host.querySelector('[aria-label="Dependent automations"]')).toBeNull()
+  section.querySelector<HTMLAnchorElement>('a')!.click()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(history.get()).toBe('/entities/lamp')
+})
+it('counts one entity definition rebuilt in the singular', async () => {
+  mountRouted(r => r.operation === 'save' ? { saved: true, document: { ...documents()[0], source: r.source, revision: 2 }, generation: 'g2', catalog: rich.catalog, automations: [], definitions: definitionAnswers.definitions.slice(0, 1), invalidDefinitions: [] } : undefined)
+  await vi.advanceTimersByTimeAsync(900)
+  await saveEdit()
+  expect(host.querySelector('[aria-label="Dependent entity definitions"]')!.textContent).toBe('1 entity definition rebuilt')
+})
+it('lists the entity definitions a refused save would break under the refusal, linked, and counts their problems', async () => {
+  const refusal = { version: 1, ok: false, error: { code: 'validation', detail: { diagnostics: [], automations: [], invalid: [],
+    definitions: [{ id: 'plug', name: 'Plug', diagnostics: [{ nodeId: 'on', inputId: null, message: 'Relay has no command toggle', severity: 3 }] }] } } }
+  mountRouted(r => r.operation === 'save' ? { envelope: refusal } : undefined)
+  await vi.advanceTimersByTimeAsync(900)
+  await saveEdit()
+  expect(host.querySelector('[role="alert"]')!.textContent).toContain('Saving would break Plug. Fix the library or that entity definition first')
+  const blocked = host.querySelector('[aria-label="Entity definitions this would break"]')!
+  expect(blocked.textContent).toBe('Plug: Relay has no command toggle')
+  expect(blocked.querySelector('a')!.getAttribute('href')).toBe('/entities/plug')
+  const diagnostics = host.querySelector('[aria-label="Library workspace diagnostics"]')!
+  expect(diagnostics.querySelector('p')!.textContent).toBe('1 error · 0 warnings')
+  expect([...diagnostics.querySelectorAll('li')].map(li => li.textContent)).toEqual(['Error · Plug: Relay has no command toggle'])
+})
+it('names the entity definitions without links where the page has no router', async () => {
+  mount(false, (r, result) => r.operation === 'save' ? { ...result, ...definitionAnswers } : result); await vi.advanceTimersByTimeAsync(900)
+  await saveEdit()
+  const section = host.querySelector('[aria-label="Dependent entity definitions"]')!
+  expect(section.textContent).toContain('Lamp: Saved; activation failed: Lamp could not start')
+  expect(section.querySelector('a')).toBeNull()
+  expect(host.innerHTML).not.toContain('hasValue')
+})

@@ -1,6 +1,6 @@
 import { createMemo, createUniqueId, For, Show, type JSX } from 'solid-js'
 import { JsonTree, type JsonLeaf } from '../../components/JsonTree'
-import { TriggerSummary } from '../../components/TriggerSummary'
+import { definitionNames, TriggerSummary, type TriggerNames } from '../../components/TriggerSummary'
 import { Glyph } from '../Glyph'
 import { SheetBar, SheetPeek } from '../Inspector'
 import { TypeChip } from '../InputRow'
@@ -71,7 +71,7 @@ export function TraceInspector(props: TraceInspectorProps) {
         <PeekBar />
       </Show>
       <SheetBar onClose={close} />
-      <Show when={node()?.id} keyed fallback={<RunOverview run={props.run} model={props.model} />}>
+      <Show when={node()?.id} keyed fallback={<RunOverview run={props.run} model={props.model} names={definitionNames(props.graph, props.catalog)} />}>
         {_id => <StepValues node={node()!} graph={props.graph!} catalog={props.catalog} model={props.model} event={props.event} frame={props.frame}
           onSelectSource={selectSource} onSelectEvent={props.onSelectEvent} onSelectWholeRun={props.onSelectWholeRun} />}
       </Show>
@@ -95,7 +95,7 @@ export function TraceInspector(props: TraceInspectorProps) {
 }
 
 /** With nothing selected: what started the run, when, how it ended, and the trigger's data. */
-function RunOverview(props: { run: AutomationRun; model?: TraceModel }) {
+function RunOverview(props: { run: AutomationRun; model?: TraceModel; names?: TriggerNames }) {
   const failed = () => props.run.status === 'Failed' || props.run.status === 'Interrupted'
   return (
     <section class="hs-insp-overview hs-trace-overview" aria-label="This run">
@@ -117,7 +117,7 @@ function RunOverview(props: { run: AutomationRun; model?: TraceModel }) {
       </Show>
       <div class="hs-trace-section">
         <h3 class="hs-insp-heading">Started by</h3>
-        <TriggerSummary trigger={props.run.trigger} />
+        <TriggerSummary trigger={props.run.trigger} names={props.names} />
       </div>
       <Show when={props.model && Object.keys(props.model.trace.trigger ?? {}).length}>
         <div class="hs-trace-section">

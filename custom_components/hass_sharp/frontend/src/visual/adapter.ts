@@ -83,6 +83,24 @@ export interface EditorTexts {
    * (an automation) the overview is not offered there.
    */
   overviewPeek?: string
+  /** The Runs tab's hint when a saved document has no runs yet (default: an automation's, "Run it now or wait for its next trigger."). */
+  runsNone?: string
+  /** A run's `revision` in the Runs tab (default: "Automation revision"). */
+  runRevision?: string
+  /** The run page's back button (default: "Back to the automation’s runs"). */
+  traceBack?: string
+  /** The run page's title when the run's graph has no name and the run no label (default: "Automation run"). */
+  traceUntitled?: string
+  /** The tooltip of "This run used an earlier version." (default: "The canvas shows the automation as it was for this run, not as it is now."). */
+  traceEarlier?: string
+  /** A run whose graph is no longer stored (default: "The automation as it was for this run is no longer stored. Its summary is below."). */
+  traceMissing?: string
+  /** A run without a step-by-step record (default: the automation's, "…The canvas shows the automation as it was for this run."). */
+  traceNoRecord?: string
+  /** The run page of a run that is not one of this document's (default: "This run is not one of this automation’s runs."). */
+  traceForeign?: string
+  /** The run page of a document that no longer exists (default: "This automation no longer exists."). */
+  traceDeleted?: string
 }
 
 /**

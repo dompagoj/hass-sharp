@@ -1,5 +1,6 @@
 import { batch, createMemo, createSignal, onCleanup } from 'solid-js'
-import { LibraryApiError, librariesChanged, type LibraryApi, type LibraryAutomationDiagnostic, type LibraryDiagnostic, type LibraryContext, type LibraryDocument, type LibraryPreview, type LibraryReply, type LibraryActivation, type LibraryNotRebuilt, type LibraryValidationDetail } from './library-api'
+import { LibraryApiError, librariesChanged, type LibraryApi, type LibraryAutomationDiagnostic, type LibraryDiagnostic, type LibraryContext, type LibraryDocument, type LibraryPreview, type LibraryReply, type LibraryActivation, type LibraryNotRebuilt, type LibraryValidationDetail, type LibraryDefinitionActivation, type LibraryDefinitionNotRebuilt } from './library-api'
+import type { VisualDiagnostic } from './api'
 
 export const libraryTemplate = `/// <summary>Reusable nodes.</summary>
 public static class Nodes
@@ -11,17 +12,19 @@ public static class Nodes
     public static string MyNode([Port("Text")] string text) => text;
 }`
 interface Draft extends LibraryDocument { baseline: LibraryDocument; conflict?: boolean }
-/** One line of Workspace diagnostics: a library file's, or an automation's that a refused save would break. */
+/** One line of Workspace diagnostics: a library file's, or an automation's or entity definition's that a refused save would break. */
 export type WorkspaceDiagnostic =
   | { kind: 'library'; severity: number; diagnostic: LibraryDiagnostic }
   | { kind: 'automation'; severity: number; automation: string; diagnostic: LibraryAutomationDiagnostic }
+  | { kind: 'definition'; severity: number; definition: string; id: string; diagnostic: VisualDiagnostic }
 /**
- * The workspace's diagnostics with what a refused save would break in each automation: errors first (each list keeps
- * its order), so the reason for a refusal is never under the warnings.
+ * The workspace's diagnostics with what a refused save would break in each automation and entity definition: errors
+ * first (each list keeps its order), so the reason for a refusal is never under the warnings.
  */
 export function workspaceDiagnostics(diagnostics: readonly LibraryDiagnostic[], detail?: LibraryValidationDetail): WorkspaceDiagnostic[] {
   const all: WorkspaceDiagnostic[] = [
     ...(detail?.automations ?? []).flatMap(graph => graph.diagnostics.map(d => ({ kind: 'automation' as const, severity: d.severity ?? 3, automation: graph.name || graph.id, diagnostic: d }))),
+    ...(detail?.definitions ?? []).flatMap(definition => definition.diagnostics.map(d => ({ kind: 'definition' as const, severity: d.severity ?? 3, definition: definition.name || definition.id, id: definition.id, diagnostic: d }))),
     ...diagnostics.map(d => ({ kind: 'library' as const, severity: d.severity, diagnostic: d })),
   ]
   return [...all.filter(d => d.severity === 3), ...all.filter(d => d.severity !== 3)]
@@ -41,6 +44,13 @@ export function createLibrarySession(api: LibraryApi) {
   const [saving, setSaving] = createSignal(false)
   const [activations, setActivations] = createSignal<LibraryActivation[]>([])
   const [notRebuilt, setNotRebuilt] = createSignal<LibraryNotRebuilt[]>([])
+  // What the last save or delete did to the entity definitions that use the libraries.
+  const [definitions, setDefinitions] = createSignal<LibraryDefinitionActivation[]>([])
+  const [definitionsNotRebuilt, setDefinitionsNotRebuilt] = createSignal<LibraryDefinitionNotRebuilt[]>([])
+  const clearResults = () => batch(() => { setActivations([]); setNotRebuilt([]); setDefinitions([]); setDefinitionsNotRebuilt([]) })
+  const keepResults = (result: { automations: LibraryActivation[]; invalid?: LibraryNotRebuilt[]; definitions?: LibraryDefinitionActivation[]; invalidDefinitions?: LibraryDefinitionNotRebuilt[] }) => {
+    setActivations(result.automations); setNotRebuilt(result.invalid ?? []); setDefinitions(result.definitions ?? []); setDefinitionsNotRebuilt(result.invalidDefinitions ?? [])
+  }
   const dirtyFile = (f: Draft) => f.revision === 0 || f.source !== f.baseline.source || f.name !== f.baseline.name
   const dirty = createMemo(() => files().some(dirtyFile))
   const conflict = () => selected()?.conflict === true
@@ -109,7 +119,7 @@ export function createLibrarySession(api: LibraryApi) {
   const save = async () => {
     if (!canSave()) return
     // The previous save's results are dropped: they would read as this save's.
-    const submitted = { ...selected()! }; ++loadRequest; setSaving(true); setError(undefined); setActivations([]); setNotRebuilt([])
+    const submitted = { ...selected()! }; ++loadRequest; setSaving(true); setError(undefined); clearResults()
     try {
       const result = await api.save(submitted)
       if (disposed) return
@@ -118,8 +128,9 @@ export function createLibrarySession(api: LibraryApi) {
           const saved = result.document
           setFiles(list => list.map(f => f.id === submitted.id ? { ...f, revision: saved.revision, baseline: saved, conflict: false } : f))
         }
-        setGeneration(result.generation); setActivations(result.automations); setNotRebuilt(result.invalid ?? []); invalidate()
+        setGeneration(result.generation); keepResults(result); invalidate()
       })
+      // Every open editor reads its document again: automations and entity definitions alike were rebuilt.
       notifying = true
       try { librariesChanged() } finally { notifying = false }
     } catch (e) { if (!disposed) mutationError(e, submitted.id) }
@@ -136,14 +147,14 @@ export function createLibrarySession(api: LibraryApi) {
     const f = selected(); if (!f || saving()) return
     if (!f.revision) { setFiles(list => list.filter(d => d.id !== f.id)); setSelectedId(files()[0]?.id); invalidate(); return }
     // The previous save's results are dropped, as a save drops them: they would read as this delete's.
-    ++loadRequest; setSaving(true); setError(undefined); setActivations([]); setNotRebuilt([])
+    ++loadRequest; setSaving(true); setError(undefined); clearResults()
     try {
       const result = await api.delete(f.id, f.revision)
       if (disposed) return
       batch(() => {
         setFiles(list => list.flatMap(d => d.id !== f.id ? [d] : d.source !== f.source || d.name !== f.name ? [{ ...d, revision: 0, baseline: { ...d, revision: 0 }, conflict: false }] : []))
         if (!selected()) setSelectedId(files()[0]?.id)
-        setGeneration(result.generation); setActivations(result.automations); setNotRebuilt(result.invalid ?? []); invalidate()
+        setGeneration(result.generation); keepResults(result); invalidate()
       })
       notifying = true
       try { librariesChanged() } finally { notifying = false }
@@ -184,6 +195,8 @@ export function createLibrarySession(api: LibraryApi) {
   window.addEventListener('focus', onFocus)
   onCleanup(() => { disposed = true; ++loadRequest; clearTimeout(timer); window.removeEventListener('hass-sharp-libraries-changed', onChanged); window.removeEventListener('focus', onFocus) })
   void refresh()
-  return { files, selected, selectedId, select, edit, rename, create, remove, save, validateAndSave, reload, refresh, invalidate, dirty, dirtyFile, conflict, canSave, preview, previewing, validatePreview: runPreview, diagnostics: () => validation()?.diagnostics ?? preview()?.diagnostics ?? [], workspace: () => workspaceDiagnostics(validation()?.diagnostics ?? preview()?.diagnostics ?? [], validation()), validation, error, loading, saving, activations, notRebuilt, workspaceVersion, generation, sourceGeneration, context, accepts }
+  return { files, selected, selectedId, select, edit, rename, create, remove, save, validateAndSave, reload, refresh, invalidate, dirty, dirtyFile, conflict, canSave, preview, previewing, validatePreview: runPreview, diagnostics: () => validation()?.diagnostics ?? preview()?.diagnostics ?? [], workspace: () => workspaceDiagnostics(validation()?.diagnostics ?? preview()?.diagnostics ?? [], validation()), validation, error, loading, saving, activations, notRebuilt, definitions, definitionsNotRebuilt,
+    /** The entity definitions a refused save or delete would break. */
+    blockingDefinitions: () => validation()?.definitions ?? [], workspaceVersion, generation, sourceGeneration, context, accepts }
 }
 export type LibrarySession = ReturnType<typeof createLibrarySession>

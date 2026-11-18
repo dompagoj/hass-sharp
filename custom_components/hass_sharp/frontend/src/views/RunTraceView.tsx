@@ -4,11 +4,13 @@ import { useNavigate, useParams } from '@solidjs/router'
 import { useQuery } from '@tanstack/solid-query'
 import { Button } from '../components/Controls'
 import { useHass } from '../context'
+import { classDefinitionCode, entityAdapter } from '../entities/adapter'
 import type { RunTraceResponse } from '../types'
+import { automationAdapter, type EditorAdapter } from '../visual/adapter'
 import { visualApi, visualError } from '../visual/api'
 import { libraryHref } from '../visual/library-api'
 import { sharePoll } from '../visual/trace/poll'
-import { TracePage } from '../visual/trace/TracePage'
+import { TracePage, type TraceTexts } from '../visual/trace/TracePage'
 
 /** While a run is pending or running, its trace is read again this often. */
 export const LIVE_POLL_MS = 2000
@@ -24,12 +26,20 @@ export const unanswered = (error: unknown) => typeof (error as { code?: unknown 
 /**
  * `/visual/:id/runs/:runId`: one run of a visual automation, read-only (contract C9 `run_trace`). The graph shown is
  * the one stored with the run, not the automation as it is now.
+ *
+ * With another adapter (an entity definition's, {@link EntityRunTraceView}) the document is read, and the editor and
+ * list linked, through it, in its words; `ownRunsOnly` then shows a run only on its own document's page: a run of
+ * another document, a document that no longer exists and one that cannot be read as the adapter's (an entity definition
+ * built from a class) each say so instead. An automation's page follows the run's automation, as it always has.
  */
-export function RunTraceView() {
+export function RunTraceView(props: { adapter?: EditorAdapter; ownRunsOnly?: boolean } = {}) {
   const hass = useHass()
   const params = useParams()
   const navigate = useNavigate()
   const api = visualApi(hass)
+  const adapter = props.adapter ?? (automationAdapter(hass) as unknown as EditorAdapter)
+  const texts = adapter.texts
+  const own = !!props.ownRunsOnly
   const admin = () => !!hass.user?.is_admin
   const trace = useQuery(() => ({
     queryKey: ['run-trace', params.runId],
@@ -50,12 +60,14 @@ export function RunTraceView() {
   }))
   // Solid Query keeps results in a store; the graph and catalog are read (and copied by the validator) as plain data.
   const data = () => (trace.data ? unwrap(trace.data) : undefined)
-  const visualId = () => data()?.run.visualId ?? params.id ?? ''
-  // The automation as it is now, only to say when this run used an earlier version: read once the run says which.
+  // The page's own document, or else (an automation's page) the run's.
+  const visualId = () => (own ? params.id : data()?.run.visualId ?? params.id) ?? ''
+  // The document as it is now, to say when this run used an earlier version: an automation's read once the run says
+  // which, one that shows only its own runs read at once, to know whether the run is its own.
   const current = useQuery(() => ({
-    queryKey: ['visual-trace-document', visualId()],
-    queryFn: () => api.read(visualId()),
-    enabled: admin() && !!data() && !!visualId(),
+    queryKey: [adapter.document === 'automation' ? 'visual-trace-document' : `${adapter.document}-trace-document`, visualId()],
+    queryFn: () => adapter.read(visualId()),
+    enabled: admin() && (own || !!data()) && !!visualId(),
     staleTime: 30_000,
   }))
   // The services as they are now, to show service fields with: a run's stored snapshot may have no service schema (C4).
@@ -66,14 +78,52 @@ export function RunTraceView() {
     enabled: admin() && !!data(),
     staleTime: 60_000,
   }))
-  const editorHref = () => `/visual/${encodeURIComponent(visualId())}`
-  // Back is always the automation's Runs tab: the history could lead out of the panel.
+  const editorHref = () => adapter.editorHref(visualId())
+  // Back is always the document's Runs tab: the history could lead out of the panel.
   const back = () => navigate(`${editorHref()}?drawer=runs`)
+  /**
+   * Why a page that shows only its own runs does not show this one: the document is gone, cannot be read as this
+   * page's (its own words), or the run is another's. The run is known to be its own only once the document is read.
+   */
+  const refused = (): { text: string; gone?: boolean } | undefined => {
+    if (!own) return
+    if (current.isError) {
+      const code = adapter.apiError(current.error)?.code
+      if (code === 'not_found') return { text: texts.traceDeleted ?? 'This automation no longer exists.', gone: true }
+      // An entity definition built from a class, which has no recorded runs: the read's own words.
+      if (code === classDefinitionCode) return { text: visualError(current.error) }
+      // Any other failure only leaves the revision now unknown, as on an automation's page.
+      return
+    }
+    const run = data()?.run, document = current.data
+    if (run && (run.visualId !== params.id || (document && run.automationId !== document.automationId)))
+      return { text: texts.traceForeign ?? 'This run is not one of this automation’s runs.' }
+  }
+  const traceTexts = (): Partial<TraceTexts> => ({
+    back: texts.traceBack, untitled: texts.traceUntitled, earlier: texts.traceEarlier, missing: texts.traceMissing, noRecord: texts.traceNoRecord, canvas: texts.canvasLabel,
+  })
+  // Unset texts take the automation's (spreading an undefined would replace them).
+  const definedTexts = () => Object.fromEntries(Object.entries(traceTexts()).filter(([, value]) => value !== undefined)) as Partial<TraceTexts>
   return (
     // A run already shown stays on the page if a later read fails.
     <Switch>
       <Match when={!admin()}>
         <p class="hs-notice">Administrator access is required to view run traces.</p>
+      </Match>
+      <Match when={refused()}>
+        {reason => (
+          <div class="hs-notice hs-notice--danger" role="alert">
+            <h2>This run couldn’t load</h2>
+            <p>{reason().text}</p>
+            <p>{reason().gone
+              ? <Button onClick={() => navigate(adapter.listHref)}>{texts.back}</Button>
+              : <Button onClick={() => navigate(editorHref())}>Open in editor</Button>}</p>
+          </div>
+        )}
+      </Match>
+      {/* A page that shows only its own runs waits for the document, which says whether the run is one of them. */}
+      <Match when={own && data() && current.isPending}>
+        <div class="hs-empty" role="status">Loading the run…</div>
       </Match>
       <Match when={data()}>
         {response => (
@@ -87,6 +137,7 @@ export function RunTraceView() {
             onRetry={() => void trace.refetch()}
             services={services.data ? unwrap(services.data) : undefined}
             onOpenLibrary={(id, line) => navigate(libraryHref(id, line))}
+            texts={definedTexts()}
           />
         )}
       </Match>
@@ -102,4 +153,12 @@ export function RunTraceView() {
       </Match>
     </Switch>
   )
+}
+
+/**
+ * `/entities/:id/runs/:runId`: one run of an entity definition built from steps, read through the entity API, linked
+ * back to its editor (`/entities/<id>`) and worded for it; only the definition's own runs are shown.
+ */
+export function EntityRunTraceView() {
+  return <RunTraceView adapter={entityAdapter(useHass()) as unknown as EditorAdapter} ownRunsOnly />
 }

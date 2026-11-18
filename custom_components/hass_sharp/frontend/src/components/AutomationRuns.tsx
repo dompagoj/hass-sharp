@@ -6,13 +6,15 @@ import type { AutomationRun, RunHistoryResponse, RunStatus } from '../types'
 import { acceptedRun, forgetAcceptedRun, runErrorMessage as errorMessage, runHistoryInterval } from './runDispatch'
 import { Button, Icon } from './Controls'
 import { JsonTree } from './JsonTree'
-import { summarizeTrigger, TriggerSummary } from './TriggerSummary'
+import { summarizeTrigger, TriggerSummary, type TriggerNames } from './TriggerSummary'
 import { relativeTime } from '../automations/model'
 
 const PAGE_SIZE = 20
 const STATUSES: RunStatus[] = ['Failed', 'Cancelled', 'Interrupted', 'Stopped', 'Skipped', 'Succeeded', 'Running', 'Pending']
 const CAUSES: Record<string, string> = {
   HomeAssistantTrigger: 'Home Assistant trigger', Entity: 'Entity change', Schedule: 'Schedule', Manual: 'Manual run', Startup: 'Startup',
+  // An entity definition's: one of its entities was commanded, or it started.
+  Command: 'Command', Setup: 'Started',
 }
 const duration = (ms: number | null) => ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} s`
 // Rows recorded before run history v2 carry only the method name and no trigger summary.
@@ -23,17 +25,25 @@ const Timestamp = (props: { value: string | null }) => <Show when={props.value} 
   <time dateTime={value()} title={value()}>{new Date(value()).toLocaleString()}</time>
 }</Show>
 
-/** The run history of one saved automation. Runs are started elsewhere (the visual editor's top bar). */
+/** The run history of one saved automation (or entity definition). Runs are started elsewhere (the visual editor's top bar). */
 interface RunsProps {
   automationId: string
   /** Where a run's "View trace" link goes (default: the run of the visual automation, `/visual/<id>/runs/<runId>`). */
   runHref?: (run: AutomationRun) => string
+  /** The hint under "No runs yet" (default: an automation's, "Run it now or wait for its next trigger."). */
+  emptyHint?: string
+  /** The name of a run's `revision` in its details (default: "Automation revision"). */
+  revisionLabel?: string
+  /** An entity definition's entities and their commands, to name its command runs by. */
+  triggerNames?: TriggerNames
 }
 export const AutomationRuns = (props: RunsProps) => {
   const hass = useHass()
   // Identity, rather than filename, owns pagination and dispatch feedback.
   return <Show when={hass.user?.is_admin} fallback={<p class="hs-notice">Administrator access is required to view run history.</p>}>
-    <Show when={props.automationId} keyed>{id => <RunPanel automationId={id} runHref={props.runHref} />}</Show>
+    <Show when={props.automationId} keyed>{id =>
+      <RunPanel automationId={id} runHref={props.runHref} emptyHint={props.emptyHint} revisionLabel={props.revisionLabel} triggerNames={props.triggerNames} />
+    }</Show>
   </Show>
 }
 
@@ -93,10 +103,11 @@ const RunPanel = (props: RunsProps) => {
       </div></Show>
       <Show when={history.isSuccess && !history.data.runs.length}><div class="hs-empty" role="status">
         <h2>{offset() ? 'No more runs' : statusFilter() ? `No ${statusFilter().toLowerCase()} runs` : 'No runs yet'}</h2>
-        <p>{offset() ? 'Return to the newest runs or the previous page.' : statusFilter() ? 'Choose another status to see other runs.' : 'Run it now or wait for its next trigger.'}</p>
+        <p>{offset() ? 'Return to the newest runs or the previous page.' : statusFilter() ? 'Choose another status to see other runs.' : props.emptyHint ?? 'Run it now or wait for its next trigger.'}</p>
       </div></Show>
       <ul class="hs-run-list" aria-label="Recorded runs" aria-busy={history.isFetching}>
-        <For each={history.data?.runs}>{run => <RunRow run={run} now={now()} open={expanded().has(run.runId)} onToggle={() => toggle(run.runId)} href={props.runHref} />}</For>
+        <For each={history.data?.runs}>{run => <RunRow run={run} now={now()} open={expanded().has(run.runId)} onToggle={() => toggle(run.runId)} href={props.runHref}
+          revisionLabel={props.revisionLabel} names={props.triggerNames} />}</For>
       </ul>
       <nav class="hs-history-pagination" aria-label="Run history pages">
         <Button disabled={!offset() || history.isFetching} onClick={() => setOffset(0)}>Newest</Button>
@@ -109,11 +120,13 @@ const RunPanel = (props: RunsProps) => {
 }
 
 
-const RunRow = (props: { run: AutomationRun; now: number; open: boolean; onToggle: () => void; href?: (run: AutomationRun) => string }) => {
+const RunRow = (props: {
+  run: AutomationRun; now: number; open: boolean; onToggle: () => void; href?: (run: AutomationRun) => string; revisionLabel?: string; names?: TriggerNames
+}) => {
   // The run list can also stand alone, outside the app's routes: a link to a run needs the router.
   const routed = !!useContext(RouterContext)
   const bodyId = createUniqueId()
-  const summary = () => props.run.trigger ? summarizeTrigger(props.run.trigger) : undefined
+  const summary = () => props.run.trigger ? summarizeTrigger(props.run.trigger, props.names) : undefined
   return <li class={`hs-run-row hs-run-row--${props.run.status.toLowerCase()}`}>
     <div class="hs-run-line">
       <button type="button" class="hs-run-toggle" aria-expanded={props.open} aria-controls={props.open ? bodyId : undefined} onClick={() => props.onToggle()}>
@@ -139,11 +152,11 @@ const RunRow = (props: { run: AutomationRun; now: number; open: boolean; onToggl
         <h3>{props.run.status === 'Cancelled' ? 'Cancel reason' : 'Error'}</h3>
         <pre class={`hs-run-error ${props.run.status === 'Cancelled' ? 'hs-run-error--quiet' : ''}`}>{error()}</pre>
       </section>}</Show>
-      <section><h3>Trigger</h3><TriggerSummary trigger={props.run.trigger} /></section>
+      <section><h3>Trigger</h3><TriggerSummary trigger={props.run.trigger} names={props.names} /></section>
       <section><h3>Run</h3><dl class="hs-run-fields">
         <div><dt>Run ID</dt><dd class="hs-run-id"><code>{props.run.runId}</code><CopyButton value={props.run.runId} /></dd></div>
         <Show when={props.run.visualRevision != null}><div><dt>Graph revision</dt><dd>{props.run.visualRevision}</dd></div></Show>
-        <div><dt>Automation revision</dt><dd><code>{props.run.revision}</code></dd></div>
+        <div><dt>{props.revisionLabel ?? 'Automation revision'}</dt><dd><code>{props.run.revision}</code></dd></div>
         <div><dt>Planned</dt><dd><Timestamp value={props.run.plannedUtc} /></dd></div>
         <div><dt>Received</dt><dd><Timestamp value={props.run.receivedUtc} /></dd></div>
         <div><dt>Started</dt><dd><Timestamp value={props.run.startUtc} /></dd></div>

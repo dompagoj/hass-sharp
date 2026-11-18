@@ -380,7 +380,8 @@ export interface HassValueChangedEvent extends Event {
 export type RunStatus = 'Pending' | 'Running' | 'Succeeded' | 'Skipped' | 'Cancelled' | 'Failed' | 'Interrupted' | 'Stopped'
 /** Stored trigger summary of a run (run history v2). Only the fields of its kind are present. */
 export interface RunTrigger {
-  kind: 'ha' | 'entity' | 'schedule' | 'manual' | 'startup'
+  /** An entity definition's runs add `command` (one of its entities was commanded) and `setup` (it started). */
+  kind: 'ha' | 'entity' | 'schedule' | 'manual' | 'startup' | 'command' | 'setup'
   platform?: string
   id?: string
   description?: string
@@ -390,6 +391,10 @@ export interface RunTrigger {
   eventType?: string
   scheduleId?: string
   planned?: string
+  /** A command run's entity, by its key in the definition. */
+  entity?: string
+  /** A command run's command, as Home Assistant gave it (`turn_on`). */
+  command?: string
 }
 /**
  * Run history v2. UTC strings are rendered in local time. Rows written before v2

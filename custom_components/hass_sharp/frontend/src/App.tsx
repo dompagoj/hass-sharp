@@ -6,7 +6,7 @@ import { MainLayout } from './layout/MainLayout'
 import { HassCtx } from './context'
 import { AutomationsListView } from './views/AutomationsListView'
 import { VisualAutomationView } from './views/VisualAutomationView'
-import { RunTraceView } from './views/RunTraceView'
+import { EntityRunTraceView, RunTraceView } from './views/RunTraceView'
 import { EntityDefinitionView } from './views/EntityDefinitionView'
 import { EntitiesListView } from './views/EntitiesListView'
 import { findCustomComponent } from './utils'
@@ -46,6 +46,7 @@ export function AppRoutes() {
     <Route path="/devices" component={() => <Navigate href="/entities" />} />
     <Route path="/entities" component={EntitiesListView} />
     <Route path="/entities/:id" component={EntityDefinitionView} />
+    <Route path="/entities/:id/runs/:runId" component={EntityRunTraceView} />
   </>
 }
 

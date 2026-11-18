@@ -5,7 +5,7 @@ import { Dialog, openModal, trapTab } from '../components/Dialog'
 import { createLoader, LoadFailed } from '../components/LazyLoad'
 import { Menu, type MenuItem } from '../components/Menu'
 import type { CustomCodeHandle } from '../components/Editor/CustomCode'
-import { customSignature, wellFormedSignature, type CustomSignature, type GraphNode, type InputSpec, type VisualCatalogSnapshot } from './contract'
+import { customSignature, wellFormedSignature, type CustomSignature, type GraphDocument, type GraphNode, type InputSpec, type VisualCatalogSnapshot } from './contract'
 import { exampleSource } from './customCode'
 import { nodeTitle } from './flow/flowModel'
 import { Glyph } from './Glyph'
@@ -38,6 +38,8 @@ export interface CustomCodeEditorProps {
   onDirtyChange?(dirty: boolean, source?: string): void
   /** Unapplied code to open with (restored from a draft); unapplied, so it counts as unsaved until it is applied. */
   draft?: string
+  /** The kind of graph the node is in (`graphDocument`), for the help's words: an automation unless told. */
+  document?: GraphDocument
 }
 
 /**
@@ -203,7 +205,7 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
         footer={<><Button onClick={() => setConfirm(false)}>Keep editing</Button><Button variant="danger" onClick={() => { setConfirm(false); close() }}>Discard</Button></>}>
         <p>The node keeps its code as it was before you opened the editor.</p>
       </Dialog>
-      <CustomCodeHelp open={help()} onClose={() => setHelp(false)} />
+      <CustomCodeHelp open={help()} onClose={() => setHelp(false)} document={props.document} />
     </dialog>
   )
 }
@@ -294,7 +296,7 @@ export function CodeLeftBehind(props: { source?: string; onClose(): void }) {
 }
 
 /** A short reference for writing a node's code, in the style of the editor's help. */
-export function CustomCodeHelp(props: { open: boolean; onClose(): void }) {
+export function CustomCodeHelp(props: { open: boolean; onClose(): void; /** The kind of graph the node is in (an automation unless told). */ document?: GraphDocument }) {
   return (
     <Dialog open={props.open} title="Writing a node in C#" width="large" onClose={props.onClose}>
       <p>The code is one static class with exactly one method marked <code>[Node("Title")]</code>. Helper methods and types can sit beside it, and <code>using</code> lines go at the top.</p>
@@ -320,7 +322,7 @@ export function CustomCodeHelp(props: { open: boolean; onClose(): void }) {
       <p>Read a state with <code>context.State("sensor.x")</code>.</p>
       <p>Call a service with <code>await context.Services.Light.TurnOn(light, brightnessPct: 30)</code>; the methods follow this Home Assistant's own services. Domains and services are in PascalCase and fields in camelCase (<code>brightness_pct</code> is <code>brightnessPct</code>); the call sends the original ids. The target comes first: an entity ID, a list such as <code>["light.a", "light.b"]</code>, or a <code>ServiceTarget</code> such as <code>ServiceTarget.Areas("kitchen")</code>. Only the fields you give are sent.</p>
       <p>For a service id known only at run time, use <code>context.CallService("domain.service", target, data)</code>.</p>
-      <p>If a service goes away, code that calls it stops compiling at its next compile; running automations keep running.</p>
+      <p>If a service goes away, code that calls it stops compiling at its next compile; {props.document === 'entity' ? 'what is already running keeps running' : 'running automations keep running'}.</p>
       <h3>Descriptions</h3>
       <p>The XML <code>&lt;summary&gt;</code> is the node's description, each <code>&lt;param&gt;</code> describes an input and <code>&lt;returns&gt;</code> describes the output.</p>
     </Dialog>
