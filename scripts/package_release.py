@@ -35,12 +35,15 @@ def package_release(integration_dir: Path, output: Path, version: str) -> None:
         "__init__.py", "manifest.json", "dotnet.runtimeconfig.json",
         "out/HassSharp.dll", "out/HassSharp.deps.json", "out/Python.Runtime.dll",
         "www/hass-sharp.js", "visual_node_catalog.json", "authoring_examples.json",
-        # The licences of what a release carries that is not HassSharp's own (THIRD-PARTY-NOTICES.md).
-        "licenses/DejaVu-LICENSE.txt", "licenses/StbTrueTypeSharp-LICENSE.txt",
     )
     for name in required:
         if not (integration_dir / name).is_file():
             raise ValueError(f"Missing runtime file: {name}. Build the integration first.")
+    # The licences of what a release carries that is not HassSharp's own.
+    for name in ("licenses/DejaVu-LICENSE.txt", "licenses/StbTrueTypeSharp-LICENSE.txt"):
+        if not (integration_dir / name).is_file():
+            raise ValueError(f"The licence file {name} is missing. A release carries the licence of everything it "
+                             "bundles that is not HassSharp's own (THIRD-PARTY-NOTICES.md).")
 
     files = [*integration_dir.glob("*.py"), *integration_dir.glob("*.json")]
     for directory in ("out", "www", "translations", "brand", "licenses"):

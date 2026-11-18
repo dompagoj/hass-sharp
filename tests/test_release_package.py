@@ -126,7 +126,9 @@ class ReleasePackageTests(unittest.TestCase):
                 (self.integration / name).unlink()
                 result = self.package()
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn(name, result.stderr)
+                self.assertIn(f"The licence file {name} is missing. A release carries the licence of everything it "
+                              "bundles that is not HassSharp's own (THIRD-PARTY-NOTICES.md).", result.stderr)
+                self.assertNotIn("Build the integration first", result.stderr)
                 self.assertFalse(self.output.exists())
                 self.write_file(name, self.files[name])
 

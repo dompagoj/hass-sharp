@@ -42,6 +42,7 @@ static class SharpImageTests
         ManyScans();
         HugeHeader();
         NoSize();
+        CutBeforeItsSize();
         Allocation();
         Threads();
         Pooled();
@@ -403,6 +404,34 @@ static class SharpImageTests
         return image.ToJpeg();
     }
 
+    static void CutBeforeItsSize()
+    {
+        // This thread's decoder last read a picture 34 × 8.
+        Check(Decode(SharpImage.Load(SharpImage.Blank(34, 8).ToJpeg()).DrawRect(1, 1, 4, 4).ToJpeg()).Width == 34, "the earlier picture");
+        var jpeg = SharpImage.Blank(64, 48).ToJpeg();
+        var cut = jpeg[..Marker(jpeg, 0xC0, 2)];
+        try
+        {
+            TurboJpeg.Header(cut, out var width, out var height);
+            throw new Exception($"a JPEG cut before its size was read as {width} × {height}");
+        }
+        catch (InvalidDataException error)
+        {
+            Check(error.Message.StartsWith("The picture could not be read", StringComparison.Ordinal), "a JPEG cut before its size: " + error.Message);
+        }
+        try
+        {
+            var drawn = SharpImage.Load(cut).DrawRect(1, 1, 4, 4).ToJpeg();
+            throw new Exception($"drawing on a JPEG cut before its size gave a picture {Decode(drawn).Width} wide");
+        }
+        catch (InvalidDataException error)
+        {
+            Check(error.Message.StartsWith("The picture could not be read", StringComparison.Ordinal), "drawing on a JPEG cut before its size: " + error.Message);
+        }
+        Check(Decode(SharpImage.Load(SharpImage.Blank(34, 8).ToJpeg()).DrawRect(1, 1, 4, 4).ToJpeg()).Width == 34, "a good picture decodes right after");
+        Console.WriteLine("PASS sharp image: a JPEG cut before its size is refused with a plain sentence, also on a thread that read another picture's");
+    }
+
     static void Allocation()
     {
         var source = Busy(1280, 720);
@@ -439,8 +468,6 @@ static class SharpImageTests
         Console.WriteLine("PASS sharp image: 8 threads drawing at once all give correct pictures");
     }
 
-    // Eight threads that each made a 1920 × 1080 frame (a pixel buffer of 6 MB, pooled in the 8 MiB bucket) and are still
-    // alive keep at most two buffers between them: the pool has no buffer of each thread's own, as the shared pool has.
     // Eight threads that each made a 2560 × 1920 frame (a pixel buffer of 14 MB, in the pool's largest size, 16 MiB, so
     // that no larger one stands in) and are still alive keep at most two buffers between them: the pool keeps two of a
     // size, and none of each thread's own, as the shared pool does (one per thread, 128 MiB here).

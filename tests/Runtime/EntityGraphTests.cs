@@ -2730,10 +2730,12 @@ static class EntityGraphTests
         rig.Home.AnswerPictures = (_, _, _, _) => { };
         var (host, _) = Annotating(rig);
         await Task.Delay(50);
-        var waiting = Frame(rig);
-        await EntityTestHome.Until(() => rig.Home.Pictures().Length == 2, "the frame flow asks for its picture");
+        // Unlinked before the request begins, so that neither the request nor the making of its frame sees a stop: only
+        // the lifetime ends.
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         typeof(DefinitionHost).GetField("stopping", flags)!.SetValue(host, new CancellationTokenSource());
+        var waiting = Frame(rig);
+        await EntityTestHome.Until(() => rig.Home.Pictures().Length == 2, "the frame flow asks for its picture");
         var script = (UserScript)typeof(DefinitionHost).GetFields(flags).Single(field => field.FieldType == typeof(UserScript)).GetValue(host)!;
         script.CancelLifetime(CancelReasons.Stopping);
         Check(Same(await waiting, good), "the request gets the last good frame");

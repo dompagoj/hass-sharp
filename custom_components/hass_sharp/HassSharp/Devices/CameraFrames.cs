@@ -191,15 +191,17 @@ internal sealed class CameraFrames
 
     /// <summary>
     /// The camera of the revision this one replaced handed over its frames: they become this camera's, unless it has
-    /// shown one of its own meanwhile (as the revision prepared). The frames are made anew here, so nothing of the
-    /// replaced revision is kept; none is fresh for <see cref="Share"/>, which only an attempt of this camera is.
+    /// shown one of its own meanwhile (as the revision prepared). The frames are made anew here, of copies of the pictures,
+    /// so nothing of the replaced revision is kept; none is fresh for <see cref="Share"/>, which only an attempt of this camera is.
     /// </summary>
     public void TakeOver(Handover handed)
     {
         if (handed.Current is not { } kept) return;
-        var taken = new Frame(kept.Image, kept.Confirmed, kept.Jpeg);
+        // Copies (the bytes shared), as a picture is for one flow at a time: a request to the replaced revision may still
+        // be encoding its own.
+        var taken = new Frame(kept.Image.Copy(), kept.Confirmed, kept.Jpeg);
         // The current frame was the good one when its JPEG was made and no other is handed.
-        var earlier = handed.Good is { } was ? new Frame(was.Image, was.Confirmed, was.Jpeg) : kept.Jpeg != null ? taken : null;
+        var earlier = handed.Good is { } was ? new Frame(was.Image.Copy(), was.Confirmed, was.Jpeg) : kept.Jpeg != null ? taken : null;
         lock (gate)
         {
             if (current != null) return;

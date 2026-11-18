@@ -16,7 +16,9 @@ handles fails naming the entity and the command, and that nothing logged at warn
 For pictures, which cross as bytes both ways: a class camera shows a blank picture, which comes out of CameraImage as a
 System.Byte[]; another, whose frames take a picture of the first through BeginCameraSnapshot (answered as the bridge
 answers, with a System.Byte[] the bridge's own code builds) and draw a rectangle and a label on it, gives a JPEG that
-differs from its source, which takes libjpeg-turbo and the embedded font.
+differs from its source, which takes libjpeg-turbo and the embedded font. A camera that only shows its frames keeps its
+picture across a save: the request right after it gets the frame the replaced revision showed, which the new one never
+shows itself.
 Exits non-zero with a message on the first mismatch.
 """
 import ast
@@ -38,13 +40,16 @@ sys.path.insert(0, str(root / 'out'))
 import clr
 clr.AddReference('HassSharp')
 from HassSharp import HasEntityState, HassSharpManager, PyInterop, SharpImage
-from System import Action, Array, Byte, Func, Int32, Object, String
+from System import Action, AppContext, Array, Boolean, Byte, Func, Int32, Object, String
 from System.Collections.Generic import Dictionary
 from System.Threading.Tasks import Task
 
 DEFINITION = 'smoke_plug'
 # The cameras' definitions, and the entity id the smoke's sync answers for the still one.
 STILL, LENS = 'smoke_still', 'smoke_lens'
+# A camera that shows a green frame as it starts only while the smoke says so (AppContext data), so that a revision saved
+# without it shows none of its own.
+PUSH, PUSH_SHOWS = 'smoke_push', 'HassSharp.Smoke.PushShows'
 STILL_CAMERA = f'camera.{STILL}_main'
 TYPE = 'library:smoke:NodeLib.SmokePlug'
 REFUSAL = 'the smoke plug refuses to turn on'
@@ -72,6 +77,14 @@ public class SmokePlug : SharpDevice
 public class SmokeStill : SharpCamera
 {
     protected override Task Start() { Show(SharpImage.Blank(64, 48, SharpColor.Blue)); return Task.CompletedTask; }
+}
+public class SmokePush : SharpCamera
+{
+    protected override Task Start()
+    {
+        if (AppContext.GetData("''' + PUSH_SHOWS + '''") is true) Show(SharpImage.Blank(64, 48, SharpColor.Green));
+        return Task.CompletedTask;
+    }
 }
 public class SmokeLens : SharpCamera
 {
@@ -526,6 +539,26 @@ try:
         for definition_id in (STILL, LENS):
             deleted = request(manager.EntityRequest, {'operation': 'delete', 'id': definition_id, 'expectedRevision': 1}, f'the {definition_id} delete')
             check(deleted == {'deleted': True}, f'the {definition_id} delete answered {deleted}')
+
+        # ---- A camera that only shows its frames, across a save ----
+        def save_push(revision):
+            saved = request(manager.EntityRequest, {'operation': 'save', 'id': PUSH, 'expectedRevision': revision, 'definition': {
+                'name': PUSH, 'settings': [], 'logic': {'kind': 'class', 'type': 'library:smoke:NodeLib.SmokePush'}}},
+                f'the {PUSH} save at revision {revision}')
+            check(saved.get('active') is True and saved['document']['status'] == 'running', f'{PUSH} does not run: {saved}')
+        AppContext.SetData(PUSH_SHOWS, Boolean(True))
+        save_push(0)
+        shown = frame(f'{PUSH}:main', "the push camera's frame")
+        check(shown[:2] == b'\xff\xd8', f"the push camera's frame is not a JPEG: it starts {shown[:4].hex()}")
+        AppContext.SetData(PUSH_SHOWS, None)
+        save_push(1)
+        try:
+            kept = bytes(call(lambda: manager.CameraImage(f'{PUSH}:main'), "the push camera's frame right after the save"))
+        except Exception as error:
+            fail(f"the push camera's frame right after the save failed: {getattr(error, 'Message', error)}")
+        check(kept == shown, "the push camera's frame right after the save is not the one the replaced revision showed")
+        deleted = request(manager.EntityRequest, {'operation': 'delete', 'id': PUSH, 'expectedRevision': 2}, f'the {PUSH} delete')
+        check(deleted == {'deleted': True}, f'the {PUSH} delete answered {deleted}')
     finally:
         call(lambda: manager.UnloadAsync(False), 'unload')
     errors = [line for level, line in logs if level >= 40]
@@ -540,4 +573,4 @@ finally:
     shutil.rmtree(config, ignore_errors=True)
 
 print(f"entity bridge smoke OK ({len(recorded('push'))} pushes; {len(recorded('snapshot')) // 2} picture taken; "
-      f"other delegates called: {sorted(set(others)) or 'none'})")
+      f"a push camera's frame kept across a save; other delegates called: {sorted(set(others)) or 'none'})")

@@ -328,7 +328,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// Stops the definition: from now on it publishes nothing and refuses commands. Cancels <see cref="Stopping"/>, ends
     /// its timers and tracks, waits for a start still running and then for the timer callbacks, track callbacks and
     /// commands still running, then runs <c>Stop()</c> on each entity and then the device, all within
-    /// <see cref="UserScript.RunDrainTimeout"/>, and leaves the directory unless replaced. What the host waits on for the
+    /// <see cref="UserScript.RunDrainTimeout"/>, and leaves the directory unless replaced: a revision that replaces it and
+    /// has not stopped takes its place there, and answers for its entities until it starts. What the host waits on for the
     /// component (<see cref="Calls"/>) ends when that time is up. Their failures are logged, never thrown. Pushes nothing
     /// to Home Assistant. A second call returns the first one's task.
     /// </summary>
@@ -344,24 +345,27 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         {
             if (stopped != null) return stopped.Task;
             stopped = completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            (next, successor) = (successor, null);
+            // Before the status: a request that sees this one stopped also sees that it is replaced.
+            replacing = next != null;
             status = Stopped;
             start = starting;
             ticking = [.. timers];
             following = [.. tracks];
             timers.Clear();
             tracks.Clear();
-            (next, successor) = (successor, null);
             final = next != null ? CurrentStates() : [];
-            replacing = next != null;
         }
         // The revision replacing this one gets what changed while it was prepared, and its cameras the frames of these;
         // outside the lock, as it takes its own, and as each camera takes its own.
         next?.Inherit(this, final, next != null ? HandedFrames() : []);
-        _ = StopCoreAsync(completion, start, ticking, following);
+        _ = StopCoreAsync(completion, start, ticking, following, next);
         return completion.Task;
     }
 
-    async Task StopCoreAsync(TaskCompletionSource completion, Task? start, Repeating[] ticking, IDisposable[] following)
+    // The heir is the revision replacing this one, which takes its place in the directory as it leaves (until it starts,
+    // and registers itself); held only until this stop has ended.
+    async Task StopCoreAsync(TaskCompletionSource completion, Task? start, Repeating[] ticking, IDisposable[] following, DefinitionHost? heir)
     {
         try
         {
@@ -406,7 +410,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         catch (Exception failure) { Report("stopping failed", failure, PyLogLevel.Error); }
         finally
         {
-            Manager.Entities.Leave(this);
+            Manager.Entities.Leave(this, heir);
             // A revision this one was to replace keeps nothing of it, nor it of that one.
             ReleasePredecessor();
             // Nothing of the user's code stays reachable from the host once stopped.
@@ -524,8 +528,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// that cannot be encoded leaves the last good one as the answer for a while. While the definition starts, the
     /// current frame (one the revision it replaces handed over) is the answer and none is made. Stopping cancels the
     /// frame being made (through <see cref="Stopping"/>) and waits for it as for a command; a request then waiting is
-    /// answered with the last good frame while there is one, as when making one failed, and so is a request while a
-    /// revision that a new one replaces is still stopping. One turned off or deleted refuses every later request.
+    /// answered with the last good frame while there is one, as when making one failed (a camera that makes none with its
+    /// current frame, however old), and so is a request while a revision that a new one replaces is still stopping; once
+    /// it has left, the new revision answers until it starts. One turned off or deleted refuses every later request.
     /// </summary>
     /// <exception cref="InvalidOperationException">The definition is not running (or stopped meanwhile, with no good frame), the camera has not shown a frame, or making or encoding one failed and the last good one is too old.</exception>
     /// <exception cref="TimeoutException">Making one took longer than <see cref="CameraFrames.MakeLimit"/> and the last good one is too old.</exception>
@@ -536,16 +541,18 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         var what = $"{camera.Called} could not make a frame";
         var interval = CameraFrames.IntervalSecond * camera.FrameInterval;
         var goodFor = CameraFrames.GoodWithin(interval);
+        // A camera that makes no frames answers its current one however old, also when the definition stops.
+        var makes = Maker(camera) != null;
         // The same frame fails the same way for every request: its whole failure is logged with its first line.
         string Unencoded(Exception failure) => Failing(frames.Failures, what, failure, everyTime: false);
         if (status == SettingUp)
         {
             // Starting: what the camera has, made by none, within the time a good frame is given when it makes its frames.
-            try { return (await frames.Picture(camera.Called, Maker(camera) != null ? Starting : null, goodFor, Unencoded)).Jpeg; }
+            try { return (await frames.Picture(camera.Called, makes ? Starting : null, goodFor, Unencoded)).Jpeg; }
             catch (Exception) { throw NotRunning(); }
         }
         // Replaced by a new revision, still stopping (it may wait for a Stop() or a frame): the good frame, none made.
-        if (status == Stopped && replacing) return await Overtaken(camera, goodFor, Unencoded);
+        if (status == Stopped && replacing) return await Overtaken(camera, makes, goodFor, Unencoded);
         if (status != Running) throw NotRunning();
         try
         {
@@ -554,20 +561,20 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             if (Maker(camera) is { } make)
                 outcome = await (shared = frames.Share(interval, () => Make(camera, make, what))).WaitAsync(stopping);
             // Also when the making saw the stop first.
-            if (stopping.IsCancellationRequested) return await Overtaken(camera, goodFor, Unencoded);
+            if (stopping.IsCancellationRequested) return await Overtaken(camera, makes, goodFor, Unencoded);
             var (jpeg, current) = await frames.Picture(camera.Called, outcome, goodFor, Unencoded);
             // Not after a newer attempt failed meanwhile: the one this request shared is then no longer the news.
             if (current && (shared == null || outcome is { Failure: null } && frames.IsLast(shared))) Working(frames.Failures, $"{camera.Called} makes frames again");
             return jpeg;
         }
-        catch (Exception) when (stopping.IsCancellationRequested) { return await Overtaken(camera, goodFor, Unencoded); }
+        catch (Exception) when (stopping.IsCancellationRequested) { return await Overtaken(camera, makes, goodFor, Unencoded); }
     }
 
-    // A request the definition's stop overtook: the camera's good frame, while there is one, else the refusal of a camera
-    // whose definition is not running.
-    static async Task<byte[]> Overtaken(SharpCamera camera, TimeSpan goodFor, Func<Exception, string> unencoded)
+    // A request the definition's stop overtook: the camera's good frame, while there is one (the current frame, however
+    // old, of a camera that makes none), else the refusal of a camera whose definition is not running.
+    static async Task<byte[]> Overtaken(SharpCamera camera, bool makes, TimeSpan goodFor, Func<Exception, string> unencoded)
     {
-        try { return (await camera.Frames.Picture(camera.Called, Cancelled, goodFor, unencoded)).Jpeg; }
+        try { return (await camera.Frames.Picture(camera.Called, makes ? Cancelled : null, goodFor, unencoded)).Jpeg; }
         catch (Exception) { throw NotRunning(); }
     }
 

@@ -107,13 +107,18 @@ internal static unsafe class TurboJpeg
         if (!warning) throw new InvalidDataException(what + message);
     }
 
-    /// <summary>Reads a JPEG's size from its header, without decoding it.</summary>
+    /// <summary>
+    /// Reads a JPEG's size from its header, without decoding it, with a new decompressor: one that read a picture before
+    /// answers a header that ends before its size with that picture's size (libjpeg-turbo 3), as if it were this one's.
+    /// </summary>
     /// <exception cref="InvalidOperationException">The library is missing: <see cref="Missing"/>.</exception>
     /// <exception cref="InvalidDataException">The header cannot be read.</exception>
     internal static void Header(ReadOnlySpan<byte> jpeg, out int width, out int height)
     {
         var api = Require();
         int w = 0, h = 0, subsampling, colorspace, result;
+        decompressor?.Dispose();
+        decompressor = null;
         var handle = Decompressor(api);
         fixed (byte* source = jpeg) result = api.DecompressHeader3(handle, source, new CULong((nuint)jpeg.Length), &w, &h, &subsampling, &colorspace);
         if (result != 0) Failed(api, ref decompressor, "The picture could not be read: ");

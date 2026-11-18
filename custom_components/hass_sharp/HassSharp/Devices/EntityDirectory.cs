@@ -31,12 +31,24 @@ internal sealed class EntityDirectory
     /// <summary>The started host of the definition; null when none is.</summary>
     public DefinitionHost? Host(string definitionId) { lock (gate) return hosts.GetValueOrDefault(definitionId); }
 
+    /// <summary>Enters the started host; again for one already entered (as an heir, see <see cref="Leave"/>) changes nothing.</summary>
     internal void Register(DefinitionHost host) { lock (gate) hosts[host.DefinitionId] = host; }
 
-    /// <summary>Removes the host, unless another revision of its definition has replaced it.</summary>
-    internal void Leave(DefinitionHost host)
+    /// <summary>
+    /// Removes the stopped host, unless another revision of its definition has replaced it there. When
+    /// <paramref name="heir"/>, the revision replacing it, has not stopped, it takes the host's place instead: from the
+    /// host's leaving until the heir starts and registers itself, the heir answers for the definition's entities (its
+    /// cameras with the frames they took over; its commands are refused until it runs). An heir that stops before it
+    /// starts leaves as any host does.
+    /// </summary>
+    internal void Leave(DefinitionHost host, DefinitionHost? heir = null)
     {
         lock (gate)
-            if (hosts.TryGetValue(host.DefinitionId, out var current) && current == host) hosts.Remove(host.DefinitionId);
+        {
+            if (!hosts.TryGetValue(host.DefinitionId, out var current) || current != host) return;
+            // Its status is set before it leaves (StopAsync): an heir that stopped first is never put back.
+            if (heir != null && heir != host && heir.DefinitionId == host.DefinitionId && heir.Status != "stopped") hosts[host.DefinitionId] = heir;
+            else hosts.Remove(host.DefinitionId);
+        }
     }
 }

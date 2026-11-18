@@ -329,9 +329,18 @@ static class CameraTests
         throw new Exception("no start of frame");
     }
 
+    // A JPEG cut just before its start-of-frame: it starts as one and never says its size.
+    static byte[] CutBeforeItsSize()
+    {
+        var jpeg = SharpImage.Blank(64, 48).ToJpeg();
+        for (var i = 2; i + 1 < jpeg.Length; i++)
+            if (jpeg[i] == 0xFF && jpeg[i + 1] is 0xC0 or 0xC1 or 0xC2) return jpeg[..i];
+        throw new Exception("no start of frame");
+    }
+
     /// <summary>
     /// A frame that cannot be encoded (a picture that claims 12000 × 12000 with a rectangle drawn on it, a damaged JPEG
-    /// that starts as one) leaves the last frame whose JPEG was made as the answer for the last-good time (here 1 s), then
+    /// that starts as one, one cut before its size on threads that read another picture's) leaves the last frame whose JPEG was made as the answer for the last-good time (here 1 s), then
     /// fails: one line for each reason, and one when a frame can be encoded again.
     /// </summary>
     static async Task Unencodable(HassSharpManager api, EntityTestHome home)
@@ -357,14 +366,25 @@ static class CameraTests
             pusher.Show(SharpImage.Blank(36, 8));
             Check(Width(await api.CameraImage("pusher:main")) == 36 && Width(await api.CameraImage("pusher:main")) == 36, "a frame that can be encoded is the answer again");
             Check(home.Logs(PyLogLevel.Info).Count(line => line == "Pusher: Pusher (main) makes frames again") == 1, "and that is said once: " + string.Join(" | ", home.Logs()));
+
+            // The pool's threads read a picture 38 wide; one cut before its size is refused, not drawn black at that size.
+            var other = SharpImage.Blank(38, 8).ToJpeg();
+            Parallel.For(0, 64, _ => SharpImage.Load(other).DrawRect(1, 1, 4, 4).ToJpeg());
+            pusher.Show(SharpImage.Load(CutBeforeItsSize()).DrawRect(1, 1, 4, 4));
+            var answered = Width(await api.CameraImage("pusher:main"));
+            Check(answered == 36, $"a picture cut before its size answers the last good frame, not one {answered} wide");
+            Check(Errors().Length == 3 && Errors()[2].StartsWith("Pusher: Pusher (main) could not make a frame: The picture could not be read", StringComparison.Ordinal),
+                "and says it could not be read: " + string.Join(" | ", Errors()));
         }
         finally { CameraFrames.GoodFor = TimeSpan.FromSeconds(30); }
-        Console.WriteLine("PASS camera: a frame that cannot be encoded answers the last good one for the last-good time and then fails, one line for each reason and one on recovery");
+        Console.WriteLine("PASS camera: a frame that cannot be encoded (also one cut before its size) answers the last good one for the last-good time and then fails, one line for each reason and one on recovery");
     }
 
     /// <summary>
-    /// A new revision of a camera that shows its frames takes over the frame of the one it replaces: a request right after
-    /// the save gets it, before anything shows a new one, and so does a request while the new revision starts.
+    /// A new revision of a camera that shows its frames takes over the frame of the one it replaces (a picture of its own,
+    /// not the replaced revision's): a request right after the save gets it, before anything shows a new one, and so does
+    /// a request while the new revision starts, one while the replaced revision stops (its frame however old, as a camera
+    /// that makes none answers), and one between the replaced revision leaving and the new one starting.
     /// </summary>
     static async Task Saved(HassSharpManager api, EntityTestHome home, Func<object, Task<JsonObject>> ok)
     {
@@ -372,9 +392,11 @@ static class CameraTests
         pusher.Show(SharpImage.Blank(35, 8));
         Check(Width(await api.CameraImage("pusher:main")) == 35, "the frame shown");
         var revision = (await ok(new { operation = "read", id = "pusher" }))["revision"]!.GetValue<long>();
+        var picture = pusher.Frames.Handed().Current!.Image;
         var saved = await ok(new { operation = "save", id = "pusher", expectedRevision = revision, definition = Definition("Pusher", "Pusher") });
         Check(saved["active"]!.GetValue<bool>(), "the new revision runs: " + saved.ToJsonString());
         Check(!ReferenceEquals(Running(api, "pusher:main").Camera, pusher), "the new revision has a camera of its own");
+        Check(!ReferenceEquals(Running(api, "pusher:main").Camera.Frames.Handed().Current!.Image, picture), "and a picture of its own, not the one the replaced revision's requests may be encoding");
         Check(Width(await api.CameraImage("pusher:main")) == 35, "a request right after the save gets the frame the replaced revision showed");
 
         // While the new revision starts (its Start() waits here), a request gets the frame, and none is made.
@@ -392,11 +414,15 @@ static class CameraTests
         finally { AppContext.SetData(StartKey, null); }
         Check(Width(await api.CameraImage("pusher:main")) == 35, "and keeps it once it runs");
 
-        // While the replaced revision still stops (its Stop() waits here), a request to it gets the frame too.
+        // While the replaced revision still stops (its Stop() waits here), a request to it gets the frame too, however old:
+        // the camera makes none, so the time a good frame is given while making one fails does not bound it.
         var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         AppContext.SetData(StopKey, new Func<Task>(() => stopping.Task));
+        CameraFrames.GoodFor = TimeSpan.FromMilliseconds(100);
         try
         {
+            Running(api, "pusher:main").Camera.Show(SharpImage.Blank(35, 8));
+            await Task.Delay(200);
             var old = Running(api, "pusher:main").Host;
             var third = ok(new { operation = "save", id = "pusher", expectedRevision = revision + 2, definition = Definition("Pusher", "Pusher") });
             await EntityTestHome.Until(() => old.Status == "stopped", "the replaced revision stops");
@@ -407,8 +433,32 @@ static class CameraTests
         }
         finally { AppContext.SetData(StopKey, null); }
         Check(Width(await api.CameraImage("pusher:main")) == 35, "and the fourth revision has it too");
+
+        // Between the replaced revision leaving and the new one starting (its script still unsubscribes, held here), the
+        // new revision answers, with the frame it took over.
+        try
+        {
+            var old = Running(api, "pusher:main").Host;
+            var script = Scripts(api).GetUserScripts().Single(candidate => candidate.Host == old);
+            await script.NativeSwitch.WaitAsync();
+            Task<JsonObject> fifth;
+            try
+            {
+                fifth = ok(new { operation = "save", id = "pusher", expectedRevision = revision + 3, definition = Definition("Pusher", "Pusher") });
+                // The save stops it (asking for its stop before then would stop it unreplaced); then its stop has ended.
+                await EntityTestHome.Until(() => old.Status == "stopped", "the save stops the replaced revision");
+                await old.StopAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                Check(Scripts(api).Entities.TryGet("pusher:main", out var heir, out _) && heir != old && heir.Status == "setup",
+                    "once the replaced revision has left, the new one stands for the camera while it has not started");
+                Check(Width(await api.CameraImage("pusher:main")) == 35, "a request between the replaced revision leaving and the new one starting gets the frame");
+            }
+            finally { script.NativeSwitch.Release(); }
+            Check((await fifth)["active"]!.GetValue<bool>(), "the fifth revision runs");
+        }
+        finally { CameraFrames.GoodFor = TimeSpan.FromSeconds(30); }
+        Check(Width(await api.CameraImage("pusher:main")) == 35, "and the fifth revision has it too");
         Check(!home.Logs(PyLogLevel.Error).Any(line => line.StartsWith("Pusher: ", StringComparison.Ordinal) && !line.Contains("could not make a frame: The picture", StringComparison.Ordinal)), "nothing fails: " + string.Join(" | ", home.Logs(PyLogLevel.Error)));
-        Console.WriteLine("PASS camera: a new revision of a camera takes over the frame of the one it replaces, also while it starts, and the one it replaces answers it while it stops");
+        Console.WriteLine("PASS camera: a new revision of a camera takes over a copy of the frame of the one it replaces, also while it starts; the one it replaces answers it while it stops, however old, and the new one between the old one leaving and its own start");
     }
 
     static async Task Stopped(HassSharpManager api, EntityTestHome home, Func<object, Task<JsonObject>> ok)
