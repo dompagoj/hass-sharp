@@ -1,6 +1,6 @@
 import { For, Show } from 'solid-js'
 import type { RunTrigger } from '../types'
-import type { EntityDomainSpec, Graph, VisualCatalogSnapshot } from '../visual/contract'
+import { entityCommandLabel, type EntityDomainSpec, type Graph, type VisualCatalogSnapshot } from '../visual/contract'
 
 /**
  * What names an entity definition's command runs: its entities (each by key, with its name and type) and the commands
@@ -18,13 +18,16 @@ export function definitionNames(graph: Graph | undefined, catalog: VisualCatalog
   const entities = definition.entities.filter(record).filter((entity): entity is { key: string } => typeof entity.key === 'string')
   return { entities, domains: catalog?.entityDomains }
 }
-/** "Main relay: Turn on": the entity by its name (else its key), the command by its type's label (else in words). */
+/**
+ * "Main relay: Turn on": the entity by its name (else its key), a command its type has as the catalog labels it; one it
+ * does not have (or of an entity not known) as recorded, its underscores as spaces.
+ */
 const commanded = (trigger: RunTrigger, names?: TriggerNames) => {
   const key = trigger.entity ?? '', command = trigger.command ?? ''
-  const entity = names?.entities?.find(e => e.key === key)
-  const commands = entity?.domain ? names?.domains?.[entity.domain]?.commands : undefined
-  const label = commands && Object.hasOwn(commands, command) && typeof commands[command]?.label === 'string' ? commands[command].label : ''
-  return `${entity?.name || key}: ${label || command.replace(/_/g, ' ')}`
+  const entity = names?.entities?.find(e => e.key === key), domain = entity?.domain ?? '', domains = names?.domains
+  const commands = domains && Object.hasOwn(domains, domain) ? domains[domain]?.commands : undefined
+  const known = record(commands) && Object.hasOwn(commands, command)
+  return `${entity?.name || key}: ${known ? entityCommandLabel({ entityDomains: domains }, domain, command) : command.replace(/_/g, ' ')}`
 }
 
 const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)

@@ -416,6 +416,12 @@ it('summarises a command run by its entity and command, named when the definitio
   expect(summarizeTrigger({ kind: 'command', entity: 'gone', command: 'turn_off' }, plugNames)).toBe('gone: turn off')
 })
 
+it('names a command run\'s command by the catalog\'s label of its type, else in words', () => {
+  const fan = { entities: [{ key: 'blades', domain: 'fan', name: 'Blades' }], domains: { fan: { label: 'Fan', state: {}, options: {}, commands: { turn_on: { label: 'Spin up' }, set_speed: {} } } } }
+  expect(summarizeTrigger({ kind: 'command', entity: 'blades', command: 'turn_on' }, fan)).toBe('Blades: Spin up')
+  expect(summarizeTrigger({ kind: 'command', entity: 'blades', command: 'set_speed' }, fan)).toBe('Blades: Set speed')
+})
+
 it('labels a definition\'s Command and Setup causes, and words its empty state and revision for the definition', async () => {
   let runs: unknown[] = []
   const { root } = setupDefinition(async () => page(runs), {

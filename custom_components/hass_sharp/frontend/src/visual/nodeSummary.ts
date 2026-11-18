@@ -1,4 +1,4 @@
-import { customSignature, dataInputs, dataOutputs, definitionEntity, definitionSettings, entityDomain, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { customSignature, dataInputs, dataOutputs, definitionEntity, definitionSettings, entityCommandLabel, entityDomain, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 import { stateField, stateLabel } from './widgets/states'
 import { entityStateContext } from './entityStateContext'
@@ -251,8 +251,10 @@ function kindText(ctx: Context): string | undefined {
     case 'entity_command': {
       const entity = definitionEntityName(ctx), command = text(config.command)
       if (!entity) return
-      const labels = entityDomain(definitionCatalog(ctx), text(config.entity))?.commands
-      const label = command && record(labels) && Object.hasOwn(labels, command) ? text(labels[command]?.label) || command : command
+      // A command its type has as the catalog labels it; one it does not have as it is.
+      const catalog = definitionCatalog(ctx), commands = entityDomain(catalog, text(config.entity))?.commands
+      const label = command && record(commands) && Object.hasOwn(commands, command)
+        ? entityCommandLabel(catalog, text(definitionEntity(catalog, text(config.entity))?.domain), command) : command
       return `When commanded ▸ ${entity}${label ? `: ${label}` : ''}`
     }
     // A setting by its label; never its value, which may be a secret.

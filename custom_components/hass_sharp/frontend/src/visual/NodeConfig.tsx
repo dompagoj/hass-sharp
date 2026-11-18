@@ -201,9 +201,9 @@ export function NodeConfig(props: NodeConfigProps) {
   const configFields = createMemo(() => {
     // A trigger's whole configuration is TriggerConfig's.
     if (kind() === 'trigger') return []
-    const own = new Set([...ownConfig, ...(kindConfig[kind()] ?? [])])
+    const edited = new Set([...ownConfig, ...(kindConfig[kind()] ?? [])])
     return Object.entries(spec()?.config ?? {}).filter(([name]) => {
-      if (own.has(name) || (spec()?.argumentStorage === 'arguments' && name === 'arguments')) return false
+      if (edited.has(name) || (spec()?.argumentStorage === 'arguments' && name === 'arguments')) return false
       // An attribute name matters only while the node reads an attribute.
       return !(name === 'attribute' && spec()?.config.field && props.node.config.field !== 'attribute')
     }).map(([name]) => name)

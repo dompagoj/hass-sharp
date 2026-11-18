@@ -204,8 +204,23 @@ function definitionItems(catalog: VisualCatalogSnapshot, list: 'entities' | 'set
 export const definitionEntity = (catalog: VisualCatalogSnapshot, key: string) => definitionItems(catalog, 'entities').find(e => e.key === key)
 /** The `entityDomains` entry of the definition's entity with this key; undefined for an unknown entity or domain. */
 export function entityDomain(catalog: VisualCatalogSnapshot, key: string): EntityDomainSpec | undefined {
-  const domain = text(definitionEntity(catalog, key)?.domain), domains = catalog.entityDomains
-  return domain && record(domains) && Object.hasOwn(domains, domain) && record(domains[domain]) ? domains[domain] : undefined
+  const domain = text(definitionEntity(catalog, key)?.domain)
+  return domain ? domainRow(catalog, domain) : undefined
+}
+/** The `entityDomains` row of a domain; undefined for one the catalog does not have. */
+function domainRow(catalog: Pick<VisualCatalogSnapshot, 'entityDomains'>, domain: string): EntityDomainSpec | undefined {
+  const domains = catalog.entityDomains
+  return record(domains) && Object.hasOwn(domains, domain) && record(domains[domain]) ? domains[domain] : undefined
+}
+/** An entity type as people read it: its `entityDomains` row's label, else the domain in words (`fan_speed` → `Fan speed`). */
+export function entityTypeLabel(catalog: Pick<VisualCatalogSnapshot, 'entityDomains'>, domain: string): string {
+  return text(domainRow(catalog, domain)?.label) || words.key(domain)
+}
+/** A command of an entity type as people read it: its label in the type's row, else the command in words. */
+export function entityCommandLabel(catalog: Pick<VisualCatalogSnapshot, 'entityDomains'>, domain: string, command: string): string {
+  const commands = domainRow(catalog, domain)?.commands
+  const entry: unknown = record(commands) && Object.hasOwn(commands, command) ? commands[command] : undefined
+  return (record(entry) ? text(entry.label) : '') || words.key(command)
 }
 /** The definition's entities and settings (each with a text `key`), the first of each key. */
 export const definitionEntities = (catalog: VisualCatalogSnapshot) => definitionItems(catalog, 'entities')

@@ -491,3 +491,32 @@ it('a new step tracks run history by its document: a trigger of an entity defini
   expect(added(automation, 'trigger')).toEqual(Object.fromEntries(Object.entries(catalog.nodes.trigger.config).filter(([, rule]) => rule.default !== undefined).map(([key, rule]) => [key, rule.default])))
   expect(Object.keys(added(entity, 'trigger'))).toEqual(Object.keys(added(automation, 'trigger')))
 })
+
+describe('the labels of entity types and commands', () => {
+  /** The catalog with a type the real one does not have: a labelled fan with a labelled and an unlabelled command, and a row with no label. */
+  const catalog = {
+    ...contract.nodeCatalog,
+    entityDomains: {
+      ...contract.nodeCatalog.entityDomains,
+      fan: { label: 'Ceiling fan', state: {}, commands: { turn_on: { label: 'Spin up' }, set_speed: {} }, options: {} },
+      air_purifier: { state: {}, commands: {}, options: {} },
+    },
+  } as unknown as contract.VisualCatalogSnapshot
+  it('name a type by its row\'s label, else in words', () => {
+    expect(contract.entityTypeLabel(contract.nodeCatalog, 'binary_sensor')).toBe('Binary sensor')
+    expect(contract.entityTypeLabel(contract.nodeCatalog, 'switch')).toBe('Switch')
+    expect(contract.entityTypeLabel(catalog, 'fan')).toBe('Ceiling fan')
+    expect(contract.entityTypeLabel(catalog, 'air_purifier')).toBe('Air purifier')
+    expect(contract.entityTypeLabel(contract.nodeCatalog, 'fan_speed')).toBe('Fan speed')
+    expect(contract.entityTypeLabel(contract.nodeCatalog, 'constructor')).toBe('Constructor')
+    expect(contract.entityTypeLabel({} as contract.VisualCatalogSnapshot, 'switch')).toBe('Switch')
+  })
+  it('name a command by its label, else in words', () => {
+    expect(contract.entityCommandLabel(contract.nodeCatalog, 'switch', 'turn_on')).toBe('Turn on')
+    expect(contract.entityCommandLabel(catalog, 'fan', 'turn_on')).toBe('Spin up')
+    expect(contract.entityCommandLabel(catalog, 'fan', 'set_speed')).toBe('Set speed')
+    expect(contract.entityCommandLabel(contract.nodeCatalog, 'switch', 'fan_speed')).toBe('Fan speed')
+    expect(contract.entityCommandLabel(contract.nodeCatalog, 'fan', 'fan_speed')).toBe('Fan speed')
+    expect(contract.entityCommandLabel(contract.nodeCatalog, 'switch', 'toString')).toBe('ToString')
+  })
+})

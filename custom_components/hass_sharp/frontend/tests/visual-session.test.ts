@@ -4,7 +4,7 @@ import servicesFixture from '../../../../tests/fixtures/visual-services.json'
 import { visualFixture } from './visual-fixture'
 import { createRoot } from 'solid-js'
 import { createGraph, removeEdge, updateNode } from '../src/visual/graph'
-import { createVisualSession } from '../src/visual/session'
+import { createVisualSession, firstSave } from '../src/visual/session'
 import { visualApi, VisualApiError } from '../src/visual/api'
 
 let dispose: () => void
@@ -716,5 +716,45 @@ describe('drafts and conflicts: closing pass', () => {
     state.readFails = false
     await session.discardChanges()
     expect(session.document()?.id).toBe('motion')
+  })
+})
+
+describe('a new document\'s first save', () => {
+  const conflict = (id: string) => ({ code: 'conflict', id })
+  const isConflict = (e: unknown) => (e as { code?: unknown } | null)?.code === 'conflict'
+  /** `firstSave` over ids handed out in order and saves answered by `answer`, recording both. */
+  const attempt = (ids: string[], answer: (id: string) => unknown) => {
+    const asked: string[] = [], saved: string[] = []
+    const result = firstSave(async () => { const id = ids[asked.length] ?? ids.at(-1)!; asked.push(id); return id },
+      async id => { saved.push(id); const value = answer(id); if (value instanceof Error || isConflict(value)) throw value; return value }, isConflict)
+    return { result, asked, saved }
+  }
+  it('saves under the id it is given', async () => {
+    const { result, asked, saved } = attempt(['hall'], id => `${id} saved`)
+    await expect(result).resolves.toEqual({ id: 'hall', saved: 'hall saved' })
+    expect([asked, saved]).toEqual([['hall'], ['hall']])
+  })
+  it('tries once more with a fresh id when its id was taken meanwhile', async () => {
+    const { result, asked, saved } = attempt(['hall', 'hall_2'], id => id === 'hall' ? conflict(id) : `${id} saved`)
+    await expect(result).resolves.toEqual({ id: 'hall_2', saved: 'hall_2 saved' })
+    expect([asked, saved]).toEqual([['hall', 'hall_2'], ['hall', 'hall_2']])
+  })
+  it('gives up on a second conflict, with that conflict', async () => {
+    const { result, asked, saved } = attempt(['hall', 'hall_2', 'hall_3'], id => conflict(id))
+    await expect(result).rejects.toEqual(conflict('hall_2'))
+    expect([asked, saved]).toEqual([['hall', 'hall_2'], ['hall', 'hall_2']])
+  })
+  it('gives up when the fresh id is the one that was taken, and never retries another failure', async () => {
+    const same = attempt(['hall', 'hall'], id => conflict(id))
+    await expect(same.result).rejects.toEqual(conflict('hall'))
+    expect([same.asked, same.saved]).toEqual([['hall', 'hall'], ['hall']])
+    const failed = attempt(['hall', 'hall_2'], () => new Error('Validation failed'))
+    await expect(failed.result).rejects.toThrow('Validation failed')
+    expect([failed.asked, failed.saved]).toEqual([['hall'], ['hall']])
+  })
+  it('gives up when asking for a fresh id fails', async () => {
+    let asked = 0
+    const result = firstSave(async () => { if (asked++) throw new Error('List failed'); return 'hall' }, async id => { throw conflict(id) }, isConflict)
+    await expect(result).rejects.toThrow('List failed')
   })
 })

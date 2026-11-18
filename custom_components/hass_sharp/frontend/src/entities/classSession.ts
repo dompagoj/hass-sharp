@@ -2,6 +2,7 @@ import { batch, createEffect, createMemo, createSignal, on, onCleanup, untrack }
 import type { HomeAssistant } from '../types'
 import type { VisualDiagnostic } from '../visual/api'
 import type { JsonValue } from '../visual/contract'
+import { firstSave } from '../visual/session'
 import { entityTexts } from './adapter'
 import { EntityApiError, entityApi, entityError, type EntityPreview } from './api'
 import { definitionPollInterval, noteStarting } from './DefinitionCard'
@@ -167,18 +168,9 @@ export function createClassSession(
   const send = async (revision: number) => {
     const sent = request()
     const saved = document()
-    let id = saved?.id ?? await newId(sent.name)
-    let answer
-    try {
-      answer = await api.save(id, sent, revision)
-    } catch (failure) {
-      // A new definition's id taken meanwhile: the next free one, once.
-      if (saved || !(failure instanceof EntityApiError) || failure.code !== 'conflict') throw failure
-      const next = await newId(sent.name)
-      if (next === id) throw failure
-      id = next
-      answer = await api.save(id, sent, 0)
-    }
+    // A new definition's id taken meanwhile: the next free one, once.
+    const answer = saved ? await api.save(saved.id, sent, revision)
+      : (await firstSave(() => newId(sent.name), id => api.save(id, sent, 0), failure => failure instanceof EntityApiError && failure.code === 'conflict')).saved
     accept(answer.document)
     setDiagnostics(answer.diagnostics ?? [])
     options.onChanged?.()

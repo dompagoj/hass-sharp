@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nodeCatalog, withGraphTypes, type Graph, type GraphNode } from '../src/visual/contract'
+import { nodeCatalog, withGraphTypes, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { nodeSummary, stepSummary } from '../src/visual/nodeSummary'
 
 const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
@@ -27,6 +27,13 @@ describe('the summaries of an entity definition\'s steps', () => {
   it('name the command by its label', () => {
     expect(both(node('entity_command', { entity: 'relay', command: 'turn_off' }))).toBe('When commanded ▸ Relay: Turn off')
     expect(both(node('entity_command', { entity: 'relay', command: 'toggle' }))).toBe('When commanded ▸ Relay: toggle')
+  })
+  it('name the command by the catalog\'s label of its type, else in words', () => {
+    const catalog = { ...nodeCatalog, entityDomains: { ...nodeCatalog.entityDomains, fan: { label: 'Fan', state: {}, commands: { turn_on: { label: 'Spin up' }, set_speed: {} }, options: {} } } } as unknown as VisualCatalogSnapshot
+    const fanGraph: Graph = { ...graph, definition: { entities: [{ key: 'blades', domain: 'fan', name: 'Blades' }], settings: [] } as unknown as Graph['definition'] }
+    const summary = (config: Record<string, unknown>) => nodeSummary(node('entity_command', config), withGraphTypes(catalog, fanGraph), undefined, fanGraph)
+    expect(summary({ entity: 'blades', command: 'turn_on' })).toBe('When commanded ▸ Blades: Spin up')
+    expect(summary({ entity: 'blades', command: 'set_speed' })).toBe('When commanded ▸ Blades: Set speed')
   })
   it('name a setting by its label, else its key, and never show its value', () => {
     expect(both(node('setting', { key: 'host' }))).toBe('Setting ▸ Address')

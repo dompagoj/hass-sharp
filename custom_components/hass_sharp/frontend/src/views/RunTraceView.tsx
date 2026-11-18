@@ -30,7 +30,8 @@ export const unanswered = (error: unknown) => typeof (error as { code?: unknown 
  * With another adapter (an entity definition's, {@link EntityRunTraceView}) the document is read, and the editor and
  * list linked, through it, in its words; `ownRunsOnly` then shows a run only on its own document's page: a run of
  * another document, a document that no longer exists and one that cannot be read as the adapter's (an entity definition
- * built from a class) each say so instead, and a document that cannot be read just now offers Try again. An
+ * built from a class) each say so instead, and a document that cannot be read just now offers Try again (one read before,
+ * which showed the run is its own, keeps the run on the page). An
  * automation's page follows the run's automation, as it always has.
  */
 export function RunTraceView(props: { adapter?: EditorAdapter; ownRunsOnly?: boolean } = {}) {
@@ -89,15 +90,17 @@ export function RunTraceView(props: { adapter?: EditorAdapter; ownRunsOnly?: boo
    */
   const refused = (): { text: string; gone?: boolean; retry?: boolean } | undefined => {
     if (!own) return
+    const run = data()?.run, document = current.data
     if (current.isError) {
       const code = adapter.apiError(current.error)?.code
       if (code === 'not_found') return { text: texts.traceDeleted ?? 'This automation no longer exists.', gone: true }
       // An entity definition built from a class, which has no recorded runs: the read's own words.
       if (code === classDefinitionCode) return { text: visualError(current.error) }
-      // Any other failure: whether the run is its own is not known, so it is not shown until a read succeeds.
+      // Any other failure of a read again: the document read before still says the run is its own, so it stays.
+      if (run && document && run.visualId === params.id && run.automationId === document.automationId) return
+      // Otherwise whether the run is its own is not known, so it is not shown until a read succeeds.
       return { text: visualError(current.error), retry: true }
     }
-    const run = data()?.run, document = current.data
     if (run && (run.visualId !== params.id || (document && run.automationId !== document.automationId)))
       return { text: texts.traceForeign ?? 'This run is not one of this automation’s runs.' }
   }

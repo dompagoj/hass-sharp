@@ -1,5 +1,5 @@
 import { createMemo, createUniqueId, Show, type Component, type JSX } from 'solid-js'
-import { dataInputs, dataOutputs, definitionEntities, definitionEntity, definitionSettings, entityChoices, entityCommands, entityDomain, isAssignable, withEntityCommand, words, type GraphNode, type VisualCatalogSnapshot } from '../visual/contract'
+import { dataInputs, dataOutputs, definitionEntities, definitionEntity, definitionSettings, entityChoices, entityCommandLabel, entityCommands, entityTypeLabel, isAssignable, withEntityCommand, words, type GraphNode, type VisualCatalogSnapshot } from '../visual/contract'
 import { graphTypes } from '../visual/connectionIndex'
 import { entityStateContext } from '../visual/entityStateContext'
 import { removeEdge, updateNode, type VisualGraph } from '../visual/graph'
@@ -13,12 +13,6 @@ const record = (value: unknown): value is Record<string, unknown> => value !== n
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 const nodeSpec = (kind: string, catalog: VisualCatalogSnapshot) => (Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined)
 
-/** The type of an entity in words, when the catalog's `entityDomains` gives no label of its own. */
-const domainLabels: Record<string, string> = { binary_sensor: 'Binary sensor', sensor: 'Sensor', switch: 'Switch' }
-export function entityTypeLabel(catalog: VisualCatalogSnapshot, domain: string): string {
-  const spec = catalog.entityDomains && Object.hasOwn(catalog.entityDomains, domain) ? catalog.entityDomains[domain] : undefined
-  return text(spec?.label) || (Object.hasOwn(domainLabels, domain) ? domainLabels[domain] : words.key(domain))
-}
 /** A definition's entity as people read it: its name, else its key. */
 const entityName = (entity: Record<string, unknown>) => text(entity.name) || text(entity.key)
 
@@ -193,8 +187,7 @@ function CommandPicker(props: { ctx: StepPickerContext }) {
   const entity = () => text(ctx.node().config.entity)
   const current = () => text(ctx.node().config.command)
   const commands = createMemo(() => entityCommands(ctx.catalog(), entity()))
-  const labels = () => entityDomain(ctx.catalog(), entity())?.commands ?? {}
-  const label = (command: string) => (record(labels()[command]) ? text(labels()[command].label) : '') || words.key(command)
+  const label = (command: string) => entityCommandLabel(ctx.catalog(), text(definitionEntity(ctx.catalog(), entity())?.domain), command)
   const options = createMemo((): SearchOption[] => [
     ...(current() !== '' && commands().length && !commands().includes(current()) ? [{ value: current(), label: `Missing command: ${current()}` }] : []),
     ...commands().map(command => ({ value: command, label: label(command) })),

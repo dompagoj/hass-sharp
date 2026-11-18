@@ -102,8 +102,11 @@ export function fixtureTypeDefinition(request: { type: string; nodeId?: string; 
 /** How a fixture automation has been running, for the automations page; nothing when it never ran. */
 export type FixtureRuns = Partial<Pick<HomeAutomation, 'recentRuns' | 'runsToday' | 'failedLastDay' | 'lastRunUtc' | 'problemCount'>>
 
-/** How a fixture definition runs once loaded (`controls.activation`). */
-export type FixtureActivation = 'running' | 'failed' | 'notLoaded'
+/**
+ * How a fixture definition runs once loaded (`controls.activation`): its host's status (`DefinitionHost.Status`:
+ * `running`, `setup`, `failed`, `stopped`), or no host as its script did not load (`notLoaded`).
+ */
+export type FixtureActivation = 'running' | 'setup' | 'failed' | 'stopped' | 'notLoaded'
 /**
  * A class for the fixture's `types`, with the entities its instance reports once loaded (`entities`, fixture only: the
  * real `types` answer lists none, and neither does the fixture's).
@@ -123,20 +126,25 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  *   `{enabled: false}`); `fields` overrides any member of the stored document (`status`, `liveEntities`, …).
  * - `types`: the classes (`FixtureEntityType`, from the `entityTypes` option), answered by `types` without their
  *   `entities`, whose `generation` is the library generation. A class's `entities` are what its instance reports.
- * - Loaded (`running` or `failed`, whose start threw after its entities were made), a definition answers `liveEntities`:
- *   a graph's entities, or its class's `entities`, each `{uniqueId: '<id>:<key>', key, domain, name, entityId:
- *   '<domain>.<id>_<key>'}`. Each load also records them as Home Assistant's registry would (`published`, replaced on
- *   the next load), answered as `registeredEntities` while the definition is off or not loaded too, until it is deleted.
+ * - With a host that is not stopping (`running`, `setup` while its start runs, `failed` when its start threw; each after
+ *   its entities were made), a definition answers `liveEntities`: a graph's entities, or its class's `entities`, each
+ *   `{uniqueId: '<id>:<key>', key, domain, name, entityId: '<domain>.<id>_<key>'}`. Each such load also records them as
+ *   Home Assistant's registry would (`published`, replaced on the next load), each `disabled` as the entry of its unique
+ *   id seeded in `registry` (else recorded before) is, as Home Assistant keeps an entry's `disabled_by`; they are
+ *   answered as `registeredEntities` while the definition is off or not loaded too, until it is deleted.
  * - `registry`: registry entries a test seeds by definition id; seeded for an id, they are its `registeredEntities`
  *   instead of the recorded ones.
  * - `runs`: the run summary of the home list (`recentRuns`, `runsToday`, `failedLastDay`, `lastRunUtc`) by definition id.
  * - `requests`: every `request` received, in order (`fixture.calls` keeps the whole messages, as for every route).
  * - `controls.diagnostics`: what `preview` answers for a definition with no document problems: valid unless one is an
  *   error (severity 3), when a save is refused with `validation`; a valid save answers its warnings as `diagnostics`.
- * - `controls.activation`: how a saved, seeded or turned-on definition runs: `running`; `failed` (loaded, its start
- *   threw: `status: 'failed'`, `active: true`, `activationError`); `notLoaded` (`status: 'off'`, `active: false`,
- *   `activationError`). `controls.activationError` is the text of the last two. A definition off by the user is `off`,
- *   `active: false`, `activationError: 'Not active'` in documents and `null` in the save and `set_enabled` answers.
+ * - `controls.activation`: how a saved, seeded or turned-on definition runs, its status as `EntityApi.EntityJson` maps
+ *   its host's: `running`; `setup` (loaded, its start still running: `status: 'setup'`, `active: true`, no error);
+ *   `failed` (loaded, its start threw: `status: 'failed'`, `active: true`, `activationError`); `stopped` (loaded, its
+ *   host stopping, which counts as none: `status: 'off'`, `active: true`, no live entities, no error); `notLoaded`
+ *   (no host: `status: 'off'`, `active: false`, `activationError`). `controls.activationError` is the text of `failed`
+ *   and `notLoaded`. A definition off by the user is `off`, `active: false`, `activationError: 'Not active'` in
+ *   documents and `null` in the save and `set_enabled` answers.
  * - `controls.classChecks` (off by default): a class definition's class and setting values are checked as the real
  *   preview and save check them; `controls.libraryErrors`: the node libraries do not compile (`definition.library`,
  *   and every class setting answered masked).
@@ -236,21 +244,28 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   /** The run fields of a stored definition, as `controls.activation` says it runs when on. */
   const running = (id: string, body: DefinitionBody, enabled: boolean): Partial<EntityDocument> => {
     const activation = enabled ? controls.activation : 'off'
-    const loaded = activation === 'running' || activation === 'failed'
+    // Its script loaded; its host, unless it has none or the one it has is stopping (`EntityApi.RunningHost`).
+    const loaded = activation !== 'off' && activation !== 'notLoaded'
+    const host = activation === 'running' || activation === 'setup' || activation === 'failed' ? activation : undefined
     // A graph's entities, or those its class's instance reports (`FixtureEntityType.entities`).
     const made = body.logic.kind === 'graph' ? body.entities ?? [] : types.find(t => t.id === body.logic.type)?.entities ?? []
     return {
       automationId: `entity:${id}`, active: loaded, currentRevisionActive: loaded,
-      activationError: activation === 'off' ? 'Not active' : activation === 'running' ? null : controls.activationError,
-      status: activation === 'running' ? 'running' : activation === 'failed' ? 'failed' : 'off',
-      liveEntities: loaded ? made.map(e => ({ uniqueId: `${id}:${e.key}`, key: e.key, domain: e.domain, name: (e.name as string | null | undefined) ?? null, entityId: `${e.domain}.${id}_${e.key}` })) : [],
+      activationError: activation === 'off' ? 'Not active' : activation === 'notLoaded' || host === 'failed' ? controls.activationError : null,
+      status: host ?? 'off',
+      liveEntities: host ? made.map(e => ({ uniqueId: `${id}:${e.key}`, key: e.key, domain: e.domain, name: (e.name as string | null | undefined) ?? null, entityId: `${e.domain}.${id}_${e.key}` })) : [],
     }
   }
-  /** Keeps the document; a loaded one's entities as the registry has them from then on. */
+  /** Keeps the document; a loaded one's entities as the registry has them from then on, disabled as their entries were. */
   const keep = (document: EntityDocument) => {
     documents.set(document.id, document)
-    if (document.status === 'running' || document.status === 'failed')
-      published.set(document.id, document.liveEntities.map(e => ({ uniqueId: e.uniqueId, entityId: e.entityId ?? `${e.domain}.${document.id}_${e.key}`, domain: e.domain, name: e.name, disabled: false })))
+    if (document.status !== 'off') {
+      const before = registry.get(document.id) ?? published.get(document.id) ?? []
+      published.set(document.id, document.liveEntities.map(e => ({
+        uniqueId: e.uniqueId, entityId: e.entityId ?? `${e.domain}.${document.id}_${e.key}`, domain: e.domain, name: e.name,
+        disabled: before.find(entry => entry.uniqueId === e.uniqueId)?.disabled ?? false,
+      })))
+    }
     return document
   }
   /** What a save or `set_enabled` answers of a definition's start: off by the user has no error. */

@@ -797,6 +797,28 @@ it('shows the error state with Try again, never the run, while the definition ca
   await vi.waitFor(() => expect(own.root.querySelector('.hs-flow')).not.toBeNull())
 })
 
+it('keeps showing its own run when the definition, read before, cannot be read again', async () => {
+  let unanswered = false, failedReads = 0
+  const { root } = mountDefinition(async () => definitionResponse(), {
+    prepare: fixture => {
+      const answer = fixture.callWS
+      fixture.callWS = async (message: any) => {
+        if (unanswered && message.request?.operation === 'read') { failedReads++; throw { code: 3, message: 'Connection lost' } }
+        return answer(message)
+      }
+    },
+  })
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
+  // Read again (as on returning to the tab) with no answer: the document read before proves the run is its own.
+  unanswered = true
+  await client!.refetchQueries({ predicate: query => query.queryKey[0] === 'entity-trace-document' })
+  await vi.waitFor(() => expect(client!.getQueryState(['entity-trace-document', 'plug'])?.status).toBe('error'))
+  expect(failedReads).toBe(1)
+  expect(root.querySelector('[role="alert"]')).toBeNull()
+  expect(root.querySelector('.hs-flow')).not.toBeNull()
+  expect(steps(root)).toHaveLength(3)
+})
+
 it('shows the not-found state for a run of another definition, a definition that is gone, and one built from a class', async () => {
   // A run that belongs to another definition (or an automation).
   const foreign = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:lamp', visualId: 'lamp', cause: 'Setup', trigger: { kind: 'setup' } }) }))

@@ -4,7 +4,7 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { Inspector } from '../src/visual/Inspector'
-import { addGraphNode, connectData, nodeCatalog, type Graph } from '../src/visual/contract'
+import { addGraphNode, connectData, nodeCatalog, type Graph, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { icons, nodeIdentity } from '../src/visual/icons'
 import { chooseEntity } from '../src/entities/NodePickers'
@@ -40,7 +40,7 @@ const registryEntity = (entity_id: string, name: string, state_options: string[]
 const registry = { entities: [registryEntity('climate.living', 'Living room', ['off', 'heat', 'cool']), registryEntity('binary_sensor.motion', 'Motion')], areas: [], devices: [], floors: [], labels: [] }
 
 /** The inspector of one node over a graph history, as the editor wires them. */
-function mount(graph: VisualGraph, id: string) {
+function mount(graph: VisualGraph, id: string, catalog = nodeCatalog) {
   const el = document.createElement('div')
   el.className = 'hs-app'
   document.body.append(el)
@@ -52,7 +52,7 @@ function mount(graph: VisualGraph, id: string) {
   dispose = render(() => (
     <QueryClientProvider client={client!}>
       <HassCtx.Provider value={hass as any}>
-        <Inspector graph={history.graph()} catalog={nodeCatalog} diagnostics={[]} commit={history.commit} onNotice={text => notices.push(text)}
+        <Inspector graph={history.graph()} catalog={catalog} diagnostics={[]} commit={history.commit} onNotice={text => notices.push(text)}
           selected={history.graph().nodes.find(n => n.id === selected())} selectedIds={[id]} />
       </HassCtx.Provider>
     </QueryClientProvider>
@@ -142,6 +142,18 @@ describe('the command picker', () => {
     expect(graph.nodes[0].config).toMatchObject({ entity: 'fan', command: 'turn_off' })
     graph = updateNode(graph, 'cmd', { config: { ...graph.nodes[0].config, command: 'toggle' } })
     expect(chooseEntity(graph, 'cmd', 'relay', nodeCatalog).graph.nodes[0].config).toMatchObject({ entity: 'relay', command: 'turn_on' })
+  })
+
+  it('names a type and its commands as the catalog labels them, else in words', async () => {
+    // A type the catalog adds: its label and its commands' come from its row, none from a table of the panel's own.
+    const catalog = { ...nodeCatalog, entityDomains: { ...nodeCatalog.entityDomains,
+      fan: { label: 'Ceiling fan', state: {}, commands: { turn_on: { label: 'Spin up' }, set_speed: {} }, options: {} },
+      air_purifier: { state: {}, commands: { boost: {} }, options: {} } } } as unknown as VisualCatalogSnapshot
+    const graph = entityGraph({ entities: [{ key: 'blades', domain: 'fan', name: 'Blades' }, { key: 'purifier', domain: 'air_purifier', name: 'Purifier' }] })
+    const { el } = mount(step(graph, 'entity_command', 'cmd', { entity: 'blades', command: 'turn_on' }), 'cmd', catalog)
+    expect(texts(await open(el, 'entity'))).toEqual(['Blades · Ceiling fan', 'Purifier · Air purifier'])
+    await vi.waitFor(() => expect(box(el, 'command').value).toBe('Spin up'))
+    expect(texts(await open(el, 'command'))).toEqual(['Spin up', 'Set speed'])
   })
 })
 

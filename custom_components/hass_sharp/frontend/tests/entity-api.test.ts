@@ -303,6 +303,38 @@ describe('the in-memory entities backend', () => {
     const fresh = await api.save('fresh', body(), 0, false)
     expect([fresh.active, fresh.activationError, fresh.document.status]).toEqual([false, null, 'off'])
   })
+  it('answers a host that is setting up or stopping as EntityApi does: setup as it is, a stopped one as off', async () => {
+    const { fixture, api } = setup()
+    const state = (d: { status: string; active: boolean; currentRevisionActive: boolean; activationError: string | null; liveEntities: unknown[] }) =>
+      [d.status, d.active, d.currentRevisionActive, d.activationError, d.liveEntities.length]
+    fixture.entities.controls.activation = 'setup'
+    // Its Start() still running: its entities are made and registered, no error.
+    const starting = fixture.entities.seed('starting', body())
+    expect(state(starting)).toEqual(['setup', true, true, null, 1])
+    expect(state(await api.read('starting'))).toEqual(['setup', true, true, null, 1])
+    expect((await api.read('starting')).registeredEntities.map(e => e.uniqueId)).toEqual(['starting:any_motion'])
+    const saved = await api.save('starting', body(), 1)
+    expect([saved.active, saved.activationError, saved.document.status]).toEqual([true, null, 'setup'])
+    // A host that is stopping is no host: off, with no live entities, though its script is still loaded.
+    fixture.entities.controls.activation = 'stopped'
+    expect(state(await api.save('starting', body(), 2).then(s => s.document))).toEqual(['off', true, true, null, 0])
+    expect(state(fixture.entities.seed('stopping', body()))).toEqual(['off', true, true, null, 0])
+    // Off by the user it is off as ever.
+    await api.setEnabled('stopping', false)
+    expect(state(await api.read('stopping'))).toEqual(['off', false, false, 'Not active', 0])
+  })
+  it("answers an entity's disabled flag from the registry entry a test seeded for it", async () => {
+    const { fixture, api } = setup()
+    const two: DefinitionBody = { ...body(), entities: [...body().entities!, { key: 'tamper', domain: 'binary_sensor', name: 'Tamper' }] }
+    fixture.entities.registry.set('motion', [{ uniqueId: 'motion:tamper', entityId: 'binary_sensor.motion_tamper', domain: 'binary_sensor', name: 'Tamper', disabled: true }])
+    // Seeded entries are its registry while seeded.
+    expect((await api.save('motion', two, 0)).document.registeredEntities.map(e => [e.uniqueId, e.disabled])).toEqual([['motion:tamper', true]])
+    // What its load registered keeps the flag: Home Assistant keeps an entry's disabled_by when it registers it again.
+    fixture.entities.registry.delete('motion')
+    expect((await api.read('motion')).registeredEntities.map(e => [e.uniqueId, e.disabled])).toEqual([['motion:any_motion', false], ['motion:tamper', true]])
+    await api.save('motion', two, 1)
+    expect((await api.read('motion')).registeredEntities.map(e => [e.uniqueId, e.disabled])).toEqual([['motion:any_motion', false], ['motion:tamper', true]])
+  })
   it("lists a class definition's entities from what its class reports, and keeps them registered while it is off", async () => {
     const plugType: FixtureEntityType = { ...tokenType, id: 'library:shelly:NodeLib.Plug', entities: [{ key: 'relay', domain: 'switch', name: null }, { key: 'power', domain: 'sensor', name: 'Power' }] }
     const fixture = visualFixture({ entityTypes: [plugType] }), api = entityApi(fixture as any)

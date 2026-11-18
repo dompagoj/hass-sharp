@@ -1,7 +1,7 @@
 import { createEffect, createSignal, createUniqueId, For, Index, on, Show } from 'solid-js'
 import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
-import { words, type ConfigSpec, type VisualCatalogSnapshot } from '../visual/contract'
+import { entityTypeLabel, words, type ConfigSpec, type VisualCatalogSnapshot } from '../visual/contract'
 import type { VisualDiagnostic } from '../visual/api'
 import { Glyph } from '../visual/Glyph'
 import type { VisualGraph } from '../visual/graph'
@@ -9,7 +9,7 @@ import { icons } from '../visual/icons'
 import { addEntity, definitionOf, keyProblem, keyRule, removeEntity, setEntityOption, stepsUsingEntity, updateEntity } from './definitionEdits'
 import { FieldErrors, focusRow, ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
 import { renameEntityKey, type DefinitionEntity } from './model'
-import { entityTypeLabel, retypeEntity } from './NodePickers'
+import { retypeEntity } from './NodePickers'
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 const savedKeyHint = "The key is part of the entity's identity in Home Assistant and cannot change."

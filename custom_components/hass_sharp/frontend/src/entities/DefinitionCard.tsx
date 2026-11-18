@@ -5,13 +5,12 @@ import { EnabledSwitch } from '../automations/EnabledSwitch'
 import { pollInterval } from '../automations/model'
 import { RunDots } from '../automations/RunDots'
 import { plural } from '../utils'
-import { nodeCatalog } from '../visual/contract'
+import { entityTypeLabel, nodeCatalog } from '../visual/contract'
 import { Glyph } from '../visual/Glyph'
 import { icons } from '../visual/icons'
 import { entityTexts } from './adapter'
 import type { LiveStates } from './liveState'
 import type { HomeDefinition } from './model'
-import { entityTypeLabel } from './NodePickers'
 
 /** The switch's tooltips: the editor's, so the two say the same. */
 const switchTitles = { on: entityTexts.enabledOn, off: entityTexts.enabledOff }

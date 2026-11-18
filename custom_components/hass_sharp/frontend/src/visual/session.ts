@@ -19,6 +19,24 @@ const liveKeys = new Set<string>()
 export type UnappliedCode = { nodeId: string; text: string }
 
 /**
+ * A new document's first save: `save` under the id `newId` gives, and when that id was taken elsewhere since it was
+ * chosen (`isConflict`; an id from the name, as an entity definition's is), once more under the id `newId` gives then.
+ * A second conflict, a fresh id that is the taken one again (the first conflict) and any other failure are thrown. An
+ * id given at once (not a promise) is saved under in the same turn, as an automation's save always was.
+ */
+export async function firstSave<T>(newId: () => string | Promise<string>, save: (id: string) => Promise<T>, isConflict: (e: unknown) => boolean): Promise<{ id: string; saved: T }> {
+  const made = newId(), id = typeof made === 'string' ? made : await made
+  try {
+    return { id, saved: await save(id) }
+  } catch (err) {
+    if (!isConflict(err)) throw err
+    const next = await newId()
+    if (next === id) throw err
+    return { id: next, saved: await save(next) }
+  }
+}
+
+/**
  * Owns graph/source pairs and their revisions. Never generates or persists source locally. The document is read,
  * checked, saved and named through `adapter` (default: an automation's, {@link automationAdapter}); the node catalog
  * and services are the node library's, whatever the document.
@@ -396,26 +414,24 @@ export function createVisualSession<D extends EditorDocument = VisualDocument>(
     setSaving(true)
     setError(undefined)
     try {
-      let target = document()?.id ?? id
-      if (target === undefined) {
-        const made = adapter.newId(snapshot)
-        target = typeof made === 'string' ? made : await made
-        if (disposed || current !== identityGeneration) return
-        id = target
-      }
+      const opened = document()
       let result: EditorSaveResult<D>
-      try {
-        result = await adapter.save(target, snapshot, document()?.revision ?? 0)
-      } catch (err) {
-        // A new document whose id was taken elsewhere since it was chosen (an id from the name, as an entity
-        // definition's is): once, the id `newId` gives now. An automation's ids are random, so it never meets this.
-        if (document() || adapter.apiError(err)?.code !== 'conflict') throw err
-        const made = adapter.newId(snapshot)
-        const next = typeof made === 'string' ? made : await made
-        if (disposed || current !== identityGeneration) return
-        if (next === target) throw err
-        id = target = next
-        result = await adapter.save(target, snapshot, 0)
+      if (opened) result = await adapter.save(opened.id, snapshot, opened.revision)
+      else {
+        // A new document: the id an earlier first save chose, else the one `newId` gives, kept for the next try. An
+        // automation's ids are random, so it never meets the retry. A page that moved on meanwhile saves nothing (the
+        // catch below says nothing of it).
+        let chosen = id
+        const take = (next: string) => {
+          if (disposed || current !== identityGeneration) throw new Error('The editor moved on')
+          return (id = next)
+        }
+        const ask = () => {
+          const next = chosen ?? adapter.newId(snapshot)
+          chosen = undefined
+          return typeof next === 'string' ? take(next) : next.then(take)
+        }
+        result = (await firstSave(ask, target => adapter.save(target, snapshot, 0), err => adapter.apiError(err)?.code === 'conflict')).saved
       }
       if (disposed || current !== identityGeneration) return
       saved(result, snapshot)
