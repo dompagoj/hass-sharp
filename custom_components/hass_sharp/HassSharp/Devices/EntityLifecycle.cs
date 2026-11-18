@@ -170,31 +170,41 @@ public partial class HassSharpManager
 
     /// <summary>Runs each rebuilt definition that is on, in place of the revision running; one that is off stays off.</summary>
     /// <param name="snapshot">The libraries the definitions were rebuilt with, which say which of a class's settings are secret.</param>
-    /// <returns>Each one's activation answer, as <see cref="ActivateDefinition"/> gives it, but that a secret setting has no value in it (<see cref="WithoutSecretValues"/>).</returns>
+    /// <returns>Each one's activation answer, as <see cref="ActivateDefinition"/> gives it, a secret setting without its value (<see cref="WithoutSecretValues"/>).</returns>
     async Task<List<object>> ReactivateDefinitions(DefinitionRebuild rebuild, VisualCatalogSnapshot snapshot)
     {
         var answers = new List<object>();
         foreach (var document in rebuild.Rebuilt.Where(d => d.Enabled))
         {
-            var (json, active, activationError) = await Activate(document, null);
-            WithoutSecretValues(json, document, snapshot);
+            var (json, active, activationError) = await Activate(document, null, snapshot);
             answers.Add(new { id = document.Id, saved = true, document = json, active, activationError });
         }
         return answers;
     }
 
     /// <summary>
-    /// Sets the value of each secret setting of the answered document to null, keeping its other fields: a graph's
-    /// setting the document marks <c>secret</c>, a class's setting its class marks secret (<see cref="SettingAttribute.Secret"/>).
-    /// A library's answer reaches clients, such as an assistant over MCP, that have no business with them.
+    /// Answers each secret setting of the document without its value: <c>value</c> null, <c>secret</c> true and
+    /// <c>hasValue</c>, whether one is stored; its other fields as they are. Secret are a graph's settings the document
+    /// marks <c>secret</c> and a class's settings its class marks secret (<see cref="SettingAttribute.Secret"/>); when the
+    /// libraries do not compile or no longer declare the class, which of its settings are secret is not known, so every
+    /// one is answered so. The answers reach clients, the panel and an assistant over MCP, that have no business with them;
+    /// a save gives such a setting <c>keep</c> to leave its value as stored (<see cref="DefinitionSetting.Keep"/>).
     /// </summary>
+    /// <param name="snapshot">The libraries the definition is answered against.</param>
     static void WithoutSecretValues(JsonObject json, EntityDefinitionDocument document, VisualCatalogSnapshot snapshot)
     {
-        var secret = document.Logic.Kind == "graph"
-            ? document.Settings.Where(s => s.Secret).Select(s => s.Key).ToHashSet(StringComparer.Ordinal)
-            : (document.Logic.Type is { } type && snapshot.EntityTypes.TryGetValue(type, out var described) ? described.Settings : [])
-                .Where(s => s.Secret).Select(s => s.Key).ToHashSet(StringComparer.Ordinal);
+        // Null: not known, so every setting is secret.
+        var secret = document.Logic.Kind == "graph" ? document.Settings.Where(s => s.Secret).Select(s => s.Key).ToHashSet(StringComparer.Ordinal)
+            : !snapshot.LibraryDiagnostics.Any(d => d.Severity == 3) && document.Logic.Type is { } type && snapshot.EntityTypes.TryGetValue(type, out var described)
+                ? described.Settings.Where(s => s.Secret).Select(s => s.Key).ToHashSet(StringComparer.Ordinal)
+            : null;
         foreach (var setting in (json["settings"] as JsonArray ?? []).OfType<JsonObject>())
-            if (setting["key"] is JsonValue key && key.TryGetValue<string>(out var name) && secret.Contains(name)) setting["value"] = null;
+        {
+            if (secret != null && !(setting["key"] is JsonValue key && key.TryGetValue<string>(out var name) && secret.Contains(name))) continue;
+            var hasValue = setting["value"] is { } value && value.GetValueKind() != JsonValueKind.Null;
+            setting["value"] = null;
+            setting["secret"] = true;
+            setting["hasValue"] = hasValue;
+        }
     }
 }

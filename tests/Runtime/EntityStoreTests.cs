@@ -106,6 +106,7 @@ static class EntityStoreTests
             (nameof(PreviewReturnsTheGraphsWarnings), () => PreviewReturnsTheGraphsWarnings(snapshot)),
             (nameof(RootsListSetupCommandsAndStates), () => RootsListSetupCommandsAndStates(snapshot)),
             (nameof(ClassSettingsKeepTheirShape), () => ClassSettingsKeepTheirShape(snapshot)),
+            (nameof(KeepIsNeverStored), () => KeepIsNeverStored(snapshot)),
             (nameof(RebuiltRegeneratesAGraphDefinition), () => RebuiltRegeneratesAGraphDefinition(compiler)) })
             try { test(); }
             catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
@@ -356,6 +357,35 @@ static class EntityStoreTests
             string Settings(string id) => JsonNode.Parse(File.ReadAllText(store.FilePath(id)))!["settings"]!.ToJsonString();
             Check(Settings("plain") == """[{"key":"Host","value":"10.0.0.5"}]""" && Settings("extra") == Settings("plain"), "a class definition's settings: " + Settings("extra"));
             Console.WriteLine("PASS entity store: a class definition's settings keep phase 1's shape");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>
+    /// A setting saved with <c>keep</c> is stored with the value the stored definition has for its key (none when it has
+    /// none, or when the definition is new), and the marker itself is never stored: not in the file, not in the document.
+    /// </summary>
+    static void KeepIsNeverStored(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("keep");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            DefinitionBody Level(params DefinitionSetting[] settings) => GraphBody(LevelGraph(), LevelEntities(), [Typed("offset", "number", "4"), .. settings], "Level");
+            var created = store.Save("level", Level(Typed("token", "string", label: "Token", secret: true) with { Keep = true }), 0, snapshot, "g1");
+            Check(created.Settings[1] is { Key: "token", Value: null, Keep: false, Secret: true }, "keep in a new definition stores no value");
+            store.Save("level", Level(Typed("token", "string", "\"hunter2\"", label: "Token", secret: true)), 1, snapshot, "g1");
+            var kept = store.Save("level", Level(Typed("token", "string", label: "Token", secret: true) with { Keep = true }, Typed("other", "string") with { Keep = true }), 2, snapshot, "g1");
+            string Settings() => JsonNode.Parse(File.ReadAllText(store.FilePath("level")))!["settings"]!.ToJsonString();
+            Check(Settings() == """[{"key":"offset","value":4,"type":"number"},{"key":"token","value":"hunter2","label":"Token","type":"string","secret":true},{"key":"other","value":null,"type":"string"}]""",
+                "the stored settings: " + Settings());
+            Check(kept.Settings.All(s => !s.Keep) && store.Read("level")!.Settings.All(s => !s.Keep) && kept.Settings[1].Value!.GetValue<string>() == "hunter2", "the document keeps no marker");
+
+            // A class definition's kept setting is stored as its settings always are, a key and a value.
+            store.Save("plug", Body(settings: [Setting("Host", "\"10.0.0.5\"")]), 0, snapshot, "g1");
+            store.Save("plug", Body(settings: [Setting("Host", null) with { Keep = true }]), 1, snapshot, "g1");
+            Check(JsonNode.Parse(File.ReadAllText(store.FilePath("plug")))!["settings"]!.ToJsonString() == """[{"key":"Host","value":"10.0.0.5"}]""", "the class definition kept its value: " + File.ReadAllText(store.FilePath("plug")));
+            Console.WriteLine("PASS entity store: a kept setting is stored with the value saved before, and keep is never stored");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }

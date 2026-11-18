@@ -188,13 +188,20 @@ static class EntityApiTests
         var badDefinition = new { name = "Plug three", settings = new[] { new { key = "Port", value = "80" } }, logic = new { kind = "class", type = Plug } };
         var preview = await Ok(new { operation = "preview", definition = badDefinition });
         Check(!preview["valid"]!.GetValue<bool>() && preview["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.unknownSetting")
-            && preview.Select(p => p.Key).Order(StringComparer.Ordinal).SequenceEqual(["diagnostics", "source", "valid"]), "the preview: " + preview.ToJsonString());
+            && preview.Select(p => p.Key).Order(StringComparer.Ordinal).SequenceEqual(["diagnostics", "source", "sourceMap", "valid"])
+            && preview["sourceMap"]!.AsArray().Count == 0, "the preview: " + preview.ToJsonString());
         Check((await Ok(new { operation = "preview", definition = Definition("Plug three", "10.0.0.3") }))["valid"]!.GetValue<bool>(), "a good definition previews valid");
+        // A valid preview maps its source as the saved definition's read does: one range per library.
+        var previewedPlug = await Ok(new { operation = "preview", definition = Definition("Plug one", "10.0.0.11") });
+        var readPlug = await Ok(new { operation = "read", id = "plug1" });
+        Check(previewedPlug["sourceMap"]!.AsArray().Count == 1 && JsonNode.DeepEquals(previewedPlug["sourceMap"], readPlug["sourceMap"])
+            && previewedPlug["source"]!.GetValue<string>() == readPlug["source"]!.GetValue<string>(),
+            "the preview's source map is the saved one's: " + previewedPlug["sourceMap"]!.ToJsonString() + " / " + readPlug["sourceMap"]!.ToJsonString());
         var refused = await Entity(new { operation = "save", id = "plug3", expectedRevision = 0, definition = badDefinition });
         Check(refused["error"]?["code"]?.GetValue<string>() == "validation" && !refused["error"]!["detail"]!["valid"]!.GetValue<bool>()
             && refused["error"]!["detail"]!["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.unknownSetting"), "the save is refused: " + refused.ToJsonString());
         Check(await Fails(new { operation = "read", id = "plug3" }) == "not_found" && home.Syncs("plug3").Length == 0, "the refused definition was stored");
-        Console.WriteLine("PASS entity api: preview reports an unknown setting; save refuses it with validation and stores nothing");
+        Console.WriteLine("PASS entity api: preview reports an unknown setting and maps a valid source as read does; save refuses it with validation and stores nothing");
 
         // A setup that throws: saved, not active, the error answered, nothing synced or pushed.
         batches = home.Pushes().Length;

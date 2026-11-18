@@ -30,15 +30,18 @@ public partial class HassSharpManager
     /// The document as the API answers it: its stored fields, and how it runs now: <c>automationId</c>, <c>active</c>,
     /// <c>currentRevisionActive</c>, <c>activationError</c> (the load error, else why its <c>Start()</c> failed),
     /// <c>status</c> (<c>running</c>, <c>setup</c>, <c>failed</c>, or
-    /// <c>off</c> when not loaded) and its <c>liveEntities</c> (none when not loaded).
+    /// <c>off</c> when not loaded) and its <c>liveEntities</c> (none when not loaded). A secret setting is answered without
+    /// its value (<see cref="WithoutSecretValues"/>): every answer of a definition is built here.
     /// </summary>
-    JsonObject EntityJson(EntityDefinitionDocument document)
+    /// <param name="libraries">The libraries the definition is answered against, which say which of a class's settings are secret.</param>
+    JsonObject EntityJson(EntityDefinitionDocument document, VisualCatalogSnapshot libraries)
     {
         var path = EntityRuntimePath(document.Id);
         var running = _userScriptManager.GetUserScripts().FirstOrDefault(s => s.CompiledScript.FilePath == path && s.Active);
         var host = RunningHost(document.Id);
         var status = host?.Status ?? "off";
         var json = JsonSerializer.SerializeToNode(document, VisualStore.Json)!.AsObject();
+        WithoutSecretValues(json, document, libraries);
         json["automationId"] = _history.Identity(path);
         json["active"] = running != null;
         json["currentRevisionActive"] = running != null && running.CompiledScript.VisualRevision == document.Revision && running.CompiledScript.SourceCode == document.Source && !_loadErrors.ContainsKey(path);
@@ -106,16 +109,18 @@ public partial class HassSharpManager
     /// </summary>
     /// <param name="services">The typed service calls the request read once, so the compile references them.</param>
     /// <param name="warnings">The save's warnings, such as a command no flow handles; answered as <c>diagnostics</c> when there is any.</param>
+    /// <param name="libraries">The libraries the document is answered against (<see cref="EntityJson"/>); the saved ones when null.</param>
     /// <returns><c>{id, saved, document, active, activationError}</c>, and <c>diagnostics</c> with warnings.</returns>
-    internal async Task<object> ActivateDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services = null, IReadOnlyList<VisualDiagnostic>? warnings = null)
+    internal async Task<object> ActivateDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services = null, IReadOnlyList<VisualDiagnostic>? warnings = null,
+        VisualCatalogSnapshot? libraries = null)
     {
-        var (json, active, activationError) = await Activate(document, services);
+        var (json, active, activationError) = await Activate(document, services, libraries ?? SavedLibraries(services).Preview.Snapshot);
         return warnings is { Count: > 0 } ? new { id = document.Id, saved = true, document = json, active, activationError, diagnostics = warnings }
             : new { id = document.Id, saved = true, document = json, active, activationError };
     }
 
-    // ActivateDefinition's work: the document as answered, whether its revision runs now, and why not.
-    async Task<(JsonObject Json, bool Active, string? ActivationError)> Activate(EntityDefinitionDocument document, GeneratedServiceCalls? services)
+    // ActivateDefinition's work: the document as answered against the libraries, whether its revision runs now, and why not.
+    async Task<(JsonObject Json, bool Active, string? ActivationError)> Activate(EntityDefinitionDocument document, GeneratedServiceCalls? services, VisualCatalogSnapshot libraries)
     {
         string? activationError = null;
         if (!document.Enabled) await UnloadDefinition(document.Id);
@@ -128,7 +133,7 @@ public partial class HassSharpManager
             // Loaded, so active, but its Start() threw: the answer says why.
             if (activationError == null && RunningHost(document.Id) is { Status: "failed" } failed) activationError = failed.Error;
         }
-        var json = EntityJson(document);
+        var json = EntityJson(document, libraries);
         return (json, json["currentRevisionActive"]!.GetValue<bool>(), activationError);
     }
 
@@ -214,10 +219,39 @@ public partial class HassSharpManager
                 { ["uniqueId"] = entity.UniqueId, ["available"] = false, ["values"] = new JsonObject(), ["attributes"] = new JsonObject() });
     }
 
-    static DefinitionBody DefinitionBody(JsonObject request) =>
-        ApiRequest.Object(request, "definition").Deserialize<DefinitionBody>(VisualStore.Json) ?? throw new ArgumentException("definition is required");
+    /// <summary>
+    /// The request's <c>definition</c>. A setting given <c>keep</c> carries no value (null counts as none): the value is the
+    /// stored definition's, which the save puts in (<see cref="DefinitionSetting.Keep"/>).
+    /// </summary>
+    static DefinitionBody DefinitionBody(JsonObject request)
+    {
+        var body = ApiRequest.Object(request, "definition").Deserialize<DefinitionBody>(VisualStore.Json) ?? throw new ArgumentException("definition is required");
+        // The value is not quoted: it may be a secret.
+        if (body.Settings?.FirstOrDefault(s => s is { Keep: true, Value: { } value } && value.GetValueKind() != JsonValueKind.Null) is { } both)
+            throw new ArgumentException($"Setting {both.Key} has both a value and keep; give the value, or keep to leave the saved one as it is");
+        return body;
+    }
 
-    static object PreviewJson(DefinitionPreview preview) => new { valid = preview.Valid, diagnostics = preview.Diagnostics, source = preview.Source };
+    /// <summary>
+    /// Adds to each listed definition how it has been running, in the members and shapes the automations page's list
+    /// uses (<see cref="HomeList"/>), from one history query: <c>recentRuns</c> (at most 10, newest last), <c>runsToday</c>
+    /// (since <paramref name="today"/>), <c>failedLastDay</c> and <c>lastRunUtc</c> (null when it never ran).
+    /// </summary>
+    void WithRecentRuns(JsonObject[] listed, DateTime today)
+    {
+        static string Identity(JsonObject json) => json["automationId"]!.GetValue<string>();
+        var runs = _history.Recent(listed.Select(Identity).ToArray(), today, DateTime.UtcNow.AddDays(-1));
+        foreach (var json in listed)
+        {
+            var recent = runs.GetValueOrDefault(Identity(json));
+            json["recentRuns"] = JsonSerializer.SerializeToNode(recent?.Runs ?? [], VisualStore.Json);
+            json["runsToday"] = recent?.RunsToday ?? 0;
+            json["failedLastDay"] = recent?.FailedLastDay ?? 0;
+            json["lastRunUtc"] = JsonSerializer.SerializeToNode(recent?.LastRunUtc, VisualStore.Json);
+        }
+    }
+
+    static object PreviewJson(DefinitionPreview preview) => new { valid = preview.Valid, diagnostics = preview.Diagnostics, source = preview.Source, sourceMap = preview.SourceMap };
 
     /// <summary>
     /// The entity definitions' JSON API, answered in the envelope <see cref="VisualRequest"/> uses: <c>types</c>,
@@ -251,17 +285,26 @@ public partial class HassSharpManager
                 // A graph's entity ids that Home Assistant does not have are advice, as an automation's are.
                 result = PreviewJson(preview.Graph == null ? preview : preview with { Diagnostics = [.. preview.Diagnostics, .. EntityWarnings(preview.Graph, authoring)] });
             }
-            // Listing omits the generated source and its map; "read" returns them.
-            else if (operation == "list") result = store.List().Select(document =>
+            // Listing omits the generated source and its map; "read" returns them. The entities page's list (view "home")
+            // adds how each definition has been running, as the automations page's does.
+            else if (operation == "list")
             {
-                var listed = EntityJson(document);
-                listed.Remove("source"); listed.Remove("sourceMap");
-                return listed;
-            }).ToArray();
+                var view = ApiRequest.OptionalString(request, "view");
+                if (view is not (null or "home")) throw new ArgumentException("Unknown list view; the entity definitions list has the view home");
+                var today = view == "home" ? StartOfToday(ApiRequest.OptionalString(request, "todayUtc")) : (DateTime?)null;
+                var listed = store.List().Select(document =>
+                {
+                    var json = EntityJson(document, snapshot);
+                    json.Remove("source"); json.Remove("sourceMap");
+                    return json;
+                }).ToArray();
+                if (today != null) WithRecentRuns(listed, today.Value);
+                result = listed;
+            }
             else
             {
                 var id = ApiRequest.String(request, "id");
-                if (operation == "read") result = EntityJson(store.Read(id) ?? throw new FileNotFoundException("Entity definition not found"));
+                if (operation == "read") result = EntityJson(store.Read(id) ?? throw new FileNotFoundException("Entity definition not found"), snapshot);
                 else if (operation == "set_enabled")
                 {
                     var enabled = ApiRequest.Bool(request, "enabled");
@@ -274,13 +317,13 @@ public partial class HassSharpManager
                         catch (DefinitionValidationException ex) { RecordDefinitionLoadError(document, ex); valid = false; }
                     bool active;
                     string? activationError;
-                    if (!enabled || valid && !EntityJson(document)["currentRevisionActive"]!.GetValue<bool>())
-                        (_, active, activationError) = await Activate(document, services);
+                    if (!enabled || valid && !EntityJson(document, snapshot)["currentRevisionActive"]!.GetValue<bool>())
+                        (_, active, activationError) = await Activate(document, services, snapshot);
                     else
                     {
                         // Not activated: either it is not valid, and its load error says why, or its revision already runs,
                         // when the answer says whether its Start() failed, as a read does.
-                        var json = EntityJson(document);
+                        var json = EntityJson(document, snapshot);
                         active = json["currentRevisionActive"]!.GetValue<bool>();
                         activationError = valid ? (json["status"]!.GetValue<string>() == "failed" ? json["activationError"]?.GetValue<string>() : null)
                             : json["activationError"]?.GetValue<string>();
@@ -295,7 +338,7 @@ public partial class HassSharpManager
                         var document = store.Save(id, DefinitionBody(request), revision, authoring, libraries.Generation, ApiRequest.OptionalBool(request, "enabled"), out var preview);
                         // A valid preview's diagnostics are its warnings: advice, which never stops the save or its activation;
                         // so are a graph's entity ids that Home Assistant does not have (EntityWarnings never throws).
-                        result = await ActivateDefinition(document, services, preview.Graph == null ? preview.Diagnostics : [.. preview.Diagnostics, .. EntityWarnings(preview.Graph, authoring)]);
+                        result = await ActivateDefinition(document, services, preview.Graph == null ? preview.Diagnostics : [.. preview.Diagnostics, .. EntityWarnings(preview.Graph, authoring)], snapshot);
                     }
                     else if (operation == "delete")
                     {

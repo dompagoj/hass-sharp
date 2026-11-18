@@ -269,11 +269,7 @@ public partial class HassSharpManager
     /// <summary>The automations page's list: each document without its graph, with <see cref="Outline"/>, its load problems and recent runs.</summary>
     object[] HomeList(VisualDocument[] documents, string? todayUtc)
     {
-        // The start of the viewer's day, for "runs today"; UTC midnight when not given.
-        var today = DateTime.UtcNow.Date;
-        if (todayUtc != null && !DateTime.TryParse(todayUtc, System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out today))
-            throw new ArgumentException("todayUtc must be an ISO 8601 time");
+        var today = StartOfToday(todayUtc);
         var runs = _history.Recent(documents.Select(d => d.AutomationId!).ToArray(), today, DateTime.UtcNow.AddDays(-1));
         return documents.Select(document =>
         {
@@ -289,6 +285,17 @@ public partial class HassSharpManager
                 recentRuns = recent?.Runs ?? [], runsToday = recent?.RunsToday ?? 0, failedLastDay = recent?.FailedLastDay ?? 0, lastRunUtc = recent?.LastRunUtc,
             };
         }).ToArray();
+    }
+
+    /// <summary>The start of the viewer's day, for "runs today": <paramref name="todayUtc"/>, or UTC midnight when not given.</summary>
+    /// <exception cref="ArgumentException"><paramref name="todayUtc"/> is not an ISO 8601 time.</exception>
+    static DateTime StartOfToday(string? todayUtc)
+    {
+        var today = DateTime.UtcNow.Date;
+        if (todayUtc != null && !DateTime.TryParse(todayUtc, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out today))
+            throw new ArgumentException("todayUtc must be an ISO 8601 time");
+        return today;
     }
 
     /// <summary>

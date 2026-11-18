@@ -51,6 +51,12 @@ static class EntityGraphTests
             (nameof(AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried), AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried),
             (nameof(AnAutomationSentWithADefinitionStaysAnAutomation), AnAutomationSentWithADefinitionStaysAnAutomation),
             (nameof(ALibrarySaveAnswersNoSecretSettingValues), ALibrarySaveAnswersNoSecretSettingValues),
+            (nameof(PreviewAnswersASourceMap), PreviewAnswersASourceMap),
+            (nameof(SecretSettingsAreMaskedInEveryAnswer), SecretSettingsAreMaskedInEveryAnswer),
+            (nameof(ASaveKeepsASecretItWasNotGiven), ASaveKeepsASecretItWasNotGiven),
+            (nameof(ThePreviewAcceptsAKeptSecret), ThePreviewAcceptsAKeptSecret),
+            (nameof(NoProblemQuotesASecret), NoProblemQuotesASecret),
+            (nameof(TheHomeListSummarisesRuns), TheHomeListSummarisesRuns),
             (nameof(ASwitchKeepsItsStateThroughANewRevision), ASwitchKeepsItsStateThroughANewRevision),
             (nameof(ALibraryRebuildKeepsASwitchsState), ALibraryRebuildKeepsASwitchsState),
             (nameof(AWhenStartedFlowOverridesTheStateCarriedOver), AWhenStartedFlowOverridesTheStateCarriedOver),
@@ -990,13 +996,244 @@ static class EntityGraphTests
         var text = definitions.ToJsonString();
         Check(definitions.Count == 2 && !text.Contains("hunter2", StringComparison.Ordinal), "the answer has no secret value: " + text);
         JsonArray Settings(string id) => definitions.Single(d => d!["id"]!.GetValue<string>() == id)!["document"]!["settings"]!.AsArray();
-        Check(Settings("plug").Select(s => s!.ToJsonString()).SequenceEqual(["""{"key":"Host","value":"10.0.0.7"}""", """{"key":"Password","value":null}"""]),
+        Check(Settings("plug").Select(s => s!.ToJsonString()).SequenceEqual(["""{"key":"Host","value":"10.0.0.7"}""", """{"key":"Password","value":null,"secret":true,"hasValue":true}"""]),
             "the class's secret setting has no value, the other keeps its own: " + Settings("plug").ToJsonString());
-        Check(Settings("level").Select(s => s!.ToJsonString()).SequenceEqual(["""{"key":"offset","value":4,"type":"number"}""", """{"key":"token","value":null,"label":"Token","type":"string","secret":true}"""]),
+        Check(Settings("level").Select(s => s!.ToJsonString()).SequenceEqual(["""{"key":"offset","value":4,"type":"number"}""", """{"key":"token","value":null,"label":"Token","type":"string","secret":true,"hasValue":true}"""]),
             "the graph's secret setting has no value and is still marked secret, the other keeps its own: " + Settings("level").ToJsonString());
         // The stored documents keep the values.
-        Check((await rig.Read("plug"))["settings"]!.ToJsonString().Contains("class-hunter2", StringComparison.Ordinal), "the class definition still has its value");
-        Check((await rig.Read("level"))["settings"]!.ToJsonString().Contains("graph-hunter2", StringComparison.Ordinal), "the graph definition still has its value");
+        Check(File.ReadAllText(StoredFile(rig, "plug")).Contains("class-hunter2", StringComparison.Ordinal), "the class definition still has its value");
+        Check(File.ReadAllText(StoredFile(rig, "level")).Contains("graph-hunter2", StringComparison.Ordinal), "the graph definition still has its value");
+    }
+
+    // ---- What the panel needs: source maps, masked secrets, kept secrets, a run summary ----
+
+    /// <summary>A definition's stored file.</summary>
+    static string StoredFile(Rig rig, string id) => Path.Combine(rig.Home.Root, ".storage", "hass_sharp", "entities", id + ".json");
+
+    /// <summary>A class with a secret setting and one that is not, as a node library declares it.</summary>
+    const string SecretLibrary = """
+        public class SecretPlug : SharpDevice
+        {
+            [Setting] public string Host { get; set; } = "";
+            [Setting(Secret = true)] public string Password { get; set; } = "";
+            public SecretPlug() { Add(new SharpSwitch("relay") { OnTurnOn = () => Task.CompletedTask }); }
+        }
+        """;
+    const string SecretPlug = "library:secret:NodeLib.SecretPlug";
+    static object SecretPlugDefinition(params object[] settings) => new { name = "Plug", settings, logic = new { kind = "class", type = SecretPlug } };
+
+    /// <summary>A sensor whose value is the setting <c>offset</c>, with the settings given.</summary>
+    static JsonObject Level(params JsonObject[] settings) =>
+        Definition("Level", Graph("Level", [N("k", "setting", new { key = "offset" }), State("s", "level")], Data("k", "s", "value")), [Entity("level", "sensor")], settings);
+    static JsonObject Offset(double value) => new() { ["key"] = "offset", ["type"] = "number", ["value"] = value };
+    static JsonObject Token(JsonNode? value, string type = "string") => new() { ["key"] = "token", ["type"] = type, ["label"] = "Token", ["value"] = value, ["secret"] = true };
+    static JsonObject KeptToken(string type = "string") => new() { ["key"] = "token", ["type"] = type, ["label"] = "Token", ["secret"] = true, ["keep"] = true };
+    static JsonNode StoredSetting(Rig rig, string id, string key) =>
+        JsonNode.Parse(File.ReadAllText(StoredFile(rig, id)))!["settings"]!.AsArray().Single(s => s!["key"]!.GetValue<string>() == key)!;
+    static JsonNode Answered(JsonNode document, string key) => document["settings"]!.AsArray().Single(s => s!["key"]!.GetValue<string>() == key)!;
+
+    /// <summary>
+    /// A preview answers the source map a read of the same definition, once saved, gives: a graph's ranges of its nodes and
+    /// libraries, a class's of its libraries; an invalid one answers none.
+    /// </summary>
+    static async Task PreviewAnswersASourceMap()
+    {
+        await using var rig = await Rig.Start("preview-map", ("binary_sensor.motion_a", "off"), ("binary_sensor.motion_b", "off"));
+        var preview = await rig.Ok(new { operation = "preview", definition = Motion() });
+        Check(preview["valid"]!.GetValue<bool>() && preview.Select(p => p.Key).Order(StringComparer.Ordinal).SequenceEqual(["diagnostics", "source", "sourceMap", "valid"]),
+            "the preview's members: " + preview.ToJsonString());
+        Check(preview["sourceMap"]!.AsArray().Any(m => m!["nodeId"]!.GetValue<string>() == "s"), "the graph's preview maps its nodes: " + preview["sourceMap"]!.ToJsonString());
+        await rig.Save("motion", Motion());
+        var read = await rig.Read("motion");
+        Check(JsonNode.DeepEquals(preview["sourceMap"], read["sourceMap"]), "the graph's preview maps its source as read does: " + preview["sourceMap"]!.ToJsonString() + " / " + read["sourceMap"]!.ToJsonString());
+
+        Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
+        var plug = SecretPlugDefinition(new { key = "Host", value = "10.0.0.7" });
+        var classPreview = await rig.Ok(new { operation = "preview", definition = plug });
+        await rig.Ok(new { operation = "save", id = "plug", expectedRevision = 0, definition = plug });
+        var classRead = await rig.Read("plug");
+        Check(classPreview["valid"]!.GetValue<bool>() && classPreview["sourceMap"]!.AsArray().Count == 1 && JsonNode.DeepEquals(classPreview["sourceMap"], classRead["sourceMap"]),
+            "the class's preview maps its source as read does: " + classPreview["sourceMap"]!.ToJsonString() + " / " + classRead["sourceMap"]!.ToJsonString());
+
+        var noEntities = Motion(); noEntities["entities"] = new JsonArray();
+        var invalid = await rig.Ok(new { operation = "preview", definition = noEntities });
+        Check(!invalid["valid"]!.GetValue<bool>() && invalid["sourceMap"] is JsonArray { Count: 0 } && invalid["source"]!.GetValue<string>() == "", "an invalid preview maps nothing: " + invalid.ToJsonString());
+    }
+
+    /// <summary>
+    /// Save, read and list answer a secret setting without its value, marked secret and saying whether it has one: a
+    /// class's that its class marks secret, a graph's that the document marks; every setting of a class definition whose
+    /// class the libraries no longer declare. The other settings keep their values, and the stored files keep the secrets.
+    /// </summary>
+    static async Task SecretSettingsAreMaskedInEveryAnswer()
+    {
+        await using var rig = await Rig.Start("masked-secrets");
+        Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
+        var plugSaved = await rig.Ok(new { operation = "save", id = "plug", expectedRevision = 0,
+            definition = SecretPlugDefinition(new { key = "Host", value = "10.0.0.7" }, new { key = "Password", value = "class-hunter2" }) });
+        var levelSaved = await rig.Save("level", Level(Offset(4), Token("graph-hunter2"), new JsonObject { ["key"] = "pin", ["type"] = "string", ["secret"] = true, ["value"] = null }));
+        var plugSettings = new[] { """{"key":"Host","value":"10.0.0.7"}""", """{"key":"Password","value":null,"secret":true,"hasValue":true}""" };
+        var levelSettings = new[] { """{"key":"offset","value":4,"type":"number"}""", """{"key":"token","value":null,"label":"Token","type":"string","secret":true,"hasValue":true}""",
+            """{"key":"pin","value":null,"type":"string","secret":true,"hasValue":false}""" };
+        static bool Shaped(JsonNode document, string[] settings) => document["settings"]!.AsArray().Select(s => s!.ToJsonString()).SequenceEqual(settings);
+        Check(Shaped(plugSaved["document"]!, plugSettings), "the class's save answer: " + plugSaved["document"]!["settings"]!.ToJsonString());
+        Check(Shaped(levelSaved["document"]!, levelSettings), "the graph's save answer: " + levelSaved["document"]!["settings"]!.ToJsonString());
+        var plugRead = await rig.Read("plug");
+        var levelRead = await rig.Read("level");
+        Check(Shaped(plugRead, plugSettings) && Shaped(levelRead, levelSettings), "the reads: " + plugRead["settings"]!.ToJsonString() + " / " + levelRead["settings"]!.ToJsonString());
+        var listed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray();
+        Check(Shaped(listed.Single(d => d!["id"]!.GetValue<string>() == "plug")!, plugSettings) && Shaped(listed.Single(d => d!["id"]!.GetValue<string>() == "level")!, levelSettings),
+            "the list: " + listed.ToJsonString());
+        var answers = plugSaved.ToJsonString() + levelSaved.ToJsonString() + plugRead.ToJsonString() + levelRead.ToJsonString() + listed.ToJsonString();
+        Check(!answers.Contains("hunter2", StringComparison.Ordinal), "an answer has a secret: " + answers);
+        Check(File.ReadAllText(StoredFile(rig, "plug")).Contains("class-hunter2", StringComparison.Ordinal) && File.ReadAllText(StoredFile(rig, "level")).Contains("graph-hunter2", StringComparison.Ordinal),
+            "the stored files keep the secrets");
+        Check(!File.ReadAllText(StoredFile(rig, "plug")).Contains("hasValue", StringComparison.Ordinal) && !File.ReadAllText(StoredFile(rig, "level")).Contains("hasValue", StringComparison.Ordinal),
+            "a stored file says hasValue");
+        Check(!rig.Home.Logs().Any(l => l.Contains("hunter2", StringComparison.Ordinal)) && !rig.Home.Syncs("plug").Concat(rig.Home.Syncs("level")).Any(s => s.Contains("hunter2", StringComparison.Ordinal)),
+            "a log or a sync has a secret");
+
+        // A class definition whose class the libraries no longer declare: which of its settings are secret is not known, so each is masked.
+        var gone = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "plug")))!.AsObject();
+        gone["id"] = "gone"; gone["logic"]!["type"] = "library:secret:NodeLib.GonePlug"; gone["enabled"] = false;
+        File.WriteAllText(StoredFile(rig, "gone"), gone.ToJsonString());
+        var goneRead = await rig.Read("gone");
+        var goneListed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "gone")!;
+        var goneSettings = new[] { """{"key":"Host","value":null,"secret":true,"hasValue":true}""", """{"key":"Password","value":null,"secret":true,"hasValue":true}""" };
+        Check(Shaped(goneRead, goneSettings) && Shaped(goneListed, goneSettings), "a class not declared masks every setting: " + goneRead["settings"]!.ToJsonString() + " / " + goneListed["settings"]!.ToJsonString());
+    }
+
+    /// <summary>
+    /// A save may keep a setting's stored value without being given it: <c>keep</c> stores the value saved before, a new
+    /// value replaces it, a null value without <c>keep</c> removes it, and <c>keep</c> with nothing stored (a new key, a new
+    /// definition) stores none. A kept value that no longer fits a changed type is refused without being quoted; <c>keep</c>
+    /// with a value is a bad request. Neither <c>keep</c> nor <c>hasValue</c> is stored.
+    /// </summary>
+    static async Task ASaveKeepsASecretItWasNotGiven()
+    {
+        await using var rig = await Rig.Start("kept-secrets");
+        await rig.Save("level", Level(Offset(4), Token("graph-hunter2")));
+        var kept = await rig.Save("level", Level(Offset(5), KeptToken()), 1);
+        Check(StoredSetting(rig, "level", "token").ToJsonString() == """{"key":"token","value":"graph-hunter2","label":"Token","type":"string","secret":true}"""
+            && StoredSetting(rig, "level", "offset")["value"]!.GetValue<double>() == 5, "keep stores the value saved before: " + File.ReadAllText(StoredFile(rig, "level")));
+        Check(Answered(kept["document"]!, "token")["hasValue"]!.GetValue<bool>() && !kept.ToJsonString().Contains("hunter2", StringComparison.Ordinal), "the kept secret is answered masked: " + kept.ToJsonString());
+        // A client may send back what it was answered, hasValue and all: hasValue is not stored either.
+        var answeredBack = KeptToken(); answeredBack["hasValue"] = true; answeredBack["value"] = null;
+        await rig.Save("level", Level(Offset(5), answeredBack), 2);
+        var file = File.ReadAllText(StoredFile(rig, "level"));
+        Check(StoredSetting(rig, "level", "token")["value"]!.GetValue<string>() == "graph-hunter2" && !file.Contains("keep", StringComparison.Ordinal) && !file.Contains("hasValue", StringComparison.Ordinal),
+            "neither keep nor hasValue is stored: " + file);
+
+        await rig.Save("level", Level(Offset(5), Token("new-secret")), 3);
+        Check(StoredSetting(rig, "level", "token")["value"]!.GetValue<string>() == "new-secret", "a new value replaces the stored one: " + File.ReadAllText(StoredFile(rig, "level")));
+        var removed = await rig.Save("level", Level(Offset(5), Token(null)), 4);
+        Check(StoredSetting(rig, "level", "token")["value"] == null && !Answered(removed["document"]!, "token")["hasValue"]!.GetValue<bool>(), "a null value without keep removes it: " + removed.ToJsonString());
+        var fresh = new JsonObject { ["key"] = "fresh", ["type"] = "string", ["secret"] = true, ["keep"] = true };
+        var keptNothing = await rig.Save("level", Level(Offset(5), Token("again"), fresh), 5);
+        Check(StoredSetting(rig, "level", "fresh").ToJsonString() == """{"key":"fresh","value":null,"type":"string","secret":true}"""
+            && !Answered(keptNothing["document"]!, "fresh")["hasValue"]!.GetValue<bool>(), "keep for a key with nothing stored stores no value: " + File.ReadAllText(StoredFile(rig, "level")));
+        var created = await rig.Save("other", Level(Offset(1), KeptToken()));
+        Check(StoredSetting(rig, "other", "token")["value"] == null && !Answered(created["document"]!, "token")["hasValue"]!.GetValue<bool>(), "keep in a new definition stores no value");
+
+        // A kept value that does not fit the setting's new type is that setting's type problem; the value is not quoted.
+        var retyped = await rig.Request(new { operation = "save", id = "level", expectedRevision = 6, definition = Level(Offset(5), KeptToken("number"), fresh) });
+        var problem = retyped["error"]?["detail"]?["diagnostics"]?.AsArray().SingleOrDefault(d => d!["inputId"]?.GetValue<string>() == "token");
+        Check(retyped["error"]?["code"]?.GetValue<string>() == "validation" && problem?["code"]?.GetValue<string>() == "definition.settingType"
+            && !retyped.ToJsonString().Contains("again", StringComparison.Ordinal), "a kept value of the wrong type: " + retyped.ToJsonString());
+        // keep with a value is a bad request, naming the setting; nothing is written.
+        var both = Token("graph-hunter2"); both["keep"] = true;
+        var bad = await rig.Request(new { operation = "save", id = "level", expectedRevision = 6, definition = Level(Offset(5), both) });
+        Check(bad["error"]?["code"]?.GetValue<string>() == "invalid_request" && bad["error"]!["detail"]!.GetValue<string>().Contains("token", StringComparison.Ordinal)
+            && !bad.ToJsonString().Contains("hunter2", StringComparison.Ordinal), "keep with a value: " + bad.ToJsonString());
+        Check((await rig.Read("level"))["revision"]!.GetValue<long>() == 6 && StoredSetting(rig, "level", "token")["value"]!.GetValue<string>() == "again", "a refused save wrote");
+
+        // A class definition keeps its secret the same way; a setting that is not secret is kept as well.
+        Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
+        await rig.Ok(new { operation = "save", id = "plug", expectedRevision = 0, definition = SecretPlugDefinition(new { key = "Host", value = "10.0.0.7" }, new { key = "Password", value = "class-hunter2" }) });
+        var plug = await rig.Ok(new { operation = "save", id = "plug", expectedRevision = 1, definition = SecretPlugDefinition(new { key = "Host", keep = true }, new { key = "Password", keep = true }) });
+        Check(File.ReadAllText(StoredFile(rig, "plug")).Contains("""{"key":"Host","value":"10.0.0.7"},{"key":"Password","value":"class-hunter2"}""", StringComparison.Ordinal)
+            && Answered(plug["document"]!, "Password")["hasValue"]!.GetValue<bool>() && Answered(plug["document"]!, "Host")["value"]!.GetValue<string>() == "10.0.0.7",
+            "a class definition keeps its values: " + File.ReadAllText(StoredFile(rig, "plug")));
+    }
+
+    /// <summary>
+    /// A preview does not read the stored definition, so a kept setting's value is not checked; everything else is. It
+    /// generates the source a definition with that value would: no value reaches the source.
+    /// </summary>
+    static async Task ThePreviewAcceptsAKeptSecret()
+    {
+        await using var rig = await Rig.Start("preview-kept");
+        var kept = await rig.Ok(new { operation = "preview", definition = Level(Offset(4), KeptToken("number")) });
+        var given = await rig.Ok(new { operation = "preview", definition = Level(Offset(4), Token(7, "number")) });
+        Check(kept["valid"]!.GetValue<bool>() && kept["source"]!.GetValue<string>() == given["source"]!.GetValue<string>(), "a kept secret previews as one with a value: " + kept.ToJsonString());
+        var badType = KeptToken("colour");
+        var refused = await rig.Ok(new { operation = "preview", definition = Level(Offset(4), badType) });
+        Check(!refused["valid"]!.GetValue<bool>() && refused["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.settingType" && d["inputId"]!.GetValue<string>() == "token"),
+            "the rest of a kept setting is checked: " + refused.ToJsonString());
+        var both = Token("graph-hunter2"); both["keep"] = true;
+        var bad = await rig.Request(new { operation = "preview", definition = Level(Offset(4), both) });
+        Check(bad["error"]?["code"]?.GetValue<string>() == "invalid_request" && !bad.ToJsonString().Contains("hunter2", StringComparison.Ordinal), "a preview of keep with a value: " + bad.ToJsonString());
+
+        Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
+        var classKept = await rig.Ok(new { operation = "preview", definition = SecretPlugDefinition(new { key = "Password", keep = true }) });
+        Check(classKept["valid"]!.GetValue<bool>(), "a class's kept secret previews: " + classKept.ToJsonString());
+        var classUnknown = await rig.Ok(new { operation = "preview", definition = SecretPlugDefinition(new { key = "Pasword", keep = true }) });
+        Check(!classUnknown["valid"]!.GetValue<bool>() && classUnknown["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.unknownSetting"),
+            "a kept setting the class has not is still unknown: " + classUnknown.ToJsonString());
+    }
+
+    /// <summary>A secret whose value does not fit its type is reported by its name and type, never with its value: in a preview, a refused save and the log.</summary>
+    static async Task NoProblemQuotesASecret()
+    {
+        await using var rig = await Rig.Start("unquoted-secrets");
+        var graphPreview = await rig.Ok(new { operation = "preview", definition = Level(Offset(4), Token("graph-hunter2", "number")) });
+        var graphSave = await rig.Request(new { operation = "save", id = "level", expectedRevision = 0, definition = Level(Offset(4), Token("graph-hunter2", "number")) });
+        Check(!graphPreview["valid"]!.GetValue<bool>() && graphPreview["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.settingType" && d["message"]!.GetValue<string>() == "Token takes a number")
+            && graphSave["error"]?["code"]?.GetValue<string>() == "validation", "a graph secret of the wrong type: " + graphPreview.ToJsonString() + " / " + graphSave.ToJsonString());
+        Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
+        var plug = SecretPlugDefinition(new { key = "Password", value = new[] { "class-hunter2" } });
+        var classPreview = await rig.Ok(new { operation = "preview", definition = plug });
+        var classSave = await rig.Request(new { operation = "save", id = "plug", expectedRevision = 0, definition = plug });
+        Check(!classPreview["valid"]!.GetValue<bool>() && classPreview["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.settingType")
+            && classSave["error"]?["code"]?.GetValue<string>() == "validation", "a class secret of the wrong type: " + classPreview.ToJsonString() + " / " + classSave.ToJsonString());
+        var texts = graphPreview.ToJsonString() + graphSave.ToJsonString() + classPreview.ToJsonString() + classSave.ToJsonString() + string.Join("\n", rig.Home.Logs());
+        Check(!texts.Contains("hunter2", StringComparison.Ordinal), "a problem quotes a secret: " + texts);
+    }
+
+    /// <summary>
+    /// The home list answers each definition as the list does, with how it has been running, as the automations page's
+    /// list does: its newest runs, newest last, how many ran today, how many failed in the last day and when it last ran.
+    /// </summary>
+    static async Task TheHomeListSummarisesRuns()
+    {
+        await using var rig = await Rig.Start("home-list", ("binary_sensor.motion_a", "off"), ("binary_sensor.motion_b", "off"));
+        await rig.Save("relay", Relay(before: [Read("read", "sensor.gone")]));
+        await rig.Save("motion", Motion());
+        await rig.Until("relay:relay", _ => true, "the switch starts");
+        await rig.Api.EntityCommand("relay:relay", "turn_off", null);
+        await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("relay:relay", "turn_on", null), "a failing flow");
+        var today = DateTime.UtcNow.Date.ToString("O");
+        var home = (await rig.Request(new { operation = "list", view = "home", todayUtc = today }))["result"]!.AsArray();
+        Check(home.Select(d => d!["id"]!.GetValue<string>()).SequenceEqual(["motion", "relay"]), "the home list: " + home.ToJsonString());
+        var relay = home.Single(d => d!["id"]!.GetValue<string>() == "relay")!.AsObject();
+        var runs = relay["recentRuns"]!.AsArray();
+        Check(runs.Count == 2 && runs[0]!["status"]!.GetValue<string>() == "Succeeded" && runs[1]!["status"]!.GetValue<string>() == "Failed"
+            && runs[1]!.ToJsonString().StartsWith("{\"runId\":", StringComparison.Ordinal) && runs[1]!.AsObject().Select(p => p.Key).SequenceEqual(["runId", "status", "startUtc", "durationMs"]),
+            "the relay's runs, newest last: " + runs.ToJsonString());
+        Check(relay["runsToday"]!.GetValue<int>() == 2 && relay["failedLastDay"]!.GetValue<int>() == 1 && relay["lastRunUtc"] != null, "the relay's counts: " + relay.ToJsonString());
+        Check(!relay.ContainsKey("source") && !relay.ContainsKey("sourceMap") && !relay.ContainsKey("outline") && !relay.ContainsKey("problemCount")
+            && relay["status"]!.GetValue<string>() == "running" && relay.ContainsKey("liveEntities") && relay.ContainsKey("automationId"), "the relay's entry is the list's: " + relay.ToJsonString());
+        var motion = home.Single(d => d!["id"]!.GetValue<string>() == "motion")!.AsObject();
+        Check(motion["recentRuns"] is JsonArray { Count: 0 } && motion["runsToday"]!.GetValue<int>() == 0 && motion["failedLastDay"]!.GetValue<int>() == 0
+            && motion.ContainsKey("lastRunUtc") && motion["lastRunUtc"] == null, "a definition without runs: " + motion.ToJsonString());
+
+        var plain = (await rig.Request(new { operation = "list" }))["result"]!.AsArray();
+        Check(plain.All(d => !d!.AsObject().ContainsKey("recentRuns") && !d.AsObject().ContainsKey("runsToday")), "the plain list has no run summary: " + plain.ToJsonString());
+        Check((await rig.Request(new { operation = "list", view = "home" }))["ok"]!.GetValue<bool>(), "todayUtc may be left out");
+        var unknown = await rig.Request(new { operation = "list", view = "garden" });
+        Check(unknown["error"]?["code"]?.GetValue<string>() == "invalid_request", "an unknown view: " + unknown.ToJsonString());
+        var badDay = await rig.Request(new { operation = "list", view = "home", todayUtc = "yesterday" });
+        Check(badDay["error"]?["code"]?.GetValue<string>() == "invalid_request", "a todayUtc that is not a time: " + badDay.ToJsonString());
     }
 
     // ---- A new revision carries the states its flows set over ----

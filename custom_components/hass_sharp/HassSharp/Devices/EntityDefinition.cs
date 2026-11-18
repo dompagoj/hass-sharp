@@ -36,6 +36,12 @@ public sealed record DefinitionSetting(string Key, JsonNode? Value)
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Type { get; init; }
     /// <summary>A graph setting whose value is shown masked, such as a password. A class's settings have none (the class marks them).</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool Secret { get; init; }
+    /// <summary>
+    /// In a save or preview request only, given without a value: keep the value the stored definition has for this key,
+    /// such as a secret the panel was never sent (none when it has none). The store puts that value in its place, so it
+    /// is never stored or answered; a preview, which reads no stored definition, checks no value for it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool Keep { get; init; }
 }
 
 /// <summary>Where a definition's behaviour comes from.</summary>
@@ -168,7 +174,10 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
         }
     }
 
-    /// <summary>Saves the definition at the next revision, with the source generated from it.</summary>
+    /// <summary>
+    /// Saves the definition at the next revision, with the source generated from it. A setting given
+    /// <see cref="DefinitionSetting.Keep"/> is saved with the value stored before (<see cref="WithKeptValues"/>).
+    /// </summary>
     /// <param name="expectedRevision">The revision last read; 0 for a new definition.</param>
     /// <param name="enabled">Only for a new definition: whether it starts on (the default) or off. An existing definition
     /// keeps its own; <see cref="SetEnabled"/> changes it.</param>
@@ -188,6 +197,7 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             if ((old?.Revision ?? 0) != expectedRevision) throw new VisualConflictException();
             if (old != null && enabled != null)
                 throw new ArgumentException("enabled can only be given when saving a new definition; use set_enabled to turn a saved one on or off");
+            body = WithKeptValues(body, old);
             var graphLogic = body.Logic?.Kind == "graph";
             // A graph is laid out as an automation's is, before it is previewed: the source embeds it. A definition a client
             // put in it is never trusted. A graph of the wrong shape is the preview's to report, as it is.
@@ -212,6 +222,18 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             VisualStore.Write(path, document);
             return document;
         }
+    }
+
+    /// <summary>
+    /// The body with each setting given <see cref="DefinitionSetting.Keep"/> holding the value <paramref name="old"/> has
+    /// for its key instead, none when it has none (or there is no old definition); its other fields stay as given. Under
+    /// the lock of the save, so the value kept is the one the revision checked has, and is checked as any value is.
+    /// </summary>
+    static DefinitionBody WithKeptValues(DefinitionBody body, EntityDefinitionDocument? old)
+    {
+        if (body.Settings is not { } given || !given.Any(s => s is { Keep: true })) return body;
+        JsonNode? Stored(string key) => old?.Settings.FirstOrDefault(s => string.Equals(s.Key, key, StringComparison.Ordinal))?.Value?.DeepClone();
+        return body with { Settings = [.. given.Select(s => s is { Keep: true } ? s with { Value = Stored(s.Key), Keep = false } : s)] };
     }
 
     /// <summary>
