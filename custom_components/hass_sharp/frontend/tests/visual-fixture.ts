@@ -1,5 +1,6 @@
 import { nodeCatalog, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
-import type { GraphOutline, HomeAutomation, VisualDocument, VisualPreview } from '../src/visual/api'
+import type { GraphOutline, HomeAutomation, VisualDiagnostic, VisualDocument, VisualPreview } from '../src/visual/api'
+import type { DefinitionBody, EntityDocument, EntityType, RegisteredEntity } from '../src/entities/model'
 import type { VisualGraph } from '../src/visual/graph'
 
 /** The server's outline of a graph (VisualApi.Outline): node kinds, positions and labels, trigger ids and configs, execution edges. */
@@ -101,8 +102,135 @@ export function fixtureTypeDefinition(request: { type: string; nodeId?: string; 
 /** How a fixture automation has been running, for the automations page; nothing when it never ran. */
 export type FixtureRuns = Partial<Pick<HomeAutomation, 'recentRuns' | 'runsToday' | 'failedLastDay' | 'lastRunUtc' | 'problemCount'>>
 
+/**
+ * The in-memory `hass_sharp/entities` backend of {@link visualFixture} (`fixture.entities`), answering as
+ * `EntityApi.EntityRequest` and the Python route do, in the `{version, ok, result | error}` envelope.
+ *
+ * - `documents`: the stored definitions by id, as the store keeps them: secrets in clear, `logic` as `{kind, type, graph}`,
+ *   the graph without `definition`, with the run fields an answer has (`automationId` `entity:<id>`, `status`, …). Every
+ *   answer masks secrets from it: a graph's `secret` settings, a class's settings its type in `types` marks secret, or
+ *   every setting of a class whose type is not in `types` (as for a library that does not compile).
+ * - `seed(id, body, fields?)`: stores a definition at revision 1 (running, or `off` with `{enabled: false}`); `fields`
+ *   overrides any member of the stored document (`status`, `liveEntities`, …).
+ * - `types`: the `types` answer's classes (from the `entityTypes` option); its `generation` is the library generation.
+ * - `registry`: Home Assistant's entity registry entries by definition id, answered as `registeredEntities`.
+ * - `runs`: the run summary of the home list (`recentRuns`, `runsToday`, `failedLastDay`, `lastRunUtc`) by definition id.
+ * - `requests`: every `request` received, in order (`fixture.calls` keeps the whole messages, as for every route).
+ * - `controls.diagnostics`: what `preview` answers (valid unless one is an error, severity 3); a save is then refused with
+ *   `validation`. `controls.active`: false and a saved or turned-on definition is `failed` with `activationError`.
+ *
+ * A save checks `expectedRevision` (`conflict`), refuses `enabled` for a saved definition and `keep` with a value
+ * (`invalid_request`), and stores a setting sent with `keep`, or with `hasValue` and no value, with the value (and secret
+ * flag) stored before; any other is stored as sent. `read`, `set_enabled` and `delete` of an unknown id are `not_found`.
+ */
+function entitiesFixture(options: { entityTypes?: EntityType[] }, generation: () => string) {
+  const documents = new Map<string, EntityDocument>()
+  const registry = new Map<string, RegisteredEntity[]>()
+  const runs = new Map<string, FixtureRuns>()
+  const types = structuredClone(options.entityTypes ?? [])
+  const requests: any[] = []
+  const controls = { diagnostics: [] as VisualDiagnostic[], active: true }
+  const ok = (result: unknown) => ({ version: 1, ok: true, result })
+  const fail = (code: string, detail: unknown) => ({ version: 1, ok: false, error: { code, detail } })
+  const empty = (value: unknown) => value === undefined || value === null
+  const preview = () => {
+    const valid = !controls.diagnostics.some(d => d.severity >= 3)
+    return { valid, diagnostics: structuredClone(controls.diagnostics), source: valid ? '// HassSharp entity definition (fixture)' : '', sourceMap: [] }
+  }
+  /** The run fields of a stored definition: running when on and `controls.active`, else failed or off. */
+  const running = (id: string, body: DefinitionBody, enabled: boolean): Partial<EntityDocument> => {
+    const active = enabled && controls.active
+    return {
+      automationId: `entity:${id}`, active, currentRevisionActive: active,
+      activationError: !enabled ? 'Not active' : active ? null : 'Fixture activation failed',
+      status: !enabled ? 'off' : active ? 'running' : 'failed',
+      liveEntities: active ? (body.entities ?? []).map(e => ({ uniqueId: `${id}:${e.key}`, key: e.key, domain: e.domain, name: (e.name as string | null | undefined) ?? null, entityId: `${e.domain}.${id}_${e.key}` })) : [],
+    }
+  }
+  /** The document as the store keeps it, from a request's body and the definition stored before. */
+  const stored = (id: string, body: DefinitionBody, revision: number, enabled: boolean, before?: EntityDocument): EntityDocument => {
+    const graph = body.logic.kind === 'graph'
+    const settings = (body.settings ?? []).map(setting => {
+      const old = before?.settings.find(s => s.key === setting.key)
+      const kept = setting.keep === true || (setting.hasValue === true && empty(setting.value))
+      const value = kept ? old?.value ?? null : setting.value ?? null
+      if (!graph) return { key: setting.key, value }
+      const secret = setting.secret === true || (kept && old?.secret === true)
+      return { key: setting.key, value, ...(empty(setting.label) ? {} : { label: setting.label }), ...(empty(setting.type) ? {} : { type: setting.type }), ...(secret ? { secret } : {}) }
+    })
+    const d = body.device
+    const { definition: _definition, ...logicGraph } = (body.logic.kind === 'graph' ? body.logic.graph : {}) as Record<string, unknown>
+    return {
+      version: 1, id, revision, name: body.name,
+      device: d ? { manufacturer: d.manufacturer ?? null, model: d.model ?? null, swVersion: d.swVersion ?? null, hwVersion: d.hwVersion ?? null, configurationUrl: d.configurationUrl ?? null, suggestedArea: d.suggestedArea ?? null, via: d.via ?? null } : null,
+      settings, entities: structuredClone(body.entities ?? null),
+      logic: body.logic.kind === 'graph' ? { kind: 'graph', type: null, graph: structuredClone(logicGraph) as unknown as VisualGraph } : { kind: 'class', type: body.logic.type, graph: null },
+      source: '// HassSharp entity definition (fixture)', sourceMap: [], enabled, savedUtc: new Date().toISOString(), catalogGeneration: generation(),
+      ...running(id, body, enabled), registeredEntities: [],
+    } as EntityDocument
+  }
+  /** The document as an answer gives it: secrets masked, the registry's entries. */
+  const answered = (document: EntityDocument) => {
+    const type = document.logic.kind === 'class' ? types.find(t => t.id === document.logic.type) : undefined
+    const masked = (key: string, secret?: boolean) => document.logic.kind === 'graph' ? secret === true : !type || type.settings.some(s => s.key === key && s.secret)
+    const settings = document.settings.map(s => (masked(s.key, s.secret) ? { ...s, value: null, secret: true, hasValue: !empty(s.value) } : s))
+    const entries = [...(registry.get(document.id) ?? [])].sort((a, b) => (a.uniqueId < b.uniqueId ? -1 : a.uniqueId > b.uniqueId ? 1 : 0))
+    return structuredClone({ ...document, settings, registeredEntities: entries })
+  }
+  const summary = (document: EntityDocument) => { const { source: _source, sourceMap: _sourceMap, ...rest } = answered(document); return rest }
+  const sorted = () => [...documents.values()].sort((a, b) => (a.id < b.id ? -1 : 1))
+  const keepWithValue = (body: DefinitionBody) => body?.settings?.find(s => s.keep === true && !empty(s.value))
+  const callWS = async (message: any) => {
+    const request = message.request
+    requests.push(structuredClone(request))
+    const existing = documents.get(request.id)
+    switch (request.operation) {
+      case 'types': return ok({ types: structuredClone(types), generation: generation() })
+      case 'list':
+        return ok(sorted().map(document => request.view === 'home'
+          ? { ...summary(document), recentRuns: [], runsToday: 0, failedLastDay: 0, lastRunUtc: null, ...structuredClone(runs.get(document.id) ?? {}) }
+          : summary(document)))
+      case 'read': return existing ? ok(answered(existing)) : fail('not_found', 'Entity definition not found')
+      case 'preview': {
+        const both = keepWithValue(request.definition)
+        return both ? fail('invalid_request', `Setting ${both.key} has both a value and keep; give the value, or keep to leave the saved one as it is`) : ok(preview())
+      }
+      case 'save': {
+        if ((existing?.revision ?? 0) !== request.expectedRevision) return fail('conflict', 'Revision conflict; reload the current document')
+        if (existing && request.enabled !== undefined) return fail('invalid_request', 'enabled can only be given when saving a new definition; use set_enabled to turn a saved one on or off')
+        const both = keepWithValue(request.definition)
+        if (both) return fail('invalid_request', `Setting ${both.key} has both a value and keep; give the value, or keep to leave the saved one as it is`)
+        const checked = preview()
+        if (!checked.valid) return fail('validation', checked)
+        const document = stored(request.id, request.definition, request.expectedRevision + 1, existing?.enabled ?? request.enabled ?? true, existing)
+        documents.set(request.id, document)
+        return ok({ id: request.id, saved: true, document: answered(document), active: document.active, activationError: document.enabled ? document.activationError : null })
+      }
+      case 'set_enabled': {
+        if (!existing) return fail('not_found', 'Entity definition not found')
+        const document = { ...existing, enabled: request.enabled, ...running(existing.id, existing, request.enabled) }
+        documents.set(existing.id, document)
+        return ok({ id: existing.id, enabled: document.enabled, active: document.active, activationError: document.enabled ? document.activationError : null })
+      }
+      case 'delete':
+        if (!existing) return fail('not_found', 'Entity definition not found')
+        if (existing.revision !== request.expectedRevision) return fail('conflict', 'Revision conflict; reload the current document')
+        documents.delete(existing.id)
+        registry.delete(existing.id)
+        return ok({ deleted: true })
+      default: return fail('invalid_request', 'Unknown entity operation')
+    }
+  }
+  const seed = (id: string, body: DefinitionBody, fields: Partial<EntityDocument> = {}) => {
+    const document = { ...stored(id, body, 1, fields.enabled ?? true), ...structuredClone(fields) }
+    documents.set(id, document)
+    return document
+  }
+  return { documents, registry, runs, types, requests, controls, seed, callWS }
+}
+
 export function visualFixture(
-  options: { catalog?: VisualCatalogSnapshot; libraries?: { id: string; name: string; revision: number; source: string }[] } = {},
+  options: { catalog?: VisualCatalogSnapshot; libraries?: { id: string; name: string; revision: number; source: string }[]; entityTypes?: EntityType[] } = {},
 ) {
   const documents = new Map<string, VisualDocument>()
   const runs = new Map<string, FixtureRuns>()
@@ -134,6 +262,7 @@ export function visualFixture(
     /** `type_definition` waits for this before it answers. */
     holdTypeDefinition: undefined as Promise<unknown> | undefined,
   }
+  const entities = entitiesFixture(options, () => controls.generation)
   const makePreview = (_graph: VisualGraph): VisualPreview => ({
     valid: !controls.invalid,
     source: 'class VisualAutomation\n{\n  // generated on server\n}',
@@ -142,6 +271,7 @@ export function visualFixture(
   })
   const callWS = async (message: any) => {
     calls.push(structuredClone(message))
+    if (message.type === 'hass_sharp/entities') return entities.callWS(message)
     if (message.type === 'hass_sharp/node_library') {
       const request = message.request
       if (request.operation === 'catalog')
@@ -298,6 +428,8 @@ export function visualFixture(
     libraries,
     calls,
     controls,
+    /** The in-memory entity definitions backend (`entitiesFixture`). */
+    entities,
     callWS,
     connection: {
       subscribeMessage: async (callback: (value: unknown) => void) => {
