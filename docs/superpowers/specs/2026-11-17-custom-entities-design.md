@@ -37,6 +37,12 @@ defined with a node graph or a C# class. It has to cover:
    and in-process inference are the next project.
 7. **ImageSharp** is the imaging library; the project is open source. The licence itself is not
    named yet: ask at the start of the camera phase and add a `LICENSE` file then.
+   *Changed on 2026-11-18 after the phase 5 spikes (`docs/superpowers/plans/2026-11-18-custom-entities-phase-5-spike.md`):
+   every ImageSharp release without known advisories fails a Release build without a vendor licence
+   key. The user chose instead the **libjpeg-turbo library that the Home Assistant image already
+   ships**, called from .NET, with rectangles and text drawn by HassSharp's own code (text through
+   StbTrueTypeSharp and an embedded DejaVu Sans). There is no fallback codec: where the library is
+   missing, drawing on a frame fails with a message that says so. The project's licence is **MIT**.*
 8. **Feature branch in place** (`custom-entities`), not a worktree.
 9. **Opus 5.5 subagents do all implementation.** The main session coordinates, reviews and
    verifies; it does not write product code.
@@ -162,7 +168,8 @@ public class ShellyPlug : SharpDevice
   `SharpSelect`, `SharpText`, `SharpLight`, `SharpCover`, `SharpCamera`.
 - `SharpFiles.Download(url, sha256, name?)` returns a cached path under
   `.storage/hass_sharp/files/<sha256>/`.
-- `SharpImage` (`Load`, `DrawRect`, `DrawText`, `ToJpeg`, `Width`, `Height`) hides ImageSharp. Each
+- `SharpImage` (`Load`, `DrawRect`, `DrawText`, `ToJpeg`, `Width`, `Height`) hides the imaging code
+  (libjpeg-turbo and StbTrueTypeSharp since 2026-11-18; ImageSharp before). Each
   script load context gets private copies of non-HassSharp assemblies (`ScriptLoadContext.cs:47-48`),
   so library types must not appear in the API.
 
@@ -201,7 +208,8 @@ Definitions are hosted by the existing automation host, not a parallel one.
 - "Is a trigger" becomes "is a root" in both validators, the generator and the flow code. Existing
   `trigger` nodes stay valid roots in entity graphs, so polling is a time-pattern trigger.
 - New nodes: `entity_state` (reactive sink), `entity_command` (root; a camera frame request is the
-  command `frame`), `entity_setup` (root), `set_entity_state`, `set_entity_available`, `setting`
+  command `frame` — *changed in the phase 5 plan: a frame request returns a value, which a command
+  cannot, so it is its own root `camera_frame` with a `show_frame` step*), `entity_setup` (root), `set_entity_state`, `set_entity_available`, `setting`
   (pure), `entity_is` (pure), `http_request`, `download_file`, `camera_snapshot`,
   `image_draw_rect`, `image_draw_text`; new type `image`.
 
@@ -257,6 +265,8 @@ Each phase ends with every suite in `AGENTS.md` passing and a live check in the 
 - A definition that is off, fails to compile or fails setup keeps its entities as unavailable.
   Registry entries go only on delete or when an entity is removed from the definition.
 - `http_request`, `camera_snapshot`, the image nodes and `entity_is` are also usable in automations.
+  *(Phase 5 plan: `camera_snapshot` and the image nodes are for entity definitions only for now —
+  no automation step takes an image yet.)*
 - Run history is on for command and setup runs, and off by default for reactive state and for a
   trigger's flow in a definition.
 - `/devices` redirects to `/entities`; `TODOView` is deleted.
@@ -270,7 +280,7 @@ Each phase ends with every suite in `AGENTS.md` passing and a live check in the 
 - **Home Assistant entity lifecycle** (adding entities late from a stored callback, updating a live
   entity, unavailable after unload): the phase 1 spike, turned into tests against a real instance.
 - **Bytes through Python.NET**: the phase 1 smoke; base64 strings are the fallback.
-- **ImageSharp on Alpine**, and its licence terms: the phase 5 spike.
+- **ImageSharp on Alpine**, and its licence terms: the phase 5 spike. *(Outcome: see decision 7.)*
 - **Validator parity** between C# and TypeScript: the shared fixture, both changed together.
 - **Static dependency extraction** misses entity reads inside C# code: an entity input wired
   upstream of a State warns, but a read in library or Custom C# code (`NodeContext.State`) does
