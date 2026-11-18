@@ -113,7 +113,8 @@ it('creates an entity definition from a class with two settings, and shows its e
   expect(settings.textContent).toContain('The address of the plug.')
   expect(control(root, 'Host').placeholder).toBe('Class default')
   const interval = control(root, 'Poll interval')
-  expect([interval.type, interval.min, interval.max]).toEqual(['number', '1', '3600'])
+  // A text field, so what is typed stays as typed (a number field reports an unfinished "-" as empty).
+  expect([interval.type, interval.inputMode]).toEqual(['text', 'numeric'])
   expect(settings.textContent).toContain('Between 1 and 3600.')
   expect([...control<HTMLSelectElement>(root, 'Mode').options].map(o => o.textContent)).toEqual(["Use the class's default", 'Local', 'Cloud'])
   type(control(root, 'Host'), '10.0.0.1')
@@ -142,25 +143,35 @@ it('creates an entity definition from a class with two settings, and shows its e
   expect(control(root, 'Poll interval').value).toBe('30')
 })
 
-it('creates a second plug from the same class with its own settings, and both are listed with their own entities', async () => {
+it('creates two plugs through the page from the same class, each with its own settings and entities', async () => {
   const fixture = visualFixture({ entityTypes: [plugType, thermometerType] })
-  fixture.entities.seed('kitchen_plug', plug([{ key: 'Host', value: '10.0.0.1' }], 'Kitchen plug'))
-  const { root, history } = setup(`/entities/new?logic=class&type=${encodeURIComponent(plugType.id)}&name=Desk plug`, undefined, fixture)
-  await ready(root)
-  // The class from the address is chosen; the name from the address stays.
-  await vi.waitFor(() => expect(control(root, 'Host')).not.toBeNull())
-  expect(nameInput(root).value).toBe('Desk plug')
-  type(control(root, 'Host'), '10.0.0.2')
-  choose(control<HTMLSelectElement>(root, 'Mode'), 'Cloud')
-  save(root).click()
-  await vi.waitFor(() => expect(history.get()).toBe('/entities/desk_plug'))
-  expect(fixture.entities.documents.get('kitchen_plug')!.settings).toEqual([{ key: 'Host', value: '10.0.0.1' }])
-  expect(fixture.entities.documents.get('desk_plug')!.settings).toEqual([{ key: 'Host', value: '10.0.0.2' }, { key: 'Mode', value: 'Cloud' }])
-  const listed = await fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'list' } }) as any
-  expect(listed.result.map((d: any) => [d.id, d.logic.type, d.liveEntities.map((e: any) => e.entityId)])).toEqual([
-    ['desk_plug', plugType.id, ['switch.desk_plug_relay', 'sensor.desk_plug_power']],
-    ['kitchen_plug', plugType.id, ['switch.kitchen_plug_relay', 'sensor.kitchen_plug_power']],
+  const fromClass = `/entities/new?logic=class&type=${encodeURIComponent(plugType.id)}`
+  const create = async (host: string, id: string) => {
+    const { root, history } = setup(fromClass, undefined, fixture)
+    await ready(root)
+    // The class from the address is chosen, and names the definition.
+    await vi.waitFor(() => expect(control(root, 'Host')).not.toBeNull())
+    expect(nameInput(root).value).toBe('Shelly plug')
+    type(control(root, 'Host'), host)
+    save(root).click()
+    await vi.waitFor(() => expect(history.get()).toBe(`/entities/${id}`))
+    await vi.waitFor(() => expect(status(root)).toBe('Running'))
+    dispose!(); dispose = undefined; document.body.innerHTML = ''
+  }
+  await create('10.0.0.1', 'shelly_plug')
+  await create('10.0.0.2', 'shelly_plug_2')
+  const definition = (host: string) => ({ name: 'Shelly plug', device: null, settings: [{ key: 'Host', value: host }], logic: { kind: 'class', type: plugType.id } })
+  expect(saves(fixture)).toEqual([
+    { operation: 'save', id: 'shelly_plug', expectedRevision: 0, definition: definition('10.0.0.1') },
+    { operation: 'save', id: 'shelly_plug_2', expectedRevision: 0, definition: definition('10.0.0.2') },
   ])
+  const listed = await fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'list' } }) as any
+  expect(listed.result.map((d: any) => [d.id, d.logic.type, d.liveEntities.map((e: any) => e.entityId).sort()]).sort()).toEqual([
+    ['shelly_plug', plugType.id, ['sensor.shelly_plug_power', 'switch.shelly_plug_relay']],
+    ['shelly_plug_2', plugType.id, ['sensor.shelly_plug_2_power', 'switch.shelly_plug_2_relay']],
+  ])
+  expect(fixture.entities.documents.get('shelly_plug')!.settings).toEqual([{ key: 'Host', value: '10.0.0.1' }])
+  expect(fixture.entities.documents.get('shelly_plug_2')!.settings).toEqual([{ key: 'Host', value: '10.0.0.2' }])
 })
 
 it('keeps the class default for a field left empty, and says so', async () => {
@@ -314,24 +325,33 @@ it("says at the top that a save waits for the node libraries to compile", async 
   expect(fixture.entities.documents.get('plug')!.revision).toBe(1)
 })
 
-it('lists the values of settings the class no longer has by key, sends them back until they are removed', async () => {
-  const { root, fixture } = setup('/entities/plug', f => f.entities.seed('plug', plug([{ key: 'Host', value: '10.0.0.1' }, { key: 'Old', value: 'stray' }])))
+it('lists the values of settings the class no longer has by key; the server refuses them until they are removed', async () => {
+  const { root, fixture } = setup('/entities/plug', f => {
+    f.entities.controls.classChecks = true
+    f.entities.seed('plug', plug([{ key: 'Host', value: '10.0.0.1' }, { key: 'Old', value: 'stray' }]))
+  })
   const view = await ready(root)
   await vi.waitFor(() => expect(view.querySelector('section[aria-label="No longer used by this class"]')).not.toBeNull())
-  const unused = view.querySelector('section[aria-label="No longer used by this class"]')!
-  expect([...unused.querySelectorAll('code')].map(c => c.textContent)).toEqual(['Old'])
+  const unused = () => view.querySelector('section[aria-label="No longer used by this class"]')
+  expect([...unused()!.querySelectorAll('code')].map(c => c.textContent)).toEqual(['Old'])
   expect(root.innerHTML).not.toContain('stray')
   type(control(root, 'Host'), '10.0.0.2')
   save(root).click()
-  await vi.waitFor(() => expect(fixture.entities.documents.get('plug')!.revision).toBe(2))
+  // Sent back untouched, and refused: the server's message is on its row, and nothing is stored.
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
   expect(saves(fixture)[0].definition.settings).toEqual([{ key: 'Host', value: '10.0.0.2' }, { key: 'Old', keep: true }])
-  expect(fixture.entities.documents.get('plug')!.settings).toEqual([{ key: 'Host', value: '10.0.0.2' }, { key: 'Old', value: 'stray' }])
-  await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
-  button(root, 'Remove setting Old').click()
+  await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain('Fix the problems before saving.'))
+  await vi.waitFor(() => expect(unused()!.textContent).toContain('Shelly plug has no setting Old'))
+  expect(fixture.entities.documents.get('plug')!.revision).toBe(1)
   expect(chip(root)).toContain('Unsaved changes')
+  button(root, 'Remove setting Old').click()
+  expect(unused()).toBeNull()
   save(root).click()
-  await vi.waitFor(() => expect(fixture.entities.documents.get('plug')!.revision).toBe(3))
+  await vi.waitFor(() => expect(fixture.entities.documents.get('plug')!.revision).toBe(2))
   expect(saves(fixture)[1].definition.settings).toEqual([{ key: 'Host', value: '10.0.0.2' }])
+  expect(fixture.entities.documents.get('plug')!.settings).toEqual([{ key: 'Host', value: '10.0.0.2' }])
+  await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
+  expect(root.querySelector('[role="alert"]')).toBeNull()
 })
 
 it('offers to reload or to save anyway when the definition changed elsewhere', async () => {
@@ -478,4 +498,232 @@ it('explains where classes come from when the node libraries have none', async (
   await vi.waitFor(() => expect(view.textContent).toContain('No classes yet. Write a class that derives from SharpDevice or SharpEntity in a node library, and it appears here.'))
   expect(link(root, 'Open the node library').getAttribute('href')).toBe('/libraries')
   expect(view.querySelector('section[aria-label="Settings"]')).toBeNull()
+})
+
+const thermometer = (device: DefinitionBody['device']): DefinitionBody => ({ name: 'Thermo', device, settings: [{ key: 'Host', value: '10.0.0.4' }], logic: { kind: 'class', type: thermometerType.id } })
+const deviceSwitch = (root: Element) => root.querySelector<HTMLInputElement>('section[aria-label="Device"] input[role="switch"]')!
+
+it('groups a single entity as a device with no details when the switch is turned on, and that is a change', async () => {
+  const { root, fixture } = setup('/entities/thermo', f => f.entities.seed('thermo', thermometer(null)))
+  await ready(root)
+  await vi.waitFor(() => expect(deviceSwitch(root)).not.toBeNull())
+  expect(deviceSwitch(root).checked).toBe(false)
+  expect(chip(root)).toBe('Saved')
+  deviceSwitch(root).click()
+  await vi.waitFor(() => expect(chip(root)).toContain('Unsaved changes'))
+  expect(save(root).getAttribute('aria-disabled')).toBeNull()
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  // No details: a device all the same, named after the definition.
+  expect(saves(fixture)[0].definition.device).toEqual({})
+  await vi.waitFor(() => expect(fixture.entities.documents.get('thermo')!.revision).toBe(2))
+  expect(fixture.entities.documents.get('thermo')!.device).not.toBeNull()
+  await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
+  expect(deviceSwitch(root).checked).toBe(true)
+  // Off again: a change too, and no device.
+  deviceSwitch(root).click()
+  await vi.waitFor(() => expect(chip(root)).toContain('Unsaved changes'))
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(2))
+  expect(saves(fixture)[1].definition.device).toBeNull()
+  await vi.waitFor(() => expect(fixture.entities.documents.get('thermo')!.device).toBeNull())
+})
+
+it('keeps a stored device with no details when something else is saved', async () => {
+  const empty = { manufacturer: null, model: null, swVersion: null, hwVersion: null, configurationUrl: null, suggestedArea: null, via: null }
+  const { root, fixture } = setup('/entities/thermo', f => f.entities.seed('thermo', thermometer(empty)))
+  await ready(root)
+  await vi.waitFor(() => expect(deviceSwitch(root)?.checked).toBe(true))
+  expect(chip(root)).toBe('Saved')
+  type(control(root, 'Host'), '10.0.0.5')
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  expect(saves(fixture)[0].definition.device).toEqual({})
+  await vi.waitFor(() => expect(fixture.entities.documents.get('thermo')!.revision).toBe(2))
+  expect(fixture.entities.documents.get('thermo')!.device).not.toBeNull()
+  await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
+  expect(deviceSwitch(root).checked).toBe(true)
+})
+
+it("sends no device for a device class whose details are all left empty", async () => {
+  const { root, fixture } = setup('/entities/plug', f => f.entities.seed('plug', { ...plug([{ key: 'Host', value: '10.0.0.1' }]), device: { manufacturer: 'Acme' } }))
+  await ready(root)
+  await vi.waitFor(() => expect(control(root, 'Manufacturer').value).toBe('Acme'))
+  enter(control(root, 'Manufacturer'), '')
+  expect(chip(root)).toContain('Unsaved changes')
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  expect(saves(fixture)[0].definition.device).toBeNull()
+  await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
+  // Read back with no device, the class's own details are used; nothing is left to save.
+  expect(control(root, 'Manufacturer').value).toBe('')
+  type(control(root, 'Host'), '10.0.0.2')
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(2))
+  expect(saves(fixture)[1].definition.device).toBeNull()
+})
+
+/** The value of `key` the page last checked with the server (300 ms after a change), as the body then had it. */
+const checked = async (fixture: Fixture, key: string) => {
+  await vi.advanceTimersByTimeAsync(350)
+  const previews = fixture.entities.requests.filter(r => r.operation === 'preview')
+  expect(previews.length).toBeGreaterThan(0)
+  return previews.at(-1).definition.settings.find((s: any) => s.key === key)?.value
+}
+
+it('keeps a number as it is typed, committing it only once it is one, and saves what was typed', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const { root, fixture } = setup('/entities/plug', f => f.entities.seed('plug', plug([{ key: 'Host', value: '10.0.0.1' }])))
+  await ready(root)
+  await vi.waitFor(() => expect(control(root, 'Offset')).not.toBeNull())
+  const offset = control(root, 'Offset')
+  offset.focus()
+  const steps: [string, unknown][] = [['-', undefined], ['-0', -0], ['-0.', -0], ['-0.5', -0.5], ['1', 1], ['1e', 1], ['1e3', 1000], ['-', 1000], ['-3', -3]]
+  for (const [text, value] of steps) {
+    type(offset, text)
+    // The field shows what was typed, never a number written back.
+    expect(offset.value, text).toBe(text)
+    expect(await checked(fixture, 'Offset'), text).toBe(value)
+    expect(offset.value, text).toBe(text)
+  }
+  offset.blur()
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  expect(saves(fixture)[0].definition.settings).toEqual([{ key: 'Host', value: '10.0.0.1' }, { key: 'Offset', value: -3 }])
+  await vi.waitFor(() => expect(fixture.entities.documents.get('plug')!.revision).toBe(2))
+  expect(fixture.entities.documents.get('plug')!.settings.at(-1)).toEqual({ key: 'Offset', value: -3 })
+  expect(control(root, 'Offset').value).toBe('-3')
+})
+
+it('replaces a saved number typed over, and empties to the class default only when the field is empty', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const { root, fixture } = setup('/entities/plug', f => f.entities.seed('plug', plug([{ key: 'Offset', value: 5 }, { key: 'Interval', value: 30 }])))
+  await ready(root)
+  await vi.waitFor(() => expect(control(root, 'Offset').value).toBe('5'))
+  const offset = control(root, 'Offset')
+  offset.focus()
+  // Selected and typed over: "-" is not a number yet, so 5 stays until "-3" is.
+  type(offset, '-')
+  expect(await checked(fixture, 'Offset')).toBe(5)
+  expect(offset.value).toBe('-')
+  type(offset, '-3')
+  expect(await checked(fixture, 'Offset')).toBe(-3)
+  type(offset, '')
+  expect(await checked(fixture, 'Offset')).toBeNull()
+  expect(offset.value).toBe('')
+  type(offset, '2.5')
+  offset.blur()
+  // A whole number: a fraction is not committed, and the field says why when it is left.
+  const interval = control(root, 'Poll interval')
+  interval.focus()
+  type(interval, '1.5')
+  expect(await checked(fixture, 'Interval')).toBe(30)
+  interval.blur()
+  expect(interval.closest('[data-field]')!.textContent).toContain('Enter a whole number.')
+  expect(interval.getAttribute('aria-invalid')).toBe('true')
+  expect(interval.value).toBe('1.5')
+  interval.focus()
+  type(interval, '1e2')
+  expect(await checked(fixture, 'Interval')).toBe(100)
+  expect(interval.closest('[data-field]')!.textContent).not.toContain('Enter a whole number.')
+  interval.blur()
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  expect(saves(fixture)[0].definition.settings).toEqual([{ key: 'Offset', value: 2.5 }, { key: 'Interval', value: 100 }])
+})
+
+it('says a number left unfinished is not one, and commits nothing for it', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const { root, fixture } = setup('/entities/plug', f => f.entities.seed('plug', plug([{ key: 'Offset', value: 5 }])))
+  await ready(root)
+  await vi.waitFor(() => expect(control(root, 'Offset').value).toBe('5'))
+  const offset = control(root, 'Offset')
+  offset.focus()
+  type(offset, '1e')
+  offset.blur()
+  expect(offset.closest('[data-field]')!.textContent).toContain('Enter a number.')
+  expect(offset.value).toBe('1e')
+  expect(await checked(fixture, 'Offset')).toBe(5)
+  expect(chip(root)).toBe('Saved')
+  offset.focus()
+  type(offset, '1e1')
+  expect(offset.closest('[data-field]')!.textContent).not.toContain('Enter a number.')
+  expect(await checked(fixture, 'Offset')).toBe(10)
+})
+
+it('takes the new revision a node library save gave an unchanged definition, under unsaved changes, so Save is no conflict', async () => {
+  const { root, fixture } = setup('/entities/plug', f => f.entities.seed('plug', plug([{ key: 'Host', value: '10.0.0.1' }])))
+  await ready(root)
+  await vi.waitFor(() => expect(control(root, 'Host').value).toBe('10.0.0.1'))
+  type(control(root, 'Host'), 'mine')
+  // A library save rebuilds the definition as it was, at the next revision.
+  fixture.entities.documents.get('plug')!.revision = 2
+  const reads = () => fixture.entities.requests.filter(r => r.operation === 'read').length
+  const before = reads()
+  window.dispatchEvent(new Event('hass-sharp-libraries-changed'))
+  await vi.waitFor(() => expect(reads()).toBe(before + 1))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(control(root, 'Host').value).toBe('mine')
+  save(root).click()
+  await vi.waitFor(() => expect(fixture.entities.documents.get('plug')!.revision).toBe(3))
+  expect(saves(fixture).at(-1)).toMatchObject({ expectedRevision: 2, definition: { settings: [{ key: 'Host', value: 'mine' }] } })
+  expect(document.querySelector('dialog[open]')).toBeNull()
+  await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
+})
+
+it('keeps the revision it opened when a node library save finds the definition changed elsewhere, so Save offers the choices', async () => {
+  const { root, fixture } = setup('/entities/plug', f => f.entities.seed('plug', plug([{ key: 'Host', value: '10.0.0.1' }])))
+  await ready(root)
+  await vi.waitFor(() => expect(control(root, 'Host').value).toBe('10.0.0.1'))
+  type(control(root, 'Host'), 'mine')
+  await fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'save', id: 'plug', expectedRevision: 1, definition: plug([{ key: 'Host', value: 'theirs' }]) } })
+  const reads = () => fixture.entities.requests.filter(r => r.operation === 'read').length
+  const before = reads()
+  window.dispatchEvent(new Event('hass-sharp-libraries-changed'))
+  await vi.waitFor(() => expect(reads()).toBe(before + 1))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(control(root, 'Host').value).toBe('mine')
+  save(root).click()
+  await vi.waitFor(() => expect(document.querySelector<HTMLElement>('dialog[open]')?.textContent).toContain('This entity definition changed elsewhere'))
+  expect(saves(fixture).at(-1)).toMatchObject({ expectedRevision: 1 })
+  expect(fixture.entities.documents.get('plug')!.settings).toEqual([{ key: 'Host', value: 'theirs' }])
+})
+
+it('counts in the save state only the problems it shows', async () => {
+  const { root, fixture } = setup('/entities/old', f => {
+    f.entities.controls.classChecks = true
+    f.entities.seed('old', plug([{ key: 'Host', value: '10.0.0.9' }], 'Old plug', 'library:old:NodeLib.Gone'))
+  })
+  const view = await ready(root)
+  await vi.waitFor(() => expect(view.textContent).toContain("This entity definition's class is not available"))
+  // The server's "unknown class", which the page says in its own words, is not counted.
+  await vi.waitFor(() => expect(fixture.entities.requests.some(r => r.operation === 'preview')).toBe(true))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(view.querySelector('ul[aria-label="Problems of this entity definition"]')).toBeNull()
+  expect(chip(root)).toBe('Saved')
+})
+
+it('stays where the person went when a first save answers after they left', async () => {
+  let release!: () => void, asked = false
+  const gate = new Promise<void>(resolve => (release = resolve))
+  const { root, fixture, history } = setup('/entities/new?logic=class', f => {
+    const inner = f.entities.callWS
+    f.entities.callWS = async (message: any) => { if (message.request?.operation === 'save') { asked = true; await gate } return inner(message) }
+  })
+  await ready(root)
+  await vi.waitFor(() => expect(pickClass(root, plugType.id)).not.toBeNull())
+  pickClass(root, plugType.id).click()
+  await vi.waitFor(() => expect(nameInput(root).value).toBe('Shelly plug'))
+  save(root).click()
+  await vi.waitFor(() => expect(asked).toBe(true))
+  link(root, 'Leave').click()
+  const dialog = () => document.querySelector<HTMLElement>('dialog[open]')
+  await vi.waitFor(() => expect(dialog()).not.toBeNull())
+  button(dialog()!, 'Discard changes').click()
+  await vi.waitFor(() => expect(history.get()).toBe('/elsewhere'))
+  release()
+  await vi.waitFor(() => expect(fixture.entities.documents.get('shelly_plug')).toBeDefined())
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(history.get()).toBe('/elsewhere')
+  expect(root.querySelector('h1')?.textContent).toBe('Elsewhere')
 })

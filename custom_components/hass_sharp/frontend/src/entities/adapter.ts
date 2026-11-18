@@ -64,12 +64,13 @@ const result = (saved: EntitySaveResult) => ({ ...saved, document: held(saved.do
  * and downloads without secret values, and the definition form as the inspector's overview. It has no Run now: an
  * entity's commands are tried from Home Assistant (ruling R1).
  *
- * `onClassDefinition` hears of a definition built from a class when `read` meets one; the read then fails with
- * {@link classDefinitionCode}, and the page shows that definition's own editor instead.
+ * The entity definition's page reads a definition before it chooses its editor; `handed` gives this editor that read
+ * for its first read of the definition (once), so it is not read twice. A definition built from a class is refused
+ * with {@link classDefinitionCode}: this editor never makes a graph of one (a run's page says so in its words).
  */
 export function entityAdapter(
   hass: Pick<HomeAssistant, 'callWS'>,
-  options: { onClassDefinition?(document: EntityDocument): void } = {},
+  options: { handed?(id: string): EntityDocument | undefined } = {},
 ): EditorAdapter<EntityEditorDocument> {
   const api = entityApi(hass)
   // A device turned off, for as long as this editor is open: the form goes whenever a step is selected.
@@ -77,11 +78,9 @@ export function entityAdapter(
   return {
     document: 'entity',
     read: async id => {
-      const document = await api.read(id)
-      if (document.logic.kind !== 'graph') {
-        options.onClassDefinition?.(document)
+      const document = options.handed?.(id) ?? await api.read(id)
+      if (document.logic.kind !== 'graph')
         throw new EntityApiError(classDefinitionCode, 'This entity definition is built from a class in a node library, not from steps.')
-      }
       return held(document)
     },
     // The entity API's check answers no source map: no line of the generated C# then selects a step.

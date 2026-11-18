@@ -882,3 +882,86 @@ it('opens a run of the definition on its run page and comes back to its Runs tab
   expect(history.get()).toBe('/entities/plug')
   for (const secret of ['typed-secret', 'stored-secret']) expect(document.body.innerHTML).not.toContain(secret)
 })
+
+/** Holds every `read` of the entity API until `release` is called. */
+function holdReads(fixture: Fixture) {
+  const inner = fixture.entities.callWS
+  let release!: () => void
+  const gate = new Promise<void>(resolve => (release = resolve))
+  fixture.entities.callWS = async (message: any) => {
+    if (message.request?.operation === 'read') await gate
+    return inner(message)
+  }
+  return () => release()
+}
+const editorShown = (root: Element) => !!root.querySelector('section[aria-label="Entity definition editor"], [aria-label^="Entity definition canvas"]')
+const catalogAsked = (fixture: Fixture) => fixture.calls.some(c => c.type === 'hass_sharp/node_library' && c.request?.operation === 'catalog')
+const reads = (fixture: Fixture) => fixture.entities.requests.filter(r => r.operation === 'read').length
+
+it('opens a definition built from a class without the graph editor, even while it is being read', async () => {
+  let release!: () => void
+  const { root, fixture } = setup('/entities/plug1', f => {
+    f.entities.seed('plug1', { name: 'Plug one', settings: [{ key: 'Host', value: '10.0.0.1' }], logic: { kind: 'class', type: 'library:shelly:NodeLib.FakePlug' } })
+    release = holdReads(f)
+  })
+  await vi.waitFor(() => expect(root.querySelector('[role="status"]')?.textContent).toBe('Loading saved entity definition…'))
+  expect(editorShown(root)).toBe(false)
+  expect(root.textContent).not.toContain('Loading saved graph')
+  expect(button(root, 'Back to entities')).toBeDefined()
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(catalogAsked(fixture)).toBe(false)
+  release()
+  await vi.waitFor(() => expect(root.querySelector('section.hs-cdef[aria-label="Entity definition"]')).not.toBeNull())
+  expect(nameInput(root).value).toBe('Plug one')
+  expect(editorShown(root)).toBe(false)
+  expect(root.textContent).not.toContain('Loading saved graph')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(catalogAsked(fixture)).toBe(false)
+  expect(reads(fixture)).toBe(1)
+})
+
+it('opens a definition built from steps in the graph editor, read once', async () => {
+  let release!: () => void
+  const { root, fixture } = setup('/entities/plug', f => { f.entities.seed('plug', plugBody()); release = holdReads(f) })
+  await vi.waitFor(() => expect(root.querySelector('[role="status"]')?.textContent).toBe('Loading saved entity definition…'))
+  expect(editorShown(root)).toBe(false)
+  release()
+  await vi.waitFor(() => expect(root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
+  expect(root.querySelector('section[aria-label="Entity definition editor"]')).not.toBeNull()
+  expect(nameInput(root).value).toBe('Plug')
+  expect(root.querySelector('section.hs-cdef')).toBeNull()
+  // The editor is handed the definition the page read: its own reads are only the check after the node catalog
+  // answers, as before the page read first.
+  expect(reads(fixture)).toBe(2)
+  expect(fixture.calls.findIndex(c => c.type === 'hass_sharp/entities' && c.request.operation === 'read')).toBeLessThan(fixture.calls.findIndex(c => c.request?.operation === 'catalog'))
+  // Saved again, the editor's own read and save work as before.
+  rename(root, 'Plug two')
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(fixture.entities.documents.get('plug')!.revision).toBe(2))
+  expect(fixture.entities.documents.get('plug')!.name).toBe('Plug two')
+})
+
+it('says a definition that is not stored was not found, and one that could not be read why', async () => {
+  const { root, history } = setup('/entities/nothing')
+  await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain('This entity definition was not found. It may have been deleted.'))
+  expect(editorShown(root)).toBe(false)
+  expect(root.querySelector('section.hs-cdef[aria-label="Entity definition"]')).toBeNull()
+  button(root, 'Back to entities').click()
+  await vi.waitFor(() => expect(history.get()).toBe('/entities'))
+  dispose!(); document.body.innerHTML = ''
+  let fail = true
+  const again = setup('/entities/plug', f => {
+    f.entities.seed('plug', plugBody())
+    const inner = f.entities.callWS
+    f.entities.callWS = async (message: any) => {
+      if (message.request?.operation === 'read' && fail) return { version: 1, ok: false, error: { code: 'internal', detail: 'The store is busy' } }
+      return inner(message)
+    }
+  })
+  await vi.waitFor(() => expect(again.root.querySelector('[role="alert"]')?.textContent).toContain('Could not open the entity definition: The store is busy'))
+  expect(editorShown(again.root)).toBe(false)
+  fail = false
+  button(again.root, 'Try again').click()
+  await vi.waitFor(() => expect(again.root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
+  expect(nameInput(again.root).value).toBe('Plug')
+})

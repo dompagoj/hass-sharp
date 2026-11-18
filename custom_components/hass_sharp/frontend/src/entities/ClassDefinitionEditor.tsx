@@ -89,18 +89,21 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
   // The server's problems: a setting's on its field (by key), the rest at the top.
   const problems = createMemo(() => {
     const fields = new Map<string, string[]>(), others: VisualDiagnostic[] = []
+    let errors = 0
     for (const diagnostic of session.diagnostics()) {
       if (diagnostic.nodeId || diagnostic.severity <= 0) continue
       // The page explains a class that is gone itself.
       if (diagnostic.code === 'definition.unknownType' && (missing() || !body().type)) continue
+      if (diagnostic.severity >= 3) errors++
       const row = problemRow(diagnostic), key = diagnostic.inputId ?? ''
       // On the field of a setting the class declares, or on the row of a value it no longer uses.
       if (row === `setting:${key}` && (declared(key) || body().settings.some(s => s.key === key))) fields.set(key, [...(fields.get(key) ?? []), diagnostic.message])
       else others.push(diagnostic)
     }
-    return { fields, others }
+    return { fields, others, errors }
   })
-  const errorCount = () => session.diagnostics().filter(d => d.severity >= 3).length
+  // The problems shown, on their fields or at the top.
+  const errorCount = () => problems().errors
 
   const busy = () => session.saving() || session.switching()
   /** Why Save does nothing, if it does nothing. */
@@ -424,15 +427,12 @@ function SettingField(props: { setting: EntityTypeSetting; session: ClassSession
     return `Between ${minimum} and ${maximum}.`
   }
   const hint = () => [range(), props.setting.description].filter(Boolean).join(' ')
-  const invalid = () => props.errors.length > 0
+  // A number field's text that is not a number when it is left: said under the field, and nothing committed.
+  const [unreadable, setUnreadable] = createSignal<string>()
+  const errors = () => (unreadable() ? [unreadable()!, ...props.errors] : props.errors)
+  const invalid = () => errors().length > 0
   const describe = () => describedBy(!!hint() && hintId, invalid() && errorsId)
   const text = () => (typeof value() === 'string' ? value() as string : typeof value() === 'number' || typeof value() === 'boolean' ? String(value()) : '')
-  const number = (typed: string): JsonValue | null => {
-    if (!typed.trim()) return null
-    const parsed = Number(typed)
-    // The server says what a value that is not a number should be.
-    return Number.isFinite(parsed) ? parsed : typed
-  }
   const select = (choices: { value: string; label: string }[], current: string, onChange: (value: string) => void) => (
     <select id={id} class="hs-input" aria-invalid={invalid() || undefined} aria-describedby={describe()}
       onChange={event => onChange(event.currentTarget.value)}>
@@ -453,10 +453,8 @@ function SettingField(props: { setting: EntityTypeSetting; session: ClassSession
             onInput={event => set(event.currentTarget.value === '' ? null : event.currentTarget.value)} />
         }>
           <Match when={props.setting.type === 'integer' || props.setting.type === 'number'}>
-            <input id={id} class="hs-input" type="number" inputmode={props.setting.type === 'integer' ? 'numeric' : 'decimal'}
-              step={props.setting.type === 'integer' ? '1' : 'any'} min={props.setting.minimum} max={props.setting.maximum}
-              placeholder="Class default" value={text()} aria-invalid={invalid() || undefined} aria-describedby={describe()}
-              onInput={event => set(number(event.currentTarget.value))} />
+            <NumberInput id={id} whole={props.setting.type === 'integer'} minimum={props.setting.minimum} value={value()} invalid={invalid()}
+              describedBy={describe()} errorsId={errorsId} onUnreadable={setUnreadable} onChange={set} />
           </Match>
           <Match when={props.setting.type === 'boolean'}>
             {select([{ value: '', label: "Use the class's default" }, { value: 'true', label: 'True' }, { value: 'false', label: 'False' }],
@@ -472,8 +470,56 @@ function SettingField(props: { setting: EntityTypeSetting; session: ClassSession
           </Match>
         </Switch>
         <Show when={hint()}><small id={hintId} class="hs-field-hint">{hint()}</small></Show>
-        <FieldErrors id={errorsId} list={props.errors} />
+        <FieldErrors id={errorsId} list={errors()} />
       </div>
     </Show>
+  )
+}
+
+/** A number as typed: digits, a sign, a fraction and an exponent, whole; `undefined` for an unfinished or other text. */
+function readNumber(typed: string, whole: boolean): number | null | undefined {
+  const trimmed = typed.trim()
+  if (!trimmed) return null
+  if (!/^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i.test(trimmed)) return
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed) || (whole && !Number.isSafeInteger(parsed))) return
+  return parsed
+}
+
+/**
+ * A number setting's field. It keeps the text as typed and never writes a number back into it while it has focus:
+ * the value is committed whenever the text is a number, and emptied (the class's default) only when the text is. A
+ * text that is not a number when the field is left commits nothing, and `onUnreadable` says why.
+ */
+function NumberInput(props: {
+  id: string; whole: boolean; minimum?: number; value: JsonValue | null | undefined; invalid: boolean; describedBy?: string; errorsId: string
+  onChange(value: number | null): void; onUnreadable(message: string | undefined): void
+}) {
+  const stored = () => (typeof props.value === 'number' ? String(props.value) : typeof props.value === 'string' ? props.value : '')
+  // The text typed since the field was entered (or left unreadable); undefined shows the stored value.
+  const [typed, setTyped] = createSignal<string>()
+  let focused = false
+  const message = () => (props.whole ? 'Enter a whole number.' : 'Enter a number.')
+  // A value changed from elsewhere (a reload, a re-read) shows when the field is not being typed in.
+  createEffect(on(() => props.value, () => { if (!focused) { setTyped(undefined); props.onUnreadable(undefined) } }, { defer: true }))
+  return (
+    <input id={props.id} class="hs-input" type="text" spellcheck={false} autocomplete="off"
+      inputmode={props.minimum !== undefined && props.minimum >= 0 ? (props.whole ? 'numeric' : 'decimal') : undefined}
+      placeholder="Class default" value={typed() ?? stored()} aria-invalid={props.invalid || undefined} aria-describedby={props.describedBy}
+      onFocus={() => (focused = true)}
+      onInput={event => {
+        const text = event.currentTarget.value
+        setTyped(text)
+        props.onUnreadable(undefined)
+        const parsed = readNumber(text, props.whole)
+        if (parsed !== undefined) props.onChange(parsed)
+      }}
+      onBlur={() => {
+        focused = false
+        const text = typed()
+        if (text === undefined) return
+        if (readNumber(text, props.whole) === undefined) props.onUnreadable(message())
+        else setTyped(undefined)
+      }} />
   )
 }

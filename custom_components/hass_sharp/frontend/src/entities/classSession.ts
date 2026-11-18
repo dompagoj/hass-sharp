@@ -22,11 +22,15 @@ const none = (value: unknown) => value === null || value === undefined
 /** A value the page was not sent (a secret, or every value of a class it cannot describe): untouched, it is kept. */
 export const maskedValue = (setting: DefinitionSetting | undefined) => !!setting && setting.hasValue === true && none(setting.value)
 
-/** A device with its empty details left out; none when nothing is left of it (no detail and no parent). */
-function deviceToSend(device: DefinitionDevice | null): DefinitionDevice | null {
+/**
+ * The device a request sends, its empty details left out. A single entity's is the switch's: on, a device even with no
+ * details (named after the definition); off, none. A device class always has its own, which these details override:
+ * with none of them, none is sent. A class not known (gone) keeps what is stored.
+ */
+function deviceToSend(device: DefinitionDevice | null, kind: EntityType['kind'] | undefined): DefinitionDevice | null {
   if (!device) return null
   const kept = Object.fromEntries(Object.entries(device).filter(([, value]) => !none(value) && value !== '')) as DefinitionDevice
-  return Object.keys(kept).length ? kept : null
+  return kind === 'device' && !Object.keys(kept).length ? null : kept
 }
 
 /** The body a document stands for, as the page edits it. */
@@ -39,20 +43,20 @@ const bodyOf = (document: EntityDocument): ClassBody => ({
 
 /**
  * The definition a request sends: each setting the page has, a masked one nobody changed as `keep` (ruling R9), an
- * empty one as `value: null` (the class's default); a device without empty details.
+ * empty one as `value: null` (the class's default); a device without empty details, as the class's `kind` takes it.
  */
-export function classRequest(body: ClassBody): DefinitionBody {
+export function classRequest(body: ClassBody, kind?: EntityType['kind']): DefinitionBody {
   return {
     name: body.name,
-    device: deviceToSend(body.device),
+    device: deviceToSend(body.device, kind),
     settings: body.settings.map(setting => (maskedValue(setting) ? { key: setting.key, keep: true } : { key: setting.key, value: setting.value ?? null })),
     logic: { kind: 'class', type: body.type },
   }
 }
 
 /** What counts as a change: an empty value that was never saved is the same as no value at all. */
-const comparable = (body: ClassBody) => JSON.stringify({
-  ...classRequest(body),
+const comparable = (body: ClassBody, kind: EntityType['kind'] | undefined) => JSON.stringify({
+  ...classRequest(body, kind),
   settings: body.settings.filter(s => !none(s.value) || s.hasValue === true).map(s => (maskedValue(s) ? { key: s.key, keep: true } : { key: s.key, value: s.value })),
 })
 
@@ -82,12 +86,11 @@ export function createClassSession(
   const [document, setDocument] = createSignal<EntityDocument | undefined>(initial.document)
   const start: ClassBody = initial.document ? bodyOf(initial.document) : { name: initial.name ?? entityTexts.untitled, type: '', settings: [], device: null }
   const [body, setBody] = createSignal<ClassBody>(start)
-  const [baseline, setBaseline] = createSignal(comparable(start))
-  const dirty = createMemo(() => comparable(body()) !== baseline())
+  // What was last read or saved, compared as the class (once known) takes it.
+  const [baseline, setBaseline] = createSignal<ClassBody>(start)
   // A new definition is named after its class until a name is typed (or the address gave one).
   let nameFromClass = !initial.document && !initial.name
   const [diagnostics, setDiagnostics] = createSignal<VisualDiagnostic[]>([])
-  const [previewPending, setPreviewPending] = createSignal(false)
   const [error, setError] = createSignal<string>()
   const [conflict, setConflict] = createSignal(false)
   const [saving, setSaving] = createSignal(false)
@@ -95,13 +98,16 @@ export function createClassSession(
   const [notice, setNotice] = createSignal<ClassNotice>()
 
   const type = createMemo(() => { const id = body().type; return id ? options.types()?.find(t => t.id === id) : undefined })
+  const kind = () => type()?.kind
+  const request = () => classRequest(body(), kind())
+  const dirty = createMemo(() => comparable(body(), kind()) !== comparable(baseline(), kind()))
 
   /** Takes a read or saved definition as the one the page edits. */
   const accept = (latest: EntityDocument) => batch(() => {
     const next = bodyOf(latest)
     setDocument(latest)
     setBody(next)
-    setBaseline(comparable(next))
+    setBaseline(next)
     setConflict(false)
     setError(undefined)
   })
@@ -120,16 +126,14 @@ export function createClassSession(
   let previewTimer: ReturnType<typeof setTimeout> | undefined
   // The classes read again (a node library saved) are checked against too.
   const typesKey = () => JSON.stringify(options.types() ?? null)
-  createEffect(on(() => [comparable(body()), typesKey()] as const, () => {
+  createEffect(on(() => [comparable(body(), kind()), typesKey()] as const, () => {
     clearTimeout(previewTimer)
     const current = ++previewGeneration
-    if (!body().type) { setPreviewPending(false); return }
-    setPreviewPending(true)
+    if (!body().type) return
     previewTimer = setTimeout(() => void (async () => {
       let answer: EntityPreview | undefined
-      try { answer = await api.preview(classRequest(untrack(body))) } catch { /* A save checks again; nothing to show here. */ }
+      try { answer = await api.preview(untrack(request)) } catch { /* A save checks again; nothing to show here. */ }
       if (current !== previewGeneration) return
-      setPreviewPending(false)
       if (answer) setDiagnostics(answer.diagnostics ?? [])
     })(), 300)
   }))
@@ -146,7 +150,6 @@ export function createClassSession(
     if (failure instanceof EntityApiError && failure.code === 'validation') {
       const detail = failure.detail as Partial<EntityPreview> | undefined
       previewGeneration++
-      setPreviewPending(false)
       setDiagnostics(detail?.diagnostics ?? [])
       setError(failure.message)
       return
@@ -156,7 +159,7 @@ export function createClassSession(
 
   /** Saves what the page has at `revision` (the saved one's, 0 for a new definition); a new one gets its id from its name. */
   const send = async (revision: number) => {
-    const sent = classRequest(body())
+    const sent = request()
     const saved = document()
     let id = saved?.id ?? await newId(sent.name)
     let answer
@@ -188,15 +191,21 @@ export function createClassSession(
     }
   }
 
-  /** Re-reads the saved definition: all of it with no unsaved changes, else only how it runs. */
+  /**
+   * Re-reads the saved definition: all of it with no unsaved changes. Under unsaved changes, a definition stored as
+   * the page loaded it (a node library save rebuilds it at the next revision) is taken with its new revision, so Save
+   * is no conflict; one changed elsewhere keeps the revision the page opened, and Save offers the choices.
+   */
   const refresh = async () => {
     const saved = document()
     if (!saved) return
     let latest: EntityDocument
     try { latest = await api.read(saved.id) } catch { return }
-    if (document()?.id !== saved.id) return
+    const current = document()
+    if (current?.id !== saved.id) return
     if (!dirty() && !conflict() && !saving()) accept(latest)
-    else setDocument(current => (current ? withRun(current, latest) : current))
+    else if (!conflict() && comparable(bodyOf(latest), kind()) === comparable(bodyOf(current), kind())) setDocument(latest)
+    else setDocument(withRun(current, latest))
   }
 
   // ---- While it is starting, read again as the entities page does: every 5 s for 2 minutes, then every 30 s.
@@ -227,14 +236,14 @@ export function createClassSession(
   }))
 
   return {
-    document, body, dirty, type, diagnostics, previewPending, error, conflict, saving, switching, notice,
+    document, body, dirty, type, diagnostics, error, conflict, saving, switching, notice,
     setting,
     setName(name: string) { nameFromClass = false; change(b => ({ ...b, name })) },
     setType,
     /** The class a new definition's address names, chosen before anything is edited: not a change of its own. */
     preset(chosen: EntityType) {
       setType(chosen)
-      setBaseline(comparable(body()))
+      setBaseline(body())
     },
     /** A setting's value; null for the class's default. A masked value keeps `hasValue` (what is saved) as it is. */
     setValue(key: string, value: JsonValue | null) { putSetting(key, current => ({ ...(current ?? { key }), value })) },
