@@ -12,6 +12,8 @@ export const icons = {
   logic: ['M6 3v18', 'M6 8c0 4 12 1 12 6v7', 'M14 17l4 4 4-4'],
   data: ['M4 6.5C4 4.6 7.6 3 12 3s8 1.6 8 3.5S16.4 10 12 10 4 8.4 4 6.5z', 'M4 6.5v11C4 19.4 7.6 21 12 21s8-1.6 8-3.5v-11', 'M4 12c0 1.9 3.6 3.5 8 3.5s8-1.6 8-3.5'],
   code: ['M8.5 7 3.5 12l5 5', 'M15.5 7l5 5-5 5', 'M13.5 4.5l-3 15'],
+  /** An entity definition's steps: a device with its state light. */
+  entity: ['M7 3h10v18H7z', 'M12 7a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5z', 'M10 16.5h4'],
   library: ['M12 2.8 20 7.3v9.4l-8 4.5-8-4.5V7.3z', 'M4 7.3l8 4.5 8-4.5', 'M12 11.8v9.4'],
   /** Error badge: a circle with a cross (warnings use the triangle, so the two never differ by colour alone). */
   problem: ['M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z', 'M9 9l6 6', 'M15 9l-6 6'],
@@ -38,9 +40,9 @@ export interface NodeIdentity {
   icon: readonly string[]
 }
 
-const known: Record<string, IconName> = { hass: 'hass', flow: 'flow', logic: 'logic', data: 'data', code: 'code' }
+const known: Record<string, IconName> = { hass: 'hass', flow: 'flow', logic: 'logic', data: 'data', code: 'code', entity: 'entity' }
 /** Built-in catalog categories are short keys; people read these names (the canvas, quick-add and the library). */
-const plainNames: Record<string, string> = { hass: 'Home Assistant', flow: 'Flow', logic: 'Logic', data: 'Data', code: 'Code' }
+const plainNames: Record<string, string> = { hass: 'Home Assistant', flow: 'Flow', logic: 'Logic', data: 'Data', code: 'Code', entity: 'Entity' }
 /**
  * Category identity of a node kind. The built-in categories have their own colour token; any other category (a
  * library's) gets a stable hue derived from its name and the library icon.

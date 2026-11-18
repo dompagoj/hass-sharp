@@ -37,6 +37,8 @@ export interface InputEditorProps {
    * (a true/false value from the text true or false, any case).
    */
   retype?: boolean
+  /** The widget to edit with instead of the one the input's type and selector call for (a state picker for a plain text input). */
+  widget?: Widget
 }
 
 const jsonWidget: Widget = { kind: 'json', multiple: false }
@@ -58,7 +60,7 @@ export function InputEditor(props: InputEditorProps) {
   // A literal null (how an empty optional value is often stored) is edited and summarised as not set, never as "null";
   // in the JSON editor it is a value someone wrote, and stays one.
   const literal = () => { const o = operand(); return o.kind === 'literal' && (o.value !== null || keepsNull(widget())) ? o.value : undefined }
-  const widget = createMemo(() => widgetFor(props.input, catalog()))
+  const widget = createMemo(() => props.widget ?? widgetFor(props.input, catalog()))
   // A Constant's stored text or number that the validator refuses for its Type is shown in the Type's own editor (see
   // `retype`). A value the Type takes as it is (a number under a C# `int`, an entity id under Text: the same check as a
   // wire's) is left alone, so focusing and leaving its field changes nothing.

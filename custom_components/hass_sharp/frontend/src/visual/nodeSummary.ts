@@ -1,4 +1,4 @@
-import { customSignature, dataInputs, dataOutputs, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { customSignature, dataInputs, dataOutputs, definitionEntity, definitionSettings, entityDomain, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 import { stateField, stateLabel } from './widgets/states'
 import { entityStateContext } from './entityStateContext'
@@ -242,7 +242,48 @@ function kindText(ctx: Context): string | undefined {
     case 'array_create': { const n = Array.isArray(config.items) ? config.items.length : 0; return n ? `${n} item${n === 1 ? '' : 's'}` : undefined }
     case 'condition_result': { const value = operandText(ctx, 'value'); return value ? `Return ${value}` : undefined }
     case 'loop_result': return 'Finish this iteration'
+    case 'entity_state': case 'set_entity_state': case 'set_entity_available': {
+      const entity = definitionEntityName(ctx)
+      return entity ? `${entityStepWords[node.kind]} ▸ ${entity}` : undefined
+    }
+    case 'entity_command': {
+      const entity = definitionEntityName(ctx), command = text(config.command)
+      if (!entity) return
+      const labels = entityDomain(definitionCatalog(ctx), text(config.entity))?.commands
+      const label = command && record(labels) && Object.hasOwn(labels, command) ? text(labels[command]?.label) || command : command
+      return `When commanded ▸ ${entity}${label ? `: ${label}` : ''}`
+    }
+    // A setting by its label; never its value, which may be a secret.
+    case 'setting': {
+      const key = text(config.key)
+      return key ? `Setting ▸ ${text(definitionSettings(definitionCatalog(ctx)).find(s => s.key === key)?.label) || key}` : undefined
+    }
+    case 'entity_is': {
+      const entity = homeEntity(ctx), state = operandState(ctx)
+      return entity ? `Has state ▸ ${entity}${state ? ` is ${state}` : ''}` : undefined
+    }
+    case 'entity_current': { const entity = homeEntity(ctx); return entity ? `Current state ▸ ${entity}` : undefined }
   }
+}
+const entityStepWords: Record<string, string> = { entity_state: 'State', set_entity_state: 'Set state', set_entity_available: 'Set available' }
+/** The catalog with the definition of the graph the step is in: lifted already (the canvas), or from the graph. */
+const definitionCatalog = (ctx: Context): VisualCatalogSnapshot =>
+  !ctx.catalog.definition && record(ctx.graph?.definition) ? { ...ctx.catalog, definition: ctx.graph.definition } : ctx.catalog
+/** The definition's entity the step names, by its name, else its key (also a key the definition no longer has). */
+function definitionEntityName(ctx: Context): string | undefined {
+  const key = text(ctx.node.config.entity)
+  return key ? text(definitionEntity(definitionCatalog(ctx), key)?.name) || key : undefined
+}
+/** The Home Assistant entity a Has state or Current state reads: its id as typed in, or the output wired into it. */
+function homeEntity(ctx: Context): string | undefined {
+  const operand = inputValue(ctx.node, 'entity', ctx.catalog)
+  const wired = ctx.graph?.edges.some(e => e?.kind === 'data' && e.target === ctx.node.id && e.targetPort === 'entity')
+  return !wired && record(operand) && operand.kind === 'literal' && typeof operand.value === 'string' ? text(operand.value) || undefined : operandText(ctx, 'entity')
+}
+/** The state a Has state compares with, as stored. */
+function operandState(ctx: Context): string | undefined {
+  const operand = inputValue(ctx.node, 'state', ctx.catalog)
+  return record(operand) && operand.kind === 'literal' && typeof operand.value === 'string' ? text(operand.value) || undefined : operandText(ctx, 'state')
 }
 
 /**

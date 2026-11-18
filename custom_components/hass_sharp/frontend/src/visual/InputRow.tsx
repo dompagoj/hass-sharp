@@ -4,6 +4,7 @@ import { Glyph } from './Glyph'
 import type { InputView } from './flow/flowModel'
 import { inputValue, resolveTypeSpec, setInput, words, type GraphNode, type InputSpec, type Operand, type VisualCatalogSnapshot } from './contract'
 import { typeColor, typeIsList, typeLabel } from './typeLabels'
+import type { Widget } from './widgets'
 import { csharpText, CSharpTypeText } from './typeDefinition'
 
 type Options = { coalesce?: string }
@@ -95,6 +96,9 @@ export interface FieldRow {
   removeLabel?: string
   /** Why the field cannot be removed (it is connected); undefined when it can. */
   removeBlocked?: string
+  /** The widget to edit the value with, and the entities its states are of, instead of the input's and the node's. */
+  widget?: Widget
+  context?: { targetEntityIds?: string[] }
 }
 
 /** The node an input row belongs to, read through accessors so the row survives edits of that node. */
@@ -140,7 +144,7 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
       <Show when={!wired() && !muted() && editSpec()} fallback={<span class="hs-insp-input__label">{label()}</span>}>
         {current => (
           <InputEditor variant="panel" input={current()} value={operand()} label={label()} catalog={ctx.catalog()}
-            context={{ targetEntityIds: ctx.targetEntityIds() }} errors={errors()} onChange={change}
+            context={row.context ?? { targetEntityIds: ctx.targetEntityIds() }} widget={row.widget} errors={errors()} onChange={change}
             retype={ctx.node().kind === 'constant' && row.port === 'value'} />
         )}
       </Show>

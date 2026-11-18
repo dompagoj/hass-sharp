@@ -41,6 +41,7 @@
  --hs-cat-logic: color-mix(in oklab, #c99312 var(--hs-hue-mix), var(--hs-text, #202535));
  --hs-cat-data: color-mix(in oklab, #1f9a87 var(--hs-hue-mix), var(--hs-text, #202535));
  --hs-cat-code: color-mix(in oklab, #6c778a var(--hs-hue-mix), var(--hs-text, #202535));
+ --hs-cat-entity: color-mix(in oklab, #c03fa6 var(--hs-hue-mix), var(--hs-text, #202535));
  /* Node cards, pins and wires. */
  --hs-card-shadow: 0 1px 2px #0000000f, 0 3px 10px #00000012;
  --hs-card-shadow-raised: 0 2px 4px #00000014, 0 8px 22px #0000001f;

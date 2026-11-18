@@ -276,6 +276,7 @@
 .hs-app .hs-flow .hs-minimap-node--flow { fill: var(--hs-cat-flow); }
 .hs-app .hs-flow .hs-minimap-node--logic { fill: var(--hs-cat-logic); }
 .hs-app .hs-flow .hs-minimap-node--data { fill: var(--hs-cat-data); }
+.hs-app .hs-flow .hs-minimap-node--entity { fill: var(--hs-cat-entity); }
 .hs-app .hs-flow .hs-minimap-node--code, .hs-app .hs-flow .hs-minimap-node--library { fill: var(--hs-cat-code); }
 
 /* Quick-add: a searchable palette at the pointer. */

@@ -1,4 +1,5 @@
 import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js'
+import { Dynamic } from 'solid-js/web'
 import { Menu, type MenuItem } from '../components/Menu'
 import { ServiceFields } from './ServiceFields'
 import { retypeTriggerNode, TriggerAdvanced, TriggerConfig } from './TriggerConfig'
@@ -21,13 +22,19 @@ import { DraftField } from './widgets/common'
 import { numberMessage, parseNumber, useDecimalSeparator } from './widgets/number'
 import { stateField, WidgetControl } from './widgets'
 import type { VisualDiagnostic } from './api'
+import { stepInputRows, stepPickers, type StepPickerContext } from '../entities/NodePickers'
 
 type Options = { coalesce?: string }
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((v, i) => v === b[i])
 const operators: Record<string, string> = { eq: 'is equal to', ne: 'is not equal to', lt: 'is less than', le: 'is at most', gt: 'is greater than', ge: 'is at least' }
 /** Config keys edited by a kind's own section, or not at all (`values` of a loop result are its inputs). */
 const ownConfig = new Set(['carry', 'exports', 'branches'])
-const kindConfig: Record<string, string[]> = { service: ['service', 'fields', 'returnResponse'], custom: ['source', 'signature', 'arguments'], select_property: ['property'], object_create: ['fields'], array_create: ['items'], loop_result: ['values'] }
+const kindConfig: Record<string, string[]> = {
+  service: ['service', 'fields', 'returnResponse'], custom: ['source', 'signature', 'arguments'], select_property: ['property'], object_create: ['fields'], array_create: ['items'], loop_result: ['values'],
+  // An entity definition's steps choose its entities, their commands and its settings with pickers of their own.
+  ...Object.fromEntries(Object.entries(stepPickers).map(([kind, picker]) => [kind, picker.keys])),
+}
+const own = <T,>(map: Record<string, T>, key: string) => (Object.hasOwn(map, key) ? map[key] : undefined)
 
 export interface NodeConfigProps {
   node: GraphNode
@@ -108,6 +115,22 @@ export function NodeConfig(props: NodeConfigProps) {
     set: (key, value) => set(key, value),
     errorsFor,
     focus,
+  }
+  const pickers: StepPickerContext = {
+    node: () => props.node,
+    graph: () => props.graph,
+    catalog: types,
+    errorsFor,
+    onChange: config => props.onChange(config),
+    onGraphChange: graph => props.onGraphChange(graph),
+    onNotice: text => props.onNotice?.(text),
+  }
+  /** How the row of an input is edited when its kind says so (a Has state's state offers its entity's states). */
+  const rowFor = (port: string) => {
+    const row = own(stepInputRows, kind())
+    if (!row || !Object.hasOwn(row, port)) return {}
+    const edit = createMemo(() => row[port](props.node, props.graph, types()))
+    return { get widget() { return edit().widget }, get context() { return edit().context } }
   }
   // Messages about the service, its response or its fields as a whole, which have no input row.
   const serviceMessages = (key: string) => problems().filter(d => d.inputId === key).map(d => d.message)
@@ -258,6 +281,7 @@ export function NodeConfig(props: NodeConfigProps) {
             <Errors list={errorsFor('source')} />
           </div>
         </Show>
+        <Show when={own(stepPickers, kind())}>{picker => <Dynamic component={picker().Section} ctx={pickers} />}</Show>
         <For each={configFields()}>{name => <ConfigField name={name} rule={spec()!.config[name]} />}</For>
         <Show when={kind() === 'parallel'}><Branches ctx={structure} /></Show>
         <Show when={kind() === 'object_create'}><ObjectFields ctx={structure} /></Show>
@@ -265,7 +289,7 @@ export function NodeConfig(props: NodeConfigProps) {
         <Show when={kind() !== 'service' && kind() !== 'trigger' && ports().length}>
           <section class="hs-insp-section" aria-label="Inputs">
             <h3 class="hs-insp-heading">Inputs</h3>
-            <For each={ports()}>{port => <InputRow port={port} ctx={rows} />}</For>
+            <For each={ports()}>{port => <InputRow port={port} ctx={rows} {...rowFor(port)} />}</For>
           </section>
         </Show>
         <Show when={kind() === 'select_property'}>

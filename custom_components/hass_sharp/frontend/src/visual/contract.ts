@@ -207,6 +207,28 @@ export function entityDomain(catalog: VisualCatalogSnapshot, key: string): Entit
   const domain = text(definitionEntity(catalog, key)?.domain), domains = catalog.entityDomains
   return domain && record(domains) && Object.hasOwn(domains, domain) && record(domains[domain]) ? domains[domain] : undefined
 }
+/** The definition's entities and settings (each with a text `key`), the first of each key. */
+export const definitionEntities = (catalog: VisualCatalogSnapshot) => definitionItems(catalog, 'entities')
+export const definitionSettings = (catalog: VisualCatalogSnapshot) => definitionItems(catalog, 'settings')
+/** The commands the type of the definition's entity with this key takes, in the catalog's order; none for an unknown entity. */
+export function entityCommands(catalog: VisualCatalogSnapshot, key: string): string[] {
+  const commands = entityDomain(catalog, key)?.commands
+  return record(commands) ? Object.keys(commands) : []
+}
+/** The definition's entities a step of this kind can name: When commanded only those whose type takes commands. */
+export function entityChoices(catalog: VisualCatalogSnapshot, kind: string): Record<string, unknown>[] {
+  const entities = definitionEntities(catalog)
+  return kind === 'entity_command' ? entities.filter(e => entityCommands(catalog, e.key as string).length > 0) : entities
+}
+/**
+ * The config of a When commanded once its entity is set (ruling R12): a command the entity's type does not take, or none,
+ * becomes the type's first command. Any other config, and one whose entity is unknown, as it is.
+ */
+export function withEntityCommand(kind: string, config: Record<string, unknown>, catalog: VisualCatalogSnapshot): Record<string, unknown> {
+  if (!Object.hasOwn(nodeSpec(kind, catalog)?.config ?? {}, 'command')) return config
+  const commands = entityCommands(catalog, text(config.entity))
+  return commands.length && !commands.includes(text(config.command)) ? { ...config, command: commands[0] } : config
+}
 /** The type of the definition's setting with this key, when it is one a setting can have. */
 export function settingType(catalog: VisualCatalogSnapshot, key: string): string | undefined {
   const type = text(definitionItems(catalog, 'settings').find(s => s.key === key)?.type)
@@ -1413,8 +1435,17 @@ export function addGraphNode(graph: Graph, kind: string, id: string, catalog: Vi
   if (Object.hasOwn(spec.config, 'trackHistory')) config.trackHistory = trackHistoryDefault(kind, graphDocument(graph), catalog)
   const storage = spec.argumentStorage === 'arguments' ? (config.arguments ??= {}) as Record<string, unknown> : config
   for (const [key, value] of Object.entries(spec.inputs)) if (value.default !== undefined) storage[key] = structuredClone(value.default)
+  // A step of an entity definition names the definition's only entity (or setting) it can name (ruling R12).
+  const named = spec.documents?.includes('entity') && graphDocument(graph) === 'entity' ? prefilled(kind, spec, { ...catalog, definition: graph.definition }) : {}
   // A Custom C# node is titled by its method until someone names it.
-  return fillGraphLayout({ ...graph, nodes: [...graph.nodes, { id, kind, ...(spec.dynamicInputs === 'custom' ? {} : { label: spec.label }), config }] })
+  return fillGraphLayout({ ...graph, nodes: [...graph.nodes, { id, kind, ...(spec.dynamicInputs === 'custom' ? {} : { label: spec.label }), config: { ...config, ...named } }] })
+}
+/** The definition's entity or setting a new step of the kind names: the only one it can name, else none. */
+function prefilled(kind: string, spec: NodeSpec, catalog: VisualCatalogSnapshot): Record<string, unknown> {
+  const entities = Object.hasOwn(spec.config, 'entity') ? entityChoices(catalog, kind) : []
+  if (entities.length === 1) return withEntityCommand(kind, { entity: entities[0].key }, catalog)
+  const settings = Object.hasOwn(spec.config, 'key') ? definitionSettings(catalog) : []
+  return settings.length === 1 ? { key: settings[0].key } : {}
 }
 /** Returns a new immutable graph; the caller records that graph as one undo entry. */
 export function connectData(graph: Graph, source: string, sourcePort: string, target: string, targetPort: string, catalog: VisualCatalogSnapshot = nodeCatalog): Graph {
