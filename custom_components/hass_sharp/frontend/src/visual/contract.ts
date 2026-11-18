@@ -1393,12 +1393,24 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
 export function fillGraphLayout<T extends { nodes: GraphNode[] }>(graph: T): T {
   return { ...graph, nodes: graph.nodes.map((node, i) => ({ ...node, position: node.position ?? { x: 60 + (i % 4) * 300, y: 100 + Math.floor(i / 4) * 180 } })) }
 }
+/**
+ * Whether a step of the kind records its automatic runs when its config does not say: a trigger in an automation does,
+ * in an entity definition it does not (there it typically polls every few seconds); another kind as its catalog entry
+ * says, else it does. Mirrors `EntityApi.TrackHistory` and the automations' `?? true` in `VisualApi`.
+ */
+export function trackHistoryDefault(kind: string, document: GraphDocument, catalog: VisualCatalogSnapshot): boolean {
+  if (kind === 'trigger') return document === 'automation'
+  const value = nodeSpec(kind, catalog)?.config.trackHistory?.default
+  return typeof value === 'boolean' ? value : true
+}
 export function addGraphNode(graph: Graph, kind: string, id: string, catalog: VisualCatalogSnapshot = nodeCatalog): Graph {
   if (graph.version !== catalog.graphVersion) throw new Error(`Only graph version ${catalog.graphVersion} is supported`)
   const spec = nodeSpec(kind, catalog); if (!spec) throw new Error('Unknown node kind')
   if (graph.nodes.some(n => n.id === id)) throw new Error('Duplicate node id')
   const config: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(spec.config)) if (value.default !== undefined) config[key] = structuredClone(value.default)
+  // The stored step says what the editor shows: a trigger of an entity definition is not recorded.
+  if (Object.hasOwn(spec.config, 'trackHistory')) config.trackHistory = trackHistoryDefault(kind, graphDocument(graph), catalog)
   const storage = spec.argumentStorage === 'arguments' ? (config.arguments ??= {}) as Record<string, unknown> : config
   for (const [key, value] of Object.entries(spec.inputs)) if (value.default !== undefined) storage[key] = structuredClone(value.default)
   // A Custom C# node is titled by its method until someone names it.

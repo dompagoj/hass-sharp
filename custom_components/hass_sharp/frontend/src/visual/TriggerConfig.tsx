@@ -1,6 +1,6 @@
 import { createSignal, createUniqueId, For, onCleanup, onMount, Show } from 'solid-js'
 import { useHass } from '../context'
-import { dataOutputs, isAssignable, nodeCatalog, type GraphNode, type InputSpec, type JsonValue, type VisualCatalogSnapshot } from './contract'
+import { dataOutputs, isAssignable, nodeCatalog, trackHistoryDefault, type GraphDocument, type GraphNode, type InputSpec, type JsonValue, type VisualCatalogSnapshot } from './contract'
 import { nodeInputs, removeEdge, updateNode, type VisualGraph } from './graph'
 import type { VisualDiagnostic } from './api'
 import { domainWords } from './typeLabels'
@@ -238,6 +238,8 @@ export function TriggerConfig(props: {
   /** A new type: its config and the node's label, as one change. */
   onRetype?(config: Config, label: string | undefined): void
   diagnostics?: VisualDiagnostic[]
+  /** The kind of graph the trigger is in (`graphDocument`), for what an unset setting means: an automation unless told. */
+  document?: GraphDocument
 }) {
   const hass = useHass()
   const decimal = useDecimalSeparator()
@@ -469,7 +471,7 @@ export function TriggerConfig(props: {
         </For>
       </fieldset>
       <label class="hs-insp-toggle">
-        <input type="checkbox" role="switch" class="hs-switch" checked={config().trackHistory !== false} onChange={e => set('trackHistory', e.currentTarget.checked)} />
+        <input type="checkbox" role="switch" class="hs-switch" checked={(config().trackHistory ?? trackHistoryDefault('trigger', props.document ?? 'automation', nodeCatalog)) !== false} onChange={e => set('trackHistory', e.currentTarget.checked)} />
         <span><strong>Track in run history</strong><small class="hs-field-hint">Record automatic runs and their traces. Run now is always recorded.</small></span>
       </label>
     </div>

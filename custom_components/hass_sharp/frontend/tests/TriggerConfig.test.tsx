@@ -350,3 +350,32 @@ it('offers a daily trigger\'s time to the minute: both validators refuse seconds
   const { host } = mount({ type: 'daily', time: '07:30', timeZone: 'UTC' })
   expect(field(host, 'Time of day').getAttribute('step')).toBe('60')
 })
+
+it.each([['automation', true], ['entity', false]] as const)('in an %s, a trigger whose config does not say shows run history tracking as %s', (document, shown) => {
+  const host = window.document.createElement('div')
+  host.className = 'hs-app'
+  window.document.body.append(host)
+  const [config, setConfig] = createSignal<Record<string, unknown>>({ type: 'time_pattern', minutes: '/1' })
+  client = new QueryClient()
+  const value = { callWS: async () => ({ entities: [], areas: [], devices: [], floors: [], labels: [] }) }
+  dispose = render(
+    () => (
+      <QueryClientProvider client={client!}>
+        <HassCtx.Provider value={value as any}>
+          <TriggerConfig document={document} node={{ id: 'poll', kind: 'trigger', config: config() }} onChange={next => setConfig(next)} />
+        </HassCtx.Provider>
+      </QueryClientProvider>
+    ),
+    host,
+  )
+  const toggle = [...host.querySelectorAll<HTMLLabelElement>('.hs-insp-trigger label')]
+    .find(label => label.querySelector('strong')?.textContent === 'Track in run history')
+    ?.querySelector<HTMLInputElement>('input[role="switch"]')
+  expect(toggle).toBeDefined()
+  expect(toggle!.checked).toBe(shown)
+  toggle!.click()
+  expect(config().trackHistory).toBe(!shown)
+  // A value the config holds wins over the document's default.
+  setConfig({ ...config(), trackHistory: shown })
+  expect(toggle!.checked).toBe(shown)
+})

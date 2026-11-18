@@ -2,7 +2,7 @@ import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js'
 import { Glyph } from './Glyph'
 import { catalogPalette, paletteMatches, type NodeKind } from './graph'
 import { nodeIdentity } from './icons'
-import { nodeCatalog, type VisualCatalogSnapshot } from './contract'
+import { nodeCatalog, type GraphDocument, type VisualCatalogSnapshot } from './contract'
 import { NODE_DRAG_TYPE } from './nodeDrag'
 
 const chevron = { left: ['M15 5l-7 7 7 7'], right: ['M9 5l7 7-7 7'] }
@@ -10,6 +10,8 @@ const plus = ['M12 5v14', 'M5 12h14']
 
 export interface NodeLibraryPanelProps {
   catalog?: VisualCatalogSnapshot
+  /** The kind of graph the steps are added to (`graphDocument`): an automation unless told. */
+  document?: GraphDocument
   /** Narrowed to a rail: an expand button and "Add step". */
   collapsed: boolean
   onCollapsedChange(collapsed: boolean): void
@@ -33,7 +35,7 @@ export function NodeLibraryPanel(props: NodeLibraryPanelProps) {
   let expandButton: HTMLButtonElement | undefined
   const catalog = () => props.catalog ?? nodeCatalog
   const items = createMemo(() => {
-    return catalogPalette(catalog()).filter(item => paletteMatches(item, search(), nodeIdentity(item.kind, catalog()).label))
+    return catalogPalette(catalog(), props.document ?? 'automation').filter(item => paletteMatches(item, search(), nodeIdentity(item.kind, catalog()).label))
   })
   // Categories in catalog order; the heading shows the category's look, not the trigger's own, when it has others.
   const groups = createMemo(() => {

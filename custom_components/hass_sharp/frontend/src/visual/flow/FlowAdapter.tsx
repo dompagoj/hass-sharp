@@ -8,7 +8,7 @@ import { QuickAdd } from '../QuickAdd'
 import type { VisualDiagnostic } from '../api'
 import { HassCtx } from '../../context'
 import { useLoadedRegistry } from '../../registry'
-import { connectData, nodeCatalog, setInput as writeInput, type Operand, type VisualCatalogSnapshot } from '../contract'
+import { connectData, graphDocument, isRoot, nodeCatalog, setInput as writeInput, type Operand, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeEdge, removeNode, updateNode, type NodeKind, type VisualGraph } from '../graph'
 import { connectionIndex, graphTypes } from '../connectionIndex'
 import { media } from '../media'
@@ -119,7 +119,9 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   const catalog = () => props.catalog ?? nodeCatalog
   const readOnly = () => !!props.readOnly
   const graph = createMemo(() => renderableGraph(props.graph))
-  const palette = () => catalogPalette(catalog())
+  // The steps the graph's document takes: an entity definition's own steps beside an automation's.
+  const documentKind = () => graphDocument(graph())
+  const palette = () => catalogPalette(catalog(), documentKind())
   const editable = !!useContext(QueryClientContext) && !!useContext(HassCtx)
   // Registry names for summaries; only inside the app's providers (a bare adapter in a test has none).
   const names = useLoadedRegistry()
@@ -577,7 +579,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
             // The zoom the whole path needs in this canvas, as fitView works it out.
             const { zoom } = getViewportForBounds(api.getNodesBounds(reached), canvas.clientWidth, canvas.clientHeight, pathFitOptions.minZoom, pathFitOptions.maxZoom, pathFitOptions.padding)
             if (zoom >= READABLE_ZOOM || !wide()) return void api.fitView({ ...pathFitOptions, nodes: reached.map(id => ({ id })) })
-            const first = reached.find(id => graph().nodes.find(n => n.id === id)?.kind === 'trigger') ?? reached[0]
+            const first = reached.find(id => { const node = graph().nodes.find(n => n.id === id); return !!node && isRoot(node, catalog()) }) ?? reached[0]
             centreOn(focus ?? first, () => READABLE_ZOOM)
           }
           whenMeasured(() => {
@@ -1372,6 +1374,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
             return (
               <QuickAdd
                 catalog={catalog()}
+                document={documentKind()}
                 {...quickAddOffset(request.screen)}
                 title={quickAddTitle(request.pin)}
                 allowed={kind => allowed().has(kind)}

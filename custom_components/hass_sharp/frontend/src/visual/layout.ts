@@ -1,4 +1,4 @@
-import { executionPorts, nodeCatalog, scopePorts, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { executionPorts, isRoot, nodeCatalog, scopePorts, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { outputPort, type VisualGraph } from './graph'
 
 type Point = { x: number; y: number }
@@ -25,15 +25,16 @@ const scopePort = (node: GraphNode, port: string, catalog: VisualCatalogSnapshot
 
 /**
  * A layered left-to-right layout ("Tidy"). Each connected flow (steps joined by execution or value wires) is a
- * horizontal band of its own; bands are stacked top to bottom in the order of their first trigger's current
- * position, and steps connected to nothing share a last band, in a row.
+ * horizontal band of its own; bands are stacked top to bottom in the order of their first root's current
+ * position (a trigger, or an entity definition's State, When commanded or When started), and steps connected to
+ * nothing share a last band, in a row.
  *
  * Within a band, execution wires decide the columns: every node sits one column after the furthest step that runs it
  * (longest path), and what runs after a loop or a parallel step sits right of every step inside it. A node with only
  * data wires (a value node) sits in the column before its first reader: the one in the leftmost column. Within a column the order follows execution (a branch's
  * ports top to bottom), then a few barycentre sweeps reduce crossings. Each card is placed level with the steps that
  * feed it where there is room, and never overlaps another: columns are as wide as their widest card and cards in a
- * column are stacked. The result depends only on the graph, the sizes and the order of the bands' triggers, so the
+ * column are stacked. The result depends only on the graph, the sizes and the order of the bands' roots, so the
  * same input always gives the same positions, and tidying a tidy graph changes nothing.
  */
 export function tidyLayout(graph: VisualGraph, catalog: VisualCatalogSnapshot = nodeCatalog, options: LayoutOptions = {}): Map<string, Point> {
@@ -98,13 +99,15 @@ export function tidyLayout(graph: VisualGraph, catalog: VisualCatalogSnapshot = 
   for (const id of ids) groups.set(find(id), [...(groups.get(find(id)) ?? []), id])
   const at = (id: string) => ({ x: finite(byId.get(id)!.position?.x, 0), y: finite(byId.get(id)!.position?.y, 0) })
   const before = (a: string, b: string) => at(a).y - at(b).y || at(a).x - at(b).x || index.get(a)! - index.get(b)!
+  // A flow is led by its roots: triggers, and an entity definition's State, When commanded and When started.
+  const root = (id: string) => isRoot(byId.get(id)!, catalog)
   const lead = (members: string[]) => {
-    const triggers = members.filter(id => byId.get(id)!.kind === 'trigger')
-    return [...(triggers.length ? triggers : members)].sort(before)[0]
+    const roots = members.filter(root)
+    return [...(roots.length ? roots : members)].sort(before)[0]
   }
   const connected = [...groups.values()].filter(members => members.length > 1)
-  const hasTrigger = (members: string[]) => members.some(id => byId.get(id)!.kind === 'trigger')
-  connected.sort((a, b) => Number(hasTrigger(b)) - Number(hasTrigger(a)) || before(lead(a), lead(b)))
+  const hasRoot = (members: string[]) => members.some(root)
+  connected.sort((a, b) => Number(hasRoot(b)) - Number(hasRoot(a)) || before(lead(a), lead(b)))
   const loose = [...groups.values()].filter(members => members.length === 1).map(([id]) => id).sort((a, b) => index.get(a)! - index.get(b)!)
 
   const size = (id: string) => {

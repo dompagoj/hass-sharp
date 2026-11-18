@@ -20,6 +20,7 @@ import { media } from './media'
 import { createVisualSession } from './session'
 import { visualError, type VisualDiagnostic, type VisualDocument } from './api'
 import { createGraph, createNodeAt, serializeGraph, type NodeKind } from './graph'
+import { graphDocument } from './contract'
 import { RunNowButton } from './RunNow'
 import { runHistoryInterval } from '../components/runDispatch'
 import { EnabledSwitch } from '../automations/EnabledSwitch'
@@ -506,6 +507,7 @@ export function VisualEditor(props: {
       <div class="hs-visual-workspace" inert={busy()} aria-busy={busy()}>
         <NodeLibraryPanel
           catalog={session.catalog()}
+          document={graphDocument(graph())}
           collapsed={libraryCollapsed()}
           onCollapsedChange={setLibraryCollapsed}
           onAdd={addStep}

@@ -1,4 +1,4 @@
-import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, isPure, selectsProperties, typeProperties, withGraphTypes, type GraphEdge, type GraphNode, type OutputSpec, type VisualCatalogSnapshot } from '../contract'
+import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, isPure, isRoot, selectsProperties, typeProperties, withGraphTypes, type GraphEdge, type GraphNode, type OutputSpec, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, connectNodes, nodeInputs, outputPort, removeEdge, updateNode, type VisualGraph } from '../graph'
 import { createUuid } from '../id'
 import { dataPortOf, nodeTitle } from './flowModel'
@@ -62,8 +62,8 @@ function portFor(graph: VisualGraph, kind: string, pin: PinRef, catalog: VisualC
     const port = defaultExec(node, catalog)
     return port && canConnect(next, id, pin.nodeId, port, catalog) ? port : undefined
   }
-  // A value wire runs between steps of one flow: the new step needs an execution input.
-  if (kind === 'trigger') return
+  // A value wire runs between steps of one flow: the new step needs an execution input, which a root has not.
+  if (isRoot(node, catalog)) return
   // The types the graph's Custom C# nodes declare, beside the catalog's, decide which pins take the value.
   const types = withGraphTypes(catalog, next)
   if (pin.type === 'source') {
@@ -92,9 +92,9 @@ function pinLabel(graph: VisualGraph, pin: PinRef, catalog: VisualCatalogSnapsho
   return label || data
 }
 
-/** Steps that run: reached from a trigger along execution wires. */
-function running(graph: VisualGraph): Set<string> {
-  const reached = new Set(graph.nodes.filter(n => n.kind === 'trigger').map(n => n.id))
+/** Steps that run: reached from a root (a trigger, an entity definition's When commanded…) along execution wires. */
+function running(graph: VisualGraph, catalog: VisualCatalogSnapshot): Set<string> {
+  const reached = new Set(graph.nodes.filter(n => isRoot(n, catalog)).map(n => n.id))
   const queue = [...reached]
   while (queue.length) {
     const id = queue.shift()!
@@ -166,7 +166,7 @@ export function addConnected(graph: VisualGraph, kind: string, position: Point, 
     return blocked(placed) ? undefined : { graph: placed, nodeId: id, refused: { nodeId: wire[2], handle: `data:${wire[3]}` }, error: `Added ${kindName}. Connect ${pinName} to it.` }
   }
   const hasNext = executionPorts(added, catalog).includes('next')
-  const runs = running(graph).has(pin.nodeId)
+  const runs = running(graph, catalog).has(pin.nodeId)
   const title = (nodeId: string) => nodeTitle(placed.nodes.find(n => n.id === nodeId), catalog, nodeId)
   let ordered: VisualGraph | undefined
   let between: [string, string] | undefined

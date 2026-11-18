@@ -13,7 +13,7 @@ import { RemoveWire } from './RemoveWire'
 import { chooseProperty, PropertyPicker } from './selectProperty'
 import { graphTypes } from './connectionIndex'
 import { entityStateContext } from './entityStateContext'
-import { customSignature, listedTypes, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { customSignature, graphDocument, listedTypes, trackHistoryDefault, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
 import { typeLabel } from './typeLabels'
@@ -117,7 +117,8 @@ export function NodeConfig(props: NodeConfigProps) {
     const id = createUniqueId(), hintId = `${id}-hint`
     const hint = () => (field.rule.description ? hintId : undefined)
     const label = () => (field.rule.label && field.rule.label !== field.name ? field.rule.label : words.key(field.name))
-    const value = () => props.node.config[field.name]
+    // Run history tracking that is not set is what the document does by default (a State of an entity definition is not recorded).
+    const value = () => field.name === 'trackHistory' ? props.node.config.trackHistory ?? trackHistoryDefault(kind(), graphDocument(props.graph), props.catalog) : props.node.config[field.name]
     const errors = () => errorsFor(field.name)
     const types = () => field.rule.enumSource === 'types' || field.name === 'type' || field.name === 'itemType'
     // A Constant offers only the types a value can be typed in for; a Convert or a loop any listed type.
@@ -239,7 +240,7 @@ export function NodeConfig(props: NodeConfigProps) {
             row={(port, extra) => <InputRow port={port} ctx={rows} {...extra} />} />
         </Show>
         <Show when={kind() === 'trigger'}>
-          <TriggerConfig node={props.node} onChange={props.onChange} diagnostics={props.diagnostics}
+          <TriggerConfig node={props.node} onChange={props.onChange} diagnostics={props.diagnostics} document={graphDocument(props.graph)}
             onRetype={(config, label) => {
               const result = retypeTriggerNode(props.graph, props.node.id, config, label, types())
               props.onGraphChange(result.graph)

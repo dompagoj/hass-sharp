@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, createUniqueId, For, onCleanup, onMount, Show } from 'solid-js'
 import { catalogPalette, paletteMatches, type NodeKind } from './graph'
-import { nodeCatalog, type VisualCatalogSnapshot } from './contract'
+import { nodeCatalog, type GraphDocument, type VisualCatalogSnapshot } from './contract'
 import { nodeIdentity } from './icons'
 
 const Glyph = (props: { paths: readonly string[] }) => (
@@ -17,6 +17,8 @@ const Glyph = (props: { paths: readonly string[] }) => (
  */
 export function QuickAdd(props: {
   catalog?: VisualCatalogSnapshot
+  /** The kind of graph the step is added to (`graphDocument`): an automation unless told. */
+  document?: GraphDocument
   /** Top-left corner inside the canvas, in pixels. */
   x: number
   y: number
@@ -35,7 +37,7 @@ export function QuickAdd(props: {
   let input!: HTMLInputElement
   let list!: HTMLDivElement
   const catalog = () => props.catalog ?? nodeCatalog
-  const offered = createMemo(() => catalogPalette(catalog()).filter(item => props.allowed(item.kind)))
+  const offered = createMemo(() => catalogPalette(catalog(), props.document ?? 'automation').filter(item => props.allowed(item.kind)))
   const items = createMemo(() => {
     return offered().filter(item => paletteMatches(item, search(), item.category))
   })

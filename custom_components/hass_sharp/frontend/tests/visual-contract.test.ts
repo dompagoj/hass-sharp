@@ -465,3 +465,29 @@ describe('type and service names that cannot run away or repeat (final fix round
     expect(contract.words.serviceName({ name: 'Turn on (beta)' } as contract.ServiceSchema, 'light.turn_on')).toBe('Turn on (beta)')
   })
 })
+
+it('a new step tracks run history by its document: a trigger of an entity definition does not', () => {
+  const automation: Graph = { version: 5, name: 'Hall', nodes: [], edges: [] }
+  const entity: Graph = { ...automation, name: 'Relay', definition: { entities: [{ key: 'relay', domain: 'switch' }], settings: [] } }
+  const catalog = contract.nodeCatalog
+  expect(contract.trackHistoryDefault('trigger', 'automation', catalog)).toBe(true)
+  expect(contract.trackHistoryDefault('trigger', 'entity', catalog)).toBe(false)
+  for (const document of ['automation', 'entity'] as const) {
+    expect(contract.trackHistoryDefault('entity_state', document, catalog)).toBe(false)
+    expect(contract.trackHistoryDefault('entity_command', document, catalog)).toBe(true)
+    expect(contract.trackHistoryDefault('entity_setup', document, catalog)).toBe(true)
+    // A kind without the setting, or one the catalog lacks, records its runs.
+    expect(contract.trackHistoryDefault('log', document, catalog)).toBe(true)
+    expect(contract.trackHistoryDefault('missing', document, catalog)).toBe(true)
+  }
+  const added = (graph: Graph, kind: string) => contract.addGraphNode(graph, kind, 'n', catalog).nodes.at(-1)!.config
+  expect(added(automation, 'trigger').trackHistory).toBe(true)
+  expect(added(entity, 'trigger').trackHistory).toBe(false)
+  expect(added(entity, 'entity_state').trackHistory).toBe(false)
+  expect(added(entity, 'entity_command').trackHistory).toBe(true)
+  expect(added(entity, 'entity_setup').trackHistory).toBe(true)
+  expect(Object.hasOwn(added(entity, 'log'), 'trackHistory')).toBe(false)
+  // An automation's trigger keeps the catalog's config, key for key and in order.
+  expect(added(automation, 'trigger')).toEqual(Object.fromEntries(Object.entries(catalog.nodes.trigger.config).filter(([, rule]) => rule.default !== undefined).map(([key, rule]) => [key, rule.default])))
+  expect(Object.keys(added(entity, 'trigger'))).toEqual(Object.keys(added(automation, 'trigger')))
+})

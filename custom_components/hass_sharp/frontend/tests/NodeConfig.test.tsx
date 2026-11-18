@@ -1022,3 +1022,33 @@ it('refuses a setting\'s comma where the person\'s number format writes a point,
   expect(mounted.node().config.maxIterations).toBe(12)
   expect(error()).toBeUndefined()
 })
+
+it('shows run history tracking a step\'s config does not hold as the entity definition\'s default', async () => {
+  const graph: VisualGraph = {
+    version: 5, name: 'Relay', edges: [],
+    definition: { entities: [{ key: 'relay', domain: 'switch' }], settings: [] },
+    nodes: [
+      { id: 'state', kind: 'entity_state', config: { entity: 'relay' }, position: { x: 0, y: 0 } },
+      { id: 'cmd', kind: 'entity_command', config: { entity: 'relay', command: 'turn_on' }, position: { x: 0, y: 200 } },
+      { id: 'setup', kind: 'entity_setup', config: {}, position: { x: 0, y: 400 } },
+      { id: 'poll', kind: 'trigger', config: { type: 'time_pattern', minutes: '/1' }, position: { x: 0, y: 600 } },
+    ],
+  }
+  const { el, setSelected } = mount(graph, 'state')
+  const field = () => row(el, 'trackHistory')!
+  const shown = () => ({ checked: field().querySelector<HTMLInputElement>('input[role="switch"]')!.checked, text: field().querySelector('.hs-muted')!.textContent })
+  await vi.waitFor(() => expect(field()).toBeDefined())
+  expect(shown()).toEqual({ checked: false, text: 'False' })
+  setSelected('cmd')
+  await vi.waitFor(() => expect(shown()).toEqual({ checked: true, text: 'True' }))
+  setSelected('setup')
+  await vi.waitFor(() => expect(shown()).toEqual({ checked: true, text: 'True' }))
+  // A trigger of an entity definition is not recorded unless it says so.
+  setSelected('poll')
+  const toggle = await vi.waitFor(() => {
+    const found = [...el.querySelectorAll<HTMLLabelElement>('.hs-insp-trigger label')].find(label => label.querySelector('strong')?.textContent === 'Track in run history')
+    expect(found).toBeDefined()
+    return found!.querySelector<HTMLInputElement>('input[role="switch"]')!
+  })
+  expect(toggle.checked).toBe(false)
+})

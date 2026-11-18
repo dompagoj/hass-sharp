@@ -6,6 +6,7 @@ import {
   executionPorts,
   inputValue,
   isPure,
+  isRoot,
   scopePorts,
   type GraphEdge,
   type GraphNode,
@@ -98,7 +99,7 @@ export interface NodeView {
   warnings: number
   /** Entities the node acts on, for state options of its inputs. */
   targetEntityIds: string[]
-  /** Not reachable by execution from a trigger: drawn muted. */
+  /** Not reachable by execution from a trigger or another root: drawn muted. */
   unreachable: boolean
   /** A value node: worked out each time a step reads it, with no execution pins and no error path. */
   pure: boolean
@@ -209,7 +210,7 @@ const typeName = (types: string[], catalog: VisualCatalogSnapshot) => {
 
 const unreachable = (node: GraphNode, ctx: ViewContext) => {
   const analysis = connectionIndex(ctx.graph, ctx.catalog).analysis
-  return analysis.complete && node.kind !== 'trigger' && !isPure(node, ctx.catalog) && !analysis.scopes.has(node.id)
+  return analysis.complete && !isRoot(node, ctx.catalog) && !isPure(node, ctx.catalog) && !analysis.scopes.has(node.id)
 }
 /** The card of one node: pins, rows, summary and problems. Pure: the adapter caches it per node content. */
 export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
@@ -241,8 +242,9 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   }
   const execInConnected = incoming.some(e => e.kind !== 'data')
   const pure = isPure(node, catalog)
-  // Unknown kinds keep their execution input, so wires into a node whose library vanished still show. A value node has none.
-  const execIn: PinView | undefined = node.kind === 'trigger' || pure ? undefined : {
+  // Unknown kinds keep their execution input, so wires into a node whose library vanished still show. A value node has
+  // none, and neither has a root: a trigger, or an entity definition's State, When commanded and When started.
+  const execIn: PinView | undefined = isRoot(node, catalog) || pure ? undefined : {
     id: 'in', side: 'in', kind: 'exec', label: 'Execution input', name: `Execution input, ${connectedText(execInConnected)}`,
     color: 'var(--hs-port-execution)', list: false, connected: execInConnected, error: false,
   }

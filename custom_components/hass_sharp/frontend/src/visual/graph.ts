@@ -4,6 +4,7 @@ import {
   addGraphNode,
   executionPorts,
   isPure,
+  isRoot,
   dataInputs,
   dataOutputs,
   inputValue,
@@ -140,8 +141,10 @@ export function canConnect(
 ): boolean {
   const node = graph.nodes.find(n => n.id === source),
     destination = graph.nodes.find(n => n.id === target)
-  // A value node has no place in the run order: no step order wire goes into it (nor out of it: it has no execution output).
-  if (!node || !destination || source === target || destination.kind === 'trigger' || isPure(destination, catalog)) return false
+  // A root starts a flow of its own (a trigger; an entity definition's State, When commanded and When started) and a
+  // value node has no place in the run order: no step order wire goes into either (nor out of a value node or a State:
+  // they have no execution output).
+  if (!node || !destination || source === target || isRoot(destination, catalog) || isPure(destination, catalog)) return false
   const resolved = port ?? executionPorts(node, catalog)[0]
   if (
     !executionPorts(node, catalog).includes(resolved) ||
