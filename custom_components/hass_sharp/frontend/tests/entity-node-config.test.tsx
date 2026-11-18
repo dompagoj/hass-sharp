@@ -181,7 +181,7 @@ describe('the outputs of When commanded follow its command', () => {
     return { ...graph, edges: [...graph.edges, { id: 'wire', kind: 'data' as const, source: 'cmd', sourcePort: 'brightness', target: 'set', targetPort: 'brightness' }] }
   }
   const wires = (graph: VisualGraph) => graph.edges.filter(e => e.kind === 'data').map(e => `${e.source}.${e.sourcePort}`)
-  const notice = 'Removed 1 connection the new command does not have: Brightness.'
+  const notice = 'Removed 1 connection from an output the new command does not have: Brightness.'
 
   it('removes the wires of an output the command chosen does not have, in the same edit, and says so', async () => {
     const { el, history, node, notices } = mount(lamp(), 'cmd')
@@ -208,6 +208,13 @@ describe('the outputs of When commanded follow its command', () => {
     const kept = chooseEntity(lamps, 'cmd', 'bulb', nodeCatalog)
     expect(wires(kept.graph)).toEqual(['cmd.brightness'])
     expect(kept.notice).toBeUndefined()
+  })
+
+  it('counts the connections it removes', () => {
+    let twice = lamp()
+    twice = step(twice, 'set_entity_state', 'again', { entity: 'lamp' })
+    twice = { ...twice, edges: [...twice.edges, { id: 'wire2', kind: 'data' as const, source: 'cmd', sourcePort: 'brightness', target: 'again', targetPort: 'brightness' }] }
+    expect(chooseEntity(twice, 'cmd', 'relay', nodeCatalog).notice).toBe('Removed 2 connections from outputs the new command does not have: Brightness.')
   })
 })
 

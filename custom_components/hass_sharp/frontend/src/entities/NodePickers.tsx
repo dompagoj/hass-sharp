@@ -152,7 +152,7 @@ function refit(graph: VisualGraph, node: GraphNode, given: GraphNode['config'], 
 function refitNotice(removed: string[], cleared: string[], unplugged: string[] = []): string | undefined {
   const list = (names: string[]) => [...new Set(names)].join(', ')
   const notes = [
-    ...(unplugged.length ? [`Removed ${unplugged.length} ${unplugged.length === 1 ? 'connection' : 'connections'} the new command does not have: ${list(unplugged)}`] : []),
+    ...(unplugged.length ? [`Removed ${unplugged.length === 1 ? '1 connection from an output' : `${unplugged.length} connections from outputs`} the new command does not have: ${list(unplugged)}`] : []),
     ...(removed.length ? [`Removed ${removed.length} ${removed.length === 1 ? 'connection that no longer fits' : 'connections that no longer fit'}: ${list(removed)}`] : []),
     ...(cleared.length ? [`Cleared ${cleared.length === 1 ? 'a value that no longer fits' : `${cleared.length} values that no longer fit`}: ${list(cleared)}`] : []),
   ]

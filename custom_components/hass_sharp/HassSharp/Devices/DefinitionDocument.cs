@@ -6,16 +6,16 @@ using System.Text.RegularExpressions;
 namespace HassSharp;
 
 /// <summary>
-/// The checks of a graph definition's document, before its graph is looked at: its entities and settings, as
-/// <see cref="DefinitionGraph.Compose"/> puts them into the graph. A document that passes them composes to a definition
-/// the validator reads (it never answers <c>definition.invalid</c>).
-/// </summary>
-/// <summary>
 /// One problem of a definition: its code, its message, the key of the entity or setting it is about and, for an entity's
 /// option, the key of that option (null when it is about no one option).
 /// </summary>
 internal delegate void DefinitionProblem(string code, string message, string? input, string? port = null);
 
+/// <summary>
+/// The checks of a graph definition's document, before its graph is looked at: its entities and settings, as
+/// <see cref="DefinitionGraph.Compose"/> puts them into the graph. A document that passes them composes to a definition
+/// the validator reads (it never answers <c>definition.invalid</c>).
+/// </summary>
 internal static class DefinitionDocument
 {
     /// <summary>The entity description fields given as a text, each absent or null for none.</summary>
@@ -101,7 +101,8 @@ internal static class DefinitionDocument
         var given = entity["options"];
         var known = spec["options"] as JsonObject ?? [];
         var label = VisualNodeCatalog.Text(spec, "label", key);
-        var named = IsText(entity["name"], out var name) && name.Trim().Length > 0 ? name : key;
+        var hasName = IsText(entity["name"], out var name) && name.Trim().Length > 0;
+        var named = hasName ? name! : key;
         // An option as people read it: its label, else its key in words.
         string Option(string option) => known[option] is JsonObject rule && VisualNodeCatalog.Text(rule, "label") is { Length: > 0 } shown ? shown : VisualGraphValidator.Words.KeyWords(option);
         static string Lower(string text) => text.Length == 0 ? text : char.ToLowerInvariant(text[0]) + text[1..];
@@ -144,7 +145,8 @@ internal static class DefinitionDocument
         }
         foreach (var (option, rule) in known)
             if (rule is JsonObject required && Required(required) && (options[option] is not { } value || value.GetValueKind() == JsonValueKind.Null))
-                Problem(option, $"{named} needs {Lower(Option(option))}: {Article(label)} {label.ToLowerInvariant()} cannot work without it");
+                // A sentence starts with the entity: its name, else "Entity" and its key, which may start lower-case.
+                Problem(option, $"{(hasName ? named : "Entity " + key)} needs {Lower(Option(option))}: {Article(label)} {label.ToLowerInvariant()} cannot work without it");
         if (!bounded && known.ContainsKey("min") && known.ContainsKey("max") && (options.ContainsKey("min") || options.ContainsKey("max")))
         {
             var defaults = SharpDomains.DefaultOptions(domainId);

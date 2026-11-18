@@ -67,6 +67,71 @@ static class EntityStartupTests
         await EditedOnDisk();
         await ForgetsTheStatesOfDefinitionsGone();
         await CannotStartWarnsOnceInPlainWords();
+        await DoesNotCompileWarnsWithoutAPath();
+    }
+
+    // A library that compiles, whose class cannot be created: its constructor is obsolete as an error, so the definition's
+    // generated source, which creates it, does not compile (CS0619), at its save and at every startup.
+    const string Obsolete = """
+        public class OldPlug : SharpDevice
+        {
+            [System.Obsolete("Use the new plug", true)] public OldPlug() { Add(new SharpSwitch("relay")); }
+        }
+        """;
+
+    /// <summary>
+    /// A definition whose code does not compile says why as the startup line always worded it (the compiler's message, its
+    /// code and the library, never the generated file's path), in its <c>activationError</c> and in the one warning a save,
+    /// a startup or a reload logs; a retry for the same reason says nothing, and nothing is logged at error.
+    /// </summary>
+    static async Task DoesNotCompileWarnsWithoutAPath()
+    {
+        await using var home = new EntityTestHome("entity-startup-no-compile");
+        int Mark() => home.Logs(PyLogLevel.Warn).Length;
+        string[] Warned(int from) => [.. home.Logs(PyLogLevel.Warn).Skip(from).Where(l => l.StartsWith("Entity definition ", StringComparison.Ordinal))];
+        void Plain(string when)
+        {
+            var errors = home.Logs(PyLogLevel.Error);
+            Check(errors.Length == 0, $"{when}: logged at error: " + string.Join(" | ", errors));
+            var shown = home.Logs(PyLogLevel.Warn).Concat(home.Logs(PyLogLevel.Critical)).ToArray();
+            Check(!shown.Any(l => l.Contains(".cs", StringComparison.Ordinal) || l.Contains(home.Root, StringComparison.Ordinal) || l.Contains(".storage", StringComparison.Ordinal) || l.Contains("   at ", StringComparison.Ordinal)),
+                $"{when}: a path or a stack above Debug: " + string.Join(" | ", shown));
+        }
+        static bool Worded(string? reason) => reason != null && reason.Contains("Use the new plug", StringComparison.Ordinal) && reason.Contains("(CS0619", StringComparison.Ordinal)
+            && !reason.Contains(".cs", StringComparison.Ordinal) && !reason.Contains(".storage", StringComparison.Ordinal) && !reason.Contains('/');
+        var first = new HassSharpManager(home.Root);
+        try
+        {
+            await first.Init();
+            await SaveLibrary(first, "old", 0, Obsolete);
+            var mark = Mark();
+            var saved = await SaveDefinition(first, "old", "Old plug", null, "library:old:NodeLib.OldPlug");
+            var reason = saved["document"]?["activationError"]?.GetValue<string>() ?? saved["activationError"]?.GetValue<string>();
+            Check(Worded(reason), "the save's answer: " + saved.ToJsonString());
+            Check(Warned(mark).SequenceEqual([$"Entity definition \"Old plug\" (old) cannot start: {reason}"]), "the save warns once, without a path: " + string.Join(" | ", Warned(mark)));
+            Plain("the save");
+        }
+        finally { await first.UnloadAsync(); }
+
+        foreach (var when in new[] { "at startup", "after a reload" })
+        {
+            var mark = Mark();
+            var api = new HassSharpManager(home.Root);
+            try
+            {
+                await api.Init();
+                var read = await Read(api, "old");
+                var reason = read["activationError"]?.GetValue<string>();
+                Check(Status(read) == "failed" && Worded(reason), $"{when}: the definition answers: " + read.ToJsonString());
+                Check(Warned(mark).SequenceEqual([$"Entity definition \"Old plug\" (old) cannot start: {reason}"]), $"{when}: one warning: " + string.Join(" | ", home.Logs().TakeLast(8)));
+                mark = Mark();
+                await api.RetryFailedLoads();
+                Check(Warned(mark).Length == 0, $"{when}: a retry for the same reason warned: " + string.Join(" | ", Warned(mark)));
+                Plain(when);
+            }
+            finally { await api.UnloadAsync(); }
+        }
+        Console.WriteLine("PASS entity startup: a definition whose code does not compile warns once, at its save, at startup and after a reload, without the generated file's path; a retry for the same reason says nothing");
     }
 
     // Definitions that cannot start: one whose Setup() throws a sentence of its own over a .NET failure, one whose Setup()
@@ -488,7 +553,14 @@ static class EntityStartupTests
             var unknown = $"No entity class {EntityApiTests.Plug} in the node libraries";
             Check(Status(plug1) == "failed" && !plug1["active"]!.GetValue<bool>() && plug1["activationError"]?.GetValue<string>() == unknown,
                 "plug1's load error: " + plug1.ToJsonString());
-            Check(home.Logs().Contains($"Cannot load entity definition \"Plug one\" (plug1): 1 problem: {unknown}"), "the load failure is not logged: " + string.Join(" | ", home.Logs()));
+            // One warning, as for any definition that cannot start; nothing at error. A retry for the same reason says nothing.
+            var warned = $"Entity definition \"Plug one\" (plug1) cannot start: {unknown}";
+            Check(home.Logs(PyLogLevel.Warn).Count(l => l == warned) == 1 && !home.Logs(PyLogLevel.Error).Any(l => l.Contains("entity definition", StringComparison.OrdinalIgnoreCase)),
+                "the load failure is not warned of once: " + string.Join(" | ", home.Logs()));
+            var before = home.Logs(PyLogLevel.Warn).Length;
+            await api.RetryFailedLoads();
+            Check(home.Logs(PyLogLevel.Warn).Length == before && !home.Logs(PyLogLevel.Error).Any(l => l.Contains("entity definition", StringComparison.OrdinalIgnoreCase)),
+                "a retry for the same reason logged: " + string.Join(" | ", home.Logs().TakeLast(4)));
             Check(Status(await Read(api, "spare")) == "running" && VisualTests.Loaded(api, "auto") != null, "the other definition or the automation does not run");
             Check(home.Prunes()[^1] == """["plug1","spare"]""", "the prune: " + home.Prunes()[^1]);
             Console.WriteLine("PASS entity startup: a definition whose class is gone records why and the other definitions and automations load");

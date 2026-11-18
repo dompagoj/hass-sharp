@@ -72,9 +72,12 @@ export const watchedEntityIds = (item: HomeDefinition) =>
  * dots, the dash of no state yet). `none`: no state yet; `quiet`: drawn muted.
  */
 export interface StateWords { text: string; spoken?: string; none?: boolean; quiet?: boolean }
+/**
+ * The whole of a state shown on a card, which clamps a long one to three lines; none for one in muted words, nor for one
+ * read out in other words (a password's dots).
+ */
+export const stateTitle = (state: StateWords) => (state.quiet || state.none || state.spoken ? undefined : state.text)
 /** An entity's state text, read out as its `spoken` words when it has them. */
-/** The whole of a state shown on a card, which clamps a long one to three lines; none for one in muted words. */
-export const stateTitle = (state: StateWords) => (state.quiet || state.none ? undefined : state.text)
 export function StateText(props: { state: StateWords }) {
   return (
     <Show when={props.state.spoken} fallback={props.state.text}>

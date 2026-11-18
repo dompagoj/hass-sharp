@@ -123,9 +123,9 @@ const optionProblem = (key: string, option: string, message: string): VisualDiag
 /** An option as a problem names it: its label, else its key in words, as its field is labelled. */
 export const optionLabel = (option: string, rule: ConfigSpec | undefined) =>
   typeof rule?.label === 'string' && rule.label ? rule.label : words.key(option)
+const hasName = (entity: { name?: unknown }) => typeof entity.name === 'string' && entity.name.trim() !== ''
 /** An entity as a problem about its options names it: its name, else its key. */
-export const entityNamed = (entity: { key: string; name?: unknown }) =>
-  typeof entity.name === 'string' && entity.name.trim() ? entity.name : entity.key
+export const entityNamed = (entity: { key: string; name?: unknown }) => hasName(entity) ? entity.name as string : entity.key
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1)
 /**
  * What the form knows of the entities' options without asking the server, in the server's words
@@ -144,7 +144,8 @@ export function optionProblems(graph: VisualGraph, catalog: VisualCatalogSnapsho
       const value = Object.hasOwn(options, option) ? options[option] : undefined
       if (rule.type === 'number' && typeof value === 'string') problems.push(optionProblem(entity.key, option, `${optionLabel(option, rule)} of ${named} takes a number`))
       else if (rule.required === true && (value === undefined || value === null))
-        problems.push(optionProblem(entity.key, option, `${named} needs ${lowerFirst(optionLabel(option, rule))}: ${words.article(label)} ${label.toLowerCase()} cannot work without it`))
+        // A sentence starts with the entity: its name, else "Entity" and its key, which may start lower-case.
+        problems.push(optionProblem(entity.key, option, `${hasName(entity) ? named : `Entity ${entity.key}`} needs ${lowerFirst(optionLabel(option, rule))}: ${words.article(label)} ${label.toLowerCase()} cannot work without it`))
     }
   }
   return problems

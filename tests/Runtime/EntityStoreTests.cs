@@ -241,8 +241,8 @@ static class EntityStoreTests
         Only(One("text", new { max = -1 }), "definition.entityOption", "e", "Shortest length of e is 0, which is not below its longest length of -1");
         Only(One("text", new { mode = "secret" }), "definition.entityOption", "e", "Shown as of e takes one of text, password");
         Only(One("text", new { pattern = "([" }), "definition.entityOption", "e", "Pattern of e is not a regular expression");
-        Only(One("select", null), "definition.entityOption", "e", "e needs options: a select cannot work without it");
-        Only(One("select", new { options = (string[]?)null }), "definition.entityOption", "e", "e needs options: a select cannot work without it");
+        Only(One("select", null), "definition.entityOption", "e", "Entity e needs options: a select cannot work without it");
+        Only(One("select", new { options = (string[]?)null }), "definition.entityOption", "e", "Entity e needs options: a select cannot work without it");
         Only(One("select", new { options = Array.Empty<string>() }), "definition.entityOption", "e", "Options of e is an empty list; give it at least one text");
         Check(!generator.Preview(One("select", new { options = Array.Empty<string>() }), snapshot).Diagnostics[0].Message.Contains("leave it out", StringComparison.Ordinal), "a list an entity needs is not one to leave out");
         Only(One("select", new { options = new object[] { "a", 1 } }), "definition.entityOption", "e", "Options of e takes a list of texts");

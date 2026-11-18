@@ -7,8 +7,9 @@ public partial class HassSharpManager
 {
     /// <summary>
     /// At startup: each enabled saved definition, regenerated against the saved libraries and compiled, for the loader to
-    /// load with the automations, its regenerated source stored. One that does not is recorded and logged, and the others
-    /// are compiled; an unreadable file is logged and skipped. A definition that is off is never compiled: only its
+    /// load with the automations, its regenerated source stored. One that does not validate or compile is recorded and
+    /// warned of as any definition that cannot start (<see cref="WarnCannotStart"/>); one that fails otherwise is recorded
+    /// and logged as an error; the others are compiled. An unreadable file is logged and skipped. A definition that is off is never compiled: only its
     /// source is regenerated and stored, when it is valid, so turning it on later runs the libraries as saved.
     /// </summary>
     /// <returns>Each definition compiled, with the document it was compiled from, which says why it does not start.</returns>
@@ -41,11 +42,16 @@ public partial class HassSharpManager
                 StoreRegenerated(current);
                 compiled.Add((await CompileDefinition(current, null), current));
             }
+            catch (Exception ex) when (ex is DefinitionValidationException or CompilationErrorException)
+            {
+                // Neither is a HassSharp bug: the one warning of a definition that cannot start says why, in its load error's words.
+                RecordDefinitionLoadError(current, ex);
+                WarnCannotStart(current, _loadErrors.GetValueOrDefault(EntityRuntimePath(document.Id)));
+            }
             catch (Exception ex)
             {
                 ReportLoadFailure(document.Id, () => { RecordDefinitionLoadError(current, ex); return DefinitionLoadFailure(current, ex); }, "entity definition");
-                // Neither a definition that does not validate nor code that does not compile is a HassSharp bug; anything else is.
-                if (ex is not (DefinitionValidationException or CompilationErrorException)) try { Logger.Debug($"Loading entity definition {document.Id} failed: {ex}"); } catch { }
+                try { Logger.Debug($"Loading entity definition {document.Id} failed: {ex}"); } catch { }
             }
         }
         return compiled;
@@ -66,19 +72,21 @@ public partial class HassSharpManager
             return $"Cannot load entity definition {name}: {(problems.Length == 1 ? "1 problem" : $"{problems.Length} problems")}: {Listed(problems)}";
         }
         if (error is CompilationErrorException compilation)
-        {
-            // "path(line,column): error CS1002: ; expected": the message, its code, and the node library that line is in.
-            string Located(string text)
-            {
-                var match = CompilerError.Match(text);
-                if (!match.Success) return text;
-                var line = int.Parse(match.Groups["line"].Value, System.Globalization.CultureInfo.InvariantCulture);
-                var library = document.SourceMap.FirstOrDefault(m => line >= m.StartLine && line <= m.EndLine)?.NodeId?["$library:".Length..];
-                return $"{match.Groups["message"].Value} ({match.Groups["code"].Value}{(library == null ? "" : ", node library " + library)})";
-            }
-            return $"Cannot load entity definition {name}: its code does not compile: {Listed([.. compilation.Errors.Select(Located)])}";
-        }
+            return $"Cannot load entity definition {name}: its code does not compile: {Listed([.. compilation.Errors.Select(e => Located(document, e))])}";
         return $"Cannot load entity definition {name}: {Capped(Reason(error))}";
+    }
+
+    /// <summary>
+    /// One compiler error of a definition's code as a person reads it: "path(line,column): error CS1002: ; expected" is
+    /// the message, its code, and the node library that line is in; never the generated file's path.
+    /// </summary>
+    static string Located(EntityDefinitionDocument document, string text)
+    {
+        var match = CompilerError.Match(text);
+        if (!match.Success) return text;
+        var line = int.Parse(match.Groups["line"].Value, System.Globalization.CultureInfo.InvariantCulture);
+        var library = document.SourceMap.FirstOrDefault(m => line >= m.StartLine && line <= m.EndLine)?.NodeId?["$library:".Length..];
+        return $"{match.Groups["message"].Value} ({match.Groups["code"].Value}{(library == null ? "" : ", node library " + library)})";
     }
 
     /// <summary>

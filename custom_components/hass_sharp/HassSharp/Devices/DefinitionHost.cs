@@ -65,6 +65,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     bool released;
     // The clock of the Setup()s or the When started flow while the definition prepares, which a download's receiving stops; null after.
     volatile SetupClock? setupClock;
+    // Why the When started flow last failed, as FlowFailed words it (the step's sentence, with its cause), for its start's error.
+    volatile string? setupFailure;
 
     UserScriptManager Manager => script.ScriptManager;
 

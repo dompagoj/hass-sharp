@@ -8,7 +8,8 @@ import { AutomationRuns } from '../src/components/AutomationRuns'
 import { dispatchRun, forgetAcceptedRun, runHistoryInterval } from '../src/components/runDispatch'
 import { summarizeTrigger } from '../src/components/TriggerSummary'
 import { page, run as record, triggers, v1Run } from './run-fixture'
-import { relativeTime } from '../src/automations/model'
+import { dateText, lastRunText, relativeTime } from '../src/automations/model'
+import type { HomeAutomation } from '../src/visual/api'
 
 let dispose: () => void
 let client: QueryClient
@@ -91,6 +92,16 @@ it('renders one compact row per run with label, cause, trigger, relative time an
     expect(row.querySelector('.hs-run-body')).toBeNull()
     expect(row.textContent).not.toContain('run-1')
   } finally { vi.useRealTimers() }
+})
+
+it('says a run long ago on its date: "Ran on 3 November 2026 · 32 ms", "Running since 3 November 2026"', () => {
+  const now = new Date(2026, 11, 20, 9, 0).getTime(), then = new Date(2026, 10, 3, 9, 0).toISOString()
+  const automation = (status: 'Succeeded' | 'Running') => ({
+    id: 'a', revision: 1, automationId: 'a', enabled: true, currentRevisionActive: true, outline: { triggers: [], nodes: [], edges: [] },
+    recentRuns: [{ runId: 'r', status, startUtc: then, durationMs: status === 'Running' ? null : 32 }], runsToday: 0, failedLastDay: 0, lastRunUtc: then,
+  }) as unknown as HomeAutomation
+  expect(lastRunText(automation('Succeeded'), now)).toBe(`Ran on ${dateText(then)} · 32 ms`)
+  expect(lastRunText(automation('Running'), now)).toBe(`Running since ${dateText(then)}`)
 })
 
 it('says yesterday only for the calendar day before today, in the run list too', async () => {

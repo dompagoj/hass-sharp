@@ -73,14 +73,15 @@ export const durationText = (ms: number) =>
 
 const live = (run: RecentRun | undefined) => run?.status === 'Pending' || run?.status === 'Running'
 export const isRunning = (item: HomeAutomation) => live(item.recentRuns.at(-1))
-/** The last-run line: "Running now", "Off", "Ran 5 minutes ago · 32 ms" or "Has not run yet". */
+/** The last-run line: "Running since 1 minute ago", "Off", "Ran 5 minutes ago · 32 ms", "Ran on 3 November 2026 · 32 ms" or "Has not run yet". */
 export function lastRunText(item: HomeAutomation, now: number): string {
   const last = item.recentRuns.at(-1)
   if (live(last)) return last?.startUtc ? `Running since ${relativeTime(last.startUtc, now)}` : 'Starting now'
   if (!item.enabled) return 'Off'
   const when = last?.startUtc ?? item.lastRunUtc
   if (!when) return 'Has not run yet'
-  return `Ran ${relativeTime(when, now)}${last?.durationMs != null ? ` · ${durationText(last.durationMs)}` : ''}`
+  const ran = pastTime(when, now)
+  return `Ran ${ran.dated ? 'on ' : ''}${ran.text}${last?.durationMs != null ? ` · ${durationText(last.durationMs)}` : ''}`
 }
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`

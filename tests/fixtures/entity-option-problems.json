@@ -30,7 +30,7 @@
     { "what": "an option the entity needs, left out", "local": true, "key": "mode", "domain": "select", "name": "Mode",
       "problems": [ { "code": "definition.entityOption", "inputId": "mode", "portId": "options", "message": "Mode needs options: a select cannot work without it" } ] },
     { "what": "an option the entity needs, given as nothing", "local": true, "key": "mode", "domain": "select", "options": { "options": null },
-      "problems": [ { "code": "definition.entityOption", "inputId": "mode", "portId": "options", "message": "mode needs options: a select cannot work without it" } ] },
+      "problems": [ { "code": "definition.entityOption", "inputId": "mode", "portId": "options", "message": "Entity mode needs options: a select cannot work without it" } ] },
     { "what": "a minimum not below the maximum", "key": "target", "domain": "number", "name": "Target", "options": { "min": -20, "max": -30 },
       "problems": [ { "code": "definition.entityOption", "inputId": "target", "portId": "min", "message": "Minimum of Target is -20, which is not below its maximum of -30" } ] },
     { "what": "a minimum alone, not below the type's own maximum", "key": "target", "domain": "number", "name": "Target", "options": { "min": 150 },

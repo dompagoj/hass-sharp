@@ -74,6 +74,7 @@ internal sealed partial class DefinitionHost
         entities = all;
         if (definition.Roots?.Setup is not { } setup) return all;
         var clock = setupClock = new SetupClock();
+        setupFailure = null;
         bool ended;
         Task<RunOutcome> run;
         try
@@ -85,11 +86,12 @@ internal sealed partial class DefinitionHost
         if (!ended)
             throw new TimeoutException($"{definition.Name} does not start: its When started flow did not finish within {Seconds(SetupTimeout)} s");
         var outcome = await run;
-        // A flow that ends at a Stop step has done what it was to do.
+        // A flow that ends at a Stop step has done what it was to do. One that failed says why as FlowFailed worded it: the
+        // run's own error is the innermost failure alone, as an automation's run says it.
         if (outcome.Status is not ("Succeeded" or "Stopped"))
             throw new InvalidOperationException(outcome.Status switch
             {
-                "Failed" => outcome.Error ?? $"{definition.Name} does not start: its When started flow failed",
+                "Failed" => setupFailure ?? outcome.Error ?? $"{definition.Name} does not start: its When started flow failed",
                 "Cancelled" => $"{definition.Name} does not start: its When started flow was cancelled because {Because(outcome.Error)}",
                 _ => $"{definition.Name} does not start: its When started flow did not run",
             });
@@ -469,7 +471,7 @@ internal sealed partial class DefinitionHost
     /// then cannot start, which its manager warns of once per reason in the same words. A trigger flow's
     /// at error once per reason, as a State's warning is: a poll of a device that does not answer fails on every tick,
     /// and only a failure for another reason logs again, until a run works (<see cref="FlowSucceeded"/>). Then, for every
-    /// failure, the whole of it at Debug. Keeps the reason of a trigger flow's failure only. Never throws.
+    /// failure, the whole of it at Debug. Keeps the reason of a trigger flow's failure, and of the When started flow's for its start's error. Never throws.
     /// </summary>
     /// <param name="method">The flow's method.</param>
     /// <param name="cause">What started the run.</param>
@@ -482,8 +484,9 @@ internal sealed partial class DefinitionHost
             string reason;
             try { reason = Reason(failure) ?? failure.GetType().Name; } catch { reason = "it failed"; }
             var (flow, kind) = Flow(method, cause);
-            // A failing When started flow fails the definition's start, whose warning says why.
+            // A failing When started flow fails the definition's start, whose error and warning say why, in these words.
             var log = kind != FlowKind.Setup;
+            if (!log) setupFailure = reason;
             if (kind == FlowKind.Trigger)
                 lock (gate)
                 {

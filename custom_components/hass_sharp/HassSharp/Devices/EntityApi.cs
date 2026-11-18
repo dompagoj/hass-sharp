@@ -201,9 +201,11 @@ public partial class HassSharpManager
     /// Records why the definition does not load, as <see cref="RecordLoadError"/> does. A graph that does not validate reads
     /// as an automation's graph does: its errors only, each after the id of its node, and it is tried again on a push of
     /// Home Assistant's services or entity classes only when that can cure it: a problem in a line of code (a Custom C# node
-    /// compiled against a service not there yet) or in the node libraries. A failure that is neither a problem nor a
-    /// compiler error (its setup failed) reads as the host words a failure (<see cref="DefinitionHost.Reason"/>): what was
-    /// thrown, with the failure underneath when it does not say it already, not the innermost failure alone.
+    /// compiled against a service not there yet) or in the node libraries. Code that does not compile reads as each compiler
+    /// error's message, code and node library (<see cref="Located"/>), never the generated file's path. A failure that is
+    /// neither a problem nor a compiler error (its setup failed) reads as the host words a failure
+    /// (<see cref="DefinitionHost.Reason"/>): what was thrown, with the failure underneath when it does not say it already,
+    /// not the innermost failure alone.
     /// </summary>
     void RecordDefinitionLoadError(EntityDefinitionDocument document, Exception error)
     {
@@ -211,7 +213,8 @@ public partial class HassSharpManager
         if (document.Logic.Kind != "graph" || error is not DefinitionValidationException { Preview.Diagnostics: var diagnostics })
         {
             RecordLoadError(path, error);
-            if (error is not (DefinitionValidationException or CompilationErrorException)) _loadErrors[path] = Reason(error);
+            if (error is CompilationErrorException compilation) _loadErrors[path] = string.Join("\n", compilation.Errors.Select(e => Located(document, e)));
+            else if (error is not DefinitionValidationException) _loadErrors[path] = Reason(error);
             return;
         }
         var errors = diagnostics.Where(d => d.Severity >= 3).ToArray();

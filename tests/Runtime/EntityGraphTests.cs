@@ -933,7 +933,8 @@ static class EntityGraphTests
 
     /// <summary>
     /// A graph definition that no longer validates at a restart (its library node was removed on disk) answers its problems
-    /// as an automation's are, each after its node's id, and is not tried again when Home Assistant pushes its services.
+    /// as an automation's are, each after its node's id, warns once of them, and is not tried again when Home Assistant
+    /// pushes its services.
     /// </summary>
     static async Task AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried()
     {
@@ -952,8 +953,9 @@ static class EntityGraphTests
         var error = level["activationError"]!.GetValue<string>();
         Check(Status(level) == "failed" && error.Split('\n').All(line => line.StartsWith("h: ", StringComparison.Ordinal) || line.StartsWith("s: ", StringComparison.Ordinal) || line.StartsWith("k: ", StringComparison.Ordinal)),
             "the problems are each after their node's id: " + level.ToJsonString());
-        Check(rig.Home.Logs(PyLogLevel.Error).Any(l => l.StartsWith("Cannot load entity definition \"Level\" (level): ", StringComparison.Ordinal) && l.Contains(": " + error.Split('\n')[0], StringComparison.Ordinal)
-            && l.Contains("; " + error.Split('\n')[1], StringComparison.Ordinal)), "the startup log line has the problems as the load error does: " + Lines(rig.Home.Logs(PyLogLevel.Error)));
+        // The one warning of a definition that cannot start, with the problems as the load error has them; nothing at error.
+        Check(rig.Home.Logs(PyLogLevel.Warn).Count(l => l == $"Entity definition \"Level\" (level) cannot start: {error}") == 1 && rig.Home.Logs(PyLogLevel.Error).Length == 0,
+            "the startup warning has the problems as the load error does: " + Lines(rig.Home.Logs(PyLogLevel.Warn)) + " / " + Lines(rig.Home.Logs(PyLogLevel.Error)));
         var curable = (System.Collections.Concurrent.ConcurrentDictionary<string, byte>)typeof(HassSharpManager).GetField("_curableLoadErrors", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(rig.Api)!;
         Check(!curable.Keys.Any(k => k.EndsWith("entity_level.cs", StringComparison.Ordinal)), "a graph that does not validate is retried on every push: " + string.Join(", ", curable.Keys));
     }
@@ -1877,9 +1879,10 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// A When started flow that fails logs only the definition's cannot-start warning, and the whole failure at Debug; a
-    /// trigger's flow in a definition that fails logs one error naming the definition and the flow, with no stack, and the
-    /// whole failure at Debug; the runner's line for an automation is not written.
+    /// A When started flow that fails logs only the definition's cannot-start warning, which, as its error does, names the
+    /// step that failed and its cause, and the whole failure at Debug; a trigger's flow in a definition that fails logs one
+    /// error naming the definition and the flow, with no stack, and the whole failure at Debug; the runner's line for an
+    /// automation is not written.
     /// </summary>
     static async Task FailingSetupAndTriggerFlowsAreLoggedByName()
     {
@@ -1892,6 +1895,17 @@ static class EntityGraphTests
         Check(rig.Home.Logs(PyLogLevel.Warn).SequenceEqual(["Entity definition \"Level\" (level) cannot start: Entity 'sensor.gone' is unavailable."]),
             "one warning names the definition and why: " + Lines(rig.Home.Logs(PyLogLevel.Warn)));
         Check(rig.Home.Logs(PyLogLevel.Debug).Any(l => l.StartsWith("Level: When started failed: ", StringComparison.Ordinal) && l.Contains("   at ", StringComparison.Ordinal)), "the whole failure at Debug: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
+
+        // A step that fails over a cause of its own: the reason names the step, then the cause, in the answer and the warning alike.
+        var converting = Graph("Count", [N("start", "entity_setup"), N("conv", "convert", new { type = "number", value = Lit("string", "warm") }), SetState("set", "count", new JsonObject())],
+            Next("start", "set"), Data("conv", "set", "value"));
+        var warnings = rig.Home.Logs(PyLogLevel.Warn).Length;
+        var named = await rig.Save("count", Definition("Count", converting, [Entity("count", "sensor")]));
+        var reason = named["activationError"]?.GetValue<string>() ?? "";
+        Check(reason == "Convert (used by Set state): Cannot convert conv.value to System.Double. (The input string 'warm' was not in a correct format.)",
+            "the save answers the step that failed and why: " + named.ToJsonString());
+        Check(rig.Home.Logs(PyLogLevel.Warn).Skip(warnings).SequenceEqual([$"Entity definition \"Count\" (count) cannot start: {reason}"]) && rig.Home.Logs(PyLogLevel.Error).Length == 0,
+            "one warning names the step: " + Lines(rig.Home.Logs(PyLogLevel.Warn).Skip(warnings)));
 
         var trigger = N("t", "trigger", new { type = "entity", entity = "sensor.button" });
         trigger["label"] = "Button pressed";
