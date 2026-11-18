@@ -43,3 +43,55 @@
 @media (forced-colors: active) {
   .hs-app .hs-def-row, .hs-app .hs-def-problems__item { border-color: CanvasText; }
 }
+
+/* The entities page: cards in the automation cards' frame (automations.css, .hs-home-*), without a picture, with how
+   each definition works, its status and its entities with their live states. */
+.hs-app .hs-ent-card .hs-home-card__body { gap: 10px; padding-top: 16px; }
+.hs-app .hs-ent-card__kind { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; color: var(--hs-muted); font-size: 13px; }
+.hs-app .hs-ent-card__logic { min-width: 0; overflow-wrap: anywhere; }
+.hs-app .hs-ent-card__logic--missing { color: var(--hs-danger); font-weight: 650; }
+.hs-app .hs-ent-card__status { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 650; }
+.hs-app .hs-ent-card__status::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--hs-muted); }
+.hs-app .hs-ent-card__status--running::before { background: var(--hs-run-succeeded); }
+.hs-app .hs-ent-card__status--starting::before { background: var(--hs-accent); animation: hs-run-pulse 1.4s ease-in-out infinite; }
+.hs-app .hs-ent-card__status--failed, .hs-app .hs-ent-card__status--stopped { color: var(--hs-danger); }
+.hs-app .hs-ent-card__status--failed::before, .hs-app .hs-ent-card__status--stopped::before { background: var(--hs-danger); }
+.hs-app .hs-ent-card__status--off { color: var(--hs-muted); }
+.hs-app .hs-ent-card .hs-home-card__health { min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
+.hs-app .hs-ent-card .hs-home-card__health:has(.hs-ent-card__stale) { color: var(--hs-warning); }
+.hs-app .hs-ent-card__entities { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; border-top: 1px solid var(--hs-line); }
+.hs-app .hs-ent-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 2px 12px; min-width: 0; padding: 7px 0; border-bottom: 1px solid var(--hs-line); font-size: 13px; }
+.hs-app .hs-ent-row__name { min-width: 0; font-weight: 650; overflow-wrap: anywhere; }
+.hs-app .hs-ent-row__state { justify-self: end; max-width: 18ch; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.hs-app .hs-ent-row__state--quiet { color: var(--hs-muted); }
+.hs-app .hs-ent-row__meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 2px 8px; min-width: 0; color: var(--hs-muted); font-size: 12px; }
+.hs-app .hs-ent-row__id { min-width: 0; color: var(--hs-text); font-size: 12px; overflow-wrap: anywhere; }
+.hs-app .hs-ent-card__more, .hs-app .hs-ent-card__none { color: var(--hs-muted); font-size: 12px; }
+.hs-app .hs-ent-card--skeleton { min-height: 220px; padding-top: 20px; }
+.hs-app .hs-ent-card--skeleton::before { content: none; }
+
+/* New entity definition: the two ways to build one, as radio choices in the dialog and as buttons on the empty page. */
+.hs-app .hs-ent-choices { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.hs-app .hs-ent-choices legend { margin-bottom: 6px; padding: 0; font-size: 13px; font-weight: 650; }
+.hs-app .hs-ent-choice { display: flex; align-items: flex-start; gap: 10px; min-width: 0; padding: 10px 12px; border: 1px solid var(--hs-line); border-radius: 10px; background: var(--hs-surface); cursor: pointer; }
+.hs-app .hs-ent-choice:has(input:checked) { border-color: var(--hs-accent); background: var(--hs-soft); }
+.hs-app .hs-ent-choice input { flex: none; margin: 3px 0 0; accent-color: var(--hs-accent); }
+.hs-app .hs-ent-choice__text, .hs-app .hs-ent-start { display: grid; gap: 2px; min-width: 0; }
+.hs-app .hs-ent-choice__text small, .hs-app .hs-ent-start small { color: var(--hs-muted); font-size: 12px; }
+.hs-app .hs-ent-starts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; width: 100%; margin-top: 8px; }
+.hs-app .hs-ent-start { align-content: start; min-height: 44px; padding: 14px 16px; border: 1px solid var(--hs-line); border-radius: 12px; background: var(--hs-surface); color: var(--hs-text); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--hs-motion) ease-out; }
+.hs-app .hs-ent-start:hover { border-color: color-mix(in srgb, var(--hs-accent) 45%, var(--hs-line)); }
+
+@media (max-width: 700px) {
+  /* One column: an entity's state goes under its name; the two ways to start stack. */
+  .hs-app .hs-ent-row { grid-template-columns: minmax(0, 1fr); }
+  .hs-app .hs-ent-row__state { justify-self: start; max-width: none; text-align: left; }
+  .hs-app .hs-ent-starts { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hs-app .hs-ent-card__status--starting::before { animation: none; }
+}
+@media (forced-colors: active) {
+  .hs-app .hs-ent-choice, .hs-app .hs-ent-start { border-color: ButtonText; }
+  .hs-app .hs-ent-card__status::before { forced-color-adjust: none; background: CanvasText; }
+}

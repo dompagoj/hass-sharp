@@ -2,13 +2,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { Route, Navigate, Router } from '@solidjs/router'
 
 import type { HomeAssistant } from './types'
-import { TODOView } from './views/TODOView'
 import { MainLayout } from './layout/MainLayout'
 import { HassCtx } from './context'
 import { AutomationsListView } from './views/AutomationsListView'
 import { VisualAutomationView } from './views/VisualAutomationView'
 import { RunTraceView } from './views/RunTraceView'
 import { EntityDefinitionView } from './views/EntityDefinitionView'
+import { EntitiesListView } from './views/EntitiesListView'
 import { findCustomComponent } from './utils'
 import { lazyView } from './components/LazyLoad'
 
@@ -35,19 +35,26 @@ window.process = {
 
 window.findCustomComponent = findCustomComponent
 
+/** The panel's pages, under the router's base. Devices are part of the Entities section. */
+export function AppRoutes() {
+  return <>
+    <Route path="/" component={() => <Navigate href="/automations" />} />
+    <Route path="/automations" component={AutomationsListView} />
+    <Route path="/visual/:id" component={VisualAutomationView} />
+    <Route path="/visual/:id/runs/:runId" component={RunTraceView} />
+    <Route path="/libraries" component={NodeLibraryView} />
+    <Route path="/devices" component={() => <Navigate href="/entities" />} />
+    <Route path="/entities" component={EntitiesListView} />
+    <Route path="/entities/:id" component={EntityDefinitionView} />
+  </>
+}
+
 function App(props: { hass: HomeAssistant }) {
   return (
     <QueryClientProvider client={client}>
       <HassCtx.Provider value={props.hass}>
         <Router base="/hass-sharp" root={MainLayout}>
-          <Route path="/" component={() => <Navigate href="/automations" />} />
-          <Route path="/automations" component={AutomationsListView} />
-          <Route path="/visual/:id" component={VisualAutomationView} />
-          <Route path="/visual/:id/runs/:runId" component={RunTraceView} />
-          <Route path="/libraries" component={NodeLibraryView} />
-          <Route path="/devices" component={TODOView} />
-          <Route path="/entities" component={TODOView} />
-          <Route path="/entities/:id" component={EntityDefinitionView} />
+          <AppRoutes />
         </Router>
       </HassCtx.Provider>
     </QueryClientProvider>

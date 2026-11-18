@@ -140,7 +140,7 @@ export function homeSummary(items: readonly HomeAutomation[]): string {
  * How often the page reads the list again: every 5 s while a run that started in the last 2 minutes is going (most
  * runs end by then), every 30 s while only older runs are going (a long Delay), and not at all when nothing runs.
  */
-export function pollInterval(items: readonly HomeAutomation[], now: number): number | false {
+export function pollInterval(items: readonly Pick<HomeAutomation, 'recentRuns'>[], now: number): number | false {
   const going = items.flatMap(item => item.recentRuns.filter(run => live(run)))
   if (!going.length) return false
   return going.some(run => !run.startUtc || now - Date.parse(run.startUtc) < 120_000) ? 5_000 : 30_000

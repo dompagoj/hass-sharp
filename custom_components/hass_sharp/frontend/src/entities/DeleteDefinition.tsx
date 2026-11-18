@@ -37,12 +37,23 @@ export function DeleteDefinition(props: { document: { id: string; revision: numb
         Delete entity definition
       </Button>
       <Show when={props.blocked}><small id="hs-def-delete-hint" class="hs-field-hint">Save or undo your changes before deleting it.</small></Show>
-      <Dialog open={asking()} title="Delete this entity definition?" width="small" onClose={() => { if (!deleting()) setAsking(false) }} footer={<>
-        <Button disabled={deleting()} onClick={() => setAsking(false)}>Cancel</Button>
-        <Button variant="danger" busy={deleting()} onClick={() => void confirm()}>Delete</Button>
-      </>}>
-        <p>{props.name} and its entities are removed from Home Assistant, with their device if it has one. This cannot be undone.</p>
-      </Dialog>
+      <DeleteDefinitionDialog open={asking()} name={props.name} deleting={deleting()} onCancel={() => setAsking(false)} onConfirm={() => void confirm()} />
     </div>
+  )
+}
+
+/**
+ * The confirmation before a definition is deleted, in the editor and on the entities page: what goes from Home
+ * Assistant, Cancel and Delete. `error` is a refusal to show in it, when the owner keeps it open for one.
+ */
+export function DeleteDefinitionDialog(props: { open: boolean; name: string; deleting: boolean; error?: string; onCancel(): void; onConfirm(): void }) {
+  return (
+    <Dialog open={props.open} title="Delete this entity definition?" width="small" onClose={() => { if (!props.deleting) props.onCancel() }} footer={<>
+      <Button disabled={props.deleting} onClick={() => props.onCancel()}>Cancel</Button>
+      <Button variant="danger" busy={props.deleting} onClick={() => props.onConfirm()}>Delete</Button>
+    </>}>
+      <p>{props.name} and its entities are removed from Home Assistant, with their device if it has one. This cannot be undone.</p>
+      <Show when={props.error}>{message => <div class="hs-error" role="alert">{message()}</div>}</Show>
+    </Dialog>
   )
 }
