@@ -465,7 +465,8 @@ internal sealed partial class DefinitionHost
     /// How a run of one of the graph's other flows failed, which the runner leaves to the host: a When commanded flow, the
     /// When started flow, or a trigger's flow. Logs one line naming the definition, the flow and why (as a State's
     /// warning says why), with no stack: a command's at warning, as whoever gave it is answered the error and Home
-    /// Assistant logs it too, each time, as someone asked for each; the When started flow's at error. A trigger flow's
+    /// Assistant logs it too, each time, as someone asked for each; the When started flow's not at all, as the definition
+    /// then cannot start, which its manager warns of once per reason in the same words. A trigger flow's
     /// at error once per reason, as a State's warning is: a poll of a device that does not answer fails on every tick,
     /// and only a failure for another reason logs again, until a run works (<see cref="FlowSucceeded"/>). Then, for every
     /// failure, the whole of it at Debug. Keeps the reason of a trigger flow's failure only. Never throws.
@@ -481,7 +482,8 @@ internal sealed partial class DefinitionHost
             string reason;
             try { reason = Reason(failure) ?? failure.GetType().Name; } catch { reason = "it failed"; }
             var (flow, kind) = Flow(method, cause);
-            var log = true;
+            // A failing When started flow fails the definition's start, whose warning says why.
+            var log = kind != FlowKind.Setup;
             if (kind == FlowKind.Trigger)
                 lock (gate)
                 {
@@ -578,11 +580,14 @@ internal sealed partial class DefinitionHost
         }
     }
 
-    // What a State's failure says, as the person reads it: the message of what the run threw, past any wrapper of the
-    // runner's, which names the failing node and the step that used it when the visual runtime wrapped it; then, when it
-    // does not say it already, the message of the failure underneath (such as the text a number could not be read from).
-    // Each its first line.
-    static string? Reason(Exception? failure)
+    /// <summary>
+    /// What a failure says, as the person reads it (a State's, a flow's, a timer's, and why a definition cannot start):
+    /// the message of what was thrown, past any wrapper of the runner's or of reflection's, which names the failing node
+    /// and the step that used it when the visual runtime wrapped it; then, when it does not say it already, the message
+    /// of the failure underneath (such as the text a number could not be read from). Each its first line; null when the
+    /// failure says nothing. Never throws for a message that does (user code).
+    /// </summary>
+    internal static string? Reason(Exception? failure)
     {
         static string First(Exception error) => Text(error).Split('\n')[0].TrimEnd('\r');
         var shown = failure;

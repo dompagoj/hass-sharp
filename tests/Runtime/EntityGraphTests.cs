@@ -1877,9 +1877,9 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// A When started flow that fails, and a trigger's flow in a definition that fails, each log one error naming the
-    /// definition and the flow, with no stack, and the whole failure at Debug; the runner's line for an automation is
-    /// not written.
+    /// A When started flow that fails logs only the definition's cannot-start warning, and the whole failure at Debug; a
+    /// trigger's flow in a definition that fails logs one error naming the definition and the flow, with no stack, and the
+    /// whole failure at Debug; the runner's line for an automation is not written.
     /// </summary>
     static async Task FailingSetupAndTriggerFlowsAreLoggedByName()
     {
@@ -1887,9 +1887,10 @@ static class EntityGraphTests
         var setup = Graph("Level", [N("start", "entity_setup"), Read("read", "sensor.gone")], Next("start", "read"));
         var failing = await rig.Save("level", Definition("Level", setup, [Entity("level", "sensor")]));
         Check(failing["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable.", "the save answers the flow's error: " + failing.ToJsonString());
-        var setupErrors = rig.Home.Logs(PyLogLevel.Error).Where(l => l.StartsWith("Level: ", StringComparison.Ordinal)).ToArray();
-        Check(setupErrors.Length == 1 && setupErrors[0].StartsWith("Level: When started failed: ", StringComparison.Ordinal) && setupErrors[0].Contains("Entity 'sensor.gone' is unavailable.", StringComparison.Ordinal)
-            && !setupErrors[0].Contains("   at ", StringComparison.Ordinal), "one error names the definition and its When started flow: " + Lines(rig.Home.Logs(PyLogLevel.Error)));
+        // The cannot-start warning says it, once: the failing When started flow is not logged at error too.
+        Check(rig.Home.Logs(PyLogLevel.Error).Length == 0, "a failing When started flow is logged at error: " + Lines(rig.Home.Logs(PyLogLevel.Error)));
+        Check(rig.Home.Logs(PyLogLevel.Warn).SequenceEqual(["Entity definition \"Level\" (level) cannot start: Entity 'sensor.gone' is unavailable."]),
+            "one warning names the definition and why: " + Lines(rig.Home.Logs(PyLogLevel.Warn)));
         Check(rig.Home.Logs(PyLogLevel.Debug).Any(l => l.StartsWith("Level: When started failed: ", StringComparison.Ordinal) && l.Contains("   at ", StringComparison.Ordinal)), "the whole failure at Debug: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
 
         var trigger = N("t", "trigger", new { type = "entity", entity = "sensor.button" });

@@ -67,7 +67,7 @@ public sealed class SharpFiles
             throw new ArgumentException("The checksum of a download must be its SHA-256: 64 hexadecimal characters");
         if (name != null && !Plain(name))
             throw new ArgumentException($"'{name}' is not a plain file name: a download's name has no directory, does not start with a dot, has no control characters and takes at most 255 bytes in UTF-8");
-        if (closing.IsCancellationRequested) throw new ObjectDisposedException(nameof(SharpFiles), "The definition has stopped: it downloads nothing more");
+        if (closing.IsCancellationRequested) throw new ObjectDisposedException(null, "The definition has stopped: it downloads nothing more");
         var checksum = sha256.ToLowerInvariant();
         // A name the address gives is never logged: the path may carry a token, as the query may.
         var shown = name ?? "a file";
@@ -156,13 +156,15 @@ public sealed class SharpFiles
         }
 
         // A failure of the connection (refused, reset, ended early, no such host) with a message of its own, which names
-        // no address.
+        // no address; the .NET failure under it is not kept, as an HTTP request step keeps none: its message may quote the
+        // address, and whoever words a failure by its innermost cause would say only "Connection refused".
         async Task<T> Network<T>(Func<Task<T>> receive)
         {
             try { return await receive(); }
             catch (Exception failure) when (failure is HttpRequestException or IOException)
             {
-                throw new HttpRequestException($"The file from {host} could not be downloaded: {failure.GetBaseException().Message}", failure);
+                throw new HttpRequestException((failure as HttpRequestException)?.HttpRequestError ?? HttpRequestError.Unknown,
+                    $"The file from {host} could not be downloaded: {failure.GetBaseException().Message}");
             }
         }
     }

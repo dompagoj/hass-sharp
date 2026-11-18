@@ -228,7 +228,10 @@ static class EntityHostTests
         foreach (var (setting, message) in new[] {
             (new DefinitionSetting("Interval", 0), "Plug three: the saved value of setting Poll interval is not a whole number from 1 to 3600"),
             (new DefinitionSetting("Interval", 3601), "Plug three: the saved value of setting Poll interval is not a whole number from 1 to 3600"),
-            (new DefinitionSetting("Gain", 0.25), "Plug three: the saved value of setting Gain is not a number of at least 0.5") })
+            (new DefinitionSetting("Gain", 0.25), "Plug three: the saved value of setting Gain is not a number of at least 0.5"),
+            // An int's range given on one side only says that side, not the int's own bound on the other.
+            (new DefinitionSetting("Retries", 0), "Plug three: the saved value of setting Retries is not a whole number of at least 1"),
+            (new DefinitionSetting("Delay", 61), "Plug three: the saved value of setting Delay is not a whole number of at most 60") })
         {
             Reset();
             manager = Manager();
@@ -1015,6 +1018,8 @@ public class HostPlug : HostDeviceBase
     [Setting] public double? Factor { get; set; }
     [Setting("Poll interval", Minimum = 1, Maximum = 3600)] public int Interval { get; set; } = 30;
     [Setting(Minimum = 0.5)] public double Gain { get; set; } = 1;
+    [Setting(Minimum = 1)] public int Retries { get; set; } = 3;
+    [Setting(Maximum = 60)] public int Delay { get; set; }
     public string? Unmarked { get; set; }
 
     protected internal override async Task Setup() { EntityHostTests.Record("device.Setup"); if (SetupHook != null) await SetupHook(this); }

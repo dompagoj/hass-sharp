@@ -207,7 +207,10 @@ class UserScriptManager
             catch (Exception ex)
             {
                 onFailure?.Invoke(compiled.FilePath, ex);
-                Logger.Error($"Cannot activate script {compiled.FilePath}: {ex}");
+                // An entity definition that cannot start is the caller's to warn of, in plain words, once per reason
+                // (HassSharpManager.WarnCannotStart): the whole failure, with its stack, only at Debug.
+                if (compiled.Definition == null) Logger.Error($"Cannot activate script {compiled.FilePath}: {ex}");
+                else Logger.Debug($"Cannot start entity definition {compiled.Definition.Id}: {ex}");
                 try { if (script != null) await script.ClearFromTrackingAsync(); }
                 catch (Exception cleanup) { Logger.Error($"Cannot clean up script {compiled.FilePath}: {cleanup}"); }
                 finally { compiled.Unload(); }

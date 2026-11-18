@@ -10,6 +10,12 @@ namespace HassSharp;
 /// <see cref="DefinitionGraph.Compose"/> puts them into the graph. A document that passes them composes to a definition
 /// the validator reads (it never answers <c>definition.invalid</c>).
 /// </summary>
+/// <summary>
+/// One problem of a definition: its code, its message, the key of the entity or setting it is about and, for an entity's
+/// option, the key of that option (null when it is about no one option).
+/// </summary>
+internal delegate void DefinitionProblem(string code, string message, string? input, string? port = null);
+
 internal static class DefinitionDocument
 {
     /// <summary>The entity description fields given as a text, each absent or null for none.</summary>
@@ -24,8 +30,8 @@ internal static class DefinitionDocument
     /// (<see cref="Options"/>); each setting has a key of its own and a type a graph reads, and a value of that type or
     /// none. An entity member none of these name is kept as given.
     /// </summary>
-    /// <param name="error">Called with each problem's code, message and the key of the entity or setting it is about.</param>
-    internal static void Check(DefinitionBody body, JsonObject catalog, Action<string, string, string?> error)
+    /// <param name="error">Called with each problem's code, message, the key of the entity or setting it is about and, for an option, the option's key.</param>
+    internal static void Check(DefinitionBody body, JsonObject catalog, DefinitionProblem error)
     {
         if (body.Logic!.Graph == null) error("definition.graph", "Give the definition a graph: its logic is a graph of nodes, and none was given", null);
         var domains = catalog["entityDomains"] as JsonObject ?? [];
@@ -45,7 +51,7 @@ internal static class DefinitionDocument
             Fields(key, entity, error);
             if (!IsText(entity["domain"], out var domain)) { error("definition.entityDomain", $"Choose a domain for entity {key}: {Or(domains.Select(d => d.Key))}", key); continue; }
             if (domains[domain] is not JsonObject spec) { error("definition.entityDomain", $"Entity {key} has the domain {domain}, which a definition built from nodes cannot create; choose {Or(domains.Select(d => d.Key))}", key); continue; }
-            Options(key, domain, spec, entity["options"], error);
+            Options(key, entity, domain, spec, error);
         }
         var settings = body.Settings ?? [];
         var settingKeys = new HashSet<string>(StringComparer.Ordinal); var repeatedSettings = new HashSet<string>(StringComparer.Ordinal);
@@ -66,7 +72,7 @@ internal static class DefinitionDocument
     /// The problems of an entity's description fields, each absent or null for none: a name, icon and device class are
     /// texts, the category is one Home Assistant has, and whether it is enabled by default is true or false (absent: it is).
     /// </summary>
-    static void Fields(string key, JsonObject entity, Action<string, string, string?> error)
+    static void Fields(string key, JsonObject entity, DefinitionProblem error)
     {
         foreach (var field in TextFields)
             if (!Fits("string", entity[field])) error("definition.entityField", $"The {field} of entity {key} is not a text; give it as a text, or leave it out", key);
@@ -80,12 +86,26 @@ internal static class DefinitionDocument
     /// The problems of an entity's options: each must be one its domain takes, of that option's type (a list of texts
     /// for an array, which is not empty) and, with an enum, one of its values; each option the domain marks required is
     /// given; a number option is one Home Assistant takes (<see cref="Limit"/>); a <c>min</c> is below the <c>max</c>,
-    /// either given or its class's own; and a <c>pattern</c> is a regular expression.
+    /// either given or its class's own; and a <c>pattern</c> is a regular expression. Each problem is about the entity's
+    /// key and the option's (a min not below the max is about the min), and words the option by its label and the entity
+    /// by its name, such as <c>Minimum of Target takes a number</c>; one about no single option (options that are not an
+    /// object) names no option. The panel words the ones it finds itself the same (<c>optionProblems</c> in
+    /// <c>frontend/src/entities/definitionEdits.ts</c>).
     /// </summary>
-    static void Options(string key, string name, JsonObject domain, JsonNode? given, Action<string, string, string?> error)
+    /// <param name="key">The entity's key.</param>
+    /// <param name="entity">The entity, whose name the messages use when it has one.</param>
+    /// <param name="domainId">The entity's domain, such as <c>number</c>.</param>
+    /// <param name="spec">What the catalog's <c>entityDomains</c> says of that domain.</param>
+    static void Options(string key, JsonObject entity, string domainId, JsonObject spec, DefinitionProblem error)
     {
-        var known = domain["options"] as JsonObject ?? [];
-        var label = VisualNodeCatalog.Text(domain, "label", key);
+        var given = entity["options"];
+        var known = spec["options"] as JsonObject ?? [];
+        var label = VisualNodeCatalog.Text(spec, "label", key);
+        var named = IsText(entity["name"], out var name) && name.Trim().Length > 0 ? name : key;
+        // An option as people read it: its label, else its key in words.
+        string Option(string option) => known[option] is JsonObject rule && VisualNodeCatalog.Text(rule, "label") is { Length: > 0 } shown ? shown : VisualGraphValidator.Words.KeyWords(option);
+        static string Lower(string text) => text.Length == 0 ? text : char.ToLowerInvariant(text[0]) + text[1..];
+        void Problem(string option, string message) => error("definition.entityOption", message, key, option);
         var options = given as JsonObject ?? [];
         var bounded = false;
         if (given != null && given.GetValueKind() != JsonValueKind.Null && given is not JsonObject)
@@ -94,9 +114,9 @@ internal static class DefinitionDocument
         {
             if (known[option] is not JsonObject rule)
             {
-                error("definition.entityOption", known.Count == 0
+                Problem(option, known.Count == 0
                     ? $"Entity {key} has the option {option}, but {Article(label)} {label.ToLowerInvariant()} takes no options; remove it"
-                    : $"Entity {key} has no option {option}; {Article(label)} {label.ToLowerInvariant()} takes {Or(known.Select(o => o.Key))}", key);
+                    : $"Entity {key} has no option {option}; {Article(label)} {label.ToLowerInvariant()} takes {Or(known.Select(o => o.Key))}");
                 continue;
             }
             if (value == null || value.GetValueKind() == JsonValueKind.Null) continue;
@@ -107,28 +127,29 @@ internal static class DefinitionDocument
             var fits = type == "array"
                 ? value is JsonArray items && items.All(i => IsText(i, out _) && Allowed(i))
                 : Fits(type, value) && Allowed(value);
+            var of = $"{Option(option)} of {named}";
             if (!fits)
-                error("definition.entityOption", $"Option {option} of entity {key} takes {(type == "array" ? "a list of texts" : allowed != null ? "one of " + string.Join(", ", allowed) : Phrase(type))}", key);
+                Problem(option, $"{of} takes {(type == "array" ? "a list of texts" : allowed != null ? "one of " + string.Join(", ", allowed) : Phrase(type))}");
             else if (value is JsonArray { Count: 0 })
-                error("definition.entityOption", $"Option {option} of entity {key} is an empty list; give it at least one text{(Required(rule) ? "" : ", or leave it out")}", key);
-            else if (Number(value) is { } number && Limit(name, option, number) is { } limit)
+                Problem(option, $"{of} is an empty list; give it at least one text{(Required(rule) ? "" : ", or leave it out")}");
+            else if (Number(value) is { } number && Limit(domainId, option, number) is { } limit)
             {
-                error("definition.entityOption", $"Option {option} of entity {key} takes {limit}, not {Shown(number)}", key);
+                Problem(option, $"{of} takes {limit}, not {Shown(number)}");
                 // A min or max refused here is not compared with the other one too.
                 bounded |= option is "min" or "max";
             }
             else if (option == "pattern" && type == "string" && IsText(value, out var pattern))
                 try { _ = new Regex(pattern, RegexOptions.None, TimeSpan.FromSeconds(1)); }
-                catch (ArgumentException problem) { error("definition.entityOption", $"Option pattern of entity {key} is not a regular expression: {problem.Message}", key); }
+                catch (ArgumentException problem) { Problem(option, $"{of} is not a regular expression: {problem.Message}"); }
         }
         foreach (var (option, rule) in known)
             if (rule is JsonObject required && Required(required) && (options[option] is not { } value || value.GetValueKind() == JsonValueKind.Null))
-                error("definition.entityOption", $"Give entity {key} the option {option}: {Article(label)} {label.ToLowerInvariant()} needs it", key);
+                Problem(option, $"{named} needs {Lower(Option(option))}: {Article(label)} {label.ToLowerInvariant()} cannot work without it");
         if (!bounded && known.ContainsKey("min") && known.ContainsKey("max") && (options.ContainsKey("min") || options.ContainsKey("max")))
         {
-            var defaults = SharpDomains.DefaultOptions(name);
+            var defaults = SharpDomains.DefaultOptions(domainId);
             if ((Number(options["min"]) ?? Number(defaults["min"])) is { } min && (Number(options["max"]) ?? Number(defaults["max"])) is { } max && !(min < max))
-                error("definition.entityOption", $"Entity {key} has a min of {Shown(min)}, which is not below its max of {Shown(max)}; give a min below the max", key);
+                Problem("min", $"{Option("min")} of {named} is {Shown(min)}, which is not below its {Lower(Option("max"))} of {Shown(max)}");
         }
     }
 

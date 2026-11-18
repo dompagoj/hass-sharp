@@ -1,6 +1,7 @@
 """The texts of the .NET entity definitions; the entity bridge adds and updates them, and a new text goes to the
 definition's handler. Home Assistant refuses a text of the wrong length or one that does not match the pattern
-before it gets here, and a failed command fails the service call with .NET's message."""
+before it gets here, and a failed command fails the service call with .NET's message. A sync that narrows the
+options drops a value they no longer take."""
 import re
 
 from homeassistant.components.text import TextEntity, TextMode
@@ -33,6 +34,18 @@ class HassSharpText(HassSharpEntity, TextEntity):
         self._attr_native_max = options.get("max", 100)
         self._attr_pattern = options.get("pattern")
         self._attr_mode = TextMode(options.get("mode") or TextMode.TEXT)
+        # A value the narrowed options no longer take is dropped, as Home Assistant would refuse it at the state write
+        # (and its message would quote it, a password too): the text is unknown until .NET pushes a value again.
+        if not self._fits(getattr(self, "_attr_native_value", None)):
+            self._attr_native_value = None
+
+    def _fits(self, value) -> bool:
+        """Whether Home Assistant shows the value with the current options: its length within them, and the pattern's."""
+        if value is None:
+            return True
+        if not self._attr_native_min <= len(value) <= self._attr_native_max:
+            return False
+        return self._attr_pattern is None or re.compile(self._attr_pattern).match(value) is not None
 
     def apply_values(self, values: dict) -> None:
         self._attr_native_value = values.get("value")

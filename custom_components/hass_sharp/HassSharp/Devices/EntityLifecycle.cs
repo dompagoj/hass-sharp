@@ -11,9 +11,10 @@ public partial class HassSharpManager
     /// are compiled; an unreadable file is logged and skipped. A definition that is off is never compiled: only its
     /// source is regenerated and stored, when it is valid, so turning it on later runs the libraries as saved.
     /// </summary>
-    async Task<List<CompiledUserScript>> CompileSavedDefinitions(VisualCatalogSnapshot snapshot, string generation)
+    /// <returns>Each definition compiled, with the document it was compiled from, which says why it does not start.</returns>
+    async Task<List<(CompiledUserScript Compiled, EntityDefinitionDocument Document)>> CompileSavedDefinitions(VisualCatalogSnapshot snapshot, string generation)
     {
-        List<CompiledUserScript> compiled = [];
+        List<(CompiledUserScript, EntityDefinitionDocument)> compiled = [];
         EntityDefinitionDocument[] documents;
         try { documents = EntityDocuments.List(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -38,7 +39,7 @@ public partial class HassSharpManager
                 current = Regenerated(document, snapshot, generation);
                 // Stored before the compile, which may fail: what is stored is what the libraries as saved generate.
                 StoreRegenerated(current);
-                compiled.Add(await CompileDefinition(current, null));
+                compiled.Add((await CompileDefinition(current, null), current));
             }
             catch (Exception ex)
             {
@@ -77,7 +78,7 @@ public partial class HassSharpManager
             }
             return $"Cannot load entity definition {name}: its code does not compile: {Listed([.. compilation.Errors.Select(Located)])}";
         }
-        return $"Cannot load entity definition {name}: {Capped(error.GetBaseException().Message)}";
+        return $"Cannot load entity definition {name}: {Capped(Reason(error))}";
     }
 
     /// <summary>
@@ -116,7 +117,9 @@ public partial class HassSharpManager
 
     /// <summary>
     /// After the typed service calls or the entity classes changed: loads again each enabled definition whose last load
-    /// failed, that a push may cure, and that is not loaded, without waiting for its start. Runs under the visual gate.
+    /// failed, that a push may cure, and that is not loaded, without waiting for its start. One that fails again warns as
+    /// a save does, once per reason (<see cref="WarnCannotStart"/>); one that loads forgets its reason, so that the same
+    /// failure later warns again. Runs under the visual gate.
     /// </summary>
     async Task RetryFailedDefinitions(VisualCatalogSnapshot snapshot, string generation)
     {
@@ -129,10 +132,15 @@ public partial class HassSharpManager
             {
                 var current = Regenerated(document, snapshot, generation);
                 StoreRegenerated(current);
-                if (await LoadDefinition(current) == null)
-                    Logger.Info($"Entity definition {document.Id} loaded now that the typed service calls or entity classes changed");
+                var error = await LoadDefinition(current);
+                WarnCannotStart(current, error);
+                if (error == null) Logger.Info($"Entity definition {document.Id} loaded now that the typed service calls or entity classes changed");
             }
-            catch (Exception ex) { RecordDefinitionLoadError(document, ex); }
+            catch (Exception ex)
+            {
+                RecordDefinitionLoadError(document, ex);
+                WarnCannotStart(document, _loadErrors.GetValueOrDefault(path));
+            }
         }
     }
 

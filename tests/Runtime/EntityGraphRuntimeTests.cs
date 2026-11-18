@@ -180,7 +180,8 @@ static class EntityGraphRuntimeTests
                 (nameof(DownloadFileHidesASecretsAddressAndChecksum), DownloadFileHidesASecretsAddressAndChecksum),
                 (nameof(HttpRequestFollowsRedirectsWithoutHandingHeadersToAnotherHost), HttpRequestFollowsRedirectsWithoutHandingHeadersToAnotherHost),
                 (nameof(HttpRequestRefusesAHeaderBeforeSending), HttpRequestRefusesAHeaderBeforeSending),
-                (nameof(HttpRequestReadsAnEmptyOrCompressedAnswer), HttpRequestReadsAnEmptyOrCompressedAnswer) })
+                (nameof(HttpRequestReadsAnEmptyOrCompressedAnswer), HttpRequestReadsAnEmptyOrCompressedAnswer),
+                (nameof(NothingKeepsACookie), NothingKeepsACookie) })
             {
                 States.Clear(); UserScriptManager.CurrentTrigger.Value = null;
                 try { await test(); }
@@ -1034,6 +1035,70 @@ static class EntityGraphRuntimeTests
         Check(nowhere?.Message == $"{host} redirected without an address to go to", "a redirect without an address: " + nowhere?.Message);
         var ftp = await Run(Request("get", server.Url("/ftp"), new { responseType = "object" }));
         Check(ftp?.Message == $"{host} redirected to an address that is not http or https", "a redirect to ftp: " + ftp?.Message);
+
+        // Where a redirect goes is part of the response: with the response kept out of run history, a failure after a
+        // redirect to another host names the host asked and says "another host" for the one it went to.
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var closed = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port.ToString(CultureInfo.InvariantCulture);
+        listener.Stop();
+        server.Respond("/missing", new() { Status = 404 });
+        Redirect("/gone", 302, server.OtherHostUrl("/missing"));
+        Redirect("/away", 302, $"http://localhost:{closed}/b");
+        foreach (var hidden in new[] { false, true })
+        {
+            JsonObject Config(bool headers = false)
+            {
+                var config = new JsonObject { ["responseType"] = "object", ["hideResponse"] = hidden };
+                if (headers) config["headers"] = Headers();
+                return config;
+            }
+            var (crossedTo, missing, unreachable) = (await Run(Request("get", server.Url("/cross"), Config(headers: true))),
+                await Run(Request("get", server.Url("/gone"), Config())), await Run(Request("get", server.Url("/away"), Config())));
+            string[] want = hidden
+                ? [$"{host} redirected to another host, and the headers were not sent there", $"{host} redirected to another host, which answered HTTP 404", $"{host} redirected to another host, which could not be reached"]
+                : [$"{host} redirected to {other}, and the headers were not sent there", $"HTTP 404 from {other}", $"Could not reach localhost:{closed}"];
+            string?[] got = [crossedTo?.Message, missing?.Message, unreachable?.Message];
+            Check(got.SequenceEqual(want), $"the failures after a redirect, {(hidden ? "with" : "without")} the response kept out of run history: " + string.Join(" | ", got));
+        }
+    }
+
+    /// <summary>
+    /// No client of the process keeps a cookie: one a server sets is not sent with a later request to it, from the same
+    /// definition's <c>Http</c>, another definition's, a download, or an HTTP request step; a definition that needs a
+    /// session sends the Cookie header itself.
+    /// </summary>
+    static async Task NothingKeepsACookie()
+    {
+        await using var server = LoopbackServer.Start();
+        server.Respond("/login", new() { Body = "ok"u8.ToArray(), Headers = new Dictionary<string, string> { ["Set-Cookie"] = "session=s3cr3t; Path=/" } });
+        server.Respond("/status", LoopbackServer.Reply.Text("""{"at":"b"}"""));
+        string? Sent() => server.Requests().Last(r => r.Path == "/status").Headers.GetValueOrDefault("Cookie");
+        var sent = new List<string>();
+        using (var mine = SharpHttp.Create())
+        {
+            await mine.GetStringAsync(server.Url("/login"));
+            await mine.GetStringAsync(server.Url("/status"));
+            sent.Add("the same client: " + (Sent() ?? "none"));
+            using var other = SharpHttp.Create();
+            await other.GetStringAsync(server.Url("/status"));
+            sent.Add("another definition's: " + (Sent() ?? "none"));
+        }
+        var root = Path.Combine(Path.GetTempPath(), "cookies-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var files = new SharpFiles(root, _ => { }, () => new Receiving());
+            await files.Download(server.Url("/login"), Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData("ok"u8.ToArray())));
+            var body = System.Text.Encoding.UTF8.GetBytes("""{"at":"b"}""");
+            await files.Download(server.Url("/status"), Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(body)));
+            sent.Add("a download: " + (Sent() ?? "none"));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+        using var compiled = await Compiled.Of(Started([Request("login", server.Url("/login")), Request("get", server.Url("/status"), new { responseType = "object" }), Field("at", "/at", "string"), SetState("set", "reading")],
+            [D("get", "at", "value", "body"), D("at", "set", "value")]), "two requests");
+        await compiled.Run("setup", new FakeDefinition());
+        sent.Add("an HTTP request step: " + (Sent() ?? "none"));
+        Same(sent, ["the same client: none", "another definition's: none", "a download: none", "an HTTP request step: none"], "the cookie the server set");
     }
 
     /// <summary>

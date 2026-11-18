@@ -933,7 +933,9 @@ public sealed class VisualRuntime
     /// off. Its outputs are the final answer's status, its body as Response type reads it (none for a HEAD) and its
     /// headers by lower-case name. Every failure is worded by its cause and names the host that failed (and a port that
     /// is not the scheme's) only, never the path, the query, a header or the body, so that a poll failing for one reason
-    /// fails with one message; a .NET failure under it, which may quote any of them, is not kept.
+    /// fails with one message; a .NET failure under it, which may quote any of them, is not kept. With Hide response on,
+    /// where a redirect went is not said either: a failure after a redirect to another host names the host asked and
+    /// says "another host", such as <c>example.com redirected to another host, which answered HTTP 404</c>.
     /// </summary>
     async Task HttpRequest(string id,VisualScope scope,JsonNode cfg) {
         var method=Text(cfg,"method","GET");var responseType=Text(cfg,"responseType","string");
@@ -956,8 +958,14 @@ public sealed class VisualRuntime
         // The step's timeout covers the whole chain.
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(scope.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(seconds));
-        // The host asked last, and the port when it is not the scheme's own: never the user, the path or the query.
+        // The host asked last, and the port when it is not the scheme's own: never the user, the path or the query. Where a
+        // redirect goes is part of the response, so with the response kept out of run history a failure after a redirect
+        // to another host names the host asked first, and says "another host" for the one it went to (Away).
+        var hidden=Flag(cfg,"hideResponse",false);var origin=uri;
         var at=uri.Authority;var verb=method;var withBody=body!=null;
+        bool Away()=>hidden&&!string.Equals(uri.IdnHost,origin.IdnHost,StringComparison.OrdinalIgnoreCase);
+        // A failure at the host asked last: "<what> <host>" or, away, "<origin> redirected to another host, which <away>".
+        string At(string what,string away)=>Away()?$"{origin.Authority} redirected to another host, {away}":$"{what}{at}";
         int status=0;byte[]? answer=null;JsonObject headersOut=[];string? charset=null;
         try {
             for(var redirects=0;;redirects++) {
@@ -970,37 +978,38 @@ public sealed class VisualRuntime
                     if(!(uri.Scheme=="https"&&next.Scheme=="http")) {
                         if(redirects==MaxRedirects)throw new HttpRequestException($"{at} redirected too many times",null,response.StatusCode);
                         if(headers!=null&&!string.Equals(next.IdnHost,uri.IdnHost,StringComparison.OrdinalIgnoreCase))
-                            throw new HttpRequestException($"{at} redirected to {next.Authority}, and the headers were not sent there",null,response.StatusCode);
+                            throw new HttpRequestException($"{at} redirected to {(hidden?"another host":next.Authority)}, and the headers were not sent there",null,response.StatusCode);
                         if(status==303&&verb!="HEAD"||status is 301 or 302&&verb=="POST") {verb="GET";withBody=false;}
-                        uri=next;at=next.Authority;
+                        uri=next;if(!hidden)at=next.Authority;
                         continue;
                     }
                 }
-                if(Flag(cfg,"failOnStatus",true)&&status is <200 or >299)throw new HttpRequestException($"HTTP {status.ToString(CultureInfo.InvariantCulture)} from {at}",null,response.StatusCode);
+                if(Flag(cfg,"failOnStatus",true)&&status is <200 or >299)throw new HttpRequestException(Away()?At("",$"which answered HTTP {status.ToString(CultureInfo.InvariantCulture)}"):$"HTTP {status.ToString(CultureInfo.InvariantCulture)} from {at}",null,response.StatusCode);
                 headersOut=AnswerHeaders(response);
                 // A HEAD's answer has no body, whatever length it gives.
-                if(verb!="HEAD") {charset=response.Content.Headers.ContentType?.CharSet;answer=await Waiting(scope,ReadAnswer(response.Content,at,deadline.Token));}
+                if(verb!="HEAD") {charset=response.Content.Headers.ContentType?.CharSet;answer=await Waiting(scope,ReadAnswer(response.Content,Away()?$"the host {origin.Authority} redirected to":at,deadline.Token));}
                 break;
             }
         }
         catch(OperationCanceledException) when(!Cancelled(scope)) {
-            if(deadline.IsCancellationRequested)throw new TimeoutException($"{at} did not answer within {VisualGraphValidator.Words.Number(seconds)} second{(seconds==1?"":"s")}");
+            var within=$"within {VisualGraphValidator.Words.Number(seconds)} second{(seconds==1?"":"s")}";
+            if(deadline.IsCancellationRequested)throw new TimeoutException(Away()?At("",$"which did not answer {within}"):$"{at} did not answer {within}");
             // The pool's limit on opening a connection passed (SharpHttp.ConnectTimeout).
-            throw new HttpRequestException($"Could not reach {at}");
+            throw new HttpRequestException(At("Could not reach ","which could not be reached"));
         }
         catch(Exception error) when(error is HttpRequestException {StatusCode:null} or IOException) {
             throw new HttpRequestException((error as HttpRequestException)?.HttpRequestError switch {
-                HttpRequestError.NameResolutionError=>$"Could not find {at}",
-                HttpRequestError.SecureConnectionError=>$"Could not make a secure connection to {at}",
-                HttpRequestError.ResponseEnded=>$"The answer from {at} broke off",
-                HttpRequestError.InvalidResponse=>$"The answer from {at} could not be read",
-                HttpRequestError.ConnectionError=>$"Could not reach {at}",
-                _ when error is IOException=>$"The answer from {at} broke off",
-                _=>$"Could not reach {at}",
+                HttpRequestError.NameResolutionError=>At("Could not find ","which could not be found"),
+                HttpRequestError.SecureConnectionError=>At("Could not make a secure connection to ","to which no secure connection could be made"),
+                HttpRequestError.ResponseEnded=>Away()?At("","whose answer broke off"):$"The answer from {at} broke off",
+                HttpRequestError.InvalidResponse=>Away()?At("","whose answer could not be read"):$"The answer from {at} could not be read",
+                HttpRequestError.ConnectionError=>At("Could not reach ","which could not be reached"),
+                _ when error is IOException=>Away()?At("","whose answer broke off"):$"The answer from {at} broke off",
+                _=>At("Could not reach ","which could not be reached"),
             });
         }
         Output(scope,id,(double)status,"status");
-        if(answer!=null)Output(scope,id,AnswerBody(answer,charset,responseType,at),"body");
+        if(answer!=null)Output(scope,id,AnswerBody(answer,charset,responseType,Away()?$"the host {origin.Authority} redirected to":at),"body");
         Output(scope,id,headersOut,"headers");
     }
     /// <summary>What an HTTP request sends: text as it is (<c>text/plain</c>), anything else as JSON (<c>application/json</c>); nothing for no body.</summary>

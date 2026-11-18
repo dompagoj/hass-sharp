@@ -66,6 +66,135 @@ static class EntityStartupTests
         await Retry();
         await EditedOnDisk();
         await ForgetsTheStatesOfDefinitionsGone();
+        await CannotStartWarnsOnceInPlainWords();
+    }
+
+    // Definitions that cannot start: one whose Setup() throws a sentence of its own over a .NET failure, one whose Setup()
+    // downloads from a port nothing listens on, and one that starts only while its marker file exists.
+    const string Failing = """
+        public class FailingPlug : SharpDevice
+        {
+            public FailingPlug() { Add(new SharpSwitch("relay")); }
+            protected override Task Setup() => throw new InvalidOperationException("The plug at 10.0.9.1 does not answer",
+                new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionRefused));
+        }
+        public class FetchingPlug : SharpDevice
+        {
+            [Setting] public string Host { get; set; } = "";
+            public FetchingPlug() { Add(new SharpSensor("table")); }
+            protected override async Task Setup() => await Files.Download(Host + "/table.bin", new string('0', 64), cancellationToken: Stopping);
+        }
+        public class FlakyPlug : SharpDevice
+        {
+            [Setting] public string Host { get; set; } = "";
+            public FlakyPlug() { Add(new SharpSwitch("relay")); }
+            protected override Task Setup() => System.IO.File.Exists(Host) ? Task.CompletedTask : throw new InvalidOperationException("The plug is not ready");
+        }
+        """;
+
+    /// <summary>
+    /// A definition that cannot start, at startup, after a reload and on a retry, logs one warning in the words a save
+    /// uses, once per reason, with why in plain words (the outer sentence, not the innermost .NET failure); nothing at
+    /// error, no stack and no file path above Debug. A graph's failing When started flow is not logged at error too. A
+    /// retry that works forgets the reason, so the same failure later warns again.
+    /// </summary>
+    static async Task CannotStartWarnsOnceInPlainWords()
+    {
+        await using var home = new EntityTestHome("entity-startup-cannot-start");
+        var timeout = DefinitionHost.SetupTimeout;
+        DefinitionHost.SetupTimeout = TimeSpan.FromSeconds(60);
+        // A port nothing listens on: a download from it is refused.
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var closed = $"http://127.0.0.1:{((System.Net.IPEndPoint)listener.LocalEndpoint).Port}";
+        listener.Stop();
+        var marker = Path.Combine(home.Root, "flaky-ready");
+        var download = new
+        {
+            name = "Graph download",
+            settings = Array.Empty<object>(),
+            entities = new[] { new { key = "model", domain = "sensor", name = "Model" } },
+            logic = new { kind = "graph", graph = new JsonObject { ["version"] = 5, ["name"] = "Graph download", ["edges"] = new JsonArray(E("setup", "download")),
+                ["nodes"] = new JsonArray(N("setup", "entity_setup"), N("download", "download_file", new JsonObject { ["url"] = Lit("string", closed + "/model.bin"), ["sha256"] = Lit("string", new string('0', 64)) })) } },
+        };
+        const string refused = "The file from 127.0.0.1 could not be downloaded: Connection refused";
+        var reasons = new Dictionary<string, (string Name, string Reason)>
+        {
+            ["failing"] = ("Failing plug", "The plug at 10.0.9.1 does not answer (Connection refused)"),
+            ["fetch"] = ("Fetching plug", refused),
+            ["graphdl"] = ("Graph download", refused),
+            ["flaky"] = ("Flaky plug", "The plug is not ready"),
+        };
+        (int Warn, int Error, int Info) Mark() => (home.Logs(PyLogLevel.Warn).Length, home.Logs(PyLogLevel.Error).Length, home.Logs(PyLogLevel.Info).Length);
+        string[] CannotStart((int Warn, int, int) from) => [.. home.Logs(PyLogLevel.Warn).Skip(from.Warn).Where(l => l.StartsWith("Entity definition ", StringComparison.Ordinal)).Order(StringComparer.Ordinal)];
+        // Every line from the mark on above Debug: none at error, none with a stack or a path.
+        void Quiet((int Warn, int Error, int Info) from, string when)
+        {
+            var errors = home.Logs(PyLogLevel.Error).Skip(from.Error).ToArray();
+            Check(errors.Length == 0, $"{when}: logged at error: " + string.Join(" | ", errors));
+            var above = home.Logs(PyLogLevel.Warn).Skip(from.Warn).Concat(home.Logs(PyLogLevel.Info).Skip(from.Info)).ToArray();
+            Check(!above.Any(l => l.Contains("   at ", StringComparison.Ordinal) || l.Contains(".cs", StringComparison.Ordinal) || l.Contains(home.Root, StringComparison.Ordinal)),
+                $"{when}: a stack or a path above Debug: " + string.Join(" | ", above));
+        }
+        string[] Expected(params string[] ids) => [.. ids.Select(id => $"Entity definition \"{reasons[id].Name}\" ({id}) cannot start: {reasons[id].Reason}").Order(StringComparer.Ordinal)];
+        async Task Failed(HassSharpManager api, string when)
+        {
+            foreach (var (id, (_, reason)) in reasons)
+            {
+                var read = await Read(api, id);
+                Check(Status(read) == "failed" && read["activationError"]?.GetValue<string>() == reason, $"{when}: {id} answers: " + read.ToJsonString());
+            }
+        }
+        var first = new HassSharpManager(home.Root);
+        try
+        {
+            await first.Init();
+            await SaveLibrary(first, "plugs", 0, Failing);
+            var mark = Mark();
+            await SaveDefinition(first, "failing", "Failing plug", null, "library:plugs:NodeLib.FailingPlug");
+            await SaveDefinition(first, "fetch", "Fetching plug", closed, "library:plugs:NodeLib.FetchingPlug");
+            await Ok(first.EntityRequest, new { operation = "save", id = "graphdl", expectedRevision = 0, definition = download });
+            await SaveDefinition(first, "flaky", "Flaky plug", marker, "library:plugs:NodeLib.FlakyPlug");
+            Check(CannotStart(mark).SequenceEqual(Expected("failing", "fetch", "graphdl", "flaky")), "a save warns once of each: " + string.Join(" | ", home.Logs()));
+            Quiet(mark, "the saves");
+            await Failed(first, "saved");
+        }
+        finally { await first.UnloadAsync(); }
+
+        try
+        {
+            foreach (var when in new[] { "at startup", "after a reload" })
+            {
+                var mark = Mark();
+                var api = new HassSharpManager(home.Root);
+                try
+                {
+                    await api.Init();
+                    Check(CannotStart(mark).SequenceEqual(Expected("failing", "fetch", "graphdl", "flaky")), $"{when}: one warning for each: " + string.Join(" | ", home.Logs().TakeLast(12)));
+                    Quiet(mark, when);
+                    await Failed(api, when);
+                    Console.WriteLine($"PASS entity startup: {when}, a definition that cannot start logs one warning in plain words, nothing at error, and no stack or path");
+                    if (when == "at startup") continue;
+
+                    // A retry for the same reasons says nothing more; one that works forgets the reason, so the same failure warns again.
+                    mark = Mark();
+                    await api.RetryFailedLoads();
+                    Check(CannotStart(mark).Length == 0, "a retry for the same reason warned: " + string.Join(" | ", CannotStart(mark)));
+                    File.WriteAllText(marker, "");
+                    await api.RetryFailedLoads();
+                    Check(Status(await Read(api, "flaky")) == "running", "the flaky plug does not run after the retry");
+                    File.Delete(marker);
+                    await Ok(api.EntityRequest, new { operation = "save", id = "flaky", expectedRevision = 1, definition = EntityApiTests.Definition("Flaky plug", marker, "library:plugs:NodeLib.FlakyPlug") });
+                    var again = CannotStart(mark);
+                    Check(again.Length == 1 && again[0].StartsWith("Entity definition \"Flaky plug\" (flaky) cannot start", StringComparison.Ordinal) && again[0].EndsWith(": The plug is not ready", StringComparison.Ordinal),
+                        "a failure after a retry that worked does not warn again: " + string.Join(" | ", again));
+                    Quiet(mark, "the retries");
+                    Console.WriteLine("PASS entity startup: a retry for the same reason warns no more, and one that works forgets it, so the same failure later warns again");
+                }
+                finally { await api.UnloadAsync(); }
+            }
+        }
+        finally { DefinitionHost.SetupTimeout = timeout; }
     }
 
     /// <summary>

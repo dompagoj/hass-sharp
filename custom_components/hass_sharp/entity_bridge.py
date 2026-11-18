@@ -336,8 +336,16 @@ class EntityBridge:
         unique_id, domain = description["uniqueId"], description["domain"]
         entity = self._live.get(unique_id)
         if entity is not None:
-            entity.apply(description, device_info, definition_name)
-            entity.async_write_ha_state()
+            # A description Home Assistant refuses (at the apply or the state write) leaves the entity as it was, not
+            # half described: its attributes and Home Assistant's cached properties are all in its __dict__.
+            before = dict(vars(entity))
+            try:
+                entity.apply(description, device_info, definition_name)
+                entity.async_write_ha_state()
+            except BaseException:
+                vars(entity).clear()
+                vars(entity).update(before)
+                raise
             # Home Assistant updates the rest of the registry entry from the state write, not these (spike rule 6). The
             # unit is the one the entity shows, as Home Assistant writes it on an add: a sensor re-added with another
             # unit of its device class keeps the unit stored for it and converts to it (spike rule 7).

@@ -459,6 +459,88 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.state('sensor.plug_one_power'))
         self.assertIsNone(self.registered('binary_sensor', 'plug1:motion'))
 
+    def narrowed(self, **options):
+        """The controls with some entities' options replaced, by key."""
+        request = json.loads(controls())
+        for entity in request['entities']:
+            if entity['key'] in options:
+                entity['options'] = {**entity['options'], **options[entity['key']]}
+        return json.dumps(request)
+
+    def write_failures(self):
+        """The log records of state writes Home Assistant refused, which a sync must not cause."""
+        return [r.getMessage() for r in self.records.records if r.levelno >= logging.WARNING
+                and r.name != 'homeassistant.loader' and not r.getMessage().startswith('Executing ')]
+
+    async def test_a_text_too_long_for_its_new_maximum_is_dropped(self):
+        await self.sync(controls())
+        await self.push(snapshot('plug1:message', values={'value': 'hello there'}))
+        self.assertEqual('hello there', self.state(CONTROLS['message']).state)
+        # The sync succeeds, and the value the text can no longer show is gone: its state is unknown.
+        await self.sync(self.narrowed(message={'max': 5}))
+        self.assertEqual([], self.write_failures())
+        message = self.state(CONTROLS['message'])
+        self.assertEqual(('unknown', 5), (message.state, message.attributes['max']))
+        await self.push(snapshot('plug1:message', values={'value': 'hi'}))
+        self.assertEqual('hi', self.state(CONTROLS['message']).state)
+        # The same for a pattern it no longer matches, and a minimum it is now shorter than.
+        await self.sync(self.narrowed(message={'max': 5, 'pattern': '^[0-9]*$'}))
+        self.assertEqual('unknown', self.state(CONTROLS['message']).state)
+        await self.push(snapshot('plug1:message', values={'value': '42'}))
+        await self.sync(self.narrowed(message={'min': 3, 'max': 5, 'pattern': '^[0-9]*$'}))
+        self.assertEqual(('unknown', []), (self.state(CONTROLS['message']).state, self.write_failures()))
+
+    async def test_a_password_text_dropped_is_not_quoted(self):
+        await self.sync(self.narrowed(message={'mode': 'password'}))
+        await self.push(snapshot('plug1:message', values={'value': 'hunter two'}))
+        await self.sync(self.narrowed(message={'mode': 'password', 'max': 5}))
+        self.assertEqual('unknown', self.state(CONTROLS['message']).state)
+        self.assertFalse([r for r in self.records.records if 'hunter' in r.getMessage() or 'hunter' in (r.exc_text or '')])
+
+    async def test_a_select_option_removed_is_dropped(self):
+        await self.sync(controls())
+        await self.push(snapshot('plug1:mode', values={'option': 'comfort'}))
+        self.assertEqual('comfort', self.state(CONTROLS['mode']).state)
+        await self.sync(self.narrowed(mode={'options': ['eco', 'boost']}))
+        self.assertEqual([], self.write_failures())
+        mode = self.state(CONTROLS['mode'])
+        self.assertEqual(('unknown', ['eco', 'boost']), (mode.state, mode.attributes['options']))
+        self.assertIsNone(self.bridge._live['plug1:mode'].current_option)
+        await self.push(snapshot('plug1:mode', values={'option': 'boost'}))
+        self.assertEqual('boost', self.state(CONTROLS['mode']).state)
+
+    async def test_a_sensor_value_its_new_options_lack_is_dropped(self):
+        def sensor(**options):
+            return definition(description('level', 'sensor', 'Level', deviceClass='enum',
+                                          options={'unit': None, 'stateClass': None, 'options': ['low', 'high'], **options}))
+        await self.sync(sensor())
+        await self.push(snapshot('plug1:level', values={'value': 'high'}))
+        self.assertEqual('high', self.state('sensor.plug_one_level').state)
+        await self.sync(sensor(options=['low', 'medium']))
+        self.assertEqual([], self.write_failures())
+        self.assertEqual('unknown', self.state('sensor.plug_one_level').state)
+        await self.push(snapshot('plug1:level', values={'value': 'medium'}))
+        self.assertEqual('medium', self.state('sensor.plug_one_level').state)
+
+    async def test_a_sync_whose_write_fails_leaves_the_entity_as_it_was(self):
+        await self.sync(controls())
+        await self.push(snapshot('plug1:message', values={'value': 'hello'}))
+        live = self.bridge._live['plug1:message']
+        before = (live.name, live.native_max, live.native_value, live.pattern)
+
+        def refuse():
+            raise ValueError('Home Assistant refused the state')
+        with patch.object(live, 'async_write_ha_state', refuse):
+            answer = await self.answer(self.bridge.begin_sync,
+                                       self.narrowed(message={'max': 8, 'pattern': '^[a-z]*$'}).replace('"Message"', '"Note"'))
+        self.assertEqual('error', answer[0], answer)
+        self.records.records = [r for r in self.records.records
+                                if not (r.name == self.const.logger.name and 'Cannot sync' in r.getMessage())]
+        # Nothing of the refused description is left on it: not half its options, not its name.
+        self.assertEqual(before, (live.name, live.native_max, live.native_value, live.pattern))
+        await self.push(snapshot('plug1:message', values={'value': 'hello again'}))
+        self.assertEqual('hello again', self.state(CONTROLS['message']).state)
+
     async def test_key_whose_domain_changes_is_added_anew(self):
         await self.sync(plug(description('main', 'switch', 'Main')))
         ids = await self.sync(plug(description('main', 'sensor', 'Main')))

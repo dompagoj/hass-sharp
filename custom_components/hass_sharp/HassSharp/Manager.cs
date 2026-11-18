@@ -99,7 +99,15 @@ public partial class HassSharpManager
             if (assemblies.Count == 0)
                 Logger.Info("No automations found on initialization");
 
-            await _userScriptManager.LoadUserScripts([.. assemblies, .. definitions], RecordLoadError);
+            // A definition that cannot start warns as a save does, once per reason, in plain words; an automation's
+            // failure is recorded as before.
+            var documents = definitions.ToDictionary(d => d.Compiled.FilePath, d => d.Document, StringComparer.Ordinal);
+            await _userScriptManager.LoadUserScripts([.. assemblies, .. definitions.Select(d => d.Compiled)], (path, ex) =>
+            {
+                if (!documents.TryGetValue(path, out var document)) { RecordLoadError(path, ex); return; }
+                RecordDefinitionLoadError(document, ex);
+                WarnCannotStart(document, _loadErrors.GetValueOrDefault(path));
+            });
             _userScriptManager.DependencyTracking.Debug();
             await PruneEntities();
         }

@@ -26,7 +26,7 @@ internal static class SharpHttp
 
     /// <summary>
     /// What every client sends through: at most 5 redirects, every decompression, <see cref="ConnectTimeout"/> to connect,
-    /// and connections renewed every 2 minutes, so a device that changes its address is found again.
+    /// connections renewed every 2 minutes, so a device that changes its address is found again, and no cookies kept.
     /// </summary>
     internal static SocketsHttpHandler Handler { get; private set; } = null!;
 
@@ -58,6 +58,10 @@ internal static class SharpHttp
         AutomaticDecompression = decompression,
         ConnectTimeout = connectTimeout,
         PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+        // One jar for the whole process would hand a cookie one definition's device or account set to every other
+        // definition's requests to that host, and keep it past the definition: nothing keeps cookies, and a definition
+        // that needs a session sends the Cookie header itself.
+        UseCookies = false,
     };
 
     /// <summary>A new client over <see cref="Handler"/>, which disposing it leaves open: 30 s per request, <c>User-Agent: HassSharp</c>.</summary>

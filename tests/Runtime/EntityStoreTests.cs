@@ -101,6 +101,7 @@ static class EntityStoreTests
             (nameof(ComposeAndDecomposeAreInverse), ComposeAndDecomposeAreInverse),
             (nameof(ComposeCarriesNoSettingValuesOrSecrets), () => ComposeCarriesNoSettingValuesOrSecrets(snapshot)),
             (nameof(GraphDocumentChecks), () => GraphDocumentChecks(snapshot)),
+            (nameof(OptionProblemsNameTheirOption), () => OptionProblemsNameTheirOption(snapshot)),
             (nameof(ValidDocumentsAreValidDefinitions), () => ValidDocumentsAreValidDefinitions(snapshot)),
             (nameof(RemovingAnEntityStillNamedByANodeIsRefused), () => RemovingAnEntityStillNamedByANodeIsRefused(snapshot)),
             (nameof(PreviewReturnsTheGraphsWarnings), () => PreviewReturnsTheGraphsWarnings(snapshot)),
@@ -221,30 +222,30 @@ static class EntityStoreTests
         Only(With(Entity("heater", "climate")), "definition.entityDomain", "heater", "heater", "climate", "binary_sensor", "sensor", "switch", "button", "number", "select", "text", "light", "cover");
         Only(With(new JsonObject { ["key"] = "lamp" }), "definition.entityDomain", "lamp", "lamp");
         Only(With(Entity("door", "binary_sensor", new { options = new { unit = "W" } })), "definition.entityOption", "door", "door", "unit");
-        Only(Level(new { options = new { stateClass = "sometimes" } }), "definition.entityOption", "level", "level", "stateClass", "measurement");
-        Only(Level(new { options = new { unit = 5 } }), "definition.entityOption", "level", "level", "unit");
-        Only(Level(new { options = new { options = new object[] { "low", 1 } } }), "definition.entityOption", "level", "level", "options");
-        Only(Level(new { options = new { options = "low" } }), "definition.entityOption", "level", "level", "options");
+        Only(Level(new { options = new { stateClass = "sometimes" } }), "definition.entityOption", "level", "State class of ", "measurement");
+        Only(Level(new { options = new { unit = 5 } }), "definition.entityOption", "level", "Unit of ");
+        Only(Level(new { options = new { options = new object[] { "low", 1 } } }), "definition.entityOption", "level", "Options of ");
+        Only(Level(new { options = new { options = "low" } }), "definition.entityOption", "level", "Options of ");
         Only(Level(new { options = new[] { "unit" } }), "definition.entityOption", "level", "level");
-        Only(Level(new { options = new { options = Array.Empty<string>() } }), "definition.entityOption", "level", "Option options of entity level is an empty list; give it at least one text, or leave it out");
+        Only(Level(new { options = new { options = Array.Empty<string>() } }), "definition.entityOption", "level", "Options of level is an empty list; give it at least one text, or leave it out");
         // The options of the other domains: numbers, true or false, those a domain needs, a min below the max, a pattern.
         DefinitionBody One(string domain, object? options) => GraphBody(Graph("All", []), [Entity("e", domain, new { options })]);
         Only(One("button", new { unit = "W" }), "definition.entityOption", "e", "Entity e has the option unit, but a button takes no options; remove it");
-        Only(One("number", new { min = "5" }), "definition.entityOption", "e", "Option min of entity e takes a number");
-        Only(One("number", new { step = true }), "definition.entityOption", "e", "Option step of entity e takes a number");
-        Only(One("number", new { mode = "dial" }), "definition.entityOption", "e", "Option mode of entity e takes one of auto, box, slider");
-        Only(One("number", new { min = 10, max = 5 }), "definition.entityOption", "e", "Entity e has a min of 10, which is not below its max of 5; give a min below the max");
-        Only(One("number", new { min = 2.5, max = 2.5 }), "definition.entityOption", "e", "Entity e has a min of 2.5, which is not below its max of 2.5");
-        Only(One("text", new { min = 8, max = 4 }), "definition.entityOption", "e", "Entity e has a min of 8, which is not below its max of 4");
-        Only(One("number", new { min = 500 }), "definition.entityOption", "e", "Entity e has a min of 500, which is not below its max of 100");
-        Only(One("text", new { max = -1 }), "definition.entityOption", "e", "Entity e has a min of 0, which is not below its max of -1");
-        Only(One("text", new { mode = "secret" }), "definition.entityOption", "e", "Option mode of entity e takes one of text, password");
-        Only(One("text", new { pattern = "([" }), "definition.entityOption", "e", "Option pattern of entity e is not a regular expression");
-        Only(One("select", null), "definition.entityOption", "e", "Give entity e the option options: a select needs it");
-        Only(One("select", new { options = (string[]?)null }), "definition.entityOption", "e", "Give entity e the option options: a select needs it");
-        Only(One("select", new { options = Array.Empty<string>() }), "definition.entityOption", "e", "Option options of entity e is an empty list; give it at least one text");
+        Only(One("number", new { min = "5" }), "definition.entityOption", "e", "Minimum of e takes a number");
+        Only(One("number", new { step = true }), "definition.entityOption", "e", "Step of e takes a number");
+        Only(One("number", new { mode = "dial" }), "definition.entityOption", "e", "Shown as of e takes one of auto, box, slider");
+        Only(One("number", new { min = 10, max = 5 }), "definition.entityOption", "e", "Minimum of e is 10, which is not below its maximum of 5");
+        Only(One("number", new { min = 2.5, max = 2.5 }), "definition.entityOption", "e", "Minimum of e is 2.5, which is not below its maximum of 2.5");
+        Only(One("text", new { min = 8, max = 4 }), "definition.entityOption", "e", "Shortest length of e is 8, which is not below its longest length of 4");
+        Only(One("number", new { min = 500 }), "definition.entityOption", "e", "Minimum of e is 500, which is not below its maximum of 100");
+        Only(One("text", new { max = -1 }), "definition.entityOption", "e", "Shortest length of e is 0, which is not below its longest length of -1");
+        Only(One("text", new { mode = "secret" }), "definition.entityOption", "e", "Shown as of e takes one of text, password");
+        Only(One("text", new { pattern = "([" }), "definition.entityOption", "e", "Pattern of e is not a regular expression");
+        Only(One("select", null), "definition.entityOption", "e", "e needs options: a select cannot work without it");
+        Only(One("select", new { options = (string[]?)null }), "definition.entityOption", "e", "e needs options: a select cannot work without it");
+        Only(One("select", new { options = Array.Empty<string>() }), "definition.entityOption", "e", "Options of e is an empty list; give it at least one text");
         Check(!generator.Preview(One("select", new { options = Array.Empty<string>() }), snapshot).Diagnostics[0].Message.Contains("leave it out", StringComparison.Ordinal), "a list an entity needs is not one to leave out");
-        Only(One("select", new { options = new object[] { "a", 1 } }), "definition.entityOption", "e", "Option options of entity e takes a list of texts");
+        Only(One("select", new { options = new object[] { "a", 1 } }), "definition.entityOption", "e", "Options of e takes a list of texts");
         // What Home Assistant takes: a step above 0, a text of 0 to 255 characters, a length a whole number.
         var limits = new List<string>();
         void Limit(DefinitionBody body, params string[] messages)
@@ -253,17 +254,17 @@ static class EntityStoreTests
             var want = messages.Select(m => $"definition.entityOption e {m}").ToList();
             if (!got.SequenceEqual(want)) limits.Add($"expected [{string.Join(" | ", want)}], got [{string.Join(" | ", got)}]");
         }
-        Limit(One("number", new { step = 0 }), "Option step of entity e takes a number above 0, not 0");
-        Limit(One("number", new { step = -0.5 }), "Option step of entity e takes a number above 0, not -0.5");
-        Limit(One("text", new { max = 300 }), "Option max of entity e takes 255 or less, as Home Assistant keeps at most 255 characters, not 300");
-        Limit(One("text", new { min = -1 }), "Option min of entity e takes 0 or more, not -1");
-        Limit(One("text", new { min = 0.5 }), "Option min of entity e takes a whole number, not 0.5");
-        Limit(One("text", new { min = 0.5, max = 0.9 }), "Option min of entity e takes a whole number, not 0.5", "Option max of entity e takes a whole number, not 0.9");
+        Limit(One("number", new { step = 0 }), "Step of e takes a number above 0, not 0");
+        Limit(One("number", new { step = -0.5 }), "Step of e takes a number above 0, not -0.5");
+        Limit(One("text", new { max = 300 }), "Longest length of e takes 255 or less, as Home Assistant keeps at most 255 characters, not 300");
+        Limit(One("text", new { min = -1 }), "Shortest length of e takes 0 or more, not -1");
+        Limit(One("text", new { min = 0.5 }), "Shortest length of e takes a whole number, not 0.5");
+        Limit(One("text", new { min = 0.5, max = 0.9 }), "Shortest length of e takes a whole number, not 0.5", "Longest length of e takes a whole number, not 0.9");
         Limit(One("text", new { min = 0, max = 255 }));
         Limit(One("number", new { min = -0.5, max = 0.5, step = 0.25 }));
         if (limits.Count > 0) throw new Exception($"option limits: {limits.Count} failing:\n" + string.Join("\n", limits));
-        Only(One("light", new { dimmable = "yes" }), "definition.entityOption", "e", "Option dimmable of entity e takes true or false");
-        Only(One("cover", new { positionable = 1 }), "definition.entityOption", "e", "Option positionable of entity e takes true or false");
+        Only(One("light", new { dimmable = "yes" }), "definition.entityOption", "e", "Can be dimmed of e takes true or false");
+        Only(One("cover", new { positionable = 1 }), "definition.entityOption", "e", "Has a position of e takes true or false");
         Only(Level(new { name = 5 }), "definition.entityField", "level", "level", "name");
         Only(Level(new { icon = true }), "definition.entityField", "level", "level", "icon");
         Only(Level(new { deviceClass = new { kind = "power" } }), "definition.entityField", "level", "level", "deviceClass");
@@ -294,6 +295,38 @@ static class EntityStoreTests
         Check(many.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.name", "definition.entityKey", "definition.entityDomain", "definition.entityOption", "definition.settingType", "definition.duplicateSetting"]),
             "every problem of the document is reported, in a fixed order: " + Codes(many));
         Console.WriteLine("PASS entity store: a document with problems gets those alone, every one in a fixed order");
+    }
+
+    /// <summary>
+    /// Each case of tests/fixtures/entity-option-problems.json, which the panel's tests read too: the problems of one
+    /// entity's options, each at the entity (<c>inputId</c>) and the option it is about (<c>portId</c>), in the labels'
+    /// words, and with that option in the JSON the API answers.
+    /// </summary>
+    static void OptionProblemsNameTheirOption(VisualCatalogSnapshot snapshot)
+    {
+        var generator = new DefinitionGenerator();
+        var cases = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "entity-option-problems.json")))!["cases"]!.AsArray();
+        var failures = new List<string>();
+        foreach (var item in cases.OfType<JsonObject>())
+        {
+            var entity = new JsonObject { ["key"] = item["key"]!.DeepClone(), ["domain"] = item["domain"]!.DeepClone() };
+            if (item["name"] is { } name) entity["name"] = name.DeepClone();
+            if (item.ContainsKey("options")) entity["options"] = item["options"]?.DeepClone();
+            var preview = generator.Preview(GraphBody(Graph("Options", []), [entity]), snapshot);
+            var got = preview.Diagnostics.Select(d => $"{d.Code} {d.InputId} {d.PortId ?? "null"} {d.NodeId ?? "null"} {d.Message}").ToArray();
+            var wanted = item["problems"]!.AsArray().OfType<JsonObject>().ToArray();
+            bool Matches(VisualDiagnostic d, JsonObject w) => d.Code == w["code"]!.GetValue<string>() && d.InputId == w["inputId"]?.GetValue<string>()
+                && d.PortId == w["portId"]?.GetValue<string>() && d.NodeId == null && d.Severity == 3
+                && (w["message"] is { } message ? d.Message == message.GetValue<string>() : d.Message.StartsWith(w["messageStartsWith"]!.GetValue<string>(), StringComparison.Ordinal));
+            if (preview.Diagnostics.Count != wanted.Length || !preview.Diagnostics.Zip(wanted).All(pair => Matches(pair.First, pair.Second)))
+                failures.Add($"{item["what"]}: expected {string.Join(" | ", wanted.Select(w => w.ToJsonString()))}, got {string.Join(" | ", got)}");
+            // The preview and save answers serialize the diagnostics as they are: the option goes out as portId.
+            var answered = JsonSerializer.SerializeToNode(preview.Diagnostics, VisualStore.Json)!.AsArray();
+            if (!answered.OfType<JsonObject>().Zip(wanted).All(pair => pair.First.ContainsKey("portId") && pair.First["portId"]?.ToJsonString() == pair.Second["portId"]?.ToJsonString()))
+                failures.Add($"{item["what"]}: the answer's portId: {answered.ToJsonString()}");
+        }
+        if (failures.Count > 0) throw new Exception($"{failures.Count} of {cases.Count} option problem cases failing:\n" + string.Join("\n", failures));
+        Console.WriteLine($"PASS entity store: each of {cases.Count} option problems of the shared fixture is at its entity and option, in the labels' words");
     }
 
     /// <summary>
@@ -657,6 +690,17 @@ static class EntityStoreTests
         Only(Body(type: PollerType, settings: [Setting("Plain", "2147483648")]), ranged, "definition.settingType", "Plain takes a whole number from -2147483648 to 2147483647", "Plain");
         foreach (var (key, value) in new[] { ("Interval", "1"), ("Interval", "3600"), ("Gain", "0.5"), ("Gain", "1e40"), ("Count", "10"), ("Count", "-9223372036854775808"), ("Plain", "-2147483648") })
             Check(generator.Preview(Body(type: PollerType, settings: [Setting(key, value)]), ranged).Valid, $"{key} {value} is within its range");
+        // An int's range given on one side only says that side, not the int's own bound on the other.
+        var oneSided = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new NodeLibrarySource("sided", """
+            public class Sided : SharpDevice
+            {
+                [Setting(Minimum = 1)] public int Retries { get; set; } = 3;
+                [Setting(Maximum = 60)] public int Delay { get; set; }
+            }
+            """, 1)]).Snapshot;
+        Only(Body(type: "library:sided:NodeLib.Sided", settings: [Setting("Retries", "0")]), oneSided, "definition.settingType", "Retries takes a whole number of at least 1", "Retries");
+        Only(Body(type: "library:sided:NodeLib.Sided", settings: [Setting("Delay", "61")]), oneSided, "definition.settingType", "Delay takes a whole number of at most 60", "Delay");
+        Only(Body(type: "library:sided:NodeLib.Sided", settings: [Setting("Retries", "2147483648")]), oneSided, "definition.settingType", "Retries takes a whole number of at least 1", "Retries");
         Console.WriteLine("PASS entity definitions: a value outside its setting's range is refused naming the setting's label and the range");
 
         foreach (var key in new[] { "Host", "Token", "Channel", "Mode" })

@@ -7,7 +7,7 @@ namespace HassSharp;
 
 /// <summary>What a definition previews to: whether it can be saved, its problems, the source it generates and its class.</summary>
 /// <param name="Valid">True when no diagnostic is an error.</param>
-/// <param name="Diagnostics">Its problems, each with a <c>definition.</c> code and, for a setting, the setting's key as its input.</param>
+/// <param name="Diagnostics">Its problems, each with a <c>definition.</c> code and, for a setting, the setting's key as its input; for an entity's option, the entity's key as its input and the option's as its port.</param>
 /// <param name="Source">The generated source; empty when the definition is not valid.</param>
 /// <param name="Type">The class it creates; null when the type is not one the libraries declare, and for graph logic.</param>
 public sealed record DefinitionPreview(bool Valid, List<VisualDiagnostic> Diagnostics, string Source, EntityTypeDescriptor? Type)
@@ -43,7 +43,7 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
     public DefinitionPreview Preview(DefinitionBody body, VisualCatalogSnapshot snapshot)
     {
         var errors = new List<VisualDiagnostic>();
-        void Error(string code, string message, string? input = null) => errors.Add(new(null, message, 3, InputId: input, Code: code));
+        void Error(string code, string message, string? input = null, string? port = null) => errors.Add(new(null, message, 3, InputId: input, PortId: port, Code: code));
 
         if (string.IsNullOrWhiteSpace(body.Name) || body.Name.Length > 120) Error("definition.name", "Give the definition a name of up to 120 characters");
         var kind = body.Logic?.Kind;
@@ -83,7 +83,7 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
         };
     }
 
-    static void Settings(EntityTypeDescriptor type, List<DefinitionSetting> given, Action<string, string, string?> error)
+    static void Settings(EntityTypeDescriptor type, List<DefinitionSetting> given, DefinitionProblem error)
     {
         var settings = given.Select(s => (Key: s?.Key ?? "", s?.Value)).ToArray();
         var known = type.Settings.ToDictionary(s => s.Key, StringComparer.Ordinal);
@@ -117,7 +117,8 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
 
     /// <summary>
     /// What a setting takes, in words after "takes": its kind and, for a number, its range, such as <c>a whole number from 1
-    /// to 3600</c> or <c>a number of at least 0.5</c>.
+    /// to 3600</c> or <c>a number of at least 0.5</c>; an int's range declared on one side only, such as <c>a whole number of
+    /// at least 1</c> (the other side is the int's own, which goes without saying).
     /// </summary>
     internal static string Phrase(EntitySettingDescriptor setting)
     {
@@ -129,7 +130,11 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
             var type => DefinitionDocument.Phrase(type),
         };
         if (setting.Type is not ("integer" or "number")) return what;
-        return (setting.Minimum, setting.Maximum) switch
+        // An int's own bound is no bound the setting declared: a range given on one side says that side only.
+        var (low, high) = (setting.Minimum, setting.Maximum);
+        if (setting.Type == "integer" && low == int.MinValue && high != int.MaxValue) low = null;
+        if (setting.Type == "integer" && high == int.MaxValue && low != null && low != int.MinValue) high = null;
+        return (low, high) switch
         {
             ({ } minimum, { } maximum) => $"{what} from {Number(minimum)} to {Number(maximum)}",
             ({ } minimum, null) => $"{what} of at least {Number(minimum)}",

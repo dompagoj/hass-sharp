@@ -288,7 +288,8 @@ static class EntityToolsTests
         files.Close();
         await Throws<OperationCanceledException>(() => download, "a download when its definition stops");
         Check(Listed(home, sha).Length == 0, "a cancelled download leaves nothing");
-        await Throws<ObjectDisposedException>(() => files.Download(server.Url("/closed.bin"), sha), "a download after its definition stopped");
+        var stopped = await Throws<ObjectDisposedException>(() => files.Download(server.Url("/closed.bin"), sha), "a download after its definition stopped");
+        Check(stopped.Message == "The definition has stopped: it downloads nothing more", "the message: " + stopped.Message);
         // The caller's own cancellation.
         using var cancel = new CancellationTokenSource();
         var cancelled = Files(home).Download(server.Url("/closed.bin"), sha, cancellationToken: cancel.Token);
@@ -441,9 +442,11 @@ static class EntityToolsTests
         await Throws<OperationCanceledException>(() => plug.Held!.WaitAsync(TimeSpan.FromSeconds(5)), "the request still in flight when the definition stopped");
         Check(plug.HeldEndedAfterStop, "the request in flight ended only after Stop()");
         var disposed = await Throws<ObjectDisposedException>(() => Task.FromResult(plug.Client), "Http after the definition stopped");
-        Check(disposed.Message.StartsWith("Tool has stopped: its HTTP client is disposed", StringComparison.Ordinal), "the message: " + disposed.Message);
+        // A plain sentence: no "Object name: ..." after it.
+        Check(disposed.Message == "Tool has stopped: its HTTP client is disposed", "the message: " + disposed.Message);
         await Throws<ObjectDisposedException>(() => plug.DeviceClient!.GetStringAsync(server.Url("/stop")), "the client kept from before the stop");
-        await Throws<ObjectDisposedException>(() => Task.FromResult(plug.Downloads), "Files after the definition stopped");
+        var noFiles = await Throws<ObjectDisposedException>(() => Task.FromResult(plug.Downloads), "Files after the definition stopped");
+        Check(noFiles.Message == "Tool has stopped: it downloads nothing more", "the message: " + noFiles.Message);
 
         // One that never used them: they are not made after the stop either.
         manager = Manager(home);

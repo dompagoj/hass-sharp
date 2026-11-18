@@ -90,7 +90,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         {
             lock (gate)
             {
-                if (released) throw new ObjectDisposedException(nameof(HttpClient), $"{definition.Name} has stopped: its HTTP client is disposed");
+                if (released) throw new ObjectDisposedException(null, $"{definition.Name} has stopped: its HTTP client is disposed");
                 return http ??= SharpHttp.Create();
             }
         }
@@ -103,7 +103,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         {
             lock (gate)
             {
-                if (released) throw new ObjectDisposedException(nameof(SharpFiles), $"{definition.Name} has stopped: it downloads nothing more");
+                if (released) throw new ObjectDisposedException(null, $"{definition.Name} has stopped: it downloads nothing more");
                 return files ??= new SharpFiles(Manager.FilesRoot ?? throw new InvalidOperationException("Downloads have no directory here"),
                     line => Report(line, PyLogLevel.Info), () => setupClock?.Receiving() ?? Nothing);
             }
