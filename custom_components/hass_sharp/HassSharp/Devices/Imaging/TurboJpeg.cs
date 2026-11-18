@@ -7,7 +7,8 @@ namespace HassSharp;
 /// <c>/usr/lib/libturbojpeg.so.0</c> (3.1); Ubuntu has 2.1. Only functions present since 2.0 are called, through function
 /// pointers looked up once per process, so a missing library or function only makes <see cref="Available"/> false.
 /// A TurboJPEG handle is not thread-safe, and after a failed call it stays failed: each thread has one decompressor and
-/// one compressor, destroyed and made again after any failed call. Pixels are RGB, three bytes each, rows packed.
+/// one compressor, destroyed and made again after any failed call, and destroyed once the thread has ended. Pixels are
+/// RGB, three bytes each, rows packed.
 /// </summary>
 internal static unsafe class TurboJpeg
 {
@@ -15,6 +16,7 @@ internal static unsafe class TurboJpeg
 
     const int PixelFormatRgb = 0;   // TJPF_RGB
     const int Subsampling420 = 2;   // TJSAMP_420
+    const int LimitScans = 32768;   // TJFLAG_LIMITSCANS (2.1+): a progressive picture of over 500 scans is refused
     const int ErrorWarning = 0;     // TJERR_WARNING: a truncated or damaged picture, still decoded
 
     // The soname first (Linux has no unversioned .so without the development package), then by directory: Python.NET
@@ -37,8 +39,36 @@ internal static unsafe class TurboJpeg
     }
 
     static readonly Api? api = Find();
-    [ThreadStatic] static nint decompressor;
-    [ThreadStatic] static nint compressor;
+    [ThreadStatic] static Handle? decompressor;
+    [ThreadStatic] static Handle? compressor;
+
+    /// <summary>
+    /// A TurboJPEG handle, destroyed when disposed after a failed call, or by its finalizer once the thread that holds
+    /// it has ended and nothing reaches it.
+    /// </summary>
+    sealed class Handle : SafeHandle
+    {
+        internal Handle(nint value) : base(0, ownsHandle: true)
+        {
+            SetHandle(value);
+            Interlocked.Increment(ref live);
+        }
+
+        public override bool IsInvalid => handle == 0;
+
+        protected override bool ReleaseHandle()
+        {
+            api!.Destroy(handle);
+            Interlocked.Decrement(ref live);
+            return true;
+        }
+    }
+
+    /// <summary>For tests: how many handles exist in the process.</summary>
+    static int live;
+    internal static int LiveHandles => Volatile.Read(ref live);
+    /// <summary>For tests: TJFLAG_PROGRESSIVE, to make a progressive JPEG with <see cref="Encode"/>.</summary>
+    internal const int Progressive = 16384;
 
     /// <summary>For tests: makes the library unavailable, as on a system without it.</summary>
     internal static bool Disabled { get; set; }
@@ -61,9 +91,10 @@ internal static unsafe class TurboJpeg
 
     static Api Require() => Available ? api! : throw new InvalidOperationException(Missing);
 
-    static nint Decompressor(Api api) => decompressor != 0 ? decompressor : decompressor = Made(api, api.InitDecompress());
-    static nint Compressor(Api api) => compressor != 0 ? compressor : compressor = Made(api, api.InitCompress());
-    static nint Made(Api api, nint handle) => handle != 0 ? handle
+    // The thread-static field keeps the handle alive while a call uses its value.
+    static nint Decompressor(Api api) => (decompressor ??= Made(api, api.InitDecompress())).DangerousGetHandle();
+    static nint Compressor(Api api) => (compressor ??= Made(api, api.InitCompress())).DangerousGetHandle();
+    static Handle Made(Api api, nint handle) => handle != 0 ? new Handle(handle)
         : throw new InvalidDataException("The picture could not be read: " + Message(api, 0));
 
     static string Message(Api api, nint handle) => Marshal.PtrToStringUTF8((nint)api.GetErrorStr2(handle)) ?? "no message";
@@ -72,12 +103,13 @@ internal static unsafe class TurboJpeg
     /// After a call that returned −1: the handle is destroyed (the library leaves it failed) and made again on the next
     /// call. A warning — a truncated or damaged picture — is accepted; anything else is thrown.
     /// </summary>
-    static void Failed(Api api, ref nint handle, string what)
+    static void Failed(Api api, ref Handle? handle, string what)
     {
-        var warning = api.GetErrorCode(handle) == ErrorWarning;
-        var message = Message(api, handle);
-        api.Destroy(handle);
-        handle = 0;
+        var value = handle!.DangerousGetHandle();
+        var warning = api.GetErrorCode(value) == ErrorWarning;
+        var message = Message(api, value);
+        handle.Dispose();
+        handle = null;
         if (!warning) throw new InvalidDataException(what + message);
     }
 
@@ -106,14 +138,14 @@ internal static unsafe class TurboJpeg
         var handle = Decompressor(api);
         fixed (byte* source = jpeg)
         fixed (byte* pixels = rgb)
-            result = api.Decompress2(handle, source, new CULong((nuint)jpeg.Length), pixels, width, width * 3, height, PixelFormatRgb, 0);
+            result = api.Decompress2(handle, source, new CULong((nuint)jpeg.Length), pixels, width, width * 3, height, PixelFormatRgb, LimitScans);
         if (result != 0) Failed(api, ref decompressor, "The picture could not be read: ");
     }
 
     /// <summary>Encodes RGB pixels as a JPEG with 4:2:0 subsampling.</summary>
     /// <exception cref="InvalidOperationException">The library is missing: <see cref="Missing"/>.</exception>
     /// <exception cref="InvalidDataException">The library could not encode it.</exception>
-    internal static byte[] Encode(ReadOnlySpan<byte> rgb, int width, int height, int quality)
+    internal static byte[] Encode(ReadOnlySpan<byte> rgb, int width, int height, int quality, int flags = 0)
     {
         var api = Require();
         if (rgb.Length < (long)width * height * 3) throw new ArgumentException("The pixel buffer is smaller than the picture");
@@ -123,7 +155,7 @@ internal static unsafe class TurboJpeg
         var handle = Compressor(api);
         // The library allocates the output; it is copied into a managed array of its size and freed.
         fixed (byte* pixels = rgb)
-            result = api.Compress2(handle, pixels, width, width * 3, height, PixelFormatRgb, &output, &size, Subsampling420, quality, 0);
+            result = api.Compress2(handle, pixels, width, width * 3, height, PixelFormatRgb, &output, &size, Subsampling420, quality, flags);
         try
         {
             if (result != 0) Failed(api, ref compressor, "The picture could not be written: ");

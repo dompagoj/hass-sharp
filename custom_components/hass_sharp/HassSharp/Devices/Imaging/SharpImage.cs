@@ -140,7 +140,9 @@ public sealed class SharpImage : IVisualSnapshot
         try
         {
             var rgb = pixels.AsSpan(0, length);
-            if (jpeg != null) TurboJpeg.Decode(jpeg, rgb, width, height);
+            // Cleared first: the pooled array holds an earlier picture, which a decode that warns and then fails leaves
+            // as it was — what did not decode is black, never someone else's frame.
+            if (jpeg != null) { rgb.Clear(); TurboJpeg.Decode(jpeg, rgb, width, height); }
             else ImagePainter.Fill(rgb, width, height, fill);
             foreach (var drawing in drawings)
                 switch (drawing)

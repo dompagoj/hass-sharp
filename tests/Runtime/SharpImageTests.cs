@@ -37,9 +37,12 @@ static class SharpImageTests
         Limits();
         Truncated();
         Corrupted();
+        WarningThenFatal();
+        ManyScans();
         HugeHeader();
         Allocation();
         Threads();
+        HandlesEndWithTheirThread();
         WithoutTheLibrary();
         UserCode();
     }
@@ -281,6 +284,61 @@ static class SharpImageTests
         Console.WriteLine($"PASS sharp image: 200 damaged pictures (bytes changed at random, headers cut) each give a picture ({pictures}) or a plain error ({refused}), and a good picture decodes right after each");
     }
 
+    // A progressive JPEG of a picture of one colour, which only the test makes.
+    static byte[] Progressive(int width, int height, SharpColor color)
+    {
+        var rgb = new byte[width * height * 3];
+        ImagePainter.Fill(rgb, width, height, color);
+        return TurboJpeg.Encode(rgb, width, height, 80, TurboJpeg.Progressive);
+    }
+
+    static int Marker(byte[] jpeg, byte marker, int from)
+    {
+        for (var i = from; i + 1 < jpeg.Length; i++) if (jpeg[i] == 0xFF && jpeg[i + 1] == marker) return i;
+        throw new Exception($"no marker FF {marker:X2}");
+    }
+
+    static void WarningThenFatal()
+    {
+        // This thread's pooled buffer of this size last held a picture with a wide blue border.
+        var earlier = Decode(SharpImage.Load(Busy(320, 240)).DrawRect(0, 0, 320, 240, SharpColor.Blue, 50).ToJpeg());
+        Check(earlier.Near(10, 120, SharpColor.Blue), "the earlier picture has its border");
+        // Junk before the second scan (a warning), then an unknown marker in its place (fatal): the library reports a
+        // warning and leaves the pixels untouched.
+        var good = Progressive(320, 240, SharpColor.Green);
+        var second = Marker(good, 0xDA, Marker(good, 0xDA, 2) + 2);
+        byte[] bad = [.. good[..second], 0, 0, 0, 0xFF, 0x02, .. good[(second + 2)..]];
+        try
+        {
+            var pixels = Decode(SharpImage.Load(bad).DrawRect(300, 220, 10, 10, SharpColor.Red, 2).ToJpeg());
+            Check(!pixels.Near(10, 120, SharpColor.Blue) && !pixels.Near(160, 20, SharpColor.Blue), $"a damaged picture never holds an earlier picture's pixels: {pixels.At(10, 120)}");
+            Console.WriteLine("PASS sharp image: a progressive picture that warns and then fails comes back blank where it did not decode, never with an earlier picture's pixels");
+        }
+        catch (InvalidDataException)
+        {
+            Console.WriteLine("PASS sharp image: a progressive picture that warns and then fails is refused, never given an earlier picture's pixels");
+        }
+    }
+
+    static void ManyScans()
+    {
+        var good = Progressive(64, 48, SharpColor.Green);
+        var first = Marker(good, 0xDA, 2);
+        var second = Marker(good, 0xDA, first + 2);
+        byte[] Repeated(int times) => [.. good[..second], .. Enumerable.Repeat(good[first..second], times).SelectMany(scan => scan), .. good[second..]];
+        // A few repeats are within the limit and decode as the picture.
+        Check(Decode(SharpImage.Load(Repeated(10)).DrawRect(60, 44, 4, 4).ToJpeg()).Near(32, 24, SharpColor.Green), "a picture with a few repeated scans decodes");
+        string outcome;
+        try
+        {
+            var pixels = Decode(SharpImage.Load(Repeated(600)).DrawRect(60, 44, 4, 4).ToJpeg());
+            Check(pixels.Near(32, 24, SharpColor.Black, 16), $"a picture of over 500 scans is not decoded: {pixels.At(32, 24)}");
+            outcome = "comes back blank";
+        }
+        catch (InvalidDataException) { outcome = "is refused"; }
+        Console.WriteLine($"PASS sharp image: a progressive picture of over 500 scans {outcome}, not decoded scan by scan");
+    }
+
     // A JPEG whose start-of-frame says 9000 × 9000, with the data of a small picture.
     static byte[] HugeHeaderJpeg()
     {
@@ -350,6 +408,23 @@ static class SharpImageTests
         threads.ForEach(thread => thread.Join());
         Check(failures.IsEmpty, "threads drawing at once: " + string.Join("; ", failures));
         Console.WriteLine("PASS sharp image: 8 threads drawing at once all give correct pictures");
+    }
+
+    static void HandlesEndWithTheirThread()
+    {
+        static void Collect() { for (var i = 0; i < 3; i++) { GC.Collect(); GC.WaitForPendingFinalizers(); } }
+        var source = Busy(64, 48);
+        Collect();
+        var before = TurboJpeg.LiveHandles;
+        var threads = Enumerable.Range(0, 4).Select(_ => new Thread(() => SharpImage.Load(source).DrawRect(1, 1, 10, 10).ToJpeg())).ToList();
+        threads.ForEach(thread => thread.Start());
+        threads.ForEach(thread => thread.Join());
+        Check(TurboJpeg.LiveHandles >= before + 8, $"each thread made its two handles ({TurboJpeg.LiveHandles - before})");
+        threads.Clear();
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (TurboJpeg.LiveHandles > before && DateTime.UtcNow < deadline) { Collect(); Thread.Sleep(20); }
+        Check(TurboJpeg.LiveHandles == before, $"a thread's handles are destroyed once it has ended ({TurboJpeg.LiveHandles - before} left)");
+        Console.WriteLine("PASS sharp image: the decompressor and compressor of a thread that has ended are destroyed");
     }
 
     static void WithoutTheLibrary()
