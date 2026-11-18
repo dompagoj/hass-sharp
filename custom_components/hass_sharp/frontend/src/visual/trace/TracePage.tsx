@@ -2,7 +2,7 @@ import { batch, createEffect, createMemo, createSignal, on, Show } from 'solid-j
 import { delegateEvents } from 'solid-js/web'
 import { A } from '@solidjs/router'
 import type { MenuItem } from '../../components/Menu'
-import { definitionNames, summarizeTrigger } from '../../components/TriggerSummary'
+import { definitionNames, runName, summarizeTrigger } from '../../components/TriggerSummary'
 import { BottomDrawer } from '../BottomDrawer'
 import { FlowAdapter, type FlowControls } from '../flow/FlowAdapter'
 import { createFullscreen, createFullscreenPage, FullscreenButton } from '../fullscreen'
@@ -236,7 +236,10 @@ export function TracePage(props: {
 
   const earlier = () => props.currentRevision !== undefined && snapshot() !== undefined && snapshot()!.visualRevision !== props.currentRevision
   // An entity definition's command run names its entity and command as the run's own graph has them.
-  const triggerLine = () => [run().actionLabel, run().trigger && summarizeTrigger(run().trigger!, definitionNames(graph(), stored()))].filter(Boolean).join(' · ')
+  const triggerLine = () => {
+    const names = definitionNames(graph(), stored())
+    return [run().actionLabel && runName(run().actionLabel, names), run().trigger && summarizeTrigger(run().trigger!, names)].filter(Boolean).join(' · ')
+  }
   const reason = () => (run().error && run().status !== 'Succeeded' ? run().error!.split('\n', 1)[0] : undefined)
   const dropped = () => props.response.trace?.dropped ?? 0
   const status = () => (

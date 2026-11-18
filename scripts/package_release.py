@@ -35,6 +35,8 @@ def package_release(integration_dir: Path, output: Path, version: str) -> None:
         "__init__.py", "manifest.json", "dotnet.runtimeconfig.json",
         "out/HassSharp.dll", "out/HassSharp.deps.json", "out/Python.Runtime.dll",
         "www/hass-sharp.js", "visual_node_catalog.json", "authoring_examples.json",
+        # The licences of what a release carries that is not HassSharp's own (THIRD-PARTY-NOTICES.md).
+        "licenses/DejaVu-LICENSE.txt", "licenses/StbTrueTypeSharp-LICENSE.txt",
     )
     for name in required:
         if not (integration_dir / name).is_file():

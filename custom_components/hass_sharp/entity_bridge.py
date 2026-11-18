@@ -176,8 +176,9 @@ class EntityBridge:
     def close(self) -> None:
         """On the loop, before the platforms unload. Later calls are dropped and pending ones answer error("closed").
 
-        Forgets the platforms and the live entities, so nothing is added to an unloaded platform (spike rule 3).
-        Registry entries and devices stay.
+        A picture being taken (begin_camera_snapshot) is not among them: it answers when its own task ends, within
+        SNAPSHOT_TIMEOUT (10 s). One asked for after this answers SNAPSHOT_CLOSED. Forgets the platforms and the live
+        entities, so nothing is added to an unloaded platform (spike rule 3). Registry entries and devices stay.
         """
         self._closed = True
         self._platforms.clear()

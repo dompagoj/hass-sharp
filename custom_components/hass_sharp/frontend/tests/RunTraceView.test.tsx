@@ -719,6 +719,17 @@ it('shows a definition\'s run on its own graph, its entity steps by name, and go
   await vi.waitFor(() => expect(history.get()).toBe('/entities/plug?drawer=runs'))
 })
 
+it('titles a definition\'s run by its root step when it carries that step\'s generated method name', async () => {
+  const { root } = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'on', cause: 'Command', actionLabel: 'Run_6F6E', trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }) }))
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
+  expect(root.querySelector('.hs-trace-strip__trigger')!.textContent).toBe('When commanded · Main relay: Turn on')
+  dispose?.(); document.body.innerHTML = ''
+  // A root that is not in the run's graph keeps the name recorded.
+  const second = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'gone', cause: 'Command', actionLabel: 'Run_676F6E65', trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }) }))
+  await vi.waitFor(() => expect(steps(second.root)).toHaveLength(3))
+  expect(second.root.querySelector('.hs-trace-strip__trigger')!.textContent).toBe('Run_676F6E65 · Main relay: Turn on')
+})
+
 it('routes a definition\'s run address to its trace page in the panel', async () => {
   const { root } = mountDefinition(async () => definitionResponse(), { app: true })
   await vi.waitFor(() => expect(steps(root)).toHaveLength(3))

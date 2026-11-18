@@ -1,6 +1,7 @@
 import { For, Show } from 'solid-js'
 import type { RunTrigger } from '../types'
-import { entityCommandLabel, type EntityDomainSpec, type Graph, type VisualCatalogSnapshot } from '../visual/contract'
+import { effectiveTriggerMethod, entityCommandLabel, isRoot, nodeCatalog, type EntityDomainSpec, type Graph, type VisualCatalogSnapshot } from '../visual/contract'
+import { nodeTitle } from '../visual/flow/flowModel'
 
 /**
  * What names an entity definition's command runs: its entities (each by key, with its name and type) and the commands
@@ -9,6 +10,8 @@ import { entityCommandLabel, type EntityDomainSpec, type Graph, type VisualCatal
 export interface TriggerNames {
   entities?: readonly { key: string; name?: string | null; domain?: string | null }[]
   domains?: Record<string, EntityDomainSpec>
+  /** Each root step of the graph by the method name a run of it records when it has none of its own (`Run_…`): its title. */
+  roots?: Readonly<Record<string, string>>
 }
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 /** The names of a graph's definition (an entity definition's graph), with the catalog's entity types; none for an automation's. */
@@ -16,8 +19,17 @@ export function definitionNames(graph: Graph | undefined, catalog: VisualCatalog
   const definition = graph?.definition as unknown
   if (!record(definition) || !Array.isArray(definition.entities)) return
   const entities = definition.entities.filter(record).filter((entity): entity is { key: string } => typeof entity.key === 'string')
-  return { entities, domains: catalog?.entityDomains }
+  const known = catalog ?? nodeCatalog
+  const roots: Record<string, string> = {}
+  for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) if (record(node) && typeof node.id === 'string' && isRoot(node, known)) roots[effectiveTriggerMethod(node)] = nodeTitle(node, known)
+  return { entities, domains: catalog?.entityDomains, roots }
 }
+/**
+ * What a run is called: as recorded, unless that is the generated method name of a root step of the graph shown (an
+ * entity definition's root runs under one), which reads as the step's title ("When a frame is needed"). An automation's
+ * names give no roots, so its runs keep their names.
+ */
+export const runName = (recorded: string, names?: TriggerNames) => names?.roots && Object.hasOwn(names.roots, recorded) ? names.roots[recorded] : recorded
 /**
  * "Main relay: Turn on": the entity by its name (else its key), a command its type has as the catalog labels it; one it
  * does not have (or of an entity not known) as recorded, its underscores as spaces.

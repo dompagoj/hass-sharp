@@ -8,7 +8,8 @@ namespace HassSharp;
 /// the list on it in order and encodes it once — and gives back the bytes it was loaded from when nothing was drawn, so a
 /// picture passed on unchanged needs no codec. Decoding and encoding need the system's libjpeg-turbo library
 /// (<c>libturbojpeg</c>). A picture is at most 20 MiB and 40 megapixels and carries at most 500 drawings. Drawing outside
-/// the picture is clipped, never an error.
+/// the picture is clipped, never an error. A picture is for one flow at a time: it is not thread-safe, so hand another
+/// flow or thread a <see cref="Copy"/>.
 /// </summary>
 public sealed class SharpImage : IVisualSnapshot
 {
@@ -105,7 +106,7 @@ public sealed class SharpImage : IVisualSnapshot
     }
 
     /// <summary>Adds a line of text in DejaVu Sans; returns this image.</summary>
-    /// <param name="text">The text, at most 200 characters.</param>
+    /// <param name="text">The text, at most 200 characters; a control character, such as a newline or a tab, is drawn as a space.</param>
     /// <param name="x">The left of the text, in pixels from the left of the picture.</param>
     /// <param name="y">The top of the text, in pixels from the top of the picture.</param>
     /// <param name="color">Its colour; red when not given.</param>

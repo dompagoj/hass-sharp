@@ -24,7 +24,7 @@ The runtime suite's image tests need libjpeg-turbo: `brew install jpeg-turbo` on
 
 After publishing, `python tests/packaging/entity_bridge_smoke.py custom_components/hass_sharp [DOTNET_ROOT]`
 (needs Python.NET, not Home Assistant; CI runs it) drives a custom entity definition
-through the real assembly and the four entity delegates.
+through the real assembly and the five entity delegates.
 
 Without Home Assistant 2026.11 or later on the host, the MCP adapter tests skip (they need its
 `probatio` package) and so do the native class-trigger tests; an older Home Assistant, such as

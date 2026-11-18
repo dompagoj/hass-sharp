@@ -6,7 +6,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
 import { AutomationRuns } from '../src/components/AutomationRuns'
 import { dispatchRun, forgetAcceptedRun, runHistoryInterval } from '../src/components/runDispatch'
-import { summarizeTrigger } from '../src/components/TriggerSummary'
+import { definitionNames, summarizeTrigger } from '../src/components/TriggerSummary'
+import { nodeCatalog, type Graph } from '../src/visual/contract'
 import { page, run as record, triggers, v1Run } from './run-fixture'
 import { dateText, lastRunText, relativeTime } from '../src/automations/model'
 import type { HomeAutomation } from '../src/visual/api'
@@ -482,4 +483,38 @@ it('labels a frame run by its camera, named when the definition is known', async
   const { root } = setupDefinition(async () => page([record({ runId: 'run-1', automationId: 'entity:plug', visualId: 'plug', cause: 'Frame', trigger: frameTrigger })]), { triggerNames: cameraNames })
   await vi.waitFor(() => expect(rows(root)).toHaveLength(1))
   expect(rows(root)[0].querySelector('.hs-run-cause')!.textContent).toBe('Frame needed · Front door')
+})
+
+// A root step of an entity definition with no method of its own runs under the method name generated from its id.
+const at = { x: 0, y: 0 }
+const lensGraph = { version: 5, name: 'Lens', edges: [],
+  nodes: [
+    { id: 'frame', kind: 'camera_frame', config: { entity: 'front' }, position: at },
+    { id: 'setup', kind: 'entity_setup', config: {}, position: at },
+    { id: 'on', kind: 'entity_command', label: 'On turn on', config: { entity: 'relay', command: 'turn_on' }, position: at },
+    { id: 'log', kind: 'log', config: { value: { kind: 'unset' } }, position: at },
+  ],
+  definition: { entities: [{ key: 'front', domain: 'camera', name: 'Front door' }, { key: 'relay', domain: 'switch', name: 'Relay' }], settings: [] },
+} as unknown as Graph
+
+it('titles an entity definition\'s run by its root step when it carries that step\'s generated method name, and keeps any other name', async () => {
+  const runs = [
+    record({ runId: 'run-5', automationId: 'entity:lens', visualId: 'lens', cause: 'Frame', trigger: { kind: 'frame', entity: 'front' }, actionLabel: 'Run_6672616D65' }),
+    record({ runId: 'run-4', automationId: 'entity:lens', visualId: 'lens', cause: 'Setup', trigger: setupTrigger, actionLabel: 'Run_7365747570' }),
+    record({ runId: 'run-3', automationId: 'entity:lens', visualId: 'lens', cause: 'Command', trigger: commandTrigger, actionLabel: 'Run_6F6E' }),
+    // A root no longer in the graph, and a step that is no root: as recorded.
+    record({ runId: 'run-2', automationId: 'entity:lens', visualId: 'lens', cause: 'Setup', trigger: setupTrigger, actionLabel: 'Run_676F6E65' }),
+    record({ runId: 'run-1', automationId: 'entity:lens', visualId: 'lens', cause: 'Setup', trigger: setupTrigger, actionLabel: 'Run_6C6F67' }),
+  ]
+  const { root } = setupDefinition(async () => page(runs), { triggerNames: definitionNames(lensGraph, nodeCatalog) })
+  await vi.waitFor(() => expect(rows(root)).toHaveLength(5))
+  expect(rows(root).map(row => row.querySelector('.hs-run-label')!.textContent)).toEqual(['When a frame is needed', 'When started', 'On turn on', 'Run_676F6E65', 'Run_6C6F67'])
+})
+
+it('keeps an automation\'s run names as recorded: its graph gives no names', async () => {
+  const automation = { version: 5, name: 'Heating', edges: [], nodes: [{ id: 't1', kind: 'trigger', config: {}, position: at }] } as unknown as Graph
+  expect(definitionNames(automation, nodeCatalog)).toBeUndefined()
+  const { root } = setup(async () => page([record({ runId: 'run-2', actionLabel: 'Run_7431' }), record({ runId: 'run-1' })]))
+  await vi.waitFor(() => expect(rows(root)).toHaveLength(2))
+  expect(rows(root).map(row => row.querySelector('.hs-run-label')!.textContent)).toEqual(['Run_7431', 'VTRV stays in heat mode for 30 minutes'])
 })

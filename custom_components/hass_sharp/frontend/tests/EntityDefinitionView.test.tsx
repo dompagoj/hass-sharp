@@ -525,7 +525,7 @@ it('starts a new definition named from the address, with one binary sensor named
   const help = document.querySelector('dialog[open]')!.textContent!
   expect(help).toContain('each a binary sensor, a sensor, a switch, a button, a number, a select, a text, a light, a cover or a camera')
   expect(help).toContain('A camera shows the picture its last Show frame step gave it, such as one taken with Take a picture and drawn on. '
-    + 'With a When a frame is needed step, its steps make a new picture each time Home Assistant asks for one, which it does only while someone is watching the camera: nothing runs while nobody watches.')
+    + 'With a When a frame is needed step, its steps make a new picture when Home Assistant asks for one, which it does only while something is watching the camera or asks for its picture: nothing runs otherwise.')
   for (const fact of ['http:// or https://', 'checks the server\'s certificate', '10 seconds', '4 MiB', 'fails on an error status unless you turn that off',
     'one to a different host fails the step when it has headers, so they are never sent there', 'Keep the response out of run history', 'SHA-256 checksum, of the file as the server sends it',
     '.storage/hass_sharp/files/', 'is not downloaded again', 'come back with the state they had after Home Assistant restarts or the definition is saved',
@@ -1214,7 +1214,16 @@ it('shows what the server refuses of an option under that option, and keeps Save
 })
 
 it('gives a camera its seconds between frames, with its hint, says on the field when it is out of range, and keeps focus there', async () => {
-  const { root, fixture } = setup('/entities/new?name=Front door')
+  // The previews the server has answered, so that what it says is counted only once it has said it.
+  const answered: any[] = []
+  const { root, fixture } = setup('/entities/new?name=Front door', fixture => {
+    const answer = fixture.entities.callWS
+    fixture.entities.callWS = async (message: any) => {
+      const result = await answer(message)
+      if (message.request?.operation === 'preview') answered.push(message.request)
+      return result
+    }
+  })
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   choose(control(expand(entityRow(root, 'front_door')), 'domain'), 'camera')
   const row = () => entityRow(root, 'front_door')
@@ -1232,8 +1241,9 @@ it('gives a camera its seconds between frames, with its hint, says on the field 
   expect(focused(field)).toBe(true)
   expect(field.getAttribute('aria-invalid')).toBe('true')
   expect(button(root, 'Save').disabled).toBe(true)
-  // Said once, though the server says it too.
-  await new Promise(resolve => setTimeout(resolve, 20))
+  // Said once, though the server says it too: counted once the server has answered a preview of 0.2, and the view has taken its answer.
+  await vi.waitFor(() => expect(answered.some(request => JSON.stringify(request).includes('"frame_interval":0.2'))).toBe(true))
+  await new Promise(resolve => setTimeout(resolve, 0))
   expect([...root.querySelectorAll('.hs-error')].filter(e => e.textContent === below)).toHaveLength(1)
   type(control(row(), 'option:frame_interval'), '61')
   await vi.waitFor(() => expect(fieldOf(row(), 'option:frame_interval').textContent).toContain('Seconds between frames of Front door takes a number from 0.5 to 60, not 61'))

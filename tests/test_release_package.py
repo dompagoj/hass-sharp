@@ -32,6 +32,9 @@ class ReleasePackageTests(unittest.TestCase):
             "out/Python.Runtime.dll": "runtime dependency",
             "www/hass-sharp.js": "// frontend",
             "www/assets/editor.worker.js": "// worker",
+            # The licences of the font and the managed library a release carries that are not HassSharp's own.
+            "licenses/DejaVu-LICENSE.txt": "Bitstream Vera",
+            "licenses/StbTrueTypeSharp-LICENSE.txt": "Unlicense OR MIT",
         }
         for name, content in self.files.items():
             self.write_file(name, content)
@@ -111,17 +114,21 @@ class ReleasePackageTests(unittest.TestCase):
 
     def test_ships_the_licences_of_what_it_bundles(self):
         # The font and the managed libraries a release carries that are not HassSharp's own come with their licences.
-        licenses = {
-            "licenses/DejaVu-LICENSE.txt": "Bitstream Vera",
-            "licenses/StbTrueTypeSharp-LICENSE.txt": "Unlicense OR MIT",
-        }
-        for name, content in licenses.items():
-            self.write_file(name, content)
         result = self.package()
         self.assertEqual(result.returncode, 0, result.stderr)
         with ZipFile(self.output) as archive:
-            self.assertEqual(set(archive.namelist()), set(self.files) | set(licenses))
             self.assertEqual(archive.read("licenses/DejaVu-LICENSE.txt"), b"Bitstream Vera")
+            self.assertEqual(archive.read("licenses/StbTrueTypeSharp-LICENSE.txt"), b"Unlicense OR MIT")
+
+    def test_refuses_a_tree_without_a_licence(self):
+        for name in ("licenses/DejaVu-LICENSE.txt", "licenses/StbTrueTypeSharp-LICENSE.txt"):
+            with self.subTest(missing=name):
+                (self.integration / name).unlink()
+                result = self.package()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(name, result.stderr)
+                self.assertFalse(self.output.exists())
+                self.write_file(name, self.files[name])
 
     def test_skips_test_pages_and_the_preview_build_under_www(self):
         # The mock preview pages are served without authentication; a release built from a working copy must not hold them.

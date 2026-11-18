@@ -6,7 +6,7 @@ import type { AutomationRun, RunHistoryResponse, RunStatus } from '../types'
 import { acceptedRun, forgetAcceptedRun, runErrorMessage as errorMessage, runHistoryInterval } from './runDispatch'
 import { Button, Icon } from './Controls'
 import { JsonTree } from './JsonTree'
-import { summarizeTrigger, TriggerSummary, type TriggerNames } from './TriggerSummary'
+import { runName, summarizeTrigger, TriggerSummary, type TriggerNames } from './TriggerSummary'
 import { relativeTime } from '../automations/model'
 
 const PAGE_SIZE = 20
@@ -18,7 +18,7 @@ const CAUSES: Record<string, string> = {
 }
 const duration = (ms: number | null) => ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} s`
 // Rows recorded before run history v2 carry only the method name and no trigger summary.
-const runLabel = (run: AutomationRun) => run.actionLabel ?? run.action
+const runLabel = (run: AutomationRun, names?: TriggerNames) => runName(run.actionLabel ?? run.action, names)
 const causeLabel = (run: AutomationRun) => CAUSES[run.cause] ?? run.cause
 const reason = (run: AutomationRun) => run.status !== 'Succeeded' && run.error ? run.error.split('\n', 1)[0] : undefined
 const Timestamp = (props: { value: string | null }) => <Show when={props.value} fallback="—">{value =>
@@ -132,7 +132,7 @@ const RunRow = (props: {
       <button type="button" class="hs-run-toggle" aria-expanded={props.open} aria-controls={props.open ? bodyId : undefined} onClick={() => props.onToggle()}>
         <span class={`hs-run-status hs-run-status--${props.run.status.toLowerCase()}`}>{props.run.status}</span>
         <span class="hs-run-main">
-          <span class="hs-run-label">{runLabel(props.run)}</span>
+          <span class="hs-run-label">{runLabel(props.run, props.names)}</span>
           <span class="hs-run-cause">{causeLabel(props.run)}<Show when={summary()}> · <span class="hs-run-trigger">{summary()}</span></Show></span>
           <Show when={reason(props.run)}><span class="hs-run-reason">{reason(props.run)}</span></Show>
         </span>

@@ -2,7 +2,7 @@
 definition. No Home Assistant.
 
 Run in a fresh process against the published library: python tests/packaging/entity_bridge_smoke.py INTEGRATION_DIR [DOTNET_ROOT]
-Python callables stand in for Home Assistant's bridge on the four entity delegates (sync, push, remove, prune), and the
+Python callables stand in for Home Assistant's bridge on the five entity delegates (sync, push, remove, prune, camera snapshot), and the
 sync is answered from Python as the bridge answers it, or the definition never becomes active. A manager runs over a
 temporary configuration directory. For each definition, checks that the sync, the pushed states and a command's effect
 arrive in Python as str on .NET's threads, and that delete removes the entities. For the class, that a command it
