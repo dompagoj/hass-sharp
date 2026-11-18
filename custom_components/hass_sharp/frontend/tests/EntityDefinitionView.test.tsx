@@ -521,9 +521,11 @@ it('starts a new definition named from the address, with one binary sensor named
   expect(document.querySelector('dialog[open]')!.textContent).toContain('once saved, its value is never shown again. It is left out of this browser\'s drafts and of Export graph. '
     + 'Run traces, the Log step and the service logs show it as hidden. A true or false worked out from it is shown. '
     + 'A step that returns what it was given, such as a custom step or a service response, can still show it.')
-  // The nine types, and what HTTP requests, downloads and restored state do.
+  // The ten types, how a camera shows a frame, and what HTTP requests, downloads and restored state do.
   const help = document.querySelector('dialog[open]')!.textContent!
-  expect(help).toContain('each a binary sensor, a sensor, a switch, a button, a number, a select, a text, a light or a cover')
+  expect(help).toContain('each a binary sensor, a sensor, a switch, a button, a number, a select, a text, a light, a cover or a camera')
+  expect(help).toContain('A camera shows the picture its last Show frame step gave it, such as one taken with Take a picture and drawn on. '
+    + 'With a When a frame is needed step, its steps make a new picture each time Home Assistant asks for one, which it does only while someone is watching the camera: nothing runs while nobody watches.')
   for (const fact of ['http:// or https://', 'checks the server\'s certificate', '10 seconds', '4 MiB', 'fails on an error status unless you turn that off',
     'one to a different host fails the step when it has headers, so they are never sent there', 'Keep the response out of run history', 'SHA-256 checksum, of the file as the server sends it',
     '.storage/hass_sharp/files/', 'is not downloaded again', 'come back with the state they had after Home Assistant restarts or the definition is saved',
@@ -1209,6 +1211,58 @@ it('shows what the server refuses of an option under that option, and keeps Save
   type(control(entityRow(root, 'things'), 'option:min'), '')
   type(control(entityRow(root, 'things'), 'option:step'), '0')
   await vi.waitFor(() => expect(fieldOf(entityRow(root, 'things'), 'option:step').textContent).toContain('Step of Things takes a number above 0, not 0'))
+})
+
+it('gives a camera its seconds between frames, with its hint, says on the field when it is out of range, and keeps focus there', async () => {
+  const { root, fixture } = setup('/entities/new?name=Front door')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  choose(control(expand(entityRow(root, 'front_door')), 'domain'), 'camera')
+  const row = () => entityRow(root, 'front_door')
+  expect([...row().querySelectorAll('[data-field^="option:"]')].map(f => [f.querySelector('label')!.textContent, f.querySelector('.hs-field-hint')?.textContent])).toEqual([
+    ['Seconds between frames', 'How often Home Assistant asks for a new picture while someone is watching; 1 when left empty.']])
+  // Below its range: said on its field at once, in the server's words, and Save waits; focus stays in the field.
+  const field = control(row(), 'option:frame_interval')
+  field.focus()
+  field.value = '0.2'
+  field.dispatchEvent(new Event('input', { bubbles: true }))
+  press(field)
+  const below = 'Seconds between frames of Front door takes a number from 0.5 to 60, not 0.2'
+  await vi.waitFor(() => expect(fieldOf(row(), 'option:frame_interval').querySelector('.hs-error')?.textContent).toBe(below))
+  expect(control(row(), 'option:frame_interval')).toBe(field)
+  expect(focused(field)).toBe(true)
+  expect(field.getAttribute('aria-invalid')).toBe('true')
+  expect(button(root, 'Save').disabled).toBe(true)
+  // Said once, though the server says it too.
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect([...root.querySelectorAll('.hs-error')].filter(e => e.textContent === below)).toHaveLength(1)
+  type(control(row(), 'option:frame_interval'), '61')
+  await vi.waitFor(() => expect(fieldOf(row(), 'option:frame_interval').textContent).toContain('Seconds between frames of Front door takes a number from 0.5 to 60, not 61'))
+  // At either end of its range it is taken.
+  type(control(row(), 'option:frame_interval'), '0.5')
+  await vi.waitFor(() => expect(fieldOf(row(), 'option:frame_interval').querySelector('.hs-error')).toBeNull())
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  expect(saves(fixture)[0].definition.entities).toEqual([{ key: 'front_door', domain: 'camera', name: 'Front door', options: { frame_interval: 0.5 } }])
+})
+
+it('retypes an entity to and from Camera in one undo step, removing what no longer fits', async () => {
+  const { root } = setup('/entities/new?name=Front')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  choose(control(expand(entityRow(root, 'front')), 'domain'), 'number')
+  type(control(entityRow(root, 'front'), 'option:min'), '2')
+  // A number's options go: a camera has none of them.
+  choose(control(entityRow(root, 'front'), 'domain'), 'camera')
+  expect(json(root).definition.entities[0]).toEqual({ key: 'front', domain: 'camera', name: 'Front' })
+  type(control(entityRow(root, 'front'), 'option:frame_interval'), '2')
+  expect(json(root).definition.entities[0].options).toEqual({ frame_interval: 2 })
+  // A camera's seconds between frames go too when it becomes a switch; one undo step brings it back.
+  choose(control(entityRow(root, 'front'), 'domain'), 'switch')
+  expect(json(root).definition.entities[0]).toEqual({ key: 'front', domain: 'switch', name: 'Front' })
+  expect(entityRow(root, 'front').querySelector('[data-field="option:frame_interval"]')).toBeNull()
+  undo(root)
+  expect(json(root).definition.entities[0]).toEqual({ key: 'front', domain: 'camera', name: 'Front', options: { frame_interval: 2 } })
+  expect(control(entityRow(root, 'front'), 'option:frame_interval').value).toBe('2')
 })
 
 it('wires a light\'s Turn on into its Set state, brightness and all, and a number\'s Set value into its own', async () => {

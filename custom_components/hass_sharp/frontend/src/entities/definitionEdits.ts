@@ -128,10 +128,20 @@ const hasName = (entity: { name?: unknown }) => typeof entity.name === 'string' 
 export const entityNamed = (entity: { key: string; name?: unknown }) => hasName(entity) ? entity.name as string : entity.key
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1)
 /**
+ * The range a number option's rule gives (its `min` and `max`, such as a camera's seconds between frames), in the words
+ * of `DefinitionDocument.Range`, when `value` is outside it; undefined when it is within, or the rule gives no range.
+ */
+function outsideRange(rule: ConfigSpec, value: number): string | undefined {
+  const { min, max } = rule
+  return typeof min === 'number' && typeof max === 'number' && (value < min || value > max) ? `a number from ${min} to ${max}` : undefined
+}
+
+/**
  * What the form knows of the entities' options without asking the server, in the server's words
  * (`DefinitionDocument.Options`), about the same entity and option (`inputId`, `portId`), so its answer about the same
- * option is not shown twice: an option the type needs left empty, and a number option holding a text that is not a
- * number (kept as typed, so it can be finished). Each blocks Save; the server checks the rest.
+ * option is not shown twice: an option the type needs left empty, a number option holding a text that is not a number
+ * (kept as typed, so it can be finished), and a number outside the range its rule gives. Each blocks Save; the server
+ * checks the rest.
  */
 export function optionProblems(graph: VisualGraph, catalog: VisualCatalogSnapshot): VisualDiagnostic[] {
   const problems: VisualDiagnostic[] = []
@@ -142,7 +152,9 @@ export function optionProblems(graph: VisualGraph, catalog: VisualCatalogSnapsho
     const options = entity.options ?? {}, label = entityTypeLabel(catalog, entity.domain), named = entityNamed(entity)
     for (const [option, rule] of Object.entries(row.options ?? {})) {
       const value = Object.hasOwn(options, option) ? options[option] : undefined
+      const range = rule.type === 'number' && typeof value === 'number' && Number.isFinite(value) ? outsideRange(rule, value) : undefined
       if (rule.type === 'number' && typeof value === 'string') problems.push(optionProblem(entity.key, option, `${optionLabel(option, rule)} of ${named} takes a number`))
+      else if (range) problems.push(optionProblem(entity.key, option, `${optionLabel(option, rule)} of ${named} takes ${range}, not ${value}`))
       else if (rule.required === true && (value === undefined || value === null))
         // A sentence starts with the entity: its name, else "Entity" and its key, which may start lower-case.
         problems.push(optionProblem(entity.key, option, `${hasName(entity) ? named : `Entity ${entity.key}`} needs ${lowerFirst(optionLabel(option, rule))}: ${words.article(label)} ${label.toLowerCase()} cannot work without it`))

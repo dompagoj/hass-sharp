@@ -36,6 +36,11 @@ describe('the problems of an entity\'s options', () => {
     same(optionProblems(editorGraph(body(c as Case)), nodeCatalog), (c as Case).problems)
   })
 
+  it('finds nothing wrong with a camera\'s seconds between frames at either end of its range', () => {
+    for (const frame_interval of [0.5, 1, 60])
+      expect(optionProblems(editorGraph(body({ what: '', key: 'front_door', domain: 'camera', options: { frame_interval }, problems: [] })), nodeCatalog), String(frame_interval)).toEqual([])
+  })
+
   it.each(cases.map(c => [c.what, c]))('the in-memory backend answers %s as the server does', async (_what, c) => {
     const answer = await visualFixture().callWS({ type: 'hass_sharp/entities', request: { operation: 'preview', definition: body(c as Case) } })
     expect(answer.ok).toBe(true)

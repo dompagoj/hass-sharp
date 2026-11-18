@@ -154,8 +154,8 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  * of 1–120 characters (`definition.name`) and, for a graph, at least one entity (`definition.entitiesRequired`), each
  * keyed `^[a-z][a-z0-9_]{0,39}$` (`definition.entityKey`) and uniquely (`definition.duplicateEntity`), of a domain of
  * the catalog's `entityDomains` (`definition.entityDomain`), with options as `DefinitionDocument.Options` checks them
- * (`definition.entityOption`: one its domain has, of its type, not an empty list, a number Home Assistant takes, a
- * pattern that is a regular expression, every option the domain needs, a min below the max); with any of them the
+ * (`definition.entityOption`: one its domain has, of its type, not an empty list, a number Home Assistant takes and
+ * within its rule's range, a pattern that is a regular expression, every option the domain needs, a min below the max); with any of them the
  * seeded diagnostics are not answered.
  *
  * Refusals come in the real order, with the real `invalid_request` texts for a field missing (`id is required`) or of
@@ -240,6 +240,9 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
         : domain === 'text' && (option === 'min' || option === 'max') && value !== Math.floor(value) ? 'a whole number'
         : domain === 'text' && option === 'min' && value < 0 ? '0 or more'
         : domain === 'text' && option === 'max' && value > 255 ? '255 or less, as Home Assistant keeps at most 255 characters' : undefined
+    // A number outside the range its rule gives, such as a camera's seconds between frames (`DefinitionDocument.Range`).
+    const range = (rule: { min?: number; max?: number }, value: number) =>
+      typeof rule.min === 'number' && typeof rule.max === 'number' && (value < rule.min || value > rule.max) ? `a number from ${rule.min} to ${rule.max}` : undefined
     let bounded = false
     for (const [option, value] of Object.entries(options)) {
       if (!Object.hasOwn(known, option)) {
@@ -254,7 +257,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
         : (rule.type === 'string' ? typeof value === 'string' : rule.type === 'boolean' ? typeof value === 'boolean' : rule.type === 'number' ? number(value) !== undefined : false) && fitsEnum(value)
       const phrase = rule.type === 'array' ? 'a list of texts' : allowed ? `one of ${allowed.join(', ')}`
         : rule.type === 'string' ? 'a text' : rule.type === 'boolean' ? 'true or false' : rule.type === 'number' ? 'a number' : rule.type
-      const bound = number(value) !== undefined ? limit(option, value as number) : undefined
+      const bound = number(value) !== undefined ? limit(option, value as number) ?? range(rule, value as number) : undefined
       const of = `${shown(option)} of ${named}`
       if (!fits) error(option, `${of} takes ${phrase}`)
       else if (Array.isArray(value) && value.length === 0) error(option, `${of} is an empty list; give it at least one text${rule.required === true ? '' : ', or leave it out'}`)

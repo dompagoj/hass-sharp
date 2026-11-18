@@ -95,7 +95,8 @@ const coverWords: Record<string, string> = { open: 'Open', closed: 'Closed', ope
 /**
  * An entity's state in words, by its type: a light "On · 60 %" (its brightness of 255) or "Off"; a cover "Open · 40 %"
  * (its position), "Closed", "Opening" or "Closing"; a number with its unit; a text's value, a password's as dots; a
- * button "Pressed 5 minutes ago", "Pressed on 3 November 2026" or "Never pressed"; any other as Home Assistant has it (a number with its unit).
+ * button "Pressed 5 minutes ago", "Pressed on 3 November 2026" or "Never pressed"; a camera "Ready" (Home Assistant's
+ * `idle`; its picture is never shown here); any other as Home Assistant has it (a number with its unit).
  * Unavailable and Unknown are quiet.
  */
 export function entityStateText(domain: string, state: LiveState, now: number): StateWords {
@@ -111,6 +112,7 @@ export function entityStateText(domain: string, state: LiveState, now: number): 
     return { text: state.state === 'off' ? 'Off' : state.brightness === undefined ? 'On' : `On · ${percent(state.brightness)}` }
   if (domain === 'cover' && Object.hasOwn(coverWords, state.state))
     return { text: state.state === 'open' && state.position !== undefined ? `Open · ${Math.round(state.position)} %` : coverWords[state.state] }
+  if (domain === 'camera' && state.state === 'idle') return { text: 'Ready' }
   if (domain === 'text') return state.mode === 'password' ? { text: hidden, spoken: 'Hidden' } : state.state === '' ? { text: 'Empty', quiet: true } : { text: state.state }
   const number = state.state.trim() !== '' && Number.isFinite(Number(state.state))
   return { text: number && state.unit ? `${state.state} ${state.unit}` : state.state }

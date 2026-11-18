@@ -1,5 +1,5 @@
 import { createMemo, createUniqueId, Show, type Component, type JSX } from 'solid-js'
-import { dataInputs, dataOutputs, definitionEntities, definitionEntity, definitionSettings, entityChoices, entityDomain, entityCommandLabel, entityCommands, entityTypeLabel, firstStateValue, booleanStateValue, isAssignable, withEntityCommand, withFirstStateValue, words, type GraphNode, type Operand, type VisualCatalogSnapshot } from '../visual/contract'
+import { cameraKinds, dataInputs, dataOutputs, definitionEntities, definitionEntity, definitionSettings, entityChoices, entityDomain, entityCommandLabel, entityCommands, entityTypeLabel, firstStateValue, booleanStateValue, isAssignable, withEntityCommand, withFirstStateValue, words, type GraphNode, type Operand, type VisualCatalogSnapshot } from '../visual/contract'
 import { graphTypes } from '../visual/connectionIndex'
 import { entityStateContext } from '../visual/entityStateContext'
 import { removeEdge, updateNode, type VisualGraph } from '../visual/graph'
@@ -202,13 +202,15 @@ const configLabel = (ctx: StepPickerContext, key: string, fallback: string) => t
 const configHint = (ctx: StepPickerContext, key: string) => text(nodeSpec(ctx.node().kind, ctx.catalog())?.config[key]?.description) || undefined
 
 /**
- * The entity of a State, When commanded, Set state or Set available: the definition's entities by name, with their
- * type (a When commanded's only those that take commands). A key the definition does not have stays chosen, marked
- * missing, so the validator's problem about it can be acted on.
+ * The entity of a State, When commanded, Set state or Set available, and the camera of a Show frame or When a frame is
+ * needed: the definition's entities by name, with their type (a When commanded's only those that take commands, a
+ * camera step's only its cameras). A key the definition does not have stays chosen, marked missing, so the validator's
+ * problem about it can be acted on.
  */
 function EntityPicker(props: { ctx: StepPickerContext }) {
   const ctx = props.ctx
   const current = () => text(ctx.node().config.entity)
+  const camera = () => cameraKinds.includes(ctx.node().kind)
   const choices = createMemo(() => entityChoices(ctx.catalog(), ctx.node().kind))
   // A State or Set state cannot name an entity whose type has no state (a button): offered, and marked so.
   const stateless = (entity: Record<string, unknown>) => stateKinds.includes(ctx.node().kind) && !hasState(ctx.catalog(), text(entity.domain))
@@ -221,14 +223,16 @@ function EntityPicker(props: { ctx: StepPickerContext }) {
   const missing = () => current() !== '' && !known()
   const options = createMemo((): SearchOption[] => [
     ...(missing() ? [{ value: current(), label: `Missing entity: ${current()}` }] : []),
-    // An entity the definition has that this step cannot name (one that takes no commands) is still shown as chosen.
-    ...(current() !== '' && known() && !listed() ? [option(known()!, `${entityTypeLabel(ctx.catalog(), text(known()!.domain))} · takes no commands`)] : []),
+    // An entity the definition has that this step cannot name (one that takes no commands, or is not a camera) is still
+    // shown as chosen.
+    ...(current() !== '' && known() && !listed() ? [option(known()!, `${entityTypeLabel(ctx.catalog(), text(known()!.domain))} · ${camera() ? 'not a camera' : 'takes no commands'}`)] : []),
     ...choices().map(e => option(e)),
   ])
-  const hint = () => !definitionEntities(ctx.catalog()).length ? `This definition has no entities yet. Add one ${underEntities}`
+  const hint = () => camera() && !choices().length ? 'Add a camera to this definition first.'
+    : !definitionEntities(ctx.catalog()).length ? `This definition has no entities yet. Add one ${underEntities}`
     : !choices().length ? `None of this definition's entities takes commands. Give one a type that does, such as a switch, ${underEntities}` : configHint(ctx, 'entity')
   return (
-    <PickerField name="entity" label={configLabel(ctx, 'entity', 'Entity')} options={options()} value={current()} placeholder="Choose an entity"
+    <PickerField name="entity" label={configLabel(ctx, 'entity', 'Entity')} options={options()} value={current()} placeholder={camera() ? 'Choose a camera' : 'Choose an entity'}
       hint={hint()} invalid={missing()} disabled={!options().length} errors={ctx.errorsFor('entity')}
       onSelect={key => {
         const result = chooseEntity(ctx.graph(), ctx.node().id, key, ctx.catalog())
@@ -292,6 +296,8 @@ export const stepPickers: Record<string, { keys: string[]; Section: Component<{ 
   entity_command: { keys: ['entity', 'command'], Section: CommandSection },
   set_entity_state: { keys: ['entity'], Section: EntitySection },
   set_entity_available: { keys: ['entity'], Section: EntitySection },
+  camera_frame: { keys: ['entity'], Section: EntitySection },
+  show_frame: { keys: ['entity'], Section: EntitySection },
   setting: { keys: ['key'], Section: SettingSection },
 }
 

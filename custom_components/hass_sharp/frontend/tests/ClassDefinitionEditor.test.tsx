@@ -998,3 +998,31 @@ it('shows the state of each entity it made, by its type, as Home Assistant has i
   expect(css).toMatch(/\.hs-app \.hs-cdef-entity__state \{[^}]*-webkit-line-clamp: 3;[^}]*overflow: hidden/)
   expect(css).not.toMatch(/@media \(max-width: 700px\) \{[^@]*\.hs-app \.hs-cdef-entity__state \{[^}]*(display|-webkit-line-clamp|overflow):/)
 })
+
+it('shows a camera it made as Ready or Unavailable, never its access token, its picture\'s address or any other attribute', async () => {
+  const doorbell: FixtureEntityType = { ...thermometerType, id: 'library:shelly:NodeLib.Doorbell', title: 'Doorbell', kind: 'device', domain: null,
+    entities: [{ key: 'front', domain: 'camera', name: 'Front door' }] }
+  const subscriptions: { message: any; push(event: unknown): void }[] = []
+  const fixture = visualFixture({ entityTypes: [doorbell] })
+  fixture.entities.seed('doorbell', plug([], 'Doorbell', doorbell.id))
+  const subscribeMessage = vi.fn(async (push: (event: unknown) => void, message: unknown) => { subscriptions.push({ message, push }); return async () => {} })
+  ;(fixture as any).connection = { subscribeMessage }
+  const logged = (['log', 'info', 'warn', 'error', 'debug'] as const).map(method => vi.spyOn(console, method))
+  const { root } = setup('/entities/doorbell', undefined, fixture)
+  await ready(root)
+  await vi.waitFor(() => expect(subscriptions).toHaveLength(1))
+  expect(subscriptions[0].message.entity_ids).toEqual(['camera.doorbell_front'])
+  const entities = page(root)!.querySelector('section[aria-label="Entities"]')!
+  const state = () => entities.querySelector('.hs-cdef-entity__state')?.textContent
+  const token = 'f3c1d9-access-token', picture = `/api/camera_proxy/camera.doorbell_front?token=${token}`
+  subscriptions[0].push({ a: { 'camera.doorbell_front': { s: 'idle', a: { access_token: token, entity_picture: picture, friendly_name: 'Front door', brand: 'HassSharp' } } } })
+  await vi.waitFor(() => expect(state()).toBe('Ready'))
+  const never = () => {
+    for (const value of [token, picture, 'camera_proxy', 'HassSharp']) expect(root.innerHTML, value).not.toContain(value)
+    for (const spy of logged) expect(JSON.stringify(spy.mock.calls)).not.toContain(token)
+  }
+  never()
+  subscriptions[0].push({ c: { 'camera.doorbell_front': { '+': { s: 'unavailable', a: { access_token: `${token}-2` } } } } })
+  await vi.waitFor(() => expect(state()).toBe('Unavailable'))
+  never()
+})

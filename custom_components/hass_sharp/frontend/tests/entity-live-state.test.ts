@@ -47,6 +47,19 @@ it('subscribes once to the ids, applies added, changed and removed entities, and
   expect(states()['switch.plug_relay']).toBeUndefined()
 })
 
+it('keeps none of a camera\'s attributes: not its access token, nor its picture\'s address', async () => {
+  const { hass, subscriptions } = connection()
+  const [ids] = createSignal(['camera.front'])
+  const states = createRoot(done => { dispose = done; return liveState(hass, ids) })
+  await settle()
+  const token = 'f3c1d9-access-token'
+  subscriptions[0].push({ a: { 'camera.front': { s: 'idle', a: { access_token: token, entity_picture: `/api/camera_proxy/camera.front?token=${token}`, friendly_name: 'Front', supported_features: 0 } } } })
+  expect(states()).toEqual({ 'camera.front': { state: 'idle', available: true } })
+  subscriptions[0].push({ c: { 'camera.front': { '+': { a: { access_token: `${token}-2`, entity_picture: `/api/camera_proxy/camera.front?token=${token}-2` } } } } })
+  expect(states()).toEqual({ 'camera.front': { state: 'idle', available: true } })
+  expect(JSON.stringify(states())).not.toContain(token)
+})
+
 it('resubscribes only when the set of ids changes, not for the same ids in another order or array', async () => {
   const { hass, subscriptions, subscribeMessage } = connection()
   const [ids, setIds] = createSignal(['light.a', 'light.b'])

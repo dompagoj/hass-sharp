@@ -38,7 +38,7 @@ const step = (graph: VisualGraph, kind: string, id: string, config: Record<strin
 const registryEntity = (entity_id: string, name: string, state_options: string[] | null = null) => ({
   entity_id, name, domain: entity_id.split('.')[0], area_id: null, device_id: null, device_class: null, supported_features: null, unit: null, icon: null, disabled: false, state_options,
 })
-const registry = { entities: [registryEntity('climate.living', 'Living room', ['off', 'heat', 'cool']), registryEntity('binary_sensor.motion', 'Motion')], areas: [], devices: [], floors: [], labels: [] }
+const registry = { entities: [registryEntity('climate.living', 'Living room', ['off', 'heat', 'cool']), registryEntity('binary_sensor.motion', 'Motion'), registryEntity('camera.front_door', 'Front door')], areas: [], devices: [], floors: [], labels: [] }
 
 /** The inspector of one node over a graph history, as the editor wires them. */
 function mount(graph: VisualGraph, id: string, catalog = nodeCatalog) {
@@ -130,6 +130,80 @@ describe('the entity picker', () => {
     const { el } = mount(step(graph, 'set_entity_state', 'set', { entity: 'bell' }), 'set')
     expect(texts(await open(el, 'entity'))).toEqual(['Bell · Button · has no state', 'Relay · Switch'])
     expect(el.querySelector('.hs-inspector section[aria-label="Inputs"]')).toBeNull()
+  })
+})
+
+describe('the camera pickers of Show frame and When a frame is needed', () => {
+  const cameras = () => entityGraph({ entities: [...definition().entities, { key: 'front', domain: 'camera', name: 'Front door' }, { key: 'yard', domain: 'camera' }] })
+
+  it('offer only the definition\'s cameras, by name, and store the chosen key', async () => {
+    for (const kind of ['show_frame', 'camera_frame']) {
+      const { el, node } = mount(step(cameras(), kind, 'cam', {}), 'cam')
+      expect(field(el, 'entity').querySelector('label')?.textContent, kind).toBe('Camera')
+      expect(texts(await open(el, 'entity')), kind).toEqual(['Front door · Camera', 'yard · Camera'])
+      await choose(el, 'entity', 'yard')
+      expect(node().config.entity, kind).toBe('yard')
+      // Only one picker for the camera: the generic text field of its config is not drawn too.
+      expect(el.querySelectorAll('.hs-inspector [data-input-id="entity"]'), kind).toHaveLength(1)
+      dispose?.(); dispose = undefined; document.body.innerHTML = ''
+    }
+  })
+
+  it('say to add a camera first when the definition has none, and are disabled', async () => {
+    for (const graph of [entityGraph(), entityGraph({ entities: [] })])
+      for (const kind of ['show_frame', 'camera_frame']) {
+        const { el } = mount(step(graph, kind, 'cam', {}), 'cam')
+        expect(field(el, 'entity').querySelector('.hs-field-hint')?.textContent, kind).toBe('Add a camera to this definition first.')
+        expect(box(el, 'entity').disabled, kind).toBe(true)
+        dispose?.(); dispose = undefined; document.body.innerHTML = ''
+      }
+  })
+
+  it('show an entity that is not a camera as chosen, marked so', async () => {
+    const { el } = mount(step(cameras(), 'show_frame', 'cam', { entity: 'relay' }), 'cam')
+    expect(box(el, 'entity').value).toBe('Relay')
+    expect(texts(await open(el, 'entity'))).toEqual(['Relay · Switch · not a camera', 'Front door · Camera', 'yard · Camera'])
+  })
+
+  it('name the definition\'s only camera in a new step, and none when it has several or none', () => {
+    const added = (graph: VisualGraph, kind: string) => addGraphNode(graph, kind, 'new', nodeCatalog).nodes.at(-1)!.config
+    const one = entityGraph({ entities: [...definition().entities, { key: 'front', domain: 'camera', name: 'Front door' }] })
+    for (const kind of ['show_frame', 'camera_frame']) {
+      expect(added(one, kind).entity, kind).toBe('front')
+      expect(added(cameras(), kind).entity, kind).toBeUndefined()
+      // A definition whose only entity is not a camera: none named.
+      expect(added(entityGraph({ entities: [{ key: 'power', domain: 'sensor', name: 'Power' }] }), kind).entity, kind).toBeUndefined()
+    }
+  })
+})
+
+describe('retyping an entity to or from Camera', () => {
+  it('removes the values, wires and options a camera does not take, and a camera\'s seconds between frames from another type', () => {
+    let graph = entityGraph({ entities: [{ key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'level', domain: 'number', name: 'Level', options: { min: 1, max: 30 } }] })
+    graph = step(graph, 'set_entity_state', 'set', { entity: 'relay', is_on: lit('boolean', true) })
+    graph = step(graph, 'entity_command', 'cmd', { entity: 'level', command: 'set_value' })
+    graph = step(graph, 'set_entity_state', 'value', { entity: 'level' })
+    graph = connectData(graph, 'cmd', 'value', 'value', 'value', graphTypes(graph, nodeCatalog))
+    const relay = retypeEntity(graph, 'relay', 'camera', nodeCatalog)
+    expect(relay.graph.nodes.find(n => n.id === 'set')!.config).toEqual({ entity: 'relay' })
+    expect(relay.notice).toBe('Cleared a value that no longer fits: On.')
+    const level = retypeEntity(graph, 'level', 'camera', nodeCatalog)
+    expect((level.graph.definition as any).entities[1]).toEqual({ key: 'level', domain: 'camera', name: 'Level' })
+    expect(level.graph.edges.filter(e => e.kind === 'data')).toEqual([])
+    expect(level.notice).toContain('Value')
+    // Back from Camera: its seconds between frames go, as a number has none.
+    const camera = entityGraph({ entities: [{ key: 'front', domain: 'camera', name: 'Front', options: { frame_interval: 2 } }] })
+    expect((retypeEntity(camera, 'front', 'number', nodeCatalog).graph.definition as any).entities[0]).toEqual({ key: 'front', domain: 'number', name: 'Front' })
+  })
+})
+
+describe('Take a picture', () => {
+  it('offers only Home Assistant\'s cameras for its camera', async () => {
+    const { el } = mount(step(entityGraph(), 'camera_snapshot', 'snap', {}), 'snap')
+    field(el, 'entity').querySelector<HTMLButtonElement>('.hs-picker-field')!.click()
+    const options = () => [...document.querySelectorAll<HTMLElement>('dialog[open] [role="option"]')]
+    await vi.waitFor(() => expect(options().length).toBeGreaterThan(0))
+    expect(options().map(o => o.textContent)).toEqual([expect.stringContaining('camera.front_door')])
   })
 })
 

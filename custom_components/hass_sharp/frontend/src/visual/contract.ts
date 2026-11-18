@@ -252,10 +252,16 @@ export function entityCommands(catalog: VisualCatalogSnapshot, key: string): str
   const commands = entityDomain(catalog, key)?.commands
   return record(commands) ? Object.keys(commands) : []
 }
-/** The definition's entities a step of this kind can name: When commanded only those whose type takes commands. */
+/** The steps that name one of the definition's cameras. */
+export const cameraKinds: readonly string[] = ['camera_frame', 'show_frame']
+/**
+ * The definition's entities a step of this kind can name: When commanded only those whose type takes commands, Show
+ * frame and When a frame is needed only its cameras.
+ */
 export function entityChoices(catalog: VisualCatalogSnapshot, kind: string): Record<string, unknown>[] {
   const entities = definitionEntities(catalog)
-  return kind === 'entity_command' ? entities.filter(e => entityCommands(catalog, e.key as string).length > 0) : entities
+  if (kind === 'entity_command') return entities.filter(e => entityCommands(catalog, e.key as string).length > 0)
+  return cameraKinds.includes(kind) ? entities.filter(e => text(e.domain) === 'camera') : entities
 }
 /**
  * The config of a When commanded once its entity is set (ruling R12): a command the entity's type does not take, or none,

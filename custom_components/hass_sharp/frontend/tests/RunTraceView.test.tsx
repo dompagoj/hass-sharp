@@ -791,6 +791,53 @@ it('never shows a definition\'s secret setting value on its run\'s page', async 
   expect(fixture.entities.documents.get('plug')!.settings[1].value).toBe('stored-secret')
 })
 
+it('shows a picture as the recorder\'s short text, as plain words on its card and in the panel', async () => {
+  const doorbell = (): Graph => ({ version: 5, name: 'Doorbell',
+    nodes: [
+      { id: 'frame', kind: 'camera_frame', config: { entity: 'front', trackHistory: true }, position: { x: 60, y: 100 } },
+      { id: 'snap', kind: 'camera_snapshot', config: { entity: { kind: 'literal', type: 'entity_id:camera', value: 'camera.porch' } }, position: { x: 360, y: 100 } },
+      { id: 'text', kind: 'image_draw_text', config: { color: 'White', size: 16, background: true, text: { kind: 'literal', type: 'string', value: 'Porch' }, x: { kind: 'literal', type: 'number', value: 8 }, y: { kind: 'literal', type: 'number', value: 8 } }, position: { x: 660, y: 300 } },
+      { id: 'show', kind: 'show_frame', config: { entity: 'front' }, position: { x: 960, y: 100 } },
+    ],
+    edges: [
+      { id: 'frame->snap', kind: 'execution', source: 'frame', sourcePort: 'next', target: 'snap', targetPort: 'in' },
+      { id: 'snap->show', kind: 'execution', source: 'snap', sourcePort: 'next', target: 'show', targetPort: 'in' },
+      { id: 'snap.image:text.image', kind: 'data', source: 'snap', sourcePort: 'image', target: 'text', targetPort: 'image' },
+      { id: 'text.image:show.image', kind: 'data', source: 'text', sourcePort: 'image', target: 'show', targetPort: 'image' },
+    ] } as unknown as Graph)
+  const entities = [{ key: 'front', domain: 'camera', name: 'Front door' }]
+  const taken = 'Image · 48 KB · 0 drawings', drawn = 'Image · 48 KB · 1 drawing'
+  const list: TraceEvent[] = [
+    { seq: 1, node: 'frame', frame: '', t: 0, ms: 1, status: 'ok', port: 'next' },
+    { seq: 2, node: 'snap', frame: '', t: 1, ms: 120, status: 'ok', port: 'next', inputs: { entity: { type: 'entity_id:camera', v: 'camera.porch' } }, outputs: { image: { type: 'image', v: taken } } },
+    { seq: 3, node: 'text', frame: '', t: 121, ms: 1, status: 'ok', port: 'next', inputs: { image: { type: 'image', v: taken, src: { node: 'snap', port: 'image' } } }, outputs: { image: { type: 'image', v: drawn } } },
+    { seq: 4, node: 'show', frame: '', t: 122, ms: 1, status: 'ok', port: 'next', inputs: { image: { type: 'image', v: drawn, src: { node: 'text', port: 'image' } } } },
+  ]
+  const summary: RunTrace['summary'] = {}
+  for (const event of list) { const row = (summary[event.node] ??= { count: 0, failed: 0, last: 'ok' }); row.count++; row.last = event.status }
+  const answer: RunTraceResponse = {
+    version: 1, live: false,
+    run: run({ runId: 'run-8', automationId: 'entity:doorbell', visualId: 'doorbell', visualRevision: 1, triggerNodeId: 'frame', cause: 'Frame', actionLabel: 'When a frame is needed ▸ Front door', trigger: { kind: 'frame', entity: 'front' } }),
+    snapshot: { revision: 'rev', visualId: 'doorbell', visualRevision: 1, graph: { ...doorbell(), definition: { entities, settings: [] } } as unknown as Graph, catalog: nodeCatalog },
+    trace: { format: 1, runId: 'run-8', rootNodeId: 'frame', startedUtc: '2026-11-18T01:00:01Z', complete: true, truncated: false, dropped: 0, trigger: { platform: 'frame', entity: 'front' }, events: list, summary },
+  }
+  const { root } = mountDefinition(async () => answer, { path: '/entities/doorbell/runs/run-8', prepare: fixture => fixture.entities.seed('doorbell', {
+    name: 'Doorbell', device: null, settings: [], entities, logic: { kind: 'graph', graph: doorbell() } }) })
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(4))
+  // On the cards: the words alone, never in quotes.
+  const chips = (id: string) => [...card(root, id).querySelectorAll('.hs-value-chip')].map(chip => chip.textContent)
+  expect(chips('snap')).toContain(taken)
+  expect(chips('show')).toContain(drawn)
+  expect(root.textContent).not.toContain(`"${drawn}"`)
+  // In the panel: the words, typed Image, not a tree.
+  steps(root)[3].click()
+  await vi.waitFor(() => expect(port(root, 'image')).not.toBeNull())
+  expect(port(root, 'image').querySelector('.hs-trace-value')!.textContent).toBe(drawn)
+  expect(port(root, 'image').querySelector('.hs-type-chip__name')!.textContent).toBe('Image')
+  expect(port(root, 'image').querySelector('[role="tree"], .hs-json-tree')).toBeNull()
+  expect(port(root, 'image').querySelector('.hs-trace-port__from')!.textContent).toContain('Draw text')
+})
+
 it('shows the error state with Try again, never the run, while the definition cannot be read', async () => {
   // The definition read gets no answer once: the run (another definition's) cannot be told apart from its own.
   let unanswered = true

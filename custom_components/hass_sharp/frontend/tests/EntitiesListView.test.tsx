@@ -332,6 +332,29 @@ it('shows each type\'s state in words: a light\'s brightness, a cover\'s positio
   await vi.waitFor(() => expect(states().slice(0, 4)).toEqual(['On · 100 %', 'Closed', 'Unknown', 'Unavailable']))
 })
 
+it('shows a camera as Ready or Unavailable, never its access token, its picture\'s address or any other attribute', async () => {
+  const doorbell: DefinitionBody = { name: 'Doorbell', settings: [], logic: graph('Doorbell'), entities: [{ key: 'front', domain: 'camera', name: 'Front door' }] }
+  const logged = (['log', 'info', 'warn', 'error', 'debug'] as const).map(method => vi.spyOn(console, method))
+  const { root, subscriptions } = setup({ prepare: f => f.entities.seed('doorbell', doorbell) })
+  await loaded(root)
+  await vi.waitFor(() => expect(subscriptions).toHaveLength(1))
+  const token = 'f3c1d9-access-token', picture = `/api/camera_proxy/camera.doorbell_front?token=${token}`
+  subscriptions[0].push({ a: { 'camera.doorbell_front': { s: 'idle', a: { access_token: token, entity_picture: picture, friendly_name: 'Front door', brand: 'HassSharp', supported_features: 0 } } } })
+  await vi.waitFor(() => expect(rows(card(root, 'doorbell'))).toEqual([['Front door', 'Camera', 'camera.doorbell_front', 'Ready']]))
+  const never = () => {
+    for (const value of [token, picture, 'camera_proxy', 'HassSharp']) expect(root.innerHTML, value).not.toContain(value)
+    for (const spy of logged) expect(JSON.stringify(spy.mock.calls)).not.toContain(token)
+  }
+  never()
+  // A new token, as Home Assistant hands one out every few minutes: still nothing of it.
+  subscriptions[0].push({ c: { 'camera.doorbell_front': { '+': { a: { access_token: `${token}-2`, entity_picture: `${picture}-2` } } } } })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  never()
+  subscriptions[0].push({ c: { 'camera.doorbell_front': { '+': { s: 'unavailable' } } } })
+  await vi.waitFor(() => expect(rows(card(root, 'doorbell'))[0][3]).toBe('Unavailable'))
+  never()
+})
+
 it('turns a definition off and on from its card, with the entity wording on the switch, and rolls back a failure', async () => {
   const { root, fixture, release } = setup({ hold: ['set_enabled'], prepare: three })
   await loaded(root)
