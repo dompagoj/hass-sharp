@@ -88,3 +88,36 @@ source is briefly unavailable (return the last good frame); ask the source for a
 smaller; set `is_streaming` ourselves if the state should say so; cap ImageSharp's pool. Code map:
 `docs/superpowers/plans/2026-11-18-custom-entities-phase-5-map.md`
 (its 13 open questions are the planner's list).
+
+# Second spike — alternatives to ImageSharp (2026-11-18)
+
+Same container, method and source frames as above; every candidate builds in Release with no key. Times are
+decode + draw (5 rectangles, 3 labels) + encode at quality 80, median (worst) of 50, in ms.
+
+| Candidate | Licence | Added to the release | 720p | 1080p | Peak memory | Notes |
+|---|---|---|---|---|---|---|
+| ImageSharp 4 + Drawing + Fonts (first spike) | Six Labors Split | 5.1 MB + font | 17.35 (20.28) | 37.23 (39.90) | 106–110 MiB | Release build needs a key |
+| SkiaSharp 4.157.0 + NativeAssets.Linux.NoDependencies | MIT + notices | 0.57 MB managed + 151 MB native for 13 Linux RIDs (8.8–13.3 MB each) | 11.65 (12.62) | 26.15 (27.92) | 65.6 MiB | over the 100 MiB limit; no kerning; needs a `SetDllImportResolver` under Python.NET |
+| Sdcb.SimdCodecs.Jpeg 2.0.0 + StbTrueTypeSharp | MIT / Unlicense-or-MIT | 0.42 MB + font | 9.91 (11.91) | 22.17 (23.06) | 72.3 MiB | fully managed; package 9 days old, one author, 2,502 downloads |
+| StbImageSharp + StbImageWriteSharp + StbTrueTypeSharp | Unlicense-or-MIT; StbImageWriteSharp declares none | 0.17 MB + font | 34.30 (35.93) | 75.61 (77.93) | 127.7 MiB | 3.5–7.8 MB allocated per frame |
+| SharpAstro.Jpeg 3.40.1991 | Unlicense | 0.17 MB + font | 26.58 (28.99) | 59.88 (60.94) | 103.5 MiB | built the day of the spike |
+| System libturbojpeg 3.1.3 by P/Invoke + own drawing | not shipped | ≈ 0 | 6.54 (8.52) | 14.56 (15.44) | 102 MiB | decode 4.14 / 9.29, encode 2.32 / 5.21; first frame 15.5 ms |
+| Magick.NET-Q8 15.1.0 | Apache-2.0 | 33–41 MB per RID | — | — | — | no arm / musl-arm; too large |
+| NetVips 3.2.0 + Native 8.18.7 | MIT, native LGPL-3.0+ | 17–18 MB per RID | — | — | — | no musl-arm; too large |
+
+**libturbojpeg in the image.** `/usr/lib/libturbojpeg.so.0` → `.so.0.4.0`, Alpine package `libturbojpeg-3.1.3-r0`,
+named in the image's `/etc/apk/world` (it belongs to the image, not to a wheel; PyTurboJPEG 1.8.3 loads it); its only
+dependency is musl libc. `NativeLibrary.TryLoad("libturbojpeg.so.0")` works; the name `turbojpeg` alone does not (no
+`.so` dev symlink) — resolve it as `SqliteNative` does, trying the soname and PyTurboJPEG's path list. Exports the
+legacy and the tj3 API, 16 scaling factors (decode at ½ straight to 640 wide: 4.22 ms at 720p). Rules found by
+feeding it 600 corrupted frames: after a failed `tjDecompressHeader3` the handle stays failed — destroy and recreate
+it; truncated data returns −1 with `tjGetErrorCode == 0` (a warning) — accept warnings, or every damaged frame is
+lost. With both: 497 of 600 decoded, the rest managed exceptions, no crash. One handle per thread.
+
+**Text without ImageSharp.** StbTrueTypeSharp: TrueType only, from an embedded resource; anti-aliased, pair
+kerning, Croatian letters render, a missing glyph draws the font's box. Feeding it a WOFF2 file aborted the process
+(AccessViolationException): only ever load the one embedded font.
+
+**Not established.** glibc hosts and 32-bit arm (no candidate was run there); whether every architecture's Home
+Assistant image, and a Core install in a venv, has libturbojpeg (only aarch64 was looked at); real Python.NET (a
+mimic was used); why the turbo path holds about 30 MB more than Sdcb at 1080p.
