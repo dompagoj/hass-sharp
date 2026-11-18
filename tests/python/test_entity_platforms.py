@@ -86,6 +86,32 @@ def plug(*entities, **fields):
                       **fields)
 
 
+def controls():
+    """One entity of each platform that takes commands besides the switch, with the options .NET describes, on the
+    device "Plug one": a dimmable lamp and a bulb that is not, a blind with a position and a door without one."""
+    return definition(
+        description('restart', 'button', 'Restart', deviceClass='restart'),
+        description('target', 'number', 'Target',
+                    options={'min': 5, 'max': 30, 'step': 0.5, 'mode': 'box', 'unit': '°C'}),
+        description('mode', 'select', 'Mode', options={'options': ['eco', 'comfort']}),
+        description('message', 'text', 'Message',
+                    options={'min': 1, 'max': 20, 'pattern': '^[a-z ]*$', 'mode': 'text'}),
+        description('lamp', 'light', 'Lamp', options={'dimmable': True}),
+        description('bulb', 'light', 'Bulb', options={'dimmable': False}),
+        description('blind', 'cover', 'Blind', deviceClass='blind', options={'positionable': True}),
+        description('door', 'cover', 'Door', deviceClass='garage', options={'positionable': False}))
+
+
+# Each control's entity id, and a service call that reaches .NET for it.
+CONTROLS = {'restart': 'button.plug_one_restart', 'target': 'number.plug_one_target', 'mode': 'select.plug_one_mode',
+            'message': 'text.plug_one_message', 'lamp': 'light.plug_one_lamp', 'bulb': 'light.plug_one_bulb',
+            'blind': 'cover.plug_one_blind', 'door': 'cover.plug_one_door'}
+CALLS = {'restart': ('button', 'press', {}), 'target': ('number', 'set_value', {'value': 21.5}),
+         'mode': ('select', 'select_option', {'option': 'eco'}), 'message': ('text', 'set_value', {'value': 'hi'}),
+         'lamp': ('light', 'turn_on', {'brightness': 128}), 'bulb': ('light', 'turn_off', {}),
+         'blind': ('cover', 'set_cover_position', {'position': 40}), 'door': ('cover', 'open_cover', {})}
+
+
 # The platforms are Home Assistant's own entity classes; run these inside the HA container or a venv with it. A skip
 # on the class, not the module, so that naming this module to unittest skips rather than fails.
 @unittest.skipIf(importlib.util.find_spec('homeassistant') is None,
@@ -277,6 +303,112 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
                                                 blocking=True)
         # The .NET message, without its type and stack.
         self.assertEqual('The plug did not answer', str(raised.exception))
+
+    # The controls: button, number, select, text, light and cover
+
+    async def test_controls_reach_the_state_machine_with_their_features(self):
+        ids = await self.sync(controls())
+        self.assertEqual({f'plug1:{key}': entity_id for key, entity_id in CONTROLS.items()}, ids)
+        for entity_id in ids.values():
+            self.assertEqual('unavailable', self.state(entity_id).state)
+        await self.push(*(snapshot(f'plug1:{key}', values={}) for key in CONTROLS))
+        attributes = {key: self.state(entity_id).attributes for key, entity_id in CONTROLS.items()}
+        self.assertEqual(('Plug one Restart', 'restart'),
+                         (attributes['restart']['friendly_name'], attributes['restart']['device_class']))
+        target = attributes['target']
+        self.assertEqual((5, 30, 0.5, 'box', '°C'),
+                         (target['min'], target['max'], target['step'], target['mode'], target['unit_of_measurement']))
+        self.assertEqual(['eco', 'comfort'], attributes['mode']['options'])
+        message = attributes['message']
+        self.assertEqual((1, 20, '^[a-z ]*$', 'text'),
+                         (message['min'], message['max'], message['pattern'], message['mode']))
+        self.assertEqual((['brightness'], ['onoff']),
+                         (attributes['lamp']['supported_color_modes'], attributes['bulb']['supported_color_modes']))
+        from homeassistant.components.cover import CoverEntityFeature
+        moves = CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
+        self.assertEqual((moves | CoverEntityFeature.SET_POSITION, moves),
+                         (attributes['blind']['supported_features'], attributes['door']['supported_features']))
+        self.assertEqual(('blind', 'garage'), (attributes['blind']['device_class'], attributes['door']['device_class']))
+        # Known to nothing yet: unknown, not unavailable.
+        self.assertEqual({'unknown'}, {self.state(entity_id).state for entity_id in CONTROLS.values()})
+
+    async def test_control_pushes_show(self):
+        await self.sync(controls())
+        await self.push(snapshot('plug1:restart', values={}),
+                        snapshot('plug1:target', values={'value': 21.5}),
+                        snapshot('plug1:mode', values={'option': 'comfort'}),
+                        snapshot('plug1:message', values={'value': 'hello'}),
+                        snapshot('plug1:lamp', values={'is_on': True, 'brightness': 128}),
+                        snapshot('plug1:bulb', values={'is_on': True, 'brightness': None}),
+                        snapshot('plug1:blind', values={'is_closed': None, 'position': 40}),
+                        snapshot('plug1:door', values={'is_closed': True, 'position': None}))
+        shown = {key: self.state(entity_id).state for key, entity_id in CONTROLS.items()}
+        self.assertEqual({'restart': 'unknown', 'target': '21.5', 'mode': 'comfort', 'message': 'hello', 'lamp': 'on',
+                          'bulb': 'on', 'blind': 'open', 'door': 'closed'}, shown)
+        lamp, bulb = self.state(CONTROLS['lamp']).attributes, self.state(CONTROLS['bulb']).attributes
+        self.assertEqual((128, 'brightness'), (lamp['brightness'], lamp['color_mode']))
+        self.assertEqual('onoff', bulb['color_mode'])
+        self.assertNotIn('brightness', bulb)
+        self.assertEqual(40, self.state(CONTROLS['blind']).attributes['current_position'])
+        self.assertNotIn('current_position', self.state(CONTROLS['door']).attributes)
+        # A cover that says only where it is: closed at position 0. One that says nothing is unknown.
+        await self.push(snapshot('plug1:blind', values={'is_closed': None, 'position': 0}),
+                        snapshot('plug1:door', values={'is_closed': None, 'position': None}),
+                        snapshot('plug1:lamp', values={'is_on': False, 'brightness': 128}))
+        self.assertEqual(('closed', 'unknown', 'off'),
+                         tuple(self.state(CONTROLS[key]).state for key in ('blind', 'door', 'lamp')))
+
+    async def test_control_service_calls_reach_their_commands(self):
+        from homeassistant.exceptions import HomeAssistantError
+        await self.sync(controls())
+        await self.push(*(snapshot(f'plug1:{key}', values={}) for key in CONTROLS))
+        for domain, service, data in (
+                ('button', 'press', {'entity_id': CONTROLS['restart']}),
+                ('number', 'set_value', {'entity_id': CONTROLS['target'], 'value': 21.5}),
+                ('select', 'select_option', {'entity_id': CONTROLS['mode'], 'option': 'eco'}),
+                ('text', 'set_value', {'entity_id': CONTROLS['message'], 'value': 'hi there'}),
+                ('light', 'turn_on', {'entity_id': CONTROLS['lamp'], 'brightness': 128}),
+                ('light', 'turn_on', {'entity_id': CONTROLS['lamp']}),
+                ('light', 'turn_on', {'entity_id': CONTROLS['bulb'], 'brightness': 128}),
+                ('light', 'turn_off', {'entity_id': CONTROLS['lamp']}),
+                ('cover', 'open_cover', {'entity_id': CONTROLS['blind']}),
+                ('cover', 'close_cover', {'entity_id': CONTROLS['blind']}),
+                ('cover', 'stop_cover', {'entity_id': CONTROLS['blind']}),
+                ('cover', 'set_cover_position', {'entity_id': CONTROLS['blind'], 'position': 40})):
+            await self.hass.services.async_call(domain, service, data, blocking=True)
+        self.assertEqual([('plug1:restart', 'press', {}), ('plug1:target', 'set_value', {'value': 21.5}),
+                          ('plug1:mode', 'select_option', {'option': 'eco'}),
+                          ('plug1:message', 'set_value', {'value': 'hi there'}),
+                          ('plug1:lamp', 'turn_on', {'brightness': 128}), ('plug1:lamp', 'turn_on', {}),
+                          # Home Assistant drops the brightness of a light that cannot be dimmed.
+                          ('plug1:bulb', 'turn_on', {}), ('plug1:lamp', 'turn_off', {}),
+                          ('plug1:blind', 'open', {}), ('plug1:blind', 'close', {}), ('plug1:blind', 'stop', {}),
+                          ('plug1:blind', 'set_position', {'position': 40})],
+                         [command[:3] for command in self.manager.commands])
+        self.assertNotIn(threading.main_thread(), [command[3] for command in self.manager.commands])
+        # Home Assistant refuses what the entity does not offer before it is asked: a position for a cover without
+        # one, a number beyond the maximum, an option not in the list, a text that does not match.
+        for domain, service, data in (
+                ('cover', 'set_cover_position', {'entity_id': CONTROLS['door'], 'position': 40}),
+                ('number', 'set_value', {'entity_id': CONTROLS['target'], 'value': 45}),
+                ('select', 'select_option', {'entity_id': CONTROLS['mode'], 'option': 'boost'}),
+                ('text', 'set_value', {'entity_id': CONTROLS['message'], 'value': 'HI'})):
+            with self.subTest(f'{domain}.{service}'), self.assertRaises((HomeAssistantError, ValueError)):
+                await self.hass.services.async_call(domain, service, data, blocking=True)
+        self.assertEqual(12, len(self.manager.commands))
+
+    async def test_refused_control_command_fails_the_service_call(self):
+        from homeassistant.exceptions import HomeAssistantError
+        await self.sync(controls())
+        await self.push(*(snapshot(f'plug1:{key}', values={}) for key in CONTROLS))
+        for key, (domain, service, data) in CALLS.items():
+            with self.subTest(key):
+                self.manager.error = DotNetError(f'{key.title()} ({key}) takes nothing now')
+                with self.assertRaises(HomeAssistantError) as raised:
+                    await self.hass.services.async_call(domain, service, {'entity_id': CONTROLS[key], **data},
+                                                        blocking=True)
+                self.assertEqual(f'{key.title()} ({key}) takes nothing now', str(raised.exception))
+        self.assertEqual(len(CALLS), len(self.manager.commands))
 
     async def test_resync_renames_a_live_entity(self):
         await self.sync(plug())

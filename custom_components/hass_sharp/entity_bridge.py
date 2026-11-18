@@ -249,13 +249,20 @@ class EntityBridge:
         failures.add(message)
 
     async def _async_sync(self, definition_json):
-        """Make Home Assistant match one definition's description (spike rules 2, 5, 6, 8, 9)."""
+        """Make Home Assistant match one definition's description (spike rules 2, 5, 6, 8, 9).
+
+        Refused before anything changes when a platform is not set up or cannot show one of the entities
+        (`HassSharpEntity.refusal`)."""
         definition = json.loads(definition_json)
         definition_id = definition["definitionId"]
         descriptions = definition["entities"]
         missing = sorted({d["domain"] for d in descriptions} - self._platforms.keys())
         if missing:
             raise _Refused(f"The {', '.join(missing)} platform of HassSharp is not set up")
+        refusals = [refused for d in descriptions
+                    if (refused := self._platforms[d["domain"]][1].refusal(d)) is not None]
+        if refusals:
+            raise _Refused("; ".join(refusals))
         entities, devices = er.async_get(self.hass), dr.async_get(self.hass)
         described = {(d["domain"], d["uniqueId"]) for d in descriptions}
         unique_ids = {unique_id for _, unique_id in described}

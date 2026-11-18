@@ -22,6 +22,16 @@ class HassSharpEntity(Entity):
         self._attr_available = False
         self.apply(description, device, definition_name)
 
+    @classmethod
+    def refusal(cls, description: dict) -> str | None:
+        """Why Home Assistant cannot show an entity so described, as a sentence naming it; None when it can.
+
+        The bridge refuses a definition with such an entity before it changes anything. A platform overrides this for
+        what .NET accepts and Home Assistant would fail on at every state write, such as a text pattern Python's `re`
+        cannot read.
+        """
+        return None
+
     def apply(self, description: dict, device: dict | None, definition_name: str) -> None:
         """Take the metadata of a description; on the loop. The bridge writes the state afterwards.
 

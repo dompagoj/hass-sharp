@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 from test_visual import EntryState, load_routes
 
-PLATFORMS=['binary_sensor','sensor','switch']
+PLATFORMS=['binary_sensor','sensor','switch','button','number','select','text','light','cover']
 
 class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_unload_unloads_platform_invalidates_tools_and_removes_panel(self):

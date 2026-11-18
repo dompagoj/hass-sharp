@@ -201,15 +201,62 @@ def load(name, env):
     return env
 
 
+# What the platform modules import from Home Assistant, as far as they use it: the base classes by name only, the
+# enums with the members they take.
+class NumberMode(enum.StrEnum):
+    AUTO = 'auto'
+    BOX = 'box'
+    SLIDER = 'slider'
+
+
+class TextMode(enum.StrEnum):
+    TEXT = 'text'
+    PASSWORD = 'password'
+
+
+class ColorMode(enum.StrEnum):
+    ONOFF = 'onoff'
+    BRIGHTNESS = 'brightness'
+
+
+class CoverEntityFeature(enum.IntFlag):
+    OPEN = 1
+    CLOSE = 2
+    SET_POSITION = 4
+    STOP = 8
+
+
+PLATFORM_BASES = {name: type(name, (Entity,), {}) for name in (
+    'BinarySensorEntity', 'SensorEntity', 'SwitchEntity', 'ButtonEntity', 'NumberEntity', 'SelectEntity', 'TextEntity',
+    'LightEntity', 'CoverEntity')}
+
+
+def platform_class(domain):
+    """The entity class of a platform module, loaded over the entity base and the fakes above."""
+    base = load('entity_base', {'Entity': Entity, 'EntityCategory': EntityCategory})['HassSharpEntity']
+    env = load(domain, {'HassSharpEntity': base, 'entity_platform': NS(), **PLATFORM_BASES, 'NumberMode': NumberMode,
+                        'TextMode': TextMode, 'ColorMode': ColorMode, 'CoverEntityFeature': CoverEntityFeature,
+                        'ATTR_BRIGHTNESS': 'brightness', 'ATTR_POSITION': 'position'})
+    classes = [v for v in env.values() if isinstance(v, type) and issubclass(v, base) and v is not base]
+    assert len(classes) == 1, classes
+    return classes[0]
+
+
 def device(name='Plug one', **fields):
     return {'name': name, 'manufacturer': 'Shelly', 'model': 'Plug S', 'swVersion': None, 'hwVersion': None,
             'configurationUrl': None, 'suggestedArea': None, 'via': None, **fields}
 
 
+# The commands .NET describes for each domain (the catalog's entityDomains).
+COMMANDS = {'switch': ['turn_on', 'turn_off'], 'button': ['press'], 'number': ['set_value'],
+            'select': ['select_option'], 'text': ['set_value'], 'light': ['turn_on', 'turn_off'],
+            'cover': ['open', 'close', 'stop', 'set_position']}
+
+
 def description(key, domain='switch', name='Relay', definition='plug1', **fields):
     return {'uniqueId': f'{definition}:{key}', 'key': key, 'domain': domain, 'name': name, 'icon': None,
             'deviceClass': None, 'entityCategory': None, 'enabledByDefault': True,
-            'commands': ['turn_on', 'turn_off'] if domain == 'switch' else [], 'options': {}, **fields}
+            'commands': COMMANDS.get(domain, []), 'options': {}, **fields}
 
 
 def definition(*entities, definition_id='plug1', name='Plug one', device=device()):
@@ -512,6 +559,26 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('binary_sensor', answers[0][1])
         # Nothing was changed.
         self.assertEqual((self.entities.entities, self.devices.devices, self.platforms['switch'].added), ({}, {}, []))
+
+    async def test_sync_refuses_a_text_pattern_python_cannot_read(self):
+        # Valid in .NET, but Home Assistant matches the text with Python's re, which has no \p{...}: every state write
+        # would fail with a traceback, so the definition is refused instead.
+        self.platforms['text'] = Platform('text', self.hass, self.entities, self.devices)
+        self.bridge.attach_platform('text', self.platforms['text'], platform_class('text'))
+        options = {'min': 0, 'max': 10, 'pattern': r'^\p{Lu}+$', 'mode': 'text'}
+        code = description('code', 'text', 'Code', options=options)
+        answers = await self.answers(self.bridge.begin_sync, definition(description('relay'), code))
+        self.assertEqual(answers, [('error', r'Code (code) has the pattern ^\p{Lu}+$, which Home Assistant cannot use: '
+                                             r'bad escape \p at position 1')])
+        # Refused before anything changed, and logged without a traceback.
+        self.assertEqual((self.entities.entities, self.devices.devices), ({}, {}))
+        self.assertEqual((self.platforms['switch'].added, self.platforms['text'].added), ([], []))
+        self.logger.exception.assert_not_called()
+        # A pattern Python reads is taken, and so is a text without one.
+        await self.sync(definition(description('code', 'text', 'Code', options={**options, 'pattern': '^[A-Z]+$'}),
+                                   description('note', 'text', None, options={**options, 'pattern': None})))
+        self.assertEqual(self.live('plug1:code')._attr_pattern, '^[A-Z]+$')
+        self.assertIsNone(self.live('plug1:note')._attr_pattern)
 
     async def test_sync_resolves_the_via_device(self):
         self.devices.add('hub', name='Hub')
@@ -833,6 +900,104 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
             await self.live('plug1:relay').command('turn_off')
         # The message only: not the .NET type or stack (spike rule 12).
         self.assertEqual(str(raised.exception), 'The entity is not running')
+
+
+class PlatformModulesTest(unittest.IsolatedAsyncioTestCase):
+    """Each platform module over fake base classes: what it takes from a description's options and a snapshot's
+    values, and the command and data each of its methods sends."""
+
+    def entity(self, domain, **options):
+        self.commands = []
+
+        async def command(unique_id, name, data):
+            self.commands.append((name, data))
+        bridge = NS(async_command=command)
+        return platform_class(domain)(bridge, description('main', domain, 'Main', options=options), None, 'Def')
+
+    def values(self, entity, **values):
+        entity.apply_state({'available': True, 'values': values, 'attributes': {}})
+        return entity
+
+    async def test_button_presses(self):
+        button = self.values(self.entity('button'))
+        await button.async_press()
+        self.assertEqual(self.commands, [('press', {})])
+
+    async def test_number_takes_its_range_and_sets_a_value(self):
+        number = self.entity('number', min=5, max=30, step=0.5, mode='box', unit='°C')
+        self.assertEqual((number._attr_native_min_value, number._attr_native_max_value, number._attr_native_step,
+                          number._attr_native_unit_of_measurement), (5, 30, 0.5, '°C'))
+        self.assertIs(number._attr_mode, NumberMode.BOX)
+        self.assertEqual(self.values(number, value=21.5)._attr_native_value, 21.5)
+        self.assertIsNone(self.values(number, value=None)._attr_native_value)
+        await number.async_set_native_value(22.0)
+        self.assertEqual(self.commands, [('set_value', {'value': 22.0})])
+        # Synced again with other options, a live number takes them.
+        number.apply(description('main', 'number', 'Main', options={'min': 0, 'max': 1, 'step': 0.1, 'mode': 'auto',
+                                                                    'unit': None}), None, 'Def')
+        self.assertEqual((number._attr_native_max_value, number._attr_mode, number._attr_native_unit_of_measurement),
+                         (1, NumberMode.AUTO, None))
+
+    async def test_select_takes_its_options_and_selects_one(self):
+        select = self.entity('select', options=['eco', 'comfort'])
+        self.assertEqual(select._attr_options, ['eco', 'comfort'])
+        self.assertEqual(self.values(select, option='comfort')._attr_current_option, 'comfort')
+        self.assertIsNone(self.values(select, option=None)._attr_current_option)
+        await select.async_select_option('eco')
+        self.assertEqual(self.commands, [('select_option', {'option': 'eco'})])
+
+    async def test_text_takes_its_lengths_pattern_and_mode_and_sets_a_text(self):
+        text = self.entity('text', min=1, max=20, pattern='^[a-z ]*$', mode='password')
+        self.assertEqual((text._attr_native_min, text._attr_native_max, text._attr_pattern), (1, 20, '^[a-z ]*$'))
+        self.assertIs(text._attr_mode, TextMode.PASSWORD)
+        self.assertEqual(self.values(text, value='hello')._attr_native_value, 'hello')
+        await text.async_set_value('hi there')
+        self.assertEqual(self.commands, [('set_value', {'value': 'hi there'})])
+
+    async def test_text_refuses_only_a_pattern_python_cannot_read(self):
+        cls = platform_class('text')
+        options = {'min': 0, 'max': 10, 'mode': 'text'}
+        self.assertEqual(cls.refusal(description('code', 'text', None, options={**options, 'pattern': '(?<n>a)'})),
+                         'code has the pattern (?<n>a), which Home Assistant cannot use: unknown extension ?<n at '
+                         'position 1')
+        self.assertIsNone(cls.refusal(description('code', 'text', 'Code', options={**options, 'pattern': '^a+$'})))
+        self.assertIsNone(cls.refusal(description('code', 'text', 'Code', options={**options, 'pattern': None})))
+        # The other platforms refuse nothing.
+        self.assertIsNone(platform_class('number').refusal(description('main', 'number', options={'pattern': '('})))
+
+    async def test_light_takes_its_colour_mode_and_sends_brightness_only_when_given(self):
+        lamp = self.entity('light', dimmable=True)
+        self.assertEqual((lamp._attr_supported_color_modes, lamp._attr_color_mode),
+                         ({ColorMode.BRIGHTNESS}, ColorMode.BRIGHTNESS))
+        bulb = self.entity('light', dimmable=False)
+        self.assertEqual((bulb._attr_supported_color_modes, bulb._attr_color_mode),
+                         ({ColorMode.ONOFF}, ColorMode.ONOFF))
+        self.values(lamp, is_on=True, brightness=128)
+        self.assertEqual((lamp._attr_is_on, lamp._attr_brightness), (True, 128))
+        self.values(lamp, is_on=None, brightness=None)
+        self.assertEqual((lamp._attr_is_on, lamp._attr_brightness), (None, None))
+        await lamp.async_turn_on(brightness=128, transition=2)
+        await lamp.async_turn_on()
+        await lamp.async_turn_off(transition=2)
+        self.assertEqual(self.commands, [('turn_on', {'brightness': 128}), ('turn_on', {}), ('turn_off', {})])
+
+    async def test_cover_takes_its_features_and_works_out_closed(self):
+        blind = self.entity('cover', positionable=True)
+        features = CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
+        self.assertEqual(blind._attr_supported_features, features | CoverEntityFeature.SET_POSITION)
+        self.assertEqual(self.entity('cover', positionable=False)._attr_supported_features, features)
+        for values, closed, position in (({'is_closed': False, 'position': 0}, False, 0),
+                                         ({'is_closed': None, 'position': 0}, True, 0),
+                                         ({'position': 40}, False, 40),
+                                         ({'is_closed': True, 'position': None}, True, None),
+                                         ({'is_closed': None, 'position': None}, None, None)):
+            self.values(blind, **values)
+            self.assertEqual((blind._attr_is_closed, blind._attr_current_cover_position), (closed, position), values)
+        await blind.async_open_cover()
+        await blind.async_close_cover(speed='fast')
+        await blind.async_stop_cover()
+        await blind.async_set_cover_position(position=40)
+        self.assertEqual(self.commands, [('open', {}), ('close', {}), ('stop', {}), ('set_position', {'position': 40})])
 
 
 if __name__ == '__main__':

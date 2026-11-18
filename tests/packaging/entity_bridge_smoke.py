@@ -6,7 +6,9 @@ Python callables stand in for Home Assistant's bridge on the four entity delegat
 sync is answered from Python as the bridge answers it, or the definition never becomes active. A manager runs over a
 temporary configuration directory. For each definition, checks that the sync, the pushed states and a command's effect
 arrive in Python as str on .NET's threads, and that delete removes the entities. For the class, that a command it
-rejects fails with its message. For the graph, that its binary sensor follows a source entity Python answers for (through
+rejects fails with its message, and that its number is described with its range, takes a value a command sets and refuses
+one beyond it with a message naming it. For the graph, that a dimmable light's turn on flow reads the brightness its
+command gives and its turn off flow keeps it, and that its binary sensor follows a source entity Python answers for (through
 PyInterop.Entity, asked with a str on .NET's threads, and changed through the manager as the bridge reports a change),
 that it subscribes to that source with a str and unsubscribes from it on delete, that a switch's turn on and turn off
 flows set its state, that the save warns of the one command no flow handles, naming its entity, that a command no flow
@@ -43,6 +45,7 @@ public class SmokePlug : SharpDevice
 {
     readonly SharpSwitch relay;
     readonly SharpSensor power;
+    readonly SharpNumber target;
     public SmokePlug()
     {
         Manufacturer = "Smoke";
@@ -50,6 +53,7 @@ public class SmokePlug : SharpDevice
         power = Add(new SharpSensor("power") { DeviceClass = "power", Unit = "W" });
         Add(new SharpBinarySensor("problem") { IsOn = false });
         Add(new SharpSwitch("guard") { OnTurnOn = () => throw new InvalidOperationException("''' + REFUSAL + '''") });
+        target = Add(new SharpNumber("target", "Target") { Min = 5, Max = 30, Step = 0.5, Unit = "°C", OnSetValue = value => { target.Value = value; return Task.CompletedTask; } });
     }
     protected override Task Start()
     {
@@ -58,10 +62,12 @@ public class SmokePlug : SharpDevice
     }
 }
 '''
-EXPECTED = [('relay', 'switch'), ('power', 'sensor'), ('problem', 'binary_sensor'), ('guard', 'switch')]
+EXPECTED = [('relay', 'switch'), ('power', 'sensor'), ('problem', 'binary_sensor'), ('guard', 'switch'), ('target', 'number')]
+BEYOND = 'Target (target) takes a number from 5 to 30, not 45'
 
-# The graph definition: a binary sensor on while SOURCE is, a switch whose turn on and turn off flows set its state, and a
-# switch with only a turn off flow, so that turning it on has no flow.
+# The graph definition: a binary sensor on while SOURCE is, a switch whose turn on and turn off flows set its state, a
+# switch with only a turn off flow, so that turning it on has no flow, and a dimmable light turned on at the brightness its
+# command gives.
 GRAPH_DEFINITION = 'smoke_graph'
 SOURCE = 'binary_sensor.smoke_source'
 NO_FLOW = 'Bare has no flow for Turn on'
@@ -75,8 +81,8 @@ def node(id_, kind, config):
     return {'id': id_, 'kind': kind, 'config': config}
 
 
-def data(source, target, target_port):
-    return {'id': f'{source}.value:{target}.{target_port}', 'kind': 'data', 'source': source, 'target': target, 'sourcePort': 'value', 'targetPort': target_port}
+def data(source, target, target_port, source_port='value'):
+    return {'id': f'{source}.{source_port}:{target}.{target_port}', 'kind': 'data', 'source': source, 'target': target, 'sourcePort': source_port, 'targetPort': target_port}
 
 
 def next_(source, target):
@@ -92,8 +98,15 @@ GRAPH = {'version': 5, 'name': 'Smoke graph', 'nodes': [
     node('set_off', 'set_entity_state', {'entity': 'relay', 'is_on': literal('boolean', False)}),
     node('bare_off', 'entity_command', {'entity': 'bare', 'command': 'turn_off'}),
     node('bare_set_off', 'set_entity_state', {'entity': 'bare', 'is_on': literal('boolean', False)}),
-], 'edges': [data('source', 'motion', 'is_on'), next_('on', 'set_on'), next_('off', 'set_off'), next_('bare_off', 'bare_set_off')]}
-GRAPH_ENTITIES = [('motion', 'binary_sensor', 'Motion', []), ('relay', 'switch', 'Relay', ['turn_on', 'turn_off']), ('bare', 'switch', 'Bare', ['turn_on', 'turn_off'])]
+    node('lamp_on', 'entity_command', {'entity': 'lamp', 'command': 'turn_on'}),
+    node('lamp_bright', 'set_entity_state', {'entity': 'lamp', 'is_on': literal('boolean', True)}),
+    node('lamp_off', 'entity_command', {'entity': 'lamp', 'command': 'turn_off'}),
+    node('lamp_dark', 'set_entity_state', {'entity': 'lamp', 'is_on': literal('boolean', False)}),
+], 'edges': [data('source', 'motion', 'is_on'), next_('on', 'set_on'), next_('off', 'set_off'), next_('bare_off', 'bare_set_off'),
+             next_('lamp_on', 'lamp_bright'), next_('lamp_off', 'lamp_dark'), data('lamp_on', 'lamp_bright', 'brightness', 'brightness')]}
+# Each: key, domain, name, commands, options.
+GRAPH_ENTITIES = [('motion', 'binary_sensor', 'Motion', [], {}), ('relay', 'switch', 'Relay', ['turn_on', 'turn_off'], {}),
+                  ('bare', 'switch', 'Bare', ['turn_on', 'turn_off'], {}), ('lamp', 'light', 'Lamp', ['turn_on', 'turn_off'], {'dimmable': True})]
 
 lock = threading.Lock()
 # Every thread Python started: a delegate called on one of these is a mismatch. Kept as thread objects, not idents: a
@@ -318,6 +331,9 @@ try:
         power = definition['entities'][1]
         check(power['deviceClass'] == 'power' and power['options']['unit'] == 'W', f'the power sensor is described as {power}')
         check(definition['entities'][0]['commands'] == ['turn_on', 'turn_off'], f"the relay's commands: {definition['entities'][0]}")
+        target = definition['entities'][4]
+        check(target['name'] == 'Target' and target['commands'] == ['set_value']
+              and target['options'] == {'min': 5, 'max': 30, 'step': 0.5, 'mode': 'auto', 'unit': '°C'}, f'the number is described as {target}')
 
         # Every's first run, and the binary sensor's first state, come in a push from .NET's pump.
         until(shows(f'{DEFINITION}:power', 'value', 42.5), 'the power sensor pushed 42.5')
@@ -327,6 +343,17 @@ try:
         until(shows(f'{DEFINITION}:relay', 'is_on', True), 'the relay pushed on after turn_on')
         call(lambda: manager.EntityCommand(f'{DEFINITION}:relay', 'turn_off', '{}'), 'turn_off')
         until(lambda: [s['values'].get('is_on') for s in snapshots() if s['uniqueId'] == f'{DEFINITION}:relay'][-1] is False, 'the relay pushed off after turn_off')
+
+        call(lambda: manager.EntityCommand(f'{DEFINITION}:target', 'set_value', '{"value": 21.5}'), 'set_value')
+        until(shows(f'{DEFINITION}:target', 'value', 21.5), 'the number pushed 21.5 after set_value')
+        # A value beyond the range is refused before the handler runs, with a message naming the number and the value.
+        try:
+            call(lambda: manager.EntityCommand(f'{DEFINITION}:target', 'set_value', '{"value": 45}'), 'the set_value beyond the range')
+        except Exception as error:
+            check(getattr(error, 'Message', None) == BEYOND, f'the value beyond the range failed with {getattr(error, "Message", error)!r}, not {BEYOND!r}')
+        else:
+            fail('a value beyond the range was set')
+        check(lasts(f'{DEFINITION}:target', 'value', 21.5)(), 'the refused value changed the number')
 
         # A handler that throws faults the command's Task with its own message, which the bridge reads as .Message.
         try:
@@ -350,7 +377,8 @@ try:
         # ---- A definition whose logic is a graph of nodes ----
         saved = request(manager.EntityRequest, {'operation': 'save', 'id': GRAPH_DEFINITION, 'expectedRevision': 0, 'definition': {
             'name': 'Smoke graph', 'device': None, 'settings': [],
-            'entities': [{'key': key, 'domain': domain, 'name': name} for key, domain, name, _ in GRAPH_ENTITIES],
+            'entities': [{'key': key, 'domain': domain, 'name': name, **({'options': options} if options else {})}
+                         for key, domain, name, _, options in GRAPH_ENTITIES],
             'logic': {'kind': 'graph', 'graph': GRAPH}}}, 'the graph definition save')
         check(saved.get('active') is True and saved['document']['status'] == 'running', f'the graph definition does not run: {saved}')
         # The saved libraries' compiler warnings come along (the class above has some); of the graph, only the one command.
@@ -358,7 +386,7 @@ try:
         check([d.get('code') for d in own] == ['command.unhandled'], f"the save warns only of the command no flow handles: {saved.get('diagnostics')}")
         check('bare' in own[0].get('message', '') and 'Turn on' in own[0]['message'], f"the warning names the bare switch and its command: {own[0]}")
         live = {e['uniqueId']: e['entityId'] for e in saved['document']['liveEntities']}
-        check(live == {f'{GRAPH_DEFINITION}:{key}': f'{domain}.{GRAPH_DEFINITION}_{key}' for key, domain, _, _ in GRAPH_ENTITIES},
+        check(live == {f'{GRAPH_DEFINITION}:{key}': f'{domain}.{GRAPH_DEFINITION}_{key}' for key, domain, _, _, _ in GRAPH_ENTITIES},
               f"the graph's live entities are not the entity ids Python answered: {saved['document']['liveEntities']}")
 
         synced = arguments('sync')
@@ -367,8 +395,9 @@ try:
         check(definition['definitionId'] == GRAPH_DEFINITION and definition['name'] == 'Smoke graph' and definition['device'] is None,
               f'the graph sync: {definition}')
         described = [(e['uniqueId'], e['key'], e['domain'], e['name'], e['commands']) for e in definition['entities']]
-        check(described == [(f'{GRAPH_DEFINITION}:{key}', key, domain, name, commands) for key, domain, name, commands in GRAPH_ENTITIES],
+        check(described == [(f'{GRAPH_DEFINITION}:{key}', key, domain, name, commands) for key, domain, name, commands, _ in GRAPH_ENTITIES],
               f'the graph sync describes {described}')
+        check(definition['entities'][3]['options'] == {'dimmable': True}, f"the graph's light is described as {definition['entities'][3]}")
 
         # The State's first run reads the source through PyInterop.Entity; each change of it runs the State again.
         motion = f'{GRAPH_DEFINITION}:motion'
@@ -385,6 +414,13 @@ try:
         until(lasts(relay, 'is_on', True), "the graph relay pushed on after its turn on flow")
         call(lambda: manager.EntityCommand(relay, 'turn_off', '{}'), 'the graph turn_off')
         until(lasts(relay, 'is_on', False), "the graph relay pushed off after its turn off flow")
+
+        # The light's turn on flow reads the brightness its command gives; turned off, it keeps that brightness.
+        lamp = f'{GRAPH_DEFINITION}:lamp'
+        call(lambda: manager.EntityCommand(lamp, 'turn_on', '{"brightness": 128}'), "the graph light's turn_on")
+        until(lambda: lasts(lamp, 'is_on', True)() and lasts(lamp, 'brightness', 128)(), 'the graph light pushed on at brightness 128')
+        call(lambda: manager.EntityCommand(lamp, 'turn_off', '{}'), "the graph light's turn_off")
+        until(lambda: lasts(lamp, 'is_on', False)() and lasts(lamp, 'brightness', 128)(), 'the graph light pushed off, keeping brightness 128')
 
         try:
             call(lambda: manager.EntityCommand(f'{GRAPH_DEFINITION}:bare', 'turn_on', '{}'), 'the turn_on with no flow')
