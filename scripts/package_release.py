@@ -41,7 +41,7 @@ def package_release(integration_dir: Path, output: Path, version: str) -> None:
             raise ValueError(f"Missing runtime file: {name}. Build the integration first.")
 
     files = [*integration_dir.glob("*.py"), *integration_dir.glob("*.json")]
-    for directory in ("out", "www", "translations", "brand"):
+    for directory in ("out", "www", "translations", "brand", "licenses"):
         files.extend((integration_dir / directory).rglob("*"))
     files = sorted(
         path for path in files

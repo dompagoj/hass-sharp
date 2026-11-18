@@ -109,6 +109,20 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(set(archive.namelist()), set(self.files) | set(linux) | {"out/runtimes.json"})
             self.assertEqual(archive.read("out/runtimes/linux-musl-arm64/native/libe_sqlite3.so"), b"musl arm64")
 
+    def test_ships_the_licences_of_what_it_bundles(self):
+        # The font and the managed libraries a release carries that are not HassSharp's own come with their licences.
+        licenses = {
+            "licenses/DejaVu-LICENSE.txt": "Bitstream Vera",
+            "licenses/StbTrueTypeSharp-LICENSE.txt": "Unlicense OR MIT",
+        }
+        for name, content in licenses.items():
+            self.write_file(name, content)
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with ZipFile(self.output) as archive:
+            self.assertEqual(set(archive.namelist()), set(self.files) | set(licenses))
+            self.assertEqual(archive.read("licenses/DejaVu-LICENSE.txt"), b"Bitstream Vera")
+
     def test_skips_test_pages_and_the_preview_build_under_www(self):
         # The mock preview pages are served without authentication; a release built from a working copy must not hold them.
         for name in ("www/visual-v2-check-baby/tests/preview-app.html", "www/visual-v2-check-baby/assets/preview.js",

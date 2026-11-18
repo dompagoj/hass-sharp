@@ -10,6 +10,9 @@
              Members without a doc comment, or with parameters it does not describe, are not reported. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+        <!-- StbTrueTypeSharp's API takes pointers (Devices/Imaging/ImagePainter.cs), and libjpeg-turbo is called through
+             function pointers (Devices/Imaging/TurboJpeg.cs). -->
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     </PropertyGroup>
 
     <ItemGroup>
@@ -18,10 +21,15 @@
         <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="11.0.0"/>
         <!-- Pinned with manifest.json. On an upgrade, re-check what PythonNetAssemblies.cs relies on (AssemblyManager.lhandler). -->
         <PackageReference Include="pythonnet" Version="3.1.0"/>
+        <!-- Text on pictures, from the embedded font only. Left out of the references user code compiles against
+             (ProjectReferences.cs). Licence: licenses/StbTrueTypeSharp-LICENSE.txt. -->
+        <PackageReference Include="StbTrueTypeSharp" Version="1.26.13"/>
     </ItemGroup>
 
     <ItemGroup>
         <EmbeddedResource Include="../visual_node_catalog.json" LogicalName="HassSharp.visual_node_catalog.json" />
+        <!-- DejaVu Sans 2.37, the only font text is drawn with. Licence: licenses/DejaVu-LICENSE.txt. -->
+        <EmbeddedResource Include="Devices/Imaging/DejaVuSans.ttf" LogicalName="HassSharp.DejaVuSans.ttf" />
     </ItemGroup>
 
 </Project>

@@ -25,6 +25,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     public static ImmutableArray<MetadataReference> FrameworkReferences() => References.Value;
     static readonly Lazy<ImmutableArray<MetadataReference>> References = new(() => ProjectReferences.GetDefaultReferences()
         .Concat((AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Where(path => !ProjectReferences.Hidden(Path.GetFileNameWithoutExtension(path)))
             .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path)))
         .DistinctBy(reference => reference.Display, StringComparer.Ordinal).ToImmutableArray());
 

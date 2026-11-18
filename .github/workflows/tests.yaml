@@ -47,6 +47,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
+      - name: Install libjpeg-turbo
+        # The runtime suite's picture tests decode and encode with the system's libturbojpeg, as Home Assistant's image has it.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libturbojpeg
       - name: Runtime suites
         run: dotnet run --project tests/Runtime --disable-build-servers
       - name: Editor tests
