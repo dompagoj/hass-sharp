@@ -10790,7 +10790,7 @@
             ],
             "required": true,
             "label": "X",
-            "description": "The rectangle\u0027s left edge, in whole pixels from the left of the picture."
+            "description": "The rectangle\u0027s left edge, in pixels from the left of the picture; a fraction is rounded to the nearest pixel."
           },
           "y": {
             "types": [
@@ -10798,7 +10798,7 @@
             ],
             "required": true,
             "label": "Y",
-            "description": "The rectangle\u0027s top edge, in whole pixels from the top of the picture."
+            "description": "The rectangle\u0027s top edge, in pixels from the top of the picture; a fraction is rounded to the nearest pixel."
           },
           "width": {
             "types": [
@@ -10806,7 +10806,7 @@
             ],
             "required": true,
             "label": "Width",
-            "description": "How wide the rectangle is, in whole pixels."
+            "description": "How wide the rectangle is, in pixels; a fraction is rounded to the nearest pixel."
           },
           "height": {
             "types": [
@@ -10814,7 +10814,7 @@
             ],
             "required": true,
             "label": "Height",
-            "description": "How tall the rectangle is, in whole pixels."
+            "description": "How tall the rectangle is, in pixels; a fraction is rounded to the nearest pixel."
           }
         },
         "outputs": {
@@ -10898,7 +10898,7 @@
             ],
             "required": true,
             "label": "X",
-            "description": "The left of the text, in whole pixels from the left of the picture."
+            "description": "The left of the text, in pixels from the left of the picture; a fraction is rounded to the nearest pixel."
           },
           "y": {
             "types": [
@@ -10906,7 +10906,7 @@
             ],
             "required": true,
             "label": "Y",
-            "description": "The top of the text, in whole pixels from the top of the picture."
+            "description": "The top of the text, in pixels from the top of the picture; a fraction is rounded to the nearest pixel."
           }
         },
         "outputs": {

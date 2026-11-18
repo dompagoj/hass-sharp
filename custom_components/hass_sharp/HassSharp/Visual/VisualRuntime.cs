@@ -317,8 +317,18 @@ public sealed class VisualRuntime
     /// types (a library record made an object, a node's enum), and with them its load context, for the life of the
     /// process. A resolver of its own makes these options equal to no other; they behave as the default ones.
     /// </summary>
-    /// <remarks>An entity enum is written as Home Assistant's text (<see cref="EnumText"/>) and read from it, wherever it is.</remarks>
-    public static JsonSerializerOptions JsonOptions()=>new(){TypeInfoResolver=new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),Converters={new EntityTextJsonConverter()}};
+    /// <remarks>An entity enum is written as Home Assistant's text (<see cref="EnumText"/>) and read from it, wherever it is;
+    /// a picture as its short text (<see cref="TraceJson.ImageText"/>), wherever it goes (Create object, Create list, a
+    /// service field, Convert), and is never read back.</remarks>
+    public static JsonSerializerOptions JsonOptions()=>new(){TypeInfoResolver=new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),Converters={new EntityTextJsonConverter(),new ImageTextJsonConverter()}};
+    /// <summary>
+    /// Writes a picture as its short text, "Image · 12 KB · 2 drawings": nothing reads its size, nothing is decoded, and
+    /// none of its bytes go along. Nothing is read as a picture.
+    /// </summary>
+    internal sealed class ImageTextJsonConverter:System.Text.Json.Serialization.JsonConverter<SharpImage> {
+        public override SharpImage Read(ref Utf8JsonReader reader,Type type,JsonSerializerOptions options)=>throw new JsonException("A picture is not read from JSON");
+        public override void Write(Utf8JsonWriter writer,SharpImage value,JsonSerializerOptions options)=>writer.WriteStringValue(TraceJson.ImageText(value));
+    }
     /// <summary>
     /// Writes a member of an entity enum as its text (<c>"on"</c>, <c>"other"</c> for the catch-all) and reads it back from the
     /// text, a text no member has (<c>"other"</c> among them) as the catch-all; any other enum is left to the serializer. It
@@ -806,15 +816,17 @@ public sealed class VisualRuntime
             ()=>new InvalidOperationException($"{Pin(node,port)} names an entity that is unavailable; its id is hidden because {Because(node,port)}"));
     }
     /// <summary>
-    /// A drawing step's position or size in pixels: a value that is not a whole number fails the step, naming the input
-    /// (and not quoting a secret); a whole one beyond what a position can be is outside the picture, as far as it can be.
+    /// A drawing step's position or size in pixels, rounded to the nearest one (a half away from zero): a value that is
+    /// not a number, is infinite or lies beyond a billion pixels either way fails the step, naming the input (and not
+    /// quoting a secret).
     /// </summary>
     int Pixels(VisualScope scope,string node,string port) {
         var value=Input<double>(scope,node,port);
-        if(!double.IsFinite(value)||Math.Truncate(value)!=value)
-            throw new InvalidOperationException($"{VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port)} must be a whole number of pixels, not {(SecretInput(node,port,value)?HiddenValue(node,port):Convert.ToString(value,CultureInfo.InvariantCulture))}");
-        return (int)Math.Clamp(value,int.MinValue,int.MaxValue);
+        if(!double.IsFinite(value)||Math.Abs(value)>MaxPixels)
+            throw new InvalidOperationException($"{VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port)} must be a number of pixels from -{MaxPixels} to {MaxPixels}, not {(SecretInput(node,port,value)?HiddenValue(node,port):Convert.ToString(value,CultureInfo.InvariantCulture))}");
+        return (int)Math.Round(value,MidpointRounding.AwayFromZero);
     }
+    const int MaxPixels=1_000_000_000;
     /// <summary>The colour a drawing step's Colour names; <paramref name="fallback"/> when none is chosen.</summary>
     static SharpColor Colour(JsonNode cfg,string fallback)=>SharpColor.TryParse(Text(cfg,"color",fallback),out var colour)?colour
         :throw new InvalidOperationException($"{Text(cfg,"color")} is not a colour to draw in; choose Red, Green, Blue, Yellow, Orange, White or Black");

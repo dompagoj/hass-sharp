@@ -63,7 +63,11 @@ internal static unsafe class ImagePainter
         return (x + left - pad, y + top - pad, right - left + 2 * pad, bottom - top + 2 * pad);
     }
 
-    /// <summary>Draws a line of text with the top left of its line at <paramref name="x"/>, <paramref name="y"/>.</summary>
+    // The character a rune is drawn as: a control character (a newline, a tab, any below U+0020, and U+007F) as a space,
+    // which the font draws as nothing, rather than as its empty box.
+    static int Drawn(System.Text.Rune rune) => rune.Value < 0x20 || rune.Value == 0x7F ? ' ' : rune.Value;
+
+    /// <summary>Draws a line of text with the top left of its line at <paramref name="x"/>, <paramref name="y"/>; a control character as a space.</summary>
     internal static void Text(Span<byte> rgb, int width, int height, string text, int x, int y, SharpColor color, int size, bool background)
     {
         if (text.Length == 0) return;
@@ -78,7 +82,7 @@ internal static unsafe class ImagePainter
         var previous = -1;
         foreach (var rune in text.EnumerateRunes())
         {
-            var index = stbtt_FindGlyphIndex(font, rune.Value);
+            var index = stbtt_FindGlyphIndex(font, Drawn(rune));
             if (previous >= 0) pen += stbtt_GetGlyphKernAdvance(font, previous, index) * scale;
             var glyph = GlyphOf(index, size, scale);
             Blend(rgb, width, height, glyph, x + (long)MathF.Round(pen) + glyph.Left, baseline + glyph.Top, color);
@@ -99,7 +103,7 @@ internal static unsafe class ImagePainter
         var previous = -1;
         foreach (var rune in text.EnumerateRunes())
         {
-            var index = stbtt_FindGlyphIndex(font, rune.Value);
+            var index = stbtt_FindGlyphIndex(font, Drawn(rune));
             if (previous >= 0) pen += stbtt_GetGlyphKernAdvance(font, previous, index) * scale;
             var glyph = GlyphOf(index, size, scale);
             if (glyph.Width > 0 && glyph.Height > 0)

@@ -462,7 +462,7 @@ internal sealed partial class DefinitionHost
 
     /// <inheritdoc/>
     /// <remarks>
-    /// <see cref="SetFrame"/>: whichever flow runs it, a frame flow (also one that ended after its limit) or any other.
+    /// <see cref="SetFrame"/>: whichever flow runs it, a frame flow or any other.
     /// Ignored once the definition stops or is replaced.
     /// </remarks>
     /// <exception cref="InvalidOperationException">The definition has no such entity, or it is not a camera.</exception>

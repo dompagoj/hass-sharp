@@ -193,7 +193,8 @@ static class EntityGraphRuntimeTests
                 (nameof(NothingKeepsACookie), NothingKeepsACookie),
                 (nameof(DrawingStepsDrawOnACopyOfThePicture), DrawingStepsDrawOnACopyOfThePicture),
                 (nameof(TakeAPictureFailsToItsErrorWireAndIsCancelledWithItsRun), TakeAPictureFailsToItsErrorWireAndIsCancelledWithItsRun),
-                (nameof(ADrawingStepRefusesAPositionThatIsNotWhole), ADrawingStepRefusesAPositionThatIsNotWhole),
+                (nameof(ADrawingStepRoundsAPositionThatIsNotWhole), ADrawingStepRoundsAPositionThatIsNotWhole),
+                (nameof(APictureInAnObjectIsItsShortText), APictureInAnObjectIsItsShortText),
                 (nameof(APictureIsTracedAndLoggedAsAShortText), APictureIsTracedAndLoggedAsAShortText),
                 (nameof(ShowFrameHandsThePictureToTheDefinition), ShowFrameHandsThePictureToTheDefinition) })
             {
@@ -1281,15 +1282,78 @@ static class EntityGraphRuntimeTests
         Same(definition.Calls, [], "a cancelled picture sets nothing");
     }
 
-    /// <summary>A position or size that is not a whole number fails the drawing step, naming it and the input, and the step that uses it.</summary>
-    static async Task ADrawingStepRefusesAPositionThatIsNotWhole()
+    /// <summary>
+    /// A picture that goes into an input of any type (here Create object) is written as its short text, as a trace shows
+    /// it: nothing reads its size, nothing is decoded, and none of its bytes go along.
+    /// </summary>
+    static async Task APictureInAnObjectIsItsShortText()
     {
         var picture = Picture();
         Cameras((ok, _) => ok(picture));
-        using var compiled = await Compiled.Of(Started([Snapshot("snap", "camera.porch"), Rect("rect", 2.5), N("say", "log", new { value = Unset })],
-            [D("snap", "rect", "image", "image"), D("rect", "say", "value", "image")]), "a rectangle at 2.5");
-        var error = await Fails(() => compiled.Run("setup", new FakeDefinition()), "a rectangle at 2.5");
-        Check(error.Message == "Draw rectangle (used by Log): X must be a whole number of pixels, not 2.5", "the message: " + error.Message);
+        var log = PyInterop.Log;
+        var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
+        try
+        {
+            using var compiled = await Compiled.Of(Started([Snapshot("snap", "camera.porch"), Rect("rect"), N("obj", "object_create", new JsonObject { ["fields"] = new JsonObject { ["picture"] = new JsonObject { ["kind"] = "unset" } } }), N("say", "log", new { value = Unset })],
+                [D("snap", "rect", "image", "image"), D("rect", "obj", "field:picture", "image"), D("obj", "say", "value")]), "a picture in an object");
+            await compiled.Run("setup", new FakeDefinition());
+            var said = messages.Single(m => m.Contains("picture", StringComparison.Ordinal));
+            Check(JsonNode.Parse(said)?["picture"] is JsonValue text && text.TryGetValue<string>(out var shown) && shown == $"Image · {(picture.Length + 1023) / 1024} KB · 1 drawing", "the picture in the object is its short text: " + said);
+            Check(!said.Contains("Width", StringComparison.OrdinalIgnoreCase) && !said.Contains(Convert.ToBase64String(picture)[..20], StringComparison.Ordinal), "and nothing else of it: " + said);
+        }
+        finally { PyInterop.Log = log; }
+    }
+
+    // The drawings a picture carries, as their records write themselves (Rectangle { X = 11, ... }).
+    static string[] Drawn(SharpImage image) =>
+        [.. ((System.Collections.IEnumerable)typeof(SharpImage).GetField("drawings", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(image)!).Cast<object>().Select(d => d.ToString()!)];
+
+    /// <summary>
+    /// A position or size that is not whole is rounded to the nearest pixel (a half away from zero), typed or wired; a
+    /// value that is not a number, or is infinite, fails the drawing step, naming it and the input, and the step that uses it.
+    /// </summary>
+    static async Task ADrawingStepRoundsAPositionThatIsNotWhole()
+    {
+        var picture = Picture();
+        Cameras((ok, _) => ok(picture));
+        JsonObject Show(string id) => N(id, "show_frame", new JsonObject { ["entity"] = "lens", ["image"] = JsonSerializer.SerializeToNode(Unset) });
+        foreach (var (typed, x) in new[] { (10.5, 11), (-0.5, -1), (10.4, 10), (2.0, 2) })
+        {
+            using var compiled = await Compiled.Of(Entity([N("setup", "entity_setup"), Snapshot("snap", "camera.porch"), Rect("rect", typed), Show("show")],
+                [E("setup", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("rect", "show", "image", "image")], [("lens", "camera")]), $"a rectangle at {typed}");
+            var definition = new FakeDefinition();
+            await compiled.Run("setup", definition);
+            var drawn = Drawn(definition.Frames.Single()).Single();
+            Check(drawn.StartsWith($"Rectangle {{ X = {x}, Y = 2, Width = 20, Height = 10,", StringComparison.Ordinal), $"a rectangle typed at {typed} is drawn at {x}: " + drawn);
+        }
+
+        // Wired: a Custom C# node gives the value, which the test sets.
+        var value = N("value", "custom", new JsonObject
+        {
+            ["source"] = "public static class CustomNode\n{\n    public static double Value;\n    [Node(\"Value\", Pure = true)]\n    public static double Run() => Value;\n}",
+            ["arguments"] = new JsonObject(),
+        });
+        var wired = Rect("rect");
+        wired["config"]!["width"] = JsonSerializer.SerializeToNode(Unset);
+        using var through = await Compiled.Of(Entity([N("setup", "entity_setup"), Snapshot("snap", "camera.porch"), value, wired, Show("show")],
+            [E("setup", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("value", "rect", "width", "result"), D("rect", "show", "image", "image")], [("lens", "camera")]), "a rectangle of a wired width");
+        var field = through.Assembly.GetTypes().Select(t => t.GetField("Value")).Single(f => f != null)!;
+        foreach (var (given, width) in new[] { (10.5, 11), (-0.5, -1), (10.4, 10) })
+        {
+            field.SetValue(null, given);
+            var definition = new FakeDefinition();
+            await through.Run("setup", definition);
+            var drawn = Drawn(definition.Frames.Single()).Single();
+            Check(drawn.Contains($", Width = {width}, ", StringComparison.Ordinal), $"a width wired as {given} is drawn as {width}: " + drawn);
+        }
+        foreach (var (given, shown) in new[] { (double.NaN, "NaN"), (double.PositiveInfinity, "Infinity"), (double.NegativeInfinity, "-Infinity"), (1_000_000_001.0, "1000000001") })
+        {
+            field.SetValue(null, given);
+            var definition = new FakeDefinition();
+            var error = await Fails(() => through.Run("setup", definition), $"a width wired as {shown}");
+            Check(error.Message == $"Draw rectangle (used by Show frame): Width must be a number of pixels from -1000000000 to 1000000000, not {shown}", $"a width wired as {shown}: " + error.Message);
+            Same(definition.Calls, [], $"a width of {shown} shows nothing");
+        }
     }
 
     /// <summary>

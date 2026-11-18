@@ -33,6 +33,7 @@ static class SharpImageTests
         Rectangle();
         Clipping();
         Text();
+        ControlCharacters();
         CopyLeavesTheOriginal();
         Limits();
         Truncated();
@@ -196,6 +197,16 @@ static class SharpImageTests
         ImagePainter.Text(missing, 64, 40, "中", 4, 4, SharpColor.White, 24, background: false);
         Check(missing.Any(b => b != 0), "a character the font lacks draws its empty box");
         Console.WriteLine("PASS sharp image: text changes pixels inside its box and none outside, with and without the translucent background, Croatian letters included, and a character the font lacks draws the font's box");
+    }
+
+    // A control character (a newline, a tab, any below U+0020, and U+007F) is drawn as a space, not as the font's empty box.
+    static void ControlCharacters()
+    {
+        byte[] Drawn(string text) => SharpImage.Blank(240, 60, Grey).DrawText(text, 4, 4, SharpColor.White, 24).ToJpeg();
+        var spaced = Drawn("a b c d e f");
+        Check(Drawn("a\nb\tc\u0001d\u007Fe\rf").AsSpan().SequenceEqual(spaced), "control characters are drawn as spaces");
+        Check(!Drawn("a_b c d e f").AsSpan().SequenceEqual(spaced), "a character that is not a control character is drawn as itself");
+        Console.WriteLine("PASS sharp image: a newline, a tab and the other control characters in a text are drawn as spaces");
     }
 
     static void CopyLeavesTheOriginal()
