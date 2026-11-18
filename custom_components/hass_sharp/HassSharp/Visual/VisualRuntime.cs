@@ -280,6 +280,16 @@ public sealed class VisualRuntime
     InvalidOperationException Hidden(string node,string port)=>Hidden(Pin(node,port));
     static InvalidOperationException Hidden(string where)=>new($"{where} cannot use the value it was given, which is hidden because it comes from a secret setting");
     /// <summary>
+    /// The runtime's secret guard, which every step that works on a value that may be secret goes through: what
+    /// <paramref name="work"/> gives, unless it fails (other than by being cancelled) while <paramref name="secret"/> says
+    /// of that failure that the value it worked on is secret. Then it fails with what <paramref name="hidden"/> makes
+    /// instead, which says where without quoting the value, and keeps no inner failure that might.
+    /// </summary>
+    static T Guarded<T>(Func<T> work,Func<Exception,bool> secret,Func<Exception> hidden) {
+        try {return work();}
+        catch(Exception error) when(error is not OperationCanceledException && secret(error)) {throw hidden();}
+    }
+    /// <summary>
     /// Serializer options for one automation to hold (a static of its generated class, so in its own load context).
     /// System.Text.Json caches the metadata of every type it meets in the options it is given, and shares that cache
     /// between options it finds equal, so <see cref="JsonSerializerOptions.Default"/> would keep the automation's own
@@ -360,10 +370,10 @@ public sealed class VisualRuntime
     }
     // Values are traced as the node sees them: after conversion, with the wire they came from.
     public T Input<T>(VisualScope scope,string node,string port) {
-        var given=Read(scope,node,port);T value;
+        var given=Read(scope,node,port);
         // A secret the pin cannot take is not quoted (a conversion's messages, and the failures under them, quote it).
-        try {value=(T)Coerce(given,typeof(T),$"{node}.{port}",false,()=>Title(node)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port),serializer,entities)!;}
-        catch(Exception error) when(error is not OperationCanceledException && SecretInput(node,port,given)) {throw Hidden(node,port);}
+        var value=Guarded(()=>(T)Coerce(given,typeof(T),$"{node}.{port}",false,()=>Title(node)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port),serializer,entities)!,
+            _=>SecretInput(node,port,given),()=>Hidden(node,port));
         if(scope.Trace!=null)Traced(scope,node,port,value is HassSharp.Entities.Entity handle?handle.EntityId:value);return value;
     }
     /// <summary>What a node method's <see cref="NodeContext"/> parameter gets: this run, as <paramref name="scope"/> sees it.</summary>
@@ -482,10 +492,9 @@ public sealed class VisualRuntime
         var declared=Text(OutputSpecs(node)?[port],"type");
         if(declared.StartsWith('$'))declared=Text(nodes[node]["config"],declared[1..]);
         if(declared!="") {
-            try {value=ConvertTo(value,declared,node+"."+port,false);}
-            catch(Exception error) when(error is not OperationCanceledException && Secret((node,port),value)) {
-                throw new InvalidOperationException($"{Title(node)} · {VisualGraphValidator.Words.PortLabel(OutputSpecs(node)?[port],port)} cannot give the value it worked out, which is hidden because it comes from a secret setting");
-            }
+            var given=value;
+            value=Guarded(()=>ConvertTo(given,declared,node+"."+port,false),_=>Secret((node,port),given),
+                ()=>new InvalidOperationException($"{Title(node)} · {VisualGraphValidator.Words.PortLabel(OutputSpecs(node)?[port],port)} cannot give the value it worked out, which is hidden because it comes from a secret setting"));
         }
         scope.SetOutput((node,port),value);
         if(scope.Trace!=null)trace!.Output(scope.Trace,node,port,value,Secret((node,port),value));
@@ -669,42 +678,32 @@ public sealed class VisualRuntime
                 // Both sides in the type the generator chose by widening only (C#'s numeric promotion), so neither is rounded.
                 var clr=ComparisonTypes.TryGetValue(common,out var widened)?widened:types[VisualTypes.RootId(catalog,common)];
                 var givenLeft=Read(scope,id,"left");var givenRight=Read(scope,id,"right");
-                object? a,b;
-                try {a=Coerce(givenLeft,clr,id+".left",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["left"],"left"),serializer,entities);}
-                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"left",givenLeft)) {throw Hidden(id,"left");}
-                try {b=Coerce(givenRight,clr,id+".right",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["right"],"right"),serializer,entities);}
-                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"right",givenRight)) {throw Hidden(id,"right");}
+                var a=Guarded(()=>Coerce(givenLeft,clr,id+".left",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["left"],"left"),serializer,entities),_=>SecretInput(id,"left",givenLeft),()=>Hidden(id,"left"));
+                var b=Guarded(()=>Coerce(givenRight,clr,id+".right",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["right"],"right"),serializer,entities),_=>SecretInput(id,"right",givenRight),()=>Hidden(id,"right"));
                 // The trace shows the values as they came, not as they were widened.
                 if(scope.Trace!=null){Traced(scope,id,"left",givenLeft);Traced(scope,id,"right",givenRight);}
                 // As in C#, an ordering with a missing number (a nullable side that is null) is false.
                 var op=Text(cfg,"operator","eq");Output(scope,id,op is not ("eq" or "ne")&&(a==null||b==null)?false:Compare(a,b,op));break;
             case "constant":case "convert":
                 if(compiledConversions.Contains(id)){await custom(id,scope,this);break;}
-                var convertible=Get("value");object? converted;
-                try {converted=ConvertTo(convertible,Text(cfg,"type"),id+".value",pin:()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["value"],"value"));}
-                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"value",convertible)) {throw Hidden(id,"value");}
-                Output(scope,id,converted);break;
+                var convertible=Get("value");
+                Output(scope,id,Guarded(()=>ConvertTo(convertible,Text(cfg,"type"),id+".value",pin:()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["value"],"value")),_=>SecretInput(id,"value",convertible),()=>Hidden(id,"value")));break;
             case "entity_field":
-                var snapshot=Input<EntityStateSnapshot>(scope,id,"entity");object? field;
-                try {field=EntityField(snapshot,cfg,id);}
-                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"entity",snapshot)) {throw Hidden(id,"entity");}
-                Output(scope,id,field);break;
+                var snapshot=Input<EntityStateSnapshot>(scope,id,"entity");
+                Output(scope,id,Guarded(()=>EntityField(snapshot,cfg,id),_=>SecretInput(id,"entity",snapshot),()=>Hidden(id,"entity")));break;
             case "object":case "array":
-                var whole=Get("value");object? shaped;
-                try {shaped=ConvertTo(whole,kind,id,false);}
-                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"value",whole)) {throw Hidden(id,"value");}
-                Output(scope,id,shaped);break;
+                var whole=Get("value");
+                Output(scope,id,Guarded(()=>ConvertTo(whole,kind,id,false),_=>SecretInput(id,"value",whole),()=>Hidden(id,"value")));break;
             case "object_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["fields"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get("field:"+p.Key)),serializer));break;
             case "array_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["items"] as JsonArray??[]).Select((_,i)=>Get("item:"+i)).ToArray(),serializer));break;
             case "last_error":Output(scope,id,scope.LastError?.Message??"","message");Output(scope,id,scope.LastErrorStep??"","step");break;
             case "get_field":
-                var json=Input<JsonElement>(scope,id,"value");var read=json;object? got;
-                try {
+                var read=Input<JsonElement>(scope,id,"value");
+                Output(scope,id,Guarded(()=>{
+                    var json=read;
                     var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}
-                    got=ConvertTo(json,Text(cfg,"type"),id,false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(OutputSpecs(id)?["value"],"value"));
-                }
-                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"value",read)) {throw Hidden(id,"value");}
-                Output(scope,id,got);break;
+                    return ConvertTo(json,Text(cfg,"type"),id,false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(OutputSpecs(id)?["value"],"value"));
+                },_=>SecretInput(id,"value",read),()=>Hidden(id,"value")));break;
             // A failure is worded by Prepare, which names the node and the step reading it: the message says only what went wrong.
             // Wires carry entity ids: a member that is a handle goes out as its id.
             case "select_property":var property=Text(cfg,"property");var selected=SelectProperty(Get("value")??throw new InvalidOperationException($"{property} cannot be read because the value is empty"),property,id);Output(scope,id,selected is HassSharp.Entities.Entity handle?handle.EntityId:selected);break;
@@ -713,9 +712,11 @@ public sealed class VisualRuntime
             // reaches, and the values worked out from it: see Secret).
             case "setting":
                 var settings=Definition();var key=Text(cfg,"key");var setting=settings.Setting(key);
-                if(Text(catalog["resolvedOutputs"]?[id],"value") is {Length:>0} settingType)
-                    try {setting=ConvertTo(setting,settingType,id+".value",false);}
-                    catch(Exception error) when(error is not OperationCanceledException && SecretSetting(id)) {throw new InvalidOperationException($"{Title(id)} cannot give its value as {VisualGraphValidator.Words.TypeLabel(catalog,settingType)}; the value is hidden because it comes from a secret setting");}
+                if(Text(catalog["resolvedOutputs"]?[id],"value") is {Length:>0} settingType) {
+                    var stored=setting;
+                    setting=Guarded(()=>ConvertTo(stored,settingType,id+".value",false),_=>SecretSetting(id),
+                        ()=>new InvalidOperationException($"{Title(id)} cannot give its value as {VisualGraphValidator.Words.TypeLabel(catalog,settingType)}; the value is hidden because it comes from a secret setting"));
+                }
                 scope.SetOutput((id,"value"),setting);
                 if(scope.Trace!=null)trace!.Output(scope.Trace,id,"value",setting,settings.IsSecret(key));
                 break;
@@ -756,8 +757,8 @@ public sealed class VisualRuntime
         EntityStateSnapshot.From(HomeAssistantState(entity,fresh)??throw new InvalidOperationException($"Entity '{entity}' is unavailable."));
     /// <summary><see cref="ReadEntity"/> of the entity a step read on <paramref name="port"/>; an unavailable entity whose id is secret is not named.</summary>
     EntityStateSnapshot EntityOf(string node,string port,string entity,bool fresh=false) {
-        try {return ReadEntity(entity,fresh);}
-        catch(InvalidOperationException) when(SecretInput(node,port,entity)) {throw new InvalidOperationException($"{Pin(node,port)} names an entity that is unavailable; its id is hidden because it comes from a secret setting");}
+        return Guarded(()=>ReadEntity(entity,fresh),error=>error is InvalidOperationException&&SecretInput(node,port,entity),
+            ()=>new InvalidOperationException($"{Pin(node,port)} names an entity that is unavailable; its id is hidden because it comes from a secret setting"));
     }
     /// <summary>The definition of the run in progress, which an entity node acts on; only a run of an entity definition's graph has one.</summary>
     static IDefinitionRuntime Definition()=>InvocationContext.Current?.Definition??throw new InvalidOperationException("This node only works in an entity definition");
@@ -774,8 +775,8 @@ public sealed class VisualRuntime
         foreach(var (port,spec) in InputSpecs(id) as JsonObject??[]) {
             if(!(spec?["required"] is JsonValue r&&r.TryGetValue<bool>(out var required)&&required) && !Supplied(id,port,nodes[id]["config"]?[port]))continue;
             var given=Input(scope,id,port);
-            try {values[port]=EntityStateValue(given,(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port),!PasswordText(catalog,Text(nodes[id]["config"],"entity")));}
-            catch(InvalidOperationException) when(SecretInput(id,port,given)) {throw Hidden(id,port);}
+            values[port]=Guarded(()=>EntityStateValue(given,(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port),!PasswordText(catalog,Text(nodes[id]["config"],"entity"))),
+                error=>error is InvalidOperationException&&SecretInput(id,port,given),()=>Hidden(id,port));
             if(SecretInput(id,port,values[port]))hidden.Add(port);
         }
         return values;
@@ -922,8 +923,9 @@ public sealed class VisualRuntime
             if(items.Length>max)throw new InvalidOperationException($"{Pin(id,"items")} has {items.Length} items, more than Maximum iterations ({max})");
             for(var i=0;i<items.Length;i++){
                 var item=i+1;
-                try {items[i]=ConvertTo(items[i],Text(cfg,"itemType"),id+".item["+i+"]",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["items"],"items")+", item "+item.ToString(CultureInfo.InvariantCulture));}
-                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"items",source)) {throw Hidden(id,"items");}
+                var index=i;
+                items[i]=Guarded(()=>ConvertTo(items[index],Text(cfg,"itemType"),id+".item["+index+"]",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["items"],"items")+", item "+item.ToString(CultureInfo.InvariantCulture)),
+                    _=>SecretInput(id,"items",source),()=>Hidden(id,"items"));
             }
             count=items.Length;
         }
@@ -942,8 +944,7 @@ public sealed class VisualRuntime
                 var updates=new Dictionary<string,object?>();var copy=new VisualSnapshot();
                 foreach(var pair in body.Updates) {
                     // A kept or exported value worked out from a secret is secret (see FollowSettings), and not quoted.
-                    try {updates[pair.Key]=copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false,Declared(pair.Key)));}
-                    catch(Exception error) when(error is not OperationCanceledException && Secret((id,pair.Key),pair.Value)) {throw Hidden(Declared(pair.Key)());}
+                    updates[pair.Key]=Guarded(()=>copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false,Declared(pair.Key))),_=>Secret((id,pair.Key),pair.Value),()=>Hidden(Declared(pair.Key)()));
                 }
                 foreach(var pair in updates)state[pair.Key]=pair.Value;
             }
