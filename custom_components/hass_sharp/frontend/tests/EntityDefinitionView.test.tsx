@@ -525,7 +525,7 @@ it('starts a new definition named from the address, with one binary sensor named
   const help = document.querySelector('dialog[open]')!.textContent!
   expect(help).toContain('each a binary sensor, a sensor, a switch, a button, a number, a select, a text, a light or a cover')
   for (const fact of ['http:// or https://', 'checks the server\'s certificate', '10 seconds', '4 MiB', 'fails on an error status unless you turn that off',
-    'does not send your headers to a different host', 'Keep the response out of run history', 'SHA-256 checksum, of the file as the server sends it',
+    'one to a different host fails the step when it has headers, so they are never sent there', 'Keep the response out of run history', 'SHA-256 checksum, of the file as the server sends it',
     '.storage/hass_sharp/files/', 'is not downloaded again', 'come back with the state they had after Home Assistant restarts or the definition is saved',
     'keeps its last one, or comes on at full brightness the first time', 'A button has no state'])
     expect(help, fact).toContain(fact)
@@ -1071,7 +1071,7 @@ it('blocks Save while a required option is empty or a number option is not a num
   const options = () => fieldOf(entityRow(root, 'mode'), 'option:options')
   expect([...options().querySelectorAll('.hs-field-hint')].map(h => h.textContent)).toEqual(['Ctrl+Enter to apply', 'One per line: every option it offers. Required.'])
   expect(control(row, 'option:options').getAttribute('aria-required')).toBe('true')
-  const required = 'Give entity mode the option options: a select needs it'
+  const required = 'Mode needs options: a select cannot work without it'
   // Not in red the moment the type is chosen: Save waits, the Problems tab has it, and the field says it once left.
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(true))
   await new Promise(resolve => setTimeout(resolve, 20))
@@ -1092,7 +1092,7 @@ it('blocks Save while a required option is empty or a number option is not a num
   // A number option that does not read: kept as typed, said on its field, and Save waits; unsaved work all the while.
   const level = addTyped(root, 'level', 'number')
   type(control(level, 'option:min'), '5,5')
-  const message = 'Option min of entity level takes a number'
+  const message = 'Minimum of level takes a number'
   await vi.waitFor(() => expect(fieldOf(entityRow(root, 'level'), 'option:min').textContent).toContain(message))
   expect(control(entityRow(root, 'level'), 'option:min').value).toBe('5,5')
   expect(control(entityRow(root, 'level'), 'option:min').getAttribute('aria-invalid')).toBe('true')
@@ -1121,8 +1121,44 @@ it('says a required option is missing on its field once the field is left withou
   await new Promise(resolve => setTimeout(resolve, 20))
   expect(options().querySelector('.hs-error')).toBeNull()
   control(entityRow(root, 'mode'), 'option:options').dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
-  await vi.waitFor(() => expect(options().querySelector('.hs-error')?.textContent).toBe('Give entity mode the option options: a select needs it'))
+  await vi.waitFor(() => expect(options().querySelector('.hs-error')?.textContent).toBe('Mode needs options: a select cannot work without it'))
   expect(control(entityRow(root, 'mode'), 'option:options').getAttribute('aria-invalid')).toBe('true')
+})
+
+/** Whether the element has the focus of the page it is on. */
+const focused = (element: Element) => (element.getRootNode() as Document | ShadowRoot).activeElement === element
+
+it('keeps focus in an option field while another option changes, a switch is turned, or a choice is made', async () => {
+  const { root } = setup('/entities/new?name=Level')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  choose(control(expand(entityRow(root, 'level')), 'domain'), 'number')
+  const max = control(entityRow(root, 'level'), 'option:max')
+  max.focus()
+  // Minimum commits (its blur comes as focus has moved on to Maximum).
+  const min = control(entityRow(root, 'level'), 'option:min')
+  min.value = '5'
+  min.dispatchEvent(new Event('input', { bubbles: true }))
+  min.dispatchEvent(new FocusEvent('blur'))
+  expect(control(entityRow(root, 'level'), 'option:max')).toBe(max)
+  expect(focused(max)).toBe(true)
+  expect(json(root).definition.entities[0].options).toEqual({ min: 5 })
+  // A choice in a select keeps focus on it.
+  const mode = control(entityRow(root, 'level'), 'option:mode')
+  mode.focus()
+  choose(mode, 'slider')
+  expect(control(entityRow(root, 'level'), 'option:mode')).toBe(mode)
+  expect(focused(mode)).toBe(true)
+  expect(json(root).definition.entities[0].options).toEqual({ min: 5, mode: 'slider' })
+  // Space on a switch turns it, and focus stays on it.
+  choose(control(entityRow(root, 'level'), 'domain'), 'light')
+  const dimmable = control(entityRow(root, 'level'), 'option:dimmable')
+  dimmable.focus()
+  dimmable.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true }))
+  dimmable.click()
+  dimmable.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', code: 'Space', bubbles: true }))
+  expect(control(entityRow(root, 'level'), 'option:dimmable')).toBe(dimmable)
+  expect(focused(dimmable)).toBe(true)
+  expect(json(root).definition.entities[0].options).toEqual({ dimmable: true })
 })
 
 it('drops the options a new type does not have, or whose value it does not take, in one undo step', async () => {
@@ -1155,16 +1191,16 @@ it('shows what the server refuses of an option under that option, and keeps Save
   type(control(row, 'option:min'), '30')
   type(control(row, 'option:max'), '300')
   type(control(entityRow(root, 'things'), 'option:pattern'), '[a-')
-  const max = 'Option max of entity things takes 255 or less, as Home Assistant keeps at most 255 characters, not 300'
+  const max = 'Longest length of Things takes 255 or less, as Home Assistant keeps at most 255 characters, not 300'
   await vi.waitFor(() => expect(fieldOf(entityRow(root, 'things'), 'option:max').textContent).toContain(max))
-  expect(fieldOf(entityRow(root, 'things'), 'option:pattern').textContent).toContain('Option pattern of entity things is not a regular expression')
+  expect(fieldOf(entityRow(root, 'things'), 'option:pattern').textContent).toContain('Pattern of Things is not a regular expression')
   // Not known before the server's check answers; once it has, Save waits for them as for any error.
   expect(button(root, 'Save').disabled).toBe(true)
   expect(entityRow(root, 'things').querySelector('.hs-def-row__body > .hs-def-errors')).toBeNull()
   // A min not below the max is the min's.
   type(control(entityRow(root, 'things'), 'option:max'), '20')
   type(control(entityRow(root, 'things'), 'option:pattern'), '')
-  const order = 'Entity things has a min of 30, which is not below its max of 20; give a min below the max'
+  const order = 'Shortest length of Things is 30, which is not below its longest length of 20'
   await vi.waitFor(() => expect(fieldOf(entityRow(root, 'things'), 'option:min').textContent).toContain(order))
   expect(fieldOf(entityRow(root, 'things'), 'option:max').textContent).not.toContain(order)
   // A number's step of 0; a sensor's empty list cannot be typed (an empty field leaves the option out).
@@ -1172,7 +1208,7 @@ it('shows what the server refuses of an option under that option, and keeps Save
   type(control(entityRow(root, 'things'), 'option:max'), '')
   type(control(entityRow(root, 'things'), 'option:min'), '')
   type(control(entityRow(root, 'things'), 'option:step'), '0')
-  await vi.waitFor(() => expect(fieldOf(entityRow(root, 'things'), 'option:step').textContent).toContain('Option step of entity things takes a number above 0, not 0'))
+  await vi.waitFor(() => expect(fieldOf(entityRow(root, 'things'), 'option:step').textContent).toContain('Step of Things takes a number above 0, not 0'))
 })
 
 it('wires a light\'s Turn on into its Set state, brightness and all, and a number\'s Set value into its own', async () => {

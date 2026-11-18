@@ -118,12 +118,20 @@ export function readNumber(typed: string, whole = false): number | null | undefi
   return parsed
 }
 
-const optionProblem = (key: string, message: string): VisualDiagnostic =>
-  ({ nodeId: null, inputId: key, portId: null, message, severity: 3, startLine: null, startColumn: null, code: 'definition.entityOption' })
+const optionProblem = (key: string, option: string, message: string): VisualDiagnostic =>
+  ({ nodeId: null, inputId: key, portId: option, message, severity: 3, startLine: null, startColumn: null, code: 'definition.entityOption' })
+/** An option as a problem names it: its label, else its key in words, as its field is labelled. */
+export const optionLabel = (option: string, rule: ConfigSpec | undefined) =>
+  typeof rule?.label === 'string' && rule.label ? rule.label : words.key(option)
+/** An entity as a problem about its options names it: its name, else its key. */
+export const entityNamed = (entity: { key: string; name?: unknown }) =>
+  typeof entity.name === 'string' && entity.name.trim() ? entity.name : entity.key
+const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1)
 /**
- * What the form knows of the entities' options without asking the server, in the server's words (so its answer about
- * the same option is not shown twice): an option the type needs left empty, and a number option holding a text that
- * is not a number (kept as typed, so it can be finished). Each blocks Save; the server checks the rest.
+ * What the form knows of the entities' options without asking the server, in the server's words
+ * (`DefinitionDocument.Options`), about the same entity and option (`inputId`, `portId`), so its answer about the same
+ * option is not shown twice: an option the type needs left empty, and a number option holding a text that is not a
+ * number (kept as typed, so it can be finished). Each blocks Save; the server checks the rest.
  */
 export function optionProblems(graph: VisualGraph, catalog: VisualCatalogSnapshot): VisualDiagnostic[] {
   const problems: VisualDiagnostic[] = []
@@ -131,25 +139,15 @@ export function optionProblems(graph: VisualGraph, catalog: VisualCatalogSnapsho
     const domains = catalog.entityDomains
     const row = domains && typeof entity.domain === 'string' && Object.hasOwn(domains, entity.domain) ? domains[entity.domain] : undefined
     if (!row || typeof entity.key !== 'string') continue
-    const options = entity.options ?? {}, label = entityTypeLabel(catalog, entity.domain)
+    const options = entity.options ?? {}, label = entityTypeLabel(catalog, entity.domain), named = entityNamed(entity)
     for (const [option, rule] of Object.entries(row.options ?? {})) {
       const value = Object.hasOwn(options, option) ? options[option] : undefined
-      if (rule.type === 'number' && typeof value === 'string') problems.push(optionProblem(entity.key, `Option ${option} of entity ${entity.key} takes a number`))
+      if (rule.type === 'number' && typeof value === 'string') problems.push(optionProblem(entity.key, option, `${optionLabel(option, rule)} of ${named} takes a number`))
       else if (rule.required === true && (value === undefined || value === null))
-        problems.push(optionProblem(entity.key, `Give entity ${entity.key} the option ${option}: ${words.article(label)} ${label.toLowerCase()} needs it`))
+        problems.push(optionProblem(entity.key, option, `${named} needs ${lowerFirst(optionLabel(option, rule))}: ${words.article(label)} ${label.toLowerCase()} cannot work without it`))
     }
   }
   return problems
-}
-
-/**
- * The option a problem about an entity is about, by the words the server (`DefinitionDocument.Options`) and
- * {@link optionProblems} use: "Option max of entity …", "Give entity … the option options: …", and a min not below
- * the max, which is the min's. Undefined for any other problem, which the entity's row shows.
- */
-export function problemOption(message: string): string | undefined {
-  return /^Option (\S+) of entity \S+ /.exec(message)?.[1] ?? /^Give entity \S+ the option (\S+):/.exec(message)?.[1]
-    ?? (/^Entity \S+ has a min of .+ which is not below its max/.test(message) ? 'min' : undefined)
 }
 
 /**

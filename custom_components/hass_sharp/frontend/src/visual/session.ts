@@ -1,7 +1,7 @@
 import { batch, createEffect, createMemo, createSignal, onCleanup } from 'solid-js'
 import type { HomeAssistant } from '../types'
 import { createGraphHistory, serializeGraph, type VisualGraph } from './graph'
-import { visualApi, visualError, type VisualDocument, type VisualPreview } from './api'
+import { visualApi, visualError, type VisualDiagnostic, type VisualDocument, type VisualPreview } from './api'
 import { nodeCatalog, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { connectionIndex } from './connectionIndex'
 import { danglingWireIds } from './danglingWire'
@@ -98,15 +98,18 @@ export function createVisualSession<D extends EditorDocument = VisualDocument>(
     const graph = history.graph(), analysis = connectionIndex(graph, catalog()).analysis
     // A problem about a wire whose pin is missing names that wire, so it can be removed from the problem.
     const wires = danglingWireIds(graph, analysis)
-    const local = [
-      ...analysis.diagnostics.map((d, i) => ({ ...d, startLine: null, startColumn: null, ...(wires[i] ? { edgeId: wires[i]!.id, edgeIndex: wires[i]!.index } : {}) })),
-      ...(adapter.check?.(graph, catalog()) ?? []),
-    ]
+    const validated = analysis.diagnostics.map((d, i) => ({ ...d, startLine: null, startColumn: null, ...(wires[i] ? { edgeId: wires[i]!.id, edgeIndex: wires[i]!.index } : {}) }))
+    // The adapter's own checks (an entity definition's options) find what the server finds too: the server's problem of
+    // the same kind about the same thing (code, node, input and port) is the same problem, whatever its words.
+    const own = adapter.check?.(graph, catalog()) ?? []
+    const local = [...validated, ...own]
     const backend = preview()?.diagnostics ?? []
-    // The server sends a missing input as null; local diagnostics leave it out.
+    // The server sends a missing input or port as null; local diagnostics leave it out.
+    const same = (a: VisualDiagnostic, b: VisualDiagnostic) => a.nodeId === b.nodeId && (a.inputId ?? null) === (b.inputId ?? null)
     return [
       ...local,
-      ...backend.filter(d => !local.some(other => other.nodeId === d.nodeId && (other.inputId ?? null) === (d.inputId ?? null) && other.message === d.message)),
+      ...backend.filter(d => !validated.some(other => same(other, d) && other.message === d.message)
+        && !own.some(other => same(other, d) && other.code === d.code && (other.portId ?? null) === (d.portId ?? null))),
     ]
   })
   /** A new document's id, once its first save has asked the adapter for one (a failed save tries it again). */

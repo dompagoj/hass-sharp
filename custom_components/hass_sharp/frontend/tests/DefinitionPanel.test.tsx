@@ -247,22 +247,41 @@ describe('the entities', () => {
   })
 
   it('shows a problem about an entity or a setting on its row, opened, and the definition\'s own above the form', async () => {
-    const problem = (code: string, message: string, inputId: string | null): VisualDiagnostic => ({ nodeId: null, inputId, code, message, severity: 3, startLine: null, startColumn: null })
+    const problem = (code: string, message: string, inputId: string | null, portId: string | null = null): VisualDiagnostic => ({ nodeId: null, inputId, portId, code, message, severity: 3, startLine: null, startColumn: null })
     const { el, setDiagnostics } = mount(editorGraph(plug()))
     expect(entityRow(el, 'power').querySelector('.hs-def-row__head')!.getAttribute('aria-expanded')).toBe('false')
     setDiagnostics([
-      problem('definition.entityOption', 'Option unit of entity power takes a text', 'power'),
+      // About the power entity and no one option of it.
+      problem('definition.entityOption', 'The options of entity power are not a set of named values', 'power'),
       problem('definition.settingType', 'Address takes a text', 'host'),
       problem('definition.name', 'Give the definition a name of up to 120 characters', null),
     ])
     const power = entityRow(el, 'power')
     expect(power.querySelector('.hs-def-row__head')!.getAttribute('aria-expanded')).toBe('true')
     expect(power.querySelector('.hs-def-row__mark')!.getAttribute('aria-label')).toBe('1 problem')
-    expect(power.querySelector('.hs-def-row__body')!.textContent).toContain('Option unit of entity power takes a text')
+    expect(power.querySelector('.hs-def-row__body > .hs-def-errors')!.textContent).toContain('The options of entity power are not a set of named values')
     expect(settingRow(el, 'host').textContent).toContain('Address takes a text')
     const top = el.querySelector('[aria-label="Problems of this entity definition"]')!
     expect(top.textContent).toBe('Give the definition a name of up to 120 characters')
-    expect(entityRow(el, 'relay').textContent).not.toContain('takes a text')
+    expect(entityRow(el, 'relay').textContent).not.toContain('named values')
+  })
+
+  it('places a problem about an option under that option by the option it names, whatever its words', async () => {
+    const problem = (message: string, portId: string | null): VisualDiagnostic =>
+      ({ nodeId: null, inputId: 'power', portId, code: 'definition.entityOption', message, severity: 3, startLine: null, startColumn: null })
+    const { el, setDiagnostics } = mount(editorGraph(plug()))
+    setDiagnostics([
+      problem('Unit of Power takes a text', 'unit'),
+      // Words that once named an option, about none: the row's, not the field's.
+      problem('Option unit of entity power takes a text', null),
+    ])
+    const power = entityRow(el, 'power')
+    await Promise.resolve()
+    const unit = power.querySelector<HTMLElement>('[data-field="option:unit"]')!
+    expect(unit.querySelector('.hs-error')?.textContent).toBe('Unit of Power takes a text')
+    const top = power.querySelector('.hs-def-row__body > .hs-def-errors')!
+    expect(top.textContent).toBe('Option unit of entity power takes a text')
+    expect(power.querySelector('.hs-def-row__mark')!.getAttribute('aria-label')).toBe('2 problems')
   })
 })
 

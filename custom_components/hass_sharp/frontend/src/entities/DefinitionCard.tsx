@@ -2,7 +2,7 @@ import { createMemo, createUniqueId, For, Show } from 'solid-js'
 import { A } from '@solidjs/router'
 import { Menu } from '../components/Menu'
 import { EnabledSwitch } from '../automations/EnabledSwitch'
-import { pollInterval, relativeTime } from '../automations/model'
+import { pastTime, pollInterval } from '../automations/model'
 import { RunDots } from '../automations/RunDots'
 import { plural } from '../utils'
 import { entityTypeLabel, nodeCatalog } from '../visual/contract'
@@ -73,6 +73,8 @@ export const watchedEntityIds = (item: HomeDefinition) =>
  */
 export interface StateWords { text: string; spoken?: string; none?: boolean; quiet?: boolean }
 /** An entity's state text, read out as its `spoken` words when it has them. */
+/** The whole of a state shown on a card, which clamps a long one to three lines; none for one in muted words. */
+export const stateTitle = (state: StateWords) => (state.quiet || state.none ? undefined : state.text)
 export function StateText(props: { state: StateWords }) {
   return (
     <Show when={props.state.spoken} fallback={props.state.text}>
@@ -90,14 +92,16 @@ const coverWords: Record<string, string> = { open: 'Open', closed: 'Closed', ope
 /**
  * An entity's state in words, by its type: a light "On · 60 %" (its brightness of 255) or "Off"; a cover "Open · 40 %"
  * (its position), "Closed", "Opening" or "Closing"; a number with its unit; a text's value, a password's as dots; a
- * button "Pressed 5 minutes ago" or "Never pressed"; any other as Home Assistant has it (a number with its unit).
+ * button "Pressed 5 minutes ago", "Pressed on 3 November 2026" or "Never pressed"; any other as Home Assistant has it (a number with its unit).
  * Unavailable and Unknown are quiet.
  */
 export function entityStateText(domain: string, state: LiveState, now: number): StateWords {
   if (state.state === 'unavailable') return { text: 'Unavailable', quiet: true }
   if (domain === 'button') {
     const pressed = Date.parse(state.state)
-    return Number.isNaN(pressed) ? { text: 'Never pressed', quiet: true } : { text: `Pressed ${relativeTime(state.state, now)}` }
+    if (Number.isNaN(pressed)) return { text: 'Never pressed', quiet: true }
+    const when = pastTime(state.state, now)
+    return { text: `Pressed ${when.dated ? 'on ' : ''}${when.text}` }
   }
   if (state.state === 'unknown') return { text: 'Unknown', quiet: true }
   if (domain === 'light' && (state.state === 'on' || state.state === 'off'))
@@ -220,7 +224,7 @@ export function DefinitionCard(props: {
                 return (
                   <li class="hs-ent-row">
                     <span class="hs-ent-row__name">{entity.name}</span>
-                    <span class="hs-ent-row__state" classList={{ 'hs-ent-row__state--quiet': !!state().quiet || !!state().none }}>
+                    <span class="hs-ent-row__state" classList={{ 'hs-ent-row__state--quiet': !!state().quiet || !!state().none }} title={stateTitle(state())}>
                       <StateText state={state()} />
                     </span>
                     <span class="hs-ent-row__meta">

@@ -47,16 +47,26 @@ const localDay = (time: number) => { const day = new Date(time); day.setHours(0,
 /** "just now", "5 minutes ago", "3 hours ago", "yesterday", "4 days ago", then a date. Days are calendar days here,
  * so "yesterday" means the day before today, however many hours ago that was. */
 export function relativeTime(iso: string, now: number): string {
+  return pastTime(iso, now).text
+}
+/** A day as people write it, in the browser's language: "3 November 2026". */
+export const dateText = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
+/**
+ * {@link relativeTime}, and whether it is a date ({@link dateText}) rather than a time ago, so a sentence can say "on"
+ * before it: "Pressed on 3 November 2026".
+ */
+export function pastTime(iso: string, now: number): { text: string; dated: boolean } {
+  const text = (value: string) => ({ text: value, dated: false })
   const then = Date.parse(iso)
   const seconds = (then - now) / 1000
-  if (Number.isNaN(seconds)) return iso
-  if (seconds > -45) return 'just now'
-  if (-seconds < 60 * 45) return relativeFormat.format(Math.round(seconds / 60), 'minute')
+  if (Number.isNaN(seconds)) return text(iso)
+  if (seconds > -45) return text('just now')
+  if (-seconds < 60 * 45) return text(relativeFormat.format(Math.round(seconds / 60), 'minute'))
   // Rounded, so a day with a daylight saving change still counts as one.
   const days = Math.round((localDay(now) - localDay(then)) / 86_400_000)
-  if (-seconds < 3600 * 22 || days <= 0) return relativeFormat.format(Math.round(seconds / 3600), 'hour')
-  if (days < 26) return relativeFormat.format(-days, 'day')
-  return new Date(iso).toLocaleDateString()
+  if (-seconds < 3600 * 22 || days <= 0) return text(relativeFormat.format(Math.round(seconds / 3600), 'hour'))
+  if (days < 26) return text(relativeFormat.format(-days, 'day'))
+  return { text: dateText(iso), dated: true }
 }
 export const durationText = (ms: number) =>
   ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} s`

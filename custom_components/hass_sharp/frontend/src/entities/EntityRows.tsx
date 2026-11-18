@@ -6,7 +6,7 @@ import type { VisualDiagnostic } from '../visual/api'
 import { Glyph } from '../visual/Glyph'
 import type { VisualGraph } from '../visual/graph'
 import { icons } from '../visual/icons'
-import { addEntity, definitionOf, keyProblem, keyRule, problemOption, readNumber, removeEntity, setEntityOption, stepsUsingEntity, updateEntity } from './definitionEdits'
+import { addEntity, definitionOf, keyProblem, keyRule, readNumber, removeEntity, setEntityOption, stepsUsingEntity, updateEntity } from './definitionEdits'
 import { FieldErrors, focusRow, ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
 import { renameEntityKey, type DefinitionEntity } from './model'
 import { retypeEntity } from './NodePickers'
@@ -104,19 +104,21 @@ function EntityRow(props: {
   const id = createUniqueId()
   const rows = props.rows
   const key = () => props.entity.key
-  // An option's problem goes under that option's field; the rest at the top of the row.
-  const messages = () => (rows.problems.get(key()) ?? []).map(d => d.message)
+  // An option's problem (one whose port is the option) goes under that option's field; the rest at the top of the row.
+  const problems = () => rows.problems.get(key()) ?? []
+  const messages = () => problems().map(d => d.message)
   const optionKeys = () => Object.keys(spec()?.options ?? {})
-  const onOption = (message: string) => { const option = problemOption(message); return option !== undefined && optionKeys().includes(option) ? option : undefined }
-  const rowProblems = () => messages().filter(message => onOption(message) === undefined)
+  const onOption = (problem: VisualDiagnostic) => { const option = problem.portId; return typeof option === 'string' && optionKeys().includes(option) ? option : undefined }
+  const rowProblems = () => problems().filter(problem => onOption(problem) === undefined).map(d => d.message)
   // A required option left empty says so on its field once the field has been left, or the row was opened from the
   // Problems tab (the class page's rule): not in red the moment the type is chosen. Save waits for it all the same, and
   // the Problems tab counts it.
   const [left, setLeft] = createSignal<ReadonlySet<string>>(new Set())
   const leave = (option: string) => { if (!left().has(option)) setLeft(new Set([...left(), option])) }
   createEffect(on(() => rows.located, located => { if (located?.target === `entity:${key()}`) setLeft(new Set(optionKeys())) }))
-  const told = (message: string, option: string) => !/^Give entity \S+ the option /.test(message) || left().has(option)
-  const optionErrors = (option: string) => messages().filter(message => onOption(message) === option && told(message, option))
+  const missing = (option: string) => { const value = props.entity.options?.[option]; return spec()?.options?.[option]?.required === true && (value === undefined || value === null) }
+  const told = (option: string) => !missing(option) || left().has(option)
+  const optionErrors = (option: string) => problems().filter(problem => onOption(problem) === option && told(option)).map(d => d.message)
   const typeLabel = () => entityTypeLabel(rows.catalog, props.entity.domain)
   const spec = () => { const domains = rows.catalog.entityDomains; return domains && Object.hasOwn(domains, props.entity.domain) ? domains[props.entity.domain] : undefined }
   const set = (changes: Partial<Record<keyof DefinitionEntity, unknown>>) => rows.commit(updateEntity(rows.graph, key(), changes))
@@ -183,8 +185,9 @@ function EntityRow(props: {
             hint="Config and diagnostic entities are listed apart on the device's page." onChange={value => set({ entityCategory: value || undefined })} />
           <SwitchField name="enabledByDefault" label="Enabled by default" checked={props.entity.enabledByDefault !== false}
             hint="Off: Home Assistant adds it turned off, to be turned on in its settings." onChange={on => set({ enabledByDefault: on ? undefined : false })} />
-          <For each={Object.entries(spec()?.options ?? {})}>
-            {([option, rule]) => <OptionField option={option} rule={rule} value={props.entity.options?.[option]} errors={optionErrors(option)}
+          {/* By key: a field stays (and keeps focus) while another option changes. */}
+          <For each={optionKeys()}>
+            {option => <OptionField option={option} rule={spec()?.options?.[option] ?? { type: 'string' }} value={props.entity.options?.[option]} errors={optionErrors(option)}
               onChange={value => rows.commit(setEntityOption(rows.graph, key(), option, value))} />}
           </For>
           <div class="hs-def-actions">

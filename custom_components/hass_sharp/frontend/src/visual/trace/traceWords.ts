@@ -69,3 +69,19 @@ export function secretName(name: string): boolean {
   key = key.toLowerCase()
   return secretNames.has(key) || secretSuffixes.some(suffix => key.endsWith(suffix))
 }
+
+/**
+ * Why a value was not recorded (`redacted`), in words: a port whose name looks like a secret is hidden for its name; one
+ * that is a secret setting's value, or a hidden response's body or headers (Hide response), or one a wire brings from
+ * either, for that. The trace marks only that a value was hidden, not why (`TraceJson.Entry`): a value worked out from
+ * one of them further back is said in words true of both.
+ */
+export function hiddenReason(graph: Graph, node: GraphNode, port: string, value: TraceValue, side: 'in' | 'out' = 'in'): string {
+  if (secretName(port)) return 'Not recorded because its name looks like a secret.'
+  const from = side === 'out' ? node : value.src ? graph.nodes.find(n => n.id === value.src!.node) : undefined
+  const fromPort = side === 'out' ? port : value.src?.port
+  if (from?.kind === 'setting') return 'Not recorded because it comes from a secret setting.'
+  if (from?.kind === 'http_request' && from.config.hideResponse === true && (fromPort === 'body' || fromPort === 'headers'))
+    return 'Not recorded because it is part of a response kept out of run history.'
+  return 'Not recorded because it may hold a secret: it comes from a secret setting or a response kept out of run history.'
+}

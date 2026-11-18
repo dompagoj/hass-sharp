@@ -11,6 +11,7 @@ import { nodeCatalog, type Graph } from '../src/visual/contract'
 import { addNode, connectNodes, createGraph, updateNode } from '../src/visual/graph'
 import type { RunTrace, RunTraceResponse, TraceEvent } from '../src/types'
 import { run } from './run-fixture'
+import { hiddenReason } from '../src/visual/trace/traceWords'
 import services from '../../../../tests/fixtures/visual-services.json'
 
 let dispose: (() => void) | undefined
@@ -744,6 +745,36 @@ it('words a definition\'s run without a trace, or without its graph, for the def
   await vi.waitFor(() => expect(second.root.textContent).toContain('The entity definition as it was for this run is no longer stored. Its summary is below.'))
   // Without the run's graph its entities' names are not known: the key and the command as recorded, in words.
   expect(second.root.textContent).toContain('relay: turn on')
+})
+
+it('says why a value was not recorded: its secret setting, a hidden response, or its name', async () => {
+  const { root } = mountDefinition(async () => definitionResponse())
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
+  steps(root)[2].click()
+  await vi.waitFor(() => expect(port(root, 'value')).not.toBeNull())
+  expect(port(root, 'value').querySelector('.hs-trace-port__note')!.textContent).toBe('Not recorded because it comes from a secret setting.')
+  expect(port(root, 'value').textContent).not.toContain('looks like a secret')
+})
+
+it('says a value of a response kept out of run history, or of a secret-looking name, was not recorded for that', () => {
+  const graph = { version: 5, name: 'Poll', nodes: [
+    { id: 'get', kind: 'http_request', config: { hideResponse: true }, position: { x: 0, y: 0 } },
+    { id: 'shown', kind: 'http_request', config: {}, position: { x: 0, y: 0 } },
+    { id: 'pw', kind: 'setting', config: { key: 'password' }, position: { x: 0, y: 0 } },
+    { id: 'say', kind: 'log', config: {}, position: { x: 0, y: 0 } },
+    { id: 'add', kind: 'concat', config: {}, position: { x: 0, y: 0 } },
+  ], edges: [] } as unknown as Graph
+  const node = (id: string) => graph.nodes.find(n => n.id === id)!
+  const hidden = (src?: { node: string; port: string }) => ({ type: 'string', v: '***', redacted: true, ...(src ? { src } : {}) })
+  expect(hiddenReason(graph, node('get'), 'body', hidden(), 'out')).toBe('Not recorded because it is part of a response kept out of run history.')
+  expect(hiddenReason(graph, node('say'), 'value', hidden({ node: 'get', port: 'headers' }), 'in')).toBe('Not recorded because it is part of a response kept out of run history.')
+  expect(hiddenReason(graph, node('say'), 'value', hidden({ node: 'pw', port: 'value' }), 'in')).toBe('Not recorded because it comes from a secret setting.')
+  expect(hiddenReason(graph, node('say'), 'field:api_key', hidden(), 'in')).toBe('Not recorded because its name looks like a secret.')
+  // Worked out from one of them a few steps back: the trace does not say which.
+  expect(hiddenReason(graph, node('say'), 'value', hidden({ node: 'add', port: 'value' }), 'in'))
+    .toBe('Not recorded because it may hold a secret: it comes from a secret setting or a response kept out of run history.')
+  expect(hiddenReason(graph, node('say'), 'value', hidden({ node: 'shown', port: 'body' }), 'in'))
+    .toBe('Not recorded because it may hold a secret: it comes from a secret setting or a response kept out of run history.')
 })
 
 it('never shows a definition\'s secret setting value on its run\'s page', async () => {

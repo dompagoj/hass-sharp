@@ -67,7 +67,8 @@
 .hs-app .hs-ent-card__entities { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; border-top: 1px solid var(--hs-line); }
 .hs-app .hs-ent-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 2px 12px; min-width: 0; padding: 7px 0; border-bottom: 1px solid var(--hs-line); font-size: 13px; }
 .hs-app .hs-ent-row__name { min-width: 0; font-weight: 650; overflow-wrap: anywhere; }
-.hs-app .hs-ent-row__state { justify-self: end; max-width: 18ch; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* A long state (a 255-character text, a file path) is clamped to three lines; its title has the whole of it. */
+.hs-app .hs-ent-row__state { justify-self: end; max-width: 18ch; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
 .hs-app .hs-ent-row__state--quiet { color: var(--hs-muted); }
 .hs-app .hs-ent-row__meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 2px 8px; min-width: 0; color: var(--hs-muted); font-size: 12px; }
 .hs-app .hs-ent-row__id { min-width: 0; color: var(--hs-text); font-size: 12px; overflow-wrap: anywhere; }
@@ -137,7 +138,7 @@
 .hs-app .hs-cdef-unused__head .hs-button { min-height: 36px; padding: 6px 12px; }
 .hs-app .hs-cdef-entity { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 48px; padding: 6px 10px; }
 /* An entity's state as Home Assistant has it, at the row's end. */
-.hs-app .hs-cdef-entity__state { max-width: 18ch; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.hs-app .hs-cdef-entity__state { max-width: 18ch; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
 .hs-app .hs-cdef-entity__state--quiet { color: var(--hs-muted); }
 
 @media (max-width: 700px) {

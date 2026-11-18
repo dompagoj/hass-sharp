@@ -190,8 +190,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   const ok = (result: unknown) => ({ version: 1, ok: true, result })
   const fail = (code: string, detail: unknown) => ({ version: 1, ok: false, error: { code, detail } })
   const empty = (value: unknown) => value === undefined || value === null
-  const problem = (code: string, message: string, inputId: string | null = null): VisualDiagnostic =>
-    ({ nodeId: null, message, severity: 3, startLine: null, startColumn: null, inputId, portId: null, code })
+  const problem = (code: string, message: string, inputId: string | null = null, portId: string | null = null): VisualDiagnostic =>
+    ({ nodeId: null, message, severity: 3, startLine: null, startColumn: null, inputId, portId, code })
   /** The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them. */
   const documentProblems = (body: DefinitionBody) => {
     const problems: VisualDiagnostic[] = []
@@ -212,18 +212,23 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
       const domain = entity.domain
       if (typeof domain !== 'string') return problems.push(problem('definition.entityDomain', `Choose a domain for entity ${key}: ${words.or(Object.keys(domains))}`, key))
       if (!Object.hasOwn(domains, domain)) return problems.push(problem('definition.entityDomain', `Entity ${key} has the domain ${domain}, which a definition built from nodes cannot create; choose ${words.or(Object.keys(domains))}`, key))
-      problems.push(...optionProblems(key, domain, entity.options))
+      problems.push(...optionProblems(key, domain, entity.options, typeof entity.name === 'string' && entity.name.trim() ? entity.name : key))
     })
     return problems
   }
-  /** The problems of an entity's options, in the order and words of `DefinitionDocument.Options`. */
-  const optionProblems = (key: string, domain: string, given: unknown): VisualDiagnostic[] => {
+  /**
+   * The problems of an entity's options, in the order and words of `DefinitionDocument.Options`: each about the entity
+   * (`inputId`) and the option (`portId`), the option by its label and the entity by its name (`named`).
+   */
+  const optionProblems = (key: string, domain: string, given: unknown, named: string): VisualDiagnostic[] => {
     const out: VisualDiagnostic[] = []
-    const error = (message: string) => out.push(problem('definition.entityOption', message, key))
     const row = nodeCatalog.entityDomains![domain], known = row.options ?? {}
     const label = row.label || key, a = `${words.article(label)} ${label.toLowerCase()}`
+    const shown = (option: string) => (Object.hasOwn(known, option) && known[option].label) || words.key(option)
+    const lower = (text: string) => text.charAt(0).toLowerCase() + text.slice(1)
+    const error = (option: string | null, message: string) => out.push(problem('definition.entityOption', message, key, option))
     if (given !== undefined && given !== null && (typeof given !== 'object' || Array.isArray(given))) {
-      error(`The options of entity ${key} are not a set of named values; give them as an object, such as {"unit": "W"}`)
+      error(null, `The options of entity ${key} are not a set of named values; give them as an object, such as {"unit": "W"}`)
       return out
     }
     const options = (given ?? {}) as Record<string, unknown>
@@ -237,7 +242,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     let bounded = false
     for (const [option, value] of Object.entries(options)) {
       if (!Object.hasOwn(known, option)) {
-        error(Object.keys(known).length === 0 ? `Entity ${key} has the option ${option}, but ${a} takes no options; remove it`
+        error(option, Object.keys(known).length === 0 ? `Entity ${key} has the option ${option}, but ${a} takes no options; remove it`
           : `Entity ${key} has no option ${option}; ${a} takes ${words.or(Object.keys(known))}`)
         continue
       }
@@ -249,19 +254,20 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
       const phrase = rule.type === 'array' ? 'a list of texts' : allowed ? `one of ${allowed.join(', ')}`
         : rule.type === 'string' ? 'a text' : rule.type === 'boolean' ? 'true or false' : rule.type === 'number' ? 'a number' : rule.type
       const bound = number(value) !== undefined ? limit(option, value as number) : undefined
-      if (!fits) error(`Option ${option} of entity ${key} takes ${phrase}`)
-      else if (Array.isArray(value) && value.length === 0) error(`Option ${option} of entity ${key} is an empty list; give it at least one text${rule.required === true ? '' : ', or leave it out'}`)
-      else if (bound) { error(`Option ${option} of entity ${key} takes ${bound}, not ${value}`); bounded ||= option === 'min' || option === 'max' }
+      const of = `${shown(option)} of ${named}`
+      if (!fits) error(option, `${of} takes ${phrase}`)
+      else if (Array.isArray(value) && value.length === 0) error(option, `${of} is an empty list; give it at least one text${rule.required === true ? '' : ', or leave it out'}`)
+      else if (bound) { error(option, `${of} takes ${bound}, not ${value}`); bounded ||= option === 'min' || option === 'max' }
       else if (option === 'pattern' && rule.type === 'string' && typeof value === 'string')
         // The tail is the regular expression engine's own words, as the server's is .NET's.
-        try { new RegExp(value) } catch (failure) { error(`Option pattern of entity ${key} is not a regular expression: ${(failure as Error).message}`) }
+        try { new RegExp(value) } catch (failure) { error(option, `${of} is not a regular expression: ${(failure as Error).message}`) }
     }
     for (const [option, rule] of Object.entries(known))
-      if (rule.required === true && (options[option] === undefined || options[option] === null)) error(`Give entity ${key} the option ${option}: ${a} needs it`)
+      if (rule.required === true && (options[option] === undefined || options[option] === null)) error(option, `${named} needs ${lower(shown(option))}: ${a} cannot work without it`)
     // A number's and a text's own min and max are 0 and 100 (`SharpDomains.DefaultOptions`).
     if (!bounded && Object.hasOwn(known, 'min') && Object.hasOwn(known, 'max') && (Object.hasOwn(options, 'min') || Object.hasOwn(options, 'max'))) {
       const min = number(options.min) ?? 0, max = number(options.max) ?? 100
-      if (!(min < max)) error(`Entity ${key} has a min of ${min}, which is not below its max of ${max}; give a min below the max`)
+      if (!(min < max)) error('min', `${shown('min')} of ${named} is ${min}, which is not below its ${lower(shown('max'))} of ${max}`)
     }
     return out
   }

@@ -4,10 +4,11 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { Inspector } from '../src/visual/Inspector'
-import { addGraphNode, connectData, nodeCatalog, validateGraph, type Graph, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { addGraphNode, connectData, nodeCatalog, validateGraph, withFirstStateValue, type Graph, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { graphTypes } from '../src/visual/connectionIndex'
 import { createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { icons, nodeIdentity } from '../src/visual/icons'
-import { chooseEntity } from '../src/entities/NodePickers'
+import { chooseEntity, retypeEntity } from '../src/entities/NodePickers'
 import { HassCtx } from '../src/context'
 
 // The steps of an entity definition name its entities, their commands and its settings by key; the inspector offers
@@ -170,6 +171,46 @@ describe('the command picker', () => {
   })
 })
 
+describe('the outputs of When commanded follow its command', () => {
+  // A lamp's Turn on gives its brightness, wired into a Set state; Turn off, a switch's commands and a number's give none
+  // of that name.
+  const lamp = () => {
+    let graph = entityGraph({ entities: [...definition().entities, { key: 'lamp', domain: 'light', name: 'Lamp', options: { dimmable: true } }] })
+    graph = step(graph, 'entity_command', 'cmd', { entity: 'lamp', command: 'turn_on' })
+    graph = step(graph, 'set_entity_state', 'set', { entity: 'lamp' })
+    return { ...graph, edges: [...graph.edges, { id: 'wire', kind: 'data' as const, source: 'cmd', sourcePort: 'brightness', target: 'set', targetPort: 'brightness' }] }
+  }
+  const wires = (graph: VisualGraph) => graph.edges.filter(e => e.kind === 'data').map(e => `${e.source}.${e.sourcePort}`)
+  const notice = 'Removed 1 connection the new command does not have: Brightness.'
+
+  it('removes the wires of an output the command chosen does not have, in the same edit, and says so', async () => {
+    const { el, history, node, notices } = mount(lamp(), 'cmd')
+    await vi.waitFor(() => expect(box(el, 'command').value).toBe('Turn on'))
+    await choose(el, 'command', 'Turn off')
+    expect(node().config.command).toBe('turn_off')
+    expect(wires(history.graph())).toEqual([])
+    expect(notices).toEqual([notice])
+    // One undo step brings back both.
+    history.undo()
+    expect([node().config.command, wires(history.graph())]).toEqual(['turn_on', ['cmd.brightness']])
+  })
+
+  it('removes them when the entity is retyped or another entity is chosen, and keeps a wire the new command has too', () => {
+    const retyped = retypeEntity(lamp(), 'lamp', 'switch', nodeCatalog)
+    expect(retyped.graph.nodes.find(n => n.id === 'cmd')!.config).toMatchObject({ entity: 'lamp', command: 'turn_on' })
+    expect(wires(retyped.graph)).toEqual([])
+    expect(retyped.notice).toContain(notice.slice(0, -1))
+    const chosen = chooseEntity(lamp(), 'cmd', 'relay', nodeCatalog)
+    expect(wires(chosen.graph)).toEqual([])
+    expect(chosen.notice).toBe(notice)
+    // Another light's Turn on gives a brightness too: its wire stays.
+    const lamps = { ...lamp(), definition: { ...lamp().definition, entities: [...(lamp().definition as any).entities, { key: 'bulb', domain: 'light', name: 'Bulb', options: { dimmable: true } }] } } as VisualGraph
+    const kept = chooseEntity(lamps, 'cmd', 'bulb', nodeCatalog)
+    expect(wires(kept.graph)).toEqual(['cmd.brightness'])
+    expect(kept.notice).toBeUndefined()
+  })
+})
+
 describe('the setting picker', () => {
   it('offers the settings by label with their type, never their values', async () => {
     const { el, node } = mount(step(entityGraph(), 'setting', 'host', {}), 'host')
@@ -260,6 +301,17 @@ describe('the state values of State and Set state', () => {
     await choose(mounted.el, 'entity', key)
     return mounted
   }
+  it('opens On when the only value it set was cleared, then a switch or a light is chosen', () => {
+    const unset = { kind: 'unset' }
+    // Its On cleared, then a light: On again, as for a step that set nothing.
+    const lamp = chooseEntity(step(things, 'set_entity_state', 'set', { entity: 'relay', is_on: unset }), 'set', 'lamp', nodeCatalog)
+    expect(lamp.graph.nodes[0].config).toEqual({ entity: 'lamp', is_on: lit('boolean', true) })
+    // A sensor's value cleared, then a switch.
+    const relay = chooseEntity(step(things, 'set_entity_state', 'set', { entity: 'power', value: unset }), 'set', 'relay', nodeCatalog)
+    expect(relay.graph.nodes[0].config).toEqual({ entity: 'relay', is_on: lit('boolean', true) })
+    expect(withFirstStateValue('set_entity_state', { entity: 'lamp', is_on: unset }, graphTypes(things, nodeCatalog))).toEqual({ entity: 'lamp', is_on: lit('boolean', true) })
+  })
+
   it('opens a new switch step On, as saved, which one click turns Off', async () => {
     const { el, node, history } = await chosen('Relay')
     expect(node().config).toEqual({ entity: 'relay', is_on: lit('boolean', true) })

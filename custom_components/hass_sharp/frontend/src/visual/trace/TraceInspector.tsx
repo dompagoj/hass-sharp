@@ -11,7 +11,7 @@ import { focusSoon } from '../soon'
 import { typeColor, typeIsList, typeLabel } from '../typeLabels'
 import type { AutomationRun, TraceEvent, TraceValue } from '../../types'
 import { isCut, isPlaceholder, isTree, opaque, valueText, type OptionText, type TraceModel } from './traceModel'
-import { inputLabel, inputOption, inputOrder, inputSource, outputLabel, secretName } from './traceWords'
+import { hiddenReason, inputLabel, inputOption, inputOrder, inputSource, outputLabel, secretName } from './traceWords'
 import { useLoadedRegistry } from '../../registry'
 import { statusIcon } from './Timeline'
 
@@ -235,6 +235,7 @@ function StepValues(props: {
                 ports={inputOrder(props.graph, props.node, inputs(), props.catalog)}
                 value={port => inputs()[port]}
                 label={port => inputLabel(props.graph, props.node, port, props.catalog)}
+                hidden={(port, value) => hiddenReason(props.graph, props.node, port, value, 'in')}
                 option={port => inputOption(props.graph, props.node, port, props.catalog, registry()?.entities)}
                 source={(_port, value) => (
                   <Show when={value.src} fallback={<span class="hs-trace-port__source">{inputSource(props.graph, value, props.catalog)}</span>}>
@@ -254,6 +255,7 @@ function StepValues(props: {
                 ports={Object.keys(outputs())}
                 value={port => outputs()[port]}
                 label={port => outputLabel(props.node, port, props.catalog, props.graph)}
+                hidden={(port, value) => hiddenReason(props.graph, props.node, port, value, 'out')}
                 side="out"
                 catalog={props.catalog}
               />
@@ -276,6 +278,8 @@ function PortList(props: {
   source?(port: string, value: TraceValue): JSX.Element
   /** Outputs: a null reads "No value" (an input's, "Not set"). */
   side?: 'in' | 'out'
+  /** Why a value hidden by the recorder was not recorded. */
+  hidden(port: string, value: TraceValue): string
   catalog: VisualCatalogSnapshot
 }) {
   return (
@@ -294,7 +298,7 @@ function PortList(props: {
                       csharp={{ types: [value().type], catalog: props.catalog }} />
                   </div>
                   {props.source?.(port, value())}
-                  <ValueView value={value()} label={props.label(port)} option={props.option?.(port)} side={props.side} />
+                  <ValueView value={value()} label={props.label(port)} option={props.option?.(port)} side={props.side} hidden={props.hidden(port, value())} />
                 </li>
               )
             }}
@@ -320,7 +324,7 @@ const traceLeaf = (cut: boolean | undefined): JsonLeaf => (name, v) => {
 }
 
 /** A recorded value: a tree for objects and lists, words for anything else; never a placeholder as if it were data. */
-function ValueView(props: { value: TraceValue; label: string; option?: OptionText; side?: 'in' | 'out' }) {
+function ValueView(props: { value: TraceValue; label: string; option?: OptionText; side?: 'in' | 'out'; hidden: string }) {
   return (
     <div class="hs-trace-port__value">
       <Show when={isTree(props.value)} fallback={
@@ -331,7 +335,7 @@ function ValueView(props: { value: TraceValue; label: string; option?: OptionTex
         <span class="hs-trace-value hs-trace-value--muted">{valueText(props.value)}</span>
         <JsonTree value={props.value.v} label={`${props.label} value`} leaf={traceLeaf(props.value.trunc)} />
       </Show>
-      <Show when={props.value.redacted}><span class="hs-trace-port__note">Not recorded because its name looks like a secret.</span></Show>
+      <Show when={props.value.redacted}><span class="hs-trace-port__note">{props.hidden}</span></Show>
       <Show when={isCut(props.value)}><span class="hs-trace-port__note">Too large: only part of it was recorded.</span></Show>
     </div>
   )

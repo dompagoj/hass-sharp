@@ -5,6 +5,7 @@ import { visualFixture } from './visual-fixture'
 import { createRoot } from 'solid-js'
 import { createGraph, removeEdge, updateNode } from '../src/visual/graph'
 import { createVisualSession, firstSave } from '../src/visual/session'
+import { automationAdapter } from '../src/visual/adapter'
 import { visualApi, VisualApiError } from '../src/visual/api'
 
 let dispose: () => void
@@ -756,5 +757,25 @@ describe('a new document\'s first save', () => {
     let asked = 0
     const result = firstSave(async () => { if (asked++) throw new Error('List failed'); return 'hall' }, async id => { throw conflict(id) }, isConflict)
     await expect(result).rejects.toThrow('List failed')
+  })
+})
+
+describe('the problems the adapter finds itself', () => {
+  it('drop the server\'s problem of the same kind about the same option, whatever its words, and keep the rest', async () => {
+    const own = { nodeId: null, inputId: 'level', portId: 'min', code: 'definition.entityOption', message: 'Minimum of Level takes a number', severity: 3, startLine: null, startColumn: null }
+    const server = [
+      { ...own, message: 'Minimum of level takes a number, in the words of an older server' },
+      { ...own, portId: 'max', message: 'Maximum of Level takes a number' },
+      { ...own, portId: null, message: 'The options of entity level are not a set of named values' },
+      { ...own, code: 'definition.entityField', portId: null, message: 'The icon of entity level is not a text' },
+    ]
+    const hass = { callWS: async (message: any) => message.type === 'hass_sharp/node_library'
+      ? ok({ catalog: nodeCatalog, generation: 'fixture', saved: true, valid: true, diagnostics: [] })
+      : ok({ valid: false, source: '', sourceMap: [], diagnostics: server }) } as any
+    const adapter = { ...automationAdapter(hass), check: () => [own] }
+    const session = createRoot(d => { dispose = d; return createVisualSession(hass, graph(), { adapter }) })
+    await vi.waitFor(() => expect(session.preview()).toBeDefined())
+    expect(session.diagnostics().filter(d => d.code?.startsWith('definition.')).map(d => d.message)).toEqual([
+      'Minimum of Level takes a number', 'Maximum of Level takes a number', 'The options of entity level are not a set of named values', 'The icon of entity level is not a text'])
   })
 })

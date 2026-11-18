@@ -16,7 +16,7 @@ import { describedBy } from '../visual/widgets/common'
 import { entityTexts } from './adapter'
 import { definitionsQueryKey, entityApi, entityError, entityTypesQueryKey } from './api'
 import { createClassSession, type ClassSession } from './classSession'
-import { cardEntities, cardStateText, definitionStatus, StateText } from './DefinitionCard'
+import { cardEntities, cardStateText, definitionStatus, StateText, stateTitle } from './DefinitionCard'
 import { DeleteDefinition } from './DeleteDefinition'
 import { problemRow, readNumber } from './definitionEdits'
 import { deviceMemory, DeviceSection } from './DeviceForm'
@@ -290,7 +290,7 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
                       </span>
                       <Show when={!entity.disabled && cardStateText(entity, states(), now())}>
                         {state => (
-                          <span class="hs-cdef-entity__state" classList={{ 'hs-cdef-entity__state--quiet': !!state().quiet || !!state().none }}>
+                          <span class="hs-cdef-entity__state" classList={{ 'hs-cdef-entity__state--quiet': !!state().quiet || !!state().none }} title={stateTitle(state())}>
                             <StateText state={state()} />
                           </span>
                         )}

@@ -44,7 +44,8 @@ export function setsStateValues(graph: VisualGraph, node: GraphNode, catalog: Vi
  * R12); a Set state that set no value yet sets its new entity's first value to true when that is true or false (ruling
  * R13). A State or Set state takes its inputs from the entity's type: the values and wires of inputs the new type does
  * not have, or whose new type does not take them, are removed and named in the notice, as applying a Custom C# node's
- * code does. A wire that already went nowhere stays, for the validator to name.
+ * code does; so are a When commanded's wires out of an output its new command does not have. A wire that already went
+ * nowhere stays, for the validator to name.
  */
 export function chooseEntity(graph: VisualGraph, nodeId: string, key: string, catalog: VisualCatalogSnapshot): { graph: VisualGraph; notice?: string } {
   const node = graph.nodes.find(n => n.id === nodeId)
@@ -54,7 +55,19 @@ export function chooseEntity(graph: VisualGraph, nodeId: string, key: string, ca
   // A Set state that set no value yet sets its new entity's On (or Closed) to true in the same change (ruling R13).
   const config = withFirstStateValue(node.kind, withEntityCommand(node.kind, { ...node.config, entity: key }, types), types, setsStateValues(graph, node, types))
   const fitted = refit(graph, node, config, types, types)
-  return { graph: fitted.graph, notice: refitNotice(fitted.removed, fitted.cleared) }
+  return { graph: fitted.graph, notice: refitNotice(fitted.removed, fitted.cleared, fitted.unplugged) }
+}
+
+/**
+ * The graph with the When commanded `nodeId` handling `command`, as one change: the wires out of an output the new
+ * command does not have (Turn off gives no brightness) are removed and named in the notice.
+ */
+export function chooseCommand(graph: VisualGraph, nodeId: string, command: string, catalog: VisualCatalogSnapshot): { graph: VisualGraph; notice?: string } {
+  const node = graph.nodes.find(n => n.id === nodeId)
+  if (!node || node.config.command === command) return { graph }
+  const types = graphTypes(graph, catalog)
+  const fitted = refit(graph, node, { ...node.config, command }, types, types)
+  return { graph: fitted.graph, notice: refitNotice(fitted.removed, fitted.cleared, fitted.unplugged) }
 }
 
 /**
@@ -73,27 +86,39 @@ export function retypeEntity(graph: VisualGraph, key: string, domain: string, ca
   const retyped = { ...rest, domain, ...(Object.keys(kept).length ? { options: kept } : {}) }
   let next: VisualGraph = { ...graph, definition: { ...definition, entities: definition.entities.map(e => (e === entity ? retyped : e)) } as unknown as VisualGraph['definition'] }
   const before = graphTypes(graph, catalog), after = graphTypes(next, catalog)
-  const removed: string[] = [], cleared: string[] = []
+  const removed: string[] = [], cleared: string[] = [], unplugged: string[] = []
   for (const node of graph.nodes) {
     if (!definitionEntityKinds.includes(node.kind) || node.config.entity !== key) continue
     const fitted = refit(next, node, withEntityCommand(node.kind, { ...node.config }, after), before, after)
     next = fitted.graph
     removed.push(...fitted.removed)
     cleared.push(...fitted.cleared)
+    unplugged.push(...fitted.unplugged)
   }
-  return { graph: next, notice: refitNotice(removed, cleared) }
+  return { graph: next, notice: refitNotice(removed, cleared, unplugged) }
 }
 
 /**
  * `graph` with `node` given `config`, its entity's state inputs as `after` types them where `before` typed them: a
  * literal value or a wire into an input the step no longer has, or one that no longer takes it, is removed (named in
- * `cleared` and `removed`).
+ * `cleared` and `removed`). A When commanded's wires out of an output its new command does not have go too (named in
+ * `unplugged`).
  */
 function refit(graph: VisualGraph, node: GraphNode, given: GraphNode['config'], before: VisualCatalogSnapshot, after: VisualCatalogSnapshot) {
   const config = { ...given }
   const spec = nodeSpec(node.kind, after)
-  const removed: string[] = [], cleared: string[] = []
-  if (spec?.dynamicInputs !== 'entity') return { graph: updateNode(graph, node.id, { config }), removed, cleared }
+  const removed: string[] = [], cleared: string[] = [], unplugged: string[] = []
+  if (spec?.dynamicOutputs === 'command') {
+    const had = dataOutputs(node, before), has = dataOutputs({ ...node, config }, after)
+    let next = updateNode(graph, node.id, { config })
+    for (const edge of graph.edges)
+      if (edge.kind === 'data' && edge.source === node.id && Object.hasOwn(had, edge.sourcePort) && !Object.hasOwn(has, edge.sourcePort)) {
+        next = removeEdge(next, edge.id, after)
+        unplugged.push(words.portLabel(had[edge.sourcePort], edge.sourcePort))
+      }
+    return { graph: next, removed, cleared, unplugged }
+  }
+  if (spec?.dynamicInputs !== 'entity') return { graph: updateNode(graph, node.id, { config }), removed, cleared, unplugged }
   const was = dataInputs(node, undefined, before), now = dataInputs({ ...node, config }, undefined, after)
   const fits = (type: unknown, accepted: string[]) => typeof type === 'string' && accepted.some(t => isAssignable(type, t, after))
   const label = (port: string) => words.portLabel(was[port], port)
@@ -120,13 +145,14 @@ function refit(graph: VisualGraph, node: GraphNode, given: GraphNode['config'], 
     next = removeEdge(next, edge.id, after)
     removed.push(label(edge.targetPort))
   }
-  return { graph: next, removed, cleared }
+  return { graph: next, removed, cleared, unplugged }
 }
 
 /** What fitting steps removed, in one notice; none when nothing was. */
-function refitNotice(removed: string[], cleared: string[]): string | undefined {
+function refitNotice(removed: string[], cleared: string[], unplugged: string[] = []): string | undefined {
   const list = (names: string[]) => [...new Set(names)].join(', ')
   const notes = [
+    ...(unplugged.length ? [`Removed ${unplugged.length} ${unplugged.length === 1 ? 'connection' : 'connections'} the new command does not have: ${list(unplugged)}`] : []),
     ...(removed.length ? [`Removed ${removed.length} ${removed.length === 1 ? 'connection that no longer fits' : 'connections that no longer fit'}: ${list(removed)}`] : []),
     ...(cleared.length ? [`Cleared ${cleared.length === 1 ? 'a value that no longer fits' : `${cleared.length} values that no longer fit`}: ${list(cleared)}`] : []),
   ]
@@ -228,7 +254,11 @@ function CommandPicker(props: { ctx: StepPickerContext }) {
     <PickerField name="command" label={configLabel(ctx, 'command', 'Command')} options={options()} value={current()}
       placeholder={ready() ? 'Choose a command' : current() || 'Not set'} hint={ready() ? configHint(ctx, 'command') : entityChoices(ctx.catalog(), ctx.node().kind).length ? 'Choose an entity first.' : 'Give an entity a type that takes commands first.'}
       invalid={ready() && current() !== '' && !commands().includes(current())} disabled={!ready()} errors={ctx.errorsFor('command')}
-      onSelect={command => ctx.onChange({ ...ctx.node().config, command })} />
+      onSelect={command => {
+        const result = chooseCommand(ctx.graph(), ctx.node().id, command, ctx.catalog())
+        ctx.onGraphChange(result.graph)
+        if (result.notice) ctx.onNotice?.(result.notice)
+      }} />
   )
 }
 

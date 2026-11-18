@@ -278,13 +278,16 @@ export const booleanStateValue = (value: EntityValueSpec | undefined) =>
  * The config of a Set state that sets no value yet once its entity is set (ruling R13): when the value it is for
  * ({@link firstStateValue}) is true or false, it is set to true, so a new switch's or light's step turns it on, as its
  * switch shows, and one click turns that off. Any other step, and one whose entity's first value is not true or false,
- * as it is. The caller says whether the step set a value before (`setsValues`): one that did changes nothing else.
+ * as it is. The caller says whether the step set a value before (`setsValues`): one that did changes nothing else. A
+ * value cleared counts as not set.
  */
 export function withFirstStateValue(kind: string, config: Record<string, unknown>, catalog: VisualCatalogSnapshot, setsValues = false): Record<string, unknown> {
   if (kind !== 'set_entity_state' || setsValues) return config
   const state = entityDomain(catalog, text(config.entity))?.state
   const first = firstStateValue(state)
-  if (!first || !booleanStateValue(state![first]) || Object.hasOwn(config, first)) return config
+  // A value cleared (`{kind: 'unset'}`) is not set: the step opens On as one that never set it.
+  const given = Object.hasOwn(config, first ?? '') ? config[first!] : undefined
+  if (!first || !booleanStateValue(state![first]) || (given !== undefined && !(record(given) && given.kind === 'unset'))) return config
   return { ...config, [first]: { kind: 'literal', type: 'boolean', value: true } }
 }
 /** The type of the definition's setting with this key, when it is one a setting can have. */

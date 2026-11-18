@@ -988,4 +988,13 @@ it('shows the state of each entity it made, by its type, as Home Assistant has i
   expect(states()).toEqual([['Bell', '—No state'], ['Lamp', '—No state'], ['Level', '—No state']])
   subscriptions[0].push({ a: { 'light.lights_lamp': { s: 'on', a: { brightness: 51 } }, 'button.lights_bell': { s: 'unknown', a: {} }, 'number.lights_level': { s: '7', a: { unit_of_measurement: 'min' } } } })
   await vi.waitFor(() => expect(states()).toEqual([['Bell', 'Never pressed'], ['Lamp', 'On · 20 %'], ['Level', '7 min']]))
+  // A long state is clamped to three lines, its whole text in the title; in the narrow layout too.
+  const long = 'x'.repeat(255)
+  subscriptions[0].push({ c: { 'number.lights_level': { '+': { s: long, a: { unit_of_measurement: null } } } } })
+  await vi.waitFor(() => expect(states()[2]).toEqual(['Level', long]))
+  expect(entities.querySelectorAll('.hs-cdef-entity__state')[2].getAttribute('title')).toBe(long)
+  const { readFileSync } = await import('node:fs')
+  const css = readFileSync('src/styles/entities.css', 'utf8')
+  expect(css).toMatch(/\.hs-app \.hs-cdef-entity__state \{[^}]*-webkit-line-clamp: 3;[^}]*overflow: hidden/)
+  expect(css).not.toMatch(/@media \(max-width: 700px\) \{[^@]*\.hs-app \.hs-cdef-entity__state \{[^}]*(display|-webkit-line-clamp|overflow):/)
 })

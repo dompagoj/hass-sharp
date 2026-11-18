@@ -315,6 +315,14 @@ it('shows each type\'s state in words: a light\'s brightness, a cover\'s positio
     'text.things_code': { '+': { s: 'hello', a: { mode: 'text' } } }, 'button.things_bell': { '+': { s: 'unknown' } },
   } })
   await vi.waitFor(() => expect(states()).toEqual(['On', 'Closing', '21.5 °C', 'Eco', 'hello', 'Never pressed']))
+  // A press long ago is a date: "Pressed on 3 November 2026"; a long state is clamped, its whole text in the title.
+  const long = 'y'.repeat(255)
+  const pressed = new Date(Date.now() - 40 * 86_400_000).toISOString()
+  subscriptions[0].push({ c: { 'button.things_bell': { '+': { s: pressed } }, 'text.things_code': { '+': { s: long } } } })
+  const date = new Date(pressed).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
+  await vi.waitFor(() => expect(states().slice(4)).toEqual([long, `Pressed on ${date}`]))
+  expect(date).toMatch(/[A-Za-z]{3,}/)
+  expect(card(root, 'things').querySelectorAll('.hs-ent-row__state')[4].getAttribute('title')).toBe(long)
   subscriptions[0].push({ c: { 'light.things_lamp': { '+': { s: 'off', a: { brightness: null } } }, 'cover.things_blind': { '+': { s: 'closed', a: { current_position: 0 } } } } })
   await vi.waitFor(() => expect(states().slice(0, 2)).toEqual(['Off', 'Closed']))
   // The light again at full brightness; Unavailable and Unknown as for any entity.
@@ -573,6 +581,9 @@ it('lays out for 360 px: one column of cards, entity rows that wrap, choices tha
   expect(css).toMatch(/\.hs-app \.hs-ent-row__id \{[^}]*overflow-wrap: anywhere/)
   expect(css).toMatch(/@media \(max-width: 700px\) \{[^@]*\.hs-app \.hs-ent-row \{[^}]*grid-template-columns: minmax\(0, 1fr\)/)
   expect(css).toMatch(/@media \(max-width: 700px\) \{[^@]*\.hs-app \.hs-ent-starts \{[^}]*grid-template-columns: minmax\(0, 1fr\)/)
+  // A long state is clamped to three lines in both layouts.
+  expect(css).toMatch(/\.hs-app \.hs-ent-row__state \{[^}]*-webkit-line-clamp: 3;[^}]*overflow: hidden/)
+  expect(css).not.toMatch(/@media \(max-width: 700px\) \{[^@]*\.hs-app \.hs-ent-row__state \{[^}]*(display|-webkit-line-clamp|overflow):/)
   // Every rule of the section is scoped to the panel and takes its colours from the tokens.
   const plain = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/@media[^{]*\{/g, '')
   for (const rule of plain.split('}').map(r => r.trim()).filter(Boolean))
