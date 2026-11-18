@@ -37,6 +37,9 @@ static class EntityToolsTests
             await TooLarge(home, server);
             await Leftovers(home, server);
             await Closed(home, server);
+            await Compressed(home, server);
+            await LongNames(home, server);
+            await FailedPrepareStops(home);
             await SetupLimit(home, server);
             await ClientOwnership(home, server);
             await LibraryDevice(home, server);
@@ -89,9 +92,10 @@ static class EntityToolsTests
         Check(request.Method == "GET" && request.Headers["User-Agent"] == "HassSharp", "the request: " + request.Method + " " + string.Join(", ", request.Headers.Select(h => h.Key + "=" + h.Value)));
         string[] logged;
         lock (lines) logged = [.. lines];
-        Check(logged.Length == 2 && logged[0] == "Downloading model.bin from 127.0.0.1"
-            && Regex.IsMatch(logged[1], @"^Downloaded model\.bin from 127\.0\.0\.1: 97\.7 KiB in \d+(\.\d)? s$"), "a download logs its start and its end: " + string.Join(" | ", logged));
-        Check(!logged.Any(line => line.Contains("hunter2") || line.Contains(server.Port.ToString()) || line.Contains("/models")), "the log names only the host: " + string.Join(" | ", logged));
+        // A name the address gives is not logged: the path may carry a token, as the query may.
+        Check(logged.Length == 2 && logged[0] == "Downloading a file from 127.0.0.1"
+            && Regex.IsMatch(logged[1], @"^Downloaded a file from 127\.0\.0\.1: 97\.7 KiB in \d+(\.\d)? s$"), "a download logs its start and its end: " + string.Join(" | ", logged));
+        Check(!logged.Any(line => line.Contains("hunter2") || line.Contains(server.Port.ToString()) || line.Contains("/models") || line.Contains("model.bin")), "the log names only the host: " + string.Join(" | ", logged));
         Check(Listed(home, sha).SequenceEqual(["model.bin"]), "only the file is left: " + string.Join(", ", Listed(home, sha)));
         Check(await files.Download(url, sha) == path && server.Count("/models/model.bin") == 1, "a second download finds the file and makes no request");
         lock (lines) Check(lines.Count == 2, "a download that finds the file logs nothing");
@@ -106,6 +110,15 @@ static class EntityToolsTests
         var plain = await files.Download(server.Url("/tables/"), Sha(table));
         Check(named == Path.Combine(FilesRoot(home), Sha(table), "table.json") && plain == Path.Combine(FilesRoot(home), Sha(table), "file")
             && File.ReadAllBytes(plain).SequenceEqual(table), "a download's name: " + named + ", " + plain);
+        // A name given is the definition's own, and is logged.
+        lock (lines) Check(lines.Contains("Downloading table.json from 127.0.0.1") && lines.Any(line => line.StartsWith("Downloaded table.json from 127.0.0.1: 7 bytes in ", StringComparison.Ordinal)),
+            "a named download logs its name: " + string.Join(" | ", lines));
+        // A token as the last path segment, which would be the file's name.
+        var token = Encoding.UTF8.GetBytes("token");
+        server.Respond("/dl/tok3n-4f9b2c", new() { Body = token });
+        lines.Clear();
+        Check(await files.Download(server.Url("/dl/tok3n-4f9b2c"), Sha(token)) == Path.Combine(FilesRoot(home), Sha(token), "tok3n-4f9b2c"), "the name from the address");
+        lock (lines) Check(lines.Count == 2 && !lines.Any(line => line.Contains("tok3n")), "a token in the path is logged: " + string.Join(" | ", lines));
         Console.WriteLine("PASS entity tools: a download fetches the file once to files/<sha256>/<name>, sends User-Agent HassSharp, logs its start and its end naming only the host, and a later one (from any definition) finds it without a request");
     }
 
@@ -118,7 +131,7 @@ static class EntityToolsTests
         var error = await Throws<InvalidDataException>(() => Files(home, lines).Download(server.Url("/firmware.bin?key=secret"), sha), "a wrong checksum");
         Check(error.Message == "The file from 127.0.0.1 does not match its checksum", "the message: " + error.Message);
         Check(!File.Exists(Path.Combine(FilesRoot(home), sha, "firmware.bin")) && Listed(home, sha).Length == 0, "a wrong checksum leaves nothing: " + string.Join(", ", Listed(home, sha)));
-        lock (lines) Check(lines.Count == 2 && lines[1].StartsWith("Downloading firmware.bin from 127.0.0.1 failed after 16 bytes in ", StringComparison.Ordinal), "a failed download logs its end: " + string.Join(" | ", lines));
+        lock (lines) Check(lines.Count == 2 && lines[1].StartsWith("Downloading a file from 127.0.0.1 failed after 16 bytes in ", StringComparison.Ordinal), "a failed download logs its end: " + string.Join(" | ", lines));
         Console.WriteLine("PASS entity tools: a file that does not match its checksum is refused by a message naming only the host, and nothing is left at its path");
     }
 
@@ -175,7 +188,7 @@ static class EntityToolsTests
         var body = Bytes(10_000, 4);
         var sha = Sha(body);
         var never = new TaskCompletionSource().Task;
-        SharpFiles.StallTimeout = TimeSpan.FromMilliseconds(300);
+        SharpFiles.StallTimeout = TimeSpan.FromSeconds(1);
         try
         {
             // Nothing at all, then the first bytes and nothing more.
@@ -185,12 +198,12 @@ static class EntityToolsTests
             {
                 var clock = System.Diagnostics.Stopwatch.StartNew();
                 var error = await Throws<TimeoutException>(() => Files(home).Download(server.Url(path), sha), "a stalled server " + path);
-                Check(error.Message == "The file from 127.0.0.1 sent nothing for 0.3 s", "the message: " + error.Message);
-                Check(clock.Elapsed >= TimeSpan.FromMilliseconds(290) && clock.Elapsed < TimeSpan.FromSeconds(5), $"{path} timed out after {clock.Elapsed.TotalMilliseconds} ms");
+                Check(error.Message == "The file from 127.0.0.1 sent nothing for 1 s", "the message: " + error.Message);
+                Check(clock.Elapsed >= TimeSpan.FromMilliseconds(990) && clock.Elapsed < TimeSpan.FromSeconds(6), $"{path} timed out after {clock.Elapsed.TotalMilliseconds} ms");
                 Check(Listed(home, sha).Length == 0, "a stalled download leaves nothing: " + string.Join(", ", Listed(home, sha)));
             }
-            // A slow file that keeps coming is no stall.
-            server.Respond("/slow.bin", new() { Body = body, Pieces = 5, Pause = TimeSpan.FromMilliseconds(150) });
+            // A slow file that keeps coming is no stall: about 1.2 s in all, with no gap longer than 150 ms.
+            server.Respond("/slow.bin", new() { Body = body, Pieces = 9, Pause = TimeSpan.FromMilliseconds(150) });
             Check(File.ReadAllBytes(await Files(home).Download(server.Url("/slow.bin"), sha)).SequenceEqual(body), "a slow download that keeps receiving");
         }
         finally { SharpFiles.StallTimeout = TimeSpan.FromSeconds(60); }
@@ -286,6 +299,75 @@ static class EntityToolsTests
         Console.WriteLine("PASS entity tools: closing a definition's downloads cancels the one in flight and refuses any later one; a caller's cancellation ends one too");
     }
 
+    static async Task Compressed(EntityTestHome home, LoopbackServer server)
+    {
+        // A stored .gz the server labels as gzip-encoded: the checksum is of the bytes it sends, which are what is kept.
+        using var packed = new MemoryStream();
+        using (var gzip = new System.IO.Compression.GZipStream(packed, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+            gzip.Write(Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("a firmware table ", 200))));
+        var bytes = packed.ToArray();
+        var sha = Sha(bytes);
+        server.Respond("/table.gz", new() { Body = bytes, Headers = new Dictionary<string, string> { ["Content-Encoding"] = "gzip", ["Content-Type"] = "application/gzip" } });
+        var path = await Files(home).Download(server.Url("/table.gz"), sha);
+        Check(File.ReadAllBytes(path).SequenceEqual(bytes), "the file on disk is the bytes the server sent");
+        Console.WriteLine("PASS entity tools: a download is checked against, and kept as, the bytes the server sends, also when it labels them gzip-encoded");
+    }
+
+    static async Task LongNames(EntityTestHome home, LoopbackServer server)
+    {
+        var body = Encoding.UTF8.GetBytes("long");
+        var sha = Sha(body);
+        // 200 characters, 400 bytes in UTF-8: more than a Linux file name takes.
+        var name = new string('ž', 200);
+        var before = server.Requests().Length;
+        await Throws<ArgumentException>(() => Files(home).Download(server.Url("/long.bin"), sha, name), "a name longer than 255 bytes");
+        Check(server.Requests().Length == before, "a name longer than 255 bytes made a request");
+        // The same name as the address's last segment: the file is called "file".
+        var path = "/" + Uri.EscapeDataString(name);
+        server.Respond(path, new() { Body = body });
+        Check(await Files(home).Download(server.Url(path), sha) == Path.Combine(FilesRoot(home), sha, "file"), "a long name from the address falls back to file");
+        // 255 bytes are taken.
+        var longest = new string('a', 255);
+        server.Respond("/longest.bin", new() { Body = body });
+        Check(await Files(home).Download(server.Url("/longest.bin"), sha, longest) == Path.Combine(FilesRoot(home), sha, longest), "a name of 255 bytes");
+        Console.WriteLine("PASS entity tools: a name longer than 255 bytes in UTF-8 is refused before any request, and one from the address falls back to file");
+    }
+
+    // A definition whose Setup() throws is stopped as one that ran is: its timers end, its client is disposed and the
+    // request it left in flight is cancelled; on its first load and as the replacement of one that runs.
+    static async Task FailedPrepareStops(EntityTestHome home)
+    {
+        await using var silent = SilentServer.Start();
+        foreach (var replacing in new[] { false, true })
+        {
+            var manager = Manager(home);
+            if (replacing)
+            {
+                var (running, _) = await Load(manager, Compiled("failing", "Failing", () => new ToolIdle()));
+                await running!.Started;
+            }
+            var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var failing = new ToolFailing(silent.Url(""), connected.Task);
+            var compiled = Compiled("failing", "Failing", () => failing);
+            Exception? failure = null;
+            var load = replacing
+                ? manager.UpdateUserScript(compiled).ContinueWith(ended => failure = ended.Exception?.GetBaseException(), TaskScheduler.Default)
+                : manager.LoadUserScripts([compiled], (_, error) => failure = error);
+            var what = replacing ? "a replacement whose Setup() throws" : "a definition whose Setup() throws";
+            await EntityTestHome.Until(() => silent.Open == 1 && failing.Ticks > 0, $"{what}: its request reaches the server and its timer ticks");
+            connected.SetResult();
+            await load;
+            Check(failure?.Message == "no plug answers at this host", $"{what}: " + failure);
+            await EntityTestHome.Until(() => silent.Open == 0, $"{what}: the request it left in flight is cancelled ({silent.Open} open)");
+            await Throws<ObjectDisposedException>(() => Task.FromResult(failing.Client), $"{what}: Http after it failed");
+            var ticks = failing.Ticks;
+            await Task.Delay(100);
+            Check(failing.Ticks == ticks, $"{what}: its timer still ticks");
+            await manager.UnloadUserScriptsAsync();
+        }
+        Console.WriteLine("PASS entity tools: a definition whose Setup() throws, loaded or replacing one that runs, ends its timers, disposes its client and cancels the request it left in flight");
+    }
+
     // --- Through the host: the setup limit, and who owns the client. ---
 
     static CompiledUserScript Compiled(string id, string name, Func<object> factory, params DefinitionSetting[] settings) => new()
@@ -308,16 +390,16 @@ static class EntityToolsTests
     {
         var body = Bytes(6_000, 8);
         var sha = Sha(body);
-        DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(300);
-        // About 600 ms of receiving, twice the setup limit.
-        server.Respond("/model.tflite", new() { Body = body, Pieces = 5, Pause = TimeSpan.FromMilliseconds(150) });
+        DefinitionHost.SetupTimeout = TimeSpan.FromSeconds(1);
+        // About 1.6 s of receiving, well past the setup limit, which leaves 1 s for the rest of the setup.
+        server.Respond("/model.tflite", new() { Body = body, Pieces = 9, Pause = TimeSpan.FromMilliseconds(200) });
         var manager = Manager(home);
         var fetcher = new ToolFetcher(server.Url("/model.tflite"), sha);
         var clock = System.Diagnostics.Stopwatch.StartNew();
         var (host, failure) = await Load(manager, Compiled("fetcher", "Fetcher", () => fetcher));
         Check(failure == null && host != null, "a download slower than the setup limit failed the setup: " + failure?.Message);
-        Check(clock.Elapsed > TimeSpan.FromMilliseconds(500) && fetcher.Path == Path.Combine(FilesRoot(home), sha, "model.tflite"), $"the setup downloaded for {clock.Elapsed.TotalMilliseconds} ms: {fetcher.Path}");
-        Check(home.Logs(PyLogLevel.Info).Contains("Fetcher: Downloading model.tflite from 127.0.0.1"), "the host logs a download after the definition's name: " + string.Join(" | ", home.Logs()));
+        Check(clock.Elapsed > TimeSpan.FromMilliseconds(1500) && fetcher.Path == Path.Combine(FilesRoot(home), sha, "model.tflite"), $"the setup downloaded for {clock.Elapsed.TotalMilliseconds} ms: {fetcher.Path}");
+        Check(home.Logs(PyLogLevel.Info).Contains("Fetcher: Downloading a file from 127.0.0.1"), "the host logs a download after the definition's name: " + string.Join(" | ", home.Logs()));
         await manager.UnloadUserScriptsAsync();
 
         // A server that answers nothing: the wait for it counts.
@@ -327,10 +409,10 @@ static class EntityToolsTests
         manager = Manager(home);
         clock.Restart();
         (host, failure) = await Load(manager, Compiled("silent", "Silent", () => new ToolFetcher(server.Url("/silent.tflite"), silentSha)));
-        Check(host == null && failure is TimeoutException && failure.Message == "Silent: Setup() did not finish within 0.3 s", "a download that receives nothing fails the setup: " + failure);
+        Check(host == null && failure is TimeoutException && failure.Message == "Silent: Setup() did not finish within 1 s", "a download that receives nothing fails the setup: " + failure);
         Check(clock.Elapsed < TimeSpan.FromSeconds(5), $"the setup failed after {clock.Elapsed.TotalMilliseconds} ms");
         // The download the abandoned Setup() still waits on ends with the host.
-        await EntityTestHome.Until(() => home.Logs(PyLogLevel.Info).Any(line => line.StartsWith("Silent: Downloading silent.tflite from 127.0.0.1 failed after 0 bytes", StringComparison.Ordinal)), "the abandoned download is cancelled");
+        await EntityTestHome.Until(() => home.Logs(PyLogLevel.Info).Any(line => line.StartsWith("Silent: Downloading a file from 127.0.0.1 failed after 0 bytes", StringComparison.Ordinal)), "the abandoned download is cancelled");
         Check(Listed(home, silentSha).Length == 0, "the abandoned download left nothing");
         await manager.UnloadUserScriptsAsync();
         DefinitionHost.SetupTimeout = TimeSpan.FromSeconds(60);
@@ -431,7 +513,7 @@ static class EntityToolsTests
             string? Last(string key) => Meter().LastOrDefault(s => s["uniqueId"]!.GetValue<string>() == "meter:" + key && s["available"]!.GetValue<bool>())?["values"]?["value"]?.ToJsonString();
             await EntityTestHome.Until(() => Last("power") == "12.5" && Last("table") == "\"rates v1\"", "the meter publishes what it read and what it downloaded");
             Check(File.ReadAllBytes(Path.Combine(FilesRoot(home), Sha(table), "table.txt")).SequenceEqual(table), "the download is under the configuration's .storage/hass_sharp/files");
-            Check(home.Logs(PyLogLevel.Info).Contains("Meter: Downloading table.txt from 127.0.0.1"), "the download is logged: " + string.Join(" | ", home.Logs()));
+            Check(home.Logs(PyLogLevel.Info).Contains("Meter: Downloading a file from 127.0.0.1"), "the download is logged: " + string.Join(" | ", home.Logs()));
             Console.WriteLine("PASS entity tools: a library device downloads a file in Setup() under .storage/hass_sharp/files and publishes what it polls with Http from Every()");
 
             // The server goes down: the poll fails on every tick, logged once; then it works again, logged once.
@@ -613,13 +695,13 @@ static class EntityToolsTests
     {
         var model = Bytes(8_000, 10);
         var sha = Sha(model);
-        // About 600 ms of receiving, twice the setup limit.
-        server.Respond("/models/model.tflite", new() { Body = model, Pieces = 5, Pause = TimeSpan.FromMilliseconds(150) });
+        // About 1.6 s of receiving, well past the setup limit, which leaves 1 s for the rest of the flow.
+        server.Respond("/models/model.tflite", new() { Body = model, Pieces = 9, Pause = TimeSpan.FromMilliseconds(200) });
         var api = new HassSharpManager(home.Root);
         try
         {
             await api.Init();
-            DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(300);
+            DefinitionHost.SetupTimeout = TimeSpan.FromSeconds(1);
             object Definition() => GraphDefinition("Model",
                 [N("setup", "entity_setup"),
                  N("download", "download_file", new JsonObject { ["url"] = Lit("string", server.Url("/models/model.tflite?token=hunter2")), ["sha256"] = Lit("string", sha) }),
@@ -632,7 +714,7 @@ static class EntityToolsTests
             Check(File.ReadAllBytes(path).SequenceEqual(model) && server.Count("/models/model.tflite") == 1, "the file is downloaded once: " + server.Count("/models/model.tflite"));
             JsonNode? Shown() => home.Snapshots().LastOrDefault(s => s["uniqueId"]!.GetValue<string>() == "model:model" && s["available"]!.GetValue<bool>())?["values"]?["value"];
             await EntityTestHome.Until(() => Shown()?.GetValue<string>() == path, "the next step gets the file's path");
-            Check(home.Logs(PyLogLevel.Info).Contains("Model: Downloading model.tflite from 127.0.0.1") && !home.Logs().Any(l => l.Contains("hunter2", StringComparison.Ordinal)), "the download is logged naming only the host");
+            Check(home.Logs(PyLogLevel.Info).Contains("Model: Downloading a file from 127.0.0.1") && !home.Logs().Any(l => l.Contains("hunter2", StringComparison.Ordinal)), "the download is logged naming only the host");
             var again = await Ok(api, new { operation = "save", id = "model", expectedRevision = 1, definition = Definition() });
             Check(again["document"]!["status"]!.GetValue<string>() == "running" && server.Count("/models/model.tflite") == 1, "a definition saved again finds the file without a request: " + server.Count("/models/model.tflite"));
             Console.WriteLine("PASS entity tools: Download file in a When started flow downloads once, not counting against the setup limit, and hands the path to the next step; saved again, it finds the file without a request");
@@ -704,6 +786,31 @@ sealed class ToolReading : SharpSensor
 {
     public ToolReading() : base("reading") { }
     public HttpClient Client => Http;
+}
+
+/// <summary>Starts a timer and a request it does not wait for in its Setup(), then throws once told to.</summary>
+sealed class ToolFailing : SharpDevice
+{
+    readonly string silent;
+    readonly Task connected;
+    int ticks;
+
+    public ToolFailing(string silent, Task connected)
+    {
+        (this.silent, this.connected) = (silent, connected);
+        Add(new SharpSensor("failing"));
+    }
+
+    public int Ticks => Volatile.Read(ref ticks);
+    public HttpClient Client => Http;
+
+    protected internal override async Task Setup()
+    {
+        Every(TimeSpan.FromMilliseconds(10), () => { Interlocked.Increment(ref ticks); return Task.CompletedTask; });
+        _ = Http.GetStringAsync(silent + "/setup");
+        await connected;
+        throw new InvalidOperationException("no plug answers at this host");
+    }
 }
 
 /// <summary>Uses neither Http nor Files while it runs.</summary>

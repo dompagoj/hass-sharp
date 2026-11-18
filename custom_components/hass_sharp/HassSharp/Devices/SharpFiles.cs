@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace HassSharp;
 
@@ -47,7 +48,9 @@ public sealed class SharpFiles
     /// still in progress when the definition stops is cancelled anyway.
     /// </summary>
     /// <param name="url">Where the file is, an <c>http</c> or <c>https</c> address.</param>
-    /// <param name="sha256">The file's SHA-256 checksum: 64 hexadecimal characters, in either case.</param>
+    /// <param name="sha256">The SHA-256 checksum of the file as the server sends it (nothing is decompressed, also when the
+    /// server labels it <c>Content-Encoding: gzip</c>), as <c>sha256sum</c> gives it for a file fetched with
+    /// <c>curl -O</c>: 64 hexadecimal characters, in either case.</param>
     /// <param name="name">What the file is called on disk, a plain file name; the address's last path segment when null, else <c>file</c>.</param>
     /// <param name="cancellationToken">Ends the download.</param>
     /// <returns>The file's path.</returns>
@@ -63,9 +66,11 @@ public sealed class SharpFiles
         if (sha256 is not { Length: 64 } || !sha256.All(Uri.IsHexDigit))
             throw new ArgumentException("The checksum of a download must be its SHA-256: 64 hexadecimal characters", nameof(sha256));
         if (name != null && !Plain(name))
-            throw new ArgumentException($"'{name}' is not a plain file name: a download's name has no directory, does not start with a dot and has no control characters", nameof(name));
+            throw new ArgumentException($"'{name}' is not a plain file name: a download's name has no directory, does not start with a dot, has no control characters and takes at most 255 bytes in UTF-8", nameof(name));
         if (closing.IsCancellationRequested) throw new ObjectDisposedException(nameof(SharpFiles), "The definition has stopped: it downloads nothing more");
         var checksum = sha256.ToLowerInvariant();
+        // A name the address gives is never logged: the path may carry a token, as the query may.
+        var shown = name ?? "a file";
         name ??= DefaultName(uri);
         var directory = Path.GetFullPath(Path.Combine(root, checksum));
         var path = Path.Combine(directory, name);
@@ -75,7 +80,7 @@ public sealed class SharpFiles
         {
             if (File.Exists(path)) return path;
             RemoveLeftovers(directory);
-            await Fetch(uri, checksum, name, directory, path, ending.Token);
+            await Fetch(uri, checksum, shown, directory, path, ending.Token);
             return path;
         }
     }
@@ -83,7 +88,8 @@ public sealed class SharpFiles
     /// <summary>Ends every download in progress and refuses any later one; the definition has stopped.</summary>
     internal void Close() => closing.Cancel();
 
-    async Task Fetch(Uri uri, string checksum, string name, string directory, string path, CancellationToken ending)
+    // Logs the download as <paramref name="shown"/>: its name when the definition gave one, else "a file".
+    async Task Fetch(Uri uri, string checksum, string shown, string directory, string path, CancellationToken ending)
     {
         // Only the host is ever named: the address may carry a token in its path or query.
         var host = uri.Host;
@@ -91,11 +97,12 @@ public sealed class SharpFiles
         var clock = Stopwatch.StartNew();
         long received = 0;
         var done = false;
-        log($"Downloading {name} from {host}");
+        log($"Downloading {shown} from {host}");
         try
         {
             // Bounded by the stall limit, not by a whole-request timeout: a large file takes as long as it takes.
-            using var client = SharpHttp.Create();
+            // One that decompresses nothing: the checksum is of the bytes the server sends.
+            using var client = SharpHttp.CreateForDownloads();
             client.Timeout = Timeout.InfiniteTimeSpan;
             using var stall = CancellationTokenSource.CreateLinkedTokenSource(ending);
             stall.CancelAfter(StallTimeout);
@@ -137,14 +144,14 @@ public sealed class SharpFiles
             }
             File.Move(temporary, path, overwrite: true);
             done = true;
-            log($"Downloaded {name} from {host}: {Size(received)} in {Seconds(clock.Elapsed)} s");
+            log($"Downloaded {shown} from {host}: {Size(received)} in {Seconds(clock.Elapsed)} s");
         }
         finally
         {
             if (!done)
             {
                 try { File.Delete(temporary); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-                log($"Downloading {name} from {host} failed after {Size(received)} in {Seconds(clock.Elapsed)} s");
+                log($"Downloading {shown} from {host} failed after {Size(received)} in {Seconds(clock.Elapsed)} s");
             }
         }
 
@@ -212,9 +219,9 @@ public sealed class SharpFiles
     }
 
     // A file name without a directory: not empty, no separator, no control character, not hidden (so never a
-    // temporary file's), no surrounding spaces.
+    // temporary file's), no surrounding spaces, and at most the 255 bytes a Linux file name takes.
     static bool Plain(string name) =>
-        name.Length is > 0 and <= 255 && name[0] != '.' && name.Trim() == name
+        name.Length > 0 && Encoding.UTF8.GetByteCount(name) <= 255 && name[0] != '.' && name.Trim() == name
         && name.IndexOfAny(['/', '\\', ':']) < 0 && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && !name.Any(char.IsControl);
 
     // The address's last path segment, as a name; "file" when it has none that is one.

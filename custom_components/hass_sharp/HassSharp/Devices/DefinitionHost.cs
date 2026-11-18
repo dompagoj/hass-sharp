@@ -163,26 +163,30 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             if (!await Within(setup, clock))
                 throw new TimeoutException($"{definition.Name}: Setup() did not finish within {Seconds(SetupTimeout)} s");
         }
-        if (device != null)
+        try
         {
-            device.Host = this;
-            await SetUp(device);
+            if (device != null)
+            {
+                device.Host = this;
+                await SetUp(device);
+            }
+            // An entity added during a Setup() is set up too.
+            var setUp = new HashSet<SharpEntity>(ReferenceEqualityComparer.Instance);
+            while (Collect().FirstOrDefault(entity => !setUp.Contains(entity)) is { } next)
+            {
+                setUp.Add(next);
+                next.Host = this;
+                await SetUp(next);
+            }
         }
-        // An entity added during a Setup() is set up too.
-        var setUp = new HashSet<SharpEntity>(ReferenceEqualityComparer.Instance);
-        while (Collect().FirstOrDefault(entity => !setUp.Contains(entity)) is { } next)
-        {
-            setUp.Add(next);
-            next.Host = this;
-            await SetUp(next);
-        }
+        // Also after a Setup() that failed or ran out of time: a download it left running no longer stops a clock.
+        finally { setupClock = null; }
         // From now on the host would not see an entity added, so the device refuses one (and has none to restore).
         if (device != null)
         {
             device.Sealed = true;
             device.Added = null;
         }
-        setupClock = null;
         var all = Collect();
         CheckKeys(all);
         entities = all;
