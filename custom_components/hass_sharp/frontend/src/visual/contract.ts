@@ -212,15 +212,22 @@ function domainRow(catalog: Pick<VisualCatalogSnapshot, 'entityDomains'>, domain
   const domains = catalog.entityDomains
   return record(domains) && Object.hasOwn(domains, domain) && record(domains[domain]) ? domains[domain] : undefined
 }
-/** An entity type as people read it: its `entityDomains` row's label, else the domain in words (`fan_speed` → `Fan speed`). */
+/**
+ * An entity type as people read it: its `entityDomains` row's label, else the domain in words (`fan_speed` → `Fan
+ * speed`). The only place a type's label is worked out, the validator's messages included: as `VisualGraphValidator`
+ * words it (`Text(row, "label", DomainWords(domain))`), a text label is taken as it is.
+ */
 export function entityTypeLabel(catalog: Pick<VisualCatalogSnapshot, 'entityDomains'>, domain: string): string {
-  return text(domainRow(catalog, domain)?.label) || words.key(domain)
+  return text(domainRow(catalog, domain)?.label, domainWords(domain))
 }
-/** A command of an entity type as people read it: its label in the type's row, else the command in words. */
+/**
+ * A command of an entity type as people read it: its label in the type's row, else the command in words. The only
+ * place a command's label is worked out, as `VisualGraphValidator` words it (`Text(entry, "label", KeyWords(command))`).
+ */
 export function entityCommandLabel(catalog: Pick<VisualCatalogSnapshot, 'entityDomains'>, domain: string, command: string): string {
   const commands = domainRow(catalog, domain)?.commands
   const entry: unknown = record(commands) && Object.hasOwn(commands, command) ? commands[command] : undefined
-  return (record(entry) ? text(entry.label) : '') || words.key(command)
+  return text(record(entry) ? entry.label : undefined, words.key(command))
 }
 /** The definition's entities and settings (each with a text `key`), the first of each key. */
 export const definitionEntities = (catalog: VisualCatalogSnapshot) => definitionItems(catalog, 'entities')
@@ -1245,9 +1252,10 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       const domain = entityDomain(catalog, entityKey), command = node.config.command
       if (!definitionEntity(catalog, entityKey)) error(node.id, words.unknownEntity(entityKey, configLabel(spec.config.entity, 'entity')), 'entity', undefined, 'definition.unknownEntity')
       else if (node.kind === 'entity_command' && domain && typeof command === 'string' && !Object.hasOwn(record(domain.commands) ? domain.commands : {}, command)) {
-        const commands = Object.entries(record(domain.commands) ? domain.commands : {}).map(([key, entry]) => text(record(entry) ? entry.label : undefined, words.key(key)))
+        const domainKey = text(definitionEntity(catalog, entityKey)?.domain)
+        const commands = Object.keys(record(domain.commands) ? domain.commands : {}).map(key => entityCommandLabel(catalog, domainKey, key))
         const commanded = Object.entries(catalog.entityDomains ?? {}).filter(([, entry]) => record(entry) && record(entry.commands) && Object.keys(entry.commands).length > 0)
-          .map(([key, entry]) => text(entry.label, domainWords(key)).toLowerCase())
+          .map(([key]) => entityTypeLabel(catalog, key).toLowerCase())
         error(node.id, words.unknownCommand(entityKey, command, commands, commanded, configLabel(spec.config.command, 'command')), 'command', undefined, 'definition.unknownCommand')
       }
     }
@@ -1368,7 +1376,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (!Array.isArray(entities) || !Array.isArray(settings) || !entities.every(e => record(e) && typeof e.key === 'string' && typeof e.domain === 'string') ||
       !settings.every(s => record(s) && typeof s.key === 'string' && typeof s.type === 'string')) { error(null, words.definitionUnreadable, undefined, undefined, 'definition.invalid'); return }
     const domains = record(catalog.entityDomains) ? catalog.entityDomains : {}
-    const labels = Object.entries(domains).map(([key, entry]) => text(record(entry) ? entry.label : undefined, domainWords(key)))
+    const labels = Object.keys(domains).map(key => entityTypeLabel(catalog, key))
     const keys = (items: { key: string }[], name: string) => {
       const seen = new Set<string>(), repeated = new Set<string>()
       for (const { key } of items) if (seen.has(key)) { if (!repeated.has(key)) { repeated.add(key); error(null, words.repeatedKey(name, key), undefined, undefined, 'definition.invalid') } } else seen.add(key)
@@ -1395,12 +1403,11 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     for (const kind of singletons) for (const node of later(ofKind(kind), () => kind)) error(node.id, words.singleton(words.name(kindLabel(kind))), undefined, undefined, 'node.singleton')
     if (!entityGraph) return
     const choice = (node: GraphNode, key: string) => text(node.config[key])
-    const commandLabel = (entity: string, command: string) => { const entry = entityDomain(catalog, entity)?.commands; return text(record(entry) && record(entry[command]) ? entry[command].label : undefined, words.key(command)) }
     const states = ofKind('entity_state').filter(n => definitionEntity(catalog, choice(n, 'entity')))
     for (const node of later(states, n => choice(n, 'entity'))) error(node.id, words.stateDuplicate(choice(node, 'entity'), kindLabel('entity_state')), 'entity', undefined, 'state.duplicate')
     const commands = ofKind('entity_command').filter(n => { const known = entityDomain(catalog, choice(n, 'entity'))?.commands; return record(known) && Object.hasOwn(known, choice(n, 'command')) })
     for (const node of later(commands, n => [choice(n, 'entity'), choice(n, 'command')]))
-      error(node.id, words.commandDuplicate(choice(node, 'entity'), commandLabel(choice(node, 'entity'), choice(node, 'command')), kindLabel('entity_command')), 'command', undefined, 'command.duplicate')
+      error(node.id, words.commandDuplicate(choice(node, 'entity'), entityCommandLabel(catalog, text(definitionEntity(catalog, choice(node, 'entity'))?.domain), choice(node, 'command')), kindLabel('entity_command')), 'command', undefined, 'command.duplicate')
     // A State is worked out again when an entity it reads changes; only an entity chosen in a reader can be watched.
     // A reader is any value node with an input that takes only entity ids (built in, a library's or Custom C#), warned
     // about for the first such input given over a wire, unless that wire comes from a Constant of an entity id type, whose
@@ -1422,7 +1429,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       const domain = entityDomain(catalog, text(entity.key))
       if (domain) for (const command of Object.keys(record(domain.commands) ? domain.commands : {}))
         if (!commands.some(n => choice(n, 'entity') === entity.key && choice(n, 'command') === command)) {
-          errors.push({ nodeId: null, message: words.commandUnhandled(text(domain.label, domainWords(text(entity.domain))), text(entity.key), commandLabel(text(entity.key), command), kindLabel('entity_command')), severity: 2, code: 'command.unhandled' }); origins.push(origin)
+          errors.push({ nodeId: null, message: words.commandUnhandled(entityTypeLabel(catalog, text(entity.domain)), text(entity.key), entityCommandLabel(catalog, text(entity.domain), command), kindLabel('entity_command')), severity: 2, code: 'command.unhandled' }); origins.push(origin)
         }
     }
   }

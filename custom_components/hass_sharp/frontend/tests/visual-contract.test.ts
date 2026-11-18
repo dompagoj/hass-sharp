@@ -519,4 +519,11 @@ describe('the labels of entity types and commands', () => {
     expect(contract.entityCommandLabel(contract.nodeCatalog, 'fan', 'fan_speed')).toBe('Fan speed')
     expect(contract.entityCommandLabel(contract.nodeCatalog, 'switch', 'toString')).toBe('ToString')
   })
+  it('word them as VisualGraphValidator does: a text label as it is, even empty, and a blank command as Unnamed', () => {
+    const blank = { entityDomains: { fan: { label: '', state: {}, commands: { turn_on: { label: '' }, set_speed: { label: 7 } }, options: {} } } } as unknown as contract.VisualCatalogSnapshot
+    expect(contract.entityTypeLabel(blank, 'fan')).toBe('')
+    expect(contract.entityCommandLabel(blank, 'fan', 'turn_on')).toBe('')
+    expect(contract.entityCommandLabel(blank, 'fan', 'set_speed')).toBe('Set speed')
+    expect(contract.entityCommandLabel(blank, 'fan', '_')).toBe('Unnamed')
+  })
 })
