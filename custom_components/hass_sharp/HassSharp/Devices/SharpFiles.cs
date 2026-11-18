@@ -54,7 +54,7 @@ public sealed class SharpFiles
     /// <param name="name">What the file is called on disk, a plain file name; the address's last path segment when null, else <c>file</c>.</param>
     /// <param name="cancellationToken">Ends the download.</param>
     /// <returns>The file's path.</returns>
-    /// <exception cref="ArgumentException">The address, the checksum or the name is not one; nothing was requested.</exception>
+    /// <exception cref="ArgumentException">The address, the checksum or the name is not one; nothing was requested. Its message is a plain sentence, naming no parameter.</exception>
     /// <exception cref="InvalidDataException">The file does not match its checksum, or is larger than 2 GiB.</exception>
     /// <exception cref="HttpRequestException">The server answered with an error status, or the download could not be made or broke off.</exception>
     /// <exception cref="TimeoutException">The server sent nothing for 60 seconds.</exception>
@@ -62,11 +62,11 @@ public sealed class SharpFiles
     public async Task<string> Download(string url, string sha256, string? name = null, CancellationToken cancellationToken = default)
     {
         if (url == null || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
-            throw new ArgumentException("The address of a download must be an http or https URL", nameof(url));
+            throw new ArgumentException("The address of a download must be an http or https URL");
         if (sha256 is not { Length: 64 } || !sha256.All(Uri.IsHexDigit))
-            throw new ArgumentException("The checksum of a download must be its SHA-256: 64 hexadecimal characters", nameof(sha256));
+            throw new ArgumentException("The checksum of a download must be its SHA-256: 64 hexadecimal characters");
         if (name != null && !Plain(name))
-            throw new ArgumentException($"'{name}' is not a plain file name: a download's name has no directory, does not start with a dot, has no control characters and takes at most 255 bytes in UTF-8", nameof(name));
+            throw new ArgumentException($"'{name}' is not a plain file name: a download's name has no directory, does not start with a dot, has no control characters and takes at most 255 bytes in UTF-8");
         if (closing.IsCancellationRequested) throw new ObjectDisposedException(nameof(SharpFiles), "The definition has stopped: it downloads nothing more");
         var checksum = sha256.ToLowerInvariant();
         // A name the address gives is never logged: the path may carry a token, as the query may.

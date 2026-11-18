@@ -35536,11 +35536,11 @@
     "nodeId": "ftp",
     "inputId": "url",
     "messages": [
-      "URL must start with http:// or https://",
-      "URL must start with http:// or https://",
-      "URL must start with http:// or https://",
-      "URL must start with http:// or https://",
-      "URL must start with http:// or https://"
+      "URL must be an http:// or https:// address with a host and no spaces",
+      "URL must be an http:// or https:// address with a host and no spaces",
+      "URL must be an http:// or https:// address with a host and no spaces",
+      "URL must be an http:// or https:// address with a host and no spaces",
+      "URL must be an http:// or https:// address with a host and no spaces"
     ],
     "codes": [
       "http.url",
@@ -35929,7 +35929,7 @@
     "messages": [
       "SHA-256 checksum must be 64 hexadecimal characters, the file's SHA-256",
       "SHA-256 checksum must be 64 hexadecimal characters, the file's SHA-256",
-      "URL must start with http:// or https://"
+      "URL must be an http:// or https:// address with a host and no spaces"
     ],
     "codes": [
       "download.checksum",
@@ -35983,6 +35983,58 @@
     ],
     "codes": [
       "node.document"
+    ]
+  },
+  {
+    "name": "code http.body: a body given to an HTTP request without a method, which sends a GET",
+    "graph": {
+      "version": 5,
+      "name": "Plug",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "get",
+          "kind": "http_request",
+          "config": {
+            "responseType": "string",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "http://192.168.1.40/rpc/Switch.Set"
+            },
+            "body": {
+              "kind": "literal",
+              "type": "object",
+              "value": {
+                "on": true
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:get",
+          "source": "t",
+          "target": "get",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "get",
+    "inputId": "body",
+    "messages": [
+      "Body cannot be sent with GET; choose another method or remove it"
+    ],
+    "codes": [
+      "http.body"
     ]
   }
 ]

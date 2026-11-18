@@ -791,7 +791,7 @@ export const words = {
   /** A Repeat count typed in above the loop's Maximum iterations. */
   repeatCount: (label: string, max: number, maxLabel: string) => `${label} must be at most ${max}, as ${maxLabel} is ${max}`,
   /** An address typed into an HTTP request or a download that is not a web address. */
-  webAddress: (label: string) => `${label} must start with http:// or https://`,
+  webAddress: (label: string) => `${label} must be an http:// or https:// address with a host and no spaces`,
   /** A body given to an HTTP request whose method sends none (GET or HEAD). */
   bodyMethod: (label: string, method: string) => `${label} cannot be sent with ${method}; choose another method or remove it`,
   /** A download's checksum typed in that is not a SHA-256. */

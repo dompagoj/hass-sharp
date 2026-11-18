@@ -78,6 +78,8 @@ sealed class LoopbackServer : IAsyncDisposable
             probe.Stop();
             var listener = new HttpListener();
             listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            // The same server under a second host name, for what a client does across hosts (a redirect).
+            listener.Prefixes.Add($"http://localhost:{port}/");
             try
             {
                 listener.Start();
@@ -91,6 +93,8 @@ sealed class LoopbackServer : IAsyncDisposable
 
     /// <summary>The address of a path (and query) on the server, such as <c>Url("/power")</c>.</summary>
     public string Url(string target) => $"http://127.0.0.1:{Port}{target}";
+    /// <summary>The address of <paramref name="target"/> under the server's second host name, <c>localhost</c>.</summary>
+    public string OtherHostUrl(string target) => $"http://localhost:{Port}{target}";
 
     /// <summary>From now on answers requests for <paramref name="path"/> (without a query) with <paramref name="reply"/>.</summary>
     public void Respond(string path, Reply reply) { lock (replies) replies[path] = reply; }
@@ -163,7 +167,7 @@ sealed class LoopbackServer : IAsyncDisposable
             Record(new Request(request.HttpMethod, path, request.RawUrl ?? path, headers, body.ToArray()));
             Reply reply;
             lock (replies) reply = replies.GetValueOrDefault(path) ?? new Reply { Status = 404 };
-            await Send(reply, response);
+            await Send(reply, response, head: request.HttpMethod == "HEAD");
         }
         // A client that went away, or the server disposed while it waited: nothing to answer.
         catch (Exception) { try { response.Abort(); } catch { } }
@@ -185,7 +189,8 @@ sealed class LoopbackServer : IAsyncDisposable
         foreach (var signal in reached) signal.TrySetResult();
     }
 
-    async Task Send(Reply reply, HttpListenerResponse response)
+    // A HEAD is answered with the reply's headers and length, and no body.
+    async Task Send(Reply reply, HttpListenerResponse response, bool head = false)
     {
         if (reply.Before != null) await reply.Before.WaitAsync(disposing.Token);
         if (reply.DropAt is < 1) throw new ArgumentException("A connection is dropped after at least one byte of the body");
@@ -195,6 +200,7 @@ sealed class LoopbackServer : IAsyncDisposable
             else response.Headers[name] = value;
         if (reply.Chunked) response.SendChunked = true;
         else response.ContentLength64 = reply.ContentLength ?? reply.Body.Length;
+        if (head) { response.Close(); return; }
         var end = Math.Min(reply.DropAt ?? reply.Body.Length, reply.Body.Length);
         // Where the writes end: each piece, the hold and the drop.
         var cuts = new SortedSet<int> { end };

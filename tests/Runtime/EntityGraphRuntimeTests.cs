@@ -38,8 +38,9 @@ static class EntityGraphRuntimeTests
         }
         public object? Setting(string key) => Settings.TryGetValue(key, out var value) ? value : throw new KeyNotFoundException(key);
         public bool IsSecret(string key) => Secrets.Contains(key);
-        // Downloads are the host's (see EntityToolsTests); a run here makes none.
-        public SharpFiles Files => throw new InvalidOperationException("This definition downloads nothing");
+        /// <summary>The downloads a test gives the definition; without, a run here makes none (see EntityToolsTests).</summary>
+        public SharpFiles? Downloads;
+        public SharpFiles Files => Downloads ?? throw new InvalidOperationException("This definition downloads nothing");
     }
     /// <summary>The trace documents a run writes; the last one is its final trace.</summary>
     sealed class TraceSink : IRunTraceSink
@@ -173,7 +174,13 @@ static class EntityGraphRuntimeTests
                 (nameof(HttpRequestRefusesWhatItCannotUse), HttpRequestRefusesWhatItCannotUse),
                 (nameof(HttpRequestHidesASecretsInputs), HttpRequestHidesASecretsInputs),
                 (nameof(HttpRequestKeepsItsResponseOutOfRunHistory), HttpRequestKeepsItsResponseOutOfRunHistory),
-                (nameof(CompareOfASecretTextAndANumberDoesNotQuoteIt), CompareOfASecretTextAndANumberDoesNotQuoteIt) })
+                (nameof(CompareOfASecretTextAndANumberDoesNotQuoteIt), CompareOfASecretTextAndANumberDoesNotQuoteIt),
+                (nameof(HttpRequestNamesAHostThatCannotBeConnectedTo), HttpRequestNamesAHostThatCannotBeConnectedTo),
+                (nameof(HttpRequestHeadGivesNoBody), HttpRequestHeadGivesNoBody),
+                (nameof(DownloadFileHidesASecretsAddressAndChecksum), DownloadFileHidesASecretsAddressAndChecksum),
+                (nameof(HttpRequestFollowsRedirectsWithoutHandingHeadersToAnotherHost), HttpRequestFollowsRedirectsWithoutHandingHeadersToAnotherHost),
+                (nameof(HttpRequestRefusesAHeaderBeforeSending), HttpRequestRefusesAHeaderBeforeSending),
+                (nameof(HttpRequestReadsAnEmptyOrCompressedAnswer), HttpRequestReadsAnEmptyOrCompressedAnswer) })
             {
                 States.Clear(); UserScriptManager.CurrentTrigger.Value = null;
                 try { await test(); }
@@ -184,6 +191,7 @@ static class EntityGraphRuntimeTests
         if (failures.Count > 0) throw new Exception($"Entity graph runtime: {failures.Count} failing:\n" + string.Join("\n", failures));
         Console.WriteLine("PASS entity graph runtime: State sets state and availability, Set state, Set available and Setting reach the definition, Has state and Current state read Home Assistant, entity nodes need a definition");
         Console.WriteLine("PASS entity graph runtime: HTTP request gets text, posts and reads JSON, fails on an error status, a timeout, a large or misshapen answer by messages naming only the host, is cancelled with its run, hides a secret's inputs and a hidden response; Compare does not quote a secret");
+        Console.WriteLine("PASS entity graph runtime: HTTP request names a host it cannot connect to, gives no body for a HEAD, follows redirects itself without handing its headers to another host, refuses a header before sending, and reads an empty or compressed answer; Download file hides a secret's address and checksum");
     }
 
     /// <summary>A State hands its inputs to the definition, then marks the entity available.</summary>
@@ -789,7 +797,7 @@ static class EntityGraphRuntimeTests
         // The same header, not secret, is named without its value.
         definition = new FakeDefinition { Settings = { ["address"] = server.Url("/rpc/Shelly.GetStatus"), ["token"] = "hunter2\r\nX-Injected: 1" }, Secrets = { "address" } };
         var plain = await Fails(() => compiled.Run("setup", definition), "a header that cannot be sent");
-        Check(plain.Message == "HTTP request · Headers: Authorization cannot be sent", "a header that cannot be sent is named, without its value: " + plain.Message);
+        Check(plain.Message == "HTTP request · Headers: Authorization has a value that cannot be sent in a header; use plain ASCII text on one line", "a header that cannot be sent is named, without its value: " + plain.Message);
         Check(server.Requests().Length == 1, "a request that cannot be made is not sent: " + server.Requests().Length);
     }
 
@@ -858,5 +866,236 @@ static class EntityGraphRuntimeTests
             "the ordering of a secret says it is hidden: " + secret.Message);
         var plain = await Run();
         Check(plain.Message.Contains("hunter2", StringComparison.Ordinal), "the ordering of a value that is not secret still says what failed: " + plain.Message);
+    }
+
+    /// <summary>
+    /// A host that takes no connection (its listener's backlog is full, so the connection is never answered) fails the
+    /// step when the pools' connect limit passes, before the step's own timeout: by the plain message that names the
+    /// host, with no failure under it.
+    /// </summary>
+    static async Task HttpRequestNamesAHostThatCannotBeConnectedTo()
+    {
+        using var listener = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+        listener.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0));
+        listener.Listen(1);
+        var port = ((System.Net.IPEndPoint)listener.LocalEndPoint!).Port;
+        var fillers = new List<System.Net.Sockets.Socket>();
+        try
+        {
+            // Connections it never accepts fill its backlog; the first one that is not answered shows it is full.
+            while (fillers.Count < 64)
+            {
+                var filler = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+                fillers.Add(filler);
+                if (!filler.ConnectAsync(System.Net.IPAddress.Loopback, port).Wait(300)) break;
+            }
+            SharpHttp.ConnectTimeout = TimeSpan.FromSeconds(1);
+            using var compiled = await Compiled.Of(Started([Request("get", $"http://127.0.0.1:{port}/status", new { timeout = 5 })], []), "a request to a host that takes no connection");
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var error = await Fails(() => compiled.Run("setup", new FakeDefinition()), "a request to a host that takes no connection");
+            Check(error is HttpRequestException && error.Message == $"Could not reach 127.0.0.1:{port}" && error.InnerException == null, $"the failure: {error.GetType().Name}: {error.Message}");
+            Check(clock.Elapsed < TimeSpan.FromSeconds(4), $"the connect limit, not the step's timeout, ended it: {clock.Elapsed.TotalMilliseconds} ms");
+        }
+        finally
+        {
+            SharpHttp.ConnectTimeout = TimeSpan.FromSeconds(10);
+            foreach (var filler in fillers) filler.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// A HEAD of something larger than 4 MiB gives its status and headers as received, and no body, whatever Response
+    /// type says: a step reading the body fails by name, in plain words.
+    /// </summary>
+    static async Task HttpRequestHeadGivesNoBody()
+    {
+        await using var server = LoopbackServer.Start();
+        server.Respond("/firmware.bin", new() { ContentLength = 10 * 1024 * 1024, Headers = new Dictionary<string, string> { ["X-Version"] = "1.2" } });
+        var head = Request("head", server.Url("/firmware.bin"), new { method = "HEAD", responseType = "object" });
+        using var compiled = await Compiled.Of(Started([head, SetState("set", "count")], [D("head", "set", "value", "status")]), "a HEAD of a large file");
+        var definition = new FakeDefinition(); var sink = new TraceSink();
+        await compiled.Run("setup", definition, sink: sink);
+        Same(definition.Calls, ["state count value=double:200"], "a HEAD gives the status");
+        var outputs = sink.Event("head")["outputs"]!;
+        Check(outputs["headers"]?["v"]?["content-length"]?.GetValue<string>() == "10485760" && outputs["headers"]!["v"]!["x-version"]?.GetValue<string>() == "1.2", "the headers as received: " + outputs.ToJsonString());
+        Check(outputs["body"] == null, "a HEAD gives no body: " + outputs.ToJsonString());
+        Check(server.Requests().Single().Method == "HEAD", "the request is a HEAD");
+
+        using var reading = await Compiled.Of(Started([Request("head", server.Url("/firmware.bin"), new { method = "HEAD" }), SetState("set", "reading")], [D("head", "set", "value", "body")]), "a step reading the body of a HEAD");
+        var error = await Fails(() => reading.Run("setup", new FakeDefinition()), "a step reading the body of a HEAD");
+        Check(error.Message.StartsWith("Set state", StringComparison.Ordinal) && error.Message.EndsWith(" reads the body of HTTP request, which uses HEAD and gets none; choose GET to read it", StringComparison.Ordinal), "the failure: " + error.Message);
+    }
+
+    sealed class Receiving : IDisposable { public void Dispose() { } }
+
+    /// <summary>
+    /// Download file fed a secret address gives the file no name from it (it is called <c>file</c>), and its path is
+    /// hidden when the address or the checksum is secret, as the checksum is part of it; a refused address fails by a
+    /// plain sentence.
+    /// </summary>
+    static async Task DownloadFileHidesASecretsAddressAndChecksum()
+    {
+        await using var server = LoopbackServer.Start();
+        var model = System.Text.Encoding.UTF8.GetBytes("weights");
+        var sha = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(model));
+        server.Respond("/hunter2-token/model.bin", new() { Body = model });
+        server.Respond("/models/model.bin", new() { Body = model });
+        var root = Path.Combine(Path.GetTempPath(), "hass-sharp-files-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var graph = Started([Setting("address", "address"), Setting("checksum", "checksum"), N("download", "download_file", new { url = Unset, sha256 = Unset }), SetState("set", "reading")],
+                [D("address", "download", "url"), D("checksum", "download", "sha256"), D("download", "set", "value", "path")], ("address", "string"), ("checksum", "string"));
+            using var compiled = await Compiled.Of(graph, "a download of a secret address");
+            foreach (var (address, secret, name) in new[] { (server.Url("/hunter2-token/model.bin?key=hunter2"), "address", "file"), (server.Url("/models/model.bin"), "checksum", "model.bin") })
+            {
+                var definition = new FakeDefinition { Settings = { ["address"] = address, ["checksum"] = sha }, Secrets = { secret }, Downloads = new SharpFiles(root, _ => { }, () => new Receiving()) };
+                var sink = new TraceSink();
+                await compiled.Run("setup", definition, sink: sink);
+                var path = Path.Combine(root, sha, name);
+                Same(definition.Calls, ["state reading value=string:" + path], $"the path, with a secret {secret}");
+                Same(definition.Hidden, ["reading.value"], $"the path is handed over as hidden, with a secret {secret}");
+                var text = sink.Final.ToJsonString();
+                Check(!text.Contains("hunter2", StringComparison.Ordinal) && (secret != "checksum" || !text.Contains(sha, StringComparison.Ordinal)), $"the trace quotes the secret {secret}");
+                Check(sink.Event("download")["outputs"]?["path"]?["redacted"]?.GetValue<bool>() == true, $"the path is traced hidden, with a secret {secret}: " + sink.Event("download")["outputs"]?.ToJsonString());
+            }
+            var refused = Started([N("url", "constant", new { type = "string", value = Lit("string", "ftp://example.com/model.bin") }), N("download", "download_file", new { url = Unset, sha256 = Lit("string", sha) })], [D("url", "download", "url")]);
+            using var ftp = await Compiled.Of(refused, "a download of an ftp address");
+            var error = await Fails(() => ftp.Run("setup", new FakeDefinition { Downloads = new SharpFiles(root, _ => { }, () => new Receiving()) }), "a download of an ftp address");
+            Check(error.Message == "The address of a download must be an http or https URL", "a plain sentence: " + error.Message);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    /// <summary>
+    /// HTTP request follows redirects itself: to the same host with its headers; to another host only when it has no
+    /// headers (else it fails, naming the hosts only, and the other host never sees them); a 303, or a 302 after a POST,
+    /// as a GET without the body; a 307 with the method and the body; at most 5; and not one without an address to go to
+    /// or to an address that is not http or https.
+    /// </summary>
+    static async Task HttpRequestFollowsRedirectsWithoutHandingHeadersToAnotherHost()
+    {
+        await using var server = LoopbackServer.Start();
+        var host = "127.0.0.1:" + server.Port.ToString(CultureInfo.InvariantCulture);
+        var other = "localhost:" + server.Port.ToString(CultureInfo.InvariantCulture);
+        server.Respond("/b", LoopbackServer.Reply.Text("""{"at":"b"}"""));
+        void Redirect(string path, int status, string? location) => server.Respond(path, new() { Status = status, Headers = location == null ? null : new Dictionary<string, string> { ["Location"] = location } });
+        JsonObject Headers() => Lit("object", new Dictionary<string, string> { ["X-Api-Key"] = "k1" });
+        async Task<Exception?> Run(JsonObject request)
+        {
+            request["id"] = "get";
+            using var compiled = await Compiled.Of(Started([request, Field("at", "/at", "string"), SetState("set", "reading")], [D("get", "at", "value", "body"), D("at", "set", "value")]), "a redirect");
+            var definition = new FakeDefinition();
+            try { await compiled.Run("setup", definition); }
+            catch (Exception error) { return error; }
+            Same(definition.Calls, ["state reading value=string:b"], "the final answer's body");
+            return null;
+        }
+        LoopbackServer.Request Last(string path) => server.Requests().Last(r => r.Path == path);
+
+        Redirect("/same", 302, "/b");
+        Check(await Run(Request("get", server.Url("/same"), new JsonObject { ["responseType"] = "object", ["headers"] = Headers() })) == null, "a redirect to the same host is followed");
+        Check(Last("/b").Headers.GetValueOrDefault("X-Api-Key") == "k1", "a redirect to the same host keeps the headers");
+
+        server.Clear();
+        Redirect("/cross", 302, server.OtherHostUrl("/b"));
+        var crossed = await Run(Request("get", server.Url("/cross"), new JsonObject { ["responseType"] = "object", ["headers"] = Headers() }));
+        Check(crossed?.Message == $"{host} redirected to {other}, and the headers were not sent there" && crossed.InnerException == null, "a redirect to another host with headers: " + crossed?.Message);
+        Check(!server.Requests().Any(r => r.Path == "/b"), "the other host never sees the headers");
+        Check(await Run(Request("get", server.Url("/cross"), new { responseType = "object" })) == null, "a redirect to another host without headers is followed");
+        Check(Last("/b").Headers["Host"] == other, "the other host is asked: " + Last("/b").Headers["Host"]);
+
+        foreach (var (status, method) in new[] { (303, "POST"), (302, "POST"), (301, "POST"), (303, "PUT") })
+        {
+            server.Clear();
+            Redirect("/see", status, "/b");
+            var posted = Request("get", server.Url("/see"), new JsonObject { ["method"] = method, ["responseType"] = "object", ["body"] = Lit("object", new { on = true }), ["headers"] = Lit("object", new Dictionary<string, string> { ["Content-Type"] = "application/merge-patch+json" }) });
+            Check(await Run(posted) == null, $"a {status} after a {method} is followed");
+            var then = Last("/b");
+            Check(then.Method == "GET" && then.Body.Length == 0 && !then.Headers.ContainsKey("Content-Type"), $"a {status} after a {method} arrives as a GET without the body: {then.Method} {then.Body.Length} bytes");
+            Check(Last("/see").Headers["Content-Type"] == "application/merge-patch+json", $"the {method} itself had its body's type");
+        }
+        foreach (var status in new[] { 307, 308 })
+        {
+            server.Clear();
+            Redirect("/keep", status, "/b");
+            Check(await Run(Request("get", server.Url("/keep"), new JsonObject { ["method"] = "POST", ["responseType"] = "object", ["body"] = Lit("object", new { on = true }) })) == null, $"a {status} is followed");
+            var kept = Last("/b");
+            Check(kept.Method == "POST" && System.Text.Encoding.UTF8.GetString(kept.Body) == """{"on":true}""" && kept.Headers["Content-Type"] == "application/json", $"a {status} keeps the method and the body: {kept.Method}");
+        }
+
+        for (var i = 0; i < 6; i++) Redirect($"/r{i}", 302, i == 5 ? "/b" : $"/r{i + 1}");
+        Check(await Run(Request("get", server.Url("/r1"), new { responseType = "object" })) == null, "five redirects are followed");
+        var many = await Run(Request("get", server.Url("/r0"), new { responseType = "object" }));
+        Check(many?.Message == $"{host} redirected too many times", "six redirects fail: " + many?.Message);
+
+        Redirect("/nowhere", 302, null);
+        Redirect("/ftp", 301, "ftp://example.com/b");
+        var nowhere = await Run(Request("get", server.Url("/nowhere"), new { responseType = "object" }));
+        Check(nowhere?.Message == $"{host} redirected without an address to go to", "a redirect without an address: " + nowhere?.Message);
+        var ftp = await Run(Request("get", server.Url("/ftp"), new { responseType = "object" }));
+        Check(ftp?.Message == $"{host} redirected to an address that is not http or https", "a redirect to ftp: " + ftp?.Message);
+    }
+
+    /// <summary>
+    /// A header that cannot be sent is refused before anything is sent: a name that cannot be a header's, a value with a
+    /// line break or a character that is not ASCII (which .NET only refuses when sending), and a body's header without a
+    /// body; each by its own plain message, which never quotes the value.
+    /// </summary>
+    static async Task HttpRequestRefusesAHeaderBeforeSending()
+    {
+        await using var server = LoopbackServer.Start();
+        server.Respond("/status", LoopbackServer.Reply.Text("ok"));
+        foreach (var (name, value, message) in new[]
+        {
+            ("Bad Name", "x", "HTTP request · Headers: Bad Name is not a header name"),
+            ("", "x", "HTTP request · Headers: Unnamed is not a header name"),
+            ("X:Name", "x", "HTTP request · Headers: X:Name is not a header name"),
+            ("X-Name", "café", "HTTP request · Headers: X-Name has a value that cannot be sent in a header; use plain ASCII text on one line"),
+            ("X-Name", "a\r\nb", "HTTP request · Headers: X-Name has a value that cannot be sent in a header; use plain ASCII text on one line"),
+            ("Content-Type", "text/plain", "HTTP request · Headers: Content-Type can only be sent with a body"),
+        })
+        {
+            var request = Request("get", server.Url("/status"), new JsonObject { ["headers"] = Lit("object", new Dictionary<string, string> { [name] = value }) });
+            using var compiled = await Compiled.Of(Started([request], []), "a header " + name);
+            var error = await Fails(() => compiled.Run("setup", new FakeDefinition()), "a header " + name);
+            Check(error.Message == message && error.InnerException == null, $"the header {name}: {error.Message}");
+        }
+        Check(server.Requests().Length == 0, "a header that cannot be sent sends nothing: " + server.Requests().Length);
+    }
+
+    /// <summary>
+    /// An empty answer read as JSON fails by saying it is empty; a compressed answer is read decompressed, and its
+    /// decompressed size counts against the limit.
+    /// </summary>
+    static async Task HttpRequestReadsAnEmptyOrCompressedAnswer()
+    {
+        await using var server = LoopbackServer.Start();
+        var host = "127.0.0.1:" + server.Port.ToString(CultureInfo.InvariantCulture);
+        static byte[] Gzip(byte[] bytes)
+        {
+            using var packed = new MemoryStream();
+            using (var gzip = new System.IO.Compression.GZipStream(packed, System.IO.Compression.CompressionLevel.SmallestSize)) gzip.Write(bytes);
+            return packed.ToArray();
+        }
+        var gzipped = new Dictionary<string, string> { ["Content-Encoding"] = "gzip", ["Content-Type"] = "application/json" };
+        server.Respond("/none", new() { Status = 204 });
+        server.Respond("/empty", new() { Body = [] });
+        server.Respond("/packed", new() { Body = Gzip(System.Text.Encoding.UTF8.GetBytes("""{"at":"packed"}""")), Headers = gzipped });
+        var big = new byte[5 * 1024 * 1024]; Array.Fill(big, (byte)' ');
+        server.Respond("/bomb", new() { Body = Gzip(big), Headers = gzipped });
+        foreach (var (path, type) in new[] { ("/none", "object"), ("/empty", "array") })
+        {
+            using var compiled = await Compiled.Of(Started([Request("get", server.Url(path), new { responseType = type })], []), "an empty answer");
+            var error = await Fails(() => compiled.Run("setup", new FakeDefinition()), "an empty answer at " + path);
+            Check(error.Message == $"The answer from {host} is empty", $"an empty answer at {path}: {error.Message}");
+        }
+        using var packed = await Compiled.Of(Started([Request("get", server.Url("/packed"), new { responseType = "object" }), Field("at", "/at", "string"), SetState("set", "reading")], [D("get", "at", "value", "body"), D("at", "set", "value")]), "a compressed answer");
+        var definition = new FakeDefinition();
+        await packed.Run("setup", definition);
+        Same(definition.Calls, ["state reading value=string:packed"], "a compressed answer is read decompressed");
+        Check(server.Requests().Last().Headers.GetValueOrDefault("Accept-Encoding")?.Contains("gzip", StringComparison.Ordinal) == true, "the request takes a compressed answer");
+        using var bomb = await Compiled.Of(Started([Request("get", server.Url("/bomb"))], []), "a compressed answer larger than the limit");
+        var tooLarge = await Fails(() => bomb.Run("setup", new FakeDefinition()), "a compressed answer larger than the limit");
+        Check(tooLarge.Message == $"The answer from {host} is larger than 4 MiB" && Gzip(big).Length < 64 * 1024, "the decompressed size counts: " + tooLarge.Message);
     }
 }

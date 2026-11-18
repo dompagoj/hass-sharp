@@ -198,7 +198,8 @@ public sealed class VisualRuntime
     /// loop's kept and exported values, of what the Loop result steps of its body give them, as these hand a value on.
     /// A step's own outputs carry none (a service's response, a node method's results), except the body and headers of an
     /// HTTP request that keeps its response out of run history, which carry that request as a secret setting's value
-    /// carries its Setting. Empty for a graph with neither, as nearly every automation's is. Whether a setting is secret
+    /// carries its Setting, and a Download file's path, which carries what its address and checksum carry (the checksum
+    /// is part of it). Empty for a graph with neither, as nearly every automation's is. Whether a setting is secret
     /// is not in the graph (it must not change the source): it is asked of the run's definition (<see cref="SecretSetting"/>).
     /// </summary>
     readonly Dictionary<(string Node,string Port),HashSet<string>> settingSources=[];
@@ -240,6 +241,7 @@ public sealed class VisualRuntime
                     var from=inputs.SelectMany(w=>Carried(w.Source)).ToArray();
                     if(from.Length>0)foreach(var (port,_) in OutputSpecs(id) as JsonObject??[])Add((id,port),from);
                 }
+                else if(kind=="download_file")Add((id,"path"),inputs.Where(w=>w.Port is "url" or "sha256").SelectMany(w=>Carried(w.Source)));
                 else if(results.TryGetValue(id,out var loopResults) || kind=="foreach") {
                     if(kind=="foreach")Add((id,"item"),inputs.Where(w=>w.Port=="items").SelectMany(w=>Carried(w.Source)));
                     foreach(var result in loopResults??[])
@@ -279,6 +281,8 @@ public sealed class VisualRuntime
     }
     /// <summary>Whether <paramref name="value"/>, read on the input <paramref name="port"/> of <paramref name="node"/>, came over a wire from a secret output (<see cref="Secret"/>).</summary>
     bool SecretInput(string node,string port,object? value)=>settingSources.Count>0 && data.TryGetValue((node,port),out var source) && Secret(source,value);
+    /// <summary>Whether <paramref name="output"/> is the body of an HTTP request that uses HEAD, which never gives one.</summary>
+    bool HeadBody((string Node,string Port) output)=>output.Port=="body"&&Text(nodes[output.Node],"kind")=="http_request"&&Text(nodes[output.Node]["config"],"method")=="HEAD";
     /// <summary>Whether an HTTP request step keeps its response out of run history: its body and headers are then secret.</summary>
     static bool HidesResponse(JsonObject node)=>Text(node,"kind")=="http_request"&&Flag(node["config"],"hideResponse",false);
     static bool Flag(JsonNode? config,string key,bool fallback)=>config?[key] is JsonValue value&&value.TryGetValue<bool>(out var on)?on:fallback;
@@ -423,6 +427,7 @@ public sealed class VisualRuntime
             try {if(!scope.TryGetOutput(source,out value))throw new InvalidOperationException(absentTriggerOutputs.TryGetValue(source,out var reason)
                 ? Text(nodes[source.Item1],"kind")=="entity_command" ? AbsentCommandValue(node,source.Item1,source.Item2,reason)
                 : $"Input {node}.{port}: trigger output {source.Item1}.{source.Item2} " + (reason==null?"is absent from this invocation's trigger payload.":$"cannot be read from this invocation's trigger payload: {reason}")
+                : HeadBody(source) ? $"{Pin(node,port)} reads the body of {Title(source.Item1)}, which uses HEAD and gets none; choose GET to read it"
                 : $"Input {node}.{port}: producer output {source.Item1}.{source.Item2} has not executed in this invocation/scope.");}
             catch(VisualCopyException error) {
                 throw new InvalidOperationException($"{Pin(node,port)} reads {Title(source.Item1)} · {VisualGraphValidator.Words.PortLabel(OutputSpecs(source.Item1)?[source.Item2],source.Item2)}, which cannot be copied into a loop or parallel branch; return a list or an array instead",error.InnerException);
@@ -632,7 +637,9 @@ public sealed class VisualRuntime
                     case "http_request":await HttpRequest(id,scope,cfg);break;
                     // The definition's downloads, which time spent receiving does not count against a When started flow's limit.
                     case "download_file":var address=Input<string>(scope,id,"url");var checksum=Input<string>(scope,id,"sha256");
-                        Output(scope,id,await Waiting(scope,definition!.Files.Download(address,checksum,Text(cfg,"name") is {Length:>0} name?name:null,scope.CancellationToken)),"path");break;
+                        // A name taken from a secret address would put part of it in the path: the file is called "file" then.
+                        var fileName=Text(cfg,"name") is {Length:>0} name?name:SecretInput(id,"url",address)?"file":null;
+                        Output(scope,id,await Waiting(scope,definition!.Files.Download(address,checksum,fileName,scope.CancellationToken)),"path");break;
                     // A secret is not written to the log: the line is *** (true or false worked out from one is written).
                     case "log":var said=Get("value");PyInterop.Log(Text(cfg,"level","Info") switch{"Debug"=>10,"Warn"=>30,"Error"=>40,_=>20},SecretInput(id,"value",said)?TraceJson.Redacted:LogText(said));break;
                     case "stop":Interlocked.Exchange(ref stopped,1);try{await lifetime.CancelAsync();}catch(Exception error){stopFailures.Enqueue(error);}throw new OperationCanceledException(lifetime.Token);
@@ -914,56 +921,86 @@ public sealed class VisualRuntime
     }
     /// <summary>The most an HTTP request step reads of an answer; a longer one fails the step.</summary>
     internal const int MaxAnswerBytes=4*1024*1024;
+    /// <summary>The most redirects an HTTP request step follows.</summary>
+    const int MaxRedirects=5;
     /// <summary>
     /// An HTTP request step: its method to its URL (http or https only), with its headers and body (text as it is, an
-    /// object or list as JSON), over the process's one connection pool, within its timeout and cancelled with its run;
-    /// nothing of it outlives the step. A status outside 200 to 299 fails it unless Fail on an error status is off. Its
-    /// outputs are the status, the body as Response type reads it and the headers by lower-case name. Every failure is
-    /// worded by its cause and names the host (and a port that is not the scheme's) only, never the path, the query, a
-    /// header or the body, so that a poll failing for one reason fails with one message; a .NET failure under it, which
-    /// may quote any of them, is not kept.
+    /// object or list as JSON), over the process's pool for these steps, within its timeout and cancelled with its run;
+    /// nothing of it outlives the step. It follows at most <see cref="MaxRedirects"/> redirects itself: to the same host
+    /// with its headers, to another host only when it has none (.NET would hand any but Authorization on); a 303, or a
+    /// 301 or 302 after a POST, as a GET without the body; a 307 or 308 as it was; from https to http not at all (the
+    /// redirect is the answer, as .NET has it). A status outside 200 to 299 fails it unless Fail on an error status is
+    /// off. Its outputs are the final answer's status, its body as Response type reads it (none for a HEAD) and its
+    /// headers by lower-case name. Every failure is worded by its cause and names the host that failed (and a port that
+    /// is not the scheme's) only, never the path, the query, a header or the body, so that a poll failing for one reason
+    /// fails with one message; a .NET failure under it, which may quote any of them, is not kept.
     /// </summary>
     async Task HttpRequest(string id,VisualScope scope,JsonNode cfg) {
         var method=Text(cfg,"method","GET");var responseType=Text(cfg,"responseType","string");
         var seconds=cfg["timeout"] is JsonValue limit&&limit.TryGetValue<double>(out var given)&&double.IsFinite(given)?Math.Clamp(given,1,300):10;
         var url=Input<string>(scope,id,"url");
         if(!Uri.TryCreate(url,UriKind.Absolute,out var uri)||uri.Scheme is not ("http" or "https")||uri.Host=="")throw new InvalidOperationException($"{Pin(id,"url")} is not an http:// or https:// address");
-        // The host, and the port when it is not the scheme's own: never the user, the path or the query.
-        var host=uri.Authority;
         object? body=Supplied(id,"body",cfg["body"])?Input(scope,id,"body"):null;
         if(body!=null&&method is "GET" or "HEAD")throw new InvalidOperationException($"{Title(id)} cannot send a body with {method}");
-        using var request=new HttpRequestMessage(new HttpMethod(method),uri){Content=Content(body)};
-        if(Supplied(id,"headers",cfg["headers"])) {
-            var headers=Input(scope,id,"headers");
-            Guarded(()=>{AddHeaders(id,request,Json(headers));return true;},_=>SecretInput(id,"headers",headers),()=>Hidden(id,"headers"));
+        object? givenHeaders=Supplied(id,"headers",cfg["headers"])?Input(scope,id,"headers"):null;
+        var headers=givenHeaders==null?null:Json(givenHeaders);
+        // One request of the chain; its headers are checked before anything is sent. The headers of a body it no longer
+        // sends (a redirect that became a GET) are left out.
+        HttpRequestMessage Build(Uri address,string verb,bool withBody) {
+            var request=new HttpRequestMessage(new HttpMethod(verb),address){Content=withBody?Content(body):null};
+            try {if(headers!=null)Guarded(()=>{AddHeaders(id,request,headers,body!=null&&!withBody);return true;},_=>SecretInput(id,"headers",givenHeaders),()=>Hidden(id,"headers"));}
+            catch {request.Dispose();throw;}
+            return request;
         }
-        using var client=SharpHttp.Create();client.Timeout=Timeout.InfiniteTimeSpan;
+        using var client=SharpHttp.CreateForRequests();client.Timeout=Timeout.InfiniteTimeSpan;
+        // The step's timeout covers the whole chain.
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(scope.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(seconds));
-        int status;byte[] answer;JsonObject headersOut;string? charset;
+        // The host asked last, and the port when it is not the scheme's own: never the user, the path or the query.
+        var at=uri.Authority;var verb=method;var withBody=body!=null;
+        int status=0;byte[]? answer=null;JsonObject headersOut=[];string? charset=null;
         try {
-            using var response=await Waiting(scope,client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token));
-            status=(int)response.StatusCode;
-            if(Flag(cfg,"failOnStatus",true)&&status is <200 or >299)throw new HttpRequestException($"HTTP {status.ToString(CultureInfo.InvariantCulture)} from {host}",null,response.StatusCode);
-            headersOut=AnswerHeaders(response);charset=response.Content.Headers.ContentType?.CharSet;
-            answer=await Waiting(scope,ReadAnswer(response.Content,host,deadline.Token));
+            for(var redirects=0;;redirects++) {
+                using var request=Build(uri,verb,withBody);
+                using var response=await Waiting(scope,client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token));
+                status=(int)response.StatusCode;
+                if(status is 301 or 302 or 303 or 307 or 308) {
+                    if(response.Headers.Location is not {} location)throw new HttpRequestException($"{at} redirected without an address to go to",null,response.StatusCode);
+                    if(!Uri.TryCreate(uri,location,out var next)||next.Scheme is not ("http" or "https")||next.Host=="")throw new HttpRequestException($"{at} redirected to an address that is not http or https",null,response.StatusCode);
+                    if(!(uri.Scheme=="https"&&next.Scheme=="http")) {
+                        if(redirects==MaxRedirects)throw new HttpRequestException($"{at} redirected too many times",null,response.StatusCode);
+                        if(headers!=null&&!string.Equals(next.IdnHost,uri.IdnHost,StringComparison.OrdinalIgnoreCase))
+                            throw new HttpRequestException($"{at} redirected to {next.Authority}, and the headers were not sent there",null,response.StatusCode);
+                        if(status==303&&verb!="HEAD"||status is 301 or 302&&verb=="POST") {verb="GET";withBody=false;}
+                        uri=next;at=next.Authority;
+                        continue;
+                    }
+                }
+                if(Flag(cfg,"failOnStatus",true)&&status is <200 or >299)throw new HttpRequestException($"HTTP {status.ToString(CultureInfo.InvariantCulture)} from {at}",null,response.StatusCode);
+                headersOut=AnswerHeaders(response);
+                // A HEAD's answer has no body, whatever length it gives.
+                if(verb!="HEAD") {charset=response.Content.Headers.ContentType?.CharSet;answer=await Waiting(scope,ReadAnswer(response.Content,at,deadline.Token));}
+                break;
+            }
         }
-        catch(OperationCanceledException) when(deadline.IsCancellationRequested&&!Cancelled(scope)) {
-            throw new TimeoutException($"{host} did not answer within {VisualGraphValidator.Words.Number(seconds)} second{(seconds==1?"":"s")}");
+        catch(OperationCanceledException) when(!Cancelled(scope)) {
+            if(deadline.IsCancellationRequested)throw new TimeoutException($"{at} did not answer within {VisualGraphValidator.Words.Number(seconds)} second{(seconds==1?"":"s")}");
+            // The pool's limit on opening a connection passed (SharpHttp.ConnectTimeout).
+            throw new HttpRequestException($"Could not reach {at}");
         }
         catch(Exception error) when(error is HttpRequestException {StatusCode:null} or IOException) {
             throw new HttpRequestException((error as HttpRequestException)?.HttpRequestError switch {
-                HttpRequestError.NameResolutionError=>$"Could not find {host}",
-                HttpRequestError.SecureConnectionError=>$"Could not make a secure connection to {host}",
-                HttpRequestError.ResponseEnded=>$"The answer from {host} broke off",
-                HttpRequestError.InvalidResponse=>$"The answer from {host} could not be read",
-                HttpRequestError.ConnectionError=>$"Could not reach {host}",
-                _ when error is IOException=>$"The answer from {host} broke off",
-                _=>$"Could not reach {host}",
+                HttpRequestError.NameResolutionError=>$"Could not find {at}",
+                HttpRequestError.SecureConnectionError=>$"Could not make a secure connection to {at}",
+                HttpRequestError.ResponseEnded=>$"The answer from {at} broke off",
+                HttpRequestError.InvalidResponse=>$"The answer from {at} could not be read",
+                HttpRequestError.ConnectionError=>$"Could not reach {at}",
+                _ when error is IOException=>$"The answer from {at} broke off",
+                _=>$"Could not reach {at}",
             });
         }
         Output(scope,id,(double)status,"status");
-        Output(scope,id,AnswerBody(answer,charset,responseType,host),"body");
+        if(answer!=null)Output(scope,id,AnswerBody(answer,charset,responseType,at),"body");
         Output(scope,id,headersOut,"headers");
     }
     /// <summary>What an HTTP request sends: text as it is (<c>text/plain</c>), anything else as JSON (<c>application/json</c>); nothing for no body.</summary>
@@ -979,25 +1016,27 @@ public sealed class VisualRuntime
     }
     /// <summary>
     /// The headers of an HTTP request step, each name with text, a number or true or false. A header of the body (such as
-    /// Content-Type) replaces the body's own. One that cannot be sent fails the step by its name, never its value.
+    /// Content-Type) replaces the body's own; one of a body the request no longer sends (<paramref name="bodyDropped"/>)
+    /// is left out. Each is checked before anything is sent, as .NET would only refuse some when sending: a name that
+    /// cannot be a header's, and a value that is not plain ASCII on one line, fail the step by the header's name, never
+    /// its value.
     /// </summary>
-    void AddHeaders(string id,HttpRequestMessage request,JsonNode? headers) {
+    void AddHeaders(string id,HttpRequestMessage request,JsonNode? headers,bool bodyDropped) {
         if(headers is not JsonObject named)throw new InvalidOperationException($"{Pin(id,"headers")} needs an object of names and values");
         foreach(var (name,value) in named) {
-            var text=value is JsonValue scalar?scalar.GetValueKind() switch{JsonValueKind.String=>scalar.GetValue<string>(),JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False=>scalar.ToJsonString(),_=>null}:null;
             var label=$"{Pin(id,"headers")}: {VisualGraphValidator.Words.Name(name)}";
+            if(name.Length==0||!name.All(HeaderNameCharacter))throw new InvalidOperationException($"{label} is not a header name");
+            var text=value is JsonValue scalar?scalar.GetValueKind() switch{JsonValueKind.String=>scalar.GetValue<string>(),JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False=>scalar.ToJsonString(),_=>null}:null;
             if(text==null)throw new InvalidOperationException($"{label} needs text, a number or true or false");
-            bool added;
-            try {
-                if(text.Any(c=>c is '\r' or '\n' or '\0'))added=false;
-                else if(request.Headers.TryAddWithoutValidation(name,text))added=true;
-                else if(request.Content is {} content) {content.Headers.Remove(name);added=content.Headers.TryAddWithoutValidation(name,text);}
-                else throw new InvalidOperationException($"{label} can only be sent with a body");
-            }
-            catch(Exception error) when(error is FormatException or ArgumentException) {added=false;}
-            if(!added)throw new InvalidOperationException($"{label} cannot be sent");
+            if(!text.All(c=>c is '\t' or >=' ' and <='~'))throw new InvalidOperationException($"{label} has a value that cannot be sent in a header; use plain ASCII text on one line");
+            if(request.Headers.TryAddWithoutValidation(name,text))continue;
+            // Not a request header, so the body's.
+            if(request.Content is {} content) {content.Headers.Remove(name);content.Headers.TryAddWithoutValidation(name,text);}
+            else if(!bodyDropped)throw new InvalidOperationException($"{label} can only be sent with a body");
         }
     }
+    /// <summary>A character a header name may have (an HTTP token's): a letter or digit, or one of <c>!#$%&amp;'*+-.^_`|~</c>.</summary>
+    static bool HeaderNameCharacter(char c)=>char.IsAsciiLetterOrDigit(c)||"!#$%&'*+-.^_`|~".Contains(c);
     /// <summary>An answer's headers and its body's, by lower-case name; the values of a header sent more than once joined with ", ".</summary>
     static JsonObject AnswerHeaders(HttpResponseMessage response) {
         var headers=new JsonObject();
@@ -1022,7 +1061,7 @@ public sealed class VisualRuntime
     static InvalidDataException TooLarge(string host)=>new($"The answer from {host} is larger than {MaxAnswerBytes/1024/1024} MiB");
     /// <summary>
     /// An answer as Response type reads it: text in the character set its Content-Type names (UTF-8 when none or one not
-    /// known), or a JSON object or list; an answer of another shape fails without quoting it.
+    /// known), or a JSON object or list; an empty answer, or one of another shape, fails without quoting it.
     /// </summary>
     static object AnswerBody(byte[] answer,string? charset,string responseType,string host) {
         System.Text.Encoding encoding;
@@ -1031,6 +1070,7 @@ public sealed class VisualRuntime
         using var reader=new StreamReader(new MemoryStream(answer),encoding,detectEncodingFromByteOrderMarks:true);
         var text=reader.ReadToEnd();
         if(responseType is not ("object" or "array"))return text;
+        if(answer.Length==0)throw new InvalidDataException($"The answer from {host} is empty");
         JsonNode? parsed;
         // A name given twice, at any depth, is refused here rather than when a later step reads it (whose message would quote it).
         try {parsed=JsonNode.Parse(text,documentOptions:new JsonDocumentOptions{AllowDuplicateProperties=false});}

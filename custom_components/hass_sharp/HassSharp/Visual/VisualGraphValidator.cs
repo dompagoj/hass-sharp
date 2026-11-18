@@ -137,7 +137,7 @@ public static class VisualGraphValidator
         /// <summary>A SHA-256 checksum: 64 hexadecimal characters, in either case.</summary>
         internal const string ChecksumPattern = "^[0-9A-Fa-f]{64}$";
         /// <summary>An address typed into an HTTP request or a download that is not a web address.</summary>
-        internal static string WebAddress(string label) => $"{label} must start with http:// or https://";
+        internal static string WebAddress(string label) => $"{label} must be an http:// or https:// address with a host and no spaces";
         internal static string BodyMethod(string label, string method) => $"{label} cannot be sent with {method}; choose another method or remove it";
         /// <summary>A download's checksum typed in that is not a SHA-256.</summary>
         internal static string Checksum(string label) => $"{label} must be 64 hexadecimal characters, the file's SHA-256";
