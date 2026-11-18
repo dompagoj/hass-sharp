@@ -7,8 +7,10 @@ sync is answered from Python as the bridge answers it, or the definition never b
 temporary configuration directory. For each definition, checks that the sync, the pushed states and a command's effect
 arrive in Python as str on .NET's threads, and that delete removes the entities. For the class, that a command it
 rejects fails with its message. For the graph, that its binary sensor follows a source entity Python answers for (through
-PyInterop.Entity, changed through the manager as the bridge reports a change), that a switch's turn on and turn off flows
-set its state, and that a command no flow handles fails naming the entity and the command.
+PyInterop.Entity, asked with a str on .NET's threads, and changed through the manager as the bridge reports a change),
+that it subscribes to that source with a str and unsubscribes from it on delete, that a switch's turn on and turn off
+flows set its state, that the save warns of the one command no flow handles, naming its entity, that a command no flow
+handles fails naming the entity and the command, and that nothing logged at warning or above names the graph.
 Exits non-zero with a message on the first mismatch.
 """
 import json
@@ -94,8 +96,10 @@ GRAPH = {'version': 5, 'name': 'Smoke graph', 'nodes': [
 GRAPH_ENTITIES = [('motion', 'binary_sensor', 'Motion', []), ('relay', 'switch', 'Relay', ['turn_on', 'turn_off']), ('bare', 'switch', 'Bare', ['turn_on', 'turn_off'])]
 
 lock = threading.Lock()
-python_threads = {threading.get_ident()}  # every thread Python started: a delegate called on one of these is a mismatch
-calls = {'sync': [], 'push': [], 'remove': [], 'prune': []}  # each: (thread ident, argument)
+# Every thread Python started: a delegate called on one of these is a mismatch. Kept as thread objects, not idents: a
+# thread that ended leaves its ident free for a thread .NET starts, which Python sees as a thread of its own (a dummy).
+python_threads = {threading.current_thread()}
+calls = {'sync': [], 'push': [], 'remove': [], 'prune': [], 'subscribe': [], 'unsubscribe': [], 'entity': []}  # each: (thread, argument)
 logs, others = [], []
 # The manager's configuration directory: a failure exits at once, so it removes the directory itself.
 config = tempfile.mkdtemp(prefix='entity-bridge-smoke-')
@@ -122,7 +126,7 @@ def check(condition, message):
 
 def record(kind, argument):
     with lock:
-        calls[kind].append((threading.get_ident(), argument))
+        calls[kind].append((threading.current_thread(), argument))
 
 
 def recorded(kind):
@@ -134,7 +138,7 @@ def later(callback, *args):
     """Answer .NET from another Python thread, as the bridge answers from Home Assistant's event loop."""
     def answer():
         with lock:
-            python_threads.add(threading.get_ident())
+            python_threads.add(threading.current_thread())
         callback(*args)
     threading.Thread(target=answer, daemon=True).start()
 
@@ -193,6 +197,7 @@ def entity_state(entity_id, state):
 
 
 def entity(entity_id):
+    record('entity', entity_id)
     with lock:
         state = sources.get(entity_id)
     return None if state is None else entity_state(entity_id, state)
@@ -202,8 +207,8 @@ PyInterop.Entity = Func[String, HasEntityState](entity)
 # Harmless stand-ins for the rest: a library and a definition use none of them, and Init and unload need them set.
 PyInterop.CallService = Action[String, String, String, Action, Action[String]](other('CallService'))
 PyInterop.CallServiceWithResponse = Action[String, String, String, Action[String], Action[String]](other('CallServiceWithResponse'))
-PyInterop.SubscribeToEntityTracking = Action[String](other('SubscribeToEntityTracking'))
-PyInterop.UnSubscribeFromEntityTracking = Action[String](other('UnSubscribeFromEntityTracking'))
+PyInterop.SubscribeToEntityTracking = Action[String](lambda entity_id: record('subscribe', entity_id))
+PyInterop.UnSubscribeFromEntityTracking = Action[String](lambda entity_id: record('unsubscribe', entity_id))
 PyInterop.UnSubscribeAllFromEntityTracking = Action(other('UnSubscribeAllFromEntityTracking'))
 
 
@@ -349,8 +354,9 @@ try:
             'logic': {'kind': 'graph', 'graph': GRAPH}}}, 'the graph definition save')
         check(saved.get('active') is True and saved['document']['status'] == 'running', f'the graph definition does not run: {saved}')
         # The saved libraries' compiler warnings come along (the class above has some); of the graph, only the one command.
-        own = [d.get('code') for d in saved.get('diagnostics') or [] if not str(d.get('nodeId')).startswith('$library:')]
-        check(own == ['command.unhandled'], f"the save warns only of the command no flow handles: {saved.get('diagnostics')}")
+        own = [d for d in saved.get('diagnostics') or [] if not str(d.get('nodeId')).startswith('$library:')]
+        check([d.get('code') for d in own] == ['command.unhandled'], f"the save warns only of the command no flow handles: {saved.get('diagnostics')}")
+        check('bare' in own[0].get('message', '') and 'Turn on' in own[0]['message'], f"the warning names the bare switch and its command: {own[0]}")
         live = {e['uniqueId']: e['entityId'] for e in saved['document']['liveEntities']}
         check(live == {f'{GRAPH_DEFINITION}:{key}': f'{domain}.{GRAPH_DEFINITION}_{key}' for key, domain, _, _ in GRAPH_ENTITIES},
               f"the graph's live entities are not the entity ids Python answered: {saved['document']['liveEntities']}")
@@ -367,6 +373,8 @@ try:
         # The State's first run reads the source through PyInterop.Entity; each change of it runs the State again.
         motion = f'{GRAPH_DEFINITION}:motion'
         until(lasts(motion, 'is_on', False), 'the motion sensor pushed off from the source as it starts')
+        check(SOURCE in arguments('subscribe'), f"the graph does not follow its source: subscribed to {arguments('subscribe')}")
+        check(SOURCE in arguments('entity'), f"the State did not read its source through PyInterop.Entity: asked for {arguments('entity')}")
         change(SOURCE, 'on')
         until(lasts(motion, 'is_on', True), 'the motion sensor pushed on after the source turned on')
         change(SOURCE, 'off')
@@ -387,8 +395,10 @@ try:
         call(lambda: manager.EntityCommand(f'{GRAPH_DEFINITION}:bare', 'turn_off', '{}'), "the bare switch's turn_off")
         until(lasts(f'{GRAPH_DEFINITION}:bare', 'is_on', False), 'the bare switch pushed off after its turn off flow')
 
+        check(SOURCE not in arguments('unsubscribe'), f"the graph stopped following its source while it runs: {arguments('unsubscribe')}")
         deleted = request(manager.EntityRequest, {'operation': 'delete', 'id': GRAPH_DEFINITION, 'expectedRevision': 1}, 'the graph delete')
         check(deleted == {'deleted': True}, f'the graph delete answered {deleted}')
+        until(lambda: SOURCE in arguments('unsubscribe'), f'the graph delete unsubscribes from {SOURCE}')
         check(arguments('remove') == [DEFINITION, GRAPH_DEFINITION], f"the graph delete asked to remove {recorded('remove')}")
         try:
             call(lambda: manager.EntityCommand(relay, 'turn_on', '{}'), 'a graph command after delete')
@@ -401,6 +411,12 @@ try:
         call(lambda: manager.UnloadAsync(False), 'unload')
     errors = [line for level, line in logs if level >= 40]
     check(not errors, f'.NET logged errors: {errors}')
+    # The graph's runs all went well: its host warns of nothing.
+    graph_warnings = [line for level, line in logs if level >= 30 and ('Smoke graph' in line or GRAPH_DEFINITION in line)]
+    check(not graph_warnings, f'.NET warned of the graph definition: {graph_warnings}')
+    # Every call of these arrived as str on a .NET thread.
+    for kind in ('subscribe', 'unsubscribe', 'entity'):
+        arguments(kind)
 finally:
     shutil.rmtree(config, ignore_errors=True)
 
