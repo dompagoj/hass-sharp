@@ -25,9 +25,9 @@ internal sealed partial class DefinitionHost
     /// <summary>
     /// A definition built from nodes: creates the entities its document describes, then runs its When started flow, if it
     /// has one, within <see cref="SetupTimeout"/>; the states that flow sets are the entities' first. A flow that does not
-    /// succeed fails the prepare with its error. When this revision replaces one that runs, each entity no State works
-    /// out starts with the state and availability its namesake of the same domain has there (<see cref="Carry"/>), unless
-    /// it refuses that state; the When started flow may still set another.
+    /// succeed, or end at a Stop step, fails the prepare with its error. When this revision replaces one that runs, each
+    /// entity no State works out starts with the state and availability its namesake of the same domain has there
+    /// (<see cref="Carry"/>), unless it refuses that state; the When started flow may still set another.
     /// </summary>
     async Task<SharpEntity[]> PrepareGraph(JsonArray described)
     {
@@ -49,11 +49,11 @@ internal sealed partial class DefinitionHost
         if (!await Within(run, SetupTimeout))
             throw new TimeoutException($"{definition.Name} does not start: its When started flow did not finish within {Seconds(SetupTimeout)} s");
         var outcome = await run;
-        if (outcome.Status != "Succeeded")
+        // A flow that ends at a Stop step has done what it was to do.
+        if (outcome.Status is not ("Succeeded" or "Stopped"))
             throw new InvalidOperationException(outcome.Status switch
             {
                 "Failed" => outcome.Error ?? $"{definition.Name} does not start: its When started flow failed",
-                "Stopped" => $"{definition.Name} does not start: its When started flow stopped itself at a Stop step before it finished",
                 "Cancelled" => $"{definition.Name} does not start: its When started flow was cancelled because {Because(outcome.Error)}",
                 _ => $"{definition.Name} does not start: its When started flow did not run",
             });
@@ -115,8 +115,9 @@ internal sealed partial class DefinitionHost
     /// <summary>
     /// Runs the graph's When commanded flow for the entity's command and waits for it, no longer than
     /// <see cref="CommandTimeout"/> (the flow may wait on a command to this same entity, which waits behind it); a flow
-    /// still running then is left to finish. Completes when the flow succeeded; otherwise throws, in words for the person
-    /// who gave the command: the flow's own error when it failed (its first line; the run's log and record have it whole).
+    /// still running then is left to finish. Completes when the flow succeeded or ended at a Stop step; otherwise throws,
+    /// in words for the person who gave the command: the flow's own error when it failed (its first line; the run's
+    /// record has it whole, and <see cref="FlowFailed"/> logs it).
     /// </summary>
     async Task RunFlow(DefinitionRoots roots, SharpEntity entity, string name, JsonElement data)
     {
@@ -133,11 +134,11 @@ internal sealed partial class DefinitionHost
         var outcome = await run;
         switch (outcome.Status)
         {
-            case "Succeeded": return;
+            // A flow that ends at a Stop step has done what it was to do.
+            case "Succeeded" or "Stopped": return;
             case "Failed":
                 var error = outcome.Error is { Length: > 0 } text ? text : $"{who}: {what} failed";
                 throw new InvalidOperationException(error.Split('\n')[0].TrimEnd('\r'));
-            case "Stopped": throw new InvalidOperationException($"{who}: {what} did not finish: its flow stopped itself at a Stop step");
             case "Cancelled": throw new InvalidOperationException($"{who}: {what} did not finish: its flow was cancelled because {Because(outcome.Error)}");
             default: throw new InvalidOperationException($"{who}: {what} did not run");
         }
@@ -281,6 +282,46 @@ internal sealed partial class DefinitionHost
                 try { whole = failure!.ToString(); } catch { whole = failure!.GetType().FullName ?? "an exception"; }
                 Report($"the State of {Named(key!)} failed: {whole}", PyLogLevel.Debug);
             }
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// How a run of one of the graph's other flows failed, which the runner leaves to the host: a When commanded flow, the
+    /// When started flow, or a trigger's flow. Logs one line naming the definition, the flow and why (as a State's
+    /// warning says why), with no stack: a command's at warning, as whoever gave it is answered the error and Home
+    /// Assistant logs it too; the When started flow's and a trigger flow's at error. Then the whole failure at Debug.
+    /// Takes no lock and keeps nothing of the failure. Never throws.
+    /// </summary>
+    /// <param name="method">The flow's method.</param>
+    /// <param name="cause">What started the run.</param>
+    /// <param name="failure">What the run threw.</param>
+    internal void FlowFailed(string method, InvocationCause cause, Exception failure)
+    {
+        try
+        {
+            // Worked out first: an exception's members are user code.
+            string reason;
+            try { reason = Reason(failure) ?? failure.GetType().Name; } catch { reason = "it failed"; }
+            var level = PyLogLevel.Error;
+            string flow;
+            var roots = definition.Roots;
+            if (roots?.Commands.FirstOrDefault(command => command.Value == method).Key is { } handled)
+            {
+                // Keyed <entity key>:<command>; an entity key has no colon.
+                var colon = handled.IndexOf(':');
+                var key = handled[..colon];
+                var domain = definition.Entities?.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == key) is { } entity ? VisualNodeCatalog.Text(entity, "domain") : "";
+                flow = $"{Named(key)}: {CommandLabel(domain, handled[(colon + 1)..])}";
+                level = PyLogLevel.Warn;
+            }
+            else if (roots?.Setup == method || cause == InvocationCause.Setup) flow = "When started";
+            else flow = script.CompiledScript.VisualTriggers?.GetValueOrDefault(method) is { } trigger ? trigger.Label ?? $"Trigger ({trigger.NodeId})" : method;
+            Report($"{flow} failed: {reason}", level);
+            // The whole failure after its line: ToString() is user code, and builds the stack.
+            string whole;
+            try { whole = failure.ToString(); } catch { whole = failure.GetType().FullName ?? "an exception"; }
+            Report($"{flow} failed: {whole}", PyLogLevel.Debug);
         }
         catch { }
     }

@@ -56,7 +56,10 @@ static class EntityGraphTests
             (nameof(AWhenStartedFlowOverridesTheStateCarriedOver), AWhenStartedFlowOverridesTheStateCarriedOver),
             (nameof(AnEntityOfAnotherDomainUnderTheSameKeyStartsUnknown), AnEntityOfAnotherDomainUnderTheSameKeyStartsUnknown),
             (nameof(AValueTheNewRevisionRefusesIsNotCarriedOver), AValueTheNewRevisionRefusesIsNotCarriedOver),
-            (nameof(AnUnavailableEntityStaysUnavailableThroughANewRevision), AnUnavailableEntityStaysUnavailableThroughANewRevision) })
+            (nameof(AnUnavailableEntityStaysUnavailableThroughANewRevision), AnUnavailableEntityStaysUnavailableThroughANewRevision),
+            (nameof(ACommandFlowThatEndsAtAStopStepSucceeds), ACommandFlowThatEndsAtAStopStepSucceeds),
+            (nameof(FailingSetupAndTriggerFlowsAreLoggedByName), FailingSetupAndTriggerFlowsAreLoggedByName),
+            (nameof(AnAutomationsFailureIsLoggedAsBefore), AnAutomationsFailureIsLoggedAsBefore) })
         {
             try
             {
@@ -363,6 +366,12 @@ static class EntityGraphTests
         Check(failed.Message == "Entity 'sensor.gone' is unavailable.", "the flow's error is the command's: " + failed.Message);
         await rig.Flush();
         Check(rig.Pushed("relay:relay", batches).Length == 0, "a failing flow pushed: " + Lines(rig.Home.Pushes().Skip(batches)));
+        // One warning names the definition, the entity and the command, with no stack; the whole failure is at Debug.
+        var warnings = rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Relay: ", StringComparison.Ordinal)).ToArray();
+        Check(warnings.Length == 1 && warnings[0].StartsWith("Relay: Relay (relay): Turn on failed: ", StringComparison.Ordinal) && warnings[0].Contains("Entity 'sensor.gone' is unavailable.", StringComparison.Ordinal)
+            && !warnings[0].Contains("   at ", StringComparison.Ordinal), "the warning names the definition, the entity and the command: " + Lines(warnings));
+        Check(rig.Home.Logs(PyLogLevel.Error).Length == 0 && !rig.Home.Logs().Any(l => l.StartsWith("Invocation ", StringComparison.Ordinal)), "the runner logged the failure as an automation's: " + Lines(rig.Home.Logs()));
+        Check(rig.Home.Logs(PyLogLevel.Debug).Any(l => l.StartsWith("Relay: Relay (relay): Turn on failed: ", StringComparison.Ordinal) && l.Contains("   at ", StringComparison.Ordinal)), "the whole failure at Debug: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
     }
 
     /// <summary>A command no flow handles fails, naming the entity and the command; the save warned of it.</summary>
@@ -472,9 +481,10 @@ static class EntityGraphTests
             await rig.Flush();
             Check(!rig.Pushed("level:level", batches).Any(s => !Available(s)), "the running revision was shown unavailable: " + Lines(rig.Home.Pushes().Skip(batches)));
 
-            var stopped = await rig.Save("stopped", Level(N("halt", "stop")));
-            Check(stopped["activationError"]?.GetValue<string>() == "Level does not start: its When started flow stopped itself at a Stop step before it finished" && rig.Home.Syncs("stopped").Length == 0,
-                "a flow that stops itself fails the save: " + stopped.ToJsonString());
+            var stopped = await rig.Save("stopped", Level(SetState("first", "level", new JsonObject { ["value"] = Lit("number", 6) }), N("halt", "stop")));
+            Check(stopped["active"]!.GetValue<bool>() && stopped["activationError"] == null && rig.Home.Syncs("stopped").Length == 1,
+                "a flow that ends at a Stop step has started the definition: " + stopped.ToJsonString());
+            await rig.Until("stopped:level", s => Available(s) && Is(s, "value", 6.0), "the state the flow set before its Stop step");
 
             var fresh = await rig.Save("fresh", Level(Read("read", "sensor.gone")));
             Check(!fresh["active"]!.GetValue<bool>() && fresh["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable." && Status(fresh["document"]!.AsObject()) == "off",
@@ -652,7 +662,10 @@ static class EntityGraphTests
         await rig.Until("relay:relay", s => Is(s, "is_on", true), "the command after the restart", batches);
     }
 
-    /// <summary>The run history records the When started and When commanded flows, with the definition's id and a trace, and never a State.</summary>
+    /// <summary>
+    /// The run history records the When started and When commanded flows, with the definition's id and a trace, and never
+    /// a State; a trigger's flow only when its node turns it on.
+    /// </summary>
     static async Task ReactiveRunsAreNotRecordedAndCommandRunsAre()
     {
         await using var rig = await Rig.Start("history", ("binary_sensor.motion_a", "off"), ("binary_sensor.motion_b", "off"));
@@ -663,13 +676,22 @@ static class EntityGraphTests
         motion["nodes"]!.AsArray().Add(N("start", "entity_setup"));
         motion["nodes"]!.AsArray().Add(SetState("first", "relay", On(false)));
         motion["edges"]!.AsArray().Add(Next("start", "first"));
+        // Two trigger flows on motion A: one as it comes, one that turns its history on.
+        motion["nodes"]!.AsArray().Add(N("quiet", "trigger", new { type = "entity", entity = "binary_sensor.motion_a" }));
+        motion["nodes"]!.AsArray().Add(N("say_quiet", "log", new { value = Lit("string", "quiet") }));
+        motion["edges"]!.AsArray().Add(Next("quiet", "say_quiet"));
+        motion["nodes"]!.AsArray().Add(N("tracked", "trigger", new { type = "entity", entity = "binary_sensor.motion_a", trackHistory = true }));
+        motion["nodes"]!.AsArray().Add(N("say_tracked", "log", new { value = Lit("string", "tracked") }));
+        motion["edges"]!.AsArray().Add(Next("tracked", "say_tracked"));
         var saved = await rig.Save("both", Definition("Both", motion, [.. EntityStoreTests.MotionEntities().Select(e => e!), Entity("relay", "switch")]));
         var automationId = saved["document"]!["automationId"]!.GetValue<string>();
         await rig.Until("both:any_motion", _ => true, "the State");
         await rig.Change("binary_sensor.motion_a", "on");
         await rig.Api.EntityCommand("both:relay", "turn_on", null);
         var runs = rig.History(automationId);
-        Check(runs.Select(r => r["cause"]!.GetValue<string>()).Order(StringComparer.Ordinal).SequenceEqual(["Command", "Setup"]), "the runs recorded: " + Lines(runs.Select(r => r.ToJsonString())));
+        Check(rig.Home.Logs().Contains("quiet") && rig.Home.Logs().Contains("tracked"), "both trigger flows ran: " + Lines(rig.Home.Logs()));
+        Check(runs.Select(r => r["cause"]!.GetValue<string>()).Order(StringComparer.Ordinal).SequenceEqual(["Command", "Entity", "Setup"]), "the runs recorded: " + Lines(runs.Select(r => r.ToJsonString())));
+        Check(runs.Single(r => r["cause"]!.GetValue<string>() == "Entity")["triggerNodeId"]!.GetValue<string>() == "tracked", "the trigger flow recorded is the one that turns its history on: " + Lines(runs.Select(r => r.ToJsonString())));
         var command = runs.Single(r => r["cause"]!.GetValue<string>() == "Command");
         Check(command["status"]!.GetValue<string>() == "Succeeded" && command["visualId"]!.GetValue<string>() == "both" && command["triggerNodeId"]!.GetValue<string>() == "on"
             && command["visualRevision"]!.GetValue<long>() == 1 && command["hasTrace"]!.GetValue<bool>(), "the command's run: " + command.ToJsonString());
@@ -1108,5 +1130,63 @@ static class EntityGraphTests
         await rig.Started("relay");
         var after = rig.Pushed("relay:relay", batches);
         Check(after.Length > 0 && after.All(s => !Available(s) && Is(s, "is_on", true)), "the new revision keeps it unavailable and on: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    // ---- How a definition's flows end ----
+
+    /// <summary>A command whose flow ends at a Stop step has succeeded: the state the flow set before it is pushed.</summary>
+    static async Task ACommandFlowThatEndsAtAStopStepSucceeds()
+    {
+        await using var rig = await Rig.Start("stop-command");
+        var graph = Graph("Relay", [Command("on", "relay", "turn_on"), SetState("set_on", "relay", On(true)), N("halt", "stop")], Next("on", "set_on"), Next("set_on", "halt"));
+        var saved = await rig.Save("relay", Definition("Relay", graph, [Entity("relay", "switch", new { name = "Relay" })]));
+        await rig.Until("relay:relay", _ => true, "the switch starts");
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the state set before the Stop step");
+        var runs = rig.History(saved["document"]!["automationId"]!.GetValue<string>());
+        Check(runs.Any(r => r["cause"]!.GetValue<string>() == "Command" && r["status"]!.GetValue<string>() == "Stopped"), "the run is recorded as stopped: " + Lines(runs.Select(r => r.ToJsonString())));
+        Check(rig.Home.Logs(PyLogLevel.Warn).Length == 0 && rig.Home.Logs(PyLogLevel.Error).Length == 0, "a flow that ended at a Stop step was logged: " + Lines(rig.Home.Logs()));
+    }
+
+    /// <summary>
+    /// A When started flow that fails, and a trigger's flow in a definition that fails, each log one error naming the
+    /// definition and the flow, with no stack, and the whole failure at Debug; the runner's line for an automation is
+    /// not written.
+    /// </summary>
+    static async Task FailingSetupAndTriggerFlowsAreLoggedByName()
+    {
+        await using var rig = await Rig.Start("flow-failures", ("sensor.button", "idle"));
+        var setup = Graph("Level", [N("start", "entity_setup"), Read("read", "sensor.gone")], Next("start", "read"));
+        var failing = await rig.Save("level", Definition("Level", setup, [Entity("level", "sensor")]));
+        Check(failing["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable.", "the save answers the flow's error: " + failing.ToJsonString());
+        var setupErrors = rig.Home.Logs(PyLogLevel.Error).Where(l => l.StartsWith("Level: ", StringComparison.Ordinal)).ToArray();
+        Check(setupErrors.Length == 1 && setupErrors[0].StartsWith("Level: When started failed: ", StringComparison.Ordinal) && setupErrors[0].Contains("Entity 'sensor.gone' is unavailable.", StringComparison.Ordinal)
+            && !setupErrors[0].Contains("   at ", StringComparison.Ordinal), "one error names the definition and its When started flow: " + Lines(rig.Home.Logs(PyLogLevel.Error)));
+        Check(rig.Home.Logs(PyLogLevel.Debug).Any(l => l.StartsWith("Level: When started failed: ", StringComparison.Ordinal) && l.Contains("   at ", StringComparison.Ordinal)), "the whole failure at Debug: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
+
+        var trigger = N("t", "trigger", new { type = "entity", entity = "sensor.button" });
+        trigger["label"] = "Button pressed";
+        var unlabelled = N("u", "trigger", new { type = "entity", entity = "sensor.button" });
+        var triggers = Graph("Button", [trigger, Read("read", "sensor.gone"), unlabelled, Read("again", "sensor.gone")], Next("t", "read"), Next("u", "again"));
+        await rig.Save("button", Definition("Button", triggers, [Entity("last", "sensor")]));
+        await rig.Change("sensor.button", "pressed");
+        var triggerErrors = rig.Home.Logs(PyLogLevel.Error).Where(l => l.StartsWith("Button: ", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray();
+        Check(triggerErrors.Length == 2 && triggerErrors[0].StartsWith("Button: Button pressed failed: ", StringComparison.Ordinal) && triggerErrors[1].StartsWith("Button: Trigger (u) failed: ", StringComparison.Ordinal)
+            && triggerErrors.All(l => l.Contains("Entity 'sensor.gone' is unavailable.", StringComparison.Ordinal) && !l.Contains("   at ", StringComparison.Ordinal)),
+            "one error for each trigger flow names the definition and the trigger: " + Lines(rig.Home.Logs(PyLogLevel.Error)));
+        Check(!rig.Home.Logs().Any(l => l.StartsWith("Invocation ", StringComparison.Ordinal)), "the runner logged a definition's failure as an automation's: " + Lines(rig.Home.Logs()));
+    }
+
+    /// <summary>An automation's failing run is logged by the runner as before: one error with the run id, the method and the whole failure.</summary>
+    static async Task AnAutomationsFailureIsLoggedAsBefore()
+    {
+        await using var rig = await Rig.Start("automation-failure", ("sensor.button", "idle"));
+        var graph = Graph("Failing", [N("t", "trigger", new { type = "entity", entity = "sensor.button" }), Read("read", "sensor.gone")], Next("t", "read"));
+        var saved = JsonNode.Parse(await rig.Api.VisualRequest(JsonSerializer.Serialize(new { operation = "save", id = "failing", expectedRevision = 0, graph })))!;
+        Check(saved["ok"]!.GetValue<bool>(), "the automation saves: " + saved.ToJsonString());
+        await rig.Change("sensor.button", "pressed");
+        var errors = rig.Home.Logs(PyLogLevel.Error);
+        Check(errors.Length == 1 && System.Text.RegularExpressions.Regex.IsMatch(errors[0], @"^Invocation [0-9a-f]{32} \(VisualAutomation::Run_[0-9]+\) failed: System\.InvalidOperationException: Entity 'sensor\.gone' is unavailable\.")
+            && errors[0].Contains("   at ", StringComparison.Ordinal), "the automation's failure line: " + Lines(errors));
     }
 }

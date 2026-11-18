@@ -88,11 +88,14 @@ public partial class HassSharpManager
 
     /// <summary>
     /// Whether a root's runs are recorded: its <c>trackHistory</c>, else its kind's default as the catalog gives it (off for a
-    /// State, on for When commanded and When started); a trigger's is on unless set, as an automation's.
+    /// State, on for When commanded and When started). A trigger's is off unless set: in a definition, a trigger mostly
+    /// keeps a state up to date, as a State does (an automation's trigger is on unless set; the catalog's default is that
+    /// one, and stays so).
     /// </summary>
     static bool TrackHistory(JsonObject node, VisualCatalogSnapshot snapshot) =>
         node["config"]?["trackHistory"] is JsonValue given && given.TryGetValue<bool>(out var track) ? track
-        : VisualNodeCatalog.Text(node, "kind") != "trigger" && VisualNodeCatalog.Spec(node, snapshot)?["config"]?["trackHistory"]?["default"] is JsonValue fallback && fallback.TryGetValue<bool>(out var byKind) ? byKind
+        : VisualNodeCatalog.Text(node, "kind") == "trigger" ? false
+        : VisualNodeCatalog.Spec(node, snapshot)?["config"]?["trackHistory"]?["default"] is JsonValue fallback && fallback.TryGetValue<bool>(out var byKind) ? byKind
         : true;
 
     /// <summary>

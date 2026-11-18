@@ -170,6 +170,9 @@ class ScriptSyncRunner
                 {
                     record.Status = "Failed"; record.Error = ex.GetBaseException().Message;
                     if (state) stateFailure = ex;
+                    // A definition's other flows (When commanded, When started, a trigger's) are logged by its host, which
+                    // names the definition and the flow.
+                    else if (host != null) host.FlowFailed(methodInfo.Name, cause, ex);
                     else Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}");
                 }
                 finally { record.DurationMs = timer.Elapsed.TotalMilliseconds; }
