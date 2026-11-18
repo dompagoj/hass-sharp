@@ -28,7 +28,8 @@ public sealed record CompiledDefinition(string Id, string Name, DefinitionDevice
 /// A definition built from nodes has no user class: the host creates the entities its document describes, its graph's
 /// runs set their states through it (<see cref="IDefinitionRuntime"/>), and it runs the graph's When started flow as it
 /// prepares and a When commanded flow for each command. It owns the definition's HTTP client and downloads, which it ends
-/// once the definition has stopped.
+/// once the definition has stopped. It answers Home Assistant's requests for its cameras' pictures, making their frames
+/// (<see cref="CameraImage"/>).
 /// </summary>
 internal sealed partial class DefinitionHost(UserScript script, CompiledDefinition definition) : IComponentHost, IDefinitionRuntime
 {
@@ -42,9 +43,10 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// <summary>How long the <c>Start()</c>s may take before the host warns that the entities stay unavailable; settable for tests.</summary>
     internal static TimeSpan StartWarning { get; set; } = TimeSpan.FromSeconds(10);
 
-    // Guards the status, the start and stop, the timer and track lists, the commands and track callbacks running, the
-    // entities whose publish failed, the HTTP client and the downloads, and a graph's entities, their states, those
-    // awaiting their first and the failing States.
+    // Guards the status, the start and stop, the timer and track lists, the commands, track callbacks and frames running,
+    // the entities whose publish failed, the HTTP client and the downloads, and a graph's entities, their states, those
+    // awaiting their first, the failing States and the frame flows. Never taken while a camera's own lock is wanted:
+    // CameraFrames calls in here under its lock (Make), not the other way round.
     readonly object gate = new();
     readonly List<Repeating> timers = [];
     readonly List<IDisposable> tracks = [];
@@ -424,6 +426,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
                 unpublishable.Clear();
                 graphEntities = new(StringComparer.Ordinal);
                 awaiting.Clear();
+                frameFlows.Clear();
                 handed = [];
                 own.Clear();
                 successor = null;
@@ -504,6 +507,110 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             done.TrySetResult();
         }
     }
+
+    /// <summary>
+    /// A picture of one of the definition's cameras for Home Assistant, as JPEG, by the rule of <see cref="CameraFrames"/>:
+    /// for a camera that makes its frames (a class's <c>Frame()</c> or <c>OnFrame</c>, a graph's frame flow,
+    /// <see cref="FrameNeeded"/>), its current frame once the making the request shares has ended; for any other, its
+    /// current frame. A frame that cannot be made or encoded is logged at Error once for each new reason, naming the
+    /// camera, and the first picture after one says once that it makes frames again. Waits no longer than the definition
+    /// runs; stopping cancels the frame being made (through <see cref="Stopping"/>) and waits for it as for a command.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The definition is not running (or stopped meanwhile), the camera has not shown a frame, or making or encoding one failed and the last good one is too old.</exception>
+    /// <exception cref="TimeoutException">Making one took longer than <see cref="CameraFrames.MakeLimit"/> and the last good one is too old.</exception>
+    public async Task<byte[]> CameraImage(SharpCamera camera)
+    {
+        var stopping = Stopping;
+        if (status != Running) throw NotRunning();
+        var frames = camera.Frames;
+        var what = $"{camera.Called} could not make a frame";
+        try
+        {
+            CameraFrames.Outcome? outcome = null;
+            if (Maker(camera) is { } make)
+                outcome = await frames.Share(CameraFrames.IntervalSecond * camera.FrameInterval, () => Make(camera, make, what)).WaitAsync(stopping);
+            // Also when the making saw the stop first.
+            if (stopping.IsCancellationRequested) throw NotRunning();
+            var encoding = frames.Picture(camera.Called, outcome);
+            byte[] jpeg;
+            try { jpeg = await encoding.WaitAsync(stopping); }
+            catch (Exception failure) when (failure is not OperationCanceledException)
+            {
+                // The same frame fails the same way for every request: its whole failure is logged with its first line.
+                throw new InvalidOperationException($"{what}: {Failing(frames.Failures, what, failure, everyTime: false)}");
+            }
+            if (outcome is null or { Failure: null }) Working(frames.Failures, $"{camera.Called} makes frames again");
+            return jpeg;
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested) { throw NotRunning(); }
+    }
+
+    static InvalidOperationException NotRunning() => new("The entity is not running");
+
+    // How the camera's frames are made when one is needed: the graph's frame flow for it, else a class's Frame(); null when
+    // the camera only shows them.
+    Func<Task<SharpImage?>>? Maker(SharpCamera camera)
+    {
+        Func<Task>? flow;
+        lock (gate) frameFlows.TryGetValue(camera.Key, out flow);
+        if (flow != null) return async () => { await flow(); return null; };
+        return camera.MakesFrames ? camera.MakeFrame : null;
+    }
+
+    // Begins making a frame of the camera, which the requests share (CameraFrames.Share, which calls this under the
+    // camera's lock, so it never blocks): the code runs on the pool, counted among what stopping waits for until it has
+    // ended, also after its outcome is known.
+    Task<CameraFrames.Outcome> Make(SharpCamera camera, Func<Task<SharpImage?>> make, string what)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (gate)
+        {
+            // Under the lock that stopping takes: a frame either is refused or is one stopping waits for.
+            if (status != Running) throw NotRunning();
+            running.Add(done.Task);
+        }
+        // The async lambda makes a null task fail rather than look cancelled.
+        var made = Task.Run(async () => await make());
+        _ = made.ContinueWith(_ =>
+        {
+            lock (gate) running.Remove(done.Task);
+            done.TrySetResult();
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return Ended(camera, made, what);
+    }
+
+    // How making the frame ended, within CameraFrames.MakeLimit: a picture becomes the current frame (a copy, as Show
+    // keeps one), none keeps it; a failure, or a frame later than the limit (left to finish, what it gives not shown), is
+    // logged once per reason. A cancellation because the definition stops is no failure, and no request waits for it.
+    async Task<CameraFrames.Outcome> Ended(SharpCamera camera, Task<SharpImage?> made, string what)
+    {
+        var token = Stopping;
+        using (var timer = CancellationTokenSource.CreateLinkedTokenSource(token))
+        {
+            if (await Task.WhenAny(made, Task.Delay(CameraFrames.MakeLimit, timer.Token)) != made)
+            {
+                _ = made.ContinueWith(ended => _ = ended.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+                if (token.IsCancellationRequested) return Cancelled;
+                var late = $"it took longer than {Seconds(CameraFrames.MakeLimit)} s";
+                Failing(camera.Frames.Failures, what, late);
+                return new(late, TimedOut: true);
+            }
+            timer.Cancel();
+        }
+        try
+        {
+            if (await made is { } image) camera.Frames.Show(image.Copy());
+            else camera.Frames.Keep();
+            return CameraFrames.Outcome.Worked;
+        }
+        catch (Exception failure)
+        {
+            if (failure is OperationCanceledException && token.IsCancellationRequested) return Cancelled;
+            return new(Failing(camera.Frames.Failures, what, failure));
+        }
+    }
+
+    static readonly CameraFrames.Outcome Cancelled = new("the definition stopped");
 
     /// <summary>The definition's entity with this unique id; null when it has none.</summary>
     internal SharpEntity? Entity(string uniqueId) => entities.FirstOrDefault(entity => UniqueId(entity) == uniqueId);
@@ -654,8 +761,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// <summary>
     /// One call of a timer's callback. A poll of a device that does not answer fails on every tick: the first failure
     /// logs an error naming the definition and the timer, and one for another reason does again, as a State's warning
-    /// does; each failure is logged whole at Debug. A call that works after a failure says so, once. Only the timer's own
-    /// loop calls it, one call at a time, so what it last logged needs no lock.
+    /// does; each failure is logged whole at Debug. A call that works after a failure says so, once.
     /// </summary>
     async Task Tick(Repeating repeating, string what, Func<Task> action, CancellationToken token)
     {
@@ -664,24 +770,42 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         {
             // A cancellation because the definition stops is no failure.
             if (failure is OperationCanceledException && token.IsCancellationRequested) return;
-            // Worked out first: an exception's members are user code.
-            string reason;
-            try { reason = Reason(failure) ?? failure.GetType().Name; } catch { reason = "it failed"; }
-            if (repeating.Failing != reason)
-            {
-                repeating.Failing = reason;
-                Report($"{what} failed: {reason}", PyLogLevel.Error);
-            }
-            string whole;
-            try { whole = failure.ToString(); } catch { whole = failure.GetType().FullName ?? "an exception"; }
-            Report($"{what} failed: {whole}", PyLogLevel.Debug);
+            Failing(repeating.Failures, $"{what} failed", failure);
             return;
         }
-        if (repeating.Failing != null)
-        {
-            repeating.Failing = null;
-            Report($"{what} works again", PyLogLevel.Info);
-        }
+        Working(repeating.Failures, $"{what} works again");
+    }
+
+    /// <summary>
+    /// A failure of something the host runs again and again, such as a timer's callback or a camera's frames: logged at
+    /// Error as "<paramref name="what"/>: reason" once for each new reason (<see cref="Reason"/>), then whole at Debug,
+    /// every time or, unless <paramref name="everyTime"/>, only with its Error line. Never throws.
+    /// </summary>
+    /// <returns>The reason.</returns>
+    string Failing(FailureLog log, string what, Exception failure, bool everyTime = true)
+    {
+        // Worked out first: an exception's members are user code.
+        string reason;
+        try { reason = Reason(failure) ?? failure.GetType().Name; } catch { reason = "it failed"; }
+        if (!Failing(log, what, reason) && !everyTime) return reason;
+        string whole;
+        try { whole = failure.ToString(); } catch { whole = failure.GetType().FullName ?? "an exception"; }
+        Report($"{what}: {whole}", PyLogLevel.Debug);
+        return reason;
+    }
+
+    // A failure for a reason: logged at Error when it is a new one. Whether it was.
+    bool Failing(FailureLog log, string what, string reason)
+    {
+        if (!log.Fails(reason)) return false;
+        Report($"{what}: {reason}", PyLogLevel.Error);
+        return true;
+    }
+
+    // A success: after a failure, logged once at Info.
+    void Working(FailureLog log, string line)
+    {
+        if (log.Works()) Report(line, PyLogLevel.Info);
     }
 
     async Task Callback(string what, Func<Task> action, CancellationToken token)
@@ -800,12 +924,44 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     sealed class Repeating(PeriodicTimer timer, DefinitionHost host) : IDisposable
     {
         public Task Loop { get; set; } = Task.CompletedTask;
-        /// <summary>Why its callback last failed, as last logged; null while it works. Its loop's alone.</summary>
-        public string? Failing { get; set; }
+        /// <summary>Why its callback last failed, as last logged.</summary>
+        public FailureLog Failures { get; } = new();
         public void Dispose()
         {
             timer.Dispose();
             lock (host.gate) host.timers.Remove(this);
+        }
+    }
+}
+
+/// <summary>
+/// Why something that runs again and again last failed, as last logged, such as a timer's callback or a camera's frames:
+/// a failure is logged once for each new reason, and the first success after one once. Thread-safe.
+/// </summary>
+internal sealed class FailureLog
+{
+    readonly object gate = new();
+    string? reason;
+
+    /// <summary>A failure for this reason: whether it is a new one, to be logged. It is the last reason from now on.</summary>
+    public bool Fails(string why)
+    {
+        lock (gate)
+        {
+            if (reason == why) return false;
+            reason = why;
+            return true;
+        }
+    }
+
+    /// <summary>A success: whether it ends a failure, to be logged.</summary>
+    public bool Works()
+    {
+        lock (gate)
+        {
+            if (reason == null) return false;
+            reason = null;
+            return true;
         }
     }
 }

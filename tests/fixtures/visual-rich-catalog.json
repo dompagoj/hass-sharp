@@ -11669,6 +11669,21 @@
             "description": "On: Home Assistant offers a position from 0, closed, to 100, open."
           }
         }
+      },
+      "camera": {
+        "label": "Camera",
+        "state": {},
+        "commands": {},
+        "options": {
+          "frame_interval": {
+            "type": "number",
+            "label": "Seconds between frames",
+            "description": "How often Home Assistant asks for a new picture while someone is watching; 1 when left empty.",
+            "min": 0.5,
+            "max": 60,
+            "default": 1
+          }
+        }
       }
     },
     "triggerOutputs": {

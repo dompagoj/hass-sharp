@@ -3,21 +3,25 @@ using HassSharp;
 
 /// <summary>
 /// What the entity suites run a whole manager in: a temporary configuration directory, and recording fakes in place of
-/// Python's four entity delegates (sync, push, remove, prune) and its log. Disposing puts back what it replaced and
-/// deletes the directory; unload the managers first.
+/// Python's five entity delegates (sync, push, remove, prune, and a picture of a camera) and its log. Disposing puts back
+/// what it replaced and deletes the directory; unload the managers first.
 /// </summary>
 sealed class EntityTestHome : IAsyncDisposable
 {
     readonly List<string> synced = [], pushed = [], removed = [], pruned = [];
+    readonly List<(string DefinitionId, string EntityId)> pictures = [];
     readonly List<(int Level, string Message)> logged = [];
     readonly string previousPath = HassPath.HassConfiguration;
     readonly Action<string, Action<string>, Action<string>> sync = PyInterop.BeginSyncEntities;
     readonly Action<string> push = PyInterop.PushEntityStates;
     readonly Action<string, Action, Action<string>> remove = PyInterop.BeginRemoveEntities, prune = PyInterop.BeginPruneEntities;
+    readonly Action<string, string, Action<byte[]>, Action<string>> snapshot = PyInterop.BeginCameraSnapshot;
     readonly Action<int, string> log = PyInterop.Log;
     readonly TimeSpan removalTimeout = HassSharpManager.RemovalTimeout, setupTimeout = DefinitionHost.SetupTimeout, syncTimeout = DefinitionHost.SyncTimeout,
-        commandTimeout = DefinitionHost.CommandTimeout, slowStateWarning = DefinitionHost.SlowStateWarning;
+        commandTimeout = DefinitionHost.CommandTimeout, slowStateWarning = DefinitionHost.SlowStateWarning,
+        frameSecond = CameraFrames.IntervalSecond, frameLimit = CameraFrames.MakeLimit, goodFor = CameraFrames.GoodFor;
     volatile bool failRemoval, ignoreRemoval, failPrune, ignorePrune;
+    volatile Action<string, string, Action<byte[]>, Action<string>>? answerPictures;
 
     /// <summary>A new directory under the temporary folder, named after the suite; the fakes are installed from now on.</summary>
     public EntityTestHome(string name)
@@ -37,6 +41,11 @@ sealed class EntityTestHome : IAsyncDisposable
             if (ignorePrune) return;
             if (failPrune) fail("the registry is locked"); else ok();
         };
+        PyInterop.BeginCameraSnapshot = (definitionId, entityId, ok, fail) =>
+        {
+            lock (pictures) pictures.Add((definitionId, entityId));
+            if (answerPictures is { } answer) answer(definitionId, entityId, ok, fail); else fail("No camera answers here");
+        };
         PyInterop.Log = (level, message) => { lock (logged) logged.Add((level, message)); };
         HassPath.HassConfiguration = Root;
     }
@@ -51,6 +60,14 @@ sealed class EntityTestHome : IAsyncDisposable
     public bool FailPrune { get => failPrune; set => failPrune = value; }
     /// <summary>A prune is never answered.</summary>
     public bool IgnorePrune { get => ignorePrune; set => ignorePrune = value; }
+
+    /// <summary>
+    /// How Home Assistant answers a picture of a camera: called with the asking definition's id, the camera's entity id and
+    /// the two callbacks; null (as at first) answers each with the error "No camera answers here".
+    /// </summary>
+    public Action<string, string, Action<byte[]>, Action<string>>? AnswerPictures { get => answerPictures; set => answerPictures = value; }
+    /// <summary>Every picture of a camera asked for so far: the asking definition's id and the camera's entity id.</summary>
+    public (string DefinitionId, string EntityId)[] Pictures() { lock (pictures) return [.. pictures]; }
 
     /// <summary>Every sync of the definition sent so far, as JSON.</summary>
     public string[] Syncs(string definitionId)
@@ -115,6 +132,7 @@ sealed class EntityTestHome : IAsyncDisposable
         PyInterop.PushEntityStates = push;
         PyInterop.BeginRemoveEntities = remove;
         PyInterop.BeginPruneEntities = prune;
+        PyInterop.BeginCameraSnapshot = snapshot;
         PyInterop.Log = log;
         HassPath.HassConfiguration = previousPath;
         HassSharpManager.RemovalTimeout = removalTimeout;
@@ -122,6 +140,7 @@ sealed class EntityTestHome : IAsyncDisposable
         DefinitionHost.SyncTimeout = syncTimeout;
         DefinitionHost.CommandTimeout = commandTimeout;
         DefinitionHost.SlowStateWarning = slowStateWarning;
+        (CameraFrames.IntervalSecond, CameraFrames.MakeLimit, CameraFrames.GoodFor) = (frameSecond, frameLimit, goodFor);
         if (Directory.Exists(Root)) await ServiceCallTests.DeleteWhenQuiet(Root);
     }
 }

@@ -128,6 +128,7 @@ internal static class SharpDomains
         (typeof(SharpText), "text"),
         (typeof(SharpLight), "light"),
         (typeof(SharpCover), "cover"),
+        (typeof(SharpCamera), "camera"),
     ];
 
     /// <summary>Each typed entity base and its domain, as the catalog's <c>entityDomains</c> describes them.</summary>
@@ -229,6 +230,14 @@ internal static class SharpDomains
                 ["is_closed"] = OnOff(entity => ((SharpCover)entity).IsClosed, (entity, closed) => ((SharpCover)entity).IsClosed = closed),
                 ["position"] = new((entity, value) => WholeRefuses(value, ((SharpCover)entity).Refuses), (entity, value) => ((SharpCover)entity).Position = (int?)(double?)value, entity => (double?)((SharpCover)entity).Position),
             }),
+        // A camera has no state: its frames are set by the graph's runs (DefinitionHost.SetFrame).
+        ["camera"] = new(
+            d => new SharpCamera(d.Key, d.Name)
+            {
+                Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault,
+                FrameInterval = d.Number("frame_interval") ?? 1,
+            },
+            new Dictionary<string, GraphState>(StringComparer.Ordinal)),
     };
 
     // A state that is on, off or unknown.

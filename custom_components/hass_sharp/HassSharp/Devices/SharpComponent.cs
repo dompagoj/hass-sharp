@@ -10,6 +10,8 @@ namespace HassSharp;
 /// </summary>
 internal interface IComponentHost
 {
+    /// <summary>The definition's id.</summary>
+    string DefinitionId { get; }
     /// <summary>Cancelled when the definition stops or is replaced.</summary>
     CancellationToken Stopping { get; }
     /// <summary>
@@ -164,6 +166,17 @@ public abstract class SharpComponent
         await HassServices.CallServiceAsync(domain, name, payload).WaitAsync(calls);
         return null;
     }
+
+    /// <summary>
+    /// Takes a picture with one of Home Assistant's cameras, such as a doorbell's, as Home Assistant's own snapshot does: a
+    /// JPEG, within 10 seconds. Draw on it and show it with a <see cref="SharpCamera"/>, or pass it on as it is. Not a camera
+    /// of this definition itself, which would wait for itself. Also from <see cref="Stop"/>, as <see cref="CallService"/>:
+    /// the wait ends only when stopping the definition stops waiting for its code.
+    /// </summary>
+    /// <param name="entityId">The camera, such as <c>camera.front_door</c>.</param>
+    /// <exception cref="InvalidOperationException">Home Assistant gave no picture; the message says why.</exception>
+    protected Task<SharpImage> CameraSnapshot(string entityId) =>
+        HassCameras.SnapshotAsync(Host?.DefinitionId ?? "", entityId, Host?.Calls ?? CancellationToken.None);
 
     /// <summary>Writes a message to the Home Assistant log.</summary>
     /// <param name="message">The message.</param>

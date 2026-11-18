@@ -48,25 +48,19 @@ internal static unsafe class TurboJpeg
     /// </summary>
     sealed class Handle : SafeHandle
     {
-        internal Handle(nint value) : base(0, ownsHandle: true)
-        {
-            SetHandle(value);
-            Interlocked.Increment(ref live);
-        }
+        internal Handle(nint value) : base(0, ownsHandle: true) => SetHandle(value);
 
         public override bool IsInvalid => handle == 0;
 
         protected override bool ReleaseHandle()
         {
             api!.Destroy(handle);
-            Interlocked.Decrement(ref live);
             return true;
         }
     }
 
-    /// <summary>For tests: how many handles exist in the process.</summary>
-    static int live;
-    internal static int LiveHandles => Volatile.Read(ref live);
+    /// <summary>For tests: the current thread's decompressor and compressor; each null until made.</summary>
+    internal static (object? Decompressor, object? Compressor) ThreadHandles => (decompressor, compressor);
     /// <summary>For tests: TJFLAG_PROGRESSIVE, to make a progressive JPEG with <see cref="Encode"/>.</summary>
     internal const int Progressive = 16384;
 

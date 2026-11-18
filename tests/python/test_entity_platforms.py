@@ -130,13 +130,18 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.hass = hass = HomeAssistant(self.temp.name)
-        # The platforms' integration depends on http, which would open Home Assistant's port: count it as set up.
+        # The platforms' integration depends on http, which would open Home Assistant's port: count it as set up. The
+        # camera component registers its picture and stream views with it, which nothing serves here.
         hass.config.components.add('http')
+        hass.http = types.SimpleNamespace(register_view=lambda view: None)
         hass.config.skip_pip = True
         with warnings.catch_warnings():
             # Home Assistant's http module, which its entity components import, warns about aiohttp on import.
             warnings.simplefilter('ignore', DeprecationWarning)
             importlib.import_module('homeassistant.components.http')
+            # Imported before sys.modules is patched below, which would drop what the camera component imports (its
+            # stream support loads NumPy) when the test ends, and NumPy warns when it is imported a second time.
+            importlib.import_module('homeassistant.components.camera')
         self.bridge_module, self.const, self.switch = load_package()
         # .NET's Action wraps the continuation; there is no .NET runtime here.
         self.system = patch.dict(sys.modules, {'System': types.SimpleNamespace(Action=lambda f: f)})
@@ -280,6 +285,20 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('on', self.state('switch.plug_one_relay').state)
         await self.push(snapshot('plug1:relay', available=False))
         self.assertEqual('unavailable', self.state('switch.plug_one_relay').state)
+
+    async def test_camera_is_a_camera_that_gives_no_picture_yet(self):
+        from homeassistant.components.camera import DATA_COMPONENT
+        ids = await self.sync(definition(description('view', 'camera', 'View', options={'frame_interval': 2})))
+        self.assertEqual({'plug1:view': 'camera.plug_one_view'}, ids)
+        await self.push(snapshot('plug1:view', values={}))
+        view = self.state('camera.plug_one_view')
+        # Camera's initialiser ran: the entity has the access token its picture's URL carries.
+        self.assertEqual('idle', view.state)
+        self.assertTrue(view.attributes['access_token'])
+        self.assertIn('/api/camera_proxy/camera.plug_one_view?token=', view.attributes['entity_picture'])
+        camera = self.hass.data[DATA_COMPONENT].get_entity('camera.plug_one_view')
+        self.assertIsNone(await camera.async_camera_image())
+        self.assertEqual([], self.manager.commands)
 
     async def test_switch_turn_on_reaches_the_manager(self):
         await self.sync(plug())

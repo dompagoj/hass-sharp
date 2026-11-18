@@ -459,4 +459,19 @@ public partial class HassSharpManager
         // A copy, so a handler may keep it after this returns.
         await host.Command(entity, command, data.RootElement.Clone());
     }
+
+    /// <summary>
+    /// The picture of a camera of a running definition, as JPEG, which Home Assistant pulls while someone watches it: its
+    /// current frame, made first when the camera makes its frames, with the requests within one interval sharing one
+    /// (<see cref="DefinitionHost.CameraImage"/>). Never waits for the API.
+    /// </summary>
+    /// <param name="uniqueId">The camera's unique id, <c>&lt;definition id&gt;:&lt;key&gt;</c>.</param>
+    /// <exception cref="InvalidOperationException">The entity is not running or not a camera, it has shown no frame, or it cannot make one and has no good one from the last 30 seconds.</exception>
+    /// <exception cref="TimeoutException">Making a frame took longer than 8 seconds and there is no good one from the last 30 seconds.</exception>
+    public async Task<byte[]> CameraImage(string uniqueId)
+    {
+        if (!_userScriptManager.Entities.TryGet(uniqueId, out var host, out var entity)) throw new InvalidOperationException("The entity is not running");
+        if (entity is not SharpCamera camera) throw new InvalidOperationException("The entity is not a camera");
+        return await host.CameraImage(camera);
+    }
 }

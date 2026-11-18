@@ -33146,7 +33146,7 @@
     },
     "valid": false,
     "messages": [
-      "Entity heater has the domain climate, which a graph cannot define; choose Binary sensor, Sensor, Switch, Button, Number, Select, Text, Light or Cover"
+      "Entity heater has the domain climate, which a graph cannot define; choose Binary sensor, Sensor, Switch, Button, Number, Select, Text, Light, Cover or Camera"
     ],
     "codes": [
       "definition.invalid"

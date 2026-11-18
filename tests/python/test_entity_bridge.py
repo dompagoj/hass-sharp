@@ -228,7 +228,7 @@ class CoverEntityFeature(enum.IntFlag):
 
 PLATFORM_BASES = {name: type(name, (Entity,), {}) for name in (
     'BinarySensorEntity', 'SensorEntity', 'SwitchEntity', 'ButtonEntity', 'NumberEntity', 'SelectEntity', 'TextEntity',
-    'LightEntity', 'CoverEntity')}
+    'LightEntity', 'CoverEntity', 'Camera')}
 
 
 def platform_class(domain):
@@ -998,6 +998,12 @@ class PlatformModulesTest(unittest.IsolatedAsyncioTestCase):
         await blind.async_stop_cover()
         await blind.async_set_cover_position(position=40)
         self.assertEqual(self.commands, [('open', {}), ('close', {}), ('stop', {}), ('set_position', {'position': 40})])
+
+    async def test_camera_gives_no_picture_yet(self):
+        camera = self.values(self.entity('camera', frame_interval=2))
+        self.assertIsNone(await camera.async_camera_image())
+        self.assertIsNone(await camera.async_camera_image(width=320, height=240))
+        self.assertEqual(self.commands, [])
 
 
 if __name__ == '__main__':

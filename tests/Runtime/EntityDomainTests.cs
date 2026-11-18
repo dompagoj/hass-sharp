@@ -95,7 +95,25 @@ static class EntityDomainTests
                 }
             }
             foreach (var (option, spec) in entry["options"]!.AsObject())
+            {
                 Check(spec?["type"] is JsonValue optionType && optionType.GetValue<string>() is "string" or "number" or "boolean" or "array" && spec["label"] is JsonValue, $"{domain}: option {option} has a type the document checks read and a label");
+                // A default is the class's own, and a range is the one the class takes: its ends, and nothing beyond them.
+                if (spec!["default"] is { } fallback)
+                    Check(fallback.ToJsonString() == entity.DomainOptions()[option]?.ToJsonString(), $"{domain}: option {option}'s default {fallback.ToJsonString()} is {type.Name}'s, {entity.DomainOptions()[option]?.ToJsonString()}");
+                if (spec["min"] != null || spec["max"] != null)
+                {
+                    var (low, high) = (spec["min"]?.GetValue<double>() ?? double.NaN, spec["max"]?.GetValue<double>() ?? double.NaN);
+                    Check(low < high, $"{domain}: option {option} has both ends of its range");
+                    SharpEntity With(double value) => SharpDomains.Create(domain, new JsonObject { ["key"] = "main", ["options"] = new JsonObject { [option] = value } });
+                    Check(JsonNode.Parse(With(low).DomainOptions()[option]!.ToJsonString())!.GetValue<double>() == low && JsonNode.Parse(With(high).DomainOptions()[option]!.ToJsonString())!.GetValue<double>() == high,
+                        $"{domain}: {type.Name} takes both ends of option {option}'s range");
+                    foreach (var beyond in new[] { low - 0.001, high + 0.001 })
+                    {
+                        try { With(beyond); throw new Exception($"{domain}: {type.Name} took {beyond} for option {option}, beyond its range"); }
+                        catch (ArgumentException) { }
+                    }
+                }
+            }
         }
         // The domains a graph defines are the catalog's, each with the catalog's state keys in its order.
         Check(string.Join(", ", SharpDomains.Graph.Keys.Order(StringComparer.Ordinal)) == string.Join(", ", domains!.Select(p => p.Key).Order(StringComparer.Ordinal)),

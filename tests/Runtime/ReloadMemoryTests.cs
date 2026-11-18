@@ -13,7 +13,8 @@ using static VisualExecutionTests;
 /// of its own node library, starts a 20 ms timer and a track of an entity, calls a service from Start() with a record of
 /// its library serialized by System.Text.Json, reads a value with its HTTP client from a loopback server and leaves a
 /// request open to a server that never answers (it does not pass Stopping, so only disposing the client ends it, which
-/// every reload must see happen), and takes a command on its switch; a library save then rebuilds it
+/// every reload must see happen), and takes a command on its switch; its camera shows a frame, and a frame request is
+/// left waiting across the reload, which the stop ends; a library save then rebuilds it
 /// (and the automations) and replaces the one Init loaded. After the reloads, a definition built from nodes is saved 100 times,
 /// each revision replacing the one before, taking a command on its switch and working out its State from its setting.
 /// Every generation's automation and definition load contexts, and every graph revision's, must be collected, and
@@ -53,6 +54,9 @@ static class ReloadMemoryTests
         var log = PyInterop.Log; var schedule = PyInterop.RegisterSchedule;
         var register = PyInterop.BeginRegisterHaTriggers; var remove = PyInterop.BeginRemoveHaTriggers; var call = PyInterop.CallService;
         var push = PyInterop.PushEntityStates;
+        // A camera's interval of half a second lasts 5 ms here.
+        var second = CameraFrames.IntervalSecond;
+        CameraFrames.IntervalSecond = TimeSpan.FromMilliseconds(10);
         var calls = new List<(string Service, string Json)>();
         PyInterop.CallService = (domain, name, json, done, _) => { lock (calls) calls.Add((domain + "." + name, json ?? "")); done?.Invoke(); };
         // Only the last snapshot pushed for each entity: the timer pushes all the time, and a list of them would be memory kept.
@@ -89,6 +93,8 @@ static class ReloadMemoryTests
             var contexts = new List<(WeakReference Context, string Name)>();
             var assemblies = new List<WeakReference>();
             var memory = new Dictionary<int, long>();
+            // The camera's frame request left in flight by the generation before.
+            Task<byte[]>? pending = null;
             void Watch(IEnumerable<UserScript> scripts, string name)
             {
                 foreach (var s in scripts)
@@ -103,6 +109,7 @@ static class ReloadMemoryTests
                 lock (states) states.Clear();
                 // async_unload_entry, then async_setup_entry: services.async_start pushes the descriptions before Init.
                 await manager.UnloadAsync();
+                if (pending != null) await NotRunning(pending, $"reload {reload}");
                 // The requests the stopped definitions left open end as their clients are disposed. The servers forget what
                 // they recorded, so that they keep no memory across the reloads.
                 await EntityTestHome.Until(() => silent.Open == 0, $"reload {reload}: the requests the stopped definitions left open are cancelled ({silent.Open} open)");
@@ -120,7 +127,7 @@ static class ReloadMemoryTests
                 // A library save rebuilds the definition (and the automations, which embed every library) and replaces it.
                 var saved = await Request(manager.NodeLibraryRequest, new { operation = "save", id = "meters", name = "Meters.cs", expectedRevision = reload, source = MeterLibrary(reload) });
                 Check(saved["definitions"]!.AsArray().Single()!["active"]!.GetValue<bool>(), $"reload {reload}: the library save runs the rebuilt definition: " + saved.ToJsonString()[..Math.Min(1200, saved.ToJsonString().Length)]);
-                await Exercise(manager, silent, calls, states, before, reload);
+                pending = await Exercise(manager, silent, calls, states, before, reload);
                 var loaded = Loaded(manager);
                 Check(loaded.Count == Automations.Length && loaded.All(s => s.Active), $"reload {reload}: all {Automations.Length} automations are active again: " + string.Join(", ", loaded.Select(s => s.CompiledScript.FileName)));
                 await RunAll(manager, calls, reload);
@@ -145,6 +152,8 @@ static class ReloadMemoryTests
                 lock (states) states.Clear();
             }
             await manager.UnloadAsync();
+            if (pending != null) await NotRunning(pending, "the last unload");
+            pending = null;
             // System.Text.Json's process-wide member accessor cache (its compiled getters and constructors of the types it
             // writes) keeps an entry about a second after its last use and drops it at its next use after that: the last
             // automations' types go once anything is written to JSON again, as Home Assistant does all the time. That
@@ -169,7 +178,7 @@ static class ReloadMemoryTests
             var samples = string.Join(", ", memory.OrderBy(m => m.Key).Select(m => $"{m.Value / 1048576.0:F1} MiB after reload {m.Key}"));
             var growth = memory.Keys.Where(reload => reload > From).Min(reload => (memory[reload] - memory[reload - Window]) / 1048576.0);
             Check(growth <= BoundMiB, $"managed memory grew in every {Window} reloads from reload {From} to reload {Reloads}, {growth:F2} MiB at the least ({samples}); a window that grows at most {BoundMiB} MiB is required");
-            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), and an entity definition rebuilt by a library save whose device runs a timer and a track, calls a service with a record of its library, reads over HTTP and leaves a request open across the reload, and takes a switch command, then a definition built from nodes saved {GraphRevisions} times, each revision taking a command and working out its State, every load context collected; managed memory {samples}");
+            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), and an entity definition rebuilt by a library save whose device runs a timer and a track, calls a service with a record of its library, reads over HTTP and leaves a request open across the reload, takes a switch command and has a camera that shows a frame with a frame request in flight across the reload, then a definition built from nodes saved {GraphRevisions} times, each revision taking a command and working out its State, every load context collected; managed memory {samples}");
         }
         finally
         {
@@ -177,6 +186,7 @@ static class ReloadMemoryTests
             if (startedPythonNet) StopPythonNetAssemblies();
             PyInterop.Log = log; PyInterop.RegisterSchedule = schedule; PyInterop.BeginRegisterHaTriggers = register; PyInterop.BeginRemoveHaTriggers = remove; PyInterop.CallService = call;
             PyInterop.PushEntityStates = push;
+            CameraFrames.IntervalSecond = second;
             HassPath.HassConfiguration = previous;
             try { Directory.Delete(root, true); } catch (IOException) { }
         }
@@ -278,7 +288,8 @@ static class ReloadMemoryTests
             const string Marker = "{{Marker(generation)}}";
             readonly SharpSwitch relay;
             readonly SharpSensor level, seen, reading;
-            int ticks;
+            readonly SharpCamera view;
+            int ticks, frames;
 
             public MemoryMeter()
             {
@@ -286,10 +297,18 @@ static class ReloadMemoryTests
                 level = Add(new SharpSensor("level"));
                 seen = Add(new SharpSensor("seen"));
                 reading = Add(new SharpSensor("reading"));
+                // Its first frame keeps the one shown; the next waits until the definition stops.
+                view = Add(new SharpCamera("view") { FrameInterval = 0.5, OnFrame = async () =>
+                {
+                    if (++frames == 1) return null;
+                    await Task.Delay(Timeout.Infinite, Stopping);
+                    return null;
+                } });
             }
 
             protected override async Task Start()
             {
+                view.Show(SharpImage.Blank(32, 16).DrawText(Marker, 1, 1, SharpColor.White, 8));
                 Every(System.TimeSpan.FromMilliseconds(20), () => { level.Value = Marker + " tick " + (++ticks); return Task.CompletedTask; });
                 Track("sensor.memory", change => { seen.Value = "track " + change.To.State + " " + Marker; return Task.CompletedTask; });
                 var data = System.Text.Json.JsonSerializer.SerializeToNode(new Brightness(40, Marker))!.AsObject();
@@ -342,7 +361,9 @@ static class ReloadMemoryTests
 
     // The rebuilt definition: its Start() called the service once, read over HTTP and left its request open, its timer
     // ticks, its track gets a change and its switch takes a command, each seen in what it pushes or what the server got.
-    static async Task Exercise(HassSharpManager manager, SilentServer silent, List<(string Service, string Json)> calls, Dictionary<string, JsonObject> states, int from, int reload)
+    // Its camera answers the frame it showed, and a second request is left waiting for a frame across the reload: the
+    // request, which the stop ends.
+    static async Task<Task<byte[]>> Exercise(HassSharpManager manager, SilentServer silent, List<(string Service, string Json)> calls, Dictionary<string, JsonObject> states, int from, int reload)
     {
         var marker = Marker(reload);
         await MeterCalled(calls, from, marker, $"reload {reload}: the rebuilt definition");
@@ -356,6 +377,21 @@ static class ReloadMemoryTests
         await manager.EntityCommand("meter:relay", "turn_on", null);
         await EntityTestHome.Until(() => Pushed(states, "seen", "value") == $"\"command {marker}\"" && Pushed(states, "relay", "is_on") == "true",
             $"reload {reload}: the rebuilt definition's switch takes the command");
+        var shown = await manager.CameraImage("meter:view");
+        Check(shown is [0xFF, 0xD8, ..] && shown.Length > 100, $"reload {reload}: the rebuilt definition's camera answers the frame it showed");
+        await Task.Delay(10);
+        var pending = manager.CameraImage("meter:view");
+        await Task.Delay(10);
+        Check(!pending.IsCompleted, $"reload {reload}: the camera's second request waits for its frame");
+        return pending;
+    }
+
+    // A frame request to a definition that has stopped since ended, saying it no longer runs.
+    static async Task NotRunning(Task<byte[]> request, string when)
+    {
+        try { await request.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (InvalidOperationException ended) when (ended.Message == "The entity is not running") { return; }
+        throw new Exception($"{when}: the camera's request in flight did not end as its definition stopped: {request.Status}");
     }
 
     // A node library whose nodes call a service and make a record, and seven automations: the first node, a Custom C# node

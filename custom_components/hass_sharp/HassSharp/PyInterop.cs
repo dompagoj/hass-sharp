@@ -209,6 +209,12 @@ public static class PyInterop
     public static Action<string, Action, Action<string>> BeginPruneEntities { get; set; } = null!;
     /// <summary>Sends Home Assistant a JSON array of entity snapshots to write as their new states.</summary>
     public static Action<string> PushEntityStates { get; set; } = null!;
+    /// <summary>
+    /// Asks Home Assistant for a picture of a camera: the id of the definition asking (empty for none), and the camera's
+    /// entity id. Python calls the first callback with the JPEG's bytes, or the second with an error message. Wrapped by
+    /// <see cref="HassCameras.SnapshotAsync"/>.
+    /// </summary>
+    public static Action<string, string, Action<byte[]>, Action<string>> BeginCameraSnapshot { get; set; } = null!;
 
     /// <summary>Creates or updates a definition's entities; completes with Python's result JSON.</summary>
     public static Task<string> SyncEntitiesAsync(string definitionJson)

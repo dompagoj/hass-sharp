@@ -1007,11 +1007,11 @@ const addTyped = (root: Element, key: string, domain: string) => {
 }
 const fieldOf = (row: Element, name: string) => row.querySelector<HTMLElement>(`[data-field="${name}"]`)!
 
-it('offers all nine types, and saves a button, number, select, text, light and cover with their options typed', async () => {
+it('offers all ten types, and saves a button, number, select, text, light and cover with their options typed', async () => {
   const { root, fixture } = setup('/entities/new?name=Things')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   const first = expand(entityRow(root, 'things'))
-  expect([...control(first, 'domain').options].map(o => o.textContent)).toEqual(['Binary sensor', 'Sensor', 'Switch', 'Button', 'Number', 'Select', 'Text', 'Light', 'Cover'])
+  expect([...control(first, 'domain').options].map(o => o.textContent)).toEqual(['Binary sensor', 'Sensor', 'Switch', 'Button', 'Number', 'Select', 'Text', 'Light', 'Cover', 'Camera'])
   type(control(first, 'key'), 'bell')
   choose(control(entityRow(root, 'bell'), 'domain'), 'button')
   // A number's options: a field each, read as numbers; Shown as a choice; every option has a hint.

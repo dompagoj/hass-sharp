@@ -21,8 +21,10 @@ internal sealed partial class DefinitionHost
     readonly HashSet<string> awaiting = new(StringComparer.Ordinal);
     // Why each failing State's entity is unavailable, by key, as last warned.
     readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
-    // Why each failing trigger flow last failed, by method, as last logged.
-    readonly Dictionary<string, string> failingFlows = new(StringComparer.Ordinal);
+    // Why each trigger flow last failed, by method, as last logged.
+    readonly Dictionary<string, FailureLog> failingFlows = new(StringComparer.Ordinal);
+    // A graph's frame flows by the key of their camera: each runs before a request for that camera's picture is answered.
+    readonly Dictionary<string, Func<Task>> frameFlows = new(StringComparer.Ordinal);
     // A graph's settings by key, as its Setting nodes read them; read from the definition as it prepares, before any run.
     volatile IReadOnlyDictionary<string, (object? Value, bool Secret)> graphSettings = new Dictionary<string, (object?, bool)>();
     // The keys of a graph's entities a State works out; none for a class.
@@ -389,6 +391,40 @@ internal sealed partial class DefinitionHost
         Publish(entity);
     }
 
+    /// <summary>
+    /// Sets the current frame of the graph's camera <paramref name="entityKey"/>: a copy of <paramref name="image"/> is kept,
+    /// so the run may go on drawing on its own (<see cref="SharpCamera.Show"/>). From any run, while the definition prepares
+    /// too; ignored once the definition stops or is replaced. Thread-safe; never calls into a run.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The definition has no such entity, or it is not a camera.</exception>
+    public void SetFrame(string entityKey, SharpImage image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        SharpEntity entity;
+        lock (gate)
+        {
+            if (Ignoring) return;
+            entity = GraphEntity(entityKey);
+        }
+        // Outside the lock: the camera takes its own, and calls into this host under it.
+        if (entity is not SharpCamera camera) throw new InvalidOperationException($"{definition.Name}: entity {entityKey} is not a camera, so it shows no frame");
+        camera.Show(image);
+    }
+
+    /// <summary>
+    /// Has a request for the picture of the graph's camera <paramref name="entityKey"/> run <paramref name="flow"/> first, as
+    /// a class's <c>Frame()</c> runs (<see cref="CameraImage"/>): one at a time, at most once per the camera's interval and
+    /// shared by the requests meanwhile, within <see cref="CameraFrames.MakeLimit"/>, cancelled through
+    /// <see cref="Stopping"/> and waited for by stopping. The flow shows its frame with <see cref="SetFrame"/>; one that shows
+    /// none keeps the frame shown, and one that throws fails the request as a class's would (the last good frame is still
+    /// given for a while). Set as the graph prepares; forgotten once the definition stops.
+    /// </summary>
+    internal void FrameNeeded(string entityKey, Func<Task> flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+        lock (gate) frameFlows[entityKey] = flow;
+    }
+
     /// <inheritdoc/>
     public object? Setting(string key) =>
         graphSettings.TryGetValue(key, out var setting) ? setting.Value : throw new KeyNotFoundException($"{definition.Name} has no setting {key}");
@@ -487,12 +523,7 @@ internal sealed partial class DefinitionHost
             // A failing When started flow fails the definition's start, whose error and warning say why, in these words.
             var log = kind != FlowKind.Setup;
             if (!log) setupFailure = reason;
-            if (kind == FlowKind.Trigger)
-                lock (gate)
-                {
-                    log = !failingFlows.TryGetValue(method, out var last) || last != reason;
-                    failingFlows[method] = reason;
-                }
+            if (kind == FlowKind.Trigger) log = Failures(method).Fails(reason);
             if (log) Report($"{flow} failed: {reason}", kind == FlowKind.Command ? PyLogLevel.Warn : PyLogLevel.Error);
             // The whole failure after its line: ToString() is user code, and builds the stack.
             string whole;
@@ -508,11 +539,22 @@ internal sealed partial class DefinitionHost
     {
         try
         {
-            bool recovered;
-            lock (gate) recovered = failingFlows.Remove(method);
-            if (recovered) Report($"{Flow(method, InvocationCause.Entity).Name} works again", PyLogLevel.Info);
+            FailureLog? failures;
+            // Only a flow that failed has one.
+            lock (gate) failingFlows.TryGetValue(method, out failures);
+            if (failures?.Works() == true) Report($"{Flow(method, InvocationCause.Entity).Name} works again", PyLogLevel.Info);
         }
         catch { }
+    }
+
+    // What a trigger flow last logged of its failures.
+    FailureLog Failures(string method)
+    {
+        lock (gate)
+        {
+            if (!failingFlows.TryGetValue(method, out var log)) failingFlows[method] = log = new();
+            return log;
+        }
     }
 
     enum FlowKind { Command, Setup, Trigger }

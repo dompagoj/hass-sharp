@@ -414,16 +414,23 @@ static class SharpImageTests
     {
         static void Collect() { for (var i = 0; i < 3; i++) { GC.Collect(); GC.WaitForPendingFinalizers(); } }
         var source = Busy(64, 48);
-        Collect();
-        var before = TurboJpeg.LiveHandles;
-        var threads = Enumerable.Range(0, 4).Select(_ => new Thread(() => SharpImage.Load(source).DrawRect(1, 1, 10, 10).ToJpeg())).ToList();
+        // Only these threads' own handles are followed: other threads of the process (a camera's frames are encoded on the
+        // pool, whose threads end when idle) make and destroy handles of their own meanwhile. A weak reference that tracks
+        // resurrection lets go only once the handle's finalizer, which destroys it, has run.
+        var handles = new List<WeakReference>();
+        var threads = Enumerable.Range(0, 4).Select(_ => new Thread(() =>
+        {
+            SharpImage.Load(source).DrawRect(1, 1, 10, 10).ToJpeg();
+            var (decompressor, compressor) = TurboJpeg.ThreadHandles;
+            lock (handles) handles.AddRange([new WeakReference(decompressor, trackResurrection: true), new WeakReference(compressor, trackResurrection: true)]);
+        })).ToList();
         threads.ForEach(thread => thread.Start());
         threads.ForEach(thread => thread.Join());
-        Check(TurboJpeg.LiveHandles >= before + 8, $"each thread made its two handles ({TurboJpeg.LiveHandles - before})");
+        Check(handles.Count == 8 && handles.All(handle => handle.Target != null) && handles.Select(handle => handle.Target).Distinct().Count() == 8, "each thread made its two handles");
         threads.Clear();
         var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (TurboJpeg.LiveHandles > before && DateTime.UtcNow < deadline) { Collect(); Thread.Sleep(20); }
-        Check(TurboJpeg.LiveHandles == before, $"a thread's handles are destroyed once it has ended ({TurboJpeg.LiveHandles - before} left)");
+        while (handles.Any(handle => handle.IsAlive) && DateTime.UtcNow < deadline) { Collect(); Thread.Sleep(20); }
+        Check(!handles.Any(handle => handle.IsAlive), $"a thread's handles are destroyed once it has ended ({handles.Count(handle => handle.IsAlive)} left)");
         Console.WriteLine("PASS sharp image: the decompressor and compressor of a thread that has ended are destroyed");
     }
 

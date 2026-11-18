@@ -85,7 +85,8 @@ internal static class DefinitionDocument
     /// <summary>
     /// The problems of an entity's options: each must be one its domain takes, of that option's type (a list of texts
     /// for an array, which is not empty) and, with an enum, one of its values; each option the domain marks required is
-    /// given; a number option is one Home Assistant takes (<see cref="Limit"/>); a <c>min</c> is below the <c>max</c>,
+    /// given; a number option is one Home Assistant takes (<see cref="Limit"/>) and within its rule's range when it has one
+    /// (<see cref="Range"/>); a <c>min</c> is below the <c>max</c>,
     /// either given or its class's own; and a <c>pattern</c> is a regular expression. Each problem is about the entity's
     /// key and the option's (a min not below the max is about the min), and words the option by its label and the entity
     /// by its name, such as <c>Minimum of Target takes a number</c>; one about no single option (options that are not an
@@ -133,7 +134,7 @@ internal static class DefinitionDocument
                 Problem(option, $"{of} takes {(type == "array" ? "a list of texts" : allowed != null ? "one of " + string.Join(", ", allowed) : Phrase(type))}");
             else if (value is JsonArray { Count: 0 })
                 Problem(option, $"{of} is an empty list; give it at least one text{(Required(rule) ? "" : ", or leave it out")}");
-            else if (Number(value) is { } number && Limit(domainId, option, number) is { } limit)
+            else if (Number(value) is { } number && (Limit(domainId, option, number) ?? Range(rule, number)) is { } limit)
             {
                 Problem(option, $"{of} takes {limit}, not {Shown(number)}");
                 // A min or max refused here is not compared with the other one too.
@@ -169,6 +170,13 @@ internal static class DefinitionDocument
         ("text", "max") when number > 255 => "255 or less, as Home Assistant keeps at most 255 characters",
         _ => null,
     };
+
+    /// <summary>
+    /// What a number option whose rule gives a <c>min</c> and a <c>max</c> takes, such as a camera's seconds between frames,
+    /// when <paramref name="number"/> is outside them; null when it is within (or the rule gives no range).
+    /// </summary>
+    static string? Range(JsonObject rule, double number) =>
+        Number(rule["min"]) is { } min && Number(rule["max"]) is { } max && (number < min || number > max) ? $"a number from {Shown(min)} to {Shown(max)}" : null;
 
     static bool Required(JsonObject rule) => rule["required"] is JsonValue flag && flag.GetValueKind() == JsonValueKind.True;
     // Read through its JSON text, as Fits reads it: a class's default may be held as an int.
