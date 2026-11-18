@@ -965,3 +965,19 @@ it('says a definition that is not stored was not found, and one that could not b
   await vi.waitFor(() => expect(again.root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
   expect(nameInput(again.root).value).toBe('Plug')
 })
+
+it('mounts a new class definition\'s page once', async () => {
+  // Each page made is a section of its own.
+  const mounted = new Set<Element>()
+  const observer = new MutationObserver(records => {
+    for (const record of records) for (const node of record.addedNodes)
+      if (node instanceof Element) for (const e of [node, ...node.querySelectorAll('*')]) if (e.matches('section.hs-cdef[aria-label="Entity definition"]')) mounted.add(e)
+  })
+  observer.observe(document.body, { childList: true, subtree: true })
+  const { root, fixture } = setup('/entities/new?logic=class&name=Shelly')
+  await vi.waitFor(() => expect(fixture.entities.requests).toEqual([{ operation: 'types' }]))
+  await new Promise(resolve => setTimeout(resolve, 20))
+  observer.disconnect()
+  expect(root.querySelectorAll('section.hs-cdef[aria-label="Entity definition"]')).toHaveLength(1)
+  expect(mounted.size).toBe(1)
+})

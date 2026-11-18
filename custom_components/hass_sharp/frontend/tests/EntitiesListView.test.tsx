@@ -399,7 +399,7 @@ it('starts a new entity definition, named, built with nodes or from a class', as
   expect(choices.map(c => c.closest('label')?.querySelector('small')?.textContent)).toEqual([
     'Define entities and their behaviour with steps.', 'Create entities from a C# class in your node library, with its settings.'])
   expect(choices[0].checked).toBe(true)
-  expect(button(dialog, 'Open draft').disabled).toBe(true)
+  expect(button(dialog, 'Continue').disabled).toBe(true)
   type(name, 'Garden sensors')
   dialog.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
   await vi.waitFor(() => expect(history.get()).toBe('/entities/new?logic=graph&name=Garden%20sensors'))
@@ -417,7 +417,7 @@ it('starts a new entity definition, named, built with nodes or from a class', as
   expect(again.querySelector<HTMLInputElement>('input[name="name"]')!.value).toBe('')
   again.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1].click()
   type(again.querySelector<HTMLInputElement>('input[name="name"]')!, 'Front camera')
-  button(again, 'Open draft').click()
+  button(again, 'Continue').click()
   await vi.waitFor(() => expect(second.history.get()).toBe('/entities/new?logic=class&name=Front%20camera'))
 })
 
@@ -433,7 +433,7 @@ it('explains the section when there is none yet, with both ways to start', async
   const dialog = await vi.waitFor(() => root.querySelector<HTMLDialogElement>('dialog[open]')!)
   expect(dialog.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1].checked).toBe(true)
   type(dialog.querySelector<HTMLInputElement>('input[name="name"]')!, 'Doorbell')
-  button(dialog, 'Open draft').click()
+  button(dialog, 'Continue').click()
   await vi.waitFor(() => expect(history.get()).toBe('/entities/new?logic=class&name=Doorbell'))
 })
 

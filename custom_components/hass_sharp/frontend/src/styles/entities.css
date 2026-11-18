@@ -102,6 +102,10 @@
 /* The class definition's page: the editor's top bar (editor-shell.css) over one column of sections, each a card. */
 .hs-app .hs-cdef { display: flex; flex-direction: column; min-height: 100%; background: var(--hs-bg); color: var(--hs-text); }
 .hs-app .hs-cdef .hs-topbar__title { flex: 1 1 auto; }
+/* The bar stays at the top of the panel's scroll area (.hs-main), as the graph editor's does over its canvas; the
+   sections scroll under it, and a field focused from Save is not left under it. */
+.hs-app .hs-cdef > .hs-topbar { position: sticky; top: 0; z-index: 10; }
+.hs-app .hs-cdef__body .hs-input, .hs-app .hs-cdef__body .hs-button { scroll-margin-top: 80px; }
 .hs-app .hs-cdef__body { display: grid; align-content: start; gap: 16px; width: 100%; max-width: 760px; min-width: 0; margin: 0 auto; padding: 24px 24px 64px; }
 .hs-app .hs-cdef__body > .hs-def-section { gap: 12px; padding: 16px; border: 1px solid var(--hs-line); border-radius: 12px; background: var(--hs-surface); }
 .hs-app .hs-cdef__body > .hs-def-delete { padding-top: 0; border-top: 0; }

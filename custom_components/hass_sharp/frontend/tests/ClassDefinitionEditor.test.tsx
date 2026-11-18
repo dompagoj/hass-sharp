@@ -644,7 +644,8 @@ it('says a number left unfinished is not one, and commits nothing for it', async
   expect(offset.closest('[data-field]')!.textContent).toContain('Enter a number.')
   expect(offset.value).toBe('1e')
   expect(await checked(fixture, 'Offset')).toBe(5)
-  expect(chip(root)).toBe('Saved')
+  // Not a change of the definition, but a problem of it.
+  expect(chip(root)).toBe('1 problem')
   offset.focus()
   type(offset, '1e1')
   expect(offset.closest('[data-field]')!.textContent).not.toContain('Enter a number.')
@@ -726,4 +727,137 @@ it('stays where the person went when a first save answers after they left', asyn
   await new Promise(resolve => setTimeout(resolve, 20))
   expect(history.get()).toBe('/elsewhere')
   expect(root.querySelector('h1')?.textContent).toBe('Elsewhere')
+})
+
+/** Types `text` one character at a time, one `input` event each, as a person does. */
+const typeEach = (input: HTMLInputElement, text: string) => { for (let end = 1; end <= text.length; end++) type(input, text.slice(0, end)) }
+const fieldText = (input: HTMLInputElement) => input.closest('[data-field]')!.textContent
+
+it('refuses to save a whole number it cannot read, and says so on the field, however the rest of the page changes', async () => {
+  const { root, fixture } = setup('/entities/plug', f => f.entities.seed('plug', plug([{ key: 'Host', value: '10.0.0.1' }, { key: 'Interval', value: 30 }])))
+  await ready(root)
+  await vi.waitFor(() => expect(control(root, 'Poll interval').value).toBe('30'))
+  const interval = control(root, 'Poll interval')
+  interval.focus()
+  typeEach(interval, '1,5')
+  expect(interval.value).toBe('1,5')
+  interval.blur()
+  expect(fieldText(interval)).toContain('Enter a whole number.')
+  // Another field changes the definition: the unreadable text and its message stay.
+  type(control(root, 'Host'), '10.0.0.2')
+  expect(interval.value).toBe('1,5')
+  expect(fieldText(interval)).toContain('Enter a whole number.')
+  // Save is unavailable, says why, and sends nothing: it goes to the field.
+  expect(save(root).getAttribute('aria-disabled')).toBe('true')
+  expect(save(root).title).toBe('Fix Poll interval first: enter a whole number')
+  expect(chip(root)).toContain('1 problem')
+  save(root).click()
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(saves(fixture)).toHaveLength(0)
+  expect(document.activeElement).toBe(interval)
+  expect(fieldText(interval)).toContain('Enter a whole number.')
+  expect(interval.value).toBe('1,5')
+  // Read as a whole number again: the message goes, and what is shown is what is saved.
+  type(interval, '')
+  typeEach(interval, '15')
+  expect(fieldText(interval)).not.toContain('Enter a whole number.')
+  expect(save(root).getAttribute('aria-disabled')).toBeNull()
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  expect(saves(fixture)[0].definition.settings).toEqual([{ key: 'Host', value: '10.0.0.2' }, { key: 'Interval', value: 15 }])
+  await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
+  expect(control(root, 'Poll interval').value).toBe('15')
+})
+
+it('saves exactly the number typed one character at a time', async () => {
+  const { root, fixture } = setup('/entities/plug', f => f.entities.seed('plug', plug([{ key: 'Host', value: '10.0.0.1' }])))
+  await ready(root)
+  await vi.waitFor(() => expect(control(root, 'Poll interval')).not.toBeNull())
+  const cases: [string, string, number][] = [['Poll interval', '1e3', 1000], ['Offset', '-5', -5], ['Offset', '1.5', 1.5]]
+  for (const [label, text, value] of cases) {
+    const input = control(root, label)
+    input.focus()
+    type(input, '')
+    typeEach(input, text)
+    expect(input.value).toBe(text)
+    input.blur()
+    expect(fieldText(input)).not.toContain('Enter a')
+    const before = saves(fixture).length
+    save(root).click()
+    await vi.waitFor(() => expect(saves(fixture)).toHaveLength(before + 1))
+    expect(saves(fixture).at(-1).definition.settings.find((s: any) => s.key === (label === 'Offset' ? 'Offset' : 'Interval')).value, text).toBe(value)
+    await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
+    expect(control(root, label).value).toBe(text)
+  }
+})
+
+it('creates a plug named from the address beside a stored one of the same class, each with its own settings in the list', async () => {
+  const fixture = visualFixture({ entityTypes: [plugType, thermometerType] })
+  fixture.entities.seed('kitchen_plug', plug([{ key: 'Host', value: '10.0.0.1' }], 'Kitchen plug'))
+  const { root, history } = setup(`/entities/new?logic=class&type=${encodeURIComponent(plugType.id)}&name=Desk plug`, undefined, fixture)
+  await ready(root)
+  // The class from the address is chosen; the name from the address stays.
+  await vi.waitFor(() => expect(control(root, 'Host')).not.toBeNull())
+  expect(nameInput(root).value).toBe('Desk plug')
+  type(control(root, 'Host'), '10.0.0.2')
+  choose(control<HTMLSelectElement>(root, 'Mode'), 'Cloud')
+  save(root).click()
+  await vi.waitFor(() => expect(history.get()).toBe('/entities/desk_plug'))
+  expect(saves(fixture)).toEqual([{ operation: 'save', id: 'desk_plug', expectedRevision: 0, definition: {
+    name: 'Desk plug', device: null, settings: [{ key: 'Host', value: '10.0.0.2' }, { key: 'Mode', value: 'Cloud' }], logic: { kind: 'class', type: plugType.id },
+  } }])
+  expect(fixture.entities.documents.get('kitchen_plug')!.settings).toEqual([{ key: 'Host', value: '10.0.0.1' }])
+  expect(fixture.entities.documents.get('desk_plug')!.settings).toEqual([{ key: 'Host', value: '10.0.0.2' }, { key: 'Mode', value: 'Cloud' }])
+  await vi.waitFor(() => expect(control<HTMLSelectElement>(root, 'Mode').value).toBe('Cloud'))
+  const listed = await fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'list' } }) as any
+  expect(listed.result.map((d: any) => [d.id, d.logic.type, d.liveEntities.map((e: any) => e.entityId).sort()]).sort()).toEqual([
+    ['desk_plug', plugType.id, ['sensor.desk_plug_power', 'switch.desk_plug_relay']],
+    ['kitchen_plug', plugType.id, ['sensor.kitchen_plug_power', 'switch.kitchen_plug_relay']],
+  ])
+})
+
+it('keeps the definition shown when a save answers after the address moved to another one', async () => {
+  let release!: () => void, asked = false
+  const gate = new Promise<void>(resolve => (release = resolve))
+  const { root, fixture, history } = setup('/entities/new?logic=class', f => {
+    f.entities.seed('kitchen_plug', plug([{ key: 'Host', value: '10.0.0.1' }], 'Kitchen plug'))
+    const inner = f.entities.callWS
+    f.entities.callWS = async (message: any) => { if (message.request?.operation === 'save') { asked = true; await gate } return inner(message) }
+  })
+  await ready(root)
+  await vi.waitFor(() => expect(pickClass(root, plugType.id)).not.toBeNull())
+  pickClass(root, plugType.id).click()
+  await vi.waitFor(() => expect(nameInput(root).value).toBe('Shelly plug'))
+  save(root).click()
+  await vi.waitFor(() => expect(asked).toBe(true))
+  // Back in the browser's history, to another definition, while the save is on its way.
+  history.set({ value: '/entities/kitchen_plug' })
+  await vi.waitFor(() => expect(nameInput(root)?.value).toBe('Kitchen plug'))
+  release()
+  await vi.waitFor(() => expect(fixture.entities.documents.get('shelly_plug')).toBeDefined())
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(history.get()).toBe('/entities/kitchen_plug')
+  expect(nameInput(root).value).toBe('Kitchen plug')
+  expect(control(root, 'Host').value).toBe('10.0.0.1')
+  // The saved one opens from its own address, read as usual.
+  history.set({ value: '/entities/shelly_plug' })
+  await vi.waitFor(() => expect(nameInput(root)?.value).toBe('Shelly plug'))
+  expect(history.get()).toBe('/entities/shelly_plug')
+})
+
+it('keeps the top bar, with Save, at the top of the page while the form scrolls under it', async () => {
+  const { readFileSync } = await import('node:fs')
+  const css = readFileSync('src/styles/entities.css', 'utf8')
+  const base = readFileSync('src/styles/base.css', 'utf8')
+  // The panel's main area scrolls; the bar sticks to its top, over the sections, in both layouts.
+  expect(base).toMatch(/\.hs-app \.hs-main \{[^}]*overflow: auto/)
+  expect(css).toMatch(/\.hs-app \.hs-cdef > \.hs-topbar \{[^}]*position: sticky; top: 0; z-index: \d+;/)
+  expect(css).not.toMatch(/\.hs-app \.hs-cdef(__body)? \{[^}]*overflow/)
+  expect(css).not.toMatch(/\.hs-cdef > \.hs-topbar \{[^}]*position: (static|relative)/)
+  // A field focused (a number Save asks to fix) is not left under the bar.
+  expect(css).toMatch(/\.hs-app \.hs-cdef__body \.hs-input, \.hs-app \.hs-cdef__body \.hs-button \{ scroll-margin-top: \d+px; \}/)
+  const { root } = setup('/entities/plug', f => f.entities.seed('plug', plug([{ key: 'Host', value: '10.0.0.1' }])))
+  const view = await ready(root)
+  expect(view.firstElementChild!.matches('header.hs-topbar')).toBe(true)
+  expect(view.querySelector('header.hs-topbar')!.contains(save(root))).toBe(true)
 })

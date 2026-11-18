@@ -33,11 +33,17 @@ export function EntityDefinitionView() {
   const base = entityAdapter(hass, {
     handed: id => { const document = handed?.id === id ? handed : undefined; handed = undefined; return document },
   })
-  // The address an editor's own save goes to (a first save, a copy) keeps that editor: nothing is read again.
+  // The address an editor's own save goes to (a first save, a copy) keeps that editor: nothing is read again. Only the
+  // editor still shown says so: a save that answers after the page moved on changes nothing here.
   let kept: string | undefined
   const adapter: typeof base = {
     ...base,
-    save: async (...args) => { const result = await base.save(...args); kept = result.document.id; return result },
+    save: async (...args) => {
+      const issuing = untrack(page)
+      const result = await base.save(...args)
+      if (!disposed && untrack(page) === issuing) kept = result.document.id
+      return result
+    },
   }
   const address = () => (route.id === 'new' ? `new:${params.logic === 'class' ? 'class' : 'graph'}` : route.id ?? '')
   const pageFor = (at: string): Page => (at === 'new:class' ? { kind: 'class' } : { kind: 'graph' })
@@ -59,7 +65,9 @@ export function EntityDefinitionView() {
       setPage(error instanceof EntityApiError && error.code === 'not_found' ? { kind: 'missing' } : { kind: 'failed', error })
     }
   }
-  createEffect(on(address, at => {
+  createEffect(on(address, (at, previous) => {
+    // A new definition's page is shown from the start.
+    if (previous === undefined && at.startsWith('new:')) return
     if (at === kept) { kept = undefined; return }
     kept = undefined
     if (at.startsWith('new:')) { generation++; setPage(pageFor(at)); return }
@@ -69,9 +77,10 @@ export function EntityDefinitionView() {
   const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value : undefined)
   // The class page starts again for another definition (another object), but not for its own first save's address.
   const classPage = createMemo(() => { const current = page(); return current.kind === 'class' ? current : undefined })
-  const classSaved = (document: EntityDocument) => {
+  const classSaved = (issuing: Page, document: EntityDocument) => {
+    if (disposed || page() !== issuing) return
     kept = document.id
-    if (disposed || route.id === document.id) return
+    if (route.id === document.id) return
     navigate(`/entities/${encodeURIComponent(document.id)}`, { replace: true })
   }
   return (
@@ -80,7 +89,7 @@ export function EntityDefinitionView() {
         <EditorView adapter={adapter} />
       </Match>
       <Match when={classPage()} keyed>
-        {current => <ClassDefinitionEditor document={current.document} name={untrack(() => text(params.name))} type={untrack(() => text(params.type))} onSaved={classSaved} />}
+        {current => <ClassDefinitionEditor document={current.document} name={untrack(() => text(params.name))} type={untrack(() => text(params.type))} onSaved={document => classSaved(current, document)} />}
       </Match>
       <Match when={true}>
         <section class="hs-cdef" aria-label="Opening entity definition">

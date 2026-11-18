@@ -65,6 +65,9 @@ const runFields = ['enabled', 'active', 'currentRevisionActive', 'activationErro
 const withRun = (document: EntityDocument, latest: EntityDocument): EntityDocument =>
   ({ ...document, ...Object.fromEntries(runFields.map(field => [field, latest[field]])) })
 
+/** A number field whose text does not read: its setting, its label, and what to enter ("enter a whole number"). */
+export interface UnreadableNumber { key: string; label: string; message: string; reason: string }
+
 /** How a refused request is told: a conflict (which offers to reload or to save anyway), or a sentence. */
 export interface ClassNotice { text: string; error?: boolean }
 
@@ -96,6 +99,9 @@ export function createClassSession(
   const [saving, setSaving] = createSignal(false)
   const [switching, setSwitching] = createSignal(false)
   const [notice, setNotice] = createSignal<ClassNotice>()
+  // Number fields whose text does not read as a number of their type, in the order they became so: nothing is saved
+  // while there is one.
+  const [unreadable, setUnreadable] = createSignal<UnreadableNumber[]>([])
 
   const type = createMemo(() => { const id = body().type; return id ? options.types()?.find(t => t.id === id) : undefined })
   const kind = () => type()?.kind
@@ -179,7 +185,7 @@ export function createClassSession(
     return answer.document
   }
   const saveWith = async (revision: () => Promise<number>) => {
-    if (saving()) return
+    if (saving() || unreadable().length) return
     setSaving(true)
     setError(undefined)
     try {
@@ -236,8 +242,15 @@ export function createClassSession(
   }))
 
   return {
-    document, body, dirty, type, diagnostics, error, conflict, saving, switching, notice,
+    document, body, dirty, type, diagnostics, error, conflict, saving, switching, notice, unreadable,
     setting,
+    /** A number field's text reads (no `problem`) or does not. */
+    markUnreadable(key: string, problem: Omit<UnreadableNumber, 'key'> | undefined) {
+      setUnreadable(list => {
+        const rest = list.filter(entry => entry.key !== key)
+        return problem ? [...rest, { key, ...problem }] : rest.length === list.length ? list : rest
+      })
+    },
     setName(name: string) { nameFromClass = false; change(b => ({ ...b, name })) },
     setType,
     /** The class a new definition's address names, chosen before anything is edited: not a change of its own. */

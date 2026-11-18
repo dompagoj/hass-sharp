@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, createUniqueId, For, Match, on, onCleanup, Show, Switch, untrack, type JSX } from 'solid-js'
+import { createEffect, createMemo, createSignal, createUniqueId, For, Index, Match, on, onCleanup, Show, Switch, untrack, type JSX } from 'solid-js'
 import { A, useNavigate } from '@solidjs/router'
 import { useQuery, useQueryClient } from '@tanstack/solid-query'
 import { EnabledSwitch } from '../automations/EnabledSwitch'
@@ -102,8 +102,8 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
     }
     return { fields, others, errors }
   })
-  // The problems shown, on their fields or at the top.
-  const errorCount = () => problems().errors
+  // The problems shown, on their fields or at the top, and the numbers that do not read.
+  const errorCount = () => problems().errors + session.unreadable().length
 
   const busy = () => session.saving() || session.switching()
   /** Why Save does nothing, if it does nothing. */
@@ -112,13 +112,24 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
     if (types.isError) return 'The classes could not be loaded'
     if (!typeList()) return 'Loading the classes…'
     if (!type()) return missing() ? 'Choose another class first: this one is not available' : 'Choose a class first'
+    const unreadable = session.unreadable()[0]
+    if (unreadable) return `Fix ${unreadable.label} first: ${unreadable.reason}`
     if (saved() && !session.dirty()) return 'Nothing to save: every change is saved'
   }
   const [conflictOpen, setConflictOpen] = createSignal(false)
   createEffect(on(session.conflict, conflicted => setConflictOpen(conflicted)))
   const saved$ = (document: EntityDocument | undefined) => { if (document) props.onSaved(document) }
+  // A save asked for while a number does not read: nothing is sent, and the field says why.
+  const [reveal, setReveal] = createSignal(0)
+  let frame: HTMLElement | undefined
   const save = () => {
     if (session.conflict()) return setConflictOpen(true)
+    const unreadable = session.unreadable()[0]
+    if (unreadable) {
+      setReveal(n => n + 1)
+      frame?.querySelector<HTMLElement>(`[data-field="setting:${CSS.escape(unreadable.key)}"] input`)?.focus()
+      return
+    }
     if (saveReason()) return
     void session.save().then(saved$)
   }
@@ -131,7 +142,7 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
   const pickerName = createUniqueId()
 
   return (
-    <section class="hs-cdef" aria-label="Entity definition">
+    <section ref={frame} class="hs-cdef" aria-label="Entity definition">
       <ClassTopBar name={body().name} onRename={session.setName} onBack={() => navigate('/entities')} busy={busy()}
         save={{ saving: session.saving(), dirty: session.dirty(), errors: errorCount(), revision: saved()?.revision }}
         saveReason={saveReason()} onSave={save}
@@ -229,7 +240,7 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
 
         <Show when={type()}>
           {chosen => <>
-            <SettingsSection type={chosen()} session={session} problems={problems().fields} unused={unused()} />
+            <SettingsSection type={chosen()} session={session} problems={problems().fields} unused={unused()} reveal={reveal} />
             <Show when={chosen().kind === 'device'} fallback={
               <DeviceSection device={body().device} onChange={session.setDevice} memory={memory} savedId={saved()?.id} savedDevice={saved()?.device}
                 toggle={{ label: 'Group this entity as a device', hint: 'Home Assistant shows it on a device page of its own, named after this entity definition.' }} />
@@ -376,14 +387,14 @@ function MissingClass(props: { document: EntityDocument }) {
 }
 
 /** The class's settings, one field each in the class's order, and the saved values of settings it no longer has. */
-function SettingsSection(props: { type: EntityType; session: ClassSession; problems: Map<string, string[]>; unused: DefinitionSetting[] }) {
+function SettingsSection(props: { type: EntityType; session: ClassSession; problems: Map<string, string[]>; unused: DefinitionSetting[]; reveal: () => number }) {
   return (
     <section class="hs-def-section" aria-label="Settings">
       <h2 class="hs-insp-heading">Settings</h2>
       <Show when={props.type.settings.length} fallback={<p class="hs-muted">This class has no settings.</p>}>
         <div class="hs-cdef-fields">
           <For each={props.type.settings}>
-            {setting => <SettingField setting={setting} session={props.session} errors={props.problems.get(setting.key) ?? []} />}
+            {setting => <SettingField setting={setting} session={props.session} errors={props.problems.get(setting.key) ?? []} reveal={props.reveal} />}
           </For>
         </div>
       </Show>
@@ -414,7 +425,7 @@ function SettingsSection(props: { type: EntityType; session: ClassSession; probl
  * One setting of the class. Empty, it keeps the class's default (`value: null`). A secret, or a value the page was not
  * sent, is the definition form's secret field. The server checks the values; its problems are shown under the field.
  */
-function SettingField(props: { setting: EntityTypeSetting; session: ClassSession; errors: string[] }) {
+function SettingField(props: { setting: EntityTypeSetting; session: ClassSession; errors: string[]; reveal: () => number }) {
   const id = createUniqueId(), hintId = `${id}-hint`, errorsId = `${id}-errors`
   const key = () => props.setting.key
   const label = () => props.setting.label || key()
@@ -427,16 +438,18 @@ function SettingField(props: { setting: EntityTypeSetting; session: ClassSession
     return `Between ${minimum} and ${maximum}.`
   }
   const hint = () => [range(), props.setting.description].filter(Boolean).join(' ')
-  // A number field's text that is not a number when it is left: said under the field, and nothing committed.
+  // A number field's text that does not read as a number of its type, once it is told: said under the field.
   const [unreadable, setUnreadable] = createSignal<string>()
   const errors = () => (unreadable() ? [unreadable()!, ...props.errors] : props.errors)
   const invalid = () => errors().length > 0
   const describe = () => describedBy(!!hint() && hintId, invalid() && errorsId)
   const text = () => (typeof value() === 'string' ? value() as string : typeof value() === 'number' || typeof value() === 'boolean' ? String(value()) : '')
-  const select = (choices: { value: string; label: string }[], current: string, onChange: (value: string) => void) => (
-    <select id={id} class="hs-input" aria-invalid={invalid() || undefined} aria-describedby={describe()}
+  // One select for the field's life: its options and its value follow the stored value (made again, its options could
+  // lose which one is selected).
+  const select = (choices: () => { value: string; label: string }[], current: () => string, onChange: (value: string) => void) => (
+    <select id={id} class="hs-input" aria-invalid={invalid() || undefined} aria-describedby={describe()} value={current()}
       onChange={event => onChange(event.currentTarget.value)}>
-      <For each={choices}>{choice => <option value={choice.value} selected={choice.value === current}>{choice.label}</option>}</For>
+      <Index each={choices()}>{choice => <option value={choice().value} selected={choice().value === current()}>{choice().label}</option>}</Index>
     </select>
   )
   const secretType = () => (props.setting.type === 'integer' || props.setting.type === 'number' ? 'number' : props.setting.type === 'boolean' ? 'boolean' : 'string')
@@ -454,19 +467,20 @@ function SettingField(props: { setting: EntityTypeSetting; session: ClassSession
         }>
           <Match when={props.setting.type === 'integer' || props.setting.type === 'number'}>
             <NumberInput id={id} whole={props.setting.type === 'integer'} minimum={props.setting.minimum} value={value()} invalid={invalid()}
-              describedBy={describe()} errorsId={errorsId} onUnreadable={setUnreadable} onChange={set} />
+              describedBy={describe()} reveal={props.reveal} onMessage={setUnreadable} onChange={set}
+              onProblem={problem => props.session.markUnreadable(key(), problem && { label: label(), ...problem })} />
           </Match>
           <Match when={props.setting.type === 'boolean'}>
-            {select([{ value: '', label: "Use the class's default" }, { value: 'true', label: 'True' }, { value: 'false', label: 'False' }],
-              value() === true ? 'true' : value() === false ? 'false' : '', choice => set(choice === '' ? null : choice === 'true'))}
+            {select(() => [{ value: '', label: "Use the class's default" }, { value: 'true', label: 'True' }, { value: 'false', label: 'False' }],
+              () => (value() === true ? 'true' : value() === false ? 'false' : ''), choice => set(choice === '' ? null : choice === 'true'))}
           </Match>
           <Match when={props.setting.type === 'enum'}>
-            {select([
+            {select(() => [
               { value: '', label: "Use the class's default" },
               // A saved value the class no longer offers stays in view, so the field says what is saved.
               ...(typeof value() === 'string' && value() !== '' && !props.setting.options.includes(value() as string) ? [{ value: value() as string, label: value() as string }] : []),
               ...props.setting.options.map(option => ({ value: option, label: option })),
-            ], typeof value() === 'string' ? value() as string : '', choice => set(choice === '' ? null : choice))}
+            ], () => (typeof value() === 'string' ? value() as string : ''), choice => set(choice === '' ? null : choice))}
           </Match>
         </Switch>
         <Show when={hint()}><small id={hintId} class="hs-field-hint">{hint()}</small></Show>
@@ -487,39 +501,44 @@ function readNumber(typed: string, whole: boolean): number | null | undefined {
 }
 
 /**
- * A number setting's field. It keeps the text as typed and never writes a number back into it while it has focus:
- * the value is committed whenever the text is a number, and emptied (the class's default) only when the text is. A
- * text that is not a number when the field is left commits nothing, and `onUnreadable` says why.
+ * A number setting's field. It keeps the text as typed: the value is committed whenever the whole text reads as a
+ * number of its type, and emptied (the class's default) only when the text is empty. A text that does not read is a
+ * problem of the definition (`onProblem`: nothing is saved while it is there), told under the field (`onMessage`) once
+ * the field is left or a save asks for it (`reveal`). The text follows the stored value only when that changes to a
+ * number other than the one the text reads as (a re-read, a reload), not on other changes of the definition.
  */
 function NumberInput(props: {
-  id: string; whole: boolean; minimum?: number; value: JsonValue | null | undefined; invalid: boolean; describedBy?: string; errorsId: string
-  onChange(value: number | null): void; onUnreadable(message: string | undefined): void
+  id: string; whole: boolean; minimum?: number; value: JsonValue | null | undefined; invalid: boolean; describedBy?: string; reveal: () => number
+  onChange(value: number | null): void; onProblem(problem: { message: string; reason: string } | undefined): void; onMessage(message: string | undefined): void
 }) {
   const stored = () => (typeof props.value === 'number' ? String(props.value) : typeof props.value === 'string' ? props.value : '')
-  // The text typed since the field was entered (or left unreadable); undefined shows the stored value.
+  // The text typed in the field; undefined shows the stored value.
   const [typed, setTyped] = createSignal<string>()
-  let focused = false
-  const message = () => (props.whole ? 'Enter a whole number.' : 'Enter a number.')
-  // A value changed from elsewhere (a reload, a re-read) shows when the field is not being typed in.
-  createEffect(on(() => props.value, () => { if (!focused) { setTyped(undefined); props.onUnreadable(undefined) } }, { defer: true }))
+  const [told, setTold] = createSignal(false)
+  const unreadable = () => { const text = typed(); return text !== undefined && readNumber(text, props.whole) === undefined }
+  const problem = () => (props.whole ? { message: 'Enter a whole number.', reason: 'enter a whole number' } : { message: 'Enter a number.', reason: 'enter a number' })
+  createEffect(() => props.onProblem(unreadable() ? problem() : undefined))
+  createEffect(() => props.onMessage(unreadable() && told() ? problem().message : undefined))
+  onCleanup(() => { props.onProblem(undefined); props.onMessage(undefined) })
+  createEffect(on(props.reveal, () => { if (unreadable()) setTold(true) }, { defer: true }))
+  const value = createMemo(() => props.value)
+  createEffect(on(value, current => {
+    const text = typed()
+    if (text === undefined || readNumber(text, props.whole) === current) return
+    setTyped(undefined)
+    setTold(false)
+  }, { defer: true }))
   return (
     <input id={props.id} class="hs-input" type="text" spellcheck={false} autocomplete="off"
       inputmode={props.minimum !== undefined && props.minimum >= 0 ? (props.whole ? 'numeric' : 'decimal') : undefined}
       placeholder="Class default" value={typed() ?? stored()} aria-invalid={props.invalid || undefined} aria-describedby={props.describedBy}
-      onFocus={() => (focused = true)}
       onInput={event => {
         const text = event.currentTarget.value
+        setTold(false)
         setTyped(text)
-        props.onUnreadable(undefined)
         const parsed = readNumber(text, props.whole)
         if (parsed !== undefined) props.onChange(parsed)
       }}
-      onBlur={() => {
-        focused = false
-        const text = typed()
-        if (text === undefined) return
-        if (readNumber(text, props.whole) === undefined) props.onUnreadable(message())
-        else setTyped(undefined)
-      }} />
+      onBlur={() => { if (unreadable()) setTold(true) }} />
   )
 }

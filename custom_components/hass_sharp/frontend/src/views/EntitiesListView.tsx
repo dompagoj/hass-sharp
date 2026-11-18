@@ -224,7 +224,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
 
       <Dialog open={newOpen()} title="New entity definition" width="small" onClose={closeNew} footer={<>
         <Button variant="ghost" onClick={closeNew}>Cancel</Button>
-        <Button variant="primary" disabled={!name().trim()} onClick={submitNew}>Open draft</Button>
+        <Button variant="primary" disabled={!name().trim()} onClick={submitNew}>Continue</Button>
       </>}>
         <form class="hs-stack" onSubmit={event => { event.preventDefault(); submitNew() }}>
           <p class="hs-muted">Set it up in the editor, then save it: its entities appear in Home Assistant.</p>
