@@ -427,6 +427,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
                 graphEntities = new(StringComparer.Ordinal);
                 awaiting.Clear();
                 frameFlows.Clear();
+                frameFailures.Clear();
                 handed = [];
                 own.Clear();
                 successor = null;

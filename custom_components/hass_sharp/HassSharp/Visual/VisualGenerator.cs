@@ -35,12 +35,14 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     /// The action of each root kind that is not a trigger (a trigger's comes from its config): its mode, whether it runs
     /// at startup and by hand, and the entities whose changes start it (from the graph, the root's id and the snapshot).
     /// A State is worked out at startup and again whenever an entity it reads changes, a newer change restarting it; a
-    /// When commanded flow runs each command in turn; When started runs once. None is run by hand.
+    /// When commanded flow runs each command in turn; When started runs once; When a frame is needed runs when its camera's
+    /// host asks, one frame at a time (the host never asks again while one runs). None is run by hand.
     /// </summary>
     static readonly Dictionary<string,(string Mode,bool Startup,bool Manual,Func<JsonObject,string,VisualCatalogSnapshot,IEnumerable<string>> Entities)> RootActions=new(StringComparer.Ordinal) {
         ["entity_state"]=("Restart",true,false,StateDependencies.Of),
         ["entity_command"]=("Queued",false,false,(_,_,_)=>[]),
         ["entity_setup"]=("Single",false,false,(_,_,_)=>[]),
+        ["camera_frame"]=("Single",false,false,(_,_,_)=>[]),
     };
     static string Q(string value)=>JsonSerializer.Serialize(value);
     /// <summary>

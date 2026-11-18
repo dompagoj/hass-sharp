@@ -51,6 +51,8 @@ export function summarizeTrigger(trigger: RunTrigger, names?: TriggerNames): str
     case 'startup': return 'Started with Home Assistant'
     case 'command': return trigger.entity || trigger.command ? commanded(trigger, names) : 'Entity commanded'
     case 'setup': return 'Definition started'
+    // A camera of the definition was asked for a picture: the camera by its name, else its key.
+    case 'frame': return trigger.entity ? names?.entities?.find(e => e.key === trigger.entity)?.name || trigger.entity : 'Frame needed'
     default: return trigger.description ? capitalise(trigger.description) : 'Trigger'
   }
 }

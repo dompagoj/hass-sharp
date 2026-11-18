@@ -10927,6 +10927,86 @@
           "picture"
         ]
       },
+      "camera_frame": {
+        "label": "When a frame is needed",
+        "category": "Entity",
+        "description": "Run the steps after it when Home Assistant needs a new picture from one of this definition\u0027s cameras. Nothing runs while nobody is watching.",
+        "root": true,
+        "documents": [
+          "entity"
+        ],
+        "minGraphVersion": 5,
+        "config": {
+          "entity": {
+            "type": "string",
+            "required": true,
+            "description": "The camera of this definition whose picture the steps after it make, by its key.",
+            "label": "Camera"
+          },
+          "trackHistory": {
+            "type": "boolean",
+            "default": false,
+            "description": "Record each frame made, with its trace. A camera may be asked for a frame every second while someone watches.",
+            "label": "Track in run history"
+          }
+        },
+        "inputs": {},
+        "outputs": {},
+        "execution": [
+          "next"
+        ],
+        "runtimeVersions": [
+          5
+        ],
+        "keywords": [
+          "camera",
+          "frame",
+          "picture",
+          "snapshot",
+          "stream"
+        ]
+      },
+      "show_frame": {
+        "label": "Show frame",
+        "category": "Entity",
+        "description": "Make this picture the camera\u0027s current picture.",
+        "documents": [
+          "entity"
+        ],
+        "minGraphVersion": 5,
+        "config": {
+          "entity": {
+            "type": "string",
+            "required": true,
+            "description": "The camera of this definition that shows the picture, by its key.",
+            "label": "Camera"
+          }
+        },
+        "inputs": {
+          "image": {
+            "types": [
+              "image"
+            ],
+            "required": true,
+            "label": "Image",
+            "description": "The picture to show until another is shown, such as one taken and drawn on."
+          }
+        },
+        "outputs": {},
+        "execution": [
+          "next"
+        ],
+        "runtimeVersions": [
+          5
+        ],
+        "keywords": [
+          "camera",
+          "frame",
+          "picture",
+          "display",
+          "publish"
+        ]
+      },
       "library:shared:global%3A%3ANodeLib.Samples.Describe": {
         "label": "Describe",
         "category": "Fixture",

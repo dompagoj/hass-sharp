@@ -39,7 +39,7 @@ public static class VisualGraphValidator
         "flow.pure", "pure.unused", "custom.signature", "property.unset", "property.unknown",
         "definition.invalid", "definition.unknownEntity", "definition.unknownCommand", "node.document", "node.singleton", "root.incoming",
         "setting.unknown", "state.duplicate", "command.duplicate", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value",
-        "http.url", "http.body", "download.checksum",
+        "http.url", "http.body", "download.checksum", "camera.entity", "camera.duplicate", "camera.no_frame",
     ];
 
     /// <summary>
@@ -123,7 +123,7 @@ public static class VisualGraphValidator
         internal static string Name(string name) => Trimmed(name) is { Length: > 0 } trimmed ? trimmed : "Unnamed";
         /// <summary>JavaScript's whitespace (as <c>String.prototype.trim</c> removes it), spelled out: .NET's differs at U+FEFF.</summary>
         static bool Blank(char c) => c is '\t' or '\n' or '\v' or '\f' or '\r' or ' ' or '\u00a0' or '\u1680' or (>= '\u2000' and <= '\u200a') or '\u2028' or '\u2029' or '\u202f' or '\u205f' or '\u3000' or '\ufeff';
-        static string Trimmed(string text)
+        internal static string Trimmed(string text)
         {
             int start = 0, end = text.Length;
             while (start < end && Blank(text[start])) start++;
@@ -416,6 +416,12 @@ public static class VisualGraphValidator
         internal static string NoValue(string step) => $"{step} needs at least one value";
         /// <summary>A command of an entity no When commanded step handles.</summary>
         internal static string CommandUnhandled(string domain, string key, string command, string label) => $"{domain} {Name(key)} does nothing on {command}; add {Article(label)} {label} step for it";
+        /// <summary>A Show frame or When a frame is needed step naming an entity of the definition that is not a camera, by its name; whether the definition has one.</summary>
+        internal static string NotACamera(string name, bool anyCamera) => anyCamera ? $"{Name(name)} is not a camera; choose one of this definition's cameras" : $"{Name(name)} is not a camera; add a camera to this definition first";
+        /// <summary>A second When a frame is needed step for one camera, named by its name.</summary>
+        internal static string FrameDuplicate(string name, string label) => $"{Name(name)} already has {Article(label)} {label} step; delete this one or choose another camera";
+        /// <summary>A camera no Show frame step shows a frame for, named by its name.</summary>
+        internal static string NoFrame(string name, string label) => $"{Name(name)} never shows a frame: add {Article(label)} {label} step for it";
     }
 
     sealed class Validation(VisualCatalogSnapshot snapshot)
@@ -645,7 +651,8 @@ public static class VisualGraphValidator
         string KindLabel(string kind) => Text(Root["nodes"]?[kind], "label", Words.KeyWords(kind));
         /// <summary>
         /// The rules about the graph as a whole: a kind a graph holds once, and in an entity graph, one State per entity, one
-        /// When commanded per command, a State reading an entity given over a wire, and a command no step handles.
+        /// When commanded per command, a State reading an entity given over a wire, a command no step handles, one When a
+        /// frame is needed per camera, and a camera no Show frame step shows a frame for.
         /// </summary>
         void GraphRules()
         {
@@ -676,7 +683,17 @@ public static class VisualGraphValidator
                     foreach (var (command, _) in domain["commands"] as JsonObject ?? [])
                         if (!commands.Any(n => Choice(n, "entity") == Text(entity, "key") && Choice(n, "command") == command))
                             errors.Add(new(null, Words.CommandUnhandled(Text(domain, "label", Words.DomainWords(Text(entity, "domain"))), Text(entity, "key"), CommandLabel(Text(entity, "key"), command), KindLabel("entity_command")), 2, Code: "command.unhandled"));
+            // One When a frame is needed per camera, and a camera with no Show frame step never has a frame to give.
+            var frames = OfKind("camera_frame").Where(n => IsCamera(Choice(n, "entity"))).ToList();
+            foreach (var node in Later(frames, n => Choice(n, "entity"))) Error(Id(node), Words.FrameDuplicate(EntityName(Choice(node, "entity")), KindLabel("camera_frame")), "entity", code: "camera.duplicate");
+            foreach (var camera in DefinitionItems(Root, "entities").Where(e => IsCamera(Text(e, "key"))))
+                if (!OfKind("show_frame").Any(n => Choice(n, "entity") == Text(camera, "key")))
+                    errors.Add(new(null, Words.NoFrame(EntityName(Text(camera, "key")), KindLabel("show_frame")), 2, Code: "camera.no_frame"));
         }
+        /// <summary>Whether the definition's entity with this key is a camera.</summary>
+        bool IsCamera(string key) => Text(DefinitionEntity(Root, key), "domain") == "camera";
+        /// <summary>The definition's entity with this key as a sentence names it: its name, else its key.</summary>
+        string EntityName(string key) => Text(DefinitionEntity(Root, key), "name") is { } name && Words.Trimmed(name).Length > 0 ? name : key;
         /// <summary>Whether a step's input is given a value: a wire into it, or an operand that is not unset.</summary>
         bool Supplied(JsonObject node, string port) =>
             incoming.ContainsKey((Id(node), port)) || TryGetInputValue(node, port, out var operand) && operand is JsonObject given && Text(given, "kind") != "unset";
@@ -846,6 +863,9 @@ public static class VisualGraphValidator
             if (EntityGraph && spec["documents"] is JsonArray && spec["config"]?["entity"] != null && cfg["entity"] is JsonValue ev && ev.TryGetValue<string>(out var entityKey))
             {
                 if (DefinitionEntity(Root, entityKey) == null) Error(id, Words.UnknownEntity(entityKey, ConfigLabel(spec["config"]?["entity"], "entity")), "entity", code: "definition.unknownEntity");
+                // Show frame and When a frame is needed name one of the definition's cameras.
+                else if (kind is "camera_frame" or "show_frame" && !IsCamera(entityKey))
+                    Error(id, Words.NotACamera(EntityName(entityKey), DefinitionItems(Root, "entities").Any(e => IsCamera(Text(e, "key")))), "entity", code: "camera.entity");
                 else if (kind == "entity_command" && EntityDomain(Root, entityKey) is { } domain && cfg["command"] is JsonValue cv && cv.TryGetValue<string>(out var command) &&
                     (domain["commands"] as JsonObject ?? []) is var commands && !commands.ContainsKey(command))
                 {

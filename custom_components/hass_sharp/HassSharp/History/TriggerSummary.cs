@@ -39,6 +39,8 @@ public static class TriggerSummary
             Add("entity", Scalar(payload, "entity"));
             Add("command", Scalar(payload, "command"));
         }
+        // A camera of a definition was asked for a picture: its key.
+        if (kind == "frame") Add("entity", Scalar(payload, "entity"));
         if (kind == "schedule")
         {
             Add("scheduleId", Scalar(payload, "schedule_id"));
@@ -62,7 +64,7 @@ public static class TriggerSummary
     static string Kind(InvocationCause cause) => cause switch
     {
         InvocationCause.HomeAssistantTrigger => "ha", InvocationCause.Entity => "entity", InvocationCause.Schedule => "schedule",
-        InvocationCause.Manual => "manual", InvocationCause.Command => "command", InvocationCause.Setup => "setup", _ => "startup",
+        InvocationCause.Manual => "manual", InvocationCause.Command => "command", InvocationCause.Setup => "setup", InvocationCause.Frame => "frame", _ => "startup",
     };
 
     static JsonElement? Property(JsonElement json, string key) =>

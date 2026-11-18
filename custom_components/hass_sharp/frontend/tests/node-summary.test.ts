@@ -127,3 +127,22 @@ describe('Take a picture, Draw rectangle and Draw text', () => {
     expect(nodeSummary(node('camera_snapshot', {}))).toBe(nodeCatalog.nodes.camera_snapshot.description)
   })
 })
+
+describe('When a frame is needed and Show frame', () => {
+  const cameras: Graph = { ...graph, definition: { entities: [{ key: 'annotated', domain: 'camera', name: 'Annotated' }, { key: 'yard', domain: 'camera' }], settings: [] } as unknown as Graph['definition'] }
+  const summary = (n: GraphNode) => {
+    const lifted = nodeSummary(n, withGraphTypes(nodeCatalog, cameras), undefined, cameras)
+    expect(nodeSummary(n, nodeCatalog, undefined, cameras)).toBe(lifted)
+    return lifted
+  }
+  it('name the camera by its name, else its key', () => {
+    expect(summary(node('camera_frame', { entity: 'annotated' }))).toBe('When a frame is needed ▸ Annotated')
+    expect(summary(node('show_frame', { entity: 'annotated', image: { kind: 'unset' } }))).toBe('Show frame ▸ Annotated')
+    expect(summary(node('camera_frame', { entity: 'yard' }))).toBe('When a frame is needed ▸ yard')
+    expect(summary(node('show_frame', { entity: 'gone' }))).toBe('Show frame ▸ gone')
+  })
+  it('fall back to the description for a camera not chosen', () => {
+    expect(summary(node('camera_frame', {}))).toBe(nodeCatalog.nodes.camera_frame.description)
+    expect(summary(node('show_frame', {}))).toBe(nodeCatalog.nodes.show_frame.description)
+  })
+})

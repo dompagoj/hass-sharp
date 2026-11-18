@@ -21,7 +21,7 @@ public static class GeneratedSourcePinTests
     /// Built-in node kinds no automation graph can use, so no pin can hold them (such as kinds only an entity
     /// definition's graph takes). Every other built-in kind must appear in some pinned graph.
     /// </summary>
-    static readonly HashSet<string> UnpinnableKinds = new(["entity_state", "entity_command", "entity_setup", "set_entity_state", "set_entity_available", "setting", "download_file", "camera_snapshot", "image_draw_rect", "image_draw_text"], StringComparer.Ordinal);
+    static readonly HashSet<string> UnpinnableKinds = new(["entity_state", "entity_command", "entity_setup", "set_entity_state", "set_entity_available", "setting", "download_file", "camera_snapshot", "image_draw_rect", "image_draw_text", "camera_frame", "show_frame"], StringComparer.Ordinal);
     static readonly JsonSerializerOptions Readable = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     static string Line(string name, string hash) => JsonSerializer.Serialize(name, Readable) + ": " + JsonSerializer.Serialize(hash, Readable);
     /// <summary>The pin file for these pins: sorted by key, one entry per line, so adding a case is a one-line diff.</summary>

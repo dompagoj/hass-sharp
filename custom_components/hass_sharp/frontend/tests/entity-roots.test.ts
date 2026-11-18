@@ -190,3 +190,25 @@ it('a State or Set state of a button, which has no state, is refused', () => {
   ])
   expect(Object.keys(dataOutputs(graph.nodes.find(n => n.id === 'press')!, withGraphTypes(nodeCatalog, graph)))).toEqual([])
 })
+
+it('When a frame is needed starts a flow as When commanded does: no step order wire leads into it, and its steps run', () => {
+  let graph: Graph = { version: 5, name: 'Annotated', nodes: [], edges: [], definition: { entities: [{ key: 'annotated', domain: 'camera' }], settings: [] } }
+  graph = add(graph, 'camera_frame', 'frame')
+  graph = add(graph, 'camera_snapshot', 'snap', { entity: lit('entity_id:camera', 'camera.front') })
+  graph = add(graph, 'show_frame', 'show')
+  graph = connectNodes(connectNodes(graph, 'frame', 'snap'), 'snap', 'show')
+  graph = connectData(graph, 'snap', 'image', 'show', 'image')
+  // A new step for the definition's only camera names it.
+  expect(graph.nodes.find(n => n.id === 'frame')!.config.entity).toBe('annotated')
+  expect(graph.nodes.find(n => n.id === 'show')!.config.entity).toBe('annotated')
+  expect(validateGraph(graph, nodeCatalog)).toEqual([])
+  expect(canConnect(graph, 'snap', 'frame')).toBe(false)
+  expect(canConnect(graph, 'show', 'frame')).toBe(false)
+  const view = (id: string) => buildNodeView(graph.nodes.find(n => n.id === id)!, { graph, catalog: nodeCatalog, diagnostics: [] })
+  expect(view('frame').execIn).toBeUndefined()
+  expect(view('frame').next?.id).toBe('next')
+  expect(view('show').execIn?.id).toBe('in')
+  expect(view('show').unreachable).toBe(false)
+  const fromNext = { nodeId: 'snap', handle: 'next', type: 'source' as const }
+  expect(canAddFor(graph, 'camera_frame', fromNext, nodeCatalog)).toBe(false)
+})

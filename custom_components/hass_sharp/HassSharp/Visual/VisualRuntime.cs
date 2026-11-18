@@ -653,11 +653,13 @@ public sealed class VisualRuntime
                     case "condition_result":scope.Condition=Input<bool>(scope,id,"value");if(ev!=null)trace!.End(ev,"ok",null,null);return;
                     // A run already cancelled (superseded or stopped) does not act on its definition.
                     case "entity_state":ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),state!,hidden!);definition.SetAvailable(Text(cfg,"entity"),true);break;
-                    // When commanded gives its command's data; When started only starts its flow.
+                    // When commanded gives its command's data; When started and When a frame is needed only start their flows.
                     case "entity_command":Command(id,scope);break;
-                    case "entity_setup":break;
+                    case "entity_setup":case "camera_frame":break;
                     case "set_entity_state":var values=EntityValues(scope,id,out var secret);ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),values,secret);break;
                     case "set_entity_available":var available=Input<bool>(scope,id,"available");ThrowIfCancelled(scope);definition!.SetAvailable(Text(cfg,"entity"),available);break;
+                    // The definition keeps a copy of the picture as its camera's current frame.
+                    case "show_frame":var frame=Input<SharpImage>(scope,id,"image");ThrowIfCancelled(scope);definition!.ShowFrame(Text(cfg,"entity"),frame);break;
                     case "loop_result":scope.Updates=(cfg["values"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get(p.Key));foreach(var edge in data.Where(p=>p.Key.Item1==id))scope.Updates[edge.Key.Item2]=Get(edge.Key.Item2);if(ev!=null)trace!.End(ev,"ok",null,null);return;
                     default:await Waiting(scope,custom(id,scope,this));break;
                 }
@@ -821,7 +823,7 @@ public sealed class VisualRuntime
     /// <summary>The definition of the run in progress, which an entity node acts on; only a run of an entity definition's graph has one.</summary>
     static IDefinitionRuntime Definition()=>InvocationContext.Current?.Definition??throw new InvalidOperationException("This node only works in an entity definition");
     /// <summary>The kinds that act on the definition of the run in progress (see <see cref="Definition"/>).</summary>
-    static readonly HashSet<string> EntityKinds=new(["entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting","download_file","camera_snapshot"],StringComparer.Ordinal);
+    static readonly HashSet<string> EntityKinds=new(["entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting","download_file","camera_snapshot","camera_frame","show_frame"],StringComparer.Ordinal);
     /// <summary>
     /// The state values a State or Set state step hands its definition: one for each of its pins (the state keys of its
     /// entity's domain) that is required or given a value (<see cref="Supplied"/>), as <see cref="EntityStateValue"/>

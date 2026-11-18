@@ -36943,5 +36943,693 @@
       "Camera accepts Camera entity, not Light entity"
     ],
     "codes": []
+  },
+  {
+    "name": "camera: a graph camera makes its frame when one is needed: When a frame is needed, Take a picture, Draw rectangle, Draw text, Show frame",
+    "graph": {
+      "version": 5,
+      "name": "Annotated",
+      "nodes": [
+        {
+          "id": "frame",
+          "kind": "camera_frame",
+          "config": {
+            "entity": "annotated",
+            "trackHistory": false
+          }
+        },
+        {
+          "id": "snap",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        },
+        {
+          "id": "rect",
+          "kind": "image_draw_rect",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            },
+            "width": {
+              "kind": "literal",
+              "type": "number",
+              "value": 20
+            },
+            "height": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            }
+          }
+        },
+        {
+          "id": "label",
+          "kind": "image_draw_text",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "text": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Front door"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "show",
+          "kind": "show_frame",
+          "config": {
+            "entity": "annotated",
+            "image": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "frame:next:snap",
+          "source": "frame",
+          "target": "snap",
+          "port": "next"
+        },
+        {
+          "id": "snap:next:show",
+          "source": "snap",
+          "target": "show",
+          "port": "next"
+        },
+        {
+          "id": "snap.image:rect.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "rect",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "rect.image:label.image",
+          "kind": "data",
+          "source": "rect",
+          "target": "label",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "label.image:show.image",
+          "kind": "data",
+          "source": "label",
+          "target": "show",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true,
+    "messages": [],
+    "codes": []
+  },
+  {
+    "name": "camera: a graph camera shows the frame another flow gives it, with no When a frame is needed",
+    "graph": {
+      "version": 5,
+      "name": "Pushed",
+      "nodes": [
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "snap",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        },
+        {
+          "id": "show",
+          "kind": "show_frame",
+          "config": {
+            "entity": "annotated",
+            "image": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:snap",
+          "source": "setup",
+          "target": "snap",
+          "port": "next"
+        },
+        {
+          "id": "snap:next:show",
+          "source": "snap",
+          "target": "show",
+          "port": "next"
+        },
+        {
+          "id": "snap.image:show.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "show",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true,
+    "messages": [],
+    "codes": []
+  },
+  {
+    "name": "code camera.entity: Show frame and When a frame is needed name an entity that is not a camera, by its name",
+    "graph": {
+      "version": 5,
+      "name": "Not cameras",
+      "nodes": [
+        {
+          "id": "frame",
+          "kind": "camera_frame",
+          "config": {
+            "entity": "power"
+          }
+        },
+        {
+          "id": "snap",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        },
+        {
+          "id": "show",
+          "kind": "show_frame",
+          "config": {
+            "entity": "door",
+            "image": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "frame:next:snap",
+          "source": "frame",
+          "target": "snap",
+          "port": "next"
+        },
+        {
+          "id": "snap:next:show",
+          "source": "snap",
+          "target": "show",
+          "port": "next"
+        },
+        {
+          "id": "snap.image:show.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "show",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "lens",
+            "domain": "camera",
+            "name": "Lens"
+          },
+          {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power"
+          },
+          {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": null
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "frame",
+    "inputId": "entity",
+    "messages": [
+      "Lens never shows a frame: add a Show frame step for it",
+      "Power is not a camera; choose one of this definition's cameras",
+      "door is not a camera; choose one of this definition's cameras"
+    ],
+    "codes": [
+      "camera.entity",
+      "camera.entity",
+      "camera.no_frame"
+    ]
+  },
+  {
+    "name": "code camera.entity: Show frame in a definition that has no camera",
+    "graph": {
+      "version": 5,
+      "name": "No camera",
+      "nodes": [
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "snap",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        },
+        {
+          "id": "show",
+          "kind": "show_frame",
+          "config": {
+            "entity": "power",
+            "image": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:snap",
+          "source": "setup",
+          "target": "snap",
+          "port": "next"
+        },
+        {
+          "id": "snap:next:show",
+          "source": "snap",
+          "target": "show",
+          "port": "next"
+        },
+        {
+          "id": "snap.image:show.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "show",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "show",
+    "inputId": "entity",
+    "messages": [
+      "Power is not a camera; add a camera to this definition first"
+    ],
+    "codes": [
+      "camera.entity"
+    ]
+  },
+  {
+    "name": "code camera.duplicate: a second When a frame is needed for one camera, the later in id order",
+    "graph": {
+      "version": 5,
+      "name": "Twice",
+      "nodes": [
+        {
+          "id": "f2",
+          "kind": "camera_frame",
+          "config": {
+            "entity": "annotated"
+          }
+        },
+        {
+          "id": "f1",
+          "kind": "camera_frame",
+          "config": {
+            "entity": "annotated"
+          }
+        },
+        {
+          "id": "snap",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        },
+        {
+          "id": "show",
+          "kind": "show_frame",
+          "config": {
+            "entity": "annotated",
+            "image": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "f1:next:snap",
+          "source": "f1",
+          "target": "snap",
+          "port": "next"
+        },
+        {
+          "id": "snap:next:show",
+          "source": "snap",
+          "target": "show",
+          "port": "next"
+        },
+        {
+          "id": "snap.image:show.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "show",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "f2",
+    "inputId": "entity",
+    "messages": [
+      "Annotated already has a When a frame is needed step; delete this one or choose another camera"
+    ],
+    "codes": [
+      "camera.duplicate"
+    ]
+  },
+  {
+    "name": "code camera.no_frame: a camera no Show frame step shows a frame for, by its name, else its key",
+    "graph": {
+      "version": 5,
+      "name": "Never shown",
+      "nodes": [
+        {
+          "id": "frame",
+          "kind": "camera_frame",
+          "config": {
+            "entity": "annotated"
+          }
+        },
+        {
+          "id": "say",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "asked"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "frame:next:say",
+          "source": "frame",
+          "target": "say",
+          "port": "next"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
+          },
+          {
+            "key": "yard",
+            "domain": "camera",
+            "name": null
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "warning": "never shows a frame",
+    "warningNodeId": null,
+    "messages": [
+      "Annotated never shows a frame: add a Show frame step for it",
+      "yard never shows a frame: add a Show frame step for it"
+    ],
+    "codes": [
+      "camera.no_frame",
+      "camera.no_frame"
+    ]
+  },
+  {
+    "name": "camera: State, Set state and When commanded keep their refusals for a camera",
+    "graph": {
+      "version": 5,
+      "name": "Lens",
+      "nodes": [
+        {
+          "id": "state",
+          "kind": "entity_state",
+          "config": {
+            "entity": "lens"
+          }
+        },
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "set",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "lens"
+          }
+        },
+        {
+          "id": "cmd",
+          "kind": "entity_command",
+          "config": {
+            "entity": "lens",
+            "command": "frame"
+          }
+        },
+        {
+          "id": "snap",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        },
+        {
+          "id": "show",
+          "kind": "show_frame",
+          "config": {
+            "entity": "lens",
+            "image": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:set",
+          "source": "setup",
+          "target": "set",
+          "port": "next"
+        },
+        {
+          "id": "set:next:snap",
+          "source": "set",
+          "target": "snap",
+          "port": "next"
+        },
+        {
+          "id": "snap:next:show",
+          "source": "snap",
+          "target": "show",
+          "port": "next"
+        },
+        {
+          "id": "snap.image:show.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "show",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "lens",
+            "domain": "camera",
+            "name": "Lens"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "cmd",
+    "inputId": "command",
+    "messages": [
+      "A camera has no state to set",
+      "A camera has no state to set",
+      "Entity lens takes no commands; choose a switch, button, number, select, text, light or cover entity instead"
+    ],
+    "codes": [
+      "definition.unknownCommand",
+      "entity.stateless",
+      "entity.stateless"
+    ]
+  },
+  {
+    "name": "camera: When a frame is needed and Show frame only work in an entity definition",
+    "graph": {
+      "version": 5,
+      "name": "Frames",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "frame",
+          "kind": "camera_frame",
+          "config": {
+            "entity": "annotated"
+          }
+        },
+        {
+          "id": "show",
+          "kind": "show_frame",
+          "config": {
+            "entity": "annotated",
+            "image": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:show",
+          "source": "t",
+          "target": "show",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "show",
+    "messages": [
+      "Image is required",
+      "Show frame only works in the graph of an entity definition; delete it from this automation",
+      "When a frame is needed only works in the graph of an entity definition; delete it from this automation"
+    ],
+    "codes": [
+      "node.document",
+      "node.document"
+    ]
   }
 ]

@@ -108,6 +108,7 @@ static class RunOutcomeTests
             await MisuseThrows(home);
             await RestartCancelsTheOlderRunBeforeTheNewerStarts(home);
             await RunToEndReportsCancellation(await Fresh());
+            await ARunCancelledByItsOwnTokenEndsAlone(await Fresh());
             await StoppingResumesTheCallerOffTheCancellingThread(await Fresh());
         }
         finally
@@ -241,8 +242,8 @@ static class RunOutcomeTests
 
     static async Task HistoryRecordsCarryTheNewCauses(Home home)
     {
-        Check(Enum.GetNames<InvocationCause>().SequenceEqual(["Startup", "Entity", "Manual", "Schedule", "HomeAssistantTrigger", "Command", "Setup"]), "the causes: " + string.Join(",", Enum.GetNames<InvocationCause>()));
-        Check((int)InvocationCause.Command == 5 && (int)InvocationCause.Setup == 6, "the new causes were not appended");
+        Check(Enum.GetNames<InvocationCause>().SequenceEqual(["Startup", "Entity", "Manual", "Schedule", "HomeAssistantTrigger", "Command", "Setup", "Frame"]), "the causes: " + string.Join(",", Enum.GetNames<InvocationCause>()));
+        Check((int)InvocationCause.Command == 5 && (int)InvocationCause.Setup == 6 && (int)InvocationCause.Frame == 7, "the new causes were not appended");
         Body = (_, _) => Task.CompletedTask;
         var before = home.Rows("Flow").Length;
         await Within(home.Class.RunToEnd("Flow", InvocationCause.Command, TriggerPayload.Command("power", "turn_on", Data)), "the command run to end");
@@ -250,16 +251,20 @@ static class RunOutcomeTests
         var command = home.Rows("Flow").First();
         await Within(home.Class.RunToEnd("Flow", InvocationCause.Setup, TriggerPayload.Setup()), "the setup run to end");
         var setup = home.Rows("Flow").First();
-        Check(home.Rows("Flow").Length == before + 2, "records written: " + (home.Rows("Flow").Length - before));
+        await Within(home.Class.RunToEnd("Flow", InvocationCause.Frame, TriggerPayload.Frame("front")), "the frame run to end");
+        var frame = home.Rows("Flow").First();
+        Check(home.Rows("Flow").Length == before + 3, "records written: " + (home.Rows("Flow").Length - before));
+        Check(frame is { Cause: "Frame", Status: "Succeeded" } && frame.Trigger == """{"kind":"frame","entity":"front"}""", $"the frame record: {frame.Cause} {frame.Status} {frame.Trigger}");
         Check(command is { Cause: "Command", Status: "Succeeded", EndUtc: not null }, $"the command record: {command.Cause} {command.Status} {command.EndUtc}");
         Check(command.Trigger == """{"kind":"command","entity":"power","command":"turn_on"}""", "the command record's trigger: " + command.Trigger);
         Check(setup is { Cause: "Setup", Status: "Succeeded", EndUtc: not null } && setup.Trigger == """{"kind":"setup"}""", $"the setup record: {setup.Cause} {setup.Status} {setup.Trigger}");
         // Read back through a store opened again, as after a restart.
         var reopened = new RunHistoryStore(home.StorePath).Read(home.Script.AutomationId, 0, 2).Select(r => r.Cause).ToArray();
-        Check(reopened.SequenceEqual(["Setup", "Command"]), "causes read back: " + string.Join(",", reopened));
+        Check(reopened.SequenceEqual(["Frame", "Setup"]), "causes read back: " + string.Join(",", reopened));
         Check(TriggerSummary.KindOnly(InvocationCause.Command) == """{"kind":"command"}""" && TriggerSummary.KindOnly(InvocationCause.Setup) == """{"kind":"setup"}""", "kind-only summaries");
         Check(TriggerSummary.Summarize(InvocationCause.Command, JsonSerializer.SerializeToElement(new { platform = "command" })) == """{"kind":"command"}""", "a command payload without its fields");
-        Console.WriteLine("PASS HistoryRecordsCarryTheNewCauses: Command and Setup are appended, stored and read back by name, with their trigger summary, final when RunToEnd returns");
+        Check(TriggerSummary.KindOnly(InvocationCause.Frame) == """{"kind":"frame"}""", "the frame kind-only summary");
+        Console.WriteLine("PASS HistoryRecordsCarryTheNewCauses: Command, Setup and Frame are appended, stored and read back by name, with their trigger summary, final when RunToEnd returns");
     }
 
     static async Task MisuseThrows(Home home)
@@ -344,6 +349,41 @@ static class RunOutcomeTests
         var stale = await Within(Start("Flow", "late"), "the run asked for after the unload to end");
         Check(stale == new RunOutcome("Cancelled", CancelReasons.Reloaded), "after unload: " + Show(stale));
         Console.WriteLine("PASS RunToEndReportsCancellation: unloading completes every RunToEnd with (Cancelled, its reason): running, history off, queued behind another, and asked for after the unload");
+    }
+
+    /// <summary>
+    /// A run given a token of its own (as a camera's frame flow is, for its time limit) ends Cancelled with the reason
+    /// given when that token is cancelled, its record saying so; the other runs, also of the same method, go on, and a
+    /// later run is not affected. A run given no token is never cancelled by one.
+    /// </summary>
+    static async Task ARunCancelledByItsOwnTokenEndsAlone(Home home)
+    {
+        var entered = new ConcurrentDictionary<string, TaskCompletionSource>();
+        TaskCompletionSource Entered(string key) => entered.GetOrAdd(key, _ => new(TaskCreationOptions.RunContinuationsAsynchronously));
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Body = async (name, automation) =>
+        {
+            var key = name + " " + automation.TriggerData.GetProperty("entity").GetString();
+            Entered(key).TrySetResult();
+            await release.Task.WaitAsync(automation.CancellationToken);
+        };
+        using var limit = new CancellationTokenSource();
+        var timed = home.Class.RunToEnd("Flow", InvocationCause.Frame, TriggerPayload.Frame("a"), limit.Token, "Took longer than 0.2 s");
+        var other = home.Class.RunToEnd("Flow", InvocationCause.Frame, TriggerPayload.Frame("b"));
+        await Within(Task.WhenAll(Entered("Flow a").Task, Entered("Flow b").Task), "both runs to enter their method");
+        limit.Cancel();
+        var outcome = await Within(timed, "the run cancelled by its token to end");
+        Check(outcome == new RunOutcome("Cancelled", "Took longer than 0.2 s"), "the cancelled run: " + Show(outcome));
+        var record = home.Rows("Flow").Single(r => r.Trigger == """{"kind":"frame","entity":"a"}""");
+        Check(record is { Status: "Cancelled", Error: "Took longer than 0.2 s", Cause: "Frame" }, $"its record: {record.Status} {record.Error}");
+        await Task.Delay(50);
+        Check(!other.IsCompleted, "the other run of the method was cancelled too");
+        release.TrySetResult();
+        Check(await Within(other, "the other run to end") == new RunOutcome("Succeeded", null), "the other run did not succeed");
+        release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var late = await Within(home.Class.RunToEnd("Flow", InvocationCause.Frame, TriggerPayload.Frame("c"), limit.Token, "late"), "a run given a cancelled token to end");
+        Check(late == new RunOutcome("Cancelled", "late"), "a run given a token already cancelled: " + Show(late));
+        Console.WriteLine("PASS ARunCancelledByItsOwnTokenEndsAlone: a run's own token cancels it alone, with the reason given, recorded; the other runs go on");
     }
 
     /// <summary>

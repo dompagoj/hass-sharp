@@ -75,23 +75,28 @@ class ScriptSyncRunner
     /// which answers with a run id the history already has. Triggers do not wait for it.</param>
     /// <param name="outcome">Completed with how the run ended, after its last history write (whether history is on for it
     /// or not), however it ended: before the returned task completes, which may still fail for a history write.</param>
-    public Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null, TaskCompletionSource? recorded = null, TaskCompletionSource<RunOutcome>? outcome = null)
+    /// <param name="cancel">Cancels this run alone, as the script's end cancels all of them; its record then says
+    /// <paramref name="cancelReason"/>, unless the script ended too. None for a run only the script's end cancels.</param>
+    public Task Run(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId = null, DateTime? plannedUtc = null, TaskCompletionSource? recorded = null, TaskCompletionSource<RunOutcome>? outcome = null,
+        CancellationToken cancel = default, string? cancelReason = null)
     {
-        var run = RunCore(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc, recorded, outcome);
+        var run = RunCore(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc, recorded, outcome, cancel, cancelReason);
         scriptClass.Script.TrackRun(run);
         return run;
     }
 
-    async Task RunCore(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc, TaskCompletionSource? recorded, TaskCompletionSource<RunOutcome>? outcome)
+    async Task RunCore(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc, TaskCompletionSource? recorded, TaskCompletionSource<RunOutcome>? outcome,
+        CancellationToken cancel, string? cancelReason)
     {
         // Run now waits for recorded, RunToEnd for outcome: whatever fails on the way (registering logs through Python),
         // they must complete. A run that got as far as its record has already given its own outcome.
-        try { await RunRecorded(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc, recorded, outcome); }
+        try { await RunRecorded(scriptClass, methodInfo, mode, cause, payload, runId, plannedUtc, recorded, outcome, cancel, cancelReason); }
         catch (Exception error) { recorded?.TrySetException(error); outcome?.TrySetResult(new("Failed", error.GetBaseException().Message)); throw; }
         finally { recorded?.TrySetResult(); }
     }
 
-    async Task RunRecorded(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc, TaskCompletionSource? recorded, TaskCompletionSource<RunOutcome>? outcome)
+    async Task RunRecorded(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, InvocationCause cause, System.Text.Json.JsonElement payload, string? runId, DateTime? plannedUtc, TaskCompletionSource? recorded, TaskCompletionSource<RunOutcome>? outcome,
+        CancellationToken cancel, string? cancelReason)
     {
         var compiled = scriptClass.Script.CompiledScript;
         var trigger = compiled.VisualTriggers?.GetValueOrDefault(methodInfo.Name);
@@ -116,13 +121,13 @@ class ScriptSyncRunner
         void Save() { history?.Save(record, firstWritten ? null : snapshot); firstWritten = true; }
         // The trigger (under the activation gate) only registers the run; every history write comes after the hop below,
         // so slow storage holds back neither other triggers nor the editor. The snapshot lands with the revision's first run.
-        var registration = TryRegister(scriptClass, methodInfo, mode);
-        var cancelled = registration == null && scriptClass.Script.LifetimeToken.IsCancellationRequested;
+        var registration = TryRegister(scriptClass, methodInfo, mode, cancel);
+        var cancelled = registration == null && (scriptClass.Script.LifetimeToken.IsCancellationRequested || cancel.IsCancellationRequested);
         await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         if (registration == null)
         {
             record.Status = cancelled ? "Cancelled" : "Skipped";
-            if (cancelled) record.Error = scriptClass.Script.CancelReason ?? CancelReasons.Unknown;
+            if (cancelled) record.Error = scriptClass.Script.CancelReason ?? (cancel.IsCancellationRequested ? cancelReason : null) ?? CancelReasons.Unknown;
             record.EndUtc = DateTime.UtcNow;
             try { history?.Save(record, snapshot); }
             catch (Exception error) { recorded?.TrySetException(error); throw; }
@@ -166,7 +171,8 @@ class ScriptSyncRunner
                 catch (OperationCanceledException) when (registration.Run.Token.IsCancellationRequested)
                 {
                     record.Status = "Cancelled";
-                    record.Error = registration.Run.CancelReason ?? registration.Run.Scope.Reason ?? scriptClass.Script.CancelReason ?? CancelReasons.Unknown;
+                    record.Error = registration.Run.CancelReason ?? registration.Run.Scope.Reason ?? scriptClass.Script.CancelReason
+                        ?? (cancel.IsCancellationRequested ? cancelReason : null) ?? CancelReasons.Unknown;
                 }
                 catch (Exception ex)
                 {
@@ -231,10 +237,11 @@ class ScriptSyncRunner
         }
     }
 
-    RunRegistration? TryRegister(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode)
+    RunRegistration? TryRegister(UserScriptClass scriptClass, MethodInfo methodInfo, AutomationMode mode, CancellationToken cancel)
     {
         var runs = scriptClass.Script.Runs;
-        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(scriptClass.Script.LifetimeToken, runs.Token);
+        var cancellation = cancel.CanBeCanceled ? CancellationTokenSource.CreateLinkedTokenSource(scriptClass.Script.LifetimeToken, runs.Token, cancel)
+            : CancellationTokenSource.CreateLinkedTokenSource(scriptClass.Script.LifetimeToken, runs.Token);
 
         using var scope = _gate.EnterScope();
         if (cancellation.IsCancellationRequested)

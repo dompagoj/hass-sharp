@@ -43,6 +43,13 @@ static class EntityGraphRuntimeTests
         public SharpFiles Files => Downloads ?? throw new InvalidOperationException("This definition downloads nothing");
         /// <summary>The definition's id, which a picture is taken under.</summary>
         public string DefinitionId { get; init; } = "fake";
+        /// <summary>Each frame shown, as the picture was handed over.</summary>
+        public readonly List<SharpImage> Frames = [];
+        public void ShowFrame(string entityKey, SharpImage image)
+        {
+            Calls.Add($"frame {entityKey} {image.Drawings} drawing(s)");
+            Frames.Add(image);
+        }
     }
     /// <summary>The trace documents a run writes; the last one is its final trace.</summary>
     sealed class TraceSink : IRunTraceSink
@@ -187,7 +194,8 @@ static class EntityGraphRuntimeTests
                 (nameof(DrawingStepsDrawOnACopyOfThePicture), DrawingStepsDrawOnACopyOfThePicture),
                 (nameof(TakeAPictureFailsToItsErrorWireAndIsCancelledWithItsRun), TakeAPictureFailsToItsErrorWireAndIsCancelledWithItsRun),
                 (nameof(ADrawingStepRefusesAPositionThatIsNotWhole), ADrawingStepRefusesAPositionThatIsNotWhole),
-                (nameof(APictureIsTracedAndLoggedAsAShortText), APictureIsTracedAndLoggedAsAShortText) })
+                (nameof(APictureIsTracedAndLoggedAsAShortText), APictureIsTracedAndLoggedAsAShortText),
+                (nameof(ShowFrameHandsThePictureToTheDefinition), ShowFrameHandsThePictureToTheDefinition) })
             {
                 States.Clear(); UserScriptManager.CurrentTrigger.Value = null;
                 try { await test(); }
@@ -198,7 +206,7 @@ static class EntityGraphRuntimeTests
         if (failures.Count > 0) throw new Exception($"Entity graph runtime: {failures.Count} failing:\n" + string.Join("\n", failures));
         Console.WriteLine("PASS entity graph runtime: State sets state and availability, Set state, Set available and Setting reach the definition, Has state and Current state read Home Assistant, entity nodes need a definition");
         Console.WriteLine("PASS entity graph runtime: HTTP request gets text, posts and reads JSON, fails on an error status, a timeout, a large or misshapen answer by messages naming only the host, is cancelled with its run, hides a secret's inputs and a hidden response; Compare does not quote a secret");
-        Console.WriteLine("PASS entity graph runtime: Take a picture asks Home Assistant under its definition's id, fails to its error wire and is cancelled with its run; Draw rectangle and Draw text draw on a copy, refuse a position that is not whole, and a picture is traced and logged as a short text, never its bytes");
+        Console.WriteLine("PASS entity graph runtime: Take a picture asks Home Assistant under its definition's id, fails to its error wire and is cancelled with its run; Draw rectangle and Draw text draw on a copy, refuse a position that is not whole, and a picture is traced and logged as a short text, never its bytes; When a frame is needed runs the steps after it and Show frame hands its picture to the definition");
         Console.WriteLine("PASS entity graph runtime: HTTP request names a host it cannot connect to, gives no body for a HEAD, follows redirects itself without handing its headers to another host, refuses a header before sending, and reads an empty or compressed answer; Download file hides a secret's address and checksum");
     }
 
@@ -496,13 +504,14 @@ static class EntityGraphRuntimeTests
              Manual("t1"), Setting("k", "name"), N("show", "log", new { value = Unset }),
              Manual("t2"), Said("before_set", "before set"), SetState("set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
              Manual("t3"), Said("before_up", "before available"), N("up", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) }),
-             Manual("t4"), Said("before_picture", "before picture"), Snapshot("picture", "camera.porch")],
+             Manual("t4"), Said("before_picture", "before picture"), Snapshot("picture", "camera.porch"),
+             N("frame", "camera_frame", new { entity = "lens" }), Said("framed", "framed")],
             [E("on", "on_set"), E("setup", "setup_up"), E("t1", "show"), D("k", "show", "value"), E("t2", "before_set"), E("before_set", "set"), E("t3", "before_up"), E("before_up", "up"),
-             E("t4", "before_picture"), E("before_picture", "picture")],
-            [("door", "binary_sensor"), ("relay", "switch")],
+             E("t4", "before_picture"), E("before_picture", "picture"), E("frame", "framed")],
+            [("door", "binary_sensor"), ("relay", "switch"), ("lens", "camera")],
             ("name", "string"));
         using var compiled = await Compiled.Of(graph, "entity nodes of every kind");
-        foreach (var root in new[] { "s", "on", "setup" })
+        foreach (var root in new[] { "s", "on", "setup", "frame" })
         {
             var error = await Fails(() => compiled.Run(root, null), $"root {root} without a definition");
             Check(error is InvalidOperationException && error.Message == Message, $"root {root} fails as it starts, saying it needs a definition: {error.GetType().Name}: {error.Message}");
@@ -1312,5 +1321,30 @@ static class EntityGraphRuntimeTests
             "the trace has no bytes and no secret: " + text);
         Check(sink.Final["truncated"]?.GetValue<bool>() == false && !text.Contains("\"trunc\"", StringComparison.Ordinal) && System.Text.Encoding.UTF8.GetByteCount(text) < VisualTrace.MaxEventBytes,
             $"the trace stays within its limits: {System.Text.Encoding.UTF8.GetByteCount(text)} bytes");
+    }
+
+    /// <summary>
+    /// When a frame is needed runs the steps after it, as a When started flow does, and Show frame hands the picture wired
+    /// to it to its definition for the camera it names; a run already cancelled shows nothing.
+    /// </summary>
+    static async Task ShowFrameHandsThePictureToTheDefinition()
+    {
+        var picture = Picture();
+        var asked = Cameras((ok, _) => ok(picture));
+        using var compiled = await Compiled.Of(Entity(
+            [N("frame", "camera_frame", new { entity = "lens" }), Snapshot("snap", "camera.porch"), Rect("rect"), N("show", "show_frame", new JsonObject { ["entity"] = "lens", ["image"] = JsonSerializer.SerializeToNode(Unset) })],
+            [E("frame", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("rect", "show", "image", "image")], [("lens", "camera")]), "a frame flow");
+        var definition = new FakeDefinition { DefinitionId = "lens" };
+        await compiled.Run("frame", definition);
+        Same(definition.Calls, ["frame lens 1 drawing(s)"], "Show frame hands the picture with its rectangle to the definition");
+        Same(asked, ["lens camera.porch"], "the picture is taken under the definition's id");
+        var shown = definition.Frames.Single().ToJpeg();
+        Check(shown is [0xFF, 0xD8, ..] && !shown.AsSpan().SequenceEqual(picture), "the frame shown is the picture drawn on");
+
+        using var cancel = new CancellationTokenSource();
+        cancel.Cancel();
+        definition = new FakeDefinition();
+        await Fails(() => compiled.Run("frame", definition, cancel.Token), "a frame flow cancelled before it starts");
+        Same(definition.Calls, [], "a cancelled run shows no frame");
     }
 }

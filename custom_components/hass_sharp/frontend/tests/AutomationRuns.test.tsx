@@ -472,3 +472,14 @@ it('labels the two causes in an automation\'s list too, without the definition\'
   expect(rows(root)[0].querySelector('.hs-run-cause')!.textContent).toBe('Command · relay: turn on')
   expect(rows(root)[1].querySelector('.hs-run-cause')!.textContent).toBe('Started · Definition started')
 })
+
+it('labels a frame run by its camera, named when the definition is known', async () => {
+  const frameTrigger = { kind: 'frame', entity: 'front' } as const
+  const cameraNames = { entities: [{ key: 'front', domain: 'camera', name: 'Front door' }], domains: {} }
+  expect(summarizeTrigger(frameTrigger)).toBe('front')
+  expect(summarizeTrigger(frameTrigger, cameraNames)).toBe('Front door')
+  expect(summarizeTrigger({ kind: 'frame' })).toBe('Frame needed')
+  const { root } = setupDefinition(async () => page([record({ runId: 'run-1', automationId: 'entity:plug', visualId: 'plug', cause: 'Frame', trigger: frameTrigger })]), { triggerNames: cameraNames })
+  await vi.waitFor(() => expect(rows(root)).toHaveLength(1))
+  expect(rows(root)[0].querySelector('.hs-run-cause')!.textContent).toBe('Frame needed · Front door')
+})

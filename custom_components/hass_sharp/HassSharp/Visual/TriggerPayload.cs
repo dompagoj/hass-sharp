@@ -101,6 +101,9 @@ public static class TriggerPayload
     /// <summary>An entity definition starts, before its entities come up.</summary>
     internal static JsonElement Setup() => Platform("setup");
 
+    /// <summary>Home Assistant needs a picture from a camera of a definition: <paramref name="entity"/> is the camera's key within the definition.</summary>
+    internal static JsonElement Frame(string entity) => JsonSerializer.SerializeToElement(new JsonObject { ["platform"] = "frame", ["entity"] = entity });
+
     static JsonElement Platform(string platform) => JsonSerializer.SerializeToElement(new JsonObject { ["platform"] = platform });
 
     // The bridge does not report last_updated, so it stays null, as in EntityStateSnapshot.From.

@@ -242,6 +242,10 @@ export function entityCommandLabel(catalog: Pick<VisualCatalogSnapshot, 'entityD
 }
 /** The definition's entities and settings (each with a text `key`), the first of each key. */
 export const definitionEntities = (catalog: VisualCatalogSnapshot) => definitionItems(catalog, 'entities')
+/** Whether the definition's entity with this key is a camera. */
+const isCamera = (catalog: VisualCatalogSnapshot, key: string) => text(definitionEntity(catalog, key)?.domain) === 'camera'
+/** The definition's entity with this key as a validator's sentence names it: its name, else its key. */
+const cameraName = (catalog: VisualCatalogSnapshot, key: string) => { const name = text(definitionEntity(catalog, key)?.name); return name.replace(blankEnds, '') ? name : key }
 export const definitionSettings = (catalog: VisualCatalogSnapshot) => definitionItems(catalog, 'settings')
 /** The commands the type of the definition's entity with this key takes, in the catalog's order; none for an unknown entity. */
 export function entityCommands(catalog: VisualCatalogSnapshot, key: string): string[] {
@@ -892,6 +896,12 @@ export const words = {
   noValue: (step: string) => `${step} needs at least one value`,
   /** A command of an entity no When commanded step handles. */
   commandUnhandled: (domain: string, key: string, command: string, label: string) => `${domain} ${words.name(key)} does nothing on ${command}; add ${words.article(label)} ${label} step for it`,
+  /** A Show frame or When a frame is needed step naming an entity of the definition that is not a camera, by its name; whether the definition has one. */
+  notACamera: (name: string, anyCamera: boolean) => anyCamera ? `${words.name(name)} is not a camera; choose one of this definition's cameras` : `${words.name(name)} is not a camera; add a camera to this definition first`,
+  /** A second When a frame is needed step for one camera, named by its name. */
+  frameDuplicate: (name: string, label: string) => `${words.name(name)} already has ${words.article(label)} ${label} step; delete this one or choose another camera`,
+  /** A camera no Show frame step shows a frame for, named by its name. */
+  noFrame: (name: string, label: string) => `${words.name(name)} never shows a frame: add ${words.article(label)} ${label} step for it`,
 }
 /** The service a service node calls, named in its messages; undefined for other nodes or without a service id. */
 const serviceName = (node: GraphNode, catalog: VisualCatalogSnapshot) => nodeSpec(node.kind, catalog)?.dynamicInputs === 'service' && typeof node.config.service === 'string' && node.config.service ? node.config.service : undefined
@@ -979,7 +989,7 @@ export const diagnosticCodes = [
   'flow.pure', 'pure.unused', 'custom.signature', 'property.unset', 'property.unknown',
   'definition.invalid', 'definition.unknownEntity', 'definition.unknownCommand', 'node.document', 'node.singleton', 'root.incoming',
   'setting.unknown', 'state.duplicate', 'command.duplicate', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value',
-  'http.url', 'http.body', 'download.checksum',
+  'http.url', 'http.body', 'download.checksum', 'camera.entity', 'camera.duplicate', 'camera.no_frame',
 ] as const
 export type DiagnosticCode = typeof diagnosticCodes[number]
 /**
@@ -1337,6 +1347,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
           .map(([key]) => entityTypeLabel(catalog, key).toLowerCase())
         error(node.id, words.unknownCommand(entityKey, command, commands, commanded, configLabel(spec.config.command, 'command')), 'command', undefined, 'definition.unknownCommand')
       }
+      // Show frame and When a frame is needed name one of the definition's cameras.
+      else if ((node.kind === 'camera_frame' || node.kind === 'show_frame') && !isCamera(catalog, entityKey))
+        error(node.id, words.notACamera(cameraName(catalog, entityKey), definitionItems(catalog, 'entities').some(e => isCamera(catalog, text(e.key)))), 'entity', undefined, 'camera.entity')
     }
     // A State or Set state needs an entity whose type has a state, and at least one of its values when none is required.
     const row = (node.kind === 'entity_state' || node.kind === 'set_entity_state') && typeof entityKey === 'string' && definitionEntity(catalog, entityKey) ? entityDomain(catalog, entityKey) : undefined
@@ -1498,8 +1511,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   }
   /**
    * The rules about the graph as a whole: a kind a graph holds once, and in an entity graph, one State per entity, one
-   * When commanded per command, a State reading an entity given over a wire, and a command no step handles. Mirrors
-   * `VisualGraphValidator` `GraphRules`.
+   * When commanded per command, a State reading an entity given over a wire, a command no step handles, one When a frame
+   * is needed per camera, and a camera no Show frame step shows a frame for. Mirrors `VisualGraphValidator` `GraphRules`.
    */
   function graphRules() {
     const byId = (a: GraphNode, b: GraphNode) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0
@@ -1542,6 +1555,13 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
           errors.push({ nodeId: null, message: words.commandUnhandled(entityTypeLabel(catalog, text(entity.domain)), text(entity.key), entityCommandLabel(catalog, text(entity.domain), command), kindLabel('entity_command')), severity: 2, code: 'command.unhandled' }); origins.push(origin)
         }
     }
+    // One When a frame is needed per camera, and a camera with no Show frame step never has a frame to give.
+    const frames = ofKind('camera_frame').filter(n => isCamera(catalog, choice(n, 'entity')))
+    for (const node of later(frames, n => choice(n, 'entity'))) error(node.id, words.frameDuplicate(cameraName(catalog, choice(node, 'entity')), kindLabel('camera_frame')), 'entity', undefined, 'camera.duplicate')
+    for (const camera of definitionItems(catalog, 'entities').filter(e => isCamera(catalog, text(e.key))))
+      if (!ofKind('show_frame').some(n => choice(n, 'entity') === camera.key)) {
+        errors.push({ nodeId: null, message: words.noFrame(cameraName(catalog, text(camera.key)), kindLabel('show_frame')), severity: 2, code: 'camera.no_frame' }); origins.push(origin)
+      }
   }
 }
 

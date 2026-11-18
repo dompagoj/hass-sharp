@@ -125,7 +125,8 @@ describe('editor graph', () => {
         settings: graph.definition.settings.map((s: any, i: number) => i % 2
           ? { ...s, value: null, label: `Setting ${s.key}`, secret: true, hasValue: true }
           : { ...s, value: s.type === 'number' ? 4 : s.type === 'boolean' ? true : 'text', label: `Setting ${s.key}` }),
-        entities: graph.definition.entities.map((e: any) => ({ ...e, name: `Entity ${e.key}`, icon: 'mdi:flash', entityCategory: null, enabledByDefault: true })),
+        // A name the fixture gives (null for none) stays, as a sentence that names an entity by its name says it.
+        entities: graph.definition.entities.map((e: any) => ({ ...e, name: Object.hasOwn(e, 'name') ? e.name : `Entity ${e.key}`, icon: 'mdi:flash', entityCategory: null, enabledByDefault: true })),
         logic: { kind: 'graph', graph: withoutDefinition(graph) },
       }
       const diagnostics = contract.validateGraph(editorGraph(body), fixture.catalogPatch ? patched(fixture.catalogPatch) : contract.nodeCatalog)

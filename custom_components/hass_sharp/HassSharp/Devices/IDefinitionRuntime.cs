@@ -9,8 +9,9 @@ namespace HassSharp;
 /// <para>
 /// <b>Concurrency.</b> Calls can arrive at the same time: from the parallel branches of one run, from runs of different
 /// roots, and from two runs of one trigger whose mode is Parallel. Two runs of one State never overlap, nor do two of one
-/// When commanded flow: a State restarts (a newer change cancels the run in progress, and the newer run starts only once
-/// that one has ended) and a When commanded flow is queued. They arrive on thread-pool threads, never on Home
+/// When commanded flow or of one When a frame is needed flow: a State restarts (a newer change cancels the run in progress,
+/// and the newer run starts only once that one has ended), a When commanded flow is queued, and a frame flow runs one at a
+/// time. They arrive on thread-pool threads, never on Home
 /// Assistant's or Python's. An implementation must be thread-safe. It may not call back into the run in progress nor
 /// wait for a run of its definition from a call: the run is blocked in the call until it returns.
 /// </para>
@@ -28,8 +29,8 @@ namespace HassSharp;
 /// </list>
 /// </para>
 /// <para>
-/// <b>A Set state or Set available step</b> reads its inputs, checks the run's cancellation in the same way, and then
-/// calls <see cref="SetState"/> or <see cref="SetAvailable"/> once. Calls already made stay made when a later step fails;
+/// <b>A Set state, Set available or Show frame step</b> reads its inputs, checks the run's cancellation in the same way, and
+/// then calls <see cref="SetState"/>, <see cref="SetAvailable"/> or <see cref="ShowFrame"/> once. Calls already made stay made when a later step fails;
 /// nothing is undone.
 /// </para>
 /// <para>
@@ -87,4 +88,11 @@ internal interface IDefinitionRuntime
     /// stops. Throws <see cref="ObjectDisposedException"/> once it has stopped.
     /// </summary>
     SharpFiles Files { get; }
+    /// <summary>
+    /// Makes <paramref name="image"/> the current frame of the definition's camera <paramref name="entityKey"/>, from any
+    /// run (a Show frame step): the frame a request for the camera's picture is answered with until another is shown.
+    /// The definition keeps a copy, so the run may go on drawing on the picture it handed over. A run already cancelled
+    /// does not call it.
+    /// </summary>
+    void ShowFrame(string entityKey, SharpImage image);
 }

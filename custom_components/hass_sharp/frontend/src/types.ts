@@ -380,8 +380,11 @@ export interface HassValueChangedEvent extends Event {
 export type RunStatus = 'Pending' | 'Running' | 'Succeeded' | 'Skipped' | 'Cancelled' | 'Failed' | 'Interrupted' | 'Stopped'
 /** Stored trigger summary of a run (run history v2). Only the fields of its kind are present. */
 export interface RunTrigger {
-  /** An entity definition's runs add `command` (one of its entities was commanded) and `setup` (it started). */
-  kind: 'ha' | 'entity' | 'schedule' | 'manual' | 'startup' | 'command' | 'setup'
+  /**
+   * An entity definition's runs add `command` (one of its entities was commanded), `setup` (it started) and `frame` (one
+   * of its cameras was asked for a picture; `entity` is its key).
+   */
+  kind: 'ha' | 'entity' | 'schedule' | 'manual' | 'startup' | 'command' | 'setup' | 'frame'
   platform?: string
   id?: string
   description?: string

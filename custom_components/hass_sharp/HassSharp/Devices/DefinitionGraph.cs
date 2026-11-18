@@ -13,6 +13,8 @@ internal sealed record DefinitionRoots(string? Setup, IReadOnlyDictionary<string
 {
     /// <summary>The key of the entity each State's method works out the state of, by method.</summary>
     public IReadOnlyDictionary<string, string> StateEntities { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
+    /// <summary>Each When a frame is needed flow's method, keyed by the key of its camera.</summary>
+    public IReadOnlyDictionary<string, string> Frames { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
 }
 
 /// <summary>
@@ -47,16 +49,17 @@ internal static class DefinitionGraph
         return copy;
     }
 
-    /// <summary>The methods of the graph's When started, When commanded and State roots, named as the generator names them.</summary>
+    /// <summary>The methods of the graph's When started, When commanded, State and When a frame is needed roots, named as the generator names them.</summary>
     internal static DefinitionRoots Roots(JsonObject graph, VisualCatalogSnapshot snapshot)
     {
         string? setup = null;
         var commands = new Dictionary<string, string>(StringComparer.Ordinal);
         var states = new List<string>();
         var stateEntities = new Dictionary<string, string>(StringComparer.Ordinal);
+        var frames = new Dictionary<string, string>(StringComparer.Ordinal);
         var roots = (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>().Where(n => VisualNodeCatalog.IsRoot(n, snapshot))
             .OrderBy(n => VisualNodeCatalog.Text(n, "id"), StringComparer.Ordinal);
-        // A valid graph has one When started and one flow per command; the first in id order is kept otherwise.
+        // A valid graph has one When started, one flow per command and one per camera; the first in id order is kept otherwise.
         foreach (var node in roots)
             switch (VisualNodeCatalog.Text(node, "kind"))
             {
@@ -68,7 +71,8 @@ internal static class DefinitionGraph
                     states.Add(VisualNodeCatalog.EffectiveTriggerMethod(node));
                     stateEntities[VisualNodeCatalog.EffectiveTriggerMethod(node)] = VisualNodeCatalog.Text(node["config"], "entity");
                     break;
+                case "camera_frame": frames.TryAdd(VisualNodeCatalog.Text(node["config"], "entity"), VisualNodeCatalog.EffectiveTriggerMethod(node)); break;
             }
-        return new(setup, commands, states) { StateEntities = stateEntities };
+        return new(setup, commands, states) { StateEntities = stateEntities, Frames = frames };
     }
 }

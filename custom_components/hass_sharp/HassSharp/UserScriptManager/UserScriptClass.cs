@@ -213,13 +213,15 @@ class UserScriptClass
     /// cancelling it (an unload, or Home Assistant stopping from Python).</item>
     /// </list>
     /// </remarks>
-    internal async Task<RunOutcome> RunToEnd(string method, InvocationCause cause, System.Text.Json.JsonElement payload)
+    /// <param name="cancel">Cancels this run alone, which then ends Cancelled with <paramref name="cancelReason"/> (see
+    /// <see cref="ScriptSyncRunner.Run"/>); none by default.</param>
+    internal async Task<RunOutcome> RunToEnd(string method, InvocationCause cause, System.Text.Json.JsonElement payload, CancellationToken cancel = default, string? cancelReason = null)
     {
         if (!_actions.TryGetValue(method, out var action)) throw new ArgumentException($"Unknown action {method}", nameof(method));
         if (cause == InvocationCause.Manual && !action.Manual)
             throw new InvalidOperationException("Manual invocation is disabled");
         var outcome = new TaskCompletionSource<RunOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var run = Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method), action.Mode, cause, payload, outcome: outcome);
+        var run = Script.ScriptManager.SyncRunner.Run(this, Methods.Single(m => m.Name == method), action.Mode, cause, payload, outcome: outcome, cancel: cancel, cancelReason: cancelReason);
         // The run's task fails for a history write, a cancellation callback that throws, or a failure before the run got
         // as far as its record; the outcome already says how the run ended. Logged as UserScriptManager.Observe logs it.
         try { await run; }

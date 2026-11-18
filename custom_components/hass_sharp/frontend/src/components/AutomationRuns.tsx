@@ -13,8 +13,8 @@ const PAGE_SIZE = 20
 const STATUSES: RunStatus[] = ['Failed', 'Cancelled', 'Interrupted', 'Stopped', 'Skipped', 'Succeeded', 'Running', 'Pending']
 const CAUSES: Record<string, string> = {
   HomeAssistantTrigger: 'Home Assistant trigger', Entity: 'Entity change', Schedule: 'Schedule', Manual: 'Manual run', Startup: 'Startup',
-  // An entity definition's: one of its entities was commanded, or it started.
-  Command: 'Command', Setup: 'Started',
+  // An entity definition's: one of its entities was commanded, it started, or one of its cameras was asked for a picture.
+  Command: 'Command', Setup: 'Started', Frame: 'Frame needed',
 }
 const duration = (ms: number | null) => ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} s`
 // Rows recorded before run history v2 carry only the method name and no trigger summary.

@@ -99,7 +99,13 @@ static class EntityGraphTests
             (nameof(ACommandsDataIsCheckedAsAClassChecksIt), ACommandsDataIsCheckedAsAClassChecksIt),
             (nameof(APasswordTextsRefusedValueIsNotQuoted), APasswordTextsRefusedValueIsNotQuoted),
             (nameof(ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot), ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot),
-            (nameof(APictureGoesIntoNoLibraryPinAndNoLibraryValueIsAPicture), APictureGoesIntoNoLibraryPinAndNoLibraryValueIsAPicture) })
+            (nameof(APictureGoesIntoNoLibraryPinAndNoLibraryValueIsAPicture), APictureGoesIntoNoLibraryPinAndNoLibraryValueIsAPicture),
+            (nameof(AGraphCameraMakesItsFrameOnlyWhenOneIsNeeded), AGraphCameraMakesItsFrameOnlyWhenOneIsNeeded),
+            (nameof(AFrameFlowWhoseSourceFailsGivesTheLastGoodFrame), AFrameFlowWhoseSourceFailsGivesTheLastGoodFrame),
+            (nameof(AFrameFlowWithoutShowFrameKeepsTheFrame), AFrameFlowWithoutShowFrameKeepsTheFrame),
+            (nameof(APushedFrameIsAnsweredWithoutRunningAnything), APushedFrameIsAnsweredWithoutRunningAnything),
+            (nameof(AFrameFlowPastItsLimitIsCancelledAndTheCameraRecovers), AFrameFlowPastItsLimitIsCancelledAndTheCameraRecovers),
+            (nameof(ARevisionSavedWhileAFrameFlowRunsServesFrames), ARevisionSavedWhileAFrameFlowRunsServesFrames) })
         {
             try
             {
@@ -2476,5 +2482,205 @@ static class EntityGraphTests
         own["edges"]!.AsArray().Add(Next("make", "keep"));
         Check(Problems(own).Length == 0, "a library's SharpImage goes into its own SharpImage pin: " + string.Join(" | ", Problems(own)));
         return Task.CompletedTask;
+    }
+
+    // ---- A camera built from nodes ----
+
+    /// <summary>The picture <c>camera.front</c> gives: 40 by 30, white, or black for a second one.</summary>
+    static byte[] Front(bool black = false) => SharpImage.Blank(40, 30, black ? SharpColor.Black : SharpColor.White).ToJpeg();
+    static JsonObject Snap(string id) => N(id, "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.front") });
+    static JsonObject Rect(string id) => N(id, "image_draw_rect", new JsonObject
+        { ["image"] = JsonSerializer.SerializeToNode(Unset), ["x"] = Lit("number", 2), ["y"] = Lit("number", 2), ["width"] = Lit("number", 20), ["height"] = Lit("number", 10) });
+    static JsonObject ShowFrame(string id, string entity = "annotated") => N(id, "show_frame", new JsonObject { ["entity"] = entity, ["image"] = JsonSerializer.SerializeToNode(Unset) });
+    static JsonObject FrameNeeded(string id, bool? trackHistory = null)
+    {
+        var config = new JsonObject { ["entity"] = "annotated" };
+        if (trackHistory is { } track) config["trackHistory"] = track;
+        return N(id, "camera_frame", config);
+    }
+    static JsonNode Camera() => Entity("annotated", "camera", new { name = "Annotated" });
+    /// <summary>
+    /// The phase's acceptance graph: When a frame is needed ▸ Annotated → Take a picture (camera.front) → Draw rectangle →
+    /// Draw text → Show frame ▸ Annotated; its history as the catalog has it unless <paramref name="trackHistory"/> is given.
+    /// </summary>
+    static JsonObject Annotated(bool? trackHistory = null) => Definition("Annotated", Graph("Annotated",
+        [FrameNeeded("frame", trackHistory), Snap("snap"), Rect("rect"),
+         N("label", "image_draw_text", new JsonObject { ["image"] = JsonSerializer.SerializeToNode(Unset), ["text"] = Lit("string", "Front door"), ["x"] = Lit("number", 1), ["y"] = Lit("number", 1) }),
+         ShowFrame("show")],
+        Next("frame", "snap"), Next("snap", "show"), Data("snap", "rect", "image", "image"), Data("rect", "label", "image", "image"), Data("label", "show", "image", "image")), [Camera()]);
+    static Task<byte[]> Frame(Rig rig, string uniqueId = "annotated:annotated") => rig.Api.CameraImage(uniqueId);
+    static bool Same(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
+    static string[] Problems(Rig rig) => [.. rig.Home.Logs(PyLogLevel.Error), .. rig.Home.Logs(PyLogLevel.Warn)];
+
+    /// <summary>
+    /// The acceptance graph: nothing runs while nobody watches; five requests at once run the flow once and get one JPEG
+    /// drawn on the picture taken; its runs are not recorded unless its history is on, and then its trace shows the
+    /// picture as a short text, never its bytes.
+    /// </summary>
+    static async Task AGraphCameraMakesItsFrameOnlyWhenOneIsNeeded()
+    {
+        await using var rig = await Rig.Start("frame", ("camera.front", "idle"));
+        var front = Front();
+        rig.Home.AnswerPictures = (_, camera, ok, fail) => { if (camera == "camera.front") ok(front); else fail("Camera is off"); };
+        var saved = await rig.Save("annotated", Annotated());
+        Check(saved["active"]!.GetValue<bool>() && saved["diagnostics"] == null, "the camera runs, with nothing to warn of: " + saved.ToJsonString());
+        var automationId = saved["document"]!["automationId"]!.GetValue<string>();
+        await rig.Started("annotated");
+        await Task.Delay(100);
+        Check(rig.Home.Pictures().Length == 0, "nothing runs while nobody watches: " + string.Join(", ", rig.Home.Pictures()));
+
+        var frames = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ => Frame(rig)));
+        Check(frames.All(frame => frame is [0xFF, 0xD8, ..] && Same(frame, frames[0])) && !Same(frames[0], front), "five requests at once get one JPEG, drawn on the picture taken");
+        TurboJpeg.Header(frames[0], out var width, out var height);
+        Check(width == 40 && height == 30, $"the frame has the picture's size: {width}x{height}");
+        Check(rig.Home.Pictures().SequenceEqual([("annotated", "camera.front")]), "the flow ran once for the five requests: " + string.Join(", ", rig.Home.Pictures()));
+        Check(rig.History(automationId).Length == 0, "a frame flow is not recorded by default: " + Lines(rig.History(automationId).Select(r => r.ToJsonString())));
+        Check(Problems(rig).Length == 0, "nothing is logged: " + Lines(Problems(rig)));
+
+        // With its history on, the frame made is a run, whose trace shows the picture as a short text.
+        await rig.Save("annotated", Annotated(trackHistory: true), saved["document"]!["revision"]!.GetValue<long>());
+        await rig.Started("annotated");
+        var traced = await Frame(rig);
+        var runs = rig.History(automationId);
+        Check(runs.Length == 1 && runs[0]["cause"]!.GetValue<string>() == "Frame" && runs[0]["status"]!.GetValue<string>() == "Succeeded"
+            && runs[0]["triggerNodeId"]!.GetValue<string>() == "frame" && runs[0]["hasTrace"]!.GetValue<bool>(), "the frame made is recorded: " + Lines(runs.Select(r => r.ToJsonString())));
+        Check(runs[0]["trigger"]!.ToJsonString().Contains("annotated", StringComparison.Ordinal), "the run's trigger names the camera: " + runs[0]["trigger"]!.ToJsonString());
+        var text = rig.Api.GetRunTrace(runs[0]["runId"]!.GetValue<string>());
+        var shown = JsonNode.Parse(text)!["trace"]!["events"]!.AsArray().Single(e => e!["node"]!.GetValue<string>() == "show")!["inputs"]!["image"]!;
+        Check(shown["v"]?.GetValue<string>() == $"Image · {(front.Length + 1023) / 1024} KB · 2 drawings", "the trace shows the picture as a short text: " + shown.ToJsonString());
+        Check(!text.Contains(Convert.ToBase64String(front)[..40], StringComparison.Ordinal) && !text.Contains(Convert.ToBase64String(traced)[..40], StringComparison.Ordinal)
+            && !text.Contains("[255,216", StringComparison.Ordinal), "the trace has no picture bytes");
+    }
+
+    /// <summary>
+    /// A frame flow whose picture cannot be taken leaves the last good frame as the answer, logged once for the reason, as
+    /// a class's Frame() is (the flow's failure is not logged a second time), and once when it works again.
+    /// </summary>
+    static async Task AFrameFlowWhoseSourceFailsGivesTheLastGoodFrame()
+    {
+        await using var rig = await Rig.Start("frame-failing", ("camera.front", "idle"));
+        CameraFrames.IntervalSecond = TimeSpan.FromMilliseconds(20);
+        var (front, black) = (Front(), Front(black: true));
+        var answer = 0;
+        rig.Home.AnswerPictures = (_, _, ok, fail) => { switch (Volatile.Read(ref answer)) { case 0: ok(front); break; case 1: fail("Camera camera.front is off"); break; default: ok(black); break; } };
+        await rig.Save("annotated", Annotated());
+        await rig.Started("annotated");
+        var good = await Frame(rig);
+        Volatile.Write(ref answer, 1);
+        for (var i = 0; i < 5; i++)
+        {
+            await Task.Delay(30);
+            Check(Same(await Frame(rig), good), $"failure {i + 1} answers the last good frame");
+        }
+        Check(rig.Home.Pictures().Length == 6, $"each request an interval apart ran the flow: {rig.Home.Pictures().Length} pictures");
+        var problems = Problems(rig);
+        Check(problems.Length == 1 && problems[0].StartsWith("Annotated: Annotated (annotated) could not make a frame: ", StringComparison.Ordinal) && problems[0].Contains("Camera camera.front is off", StringComparison.Ordinal),
+            "five failures for one reason log one line, the camera's: " + Lines(problems));
+        Volatile.Write(ref answer, 2);
+        await Task.Delay(30);
+        var again = await Frame(rig);
+        Check(!Same(again, good) && again is [0xFF, 0xD8, ..], "the camera makes frames again");
+        Check(rig.Home.Logs(PyLogLevel.Info).Count(line => line == "Annotated: Annotated (annotated) makes frames again") == 1 && Problems(rig).Length == 1,
+            "the recovery is logged once: " + Lines(rig.Home.Logs()));
+    }
+
+    /// <summary>A frame flow that shows no frame leaves the frame as it was: the one When started showed.</summary>
+    static async Task AFrameFlowWithoutShowFrameKeepsTheFrame()
+    {
+        await using var rig = await Rig.Start("frame-kept", ("camera.front", "idle"));
+        var front = Front();
+        rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
+        var graph = Graph("Kept", [N("setup", "entity_setup"), Snap("snap"), ShowFrame("show"), FrameNeeded("frame"), N("say", "log", new { value = Lit("string", "asked") })],
+            Next("setup", "snap"), Next("snap", "show"), Data("snap", "show", "image", "image"), Next("frame", "say"));
+        var saved = await rig.Save("annotated", Definition("Annotated", graph, [Camera()]));
+        Check(saved["diagnostics"] == null, "a Show frame in another flow is enough: " + saved.ToJsonString());
+        await rig.Started("annotated");
+        Check(Same(await Frame(rig), front), "the frame When started showed is the answer");
+        Check(rig.Home.Logs().Count(line => line == "asked") == 1 && rig.Home.Pictures().Length == 1, "the frame flow ran, and took no picture: " + Lines(rig.Home.Logs()));
+    }
+
+    /// <summary>
+    /// Without a When a frame is needed, a request is answered with the frame shown last, by any flow, and runs nothing:
+    /// When started shows the first, a trigger's flow a later one.
+    /// </summary>
+    static async Task APushedFrameIsAnsweredWithoutRunningAnything()
+    {
+        await using var rig = await Rig.Start("frame-pushed", ("binary_sensor.motion", "off"), ("camera.front", "idle"));
+        var front = Front();
+        rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
+        var graph = Graph("Pushed",
+            [N("setup", "entity_setup"), Snap("snap"), ShowFrame("show"), N("seen", "trigger", new { type = "entity", entity = "binary_sensor.motion" }), Snap("again"), Rect("mark"), ShowFrame("marked")],
+            Next("setup", "snap"), Next("snap", "show"), Data("snap", "show", "image", "image"),
+            Next("seen", "again"), Next("again", "marked"), Data("again", "mark", "image", "image"), Data("mark", "marked", "image", "image"));
+        var saved = await rig.Save("annotated", Definition("Annotated", graph, [Camera()]));
+        Check(saved["active"]!.GetValue<bool>() && saved["diagnostics"] == null, "the camera runs: " + saved.ToJsonString());
+        await rig.Started("annotated");
+        for (var i = 0; i < 3; i++) Check(Same(await Frame(rig), front), $"request {i + 1} gets the frame When started showed");
+        Check(rig.Home.Pictures().Length == 1, $"the requests ran nothing: {rig.Home.Pictures().Length} pictures");
+        await rig.Change("binary_sensor.motion", "on");
+        var marked = await Frame(rig);
+        Check(marked is [0xFF, 0xD8, ..] && !Same(marked, front) && rig.Home.Pictures().Length == 2, "the trigger's flow shows a frame of its own, which the next request gets");
+    }
+
+    /// <summary>
+    /// A frame flow still running at the time limit is cancelled (its run records why): the request gets the last good
+    /// frame, the next one starts a flow of its own, and once the picture comes again the camera makes frames again.
+    /// The time limit is 0.2 s here.
+    /// </summary>
+    static async Task AFrameFlowPastItsLimitIsCancelledAndTheCameraRecovers()
+    {
+        await using var rig = await Rig.Start("frame-late", ("camera.front", "idle"));
+        CameraFrames.IntervalSecond = TimeSpan.FromMilliseconds(20);
+        CameraFrames.MakeLimit = TimeSpan.FromMilliseconds(200);
+        var (front, black) = (Front(), Front(black: true));
+        var answer = 0;
+        // 1: Home Assistant never answers.
+        rig.Home.AnswerPictures = (_, _, ok, _) => { switch (Volatile.Read(ref answer)) { case 0: ok(front); break; case 1: break; default: ok(black); break; } };
+        var saved = await rig.Save("annotated", Annotated(trackHistory: true));
+        var automationId = saved["document"]!["automationId"]!.GetValue<string>();
+        await rig.Started("annotated");
+        var good = await Frame(rig);
+        Volatile.Write(ref answer, 1);
+        JsonObject[] Cancelled() => rig.History(automationId).Where(r => r["status"]!.GetValue<string>() == "Cancelled").ToArray();
+        for (var i = 1; i <= 2; i++)
+        {
+            await Task.Delay(30);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            Check(Same(await Frame(rig), good) && clock.Elapsed >= TimeSpan.FromMilliseconds(190) && clock.Elapsed < TimeSpan.FromSeconds(2),
+                $"request {i} past the limit answers the last good frame ({clock.ElapsedMilliseconds} ms)");
+            await EntityTestHome.Until(() => Cancelled().Length == i, $"flow {i} past the limit is cancelled");
+            // Its end reaches the camera through a pool continuation.
+            await Task.Delay(50);
+        }
+        Check(rig.Home.Pictures().Length == 3, $"the second request started a flow of its own: {rig.Home.Pictures().Length} pictures");
+        Check(Cancelled().All(r => r["error"]?.GetValue<string>() == "Took longer than 0.2 s"), "the runs say why they were cancelled: " + Lines(Cancelled().Select(r => r.ToJsonString())));
+        Check(Problems(rig).SequenceEqual(["Annotated: Annotated (annotated) could not make a frame: it took longer than 0.2 s"]), "the time limit is logged once: " + Lines(Problems(rig)));
+        Volatile.Write(ref answer, 2);
+        await Task.Delay(30);
+        var again = await Frame(rig);
+        Check(!Same(again, good) && again is [0xFF, 0xD8, ..], "the camera makes frames again by itself");
+        Check(rig.Home.Logs(PyLogLevel.Info).Count(line => line == "Annotated: Annotated (annotated) makes frames again") == 1, "and says so once: " + Lines(rig.Home.Logs()));
+    }
+
+    /// <summary>A revision saved while a frame flow waits for its picture: the old flow is cancelled, its request ends, the new revision serves frames.</summary>
+    static async Task ARevisionSavedWhileAFrameFlowRunsServesFrames()
+    {
+        await using var rig = await Rig.Start("frame-saved", ("camera.front", "idle"));
+        var front = Front();
+        rig.Home.AnswerPictures = (_, _, _, _) => { };
+        var saved = await rig.Save("annotated", Annotated());
+        await rig.Started("annotated");
+        var waiting = Frame(rig);
+        await EntityTestHome.Until(() => rig.Home.Pictures().Length == 1, "the frame flow asks for its picture");
+        rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var replaced = await rig.Save("annotated", Annotated(), saved["document"]!["revision"]!.GetValue<long>());
+        Check(replaced["active"]!.GetValue<bool>() && clock.Elapsed < TimeSpan.FromSeconds(2), $"the new revision runs, saved in {clock.ElapsedMilliseconds} ms: " + replaced.ToJsonString());
+        var ended = await Throws<InvalidOperationException>(() => waiting, "the request to the replaced revision");
+        Check(ended.Message == "The entity is not running", "the request to the replaced revision ends: " + ended.Message);
+        await rig.Started("annotated");
+        var frame = await Frame(rig);
+        Check(frame is [0xFF, 0xD8, ..] && !Same(frame, front) && rig.Home.Pictures().Length == 2, "the new revision serves frames");
+        Check(Problems(rig).Length == 0, "the cancelled flow is no failure: " + Lines(Problems(rig)));
     }
 }

@@ -246,6 +246,21 @@ describe('the image type', () => {
     expect(text.config).toMatchObject({ color: { default: 'White' }, size: { min: 8, max: 200, default: 16 }, background: { default: true } })
     for (const spec of [rect, text]) expect(spec.config.color.enum).toEqual(['Red', 'Green', 'Blue', 'Yellow', 'Orange', 'White', 'Black'])
   })
+  it('is shown as a camera\'s frame by Show frame, in a flow When a frame is needed starts, only in an entity definition', () => {
+    const { camera_frame: frame, show_frame: show } = contract.nodeCatalog.nodes
+    for (const spec of [frame, show]) expect(spec).toMatchObject({ category: 'Entity', documents: ['entity'], config: { entity: { type: 'string', required: true } } })
+    expect(frame).toMatchObject({ label: 'When a frame is needed', root: true, execution: ['next'], inputs: {}, outputs: {}, config: { trackHistory: { default: false } } })
+    expect(frame.description).toBe('Run the steps after it when Home Assistant needs a new picture from one of this definition\'s cameras. Nothing runs while nobody is watching.')
+    expect(frame.singleton).toBeUndefined()
+    expect(show).toMatchObject({ label: 'Show frame', execution: ['next'], inputs: { image: { types: ['image'], required: true } }, outputs: {} })
+    expect(show.root).toBeUndefined()
+    expect(show.pure).toBeUndefined()
+    expect(show.description).toBe('Make this picture the camera\'s current picture.')
+    const camera: Graph = { version: 5, name: 'Annotated', nodes: [], edges: [], definition: { entities: [{ key: 'annotated', domain: 'camera' }], settings: [] } }
+    expect(contract.trackHistoryDefault('camera_frame', 'entity', contract.nodeCatalog)).toBe(false)
+    expect(contract.addGraphNode(camera, 'camera_frame', 'n', contract.nodeCatalog).nodes.at(-1)!.config.trackHistory).toBe(false)
+    expect(contract.diagnosticCodes).toEqual(expect.arrayContaining(['camera.entity', 'camera.duplicate', 'camera.no_frame']))
+  })
 })
 it('any number goes into any numeric pin, except a nullable one into a pin that cannot hold null', () => {
   const cases: [string, string, boolean][] = [

@@ -5,7 +5,8 @@ namespace HassSharp;
 
 /// <summary>
 /// The part of <see cref="DefinitionHost"/> only a definition built from nodes uses: its entities, created from the
-/// document, its When started and When commanded flows, and what its graph's runs do to it (<see cref="IDefinitionRuntime"/>).
+/// document, its When started, When commanded and When a frame is needed flows, and what its graph's runs do to it
+/// (<see cref="IDefinitionRuntime"/>).
 /// </summary>
 internal sealed partial class DefinitionHost
 {
@@ -25,6 +26,8 @@ internal sealed partial class DefinitionHost
     readonly Dictionary<string, FailureLog> failingFlows = new(StringComparer.Ordinal);
     // A graph's frame flows by the key of their camera: each runs before a request for that camera's picture is answered.
     readonly Dictionary<string, Func<Task>> frameFlows = new(StringComparer.Ordinal);
+    // Why each frame flow's run last failed, by method, as FlowFailed worded it, until RunFrame takes it for its camera.
+    readonly Dictionary<string, (string Reason, Exception Failure)> frameFailures = new(StringComparer.Ordinal);
     // A graph's settings by key, as its Setting nodes read them; read from the definition as it prepares, before any run.
     volatile IReadOnlyDictionary<string, (object? Value, bool Secret)> graphSettings = new Dictionary<string, (object?, bool)>();
     // The keys of a graph's entities a State works out; none for a class.
@@ -44,7 +47,8 @@ internal sealed partial class DefinitionHost
     /// succeed, or end at a Stop step, fails the prepare with its error. When this revision replaces one that runs, each
     /// entity no State works out starts with the state, and availability, its namesake of the same domain has there
     /// (<see cref="Carry"/>), less each value it refuses; one that gets nothing from there takes the state values it last
-    /// showed (<see cref="EntityStateStore"/>), less each it refuses. The When started flow may still set another.
+    /// showed (<see cref="EntityStateStore"/>), less each it refuses. The When started flow may still set another. Each
+    /// When a frame is needed flow is what a request for its camera's picture runs first (<see cref="RunFrame"/>).
     /// </summary>
     async Task<SharpEntity[]> PrepareGraph(JsonArray described)
     {
@@ -74,6 +78,8 @@ internal sealed partial class DefinitionHost
         // Outside the lock: logging calls into Python.
         foreach (var line in dropped) Report(line, PyLogLevel.Debug);
         entities = all;
+        foreach (var (key, method) in definition.Roots?.Frames ?? new Dictionary<string, string>())
+            FrameNeeded(key, () => RunFrame(method));
         if (definition.Roots?.Setup is not { } setup) return all;
         var clock = setupClock = new SetupClock();
         setupFailure = null;
@@ -284,6 +290,37 @@ internal sealed partial class DefinitionHost
     }
 
     /// <summary>
+    /// Runs the graph's When a frame is needed flow <paramref name="method"/> to its end, for a request for its camera's
+    /// picture (<see cref="FrameNeeded"/>, under the rule of <see cref="CameraFrames"/>): what it shows, it shows through
+    /// <see cref="ShowFrame"/>. A run still going at <see cref="CameraFrames.MakeLimit"/> is cancelled, so that a flow
+    /// that hangs (a camera that never answers) does not keep its camera from making the next frame; its record says why.
+    /// Completes when the flow succeeded or ended at a Stop step; otherwise throws, for the camera to log once per reason:
+    /// the flow's failure as <see cref="FlowFailed"/> words it, wrapping what the run threw; a
+    /// <see cref="TimeoutException"/> past the limit; an <see cref="OperationCanceledException"/> when the definition stops.
+    /// </summary>
+    async Task RunFrame(string method)
+    {
+        var late = $"it took longer than {Seconds(CameraFrames.MakeLimit)} s";
+        using var limit = new CancellationTokenSource(CameraFrames.MakeLimit);
+        var outcome = await FlowClass(method).RunToEnd(method, InvocationCause.Frame, TriggerPayload.Frame(FrameCamera(method)), limit.Token, $"Took longer than {Seconds(CameraFrames.MakeLimit)} s");
+        (string Reason, Exception Failure) failed;
+        lock (gate) frameFailures.Remove(method, out failed);
+        switch (outcome.Status)
+        {
+            case "Succeeded" or "Stopped": return;
+            case "Failed" when failed.Failure != null: throw new InvalidOperationException(failed.Reason, failed.Failure);
+            case "Failed": throw new InvalidOperationException(outcome.Error is { Length: > 0 } error ? error.Split('\n')[0].TrimEnd('\r') : "its flow failed");
+            case "Cancelled" when Stopping.IsCancellationRequested: throw new OperationCanceledException(Stopping);
+            case "Cancelled" when limit.IsCancellationRequested: throw new TimeoutException(late);
+            case "Cancelled": throw new OperationCanceledException($"its flow was cancelled because {Because(outcome.Error)}");
+            default: throw new InvalidOperationException("its flow did not run");
+        }
+    }
+
+    // The key of the camera a frame flow makes the frames of.
+    string FrameCamera(string method) => definition.Roots?.Frames.FirstOrDefault(frame => frame.Value == method).Key ?? "";
+
+    /// <summary>
     /// The command's data with each value its <c>entityDomains</c> row names that Home Assistant did not send (absent or
     /// null) taken from the entity's state value of the same name, when it has one; else from the row's <c>default</c>,
     /// when the entity takes that value as it takes the command's data (<see cref="SharpEntity.CheckData"/>). A light
@@ -411,6 +448,14 @@ internal sealed partial class DefinitionHost
         camera.Show(image);
     }
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// <see cref="SetFrame"/>: whichever flow runs it, a frame flow (also one that ended after its limit) or any other.
+    /// Ignored once the definition stops or is replaced.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The definition has no such entity, or it is not a camera.</exception>
+    public void ShowFrame(string entityKey, SharpImage image) => SetFrame(entityKey, image);
+
     /// <summary>
     /// Has a request for the picture of the graph's camera <paramref name="entityKey"/> run <paramref name="flow"/> first, as
     /// a class's <c>Frame()</c> runs (<see cref="CameraImage"/>): one at a time, at most once per the camera's interval and
@@ -507,7 +552,9 @@ internal sealed partial class DefinitionHost
     /// then cannot start, which its manager warns of once per reason in the same words. A trigger flow's
     /// at error once per reason, as a State's warning is: a poll of a device that does not answer fails on every tick,
     /// and only a failure for another reason logs again, until a run works (<see cref="FlowSucceeded"/>). Then, for every
-    /// failure, the whole of it at Debug. Keeps the reason of a trigger flow's failure, and of the When started flow's for its start's error. Never throws.
+    /// failure, the whole of it at Debug. Keeps the reason of a trigger flow's failure, and of the When started flow's for its start's error. A
+    /// When a frame is needed flow's is not logged here: its reason and failure are kept for <see cref="RunFrame"/>, which
+    /// fails its camera's frame with them, and the camera logs that once per reason. Never throws.
     /// </summary>
     /// <param name="method">The flow's method.</param>
     /// <param name="cause">What started the run.</param>
@@ -520,6 +567,12 @@ internal sealed partial class DefinitionHost
             string reason;
             try { reason = Reason(failure) ?? failure.GetType().Name; } catch { reason = "it failed"; }
             var (flow, kind) = Flow(method, cause);
+            // A failing frame flow fails its camera's frame, which the camera logs once per reason, as a class's Frame().
+            if (kind == FlowKind.Frame)
+            {
+                lock (gate) frameFailures[method] = (reason, failure);
+                return;
+            }
             // A failing When started flow fails the definition's start, whose error and warning say why, in these words.
             var log = kind != FlowKind.Setup;
             if (!log) setupFailure = reason;
@@ -557,12 +610,14 @@ internal sealed partial class DefinitionHost
         }
     }
 
-    enum FlowKind { Command, Setup, Trigger }
+    enum FlowKind { Command, Setup, Trigger, Frame }
 
-    // A flow as its log lines name it: an entity's command, When started, or a trigger by its label (else its node).
+    // A flow as its log lines name it: an entity's command, When started, a camera's frame flow, or a trigger by its label
+    // (else its node).
     (string Name, FlowKind Kind) Flow(string method, InvocationCause cause)
     {
         var roots = definition.Roots;
+        if (roots?.Frames.FirstOrDefault(frame => frame.Value == method).Key is { } camera) return ($"{Named(camera)}: When a frame is needed", FlowKind.Frame);
         if (roots?.Commands.FirstOrDefault(command => command.Value == method).Key is { } handled)
         {
             // Keyed <entity key>:<command>; an entity key has no colon.
