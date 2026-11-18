@@ -111,15 +111,10 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         DefinitionSettings.Apply(definition.Name, definition.Settings, (SharpComponent)root);
         device = root as SharpDevice;
         SharpEntity[] Collect() => device != null ? [.. device.Entities] : [(SharpEntity)root];
-        // Each entity takes the state it last showed before any Setup() that may see it: those of the constructor before
-        // the device's, one added in a Setup() before its own.
-        var restored = new HashSet<SharpEntity>(ReferenceEqualityComparer.Instance);
-        void RestoreNew()
-        {
-            foreach (var entity in Collect())
-                if (restored.Add(entity)) RestoreClass(entity);
-        }
-        RestoreNew();
+        // Each entity takes the state it last showed before any Setup() that may see it: those of the constructor now,
+        // before the device's; one added in a Setup() as it is added, so that whatever that Setup() then sets wins.
+        foreach (var entity in Collect()) RestoreClass(entity);
+        if (device != null) device.Added = RestoreClass;
         // One bound for every Setup() together: a device that does not answer must not hold up the definitions after it.
         // Each starts on a thread of its own, so one that blocks it (a raw connect, a Wait()) is bounded like one that
         // awaits and takes no thread from the pool for good; the async lambda makes a null task fail rather than look
@@ -138,7 +133,6 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         {
             device.Host = this;
             await SetUp(device);
-            RestoreNew();
         }
         // An entity added during a Setup() is set up too.
         var setUp = new HashSet<SharpEntity>(ReferenceEqualityComparer.Instance);
@@ -147,10 +141,13 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             setUp.Add(next);
             next.Host = this;
             await SetUp(next);
-            RestoreNew();
         }
-        // From now on the host would not see an entity added, so the device refuses one.
-        if (device != null) device.Sealed = true;
+        // From now on the host would not see an entity added, so the device refuses one (and has none to restore).
+        if (device != null)
+        {
+            device.Sealed = true;
+            device.Added = null;
+        }
         var all = Collect();
         CheckKeys(all);
         entities = all;
@@ -466,11 +463,16 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     bool Restorable(SharpEntity entity) => definition.Entities != null ? !stateKeys.Contains(entity.Key) : entity.RestoreState;
 
     // A class's entity takes the values remembered for it, before its Setup(), through its own setters: nothing is
-    // published before the start. A value it no longer takes is left out, which the debug log says.
+    // published before the start. A value it no longer takes is left out, which the debug log says. Never throws: it runs
+    // inside the user's Add().
     void RestoreClass(SharpEntity entity)
     {
-        if (!entity.RestoreState || Manager.States is not { } states || !states.TryGet(UniqueId(entity), out var values)) return;
-        foreach (var dropped in entity.Restore(values)) Report($"{entity.Called} starts without its last {dropped}", PyLogLevel.Debug);
+        try
+        {
+            if (!entity.RestoreState || Manager.States is not { } states || !states.TryGet(UniqueId(entity), out var values)) return;
+            foreach (var dropped in entity.Restore(values)) Report($"{entity.Called} starts without its last {dropped}", PyLogLevel.Debug);
+        }
+        catch (Exception failure) { Report($"restoring the state of entity '{entity.Key}' failed", failure, PyLogLevel.Warn); }
     }
 
     /// <inheritdoc/>

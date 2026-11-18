@@ -78,6 +78,7 @@ static class EntityGraphTests
             (nameof(DeleteForgetsTheLastStates), DeleteForgetsTheLastStates),
             (nameof(AnEntityLeavingTheDefinitionIsForgotten), AnEntityLeavingTheDefinitionIsForgotten),
             (nameof(AnEntityGivenAnotherDomainDoesNotComeBackAsTheOther), AnEntityGivenAnotherDomainDoesNotComeBackAsTheOther),
+            (nameof(AnUnavailableEntityIsNotRemembered), AnUnavailableEntityIsNotRemembered),
             (nameof(ACommandFlowThatEndsAtAStopStepSucceeds), ACommandFlowThatEndsAtAStopStepSucceeds),
             (nameof(FailingSetupAndTriggerFlowsAreLoggedByName), FailingSetupAndTriggerFlowsAreLoggedByName),
             (nameof(AnAutomationsFailureIsLoggedAsBefore), AnAutomationsFailureIsLoggedAsBefore),
@@ -1808,6 +1809,34 @@ static class EntityGraphTests
         await rig.Started("relay");
         var after = rig.Pushed("relay:spare", batches);
         Check(after.Length > 0 && after.All(s => Is(s, "is_on", null)), "the entity added back starts unknown: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>
+    /// What an entity shows while it is unavailable is not remembered: its last remembered values stay, and it comes back
+    /// with them after a restart.
+    /// </summary>
+    static async Task AnUnavailableEntityIsNotRemembered()
+    {
+        await using var rig = await Rig.Start("restore-unavailable");
+        var definition = Relay(turnOff: false);
+        var graph = definition["logic"]!["graph"]!.AsObject();
+        graph["nodes"]!.AsArray().Add(Command("off", "relay", "turn_off"));
+        graph["nodes"]!.AsArray().Add(N("gone", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", false) }));
+        graph["nodes"]!.AsArray().Add(SetState("set_off", "relay", On(false)));
+        graph["edges"]!.AsArray().Add(Next("off", "gone"));
+        graph["edges"]!.AsArray().Add(Next("gone", "set_off"));
+        await rig.Save("relay", definition);
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Available(s) && Is(s, "is_on", true), "on");
+        await rig.Api.EntityCommand("relay:relay", "turn_off", null);
+        await rig.Until("relay:relay", s => !Available(s) && Is(s, "is_on", false), "unavailable, then off");
+        Check(rig.Scripts.States!.TryGet("relay:relay", out var values) && values.ToJsonString() == """{"is_on":true}""", "what it showed unavailable was remembered: " + values.ToJsonString());
+        await rig.Flush();
+        var batches = rig.Batches;
+        await rig.Restart();
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", true)), "it comes back with its last remembered values, available: " + Lines(after.Select(s => s.ToJsonString())));
     }
 
     /// <summary>

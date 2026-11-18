@@ -66,7 +66,8 @@ internal sealed partial class DefinitionHost
             taken.UnionWith(carried.Where(was => graphEntities.TryGetValue(was.Key, out var entity) && entity.Domain != was.Domain).Select(was => was.Key));
             foreach (var (entity, _, values) in stored)
                 if (!taken.Contains(entity.Key))
-                    Take(entity, values.Select(value => KeyValuePair.Create(value.Key, Plain(value.Value))), "its last state", dropped);
+                    // A value stored as none restores nothing.
+                    Take(entity, values.Where(value => value.Value != null).Select(value => KeyValuePair.Create(value.Key, Plain(value.Value))), "its last state", dropped);
         }
         // Outside the lock: logging calls into Python.
         foreach (var line in dropped) Report(line, PyLogLevel.Debug);

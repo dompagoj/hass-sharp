@@ -12,6 +12,8 @@ public abstract class SharpDevice : SharpComponent
 
     /// <summary>Set by the host once the entities are known: from then on <see cref="Add{T}"/> refuses.</summary>
     internal bool Sealed { get; set; }
+    /// <summary>What the host does with an entity added while it prepares the definition (it restores its state); null otherwise.</summary>
+    internal Action<SharpEntity>? Added { get; set; }
 
     /// <summary>Who made the device, as the device page shows it; null for none.</summary>
     public string? Manufacturer { get; set; }
@@ -44,6 +46,7 @@ public abstract class SharpDevice : SharpComponent
         if (entities.Any(existing => existing.Key == entity.Key))
             throw new ArgumentException($"{GetType().Name} already has an entity with key '{entity.Key}'.", nameof(entity));
         entities.Add(entity);
+        Added?.Invoke(entity);
         return entity;
     }
 }

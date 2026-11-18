@@ -445,7 +445,8 @@ public partial class HassSharpManager
     // An entry unload is a reload or removal unless Home Assistant is stopping; runs it cancels record which.
     static string UnloadReason(bool stopping) => stopping ? CancelReasons.Stopping : CancelReasons.Reloaded;
     // The entity states pending or remembered as sent are dropped with the scripts: after a reload every state is sent
-    // anew. The states the entities come back with are written now (a flush never throws).
+    // anew. The states the entities come back with are written now, and the store then closed, so that it writes nothing
+    // after its manager has gone (closing never throws; Init opens it again).
     public void Unload(bool stopping = false)
     {
         _languageLifetime.Cancel();
@@ -453,7 +454,7 @@ public partial class HassSharpManager
         finally
         {
             _userScriptManager.Pump.Reset();
-            _userScriptManager.States?.FlushAsync().GetAwaiter().GetResult();
+            _userScriptManager.States?.CloseAsync().GetAwaiter().GetResult();
         }
     }
     public async Task UnloadAsync(bool stopping = false)
@@ -463,7 +464,7 @@ public partial class HassSharpManager
         finally
         {
             _userScriptManager.Pump.Reset();
-            if (_userScriptManager.States is { } states) await states.FlushAsync();
+            if (_userScriptManager.States is { } states) await states.CloseAsync();
         }
     }
 

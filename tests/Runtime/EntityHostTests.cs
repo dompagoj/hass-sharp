@@ -136,6 +136,7 @@ static class EntityHostTests
             await UserLog();
             await MissingJsonCacheHandler();
             await RestoredState();
+            await WhatSetupSetsWins();
         }
         finally
         {
@@ -885,6 +886,47 @@ static class EntityHostTests
         }
     }
 
+    /// <summary>
+    /// What a Setup() sets wins over the state an entity comes back with: an entity added in the device's Setup(), or in
+    /// another entity's, takes its stored state as it is added, before that Setup() sets its own. A value stored as none
+    /// restores nothing: the entity keeps the one its constructor set.
+    /// </summary>
+    static async Task WhatSetupSetsWins()
+    {
+        Reset();
+        var directory = Path.Combine(Path.GetTempPath(), "entity-host-fresh-" + Guid.NewGuid());
+        var file = Path.Combine(directory, "entity_states.json");
+        try
+        {
+            UserScriptManager Kept() => new() { Pump = new EntityStatePump(TimeSpan.FromMilliseconds(5)), States = new EntityStateStore(file) };
+            JsonNode? First(string key) => Snapshots().First(s => s["uniqueId"]!.GetValue<string>() == "fresh:" + key)["values"];
+            string Shown() => string.Join(" ", new[] { "relay", "level", "preset" }.Select(key => First(key)!.ToJsonString()));
+            (HostFresh.Reading, HostFresh.Level) = (true, 30);
+            var manager = Kept();
+            await Load(manager, Compiled("fresh", "Fresh", () => new HostFresh()));
+            await Until(() => PushedAvailable("fresh:level", true), "started");
+            Check(Shown() == """{"is_on":true} {"value":30} {"value":5}""", "the first run: " + Shown());
+            await manager.UnloadUserScriptsAsync();
+            // The preset is stored as none, as an entity unknown while it ran would be.
+            manager.States!.Remember("fresh:preset", new JsonObject { ["value"] = null });
+            await manager.States.CloseAsync();
+
+            Reset();
+            (HostFresh.Reading, HostFresh.Level) = (false, 55);
+            manager = Kept();
+            await Load(manager, Compiled("fresh", "Fresh", () => new HostFresh()));
+            await Until(() => PushedAvailable("fresh:level", true), "started again");
+            Check(Shown() == """{"is_on":false} {"value":55} {"value":5}""", "what the Setup()s set wins, and none restores nothing: " + Shown());
+            await manager.UnloadUserScriptsAsync();
+            await manager.States!.CloseAsync();
+            Console.WriteLine("PASS entity host: an entity added in a Setup() takes its stored state as it is added, so what that Setup() sets wins; a value stored as none restores nothing");
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
     static async Task MissingJsonCacheHandler()
     {
         var (handler, logged) = (DefinitionHost.JsonCacheHandler, DefinitionHost.JsonCacheHandlerMissingLogged);
@@ -1056,6 +1098,40 @@ public class HostKept : SharpDevice
     public SharpSwitch Relay { get; }
 
     protected internal override Task Setup() { SeenInSetup = Dial.Value; return Task.CompletedTask; }
+}
+
+/// <summary>
+/// A device that adds its relay in its Setup() and sets it to what it reads (<see cref="Reading"/>), whose starter adds the
+/// level in its own Setup() and sets it to <see cref="Level"/>, and whose preset its constructor sets to 5.
+/// </summary>
+public class HostFresh : SharpDevice
+{
+    public static bool? Reading;
+    public static double? Level;
+
+    public HostFresh()
+    {
+        Add(new HostFreshStarter(this));
+        Add(new SharpNumber("preset", "Preset") { Value = 5 });
+    }
+
+    public T Adding<T>(T entity) where T : SharpEntity => Add(entity);
+
+    protected internal override Task Setup()
+    {
+        Add(new SharpSwitch("relay", "Relay")).IsOn = Reading;
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>A switch whose Setup() adds the device's level and sets it.</summary>
+public class HostFreshStarter(HostFresh device) : SharpSwitch("starter", "Starter")
+{
+    protected internal override Task Setup()
+    {
+        device.Adding(new SharpNumber("level", "Level")).Value = HostFresh.Level;
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>A switch that is its definition's only entity.</summary>

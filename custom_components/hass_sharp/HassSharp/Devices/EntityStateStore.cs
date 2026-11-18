@@ -24,24 +24,47 @@ internal sealed class EntityStateStore(string path)
     readonly SemaphoreSlim writing = new(1, 1);
     // Each id's values as JSON text and when they were remembered; null until the file is read.
     Dictionary<string, (string Values, DateTime Utc)>? states;
-    bool dirty, scheduled, failing;
+    bool dirty, scheduled, failing, closed;
     int writes;
 
     /// <summary>How many times the file was written; for tests.</summary>
     internal int Writes { get { lock (gate) return writes; } }
 
     /// <summary>
-    /// Reads the file, unless it was read already: one that cannot be read is logged once as a warning and taken as empty
-    /// (it is replaced at the next write). Done at startup, so that nothing else waits for the disk.
+    /// Reads the file, unless it was read already (and reads it again once the store was closed, which this opens again):
+    /// nothing in it ever throws out of here. A file that cannot be read at all (not JSON, another version, no states,
+    /// unreadable, a directory) is logged once as a warning and taken as empty, and is replaced at the next write; an
+    /// entry that is not well formed is left out, which the same warning says, and the others are kept. Done at startup,
+    /// so that nothing else waits for the disk.
     /// </summary>
     internal void Load()
     {
-        lock (gate) if (states != null) return;
-        Dictionary<string, (string, DateTime)> read = new(StringComparer.Ordinal);
+        lock (gate)
+        {
+            if (closed)
+            {
+                closed = false;
+                states = null;
+            }
+            if (states != null) return;
+        }
+        var read = new Dictionary<string, (string, DateTime)>(StringComparer.Ordinal);
         string? problem = null;
-        try { if (File.Exists(path)) read = Parse(File.ReadAllText(path)); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException)
-        { problem = error.Message; }
+        try
+        {
+            if (Directory.Exists(path)) problem = "it is a directory";
+            else if (File.Exists(path))
+            {
+                var skipped = Parse(File.ReadAllBytes(path), read);
+                if (skipped > 0) problem = skipped == 1 ? "1 entry is not well formed and is left out" : $"{skipped} entries are not well formed and are left out";
+            }
+        }
+        // Whatever the file holds, the entities start without what cannot be read; the load goes on.
+        catch (Exception error)
+        {
+            read.Clear();
+            problem = error.Message;
+        }
         lock (gate)
         {
             if (states != null) return;
@@ -51,20 +74,42 @@ internal sealed class EntityStateStore(string path)
             try { Logger.Warn($"Cannot read the entities' last states ({path}); entities start without them: {problem}"); } catch { }
     }
 
-    static Dictionary<string, (string, DateTime)> Parse(string text)
+    // Reads the file's entries into read: an id written twice keeps the last, and an entry that is not an object of
+    // values (an object without duplicated names) is skipped. How many were skipped.
+    static int Parse(byte[] text, Dictionary<string, (string, DateTime)> read)
     {
-        var root = JsonNode.Parse(text) as JsonObject ?? throw new JsonException("it is not a JSON object");
-        if (root["version"] is not JsonValue version || version.GetValueKind() != JsonValueKind.Number || !version.TryGetValue<int>(out var given) || given != Version)
+        using var document = JsonDocument.Parse(text);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object) throw new JsonException("it is not a JSON object");
+        if (!root.TryGetProperty("version", out var version) || version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var given) || given != Version)
             throw new JsonException($"its version is not {Version}");
-        var read = new Dictionary<string, (string, DateTime)>(StringComparer.Ordinal);
-        foreach (var (id, entry) in root["states"] as JsonObject ?? throw new JsonException("it has no states"))
+        if (!root.TryGetProperty("states", out var states) || states.ValueKind != JsonValueKind.Object) throw new JsonException("its states are not an object");
+        var skipped = 0;
+        foreach (var entry in states.EnumerateObject())
         {
-            if (entry?["values"] is not JsonObject values) continue;
-            var utc = entry["utc"] is JsonValue time && time.TryGetValue<string>(out var at)
-                && DateTime.TryParse(at, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var when) ? when.ToUniversalTime() : DateTime.UtcNow;
-            read[id] = (values.ToJsonString(), utc);
+            if (Entry(entry.Value) is { } kept) read[entry.Name] = kept;
+            else skipped++;
         }
-        return read;
+        return skipped;
+    }
+
+    // One entry as kept: its values as JSON text, when they are an object a JsonObject reads (no name twice), and when
+    // they were remembered (now when not given as an ISO time); null for an entry not so.
+    static (string, DateTime)? Entry(JsonElement entry)
+    {
+        if (entry.ValueKind != JsonValueKind.Object || !entry.TryGetProperty("values", out var values) || values.ValueKind != JsonValueKind.Object) return null;
+        string text;
+        try
+        {
+            // Read whole now: a JsonObject throws on a duplicated name only once its members are read.
+            var node = JsonNode.Parse(values.GetRawText())!.AsObject();
+            _ = node.Count;
+            text = node.ToJsonString();
+        }
+        catch (Exception) { return null; }
+        var utc = entry.TryGetProperty("utc", out var time) && time.ValueKind == JsonValueKind.String
+            && DateTime.TryParse(time.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var when) ? when.ToUniversalTime() : DateTime.UtcNow;
+        return (text, utc);
     }
 
     Dictionary<string, (string Values, DateTime Utc)> States
@@ -82,6 +127,7 @@ internal sealed class EntityStateStore(string path)
         var text = values.ToJsonString();
         lock (gate)
         {
+            if (closed) return;
             var all = States;
             if (all.TryGetValue(uniqueId, out var known) && known.Values == text) return;
             all[uniqueId] = (text, DateTime.UtcNow);
@@ -106,6 +152,7 @@ internal sealed class EntityStateStore(string path)
     {
         lock (gate)
         {
+            if (closed) return;
             var all = States;
             var removed = false;
             foreach (var id in uniqueIds) removed |= all.Remove(id);
@@ -143,7 +190,7 @@ internal sealed class EntityStateStore(string path)
             KeyValuePair<string, (string Values, DateTime Utc)>[] all;
             lock (gate)
             {
-                if (!dirty || states == null) return;
+                if (closed || !dirty || states == null) return;
                 dirty = false;
                 all = [.. states];
             }
@@ -161,7 +208,7 @@ internal sealed class EntityStateStore(string path)
                 failing = true;
                 // Written again later, with whatever changes until then.
                 dirty = true;
-                if (!scheduled)
+                if (!scheduled && !closed)
                 {
                     scheduled = true;
                     _ = FlushLater();
@@ -175,6 +222,20 @@ internal sealed class EntityStateStore(string path)
             if (warn)
                 try { Logger.Warn($"Cannot write the entities' last states ({path}); trying again in {FlushInterval.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture)} s: {problem}"); } catch { }
         }
+    }
+
+    /// <summary>
+    /// Writes what is not written yet, then closes the store, as its manager unloads: from now on it writes nothing,
+    /// schedules nothing and ignores a change, so that a store left behind by a reload never writes over the file its
+    /// successor keeps (a write that failed is not tried again). <see cref="Load"/> opens it again. Never throws.
+    /// </summary>
+    public async Task CloseAsync()
+    {
+        await FlushAsync();
+        // Under the write lock, so that no write of this store is under way once it is closed.
+        await writing.WaitAsync();
+        try { lock (gate) closed = true; }
+        finally { writing.Release(); }
     }
 
     void Write(KeyValuePair<string, (string Values, DateTime Utc)>[] all)

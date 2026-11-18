@@ -75,7 +75,7 @@ public abstract partial class SharpEntity : SharpComponent
     /// <summary>
     /// Takes the state values the entity last showed, as stored (its <see cref="Values"/>), through its own setters
     /// before the definition runs, so nothing is published: each value it does not take now (of another kind, or one its
-    /// setter refuses) is left out, and a value not stored is left as it is.
+    /// setter refuses) is left out, and a value not stored, or stored as none, is left as it is (restoring never clears).
     /// </summary>
     /// <returns>Why each value left out was, as "brightness: Lamp (lamp) cannot be dimmed…"; none when every one was taken.</returns>
     internal virtual string[] Restore(JsonObject values) => [];
@@ -86,7 +86,8 @@ public abstract partial class SharpEntity : SharpComponent
         List<string> dropped = [];
         foreach (var (key, keep) in keys)
         {
-            if (!values.TryGetPropertyValue(key, out var node)) continue;
+            // A value stored as none restores nothing: the entity keeps what it has, such as one its constructor set.
+            if (!values.TryGetPropertyValue(key, out var node) || node == null) continue;
             try { keep(node); }
             catch (ArgumentException refused) { dropped.Add($"{key}: {refused.Message}"); }
         }
