@@ -44,6 +44,8 @@ static class EntityGraphTests
             (nameof(AFailingNodeInAStateIsNamed), AFailingNodeInAStateIsNamed),
             (nameof(AValueTheEntityRefusesMakesItUnavailable), AValueTheEntityRefusesMakesItUnavailable),
             (nameof(SettingsAreReadWithoutThrowing), SettingsAreReadWithoutThrowing),
+            (nameof(ASensorWithAUnitTakesNumericText), ASensorWithAUnitTakesNumericText),
+            (nameof(SensorValuesAreCheckedAsHomeAssistantTakesThem), SensorValuesAreCheckedAsHomeAssistantTakesThem),
             (nameof(ATriggerFlowInADefinitionCanSetState), ATriggerFlowInADefinitionCanSetState),
             (nameof(AnUnknownSourceIsWarnedOfInPreviewAndSave), AnUnknownSourceIsWarnedOfInPreviewAndSave),
             (nameof(AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried), AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried) })
@@ -715,9 +717,12 @@ static class EntityGraphTests
         Check(Warnings().Length == 3, "a failure after the recovery warns again: " + Lines(Warnings()));
         Check(rig.Home.Logs(PyLogLevel.Error).Length == 0, "an error was logged: " + Lines(rig.Home.Logs(PyLogLevel.Error)));
         Check(!rig.Home.Logs(PyLogLevel.Warn).Concat(rig.Home.Logs(PyLogLevel.Info)).Any(l => l.Contains("   at ", StringComparison.Ordinal)), "a stack trace was logged above Debug: " + Lines(rig.Home.Logs()));
-        // Each failed run is logged whole at Debug, for whoever looks for where it failed.
-        Check(rig.Home.Logs(PyLogLevel.Debug).Count(l => l.StartsWith("Outside: the State of Outside (outside) failed: ", StringComparison.Ordinal) && l.Contains("   at ", StringComparison.Ordinal)) >= 6,
-            "each failed run at Debug: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
+        // Each failure warned of is logged whole at Debug, once, after its warning; the same failure again logs nothing.
+        var details = rig.Home.Logs().Where(l => l.StartsWith("Outside: ", StringComparison.Ordinal) && !l.Contains("has a state again", StringComparison.Ordinal)).ToArray();
+        Check(details.Length == 6 && Enumerable.Range(0, 3).All(i => details[2 * i].StartsWith("Outside: Outside (outside) is unavailable: ", StringComparison.Ordinal)
+            && details[2 * i + 1].StartsWith("Outside: the State of Outside (outside) failed: ", StringComparison.Ordinal) && details[2 * i + 1].Contains("   at ", StringComparison.Ordinal))
+            && rig.Home.Logs(PyLogLevel.Debug).Count(l => l.StartsWith("Outside: the State of", StringComparison.Ordinal)) == 3,
+            "each warning, then its failure at Debug, once per reason: " + Lines(details));
     }
 
     /// <summary>
@@ -755,7 +760,7 @@ static class EntityGraphTests
         await rig.Change("sensor.mode", "bad");
         await rig.Flush();
         Check(rig.Pushed("mode:mode", batches).LastOrDefault() is { } refused && !Available(refused) && Is(refused, "value", "low"), "a refused value makes the entity unavailable: " + Lines(rig.Home.Pushes().Skip(batches)));
-        Check(Warnings().SequenceEqual(["Mode: Mode (mode) is unavailable: The value \"bad\" does not fit Mode (mode), which takes only one of low, high"]), "one warning names the refusal: " + Lines(Warnings()));
+        Check(Warnings().SequenceEqual(["Mode: Mode (mode) is unavailable: The value \"bad\" of Mode (mode) is not one of its options: low, high"]), "one warning names the refusal: " + Lines(Warnings()));
         await rig.Change("sensor.mode", "bad");
         Check(Warnings().Length == 1, "the same refusal warned again: " + Lines(Warnings()));
         batches = rig.Batches;
@@ -763,6 +768,53 @@ static class EntityGraphTests
         await rig.Flush();
         Check(rig.Pushed("mode:mode", batches).LastOrDefault() is { } back && Available(back) && Is(back, "value", "high"), "a value it takes makes it available: " + Lines(rig.Home.Pushes().Skip(batches)));
         Check(rig.Home.Logs(PyLogLevel.Info).Count(l => l == "Mode: Mode (mode) has a state again") == 1, "one line says it recovered: " + Lines(rig.Home.Logs(PyLogLevel.Info)));
+    }
+
+    /// <summary>
+    /// A sensor with a unit takes text that reads as a number, published as given, as Home Assistant takes it; other text
+    /// it refuses, which leaves it unavailable with one warning, until a number comes again.
+    /// </summary>
+    static async Task ASensorWithAUnitTakesNumericText()
+    {
+        await using var rig = await Rig.Start("numeric", ("sensor.raw", "21.5"));
+        var graph = Graph("Temp", [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.raw") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "string" }), State("s", "temp")],
+            Data("cur", "f", "entity"), Data("f", "s", "value"));
+        await rig.Save("temp", Definition("Temp", graph, [Entity("temp", "sensor", new { name = "Temp", deviceClass = "temperature", options = new { unit = "°C" } })]));
+        await rig.Until("temp:temp", s => Available(s) && Is(s, "value", "21.5"), "numeric text is published as given");
+        string[] Warnings() => rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Temp: ", StringComparison.Ordinal)).ToArray();
+        var batches = rig.Batches;
+        await rig.Change("sensor.raw", "warm");
+        await rig.Flush();
+        Check(rig.Pushed("temp:temp", batches).LastOrDefault() is { } refused && !Available(refused), "other text makes it unavailable: " + Lines(rig.Home.Pushes().Skip(batches)));
+        Check(Warnings().SequenceEqual(["Temp: Temp (temp) is unavailable: The value \"warm\" of Temp (temp) is text, and a sensor with a unit needs a number"]), "one warning: " + Lines(Warnings()));
+        batches = rig.Batches;
+        await rig.Change("sensor.raw", "-1e1");
+        await rig.Flush();
+        Check(rig.Pushed("temp:temp", batches).LastOrDefault() is { } back && Available(back) && Is(back, "value", "-1e1"), "numeric text again: " + Lines(rig.Home.Pushes().Skip(batches)));
+    }
+
+    /// <summary>
+    /// What a sensor's value takes, by the sensor: with options, one of them; with a unit or a state class, a number or
+    /// text that reads as a finite number; otherwise any number or text. A number that is not finite is taken by a sensor
+    /// without options and shows as unknown; one with options refuses it, as it is none of them.
+    /// </summary>
+    static Task SensorValuesAreCheckedAsHomeAssistantTakesThem()
+    {
+        var value = SharpDomains.Graph["sensor"].State["value"];
+        var plain = new SharpSensor("plain"); var unit = new SharpSensor("unit") { Unit = "W" }; var total = new SharpSensor("total") { StateClass = "total" };
+        var modes = new SharpSensor("modes") { Options = ["low", "high"] };
+        string? Refused(SharpSensor sensor, object? given) => value.Refuses(sensor, given);
+        Check(Refused(plain, "warm") == null && Refused(plain, 3.0) == null && Refused(plain, double.NaN) == null && Refused(plain, null) == null, "a plain sensor takes any number or text");
+        Check(Refused(unit, "21.5") == null && Refused(unit, " 7 ") == null && Refused(unit, "1e3") == null && Refused(unit, 4.0) == null && Refused(unit, double.PositiveInfinity) == null && Refused(unit, null) == null,
+            "a sensor with a unit takes numbers and numeric text");
+        Check(Refused(unit, "warm") == "is text, and a sensor with a unit needs a number" && Refused(unit, "Infinity") != null && Refused(unit, "21,5") != null
+            && Refused(total, "warm") == "is text, and a sensor with a state class needs a number", "a sensor with a unit or a state class refuses other text");
+        Check(Refused(modes, "low") == null && Refused(modes, null) == null && Refused(modes, "warm") == "is not one of its options: low, high"
+            && Refused(modes, 1.0) == "is not one of its options: low, high" && Refused(modes, double.NaN) == "is not one of its options: low, high", "a sensor with options takes only them");
+        Check(Refused(plain, true) == "is neither a number nor text", "a sensor refuses true or false");
+        value.Keep(unit, double.NaN);
+        Check(unit.Snapshot("x:unit", running: true)["values"]!["value"] == null, "a number that is not finite shows as unknown: " + unit.Snapshot("x:unit", running: true).ToJsonString());
+        return Task.CompletedTask;
     }
 
     /// <summary>

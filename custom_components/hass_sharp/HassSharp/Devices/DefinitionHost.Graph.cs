@@ -129,7 +129,7 @@ internal sealed partial class DefinitionHost
             // Every value is checked before any is kept: a refused call changes nothing.
             foreach (var (key, value) in values)
                 if (!known.TryGetValue(key, out var state)) throw new InvalidOperationException($"{definition.Name}: a {entity.Domain} has no state {key}, so entity {entityKey} cannot take it");
-                else if (state.Refuses(entity, value) is { } refused) throw new InvalidOperationException($"The {key} {Shown(value)} does not fit {Named(entityKey)}, {refused}");
+                else if (state.Refuses(entity, value) is { } refused) throw new InvalidOperationException($"The {key} {Shown(value)} of {Named(entityKey)} {refused}");
             foreach (var (key, value) in values) known[key].Keep(entity, value);
             awaiting.Remove(entityKey);
         }
@@ -167,10 +167,11 @@ internal sealed partial class DefinitionHost
     /// <summary>
     /// How a run of a State ended, which the runner does not log: Home Assistant's entities come and go as it starts, so a
     /// State may fail on every change for a while. A failed run, whatever failed (an input, or a value the entity does not
-    /// take), leaves the entity unavailable, and its whole failure is logged at Debug. The first failure warns, naming the
-    /// entity and why (the failing node and its step, when the visual runtime named them); a failure for the same reason
-    /// again says nothing, one for another reason warns again; a success after a failure says, once, that the entity has a
-    /// state again. A cancelled run says nothing. Ignored once the definition stops or is replaced. Never throws.
+    /// take), leaves the entity unavailable. The first failure warns, naming the entity and why (the failing node and its
+    /// step, when the visual runtime named them), and then logs the whole failure at Debug; a failure for the same reason
+    /// again says nothing and costs nothing more than comparing the reason, one for another reason warns again; a success
+    /// after a failure says, once, that the entity has a state again. A cancelled run says nothing. Ignored once the
+    /// definition stops or is replaced. Never throws.
     /// </summary>
     /// <param name="recorded">The run record's error, for a failure the runner did not catch itself.</param>
     /// <param name="failure">What the run threw, when it failed.</param>
@@ -179,7 +180,11 @@ internal sealed partial class DefinitionHost
         try
         {
             if (definition.Roots?.StateEntities.TryGetValue(method, out var key) != true) return;
+            // Worked out before the lock: an exception's members are user code.
+            string? reason = null;
+            if (outcome == "Failed") try { reason = Reason(failure); } catch { }
             string? message = null;
+            var detail = false;
             var level = PyLogLevel.Warn;
             SharpEntity? unavailable = null;
             lock (gate)
@@ -188,7 +193,7 @@ internal sealed partial class DefinitionHost
                 if (Ignoring) return;
                 if (outcome == "Failed")
                 {
-                    var why = Reason(failure) ?? (recorded is { Length: > 0 } text ? text : "its State failed");
+                    var why = reason ?? (recorded is { Length: > 0 } text ? text : "its State failed");
                     if (graphEntities.TryGetValue(key!, out var entity) && entity.Available)
                     {
                         // A graph's entity has no host of its own, so this publishes nothing by itself.
@@ -200,6 +205,7 @@ internal sealed partial class DefinitionHost
                     {
                         failing[key!] = why;
                         message = $"{Named(key!)} is unavailable: {why}";
+                        detail = failure != null;
                     }
                 }
                 else if (outcome == "Succeeded" && failing.Remove(key!))
@@ -210,8 +216,14 @@ internal sealed partial class DefinitionHost
             }
             // Outside the lock: publishing and logging call into Python.
             if (unavailable != null) Publish(unavailable);
-            if (failure != null) Report($"the State of {Named(key!)} failed: {failure}", PyLogLevel.Debug);
             if (message != null) Report(message, level);
+            // The whole failure, once per reason and after its warning: ToString() is user code, and builds the stack.
+            if (detail)
+            {
+                string whole;
+                try { whole = failure!.ToString(); } catch { whole = failure!.GetType().FullName ?? "an exception"; }
+                Report($"the State of {Named(key!)} failed: {whole}", PyLogLevel.Debug);
+            }
         }
         catch { }
     }

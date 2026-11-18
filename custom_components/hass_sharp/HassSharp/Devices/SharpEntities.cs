@@ -183,17 +183,22 @@ internal static class SharpDomains
 
     // A state that is on, off or unknown.
     static GraphState OnOff(Action<SharpEntity, bool?> keep) =>
-        new((_, value) => value is null or bool ? null : "which takes only true or false", (entity, value) => keep(entity, (bool?)value));
+        new((_, value) => value is null or bool ? null : "is neither true nor false", (entity, value) => keep(entity, (bool?)value));
 
-    // A sensor's reading as Home Assistant takes it: a number or text; one of its options when it has them; a number when
-    // it has a unit or a state class. Unknown is always taken.
+    // A sensor's reading as Home Assistant takes it. With options: one of them as text (an enum sensor), or unknown.
+    // With a unit or a state class: a number, or text that reads as a finite number in the invariant culture, kept as
+    // given; other text Home Assistant refuses as it writes the state. Otherwise: any number or text. Unknown is always
+    // taken, and a number that is not finite shows as unknown.
     static string? SensorRefuses(SharpEntity entity, object? value)
     {
         var sensor = (SharpSensor)entity;
         if (value is null) return null;
-        if (value is not (double or string)) return "which takes only a number or text";
-        if (sensor.Options is { } options) return value is string option && options.Contains(option, StringComparer.Ordinal) ? null : $"which takes only one of {string.Join(", ", options)}";
-        if ((sensor.Unit != null || sensor.StateClass != null) && value is string) return "which takes only a number, as it has a unit or a state class";
+        if (value is not (double or string)) return "is neither a number nor text";
+        if (sensor.Options is { } options)
+            return value is string option && options.Contains(option, StringComparer.Ordinal) ? null : $"is not one of its options: {string.Join(", ", options)}";
+        if (value is string text && (sensor.Unit != null || sensor.StateClass != null)
+            && !(double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number) && double.IsFinite(number)))
+            return $"is text, and a sensor with {(sensor.Unit != null ? "a unit" : "a state class")} needs a number";
         return null;
     }
 }
@@ -217,7 +222,7 @@ internal sealed record GraphDomain(Func<EntityDescription, SharpEntity> Create, 
 
 /// <summary>
 /// One state key of a <see cref="GraphDomain"/>: <paramref name="Refuses"/> says why the entity does not take a value
-/// (worded to follow the entity's name, such as "which takes only true or false"), or null when it does;
+/// (worded to follow "The value 5 of Power (power)", such as "is neither true nor false"), or null when it does;
 /// <paramref name="Keep"/> sets a value it takes on the entity.
 /// </summary>
 internal sealed record GraphState(Func<SharpEntity, object?, string?> Refuses, Action<SharpEntity, object?> Keep);
