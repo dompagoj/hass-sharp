@@ -94,6 +94,13 @@ static class EntityApiTests
         }
         static string Status(JsonObject document) => document["status"]!.GetValue<string>();
 
+        // An unknown operation is answered as such before any field it might read: with no id, and with an id and no revision.
+        foreach (var operation in new object[] { new { operation = "rename" }, new { operation = "rename", id = "plug" } })
+        {
+            var answer = await Entity(operation);
+            Check(answer.ToJsonString() == """{"version":1,"ok":false,"error":{"code":"invalid_request","detail":"Unknown entity operation"}}""", "an unknown operation: " + answer.ToJsonString());
+        }
+
         var library = JsonNode.Parse(await api.NodeLibraryRequest(JsonSerializer.Serialize(new { operation = "save", id = "shelly", name = "Shelly", expectedRevision = 0, source = Library })))!;
         Check(library["ok"]!.GetValue<bool>() && library["result"]!["saved"]!.GetValue<bool>(), "the library saves: " + library.ToJsonString());
         var libraries = JsonNode.Parse(await api.NodeLibraryRequest("""{"operation":"list"}"""))!["result"]!;

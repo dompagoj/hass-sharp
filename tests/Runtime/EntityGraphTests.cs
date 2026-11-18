@@ -33,7 +33,7 @@ static class EntityGraphTests
             (nameof(ASetupThatDoesNotFinishFailsTheSave), ASetupThatDoesNotFinishFailsTheSave),
             (nameof(ADeviceDefinitionGroupsItsEntities), ADeviceDefinitionGroupsItsEntities),
             (nameof(SettingsReachTheGraph), SettingsReachTheGraph),
-            (nameof(ReplacingARevisionKeepsCustomisedEntities), ReplacingARevisionKeepsCustomisedEntities),
+            (nameof(ARenamedKeyLeavesTheSyncAndTheOthersKeepTheirUniqueIds), ARenamedKeyLeavesTheSyncAndTheOthersKeepTheirUniqueIds),
             (nameof(DisableEnableAndDelete), DisableEnableAndDelete),
             (nameof(ALibrarySaveRebuildsAGraphDefinitionThatUsesALibraryNode), ALibrarySaveRebuildsAGraphDefinitionThatUsesALibraryNode),
             (nameof(ALibrarySaveThatBreaksAGraphDefinitionIsRefused), ALibrarySaveThatBreaksAGraphDefinitionIsRefused),
@@ -552,7 +552,12 @@ static class EntityGraphTests
     /// A revision that renames an entity's key registers the new set once it prepared: the renamed entity's old unique id
     /// is left out of the sync (Home Assistant removes it then), and the others keep theirs.
     /// </summary>
-    static async Task ReplacingARevisionKeepsCustomisedEntities()
+    /// <remarks>
+    /// Only the unique ids the fake bridge is sent are seen here. That an entity keeping its unique id keeps what the
+    /// user customised in Home Assistant's registry (its entity id, name, area) is the Python bridge's, and its tests
+    /// check it (<c>tests/python/test_entity_platforms.py</c>, <c>test_entity_bridge.py</c>).
+    /// </remarks>
+    static async Task ARenamedKeyLeavesTheSyncAndTheOthersKeepTheirUniqueIds()
     {
         await using var rig = await Rig.Start("replace");
         JsonObject Pair(string second) => Definition("Pair", Graph("Pair", [State("s1", "a", new JsonObject { ["value"] = Lit("number", 1) }), State("s2", second, new JsonObject { ["value"] = Lit("number", 2) })]),

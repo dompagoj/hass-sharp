@@ -7,11 +7,12 @@ namespace HassSharp;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Concurrency.</b> Calls can arrive at the same time: from the parallel branches of one run, and from overlapping
-/// runs, including two runs of the same root (a newer change restarts a State, but the older run ends only once it
-/// notices its cancellation). They arrive on thread-pool threads, never on Home Assistant's or Python's. An implementation
-/// must be thread-safe. It may not call back into the run in progress nor wait for a run of its definition from a call:
-/// the run is blocked in the call until it returns.
+/// <b>Concurrency.</b> Calls can arrive at the same time: from the parallel branches of one run, from runs of different
+/// roots, and from two runs of one trigger whose mode is Parallel. Two runs of one State never overlap, nor do two of one
+/// When commanded flow: a State restarts (a newer change cancels the run in progress, and the newer run starts only once
+/// that one has ended) and a When commanded flow is queued. They arrive on thread-pool threads, never on Home
+/// Assistant's or Python's. An implementation must be thread-safe. It may not call back into the run in progress nor
+/// wait for a run of its definition from a call: the run is blocked in the call until it returns.
 /// </para>
 /// <para>
 /// <b>A State's run</b> (<c>entity_state</c>):
@@ -33,9 +34,9 @@ namespace HassSharp;
 /// </para>
 /// <para>
 /// <b>What remains to the host.</b> Only a run cancelled before its call is kept from calling. A cancellation that arrives
-/// during the call itself, or right after the check, does not stop it, so an older run's call can still land after a newer
-/// run's. Ordering beyond that check is the host's and the runner's job, for example by dropping a call from a run that is
-/// no longer the latest. <see cref="SetAvailable"/> with false can also arrive while the definition is stopping, from a
+/// during the call itself, or right after the check, does not stop it; a newer run of the same State starts only after
+/// such a call has returned, but a run of another root may call at any time. Ordering beyond that is the host's and the
+/// runner's job. <see cref="SetAvailable"/> with false can also arrive while the definition is stopping, from a
 /// run whose failure came before its cancellation.
 /// </para>
 /// <para>

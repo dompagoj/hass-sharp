@@ -3,8 +3,9 @@ using HassSharp;
 
 /// <summary>
 /// The catalog's <c>entityDomains</c> table, which an entity definition's graph is checked against: it describes the
-/// typed entity classes exactly (their state values, commands and options), and only entity graphs embed it, so an
-/// automation's generated source never changes with it.
+/// typed entity classes exactly (their state values, commands and options) and the domains a graph creates
+/// (<see cref="SharpDomains.Graph"/>), and only entity graphs embed it, so an automation's generated source never changes
+/// with it.
 /// </summary>
 static class EntityDomainTests
 {
@@ -28,7 +29,12 @@ static class EntityDomainTests
             foreach (var (key, state) in entry["state"]!.AsObject())
                 Check(state?["types"] is JsonArray { Count: > 0 } types && types.All(t => VisualTypes.Chain(VisualNodeCatalog.Root, t!.GetValue<string>()).Count > 0), $"{domain}.{key}: its types are catalog types");
         }
-        Console.WriteLine($"PASS entity domains: {domains!.Count} domains match the state values, commands and options of their entity classes");
+        // The domains a graph defines are the catalog's, each with the catalog's state keys in its order.
+        Check(string.Join(", ", SharpDomains.Graph.Keys.Order(StringComparer.Ordinal)) == string.Join(", ", domains!.Select(p => p.Key).Order(StringComparer.Ordinal)),
+            $"the domains a graph creates are entityDomains': {string.Join(", ", SharpDomains.Graph.Keys)}, {Keys(domains)}");
+        foreach (var (domain, graph) in SharpDomains.Graph)
+            Check(string.Join(", ", graph.State.Keys) == Keys(domains![domain]?["state"]), $"{domain}: the graph's state keys {string.Join(", ", graph.State.Keys)} are entityDomains', {Keys(domains![domain]?["state"])}");
+        Console.WriteLine($"PASS entity domains: {domains!.Count} domains match the state values, commands and options of their entity classes and the domains a graph creates");
         return Task.CompletedTask;
     }
 

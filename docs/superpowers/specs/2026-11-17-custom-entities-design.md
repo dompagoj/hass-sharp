@@ -180,8 +180,11 @@ Definitions are hosted by the existing automation host, not a parallel one.
   `entity_state` sink becomes an `AutomationAction` in Restart mode that runs at startup and when
   any entity its pure upstream reads changes; the dependencies are extracted statically from the
   graph. Commands and setup become actions too.
-- `ScriptSyncRunner.RunRecorded` returns the run record, so a failed command fails the Home
-  Assistant service call.
+- `UserScriptClass.RunToEnd` returns how the run ended (a `RunOutcome`), so a failed command fails
+  the Home Assistant service call. A command or setup flow that ends at a Stop step has succeeded.
+- A graph revision that replaces a running one starts each entity no State works out with the
+  state and availability that entity has in the running revision, unless it refuses them; its
+  setup flow may set another.
 - One state pump per manager: latest value per unique id, a short debounce, unchanged values
   dropped, one batched push per flush.
 - `NodeLibraryCompiler` discovers public non-abstract `SharpDevice` and `SharpEntity` classes and
@@ -254,7 +257,8 @@ Each phase ends with every suite in `AGENTS.md` passing and a live check in the 
 - A definition that is off, fails to compile or fails setup keeps its entities as unavailable.
   Registry entries go only on delete or when an entity is removed from the definition.
 - `http_request`, `camera_snapshot`, the image nodes and `entity_is` are also usable in automations.
-- Run history is on for command and setup runs and off by default for reactive state.
+- Run history is on for command and setup runs, and off by default for reactive state and for a
+  trigger's flow in a definition.
 - `/devices` redirects to `/entities`; `TODOView` is deleted.
 - New names avoid existing ones: `DefinitionGenerator` (not `EntityGenerator`), `entity_bridge.py`
   (not `entities.py`), `frontend/src/entities/` (not `entities.ts`).
@@ -268,8 +272,9 @@ Each phase ends with every suite in `AGENTS.md` passing and a live check in the 
 - **Bytes through Python.NET**: the phase 1 smoke; base64 strings are the fallback.
 - **ImageSharp on Alpine**, and its licence terms: the phase 5 spike.
 - **Validator parity** between C# and TypeScript: the shared fixture, both changed together.
-- **Static dependency extraction** misses entity reads inside C# code: a validator warning now,
-  dynamic collection later.
+- **Static dependency extraction** misses entity reads inside C# code: an entity input wired
+  upstream of a State warns, but a read in library or Custom C# code (`NodeContext.State`) does
+  not; dynamic collection later.
 - **Setup of a new revision overlaps the old running one**: setup is for downloads, start is for
   resources.
 - **Secret settings are stored as plain JSON**: masked in the panel and redacted in traces.

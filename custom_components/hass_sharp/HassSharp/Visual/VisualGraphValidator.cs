@@ -365,11 +365,11 @@ public static class VisualGraphValidator
         /// <summary>A Repeat count typed in above the loop's Maximum iterations.</summary>
         internal static string RepeatCount(string label, double max, string maxLabel) => $"{label} must be at most {Number(max)}, as {maxLabel} is {Number(max)}";
         // An entity definition's graph: its definition (the entities and settings composed into it) and its own steps.
-        /// <summary>A definition that is not an object of entities and settings of the shape a graph reads.</summary>
         /// <summary>A graph past the catalog's limits; an entity definition's graph may also have no node.</summary>
         internal static string GraphLimit(string document) => document == "automation"
             ? "Graph limit: 1–256 nodes and at most 512 edges"
             : "Graph limit: at most 256 nodes and at most 512 edges";
+        /// <summary>A definition that is not an object of entities and settings of the shape a graph reads.</summary>
         internal const string DefinitionUnreadable = "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type";
         /// <summary>An entity of a domain the catalog's <c>entityDomains</c> does not describe.</summary>
         internal static string UnsupportedDomain(string key, string domain, IEnumerable<string> labels) => $"Entity {Name(key)} has the domain {Name(domain)}, which a graph cannot define; choose {Or(labels)}";

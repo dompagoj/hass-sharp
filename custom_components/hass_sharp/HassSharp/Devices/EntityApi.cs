@@ -233,6 +233,8 @@ public partial class HassSharpManager
         {
             var request = ApiRequest.Parse(requestJson);
             var operation = ApiRequest.String(request, "operation");
+            // Before any field an operation reads: an unknown one is answered as such, not as a field it lacks.
+            if (operation is not ("types" or "list" or "read" or "preview" or "save" or "set_enabled" or "delete")) throw new ArgumentException("Unknown entity operation");
             object result;
             // One read of the typed service calls for the whole request, as VisualRequest does.
             var services = _diagnosticsProvider.ServiceCalls();

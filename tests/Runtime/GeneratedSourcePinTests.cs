@@ -37,7 +37,8 @@ public static class GeneratedSourcePinTests
         var pins = JsonNode.Parse(text)!.AsObject().ToDictionary(p => p.Key, p => p.Value!.GetValue<string>(), StringComparer.Ordinal);
         var cases = Cases().Select(c => c["name"]!.GetValue<string>()).ToHashSet(StringComparer.Ordinal);
         var problems = new List<string>();
-        if (text != Render(pins)) problems.Add("generated-source-pins.json is not sorted by key with one two-space indented entry per line and a final newline: put its entries in that form, without changing any hash");
+        // Line endings aside: a checkout may turn the file's into CRLF.
+        if (text.ReplaceLineEndings("\n") != Render(pins)) problems.Add("generated-source-pins.json is not sorted by key with one two-space indented entry per line and a final newline: put its entries in that form, without changing any hash");
         foreach (var (name, pinned) in pins.OrderBy(p => p.Key, StringComparer.Ordinal))
         {
             if (name != GraphKey && !name.StartsWith("pin: ", StringComparison.Ordinal) && !cases.Contains(name))

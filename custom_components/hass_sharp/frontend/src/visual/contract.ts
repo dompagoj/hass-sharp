@@ -739,9 +739,9 @@ export const words = {
   entitiesExpression: 'Entities expression is gone; choose the entity in Entity',
   schedulesExpression: 'Schedules expression is gone; set the time in Time of day',
   // An entity definition's graph: its definition (the entities and settings composed into it) and its own steps.
-  /** A definition that is not an object of entities and settings of the shape a graph reads. */
   /** A graph past the catalog's limits; an entity definition's graph may also have no node. */
   graphLimit: (document: GraphDocument) => document === 'automation' ? 'Graph limit: 1–256 nodes and at most 512 edges' : 'Graph limit: at most 256 nodes and at most 512 edges',
+  /** A definition that is not an object of entities and settings of the shape a graph reads. */
   definitionUnreadable: "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type",
   /** An entity of a domain the catalog's `entityDomains` does not describe. */
   unsupportedDomain: (key: string, domain: string, labels: string[]) => `Entity ${words.name(key)} has the domain ${words.name(domain)}, which a graph cannot define; choose ${words.or(labels)}`,
