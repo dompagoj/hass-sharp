@@ -71,7 +71,13 @@ static class EntityGraphTests
             (nameof(TextBuiltFromASecretIsHiddenWhereItIsMadeAndUsed), TextBuiltFromASecretIsHiddenWhereItIsMadeAndUsed),
             (nameof(OnlyWhatASecretReachesIsHidden), OnlyWhatASecretReachesIsHidden),
             (nameof(AStepWithASecretInputShowsItsOutputs), AStepWithASecretInputShowsItsOutputs),
-            (nameof(ASecretThatFailsIsNotQuoted), ASecretThatFailsIsNotQuoted) })
+            (nameof(ASecretThatFailsIsNotQuoted), ASecretThatFailsIsNotQuoted),
+            (nameof(SetStateKeepsWhatItIsNotGiven), SetStateKeepsWhatItIsNotGiven),
+            (nameof(ACommandHandsItsDataToTheFlow), ACommandHandsItsDataToTheFlow),
+            (nameof(AbsentBrightnessIsTheCurrentOne), AbsentBrightnessIsTheCurrentOne),
+            (nameof(AButtonRunsItsFlow), AButtonRunsItsFlow),
+            (nameof(ACommandsDataIsCheckedAsAClassChecksIt), ACommandsDataIsCheckedAsAClassChecksIt),
+            (nameof(APasswordTextsRefusedValueIsNotQuoted), APasswordTextsRefusedValueIsNotQuoted) })
         {
             try
             {
@@ -1723,5 +1729,132 @@ static class EntityGraphTests
         Check(errors[0] == "Convert · Value cannot use the value it was given, which is hidden because it comes from a secret setting" && errors[1] == errors[0],
             "the conversion's error names its step and input: " + Shown(errors[0]) + " | " + Shown(errors[1]));
         Unquoted(string.Join("\n", rig.Home.Logs()), "the log");
+    }
+
+    // ---- Partial states and command data ----
+
+    /// <summary>The automation id a saved definition's runs are recorded under.</summary>
+    static string AutomationId(JsonObject saved) => saved["document"]!["automationId"]!.GetValue<string>();
+    /// <summary>The runs a command started, most recent first.</summary>
+    static JsonObject[] CommandRuns(Rig rig, string automationId) => rig.History(automationId).Where(r => r["cause"]!.GetValue<string>() == "Command").ToArray();
+    /// <summary>A light that can be dimmed, turned on at the brightness its command gives and turned off; both flows set its state.</summary>
+    static JsonObject Lamp() => Definition("Lamp", Graph("Lamp",
+        [Command("on", "lamp", "turn_on"), SetState("bright", "lamp", On(true)), Command("off", "lamp", "turn_off"), SetState("dark", "lamp", On(false))],
+        Next("on", "bright"), Next("off", "dark"), Data("on", "bright", "brightness", "brightness")),
+        [Entity("lamp", "light", new { name = "Lamp", options = new { dimmable = true } })]);
+
+    /// <summary>A Set state step sets what it is given and the entity keeps the rest: a light turned off keeps its brightness.</summary>
+    static async Task SetStateKeepsWhatItIsNotGiven()
+    {
+        await using var rig = await Rig.Start("partial-state");
+        await rig.Save("lamp", Lamp());
+        await rig.Until("lamp:lamp", _ => true, "the light starts");
+        await rig.Api.EntityCommand("lamp:lamp", "turn_on", """{"brightness":100}""");
+        await rig.Until("lamp:lamp", s => Is(s, "is_on", true) && Is(s, "brightness", 100), "turned on at the brightness asked for");
+        var batches = rig.Batches;
+        await rig.Api.EntityCommand("lamp:lamp", "turn_off", null);
+        await rig.Until("lamp:lamp", s => Is(s, "is_on", false) && Is(s, "brightness", 100), "turned off, keeping its brightness", batches);
+    }
+
+    /// <summary>When commanded gives its command's data to the steps after it: a number's value, a select's option, a text and a cover's position.</summary>
+    static async Task ACommandHandsItsDataToTheFlow()
+    {
+        await using var rig = await Rig.Start("command-data");
+        var graph = Graph("Panel",
+            [Command("set", "target", "set_value"), SetState("show_target", "target", new JsonObject()), Command("pick", "mode", "select_option"), SetState("show_mode", "mode", new JsonObject()),
+             Command("write", "message", "set_value"), SetState("show_message", "message", new JsonObject()), Command("move", "blind", "set_position"), SetState("show_blind", "blind", new JsonObject())],
+            Next("set", "show_target"), Next("pick", "show_mode"), Next("write", "show_message"), Next("move", "show_blind"),
+            Data("set", "show_target", "value", "value"), Data("pick", "show_mode", "option", "option"), Data("write", "show_message", "value", "value"), Data("move", "show_blind", "position", "position"));
+        await rig.Save("panel", Definition("Panel", graph, [Entity("target", "number", new { options = new { min = 5, max = 30, step = 0.5 } }),
+            Entity("mode", "select", new { options = new { options = new[] { "low", "high" } } }), Entity("message", "text"), Entity("blind", "cover", new { options = new { positionable = true } })]));
+        await rig.Until("panel:target", _ => true, "the panel starts");
+        foreach (var (key, command, data) in new[] { ("target", "set_value", """{"value":21.5}"""), ("mode", "select_option", """{"option":"high"}"""), ("message", "set_value", """{"value":"Hello"}"""), ("blind", "set_position", """{"position":40}""") })
+            await rig.Api.EntityCommand("panel:" + key, command, data);
+        await rig.Until("panel:target", s => Is(s, "value", 21.5), "the number shows the value it was set to");
+        await rig.Until("panel:mode", s => Is(s, "option", "high"), "the select shows the option chosen");
+        await rig.Until("panel:message", s => Is(s, "value", "Hello"), "the text shows the text it was given");
+        await rig.Until("panel:blind", s => Is(s, "position", 40) && Is(s, "is_closed", null), "the cover shows the position it was moved to, and nothing else it was not given");
+    }
+
+    /// <summary>
+    /// A light turned on without a brightness is turned on at the one it has: the flow reads it as the command's. With none
+    /// yet, the step that reads it fails, naming the output, and so does the command; nothing is pushed.
+    /// </summary>
+    static async Task AbsentBrightnessIsTheCurrentOne()
+    {
+        await using var rig = await Rig.Start("absent-brightness");
+        var automationId = AutomationId(await rig.Save("lamp", Lamp()));
+        await rig.Until("lamp:lamp", _ => true, "the light starts");
+        var batches = rig.Batches;
+        var refused = await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("lamp:lamp", "turn_on", null), "turned on without a brightness, having none");
+        Check(refused.Message == "Input bright.brightness: trigger output on.brightness is absent from this invocation's trigger payload.", "the step reading the brightness fails, naming it: " + refused.Message);
+        await rig.Flush();
+        Check(rig.Pushed("lamp:lamp", batches).Length == 0, "a refused command pushed: " + Lines(rig.Home.Pushes().Skip(batches)));
+        await rig.Api.EntityCommand("lamp:lamp", "turn_on", """{"brightness":80}""");
+        await rig.Api.EntityCommand("lamp:lamp", "turn_off", "{}");
+        await rig.Until("lamp:lamp", s => Is(s, "is_on", false) && Is(s, "brightness", 80), "turned off at 80");
+        batches = rig.Batches;
+        await rig.Api.EntityCommand("lamp:lamp", "turn_on", """{"brightness":null}""");
+        await rig.Until("lamp:lamp", s => Is(s, "is_on", true) && Is(s, "brightness", 80), "turned on again at the brightness it has", batches);
+        var trace = JsonNode.Parse(rig.Api.GetRunTrace(CommandRuns(rig, automationId)[0]["runId"]!.GetValue<string>()))!;
+        Check(Clear(Step(trace, "bright")["inputs"]?["brightness"], 80), "the flow read the light's brightness as the command's: " + Step(trace, "bright")["inputs"]?.ToJsonString());
+    }
+
+    /// <summary>A button takes its one command, press, and its flow runs; it has no state of its own.</summary>
+    static async Task AButtonRunsItsFlow()
+    {
+        await using var rig = await Rig.Start("button");
+        var graph = Graph("Bell", [Command("press", "bell", "press"), SetState("rang", "last", new JsonObject { ["value"] = Lit("string", "pressed") })], Next("press", "rang"));
+        var saved = await rig.Save("bell", Definition("Bell", graph, [Entity("bell", "button", new { name = "Bell" }), Entity("last", "sensor")]));
+        Check(!saved.ContainsKey("diagnostics"), "a button whose press is handled has no warnings: " + saved.ToJsonString());
+        var sync = JsonNode.Parse(rig.Home.Syncs("bell").Single())!;
+        Check(sync["entities"]![0]!["commands"]!.ToJsonString() == """["press"]""", "the button takes its command: " + sync.ToJsonString());
+        await rig.Until("bell:bell", s => Available(s) && s["values"]!.ToJsonString() == "{}", "the button is pushed available, with no state");
+        await rig.Api.EntityCommand("bell:bell", "press", "{}");
+        await rig.Until("bell:last", s => Is(s, "value", "pressed"), "the press runs its flow");
+    }
+
+    /// <summary>
+    /// A graph's command is refused as a class's is when the entity does not take its data, before any flow runs and with
+    /// the class's message: a number beyond its maximum, a brightness for a light that cannot be dimmed, an option not in
+    /// the list. Nothing is pushed and no run is recorded.
+    /// </summary>
+    static async Task ACommandsDataIsCheckedAsAClassChecksIt()
+    {
+        await using var rig = await Rig.Start("command-check");
+        var graph = Graph("Panel",
+            [Command("set", "target", "set_value"), SetState("show_target", "target", new JsonObject()), Command("on", "lamp", "turn_on"), SetState("lit", "lamp", On(true)),
+             Command("off", "lamp", "turn_off"), SetState("dark", "lamp", On(false)), Command("pick", "mode", "select_option"), SetState("show_mode", "mode", new JsonObject())],
+            Next("set", "show_target"), Next("on", "lit"), Next("off", "dark"), Next("pick", "show_mode"), Data("set", "show_target", "value", "value"), Data("pick", "show_mode", "option", "option"));
+        var automationId = AutomationId(await rig.Save("panel", Definition("Panel", graph, [Entity("target", "number", new { name = "Target", options = new { min = 5, max = 30 } }),
+            Entity("lamp", "light", new { name = "Lamp" }), Entity("mode", "select", new { name = "Mode", options = new { options = new[] { "low", "high" } } })])));
+        await rig.Until("panel:target", _ => true, "the panel starts");
+        await rig.Flush();
+        var batches = rig.Batches;
+        foreach (var (key, command, data, message) in new[] {
+            ("target", "set_value", """{"value":45}""", "Target (target) takes a number from 5 to 30, not 45"),
+            ("lamp", "turn_on", """{"brightness":128}""", "Lamp (lamp) cannot be dimmed, so it takes no brightness, not 128"),
+            ("mode", "select_option", """{"option":"medium"}""", "Mode (mode) takes one of low or high, not \"medium\"") })
+        {
+            var refused = await Throws<ArgumentException>(() => rig.Api.EntityCommand("panel:" + key, command, data), $"{key} {command} {data}");
+            Check(refused.Message == message, $"{key} {command} {data} is refused with the class's message: {refused.Message}");
+        }
+        await rig.Flush();
+        Check(rig.Pushed("panel:target", batches).Length + rig.Pushed("panel:lamp", batches).Length + rig.Pushed("panel:mode", batches).Length == 0, "a refused command changed a state: " + Lines(rig.Home.Pushes().Skip(batches)));
+        Check(CommandRuns(rig, automationId).Length == 0, "a refused command ran its flow: " + Lines(rig.History(automationId).Select(r => r.ToJsonString())));
+        await rig.Api.EntityCommand("panel:lamp", "turn_on", "{}");
+        await rig.Until("panel:lamp", s => Is(s, "is_on", true), "a light that cannot be dimmed is turned on without a brightness", batches);
+    }
+
+    /// <summary>A password text's value that a Set state step gives and the text refuses is not quoted in the refusal, as its class words it.</summary>
+    static async Task APasswordTextsRefusedValueIsNotQuoted()
+    {
+        await using var rig = await Rig.Start("password-text");
+        var graph = Graph("Code", [Command("set", "code", "set_value"), SetState("show", "code", new JsonObject { ["value"] = Lit("string", "abcd") })], Next("set", "show"));
+        await rig.Save("code", Definition("Code", graph, [Entity("code", "text", new { name = "Code", options = new { pattern = "^[0-9]+$", mode = "password" } })]));
+        await rig.Until("code:code", _ => true, "the text starts");
+        var refused = await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("code:code", "set_value", """{"value":"1234"}"""), "a password text given a text it refuses");
+        Check(refused.Message == "The hidden value given for Code (code) is not a text that matches ^[0-9]+$", "the refusal does not quote the password: " + refused.Message);
+        Check(!string.Join("\n", rig.Home.Logs()).Contains("abcd", StringComparison.Ordinal), "the log quotes the password");
     }
 }

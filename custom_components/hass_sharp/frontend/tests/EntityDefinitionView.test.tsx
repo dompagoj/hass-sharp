@@ -202,6 +202,8 @@ const type = (input: HTMLInputElement | HTMLTextAreaElement, text: string) => {
   input.dispatchEvent(new FocusEvent('blur'))
 }
 const choose = (select: HTMLSelectElement, value: string) => { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) }
+/** Starts giving a value to the selected step's optional input, as its Set value button does (a Set state's inputs are all optional). */
+const setValue = (root: Element, field: string) => inspector(root).querySelector<HTMLButtonElement>(`[data-input-id="${field}"] .hs-insp-unset button`)!.click()
 /** Picks one of the definition's entities (or a command) in the selected step's picker, by its label. */
 const pickOption = async (root: Element, field: string, text: string) => {
   const box = inspector(root).querySelector<HTMLInputElement>(`[data-input-id="${field}"] input[role="combobox"]`)!
@@ -263,6 +265,7 @@ it('builds a polled plug: a time-pattern trigger sets its power, two When comman
   button(root, 'Add Set state').click()
   const setPower = lastStep(root)
   await pickOption(root, 'entity', 'Power')
+  setValue(root, 'value')
   choose(inspector(root).querySelector<HTMLSelectElement>('[data-input-id="value"] select[aria-label="Value kind"]')!, 'number')
   type(inspector(root).querySelector<HTMLInputElement>('[data-input-id="value"] input[aria-label="Value"]')!, '42')
   flow(root, poll, setPower)
@@ -276,6 +279,7 @@ it('builds a polled plug: a time-pattern trigger sets its power, two When comman
     button(root, 'Add Set state').click()
     const set = lastStep(root)
     await pickOption(root, 'entity', 'Relay')
+    setValue(root, 'is_on')
     const on = inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
     on.click()
     if (command === 'Turn off') inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.click()
@@ -608,6 +612,7 @@ it('builds the phase 2 plug through the page, every member of it, and saves that
     ids.push(set)
     label(root, '')
     await pickOption(root, 'entity', 'Relay')
+    setValue(root, 'is_on')
     const toggle = () => inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
     toggle().click()
     if (!on) toggle().click()

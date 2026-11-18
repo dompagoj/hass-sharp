@@ -34515,6 +34515,573 @@
     ]
   },
   {
+    "name": "entity graph: a light's State with only its On value",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "lamp",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "on",
+          "kind": "entity_command",
+          "config": {
+            "entity": "lamp",
+            "command": "turn_on"
+          }
+        },
+        {
+          "id": "off",
+          "kind": "entity_command",
+          "config": {
+            "entity": "lamp",
+            "command": "turn_off"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "lamp",
+            "domain": "light",
+            "options": {
+              "dimmable": false
+            }
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "code entity.no_value: a cover's State with neither value",
+    "graph": {
+      "version": 5,
+      "name": "Blind",
+      "nodes": [
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "blind"
+          }
+        },
+        {
+          "id": "open",
+          "kind": "entity_command",
+          "config": {
+            "entity": "blind",
+            "command": "open"
+          }
+        },
+        {
+          "id": "close",
+          "kind": "entity_command",
+          "config": {
+            "entity": "blind",
+            "command": "close"
+          }
+        },
+        {
+          "id": "stop",
+          "kind": "entity_command",
+          "config": {
+            "entity": "blind",
+            "command": "stop"
+          }
+        },
+        {
+          "id": "move",
+          "kind": "entity_command",
+          "config": {
+            "entity": "blind",
+            "command": "set_position"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "entities": [
+          {
+            "key": "blind",
+            "domain": "cover"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "s",
+    "messages": [
+      "State needs at least one value"
+    ],
+    "codes": [
+      "entity.no_value"
+    ]
+  },
+  {
+    "name": "entity graph: Set state with one of a light's two values",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "on",
+          "kind": "entity_command",
+          "config": {
+            "entity": "lamp",
+            "command": "turn_on"
+          }
+        },
+        {
+          "id": "dim",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "lamp",
+            "brightness": {
+              "kind": "literal",
+              "type": "number",
+              "value": 128
+            }
+          }
+        },
+        {
+          "id": "off",
+          "kind": "entity_command",
+          "config": {
+            "entity": "lamp",
+            "command": "turn_off"
+          }
+        },
+        {
+          "id": "dark",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "lamp",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": false
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "on:next:dim",
+          "source": "on",
+          "target": "dim",
+          "port": "next"
+        },
+        {
+          "id": "off:next:dark",
+          "source": "off",
+          "target": "dark",
+          "port": "next"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "lamp",
+            "domain": "light",
+            "options": {
+              "dimmable": true
+            }
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "code entity.no_value: Set state with no value",
+    "graph": {
+      "version": 5,
+      "name": "Relay",
+      "nodes": [
+        {
+          "id": "on",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "turn_on"
+          }
+        },
+        {
+          "id": "set",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "relay"
+          }
+        },
+        {
+          "id": "off",
+          "kind": "entity_command",
+          "config": {
+            "entity": "relay",
+            "command": "turn_off"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "on:next:set",
+          "source": "on",
+          "target": "set",
+          "port": "next"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "relay",
+            "domain": "switch"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "set",
+    "messages": [
+      "Set state needs at least one value"
+    ],
+    "codes": [
+      "entity.no_value"
+    ]
+  },
+  {
+    "name": "code entity.stateless: State and Set state on a button",
+    "graph": {
+      "version": 5,
+      "name": "Chime",
+      "nodes": [
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "chime"
+          }
+        },
+        {
+          "id": "press",
+          "kind": "entity_command",
+          "config": {
+            "entity": "chime",
+            "command": "press"
+          }
+        },
+        {
+          "id": "set",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "chime"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "press:next:set",
+          "source": "press",
+          "target": "set",
+          "port": "next"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "chime",
+            "domain": "button"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "set",
+    "inputId": "entity",
+    "messages": [
+      "A button has no state to set",
+      "A button has no state to set"
+    ],
+    "codes": [
+      "entity.stateless",
+      "entity.stateless"
+    ]
+  },
+  {
+    "name": "entity graph: When commanded hands a number's value to Set state",
+    "graph": {
+      "version": 5,
+      "name": "Target",
+      "nodes": [
+        {
+          "id": "set",
+          "kind": "entity_command",
+          "config": {
+            "entity": "target",
+            "command": "set_value"
+          }
+        },
+        {
+          "id": "show",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "target"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "set:next:show",
+          "source": "set",
+          "target": "show",
+          "port": "next"
+        },
+        {
+          "id": "set.value:show.value",
+          "kind": "data",
+          "source": "set",
+          "target": "show",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "target",
+            "domain": "number",
+            "options": {
+              "min": 5,
+              "max": 30
+            }
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "code port.unknownOutput: When commanded gives no value its command does not have",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "on",
+          "kind": "entity_command",
+          "config": {
+            "entity": "lamp",
+            "command": "turn_on"
+          }
+        },
+        {
+          "id": "off",
+          "kind": "entity_command",
+          "config": {
+            "entity": "lamp",
+            "command": "turn_off"
+          }
+        },
+        {
+          "id": "dim",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "lamp"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "off:next:dim",
+          "source": "off",
+          "target": "dim",
+          "port": "next"
+        },
+        {
+          "id": "off.brightness:dim.brightness",
+          "kind": "data",
+          "source": "off",
+          "target": "dim",
+          "sourcePort": "brightness",
+          "targetPort": "brightness"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "lamp",
+            "domain": "light",
+            "options": {
+              "dimmable": true
+            }
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "off",
+    "messages": [
+      "Unknown data output port"
+    ],
+    "codes": [
+      "port.unknownOutput"
+    ]
+  },
+  {
+    "name": "entity graph: a light's turn on gives its brightness as a number",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "on",
+          "kind": "entity_command",
+          "config": {
+            "entity": "lamp",
+            "command": "turn_on"
+          }
+        },
+        {
+          "id": "dim",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "lamp",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "off",
+          "kind": "entity_command",
+          "config": {
+            "entity": "lamp",
+            "command": "turn_off"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "on:next:dim",
+          "source": "on",
+          "target": "dim",
+          "port": "next"
+        },
+        {
+          "id": "on.brightness:dim.brightness",
+          "kind": "data",
+          "source": "on",
+          "target": "dim",
+          "sourcePort": "brightness",
+          "targetPort": "brightness"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "lamp",
+            "domain": "light",
+            "options": {
+              "dimmable": true
+            }
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "entity graph: a light's brightness is no true or false value",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "on",
+          "kind": "entity_command",
+          "config": {
+            "entity": "lamp",
+            "command": "turn_on"
+          }
+        },
+        {
+          "id": "dim",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "lamp"
+          }
+        },
+        {
+          "id": "off",
+          "kind": "entity_command",
+          "config": {
+            "entity": "lamp",
+            "command": "turn_off"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "on:next:dim",
+          "source": "on",
+          "target": "dim",
+          "port": "next"
+        },
+        {
+          "id": "on.brightness:dim.is_on",
+          "kind": "data",
+          "source": "on",
+          "target": "dim",
+          "sourcePort": "brightness",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "lamp",
+            "domain": "light",
+            "options": {
+              "dimmable": true
+            }
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "dim",
+    "inputId": "is_on",
+    "messages": [
+      "On accepts True/False, not Number"
+    ]
+  },
+  {
     "name": "code graph.limit: entity graph past the limit",
     "graph": {
       "version": 5,

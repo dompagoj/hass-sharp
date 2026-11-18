@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, nodeCatalog, validateGraph, type Graph } from '../src/visual/contract'
+import { addGraphNode, connectData, dataInputs, dataOutputs, nodeCatalog, validateGraph, withGraphTypes, type Graph } from '../src/visual/contract'
 import { addNode, canConnect, connectNodes, createGraph, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { addConnected, canAddFor } from '../src/visual/flow/autoConnect'
@@ -131,4 +131,62 @@ it('a new When commanded names the first command no other When commanded of the 
   // Once every command is handled, a new one names the first again, as before.
   const third = addGraphNode(second, 'entity_command', 'again', nodeCatalog)
   expect(third.nodes.at(-1)!.config).toMatchObject({ entity: 'relay', command: 'turn_on' })
+})
+
+/** A light that can be dimmed, and a cover, of one definition. */
+const lampGraph = (): VisualGraph => ({
+  version: 5, name: 'Lamp', nodes: [], edges: [],
+  definition: { entities: [{ key: 'lamp', domain: 'light', options: { dimmable: true } }, { key: 'blind', domain: 'cover' }], settings: [] },
+})
+
+it('When commanded has an output for each value of its command\'s data, typed and named as its row has it', () => {
+  let graph = add(lampGraph(), 'entity_command', 'on', { entity: 'lamp', command: 'turn_on' })
+  graph = add(graph, 'entity_command', 'off', { entity: 'lamp', command: 'turn_off' })
+  graph = add(graph, 'entity_command', 'move', { entity: 'blind', command: 'set_position' })
+  const catalog = withGraphTypes(nodeCatalog, graph)
+  const node = (id: string) => graph.nodes.find(n => n.id === id)!
+  expect(dataOutputs(node('on'), catalog)).toEqual({ brightness: { type: 'number', label: 'Brightness', pointer: '/data/brightness' } })
+  expect(dataOutputs(node('off'), catalog)).toEqual({})
+  expect(dataOutputs(node('move'), catalog)).toEqual({ position: { type: 'number', label: 'Position', pointer: '/data/position' } })
+  // Without the definition (or for a command its entity does not have) there is none.
+  expect(dataOutputs(node('on'), nodeCatalog)).toEqual({})
+  expect(dataOutputs({ ...node('on'), config: { entity: 'lamp', command: 'toggle' } }, catalog)).toEqual({})
+  // The canvas shows it as a value pin, and a wire from it into a number input is taken.
+  const view = buildNodeView(node('on'), { graph, catalog: nodeCatalog, diagnostics: [] })
+  expect(view.rows.flatMap(r => (r.output ? [r.output.label] : []))).toEqual(['Brightness'])
+  graph = add(graph, 'set_entity_state', 'dim', { entity: 'lamp' })
+  graph = connectData(connectNodes(graph, 'on', 'dim'), 'on', 'brightness', 'dim', 'brightness')
+  expect(graph.edges.some(e => e.kind === 'data' && e.source === 'on' && e.sourcePort === 'brightness' && e.target === 'dim')).toBe(true)
+  expect(() => connectData(graph, 'on', 'brightness', 'dim', 'is_on')).toThrow('On accepts True/False, not Number')
+})
+
+it('a State needs only the values its row requires, and a Set state none, but each at least one', () => {
+  let graph = add(lampGraph(), 'entity_state', 'lit', { entity: 'lamp' })
+  graph = add(graph, 'entity_state', 'shut', { entity: 'blind' })
+  graph = add(graph, 'set_entity_state', 'set', { entity: 'lamp' })
+  const catalog = withGraphTypes(nodeCatalog, graph)
+  const required = (id: string) => Object.fromEntries(Object.entries(dataInputs(graph.nodes.find(n => n.id === id)!, undefined, catalog)).map(([port, input]) => [port, input.required]))
+  expect(required('lit')).toEqual({ is_on: true, brightness: false })
+  expect(required('shut')).toEqual({ is_closed: false, position: false })
+  expect(required('set')).toEqual({ is_on: false, brightness: false })
+  // Errors on the three steps, a Set state's not being in a flow aside.
+  const problems = (g: Graph) => validateGraph(g, nodeCatalog).filter(d => d.severity === 3 && d.code !== 'node.unreachable' && ['lit', 'shut', 'set'].includes(d.nodeId ?? '')).map(d => `${d.nodeId}: ${d.message}`).sort()
+  expect(problems(graph)).toEqual(['lit: On is required', 'set: Set state needs at least one value', 'shut: State needs at least one value'])
+  graph = updateNode(graph, 'lit', { config: { entity: 'lamp', is_on: lit('boolean', true) } })
+  graph = updateNode(graph, 'shut', { config: { entity: 'blind', position: lit('number', 40) } })
+  graph = updateNode(graph, 'set', { config: { entity: 'lamp', brightness: lit('number', 128) } })
+  expect(problems(graph)).toEqual([])
+})
+
+it('a State or Set state of a button, which has no state, is refused', () => {
+  let graph: Graph = { ...entityGraph(), definition: { entities: [{ key: 'bell', domain: 'button' }], settings: [] } }
+  graph = add(graph, 'entity_state', 'state', { entity: 'bell' })
+  graph = add(graph, 'entity_command', 'press', { entity: 'bell', command: 'press' })
+  graph = connectNodes(add(graph, 'set_entity_state', 'set', { entity: 'bell' }), 'press', 'set')
+  const stateless = validateGraph(graph, nodeCatalog).filter(d => d.code === 'entity.stateless')
+  expect(stateless).toEqual([
+    { nodeId: 'state', message: 'A button has no state to set', severity: 3, inputId: 'entity', code: 'entity.stateless' },
+    { nodeId: 'set', message: 'A button has no state to set', severity: 3, inputId: 'entity', code: 'entity.stateless' },
+  ])
+  expect(Object.keys(dataOutputs(graph.nodes.find(n => n.id === 'press')!, withGraphTypes(nodeCatalog, graph)))).toEqual([])
 })

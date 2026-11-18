@@ -10280,6 +10280,7 @@
         },
         "inputs": {},
         "outputs": {},
+        "dynamicOutputs": "command",
         "execution": [
           "next"
         ],

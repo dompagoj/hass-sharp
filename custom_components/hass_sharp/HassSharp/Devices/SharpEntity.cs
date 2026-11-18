@@ -95,6 +95,13 @@ public abstract partial class SharpEntity : SharpComponent
     internal virtual Task Command(string name, JsonElement data) =>
         throw new NotSupportedException($"{Domain} entity '{Key}' has no command {name}.");
 
+    /// <summary>
+    /// Checks a command's data as <see cref="Command"/> does before its handler runs, without running it: for a definition
+    /// built from nodes, whose When commanded flow is the handler. Data the command does not read is not checked.
+    /// </summary>
+    /// <exception cref="ArgumentException">The entity does not take the data; the message names the entity and the value.</exception>
+    internal virtual void CheckData(string name, JsonElement data) { }
+
     /// <summary>The domain's state fields, such as <c>is_on</c>.</summary>
     internal virtual JsonObject Values() => new();
 

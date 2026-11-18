@@ -309,6 +309,7 @@ public static class VisualNodeCatalog
         if (Text(spec, "dynamicOutputs") == "loop") foreach (var key in new[] { "carry", "exports" }) foreach (var item in Declarations(node, key))
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = new JsonObject { ["type"] = Text(item, "type"), ["description"] = (key == "carry" ? "Kept between iterations: " : "Available after the loop: ") + Text(item, "name"), ["visibility"] = key == "carry" ? "loop" : "outside" };
         if (Text(spec, "dynamicOutputs") == "trigger") foreach (var (key, value) in TriggerOutputs(node, catalog)) ports[key] = value?.DeepClone();
+        if (Text(spec, "dynamicOutputs") == "command") foreach (var (key, value) in CommandOutputs(node, catalog)) ports[key] = value?.DeepClone();
         // An output with "when" exists only while that boolean config is true (D3, D9).
         foreach (var key in ports.Where(p => Text(p.Value, "when") is { Length: > 0 } when && !((node["config"] as JsonObject)?[when] is JsonValue on && on.TryGetValue<bool>(out var enabled) && enabled)).Select(p => p.Key).ToArray())
             ports.Remove(key);
@@ -365,6 +366,25 @@ public static class VisualNodeCatalog
                 }
         return ports;
     }
+    /// <summary>
+    /// A When commanded step's outputs: one per data value of its command in the <c>entityDomains</c> row of its entity,
+    /// named as the row names it, of its first type, read from the run's trigger at <c>/data/&lt;name&gt;</c>; none for a
+    /// command without data, an unknown entity or an unknown command. Mirrored by <c>commandOutputs</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static JsonObject CommandOutputs(JsonObject node, JsonObject catalog)
+    {
+        var ports = new JsonObject();
+        if (EntityDomain(catalog, Text(node["config"], "entity"))?["commands"]?[Text(node["config"], "command")]?["data"] is not JsonObject data) return ports;
+        foreach (var (name, value) in data)
+        {
+            var port = new JsonObject { ["type"] = TypeIds(value?["types"]).FirstOrDefault() ?? "", ["pointer"] = "/data/" + name.Replace("~", "~0").Replace("/", "~1") };
+            if (Text(value, "label") is { Length: > 0 } label) port["label"] = label;
+            ports[name] = port;
+        }
+        return ports;
+    }
+    /// <summary>The text items of a list of type ids, such as a state value's <c>types</c>; none for anything else.</summary>
+    static IEnumerable<string> TypeIds(JsonNode? types) => (types as JsonArray ?? []).OfType<JsonValue>().Select(t => t.TryGetValue<string>(out var s) ? s : "").Where(s => s != "");
     static JsonNode? ConfigValue(JsonObject? config, string path) => path.Split('.').Aggregate((JsonNode?)config, (current, segment) => (current as JsonObject)?[segment]);
     /// <summary><c>&lt;type&gt;:&lt;param&gt;</c> when the value, or every item of a non-empty list, is a literal of that one parametric type.</summary>
     static string? Refined(JsonObject catalog, string type, JsonNode? value)
@@ -429,11 +449,14 @@ public static class VisualNodeCatalog
             var port = Input([Text(item, "type")], false, "New value for " + Text(item, "name")); port["label"] = Text(item, "name");
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = port;
         }
-        // The state values of the domain of the definition's entity config.entity names, each required and without a default.
+        // The state values of the domain of the definition's entity config.entity names, each without a default: for a
+        // State, each required unless the domain's row says "required": false; for a Set state, none required (what it is
+        // not given, the entity keeps). Mirrored by dataInputs in contract.ts.
         if (dynamic == "entity" && EntityDomain(snapshot?.Root ?? Root, Text(node["config"], "entity"))?["state"] is JsonObject state)
             foreach (var (key, value) in state)
             {
-                var port = Input((value?["types"] as JsonArray ?? []).OfType<JsonValue>().Select(t => t.TryGetValue<string>(out var s) ? s : "").Where(s => s != ""), true, null);
+                var required = Text(node, "kind") != "set_entity_state" && !(value?["required"] is JsonValue r && r.TryGetValue<bool>(out var flag) && !flag);
+                var port = Input(TypeIds(value?["types"]), required, null);
                 if (Text(value, "label") is { Length: > 0 } label) port["label"] = label;
                 ports[key] = port;
             }

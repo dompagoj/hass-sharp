@@ -115,16 +115,20 @@ internal sealed partial class DefinitionHost
     /// <summary>
     /// Runs the graph's When commanded flow for the entity's command and waits for it, no longer than
     /// <see cref="CommandTimeout"/> (the flow may wait on a command to this same entity, which waits behind it); a flow
-    /// still running then is left to finish. Completes when the flow succeeded or ended at a Stop step; otherwise throws,
-    /// in words for the person who gave the command: the flow's own error when it failed (its first line; the run's
-    /// record has it whole, and <see cref="FlowFailed"/> logs it).
+    /// still running then is left to finish. The data is checked first, as a class's is (a value the entity does not take
+    /// is refused, and no flow runs), and a value of it Home Assistant did not send is the entity's state value of the
+    /// same name, when it has one (<see cref="Filled"/>). Completes when the flow succeeded or ended at a Stop step;
+    /// otherwise throws, in words for the person who gave the command: the flow's own error when it failed (its first
+    /// line; the run's record has it whole, and <see cref="FlowFailed"/> logs it).
     /// </summary>
+    /// <exception cref="ArgumentException">The entity does not take the data (<see cref="SharpEntity.CheckData"/>).</exception>
     async Task RunFlow(DefinitionRoots roots, SharpEntity entity, string name, JsonElement data)
     {
         var who = entity.Name ?? definition.Name;
         var what = CommandLabel(entity.Domain, name);
+        entity.CheckData(name, data);
         if (!roots.Commands.TryGetValue(entity.Key + ":" + name, out var method)) throw new InvalidOperationException($"{who} has no flow for {what}");
-        var run = FlowClass(method).RunToEnd(method, InvocationCause.Command, TriggerPayload.Command(entity.Key, name, data));
+        var run = FlowClass(method).RunToEnd(method, InvocationCause.Command, TriggerPayload.Command(entity.Key, name, Filled(entity, name, data)));
         using (var timer = new CancellationTokenSource())
         {
             if (await Task.WhenAny(run, Task.Delay(CommandTimeout, timer.Token)) != run)
@@ -142,6 +146,22 @@ internal sealed partial class DefinitionHost
             case "Cancelled": throw new InvalidOperationException($"{who}: {what} did not finish: its flow was cancelled because {Because(outcome.Error)}");
             default: throw new InvalidOperationException($"{who}: {what} did not run");
         }
+    }
+
+    /// <summary>
+    /// The command's data with each value its <c>entityDomains</c> row names that Home Assistant did not send (absent or
+    /// null) taken from the entity's state value of the same name, when it has one: a light turned on without a brightness
+    /// is turned on at the one it has. The data as it was when nothing is taken. Read under the lock, as states are kept.
+    /// </summary>
+    JsonElement Filled(SharpEntity entity, string name, JsonElement data)
+    {
+        if (!CommandValues.TryGetValue((entity.Domain, name), out var names) || !SharpDomains.Graph.TryGetValue(entity.Domain, out var domain)) return data;
+        JsonObject? filled = null;
+        lock (gate)
+            foreach (var key in names)
+                if (CommandData.Given(data, key) == null && domain.State.TryGetValue(key, out var state) && state.Read(entity) is { } value)
+                    (filled ??= data.ValueKind == JsonValueKind.Object ? JsonNode.Parse(data.GetRawText())!.AsObject() : new JsonObject())[key] = JsonSerializer.SerializeToNode(value);
+        return filled == null ? data : JsonSerializer.SerializeToElement(filled);
     }
 
     /// <summary>
@@ -184,12 +204,14 @@ internal sealed partial class DefinitionHost
             if (Ignoring) return;
             entity = GraphEntity(entityKey);
             var known = SharpDomains.Graph.TryGetValue(entity.Domain, out var domain) ? domain.State : new Dictionary<string, GraphState>();
-            // Every value is checked before any is kept: a refused call changes nothing. A secret value is not quoted.
+            // Every value is checked before any is kept: a refused call changes nothing. A secret value is not quoted, nor
+            // is a password text's, as its class words it.
             foreach (var (key, value) in values)
                 if (!known.TryGetValue(key, out var state)) throw new InvalidOperationException($"{definition.Name}: a {entity.Domain} has no state {key}, so entity {entityKey} cannot take it");
                 else if (state.Refuses(entity, value) is { } refused)
                     throw new InvalidOperationException(hidden.Contains(key)
                         ? $"The {key} of {Named(entityKey)} {refused}; the value is hidden because it comes from a secret setting"
+                        : entity is SharpText { Mode: SharpTextMode.Password } ? $"The hidden value given for {Named(entityKey)} {refused}"
                         : $"The {key} {Shown(value)} of {Named(entityKey)} {refused}");
             foreach (var (key, value) in values) known[key].Keep(entity, value);
             awaiting.Remove(entityKey);
@@ -364,6 +386,13 @@ internal sealed partial class DefinitionHost
 
     /// <summary>The command labels of each entity domain, as the catalog's <c>entityDomains</c> gives them.</summary>
     static readonly IReadOnlyDictionary<string, Dictionary<string, string>> CommandLabels = ReadCommandLabels();
+
+    /// <summary>The names of the data values of each domain's commands that have some, as the catalog's <c>entityDomains</c> gives them.</summary>
+    static readonly IReadOnlyDictionary<(string Domain, string Command), string[]> CommandValues =
+        (VisualNodeCatalog.Root["entityDomains"] as JsonObject ?? []).SelectMany(domain => (domain.Value?["commands"] as JsonObject ?? [])
+            .Where(command => command.Value?["data"] is JsonObject { Count: > 0 })
+            .Select(command => KeyValuePair.Create((domain.Key, command.Key), ((JsonObject)command.Value!["data"]!).Select(value => value.Key).ToArray())))
+        .ToDictionary();
 
     static IReadOnlyDictionary<string, Dictionary<string, string>> ReadCommandLabels()
     {

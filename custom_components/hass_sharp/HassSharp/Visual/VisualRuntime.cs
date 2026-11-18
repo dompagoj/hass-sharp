@@ -335,7 +335,16 @@ public sealed class VisualRuntime
         try {definition.SetAvailable(key,false);}
         catch(Exception error) {try{Logger.Warn($"Run {InvocationContext.Current?.RunId}: {Title(id)} could not mark {key} unavailable: {error.GetType().Name}: {error.Message}");}catch{}}
     }
-    JsonNode? OutputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["outputs"]:Spec(id)?["outputs"];
+    // A When commanded step's outputs are its command's data values (see CommandOutputs).
+    JsonNode? OutputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["outputs"]:Text(Spec(id),"dynamicOutputs")=="command"?CommandOutputs(id):Spec(id)?["outputs"];
+    readonly Dictionary<string,JsonObject> commandOutputs=[];
+    /// <summary>The outputs of a When commanded step, as the validators resolve them from the definition the catalog carries.</summary>
+    JsonObject CommandOutputs(string id) {
+        lock(commandOutputs) {
+            if(!commandOutputs.TryGetValue(id,out var ports))commandOutputs[id]=ports=VisualNodeCatalog.CommandOutputs(nodes[id],catalog);
+            return ports;
+        }
+    }
     // The name people see on the canvas, for messages about a value node and the step that used it.
     string Title(string id)=>VisualGraphValidator.Words.StepName(nodes[id],Spec(id));
     static string Text(JsonNode? node,string key,string fallback="")=>VisualNodeCatalog.Text(node,key,fallback);
@@ -587,8 +596,9 @@ public sealed class VisualRuntime
                     case "condition_result":scope.Condition=Input<bool>(scope,id,"value");if(ev!=null)trace!.End(ev,"ok",null,null);return;
                     // A run already cancelled (superseded or stopped) does not act on its definition.
                     case "entity_state":ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),state!,hidden!);definition.SetAvailable(Text(cfg,"entity"),true);break;
-                    // When commanded and When started only start their flows.
-                    case "entity_command":case "entity_setup":break;
+                    // When commanded gives its command's data; When started only starts its flow.
+                    case "entity_command":Command(id,scope);break;
+                    case "entity_setup":break;
                     case "set_entity_state":var values=EntityValues(scope,id,out var secret);ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),values,secret);break;
                     case "set_entity_available":var available=Input<bool>(scope,id,"available");ThrowIfCancelled(scope);definition!.SetAvailable(Text(cfg,"entity"),available);break;
                     case "loop_result":scope.Updates=(cfg["values"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get(p.Key));foreach(var edge in data.Where(p=>p.Key.Item1==id))scope.Updates[edge.Key.Item2]=Get(edge.Key.Item2);if(ev!=null)trace!.End(ev,"ok",null,null);return;
@@ -739,12 +749,14 @@ public sealed class VisualRuntime
     static readonly HashSet<string> EntityKinds=new(["entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting"],StringComparer.Ordinal);
     /// <summary>
     /// The state values a State or Set state step hands its definition: one for each of its pins (the state keys of its
-    /// entity's domain), as <see cref="EntityStateValue"/> gives it; <paramref name="hidden"/> has the pins whose values
-    /// are secret (<see cref="SecretInput"/>), which the definition does not quote.
+    /// entity's domain) that is required or given a value (<see cref="Supplied"/>), as <see cref="EntityStateValue"/>
+    /// gives it, so the entity keeps the values it is not given; <paramref name="hidden"/> has the pins whose values are
+    /// secret (<see cref="SecretInput"/>), which the definition does not quote.
     /// </summary>
     Dictionary<string,object?> EntityValues(VisualScope scope,string id,out HashSet<string> hidden) {
         var values=new Dictionary<string,object?>(StringComparer.Ordinal);hidden=new(StringComparer.Ordinal);
         foreach(var (port,spec) in InputSpecs(id) as JsonObject??[]) {
+            if(!(spec?["required"] is JsonValue r&&r.TryGetValue<bool>(out var required)&&required) && !Supplied(id,port,nodes[id]["config"]?[port]))continue;
             var given=Input(scope,id,port);
             try {values[port]=EntityStateValue(given,(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port));}
             catch(InvalidOperationException) when(SecretInput(id,port,given)) {throw Hidden(id,port);}
@@ -774,15 +786,21 @@ public sealed class VisualRuntime
     // Contract C6: each typed output reads its pointer from the normalised payload. A pointer that finds
     // nothing or JSON null, or a value of another type, produces no output; only a consumer fails, naming it.
     void Trigger(string id,VisualScope scope,JsonObject node) {
-        foreach(var (port,spec) in VisualNodeCatalog.TriggerOutputs(node,catalog)) {
-            if(trigger.ValueKind==JsonValueKind.Undefined || !TryPointer(trigger,Text(spec,"pointer"),out var value) || value.ValueKind==JsonValueKind.Null) {absentTriggerOutputs[(id,port)]=null;continue;}
-            var type=Text(spec,"type");var label=id+"."+port;
-            object? output;
-            try {output=types.GetValueOrDefault(VisualTypes.RootId(catalog,type))==typeof(EntityStateSnapshot)?EntityStateSnapshot.FromStateJson(value):ConvertTo(value,type,label,false);}
-            catch(Exception error) when(error is ArgumentException or InvalidOperationException){absentTriggerOutputs[(id,port)]=error.Message;continue;}
-            scope.SetOutput((id,port),output);
-            if(scope.Trace!=null)trace!.Output(scope.Trace,id,port,output);
-        }
+        foreach(var (port,spec) in VisualNodeCatalog.TriggerOutputs(node,catalog))TriggerOutput(id,port,spec,scope);
+    }
+    // A When commanded step's outputs are read from the command's data in the run's trigger as a trigger's are: a value
+    // the command was not given (and the host could not fill from the entity's state) is absent.
+    void Command(string id,VisualScope scope) {
+        foreach(var (port,spec) in CommandOutputs(id))TriggerOutput(id,port,spec,scope);
+    }
+    void TriggerOutput(string id,string port,JsonNode? spec,VisualScope scope) {
+        if(trigger.ValueKind==JsonValueKind.Undefined || !TryPointer(trigger,Text(spec,"pointer"),out var value) || value.ValueKind==JsonValueKind.Null) {absentTriggerOutputs[(id,port)]=null;return;}
+        var type=Text(spec,"type");var label=id+"."+port;
+        object? output;
+        try {output=types.GetValueOrDefault(VisualTypes.RootId(catalog,type))==typeof(EntityStateSnapshot)?EntityStateSnapshot.FromStateJson(value):ConvertTo(value,type,label,false);}
+        catch(Exception error) when(error is ArgumentException or InvalidOperationException){absentTriggerOutputs[(id,port)]=error.Message;return;}
+        scope.SetOutput((id,port),output);
+        if(scope.Trace!=null)trace!.Output(scope.Trace,id,port,output);
     }
     // A node about to wait stores the trace first (C10), so the running event is readable during the wait.
     Task Waiting(VisualScope scope,Task task) {if(scope.Trace!=null && !task.IsCompleted)trace!.Waiting();return task;}

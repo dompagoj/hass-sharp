@@ -21,11 +21,16 @@ static class EntityGraphRuntimeTests
     sealed class FakeDefinition : IDefinitionRuntime
     {
         public readonly List<string> Calls = [];
+        /// <summary>Each state value handed over as hidden, as <c>&lt;entity&gt;.&lt;key&gt;</c>.</summary>
+        public readonly List<string> Hidden = [];
         public readonly Dictionary<string, object?> Settings = new(StringComparer.Ordinal);
         public readonly HashSet<string> Secrets = new(StringComparer.Ordinal);
         public bool FailUnavailable;
-        public void SetState(string entityKey, IReadOnlyDictionary<string, object?> values, IReadOnlySet<string> hidden) =>
+        public void SetState(string entityKey, IReadOnlyDictionary<string, object?> values, IReadOnlySet<string> hidden)
+        {
             Calls.Add($"state {entityKey} " + string.Join(" ", values.Select(p => p.Key + "=" + Typed(p.Value))));
+            Hidden.AddRange(hidden.Order(StringComparer.Ordinal).Select(key => entityKey + "." + key));
+        }
         public void SetAvailable(string entityKey, bool available)
         {
             Calls.Add($"available {entityKey} {(available ? "yes" : "no")}");
@@ -156,7 +161,8 @@ static class EntityGraphRuntimeTests
                 (nameof(SensorStateAcceptsNumberAndText), SensorStateAcceptsNumberAndText),
                 (nameof(EmptyStateValueIsPassedThrough), () => { EmptyStateValueIsPassedThrough(); return Task.CompletedTask; }),
                 (nameof(EntityNodesFailWithoutADefinition), EntityNodesFailWithoutADefinition),
-                (nameof(EntityIsWorksInAnAutomation), EntityIsWorksInAnAutomation) })
+                (nameof(EntityIsWorksInAnAutomation), EntityIsWorksInAnAutomation),
+                (nameof(SetStateHandsOverOnlyWhatItIsGiven), SetStateHandsOverOnlyWhatItIsGiven) })
             {
                 States.Clear(); UserScriptManager.CurrentTrigger.Value = null;
                 try { await test(); }
@@ -499,5 +505,33 @@ static class EntityGraphRuntimeTests
             finally { InvocationContext.Current = prior; }
             Same(messages.ToArray(), [state == "on" ? "yes" : "no", state], $"an automation reads the porch light {state}");
         }
+    }
+
+    /// <summary>
+    /// A Set state step hands over only the values it is given (a light's brightness, not whether it is on), and a State
+    /// only those it is given beside its required ones. A value from a secret setting is still traced hidden, from its
+    /// wire, and handed over as hidden; a value it is not given is not traced.
+    /// </summary>
+    static async Task SetStateHandsOverOnlyWhatItIsGiven()
+    {
+        var graph = Entity(
+            [N("on", "entity_command", new { entity = "lamp", command = "turn_on" }), Setting("lvl", "level"), SetState("dim", "lamp"),
+             N("off", "entity_command", new { entity = "lamp", command = "turn_off" }), State("s", "blind", new JsonObject { ["position"] = Lit("number", 40) })],
+            [E("on", "dim"), D("lvl", "dim", "brightness")],
+            [("lamp", "light"), ("blind", "cover")],
+            ("level", "number"));
+        using var compiled = await Compiled.Of(graph, "a Set state of a secret brightness");
+        var definition = new FakeDefinition { Settings = { ["level"] = 128.0 }, Secrets = { "level" } };
+        var sink = new TraceSink();
+        await compiled.Run("on", definition, sink: sink);
+        Same(definition.Calls, ["state lamp brightness=double:128"], "only the brightness is handed over");
+        Same(definition.Hidden, ["lamp.brightness"], "the brightness from a secret is handed over as hidden");
+        var traced = sink.Event("dim")["inputs"]?["brightness"];
+        Check(traced?["v"]?.ToJsonString() == "\"***\"" && traced["redacted"]?.GetValue<bool>() == true && traced["src"]?["node"]?.GetValue<string>() == "lvl",
+            "the secret brightness is traced hidden, from its wire: " + (traced is JsonObject o ? string.Join(",", o.Select(p => p.Key)) : "none"));
+        Check(sink.Event("dim")["inputs"]?["is_on"] == null, "a value the step is not given is traced: " + sink.Event("dim")["inputs"]?.ToJsonString());
+        definition.Calls.Clear();
+        await compiled.Run("s", definition);
+        Same(definition.Calls, ["state blind position=double:40", "available blind yes"], "a State hands over the optional values it is given");
     }
 }

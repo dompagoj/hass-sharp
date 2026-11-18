@@ -43,7 +43,8 @@ export interface OutputSpec { label?: string; type: string; description?: string
 /**
  * `root`: the node starts a flow of its own (as a trigger does); `documents`: the kinds of graph it works in (any when
  * absent); `singleton`: a graph holds at most one. `dynamicInputs: 'entity'` gives the node the state values of the
- * domain of the definition's entity `config.entity` names, each required.
+ * domain of the definition's entity `config.entity` names (see `dataInputs`); `dynamicOutputs: 'command'` gives it the
+ * data values of its entity's command `config.command` (see `commandOutputs`).
  */
 export interface NodeSpec { root?: boolean; documents?: GraphDocument[]; singleton?: boolean; sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; executionLabels?: Record<string, string>; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 /** A public instance property or field a value of a C# type has, inherited ones included, as the compiler lists it. */
@@ -67,8 +68,13 @@ export interface ServiceSchema {
 }
 /** Contract C4: the services section, keyed by `domain.service`. Never part of the catalog root. */
 export interface ServicesSection { servicesGeneration: string; items: Record<string, ServiceSchema> }
-/** One entity domain a definition's graph can define: its state values (inputs of State and Set state), commands and options. */
-export interface EntityDomainSpec { label: string; state: Record<string, { types: string[]; label?: string }>; commands: Record<string, { label?: string }>; options: Record<string, ConfigSpec> }
+/** A state value of an entity domain, or a data value of one of its commands: `required: false` when it may be left out. */
+export interface EntityValueSpec { types: string[]; label?: string; required?: boolean }
+/**
+ * One entity domain a definition's graph can define: its state values (inputs of State and Set state), its commands,
+ * each with the values of its data (outputs of When commanded), and its options.
+ */
+export interface EntityDomainSpec { label: string; state: Record<string, EntityValueSpec>; commands: Record<string, { label?: string; data?: Record<string, EntityValueSpec> }>; options: Record<string, ConfigSpec> }
 export interface VisualCatalogSnapshot { entityDomains?: Record<string, EntityDomainSpec>; /** Per graph (`withGraphTypes`): an entity graph's definition. */ definition?: GraphDefinition; services?: ServicesSection; version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; parametricTypes?: Record<string, ParametricTypeSpec>; nodes: Record<string, NodeSpec>; triggerOutputs?: Record<string, Record<string, OutputSpec>>; /** Per graph (`withGraphTypes`): the type of each `propertyOf` output, by node id and port. */ resolvedOutputs?: Record<string, Record<string, string>>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
 /** Pass the server-produced catalog explicitly for each document; graph metadata is never type authority. */
 export const nodeCatalog = rawCatalog as unknown as VisualCatalogSnapshot
@@ -466,6 +472,7 @@ export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = no
   }
   if (spec?.dynamicOutputs === 'custom') Object.assign(ports, structuredClone(customSignature(node, catalog)?.outputs ?? {}))
   if (spec?.dynamicOutputs === 'trigger') Object.assign(ports, triggerOutputs(node, catalog))
+  if (spec?.dynamicOutputs === 'command') Object.assign(ports, commandOutputs(node, catalog))
   // An output with `when` exists only while that boolean config is true (D3, D9).
   for (const [key, port] of Object.entries(ports)) if (port.when && node.config[port.when] !== true) delete ports[key]
   return ports
@@ -512,6 +519,24 @@ export function triggerOutputs(node: GraphNode, catalog: VisualCatalogSnapshot =
       }
   return ports
 }
+/**
+ * A When commanded step's outputs: one per data value of its command in the `entityDomains` row of its entity, named as
+ * the row names it, of its first type, read from the run's trigger at `/data/<name>`; none for a command without data,
+ * an unknown entity or an unknown command. Mirrored by `VisualNodeCatalog.CommandOutputs`.
+ */
+export function commandOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, OutputSpec> {
+  const ports = Object.create(null) as Record<string, OutputSpec>
+  const commands = entityDomain(catalog, text(node.config.entity))?.commands, command = text(node.config.command)
+  const entry: unknown = record(commands) && Object.hasOwn(commands, command) ? commands[command] : undefined
+  const data = record(entry) && record(entry.data) ? entry.data : {}
+  for (const [name, value] of Object.entries(data)) {
+    const type = typeIds(record(value) ? value.types : undefined)[0] ?? ''
+    ports[name] = { type, ...(record(value) && typeof value.label === 'string' && value.label ? { label: value.label } : {}), pointer: '/data/' + name.replaceAll('~', '~0').replaceAll('/', '~1') }
+  }
+  return ports
+}
+/** The text items of a list of type ids, such as a state value's `types`; none for anything else. */
+const typeIds = (types: unknown) => Array.isArray(types) ? types.filter((t): t is string => typeof t === 'string' && t !== '') : []
 const configValue = (config: Record<string, unknown>, path: string) => path.split('.').reduce<unknown>((current, segment) => record(current) ? current[segment] : undefined, config)
 /** `<type>:<param>` when the value, or every item of a non-empty list, is a literal of that one parametric type. */
 function refinedType(type: string, value: unknown, catalog: VisualCatalogSnapshot): string | undefined {
@@ -551,11 +576,13 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
     if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
     ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { types: [item.type], required: false, label: item.name, description: `New value for ${item.name}` }
   }
-  // The state values of the domain of the definition's entity config.entity names, each required and without a default.
+  // The state values of the domain of the definition's entity config.entity names, each without a default: for a State,
+  // each required unless the domain's row says `required: false`; for a Set state, none required (what it is not given,
+  // the entity keeps). Mirrors `VisualNodeCatalog.DataInputs`.
   const state = dynamic === 'entity' ? entityDomain(catalog, text(node.config.entity))?.state : undefined
   if (record(state)) for (const [key, value] of Object.entries(state)) {
-    const types = record(value) && Array.isArray(value.types) ? value.types.filter((t): t is string => typeof t === 'string' && t !== '') : []
-    ports[key] = { types, required: true, ...(record(value) && typeof value.label === 'string' && value.label ? { label: value.label } : {}) }
+    const required = node.kind !== 'set_entity_state' && !(record(value) && value.required === false)
+    ports[key] = { types: typeIds(record(value) ? value.types : undefined), required, ...(record(value) && typeof value.label === 'string' && value.label ? { label: value.label } : {}) }
   }
   return ports
 }
@@ -817,6 +844,10 @@ export const words = {
   commandDuplicate: (key: string, command: string, label: string) => `Entity ${words.name(key)} already has ${words.article(label)} ${label} step for ${command}; delete this one or choose another command`,
   /** An entity reader a State reads whose entity comes over a wire: what the State watches cannot be known. */
   dynamicSource: (reader: string, state: string, input: string) => `${reader} gets its entity over a wire, so ${state} is not worked out again when that entity changes; choose the entity in ${input} instead`,
+  /** A State or Set state step naming an entity whose type has no state, such as a button. */
+  stateless: (type: string) => { const article = words.article(type); return `${article[0].toUpperCase()}${article.slice(1)} ${type.toLowerCase()} has no state to set` },
+  /** A State or Set state step given none of its entity's state values, none of which is required. */
+  noValue: (step: string) => `${step} needs at least one value`,
   /** A command of an entity no When commanded step handles. */
   commandUnhandled: (domain: string, key: string, command: string, label: string) => `${domain} ${words.name(key)} does nothing on ${command}; add ${words.article(label)} ${label} step for it`,
 }
@@ -905,7 +936,7 @@ export const diagnosticCodes = [
   'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult',
   'flow.pure', 'pure.unused', 'custom.signature', 'property.unset', 'property.unknown',
   'definition.invalid', 'definition.unknownEntity', 'definition.unknownCommand', 'node.document', 'node.singleton', 'root.incoming',
-  'setting.unknown', 'state.duplicate', 'command.duplicate', 'state.dynamicSource', 'command.unhandled',
+  'setting.unknown', 'state.duplicate', 'command.duplicate', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value',
 ] as const
 export type DiagnosticCode = typeof diagnosticCodes[number]
 /**
@@ -1136,6 +1167,11 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     }
   }
   origin = graphOrigin
+  /** Whether a step's input is given a value: a wire into it, or an operand that is not unset. Mirrors `VisualGraphValidator` `Supplied`. */
+  function supplied(node: GraphNode, port: string) {
+    const raw = inputValue(node, port, catalog)
+    return incoming.has(key(node.id, port)) || (record(raw) && raw.kind !== 'unset')
+  }
   function operand(node: GraphNode, port: string, raw: unknown, spec: InputSpec): string | undefined {
     const outer = origin
     origin = { kind: 'operand', node: node.id, port }
@@ -1257,6 +1293,15 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         const commanded = Object.entries(catalog.entityDomains ?? {}).filter(([, entry]) => record(entry) && record(entry.commands) && Object.keys(entry.commands).length > 0)
           .map(([key]) => entityTypeLabel(catalog, key).toLowerCase())
         error(node.id, words.unknownCommand(entityKey, command, commands, commanded, configLabel(spec.config.command, 'command')), 'command', undefined, 'definition.unknownCommand')
+      }
+    }
+    // A State or Set state needs an entity whose type has a state, and at least one of its values when none is required.
+    const row = (node.kind === 'entity_state' || node.kind === 'set_entity_state') && typeof entityKey === 'string' && definitionEntity(catalog, entityKey) ? entityDomain(catalog, entityKey) : undefined
+    if (entityGraph && row) {
+      if (!record(row.state) || !Object.keys(row.state).length) error(node.id, words.stateless(entityTypeLabel(catalog, text(definitionEntity(catalog, entityKey as string)?.domain))), 'entity', undefined, 'entity.stateless')
+      else {
+        const values = Object.entries(dataInputs(node))
+        if (!values.some(([, input]) => input.required) && !values.some(([port]) => supplied(node, port))) error(node.id, words.noValue(text(nodeSpec(node.kind)?.label, words.key(node.kind))), undefined, undefined, 'entity.no_value')
       }
     }
     if (entityGraph && node.kind === 'setting' && typeof node.config.key === 'string' && !definitionItems(catalog, 'settings').some(s => s.key === node.config.key))

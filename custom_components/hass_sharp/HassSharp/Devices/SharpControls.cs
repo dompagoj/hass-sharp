@@ -129,6 +129,7 @@ public class SharpNumber : SharpEntity
         "set_value" => SetValue(Given(data)),
         _ => base.Command(name, data),
     };
+    internal override void CheckData(string name, JsonElement data) { if (name == "set_value") _ = Given(data); }
     internal override JsonObject Values() => new() { ["value"] = Value };
     internal override JsonObject DomainOptions() => new()
     {
@@ -204,6 +205,7 @@ public class SharpSelect : SharpEntity
         "select_option" => SelectOption(Given(data)),
         _ => base.Command(name, data),
     };
+    internal override void CheckData(string name, JsonElement data) { if (name == "select_option") _ = Given(data); }
     internal override JsonObject Values() => new() { ["option"] = Option };
     internal override JsonObject DomainOptions() => new() { ["options"] = new JsonArray(Options.Select(o => (JsonNode?)o).ToArray()) };
 
@@ -349,6 +351,7 @@ public class SharpText : SharpEntity
         "set_value" => SetValue(Given(data)),
         _ => base.Command(name, data),
     };
+    internal override void CheckData(string name, JsonElement data) { if (name == "set_value") _ = Given(data); }
     internal override JsonObject Values() => new() { ["value"] = Value };
     internal override JsonObject DomainOptions() => new()
     {
@@ -443,6 +446,7 @@ public class SharpLight : SharpEntity
         "turn_off" => TurnOff(),
         _ => base.Command(name, data),
     };
+    internal override void CheckData(string name, JsonElement data) { if (name == "turn_on") _ = Given(data); }
     internal override JsonObject Values() => new() { ["is_on"] = IsOn, ["brightness"] = Brightness };
     internal override JsonObject DomainOptions() => new() { ["dimmable"] = Dimmable };
 
@@ -547,6 +551,7 @@ public class SharpCover : SharpEntity
         "set_position" => SetPosition(Given(data)),
         _ => base.Command(name, data),
     };
+    internal override void CheckData(string name, JsonElement data) { if (name == "set_position") _ = Given(data); }
     internal override JsonObject Values() => new() { ["is_closed"] = IsClosed, ["position"] = Position };
     internal override JsonObject DomainOptions() => new() { ["positionable"] = Positionable };
 

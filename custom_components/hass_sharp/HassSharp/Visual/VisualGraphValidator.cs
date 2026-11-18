@@ -38,7 +38,7 @@ public static class VisualGraphValidator
         "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult",
         "flow.pure", "pure.unused", "custom.signature", "property.unset", "property.unknown",
         "definition.invalid", "definition.unknownEntity", "definition.unknownCommand", "node.document", "node.singleton", "root.incoming",
-        "setting.unknown", "state.duplicate", "command.duplicate", "state.dynamicSource", "command.unhandled",
+        "setting.unknown", "state.duplicate", "command.duplicate", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value",
     ];
 
     /// <summary>
@@ -400,6 +400,10 @@ public static class VisualGraphValidator
         internal static string CommandDuplicate(string key, string command, string label) => $"Entity {Name(key)} already has {Article(label)} {label} step for {command}; delete this one or choose another command";
         /// <summary>An entity reader a State reads whose entity comes over a wire: what the State watches cannot be known.</summary>
         internal static string DynamicSource(string reader, string state, string input) => $"{reader} gets its entity over a wire, so {state} is not worked out again when that entity changes; choose the entity in {input} instead";
+        /// <summary>A State or Set state step naming an entity whose type has no state, such as a button.</summary>
+        internal static string Stateless(string type) => $"{Capital(Article(type))} {type.ToLowerInvariant()} has no state to set";
+        /// <summary>A State or Set state step given none of its entity's state values, none of which is required.</summary>
+        internal static string NoValue(string step) => $"{step} needs at least one value";
         /// <summary>A command of an entity no When commanded step handles.</summary>
         internal static string CommandUnhandled(string domain, string key, string command, string label) => $"{domain} {Name(key)} does nothing on {command}; add {Article(label)} {label} step for it";
     }
@@ -663,6 +667,9 @@ public static class VisualGraphValidator
                         if (!commands.Any(n => Choice(n, "entity") == Text(entity, "key") && Choice(n, "command") == command))
                             errors.Add(new(null, Words.CommandUnhandled(Text(domain, "label", Words.DomainWords(Text(entity, "domain"))), Text(entity, "key"), CommandLabel(Text(entity, "key"), command), KindLabel("entity_command")), 2, Code: "command.unhandled"));
         }
+        /// <summary>Whether a step's input is given a value: a wire into it, or an operand that is not unset.</summary>
+        bool Supplied(JsonObject node, string port) =>
+            incoming.ContainsKey((Id(node), port)) || TryGetInputValue(node, port, out var operand) && operand is JsonObject given && Text(given, "kind") != "unset";
         /// <summary>A command as people know it: its label in the entity's domain, else its key in words.</summary>
         string CommandLabel(string entity, string command) => Text(EntityDomain(Root, entity)?["commands"]?[command], "label", Words.KeyWords(command));
         void Cycles(List<JsonObject> edges, string label)
@@ -835,6 +842,13 @@ public static class VisualGraphValidator
                     var commanded = (Root["entityDomains"] as JsonObject ?? []).Where(p => p.Value?["commands"] is JsonObject { Count: > 0 }).Select(p => Text(p.Value, "label", Words.DomainWords(p.Key)).ToLowerInvariant()).ToList();
                     Error(id, Words.UnknownCommand(entityKey, command, commands.Select(c => Text(c.Value, "label", Words.KeyWords(c.Key))).ToList(), commanded, ConfigLabel(spec["config"]?["command"], "command")), "command", code: "definition.unknownCommand");
                 }
+            }
+            // A State or Set state needs an entity whose type has a state, and at least one of its values when none is required.
+            if (EntityGraph && kind is "entity_state" or "set_entity_state" && DefinitionEntity(Root, Text(cfg, "entity")) is { } described && EntityDomain(Root, Text(cfg, "entity")) is { } row)
+            {
+                if (row["state"] is not JsonObject { Count: > 0 }) Error(id, Words.Stateless(Text(row, "label", Words.DomainWords(Text(described, "domain")))), "entity", code: "entity.stateless");
+                else if (DataInputs(node) is var values && !values.Any(p => Bool(p.Value, "required")) && !values.Any(p => Supplied(node, p.Key)))
+                    Error(id, Words.NoValue(KindLabel(kind)), code: "entity.no_value");
             }
             if (EntityGraph && kind == "setting" && cfg["key"] is JsonValue kv && kv.TryGetValue<string>(out var settingKey) && !DefinitionItems(Root, "settings").Any(s => Text(s, "key") == settingKey))
                 Error(id, Words.UnknownSetting(settingKey, ConfigLabel(spec["config"]?["key"], "key")), "key", code: "setting.unknown");
