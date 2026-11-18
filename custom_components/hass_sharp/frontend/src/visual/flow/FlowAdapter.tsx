@@ -20,6 +20,7 @@ import { registryNames, type NameResolver } from '../widgets'
 import { addConnected, canAddFor, type PinRef } from './autoConnect'
 import { chooseProperty } from '../selectProperty'
 import { CanvasToolbar } from './CanvasToolbar'
+import { automationTexts } from '../automationAdapter'
 import { edgeTypes } from './Edges'
 import { NodeCard } from './NodeCard'
 import {
@@ -65,6 +66,8 @@ export interface FlowAdapterProps {
    * double-click on the card and E on the focused card. Without it, cards have no code control.
    */
   onEditCode?(id: string): void
+  /** The canvas's accessible name (default: an automation's); read only, ", read only" follows it. */
+  label?: string
 }
 
 /** What the page may ask of the canvas: the same placement the canvas uses for its own additions. */
@@ -1183,7 +1186,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
         class="hs-flow"
         classList={{ 'hs-flow--readonly': readOnly(), 'hs-flow--traced': !!props.trace, 'hs-flow--connecting': !!origin(), 'hs-flow--marquee': !!marquee() }}
         tabindex="-1"
-        aria-label={readOnly() ? 'Automation canvas, read only' : 'Automation canvas'}
+        aria-label={`${props.label ?? automationTexts.canvasLabel}${readOnly() ? ', read only' : ''}`}
         on:pointerdown={event => {
           gestureStart = { x: event.clientX, y: event.clientY }
           setGestureMoved(false)

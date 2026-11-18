@@ -1,5 +1,6 @@
-import { createEffect, createMemo, createSignal, For, on, Show, type JSX } from 'solid-js'
+import { createEffect, createMemo, createSignal, For, on, Show, untrack, type JSX } from 'solid-js'
 import { NodeConfig } from './NodeConfig'
+import { AutomationOverview, automationTexts } from './automationAdapter'
 import { TypeChip } from './InputRow'
 import { Glyph } from './Glyph'
 import type { VisualDiagnostic } from './api'
@@ -36,8 +37,15 @@ export interface InspectorProps {
   /** Shows the problems list (the overview's problem count links to it). */
   onShowProblems?(): void
   lastRun?: InspectorLastRun
-  /** False when the saved automation is turned off (the overview says so); undefined for a draft. */
+  /** False when the saved automation is turned off (the default overview says so); undefined for a draft. */
   enabled?: boolean
+  /**
+   * The top of the overview (nothing selected), given what selects a step and focuses it in the panel; called once.
+   * Without it, an automation's: whether it is off and its triggers.
+   */
+  overview?(select: (id?: string) => void): JSX.Element
+  /** The overview's accessible name (default: an automation's). */
+  overviewLabel?: string
   /**
    * Docked: a side panel beside the canvas, always shown, with the overview when nothing is selected. Otherwise
    * (below 900px, or floating over a full-screen canvas) it is a sheet in two stages: a peek bar naming the
@@ -59,7 +67,7 @@ export interface InspectorProps {
 
 /**
  * The right-hand panel. In order of precedence: several selected nodes, the selected node ({@link NodeConfig}), a selected wire (read only) or, with nothing selected, an overview of the
- * automation (its triggers, problem count and last run).
+ * document (the page's `overview`, else an automation's triggers; then the problem count and last run).
  */
 export function Inspector(props: InspectorProps) {
   let aside!: HTMLElement
@@ -213,9 +221,11 @@ export function Inspector(props: InspectorProps) {
     )
   }
 
-  /** With nothing selected: the automation's triggers (each selects itself), problems and last run. */
+  /**
+   * With nothing selected: the page's part (`overview`; an automation's triggers when it gives none), then the
+   * problems and the last run.
+   */
   function Overview() {
-    const triggers = () => props.graph.nodes.filter(n => n.kind === 'trigger')
     const problems = () => props.diagnostics.filter(d => d.severity >= 2)
     const errors = () => problems().filter(d => d.severity === 3).length
     const count = () => {
@@ -223,25 +233,10 @@ export function Inspector(props: InspectorProps) {
       return [e && `${e} ${e === 1 ? 'problem' : 'problems'}`, w && `${w} ${w === 1 ? 'warning' : 'warnings'}`].filter(Boolean).join(' and ')
     }
     return (
-      <section class="hs-insp-overview" aria-label="Automation overview">
-        <Show when={props.enabled === false}>
-          <p class="hs-insp-off" role="note"><strong>Off:</strong> nothing starts this automation by itself. Run now still works.</p>
-        </Show>
-        <h2 class="hs-insp-heading">Starts when</h2>
-        <Show when={triggers().length} fallback={<p class="hs-muted">This automation has no trigger yet.</p>}>
-          <ul class="hs-insp-triggers">
-            <For each={triggers()}>
-              {node => (
-                <li>
-                  <button type="button" class="hs-insp-trigger-line" onClick={() => selectAndFocus(node.id)}>
-                    <span class="hs-insp-trigger-line__icon" aria-hidden="true"><Glyph paths={icons.trigger} /></span>
-                    <span>{nodeSummary(node, props.catalog, props.names, props.graph)}</span>
-                  </button>
-                </li>
-              )}
-            </For>
-          </ul>
-        </Show>
+      <section class="hs-insp-overview" aria-label={props.overviewLabel ?? automationTexts.overviewLabel}>
+        {props.overview ? untrack(() => props.overview!(selectAndFocus)) : (
+          <AutomationOverview graph={props.graph} catalog={props.catalog} names={props.names} enabled={props.enabled} onSelect={selectAndFocus} />
+        )}
         <Show when={problems().length} fallback={<p class="hs-insp-meta">No problems found.</p>}>
           <button type="button" class="hs-insp-problem-count" classList={{ 'hs-insp-problem-count--warning': !errors() }} onClick={showProblems}>
             <Glyph paths={errors() ? icons.problem : icons.warning} />

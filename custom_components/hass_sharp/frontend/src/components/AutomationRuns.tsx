@@ -26,12 +26,14 @@ const Timestamp = (props: { value: string | null }) => <Show when={props.value} 
 /** The run history of one saved automation. Runs are started elsewhere (the visual editor's top bar). */
 interface RunsProps {
   automationId: string
+  /** Where a run's "View trace" link goes (default: the run of the visual automation, `/visual/<id>/runs/<runId>`). */
+  runHref?: (run: AutomationRun) => string
 }
 export const AutomationRuns = (props: RunsProps) => {
   const hass = useHass()
   // Identity, rather than filename, owns pagination and dispatch feedback.
   return <Show when={hass.user?.is_admin} fallback={<p class="hs-notice">Administrator access is required to view run history.</p>}>
-    <Show when={props.automationId} keyed>{id => <RunPanel automationId={id} />}</Show>
+    <Show when={props.automationId} keyed>{id => <RunPanel automationId={id} runHref={props.runHref} />}</Show>
   </Show>
 }
 
@@ -94,7 +96,7 @@ const RunPanel = (props: RunsProps) => {
         <p>{offset() ? 'Return to the newest runs or the previous page.' : statusFilter() ? 'Choose another status to see other runs.' : 'Run it now or wait for its next trigger.'}</p>
       </div></Show>
       <ul class="hs-run-list" aria-label="Recorded runs" aria-busy={history.isFetching}>
-        <For each={history.data?.runs}>{run => <RunRow run={run} now={now()} open={expanded().has(run.runId)} onToggle={() => toggle(run.runId)} />}</For>
+        <For each={history.data?.runs}>{run => <RunRow run={run} now={now()} open={expanded().has(run.runId)} onToggle={() => toggle(run.runId)} href={props.runHref} />}</For>
       </ul>
       <nav class="hs-history-pagination" aria-label="Run history pages">
         <Button disabled={!offset() || history.isFetching} onClick={() => setOffset(0)}>Newest</Button>
@@ -107,7 +109,7 @@ const RunPanel = (props: RunsProps) => {
 }
 
 
-const RunRow = (props: { run: AutomationRun; now: number; open: boolean; onToggle: () => void }) => {
+const RunRow = (props: { run: AutomationRun; now: number; open: boolean; onToggle: () => void; href?: (run: AutomationRun) => string }) => {
   // The run list can also stand alone, outside the app's routes: a link to a run needs the router.
   const routed = !!useContext(RouterContext)
   const bodyId = createUniqueId()
@@ -129,7 +131,7 @@ const RunRow = (props: { run: AutomationRun; now: number; open: boolean; onToggl
       </button>
       {/* Any run of a visual automation opens on its graph; without a trace it has no recorded values. */}
       <Show when={routed && props.run.visualId}>{visualId =>
-        <A class="hs-run-trace" href={`/visual/${encodeURIComponent(visualId())}/runs/${encodeURIComponent(props.run.runId)}`}>{props.run.hasTrace ? 'View trace' : 'View run'}</A>
+        <A class="hs-run-trace" href={props.href?.(props.run) ?? `/visual/${encodeURIComponent(visualId())}/runs/${encodeURIComponent(props.run.runId)}`}>{props.run.hasTrace ? 'View trace' : 'View run'}</A>
       }</Show>
     </div>
     <Show when={props.open}><div id={bodyId} class="hs-run-body">

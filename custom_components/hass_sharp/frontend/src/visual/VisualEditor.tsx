@@ -1,9 +1,8 @@
 import { batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, untrack } from 'solid-js'
-import { delegateEvents } from 'solid-js/web'
+import { delegateEvents, Dynamic } from 'solid-js/web'
 import { useQuery, useQueryClient } from '@tanstack/solid-query'
 import { Button } from '../components/Controls'
 import type { MenuItem } from '../components/Menu'
-import { HelpDialog } from '../components/HelpDialog'
 import { AutomationRuns } from '../components/AutomationRuns'
 import { Dialog } from '../components/Dialog'
 import { useEntities } from '../entities'
@@ -19,12 +18,11 @@ import { createFullscreen, createFullscreenPage, FullscreenButton } from './full
 import { media } from './media'
 import { createVisualSession } from './session'
 import { visualError, type VisualDiagnostic, type VisualDocument } from './api'
-import { createGraph, createNodeAt, serializeGraph, type NodeKind } from './graph'
+import { createNodeAt, serializeGraph, type NodeKind } from './graph'
 import { graphDocument } from './contract'
-import { RunNowButton } from './RunNow'
+import { automationAdapter, type EditorAdapter, type EditorContext, type EditorDocument } from './adapter'
 import { runHistoryInterval } from '../components/runDispatch'
 import { EnabledSwitch } from '../automations/EnabledSwitch'
-import { setAutomationEnabled } from '../automations/enabled'
 import { soon } from './soon'
 import { createNotice, TopBar } from './TopBar'
 import { CodeLeftBehind, CustomCodeEditor } from './CustomCodeEditor'
@@ -40,15 +38,17 @@ const failedStatuses = new Set(['Failed', 'Interrupted'])
 
 /**
  * The visual editor page: the top bar ({@link TopBar}), the step library, the canvas, the inspector and a bottom
- * drawer with Problems, Generated C# and Runs.
+ * drawer with Problems, Generated C# and Runs. The document it edits, and what only that kind of document has, come
+ * from `adapter` (default: an automation, {@link automationAdapter}).
  * The page root is the keyboard boundary: keys never leave it for Home Assistant's shortcuts, and everything
  * focusable (menus, dialogs, the floating inspector) is rendered inside it. The canvas can go full screen.
  */
-export function VisualEditor(props: {
+export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
   name: string
   documentId?: string
+  adapter?: EditorAdapter<D>
   onDirtyChange?: (dirty: boolean) => void
-  onSaved?: (document: VisualDocument) => void
+  onSaved?: (document: D) => void
   /** Back to the list; the page shows no back button without it. */
   onBack?: () => void
   /** Opens with the bottom drawer on this tab (a run's trace goes back to the Runs tab). */
@@ -59,8 +59,9 @@ export function VisualEditor(props: {
   onOpenLibrary?: (id: string, line?: number) => void
 }) {
   const hass = useHass()
+  const adapter = props.adapter ?? (automationAdapter(hass) as unknown as EditorAdapter<D>), texts = adapter.texts
   // Unapplied code counts as unsaved: a revision saved elsewhere is then never reloaded over it.
-  const session = createVisualSession(hass, createGraph(props.name), { unsaved: () => codeDirty(), code: () => unappliedCode() })
+  const session = createVisualSession(hass, adapter.starter(props.name), { unsaved: () => codeDirty(), code: () => unappliedCode(), adapter })
   props.discardRef?.(session.discardDraft)
   const queryClient = useQueryClient()
   const entities = useEntities()
@@ -110,7 +111,7 @@ export function VisualEditor(props: {
       () => [props.documentId, props.name] as const,
       ([id, name], previous) => {
         if (id && id !== session.document()?.id) void session.load(id)
-        else if (!id && previous) session.newDraft(createGraph(name))
+        else if (!id && previous) session.newDraft(adapter.starter(name))
         else if (!id) session.openNew()
       },
     ),
@@ -121,7 +122,7 @@ export function VisualEditor(props: {
   /** A save (or a copy, or a resolved conflict) went through: the lists show it, and the address follows a new id. */
   const stored = (result: Awaited<ReturnType<typeof session.save>>) => {
     if (!result) return
-    void queryClient.invalidateQueries({ queryKey: ['visual-automations'] })
+    for (const queryKey of adapter.queryKeys) void queryClient.invalidateQueries({ queryKey: [...queryKey] })
     if (!session.dirty()) props.onSaved?.(result.document)
   }
   const save = async () => {
@@ -169,7 +170,7 @@ export function VisualEditor(props: {
   createEffect(on(session.loading, (loading, before) => before && !loading && setLoads(count => count + 1), { defer: true }))
 
   // ---- Selection, and the inspector's sheet (below 900 px) or floating panel (full screen).
-  const [selectedId, setSelectedId] = createSignal<string | undefined>('trigger-1')
+  const [selectedId, setSelectedId] = createSignal<string | undefined>(adapter.initialSelection)
   const [selection, setSelection] = createSignal<{ ids: string[]; edge?: string }>({ ids: [] })
   const selected = createMemo(() => graph().nodes.find(node => node.id === selectedId()))
   const [sourceLine, setSourceLine] = createSignal<number>()
@@ -303,18 +304,10 @@ export function VisualEditor(props: {
     if (result.notice) flow?.notify(result.notice, { keep: true })
   }
 
-  // ---- Runs: Run now in the top bar (RunNow.tsx), the last run in the overview.
+  // ---- Runs: the adapter's run controls in the top bar, the last run in the overview.
   const [runNotice, showRunNotice] = createNotice()
-  /** Why the saved version cannot be run now, if so. */
-  const runUnavailable = () => {
-    const doc = session.document()
-    if (!doc) return
-    if (session.conflict()) return 'The saved automation changed elsewhere; choose what to keep first'
-    if (session.catalogError()) return 'The node catalog could not be loaded'
-    if (!doc.currentRevisionActive) return 'The saved version is not active'
-  }
   const automationId = () => session.document()?.automationId
-  // On/off of the saved automation: stored beside the graph, so it is not an edit (no undo step, no unsaved changes).
+  // On/off of the saved document: stored beside the graph, so it is not an edit (no undo step, no unsaved changes).
   // Shown at once; put back with a message when the request fails.
   const [switched, setSwitched] = createSignal<{ id: string; enabled: boolean }>()
   const [switching, setSwitching] = createSignal(false)
@@ -325,7 +318,7 @@ export function VisualEditor(props: {
     return local?.id === doc.id ? local.enabled : doc.enabled ?? true
   }
   // A save's reply may hold the on/off state from before a switch the server took (whichever was pressed or answered
-  // first): the switch's own answer wins until a document says the same, another automation opens, or the saved one is
+  // first): the switch's own answer wins until a document says the same, another document opens, or the saved one is
   // read again.
   createEffect(on(() => session.document(), doc => {
     const local = switched()
@@ -339,7 +332,7 @@ export function VisualEditor(props: {
     const before = enabled() ?? true
     batch(() => { setSwitching(true); setSwitched({ id: doc.id, enabled: wanted }) })
     try {
-      const now = await setAutomationEnabled(hass, queryClient, doc.id, wanted)
+      const now = await adapter.setEnabled(doc.id, wanted, { queryClient })
       setSwitched({ id: doc.id, enabled: now })
     } catch (error) {
       setSwitched({ id: doc.id, enabled: before })
@@ -365,6 +358,13 @@ export function VisualEditor(props: {
     const run = lastRuns.data?.runs?.[0]
     if (!run) return
     return { status: run.status, when: new Date(run.receivedUtc).toLocaleString(), ok: !failedStatuses.has(run.status) }
+  })
+  /** The editor as the adapter's run controls and overview see it; `select` is how that part selects a step. */
+  const context = (select: (id?: string) => void): EditorContext<D> => ({
+    get document() { return session.document() }, graph, get catalog() { return session.catalog() }, commit, select, notice: showRunNotice,
+    get diagnostics() { return session.diagnostics() }, get saved() { return !!session.document() }, get names() { return names() },
+    get enabled() { return enabled() }, get dirty() { return session.dirty() }, get busy() { return busy() },
+    get conflict() { return session.conflict() }, get catalogError() { return session.catalogError() },
   })
 
   // ---- Full screen: the library and the drawer fold away; the inspector floats; a compact bar stays.
@@ -414,7 +414,7 @@ export function VisualEditor(props: {
     const url = URL.createObjectURL(new Blob([serializeGraph(graph())], { type: 'application/json' }))
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = 'automation.graph.json'
+    anchor.download = texts.exportFileName
     anchor.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
@@ -422,13 +422,13 @@ export function VisualEditor(props: {
     ...(fullscreen.active() ? [] : [{ label: 'Full screen', onSelect: enterFullscreen }]),
     { label: 'Export graph', onSelect: download },
     ...(props.documentId ? [{ label: 'Reload saved graph', onSelect: reload }] : []),
-    { label: 'Help', onSelect: () => setHelpOpen(true) },
+    ...(adapter.help ? [{ label: 'Help', onSelect: () => setHelpOpen(true) }] : []),
   ]
 
   const busy = () => session.loading() || session.saving()
   /** Save's title: why it does nothing, or what it is waiting on (it saves anyway; the server checks a save itself). */
   const saveTitle = () => {
-    if (session.conflict()) return 'The saved automation changed elsewhere: choose what to keep'
+    if (session.conflict()) return texts.conflictSaveTitle
     if (nothingToSave()) return 'Nothing to save: every change is saved'
     if (!session.canSave()) return
     if (session.previewError()) return 'Could not check the graph'
@@ -445,7 +445,7 @@ export function VisualEditor(props: {
       }}
       class="hs-visual"
       classList={{ 'hs-visual--fullscreen': fullscreen.active(), 'hs-visual--maximised': fullscreen.maximised(), 'hs-visual--floating': floating() }}
-      aria-label="Visual automation editor"
+      aria-label={texts.editorLabel}
       on:keydown={keyboard}
       on:keyup={event => event.stopPropagation()}
     >
@@ -455,6 +455,8 @@ export function VisualEditor(props: {
         name={graph().name}
         onRename={(name, options) => commit({ ...graph(), name }, options)}
         onBack={props.onBack}
+        backLabel={texts.back}
+        nameLabel={texts.nameLabel}
         save={{ saving: session.saving(), dirty: session.dirty(), errors: errorCount(), revision: session.document()?.revision }}
         busy={busy()}
         canUndo={history.canUndo()}
@@ -470,8 +472,7 @@ export function VisualEditor(props: {
               <Show when={session.document()}>
                 <EnabledSwitch class="hs-topbar__enabled" name={graph().name} enabled={enabled() ?? true} disabled={busy()} busy={switching()} onChange={wanted => void toggleEnabled(wanted)} />
               </Show>
-              <RunNowButton document={session.document()} catalog={session.catalog()} names={names()} unavailable={runUnavailable()} dirty={session.dirty()} busy={busy()}
-                onNotice={showRunNotice} />
+              {adapter.runGroup && untrack(() => adapter.runGroup!(context(choose)))}
             </div>
           ) : undefined
         }
@@ -527,6 +528,7 @@ export function VisualEditor(props: {
             toolbarExtra={<FullscreenButton fullscreen={fullscreen} onToggle={toggleFullscreen} />}
             controls={controls => (flow = controls)}
             onEditCode={editCode}
+            label={texts.canvasLabel}
           />
         </div>
         <Inspector
@@ -541,7 +543,8 @@ export function VisualEditor(props: {
           commit={commit}
           onShowProblems={showProblems}
           lastRun={lastRun()}
-          enabled={enabled()}
+          overview={select => adapter.overview?.(context(select))}
+          overviewLabel={texts.overviewLabel}
           docked={!floating()}
           open={panelOpen()}
           onClose={() => setPanelOpen(false)}
@@ -564,7 +567,7 @@ export function VisualEditor(props: {
             get tone() { return errorCount() ? 'error' as const : 'warning' as const },
             content: () => (
               <ProblemsPanel diagnostics={session.diagnostics()} graph={graph()} catalog={session.catalog()} onLocate={locate}
-                onSelectStep={id => { leaveDrawer(); choose(id); focusCard(id) }} onShowLine={showLine} onGraphChange={next => commit(next)} />
+                onSelectStep={id => { leaveDrawer(); choose(id); focusCard(id) }} onShowLine={showLine} onGraphChange={next => commit(next)} documentLabel={texts.problemsHeading} />
             ),
           },
           {
@@ -585,10 +588,8 @@ export function VisualEditor(props: {
             label: 'Runs',
             lazy: true,
             content: () => (
-              <Show when={session.document()} fallback={<p class="hs-drawer__empty">Save this automation to see its runs here.</p>}>
-                {doc => (
-                  <AutomationRuns automationId={doc().automationId} />
-                )}
+              <Show when={session.document()} fallback={<p class="hs-drawer__empty">{texts.runsEmpty}</p>}>
+                {doc => <AutomationRuns automationId={doc().automationId} runHref={run => adapter.runHref(run.visualId ?? doc().id, run.runId)} />}
               </Show>
             ),
           },
@@ -616,7 +617,7 @@ export function VisualEditor(props: {
       >
         <p>Reloading replaces your unsaved changes with the saved version.</p>
       </Dialog>
-      <Dialog open={session.conflict() && conflictOpen()} title="This automation changed elsewhere" width="medium" onClose={() => setConflictOpen(false)}
+      <Dialog open={session.conflict() && conflictOpen()} title={texts.conflictTitle} width="medium" onClose={() => setConflictOpen(false)}
         footer={
           <>
             <Button variant="danger" disabled={busy()} onClick={() => void resolve('discard')}>Discard my changes</Button>
@@ -625,12 +626,10 @@ export function VisualEditor(props: {
           </>
         }
       >
-        <Show when={session.conflictDraft()} fallback={
-          <p>It was saved again somewhere else while you had unsaved changes here. Saving a node library does this to every automation that uses it.</p>
-        }>
-          {at => <p>Your unsaved changes from {draftTime(at())} were made before this automation was saved again somewhere else.</p>}
+        <Show when={session.conflictDraft()} fallback={<p>{texts.conflictElsewhere}</p>}>
+          {at => <p>{texts.conflictDraft(draftTime(at()))}</p>}
         </Show>
-        <p><strong>Keep my version</strong> saves your changes over the saved one. <strong>Save as a copy</strong> saves them as a new automation, turned off, and leaves the saved one as it is. <strong>Discard my changes</strong> opens the saved version.</p>
+        <p><strong>Keep my version</strong> saves your changes over the saved one. <strong>Save as a copy</strong> saves them as {texts.copyNoun}, turned off, and leaves the saved one as it is. <strong>Discard my changes</strong> opens the saved version.</p>
         <Show when={codeDirty() || session.restoredCode()}>
           <p>Code you have not applied stays in the code editor whichever you choose: apply it there, then save.</p>
         </Show>
@@ -646,7 +645,7 @@ export function VisualEditor(props: {
         <p>Restore unsaved changes from {draftTime(session.restoreOffer()?.at)}?</p>
         <p>They were left when this page closed before they were saved. Restoring them can be undone.</p>
       </Dialog>
-      <HelpDialog open={helpOpen()} onClose={() => setHelpOpen(false)} />
+      <Dynamic component={adapter.help} open={helpOpen()} onClose={() => setHelpOpen(false)} />
       {/* Inside the page root, so it also covers the full-screen editor. */}
       <Show when={codeNode() && codeNodeId()} keyed>
         {id => (

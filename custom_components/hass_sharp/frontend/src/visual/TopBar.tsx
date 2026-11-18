@@ -5,6 +5,7 @@ import { ToolButton } from './flow/CanvasToolbar'
 import { fullscreenIcons } from './fullscreen'
 import { Glyph } from './Glyph'
 import type { RunNotice } from './RunNow'
+import { automationTexts } from './automationAdapter'
 
 const historyIcons = { undo: ['M9 14 4 9l5-5', 'M4 9h10.5a5.5 5.5 0 0 1 0 11H11'], redo: ['M15 14l5-5-5-5', 'M20 9H9.5a5.5 5.5 0 0 0 0 11H13'] }
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
@@ -49,8 +50,10 @@ export function TopBar(props: {
   /** A typed name; every call of one visit to the field carries that visit's `coalesce` key. Absent: read-only. */
   onRename?(name: string, options: { coalesce: string }): void
   onBack?: () => void
-  /** The Back button's name. */
+  /** The Back button's name (default: back to the automations). */
   backLabel?: string
+  /** The name field's accessible name and title (default: an automation's). */
+  nameLabel?: string
   save?: SaveState
   /** In place of the save chip. */
   status?: JSX.Element
@@ -92,7 +95,7 @@ export function TopBar(props: {
     <>
       <header class="hs-topbar">
         <Show when={props.onBack}>
-          <button type="button" class="hs-topbar__icon hs-fs-hide" aria-label={props.backLabel ?? 'Back to automations'} title={props.backLabel ?? 'Back to automations'} onClick={() => props.onBack?.()}>
+          <button type="button" class="hs-topbar__icon hs-fs-hide" aria-label={props.backLabel ?? automationTexts.back} title={props.backLabel ?? automationTexts.back} onClick={() => props.onBack?.()}>
             <Icon name="arrow" />
           </button>
         </Show>
@@ -105,8 +108,8 @@ export function TopBar(props: {
           <div class="hs-topbar__title">
             <input
               class="hs-topbar__name"
-              aria-label="Automation name"
-              title="Automation name"
+              aria-label={props.nameLabel ?? automationTexts.nameLabel}
+              title={props.nameLabel ?? automationTexts.nameLabel}
               spellcheck={false}
               autocomplete="off"
               enterkeyhint="done"

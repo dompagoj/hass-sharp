@@ -2,10 +2,21 @@ import { createSignal, onMount } from 'solid-js'
 import { useBeforeLeave, useSearchParams, useParams, useNavigate } from '@solidjs/router'
 import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
+import { useHass } from '../context'
 import { VisualEditor } from '../visual/VisualEditor'
+import { automationAdapter, type EditorAdapter, type EditorDocument } from '../visual/adapter'
 import { libraryHref } from '../visual/library-api'
 
 export function VisualAutomationView() {
+  return <EditorView adapter={automationAdapter(useHass())} />
+}
+
+/**
+ * The editor page of one kind of document, at the adapter's `editorHref` (`:id`, or `new` for a new one, named by
+ * `?name=`): it asks before leaving unsaved changes, and goes to a new document's own address once it is saved.
+ */
+export function EditorView<D extends EditorDocument>(props: { adapter: EditorAdapter<D> }) {
+  const adapter = props.adapter
   const [params, setParams] = useSearchParams()
   const route = useParams()
   const navigate = useNavigate()
@@ -23,14 +34,14 @@ export function VisualAutomationView() {
   // reload opens the editor as usual.
   onMount(() => { if (params.drawer !== undefined) setParams({ drawer: undefined }, { replace: true }) })
   return <>
-    <VisualEditor documentId={route.id && route.id !== 'new' ? route.id : undefined} onDirtyChange={setDirty}
+    <VisualEditor adapter={adapter} documentId={route.id && route.id !== 'new' ? route.id : undefined} onDirtyChange={setDirty}
       discardRef={discard => (discardDraft = discard)}
       // A first save, or a copy saved instead of a conflicting revision, has an id of its own.
-      onSaved={doc => { if (route.id !== doc.id) navigate(`/visual/${doc.id}`, { replace: true }) }}
-      onBack={() => navigate('/automations')}
+      onSaved={doc => { if (route.id !== doc.id) navigate(adapter.editorHref(doc.id), { replace: true }) }}
+      onBack={() => navigate(adapter.listHref)}
       onOpenLibrary={(id, line) => navigate(libraryHref(id, line))}
       drawer={params.drawer === 'runs' ? 'runs' : undefined}
-      name={typeof params.name === 'string' && params.name.trim() ? params.name : 'Untitled visual automation'} />
+      name={typeof params.name === 'string' && params.name.trim() ? params.name : adapter.texts.untitled} />
     <Dialog open={!!leave()} title="Unsaved changes" width="small" onClose={() => setLeave(undefined)} footer={<>
       <Button onClick={() => setLeave(undefined)}>Keep editing</Button>
       <Button variant="danger" onClick={() => { const retry = leave(); setLeave(undefined); discardDraft?.(); retry?.() }}>Discard changes</Button>

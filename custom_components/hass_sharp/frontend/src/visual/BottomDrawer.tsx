@@ -7,6 +7,7 @@ import { serializeGraph, type VisualGraph } from './graph'
 import { icons, nodeIdentity } from './icons'
 import { media } from './media'
 import { RemoveWire } from './RemoveWire'
+import { automationTexts } from './automationAdapter'
 
 export interface DrawerTab {
   id: string
@@ -138,6 +139,8 @@ export function ProblemsPanel(props: {
   onShowLine(line: number): void
   /** Applies a graph change (the editor's: one undo step); without it (read only) nothing is offered that edits. */
   onGraphChange?(graph: VisualGraph): void
+  /** The heading of the problems about no step (default: an automation's, "This automation"). */
+  documentLabel?: string
 }) {
   let root!: HTMLDivElement
   const shown = () => props.diagnostics.filter(d => d.severity > 0)
@@ -157,7 +160,7 @@ export function ProblemsPanel(props: {
         <For each={groups()}>
           {([key, list]) => {
             const node = () => props.graph.nodes.find(n => n.id === key)
-            const heading = () => (key === '' ? 'This automation' : key.startsWith('$') ? 'Node libraries' : nodeTitle(node(), props.catalog, 'Missing step'))
+            const heading = () => (key === '' ? (props.documentLabel ?? automationTexts.problemsHeading) : key.startsWith('$') ? 'Node libraries' : nodeTitle(node(), props.catalog, 'Missing step'))
             return (
               <section class="hs-problems__group" style={{ '--hs-cat': node() ? nodeIdentity(node()!.kind, props.catalog).color : undefined }}>
                 <h3 class="hs-problems__step">

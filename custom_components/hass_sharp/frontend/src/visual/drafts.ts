@@ -1,12 +1,12 @@
-import { nodeCatalog } from './contract'
+import { nodeCatalog, type GraphDocument } from './contract'
 import { serializeGraph, type VisualGraph } from './graph'
 
 /**
  * Unsaved changes kept in this browser, so they survive the panel being torn down without asking (Home Assistant's
- * sidebar, an entry reload). One draft per automation and Home Assistant user (`hass-sharp:draft:<user>/<id>`, or
- * `<user>/new:<editing session>` before its first save), with the revision it was made on. At most
- * {@link draftLimit} are kept. Storage may be missing, full or refused: every access is guarded, and the editor works
- * the same without it.
+ * sidebar, an entry reload). One draft per document and Home Assistant user (`hass-sharp:draft:<user>/<id>`, or
+ * `<user>/new:<editing session>` before its first save; another kind of document than an automation puts its
+ * {@link draftSpace} before the id), with the revision it was made on. At most {@link draftLimit} are kept. Storage may
+ * be missing, full or refused: every access is guarded, and the editor works the same without it.
  */
 export interface VisualDraft {
   graph: VisualGraph
@@ -20,6 +20,11 @@ export interface VisualDraft {
 }
 
 const prefix = 'hass-sharp:draft:'
+/**
+ * What a kind of document puts before its draft keys (after the user), so that two kinds' documents with the same id
+ * never share a draft: nothing for an automation (the keys drafts always had), `entity:` for an entity definition.
+ */
+export const draftSpace = (document: GraphDocument) => (document === 'automation' ? '' : `${document}:`)
 /** Drafts older than this are removed when the editor starts. */
 export const draftMaxAge = 14 * 24 * 60 * 60 * 1000
 /** Drafts kept at most; writing one more drops the oldest. */
