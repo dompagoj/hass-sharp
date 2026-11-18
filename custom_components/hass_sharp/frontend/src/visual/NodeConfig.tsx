@@ -22,7 +22,7 @@ import { DraftField } from './widgets/common'
 import { numberMessage, parseNumber, useDecimalSeparator } from './widgets/number'
 import { stateField, WidgetControl } from './widgets'
 import type { VisualDiagnostic } from './api'
-import { stepInputRows, stepPickers, type StepPickerContext } from '../entities/NodePickers'
+import { stateValueRow, stepInputRows, stepPickers, type StepPickerContext } from '../entities/NodePickers'
 
 type Options = { coalesce?: string }
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((v, i) => v === b[i])
@@ -128,7 +128,11 @@ export function NodeConfig(props: NodeConfigProps) {
   /** How the row of an input is edited when its kind says so (a Has state's state offers its entity's states). */
   const rowFor = (port: string) => {
     const row = own(stepInputRows, kind())
-    if (!row || !Object.hasOwn(row, port)) return {}
+    if (!row || !Object.hasOwn(row, port)) {
+      // A State's or Set state's value, as its entity's type has it: ready to fill, or said to be optional.
+      const state = createMemo(() => stateValueRow(props.node, port, types()))
+      return { get ready() { return state()?.ready }, get description() { return state()?.description } }
+    }
     const edit = createMemo(() => row[port](props.node, props.graph, types()))
     return { get widget() { return edit().widget }, get context() { return edit().context } }
   }

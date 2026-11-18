@@ -2,14 +2,14 @@ import { createMemo, createUniqueId, For, Show } from 'solid-js'
 import { A } from '@solidjs/router'
 import { Menu } from '../components/Menu'
 import { EnabledSwitch } from '../automations/EnabledSwitch'
-import { pollInterval } from '../automations/model'
+import { pollInterval, relativeTime } from '../automations/model'
 import { RunDots } from '../automations/RunDots'
 import { plural } from '../utils'
 import { entityTypeLabel, nodeCatalog } from '../visual/contract'
 import { Glyph } from '../visual/Glyph'
 import { icons } from '../visual/icons'
 import { entityTexts } from './adapter'
-import type { LiveStates } from './liveState'
+import type { LiveState, LiveStates } from './liveState'
 import type { HomeDefinition } from './model'
 
 /** The switch's tooltips: the editor's, so the two say the same. */
@@ -67,15 +67,40 @@ export function cardEntities(item: Pick<HomeDefinition, 'id' | 'entities' | 'liv
 export const watchedEntityIds = (item: HomeDefinition) =>
   cardEntities(item).slice(0, shownEntities).flatMap(e => (e.entityId && !e.disabled ? [e.entityId] : []))
 
-/** An entity's state on its card: Home Assistant's text (a number with its unit), Unavailable, Unknown, or none yet. */
-function stateText(entity: CardEntity, states: LiveStates): { text: string; none?: boolean; quiet?: boolean } {
+/** A brightness of 0–255 as a percentage of full brightness. */
+const percent = (brightness: number) => `${Math.round((Math.min(Math.max(brightness, 0), 255) / 255) * 100)} %`
+/** What a password-mode text shows instead of its value: always as long, so its length does not show either. */
+const hidden = '••••••••'
+const coverWords: Record<string, string> = { open: 'Open', closed: 'Closed', opening: 'Opening', closing: 'Closing' }
+
+/**
+ * An entity's state in words, by its type: a light "On · 60 %" (its brightness of 255) or "Off"; a cover "Open · 40 %"
+ * (its position), "Closed", "Opening" or "Closing"; a number with its unit; a text's value, a password's as dots; a
+ * button "Pressed 5 minutes ago" or "Never pressed"; any other as Home Assistant has it (a number with its unit).
+ * Unavailable and Unknown are quiet.
+ */
+export function entityStateText(domain: string, state: LiveState, now: number): { text: string; quiet?: boolean } {
+  if (state.state === 'unavailable') return { text: 'Unavailable', quiet: true }
+  if (domain === 'button') {
+    const pressed = Date.parse(state.state)
+    return Number.isNaN(pressed) ? { text: 'Never pressed', quiet: true } : { text: `Pressed ${relativeTime(state.state, now)}` }
+  }
+  if (state.state === 'unknown') return { text: 'Unknown', quiet: true }
+  if (domain === 'light' && (state.state === 'on' || state.state === 'off'))
+    return { text: state.state === 'off' ? 'Off' : state.brightness === undefined ? 'On' : `On · ${percent(state.brightness)}` }
+  if (domain === 'cover' && Object.hasOwn(coverWords, state.state))
+    return { text: state.state === 'open' && state.position !== undefined ? `Open · ${Math.round(state.position)} %` : coverWords[state.state] }
+  if (domain === 'text') return state.mode === 'password' ? { text: hidden } : state.state === '' ? { text: 'Empty', quiet: true } : { text: state.state }
+  const number = state.state.trim() !== '' && Number.isFinite(Number(state.state))
+  return { text: number && state.unit ? `${state.state} ${state.unit}` : state.state }
+}
+
+/** An entity's state on its card: Disabled in Home Assistant, none yet, or its state in words ({@link entityStateText}). */
+export function cardStateText(entity: CardEntity, states: LiveStates, now: number): { text: string; none?: boolean; quiet?: boolean } {
   if (entity.disabled) return { text: 'Disabled in Home Assistant', quiet: true }
   const state = entity.entityId ? states[entity.entityId] : undefined
   if (!state) return { text: '—', none: true }
-  if (state.state === 'unavailable') return { text: 'Unavailable', quiet: true }
-  if (state.state === 'unknown') return { text: 'Unknown', quiet: true }
-  const number = state.state.trim() !== '' && Number.isFinite(Number(state.state))
-  return { text: number && state.unit ? `${state.state} ${state.unit}` : state.state }
+  return entityStateText(entity.domain, state, now)
 }
 
 const starting = (item: HomeDefinition) => item.enabled && item.status === 'setup'
@@ -120,6 +145,8 @@ export function DefinitionCard(props: {
   /** The classes could not be read: a class definition says so beside "Class". */
   classFailed?: boolean
   states: LiveStates
+  /** The time a button's last press is told from: the page's clock. */
+  now: number
   admin: boolean
   /** Deleting it: its actions wait. */
   busy?: boolean
@@ -175,7 +202,7 @@ export function DefinitionCard(props: {
           <ul class="hs-ent-card__entities" aria-label={`Entities of ${name()}`}>
             <For each={entities().slice(0, shownEntities)}>
               {entity => {
-                const state = () => stateText(entity, props.states)
+                const state = () => cardStateText(entity, props.states, props.now)
                 return (
                   <li class="hs-ent-row">
                     <span class="hs-ent-row__name">{entity.name}</span>

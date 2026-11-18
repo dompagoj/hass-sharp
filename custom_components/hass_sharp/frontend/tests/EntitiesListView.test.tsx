@@ -286,6 +286,38 @@ it('shows live states through one subscription, resubscribes only when the entit
   expect(subscribeMessage).toHaveBeenCalledTimes(2)
 })
 
+it('shows each type\'s state in words: a light\'s brightness, a cover\'s position, a number\'s unit, a password as dots, a button\'s last press', async () => {
+  const things: DefinitionBody = { name: 'Things', settings: [], logic: graph('Things'), entities: [
+    { key: 'lamp', domain: 'light', name: 'A lamp', options: { dimmable: true } }, { key: 'blind', domain: 'cover', name: 'B blind', options: { positionable: true } },
+    { key: 'level', domain: 'number', name: 'C level' }, { key: 'mode', domain: 'select', name: 'D mode', options: { options: ['Eco', 'Comfort'] } },
+    { key: 'code', domain: 'text', name: 'E code' }, { key: 'bell', domain: 'button', name: 'F bell' }] }
+  const { root, subscriptions } = setup({ prepare: f => f.entities.seed('things', things) })
+  await loaded(root)
+  await vi.waitFor(() => expect(subscriptions).toHaveLength(1))
+  const states = () => rows(card(root, 'things')).map(r => r[3])
+  subscriptions[0].push({ a: {
+    'light.things_lamp': { s: 'on', a: { brightness: 153, friendly_name: 'A lamp' } },
+    'cover.things_blind': { s: 'open', a: { current_position: 40 } },
+    'number.things_level': { s: '21.5', a: { unit_of_measurement: '°C', min: 0, max: 100 } },
+    'select.things_mode': { s: 'Eco', a: { options: ['Eco', 'Comfort'] } },
+    'text.things_code': { s: '1234', a: { mode: 'password' } },
+    'button.things_bell': { s: minutesAgo(5), a: {} },
+  } })
+  await vi.waitFor(() => expect(states()).toEqual(['On · 60 %', 'Open · 40 %', '21.5 °C', 'Eco', '••••••••', 'Pressed 5 minutes ago']))
+  expect(card(root, 'things').textContent).not.toContain('1234')
+  // A light that cannot dim, or is off; a cover closed or moving; a text shown as it is; a button never pressed.
+  subscriptions[0].push({ c: {
+    'light.things_lamp': { '-': { a: ['brightness'] } }, 'cover.things_blind': { '+': { s: 'closing' } },
+    'text.things_code': { '+': { s: 'hello', a: { mode: 'text' } } }, 'button.things_bell': { '+': { s: 'unknown' } },
+  } })
+  await vi.waitFor(() => expect(states()).toEqual(['On', 'Closing', '21.5 °C', 'Eco', 'hello', 'Never pressed']))
+  subscriptions[0].push({ c: { 'light.things_lamp': { '+': { s: 'off', a: { brightness: null } } }, 'cover.things_blind': { '+': { s: 'closed', a: { current_position: 0 } } } } })
+  await vi.waitFor(() => expect(states().slice(0, 2)).toEqual(['Off', 'Closed']))
+  // The light again at full brightness; Unavailable and Unknown as for any entity.
+  subscriptions[0].push({ c: { 'light.things_lamp': { '+': { s: 'on', a: { brightness: 255 } } }, 'number.things_level': { '+': { s: 'unknown' } }, 'select.things_mode': { '+': { s: 'unavailable' } } } })
+  await vi.waitFor(() => expect(states().slice(0, 4)).toEqual(['On · 100 %', 'Closed', 'Unknown', 'Unavailable']))
+})
+
 it('turns a definition off and on from its card, with the entity wording on the switch, and rolls back a failure', async () => {
   const { root, fixture, release } = setup({ hold: ['set_enabled'], prepare: three })
   await loaded(root)

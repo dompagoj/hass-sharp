@@ -1,4 +1,4 @@
-import { nodeCatalog, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { nodeCatalog, words, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import type { GraphOutline, HomeAutomation, VisualDiagnostic, VisualDocument, VisualPreview } from '../src/visual/api'
 import type { DefinitionBody, EntityDocument, EntityType, RegisteredEntity } from '../src/entities/model'
 import type { VisualGraph } from '../src/visual/graph'
@@ -152,8 +152,11 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  *
  * The document checks are the real ones a test meets most (codes of `DefinitionDocument`/`DefinitionGenerator`): a name
  * of 1–120 characters (`definition.name`) and, for a graph, at least one entity (`definition.entitiesRequired`), each
- * keyed `^[a-z][a-z0-9_]{0,39}$` (`definition.entityKey`) and uniquely (`definition.duplicateEntity`); with any of them
- * the seeded diagnostics are not answered.
+ * keyed `^[a-z][a-z0-9_]{0,39}$` (`definition.entityKey`) and uniquely (`definition.duplicateEntity`), of a domain of
+ * the catalog's `entityDomains` (`definition.entityDomain`), with options as `DefinitionDocument.Options` checks them
+ * (`definition.entityOption`: one its domain has, of its type, not an empty list, a number Home Assistant takes, a
+ * pattern that is a regular expression, every option the domain needs, a min below the max); with any of them the
+ * seeded diagnostics are not answered.
  *
  * Refusals come in the real order, with the real `invalid_request` texts for a field missing (`id is required`) or of
  * the wrong type (`id must be a string`, `expectedRevision must be a whole number`, `enabled must be true or false`).
@@ -205,8 +208,62 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
       if (!/^[a-z][a-z0-9_]{0,39}$/.test(key)) problems.push(problem('definition.entityKey', `Entity key ${key} is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters`, key))
       if (keys.has(key) && !repeated.has(key)) { repeated.add(key); problems.push(problem('definition.duplicateEntity', `Two entities have the key ${key}; give each a key of its own`, key)) }
       keys.add(key)
+      const domains = nodeCatalog.entityDomains ?? {}
+      const domain = entity.domain
+      if (typeof domain !== 'string') return problems.push(problem('definition.entityDomain', `Choose a domain for entity ${key}: ${words.or(Object.keys(domains))}`, key))
+      if (!Object.hasOwn(domains, domain)) return problems.push(problem('definition.entityDomain', `Entity ${key} has the domain ${domain}, which a definition built from nodes cannot create; choose ${words.or(Object.keys(domains))}`, key))
+      problems.push(...optionProblems(key, domain, entity.options))
     })
     return problems
+  }
+  /** The problems of an entity's options, in the order and words of `DefinitionDocument.Options`. */
+  const optionProblems = (key: string, domain: string, given: unknown): VisualDiagnostic[] => {
+    const out: VisualDiagnostic[] = []
+    const error = (message: string) => out.push(problem('definition.entityOption', message, key))
+    const row = nodeCatalog.entityDomains![domain], known = row.options ?? {}
+    const label = row.label || key, a = `${words.article(label)} ${label.toLowerCase()}`
+    if (given !== undefined && given !== null && (typeof given !== 'object' || Array.isArray(given))) {
+      error(`The options of entity ${key} are not a set of named values; give them as an object, such as {"unit": "W"}`)
+      return out
+    }
+    const options = (given ?? {}) as Record<string, unknown>
+    const number = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+    // What Home Assistant takes of a number option beyond its type (`DefinitionDocument.Limit`).
+    const limit = (option: string, value: number) =>
+      domain === 'number' && option === 'step' && !(value > 0) ? 'a number above 0'
+        : domain === 'text' && (option === 'min' || option === 'max') && value !== Math.floor(value) ? 'a whole number'
+        : domain === 'text' && option === 'min' && value < 0 ? '0 or more'
+        : domain === 'text' && option === 'max' && value > 255 ? '255 or less, as Home Assistant keeps at most 255 characters' : undefined
+    let bounded = false
+    for (const [option, value] of Object.entries(options)) {
+      if (!Object.hasOwn(known, option)) {
+        error(Object.keys(known).length === 0 ? `Entity ${key} has the option ${option}, but ${a} takes no options; remove it`
+          : `Entity ${key} has no option ${option}; ${a} takes ${words.or(Object.keys(known))}`)
+        continue
+      }
+      if (value === null) continue
+      const rule = known[option], allowed = Array.isArray(rule.enum) ? rule.enum.filter((v): v is string => typeof v === 'string') : undefined
+      const fitsEnum = (item: unknown) => !allowed || (typeof item === 'string' && allowed.includes(item))
+      const fits = rule.type === 'array' ? Array.isArray(value) && value.every(item => typeof item === 'string' && fitsEnum(item))
+        : (rule.type === 'string' ? typeof value === 'string' : rule.type === 'boolean' ? typeof value === 'boolean' : rule.type === 'number' ? number(value) !== undefined : false) && fitsEnum(value)
+      const phrase = rule.type === 'array' ? 'a list of texts' : allowed ? `one of ${allowed.join(', ')}`
+        : rule.type === 'string' ? 'a text' : rule.type === 'boolean' ? 'true or false' : rule.type === 'number' ? 'a number' : rule.type
+      const bound = number(value) !== undefined ? limit(option, value as number) : undefined
+      if (!fits) error(`Option ${option} of entity ${key} takes ${phrase}`)
+      else if (Array.isArray(value) && value.length === 0) error(`Option ${option} of entity ${key} is an empty list; give it at least one text${rule.required === true ? '' : ', or leave it out'}`)
+      else if (bound) { error(`Option ${option} of entity ${key} takes ${bound}, not ${value}`); bounded ||= option === 'min' || option === 'max' }
+      else if (option === 'pattern' && rule.type === 'string' && typeof value === 'string')
+        // The tail is the regular expression engine's own words, as the server's is .NET's.
+        try { new RegExp(value) } catch (failure) { error(`Option pattern of entity ${key} is not a regular expression: ${(failure as Error).message}`) }
+    }
+    for (const [option, rule] of Object.entries(known))
+      if (rule.required === true && (options[option] === undefined || options[option] === null)) error(`Give entity ${key} the option ${option}: ${a} needs it`)
+    // A number's and a text's own min and max are 0 and 100 (`SharpDomains.DefaultOptions`).
+    if (!bounded && Object.hasOwn(known, 'min') && Object.hasOwn(known, 'max') && (Object.hasOwn(options, 'min') || Object.hasOwn(options, 'max'))) {
+      const min = number(options.min) ?? 0, max = number(options.max) ?? 100
+      if (!(min < max)) error(`Entity ${key} has a min of ${min}, which is not below its max of ${max}; give a min below the max`)
+    }
+    return out
   }
   /** A class's setting value problems, as `DefinitionGenerator.Settings` words them; `before` gives a kept value. */
   const classProblems = (body: DefinitionBody, before?: EntityDocument): VisualDiagnostic[] => {

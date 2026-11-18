@@ -202,8 +202,6 @@ const type = (input: HTMLInputElement | HTMLTextAreaElement, text: string) => {
   input.dispatchEvent(new FocusEvent('blur'))
 }
 const choose = (select: HTMLSelectElement, value: string) => { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) }
-/** Starts giving a value to the selected step's optional input, as its Set value button does (a Set state's inputs are all optional). */
-const setValue = (root: Element, field: string) => inspector(root).querySelector<HTMLButtonElement>(`[data-input-id="${field}"] .hs-insp-unset button`)!.click()
 /** Picks one of the definition's entities (or a command) in the selected step's picker, by its label. */
 const pickOption = async (root: Element, field: string, text: string) => {
   const box = inspector(root).querySelector<HTMLInputElement>(`[data-input-id="${field}"] input[role="combobox"]`)!
@@ -264,8 +262,8 @@ it('builds a polled plug: a time-pattern trigger sets its power, two When comman
   type(inspector(root).querySelector<HTMLInputElement>('input[aria-label="Minutes"]')!, '/10')
   button(root, 'Add Set state').click()
   const setPower = lastStep(root)
+  // Its only value is ready to fill: a Set state of an entity with one state value is for that value.
   await pickOption(root, 'entity', 'Power')
-  setValue(root, 'value')
   choose(inspector(root).querySelector<HTMLSelectElement>('[data-input-id="value"] select[aria-label="Value kind"]')!, 'number')
   type(inspector(root).querySelector<HTMLInputElement>('[data-input-id="value"] input[aria-label="Value"]')!, '42')
   flow(root, poll, setPower)
@@ -279,7 +277,6 @@ it('builds a polled plug: a time-pattern trigger sets its power, two When comman
     button(root, 'Add Set state').click()
     const set = lastStep(root)
     await pickOption(root, 'entity', 'Relay')
-    setValue(root, 'is_on')
     const on = inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
     on.click()
     if (command === 'Turn off') inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.click()
@@ -524,6 +521,14 @@ it('starts a new definition named from the address, with one binary sensor named
   expect(document.querySelector('dialog[open]')!.textContent).toContain('once saved, its value is never shown again. It is left out of this browser\'s drafts and of Export graph. '
     + 'Run traces, the Log step and the service logs show it as hidden. A true or false worked out from it is shown. '
     + 'A step that returns what it was given, such as a custom step or a service response, can still show it.')
+  // The nine types, and what HTTP requests, downloads and restored state do.
+  const help = document.querySelector('dialog[open]')!.textContent!
+  expect(help).toContain('each a binary sensor, a sensor, a switch, a button, a number, a select, a text, a light or a cover')
+  for (const fact of ['http:// or https://', 'checks the server\'s certificate', '10 seconds', '4 MiB', 'fails on an error status unless you turn that off',
+    'does not send your headers to a different host', 'Keep the response out of run history', 'SHA-256 checksum, of the file as the server sends it',
+    '.storage/hass_sharp/files/', 'is not downloaded again', 'come back with the state they had after Home Assistant restarts or the definition is saved',
+    'keeps its last one, or comes on at full brightness the first time', 'A button has no state'])
+    expect(help, fact).toContain(fact)
   expectClean(root)
 })
 
@@ -612,7 +617,6 @@ it('builds the phase 2 plug through the page, every member of it, and saves that
     ids.push(set)
     label(root, '')
     await pickOption(root, 'entity', 'Relay')
-    setValue(root, 'is_on')
     const toggle = () => inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
     toggle().click()
     if (!on) toggle().click()
@@ -989,4 +993,264 @@ it('mounts a new class definition\'s page once', async () => {
   observer.disconnect()
   expect(root.querySelectorAll('section.hs-cdef[aria-label="Entity definition"]')).toHaveLength(1)
   expect(mounted.size).toBe(1)
+})
+
+// ---- The six types beyond the first three: their options in the form, their steps, and what the server refuses.
+const undo = (root: Element) =>
+  root.querySelector('section[aria-label="Entity definition editor"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))
+/** Adds an entity with the key `key` of the type `domain`, its row open. */
+const addTyped = (root: Element, key: string, domain: string) => {
+  button(root, 'Add entity').click()
+  type(control(entityRow(root, 'entity'), 'key'), key)
+  choose(control(entityRow(root, key), 'domain'), domain)
+  return entityRow(root, key)
+}
+const fieldOf = (row: Element, name: string) => row.querySelector<HTMLElement>(`[data-field="${name}"]`)!
+
+it('offers all nine types, and saves a button, number, select, text, light and cover with their options typed', async () => {
+  const { root, fixture } = setup('/entities/new?name=Things')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  const first = expand(entityRow(root, 'things'))
+  expect([...control(first, 'domain').options].map(o => o.textContent)).toEqual(['Binary sensor', 'Sensor', 'Switch', 'Button', 'Number', 'Select', 'Text', 'Light', 'Cover'])
+  type(control(first, 'key'), 'bell')
+  choose(control(entityRow(root, 'bell'), 'domain'), 'button')
+  // A number's options: a field each, read as numbers; Shown as a choice; every option has a hint.
+  let row = addTyped(root, 'level', 'number')
+  expect([...row.querySelectorAll('[data-field^="option:"]')].map(f => [f.querySelector('label')!.textContent, f.querySelector('.hs-field-hint')?.textContent])).toEqual([
+    ['Minimum', 'The smallest value it takes; 0 when left empty.'], ['Maximum', 'The largest value it takes; 100 when left empty.'],
+    ['Step', 'How far apart the values Home Assistant offers are, above 0; 1 when left empty.'],
+    ['Shown as', 'Whether Home Assistant shows a box or a slider; it chooses when left empty.'], ['Unit', 'The unit of its value, for example °C or %.']])
+  expect(control(row, 'option:min').inputMode).toBe('decimal')
+  type(control(row, 'option:min'), '5')
+  type(control(row, 'option:max'), ' 40 ')
+  type(control(row, 'option:step'), '0.5')
+  choose(control(row, 'option:mode'), 'slider')
+  type(control(row, 'option:unit'), '%')
+  row = addTyped(root, 'mode', 'select')
+  type(control(row, 'option:options'), 'Eco\n\n Comfort \n')
+  row = addTyped(root, 'label', 'text')
+  type(control(row, 'option:min'), '1')
+  type(control(row, 'option:max'), '20')
+  type(control(row, 'option:pattern'), '^[a-z]+$')
+  choose(control(row, 'option:mode'), 'password')
+  // A light that can dim and a cover with a position: switches.
+  row = addTyped(root, 'lamp', 'light')
+  expect(control(row, 'option:dimmable').getAttribute('role')).toBe('switch')
+  control(row, 'option:dimmable').click()
+  row = addTyped(root, 'blind', 'cover')
+  control(row, 'option:positionable').click()
+  control(row, 'option:positionable').click()
+  control(row, 'option:positionable').click()
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  expect(saves(fixture)[0].definition.entities).toEqual([
+    { key: 'bell', domain: 'button', name: 'Things' },
+    { key: 'level', domain: 'number', options: { min: 5, max: 40, step: 0.5, mode: 'slider', unit: '%' } },
+    { key: 'mode', domain: 'select', options: { options: ['Eco', 'Comfort'] } },
+    { key: 'label', domain: 'text', options: { min: 1, max: 20, pattern: '^[a-z]+$', mode: 'password' } },
+    { key: 'lamp', domain: 'light', options: { dimmable: true } },
+    { key: 'blind', domain: 'cover', options: { positionable: true } },
+  ])
+  await vi.waitFor(() => expect(chipTip(root)).toBe('Saved revision 1'))
+  // Turned off again, an option is left out rather than saved false.
+  control(entityRow(root, 'lamp'), 'option:dimmable').click()
+  expect(json(root).definition.entities.find((e: any) => e.key === 'lamp')).toEqual({ key: 'lamp', domain: 'light' })
+  expectClean(root)
+})
+
+it('blocks Save while a required option is empty or a number option is not a number, and says so on the field', async () => {
+  const { root, fixture } = setup('/entities/new?name=Mode')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  const row = expand(entityRow(root, 'mode'))
+  choose(control(row, 'domain'), 'select')
+  // Required: said by the field, and Save waits for it.
+  const options = () => fieldOf(entityRow(root, 'mode'), 'option:options')
+  expect([...options().querySelectorAll('.hs-field-hint')].map(h => h.textContent)).toEqual(['Ctrl+Enter to apply', 'One per line: every option it offers. Required.'])
+  expect(control(row, 'option:options').getAttribute('aria-required')).toBe('true')
+  const required = 'Give entity mode the option options: a select needs it'
+  await vi.waitFor(() => expect(options().textContent).toContain(required))
+  expect(button(root, 'Save').disabled).toBe(true)
+  button(root, 'Save').click()
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(saves(fixture)).toEqual([])
+  type(control(row, 'option:options'), 'Eco\nComfort')
+  await vi.waitFor(() => expect(options().textContent).not.toContain(required))
+  // A number option that does not read: kept as typed, said on its field, and Save waits; unsaved work all the while.
+  const level = addTyped(root, 'level', 'number')
+  type(control(level, 'option:min'), '5,5')
+  const message = 'Option min of entity level takes a number'
+  await vi.waitFor(() => expect(fieldOf(entityRow(root, 'level'), 'option:min').textContent).toContain(message))
+  expect(control(entityRow(root, 'level'), 'option:min').value).toBe('5,5')
+  expect(control(entityRow(root, 'level'), 'option:min').getAttribute('aria-invalid')).toBe('true')
+  expect(button(root, 'Save').disabled).toBe(true)
+  // Kept while a step is selected, and when the form shows again (the step's adding then undone).
+  button(root, 'Add State').click()
+  deselect(root)
+  expect(control(expand(entityRow(root, 'level')), 'option:min').value).toBe('5,5')
+  undo(root)
+  expect(json(root).nodes).toEqual([])
+  type(control(entityRow(root, 'level'), 'option:min'), '5.5')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  expect(fieldOf(entityRow(root, 'level'), 'option:min').textContent).not.toContain(message)
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  expect(saves(fixture)[0].definition.entities).toEqual([
+    { key: 'mode', domain: 'select', name: 'Mode', options: { options: ['Eco', 'Comfort'] } }, { key: 'level', domain: 'number', options: { min: 5.5 } }])
+})
+
+it('drops the options a new type does not have, or whose value it does not take, in one undo step', async () => {
+  const { root } = setup('/entities/new?name=Level')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  const row = expand(entityRow(root, 'level'))
+  choose(control(row, 'domain'), 'number')
+  type(control(row, 'option:min'), '2')
+  type(control(row, 'option:unit'), '%')
+  choose(control(row, 'option:mode'), 'slider')
+  // A text takes a min and a mode, but not a slider; no unit.
+  choose(control(entityRow(root, 'level'), 'domain'), 'text')
+  expect(json(root).definition.entities[0]).toEqual({ key: 'level', domain: 'text', name: 'Level', options: { min: 2 } })
+  expect(control(entityRow(root, 'level'), 'option:min').value).toBe('2')
+  expect(control(entityRow(root, 'level'), 'option:mode').value).toBe('')
+  undo(root)
+  expect(json(root).definition.entities[0]).toEqual({ key: 'level', domain: 'number', name: 'Level', options: { min: 2, unit: '%', mode: 'slider' } })
+  // A sensor's list of options becomes a select's.
+  choose(control(entityRow(root, 'level'), 'domain'), 'sensor')
+  type(control(entityRow(root, 'level'), 'option:options'), 'low\nhigh')
+  choose(control(entityRow(root, 'level'), 'domain'), 'select')
+  expect(json(root).definition.entities[0].options).toEqual({ options: ['low', 'high'] })
+})
+
+it('shows what the server refuses of an option under that option, and keeps Save waiting for it', async () => {
+  const { root } = setup('/entities/new?name=Things')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  const row = expand(entityRow(root, 'things'))
+  choose(control(row, 'domain'), 'text')
+  type(control(row, 'option:min'), '30')
+  type(control(row, 'option:max'), '300')
+  type(control(entityRow(root, 'things'), 'option:pattern'), '[a-')
+  const max = 'Option max of entity things takes 255 or less, as Home Assistant keeps at most 255 characters, not 300'
+  await vi.waitFor(() => expect(fieldOf(entityRow(root, 'things'), 'option:max').textContent).toContain(max))
+  expect(fieldOf(entityRow(root, 'things'), 'option:pattern').textContent).toContain('Option pattern of entity things is not a regular expression')
+  // Not known before the server's check answers; once it has, Save waits for them as for any error.
+  expect(button(root, 'Save').disabled).toBe(true)
+  expect(entityRow(root, 'things').querySelector('.hs-def-row__body > .hs-def-errors')).toBeNull()
+  // A min not below the max is the min's.
+  type(control(entityRow(root, 'things'), 'option:max'), '20')
+  type(control(entityRow(root, 'things'), 'option:pattern'), '')
+  const order = 'Entity things has a min of 30, which is not below its max of 20; give a min below the max'
+  await vi.waitFor(() => expect(fieldOf(entityRow(root, 'things'), 'option:min').textContent).toContain(order))
+  expect(fieldOf(entityRow(root, 'things'), 'option:max').textContent).not.toContain(order)
+  // A number's step of 0; a sensor's empty list cannot be typed (an empty field leaves the option out).
+  choose(control(entityRow(root, 'things'), 'domain'), 'number')
+  type(control(entityRow(root, 'things'), 'option:max'), '')
+  type(control(entityRow(root, 'things'), 'option:min'), '')
+  type(control(entityRow(root, 'things'), 'option:step'), '0')
+  await vi.waitFor(() => expect(fieldOf(entityRow(root, 'things'), 'option:step').textContent).toContain('Option step of entity things takes a number above 0, not 0'))
+})
+
+it('wires a light\'s Turn on into its Set state, brightness and all, and a number\'s Set value into its own', async () => {
+  const { root, fixture } = setup('/entities/new?name=Lamp')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  const row = expand(entityRow(root, 'lamp'))
+  choose(control(row, 'domain'), 'light')
+  control(entityRow(root, 'lamp'), 'option:dimmable').click()
+  addTyped(root, 'level', 'number')
+  // A number's Set value: its value an output of When commanded, into Set state's Value.
+  button(root, 'Add When commanded').click()
+  const set = lastStep(root)
+  await pickOption(root, 'entity', 'level')
+  expect([...inspector(root).querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Value'])
+  button(root, 'Add Set state').click()
+  const setLevel = lastStep(root)
+  await pickOption(root, 'entity', 'level')
+  // One state value: ready to fill, as it is all the step sets.
+  expect(inspector(root).querySelector('[data-input-id="value"] .hs-insp-unset')).toBeNull()
+  wire(root, set, 'value', setLevel, 'value')
+  flow(root, set, setLevel)
+  // The light's Turn on: its brightness an output, into Set state's optional Brightness; On ready, and set.
+  deselect(root)
+  button(root, 'Add When commanded').click()
+  const on = lastStep(root)
+  await pickOption(root, 'entity', 'Lamp')
+  expect([...inspector(root).querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Brightness'])
+  button(root, 'Add Set state').click()
+  const setOn = lastStep(root)
+  await pickOption(root, 'entity', 'Lamp')
+  expect(inspector(root).querySelector('[data-input-id="is_on"] .hs-insp-unset')).toBeNull()
+  const brightness = inspector(root).querySelector('[data-input-id="brightness"]')!
+  expect(brightness.querySelector('.hs-insp-unset')!.textContent).toContain('Not set')
+  expect(brightness.textContent).toContain('Leave empty to keep it as it is.')
+  inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.click()
+  wire(root, on, 'brightness', setOn, 'brightness')
+  flow(root, on, setOn)
+  // Turn off sets On alone.
+  deselect(root)
+  button(root, 'Add When commanded').click()
+  const off = lastStep(root)
+  await pickOption(root, 'entity', 'Lamp')
+  await pickOption(root, 'command', 'Turn off')
+  button(root, 'Add Set state').click()
+  const setOff = lastStep(root)
+  await pickOption(root, 'entity', 'Lamp')
+  const toggle = () => inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
+  toggle().click()
+  toggle().click()
+  flow(root, off, setOff)
+  const graph = json(root)
+  expect(graph.edges.filter((e: any) => e.kind === 'data').map((e: any) => [e.source, e.sourcePort, e.target, e.targetPort])).toEqual([
+    [set, 'value', setLevel, 'value'], [on, 'brightness', setOn, 'brightness']])
+  expect(graph.nodes.find((n: any) => n.id === setOn).config).toMatchObject({ entity: 'lamp', is_on: { kind: 'literal', type: 'boolean', value: true } })
+  expect(graph.nodes.find((n: any) => n.id === setOff).config).toMatchObject({ entity: 'lamp', is_on: { kind: 'literal', type: 'boolean', value: false } })
+  expect(graph.nodes.find((n: any) => n.id === setOff).config).not.toHaveProperty('brightness')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(chipTip(root)).toBe('Saved revision 1'))
+  expect(saves(fixture)).toHaveLength(1)
+})
+
+it('shows a problem that has no row of the form at the top of the form, from a step selected', async () => {
+  const { root, fixture } = await openPlug()
+  fixture.entities.controls.diagnostics = [{ nodeId: null, inputId: null, portId: null, code: 'definition.other', severity: 3, message: 'The definition cannot be made', startLine: null, startColumn: null } as any]
+  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await vi.waitFor(() => expect(inspector(root).querySelector('[aria-label="Problems of this entity definition"]')?.textContent).toContain('The definition cannot be made'))
+  press(root.querySelector('.solid-flow__node[data-id="on"]')!)
+  await vi.waitFor(() => expect(inspector(root).querySelector('.hs-insp-node')).not.toBeNull())
+  ;[...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith('Problems'))!.click()
+  ;[...root.querySelectorAll<HTMLButtonElement>('.hs-problem__message')].find(b => b.textContent === 'The definition cannot be made')!.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(inspector(root).querySelector('[aria-label="Problems of this entity definition"]')))
+  expect(inspector(root).querySelector('.hs-insp-node')).toBeNull()
+})
+
+it('shows the reason a definition that is on could not start, beside Failed', async () => {
+  const { root } = await openPlug(fixture => {
+    fixture.entities.controls.activation = 'notLoaded'
+    fixture.entities.controls.activationError = 'Downloading firmware.bin failed: its checksum does not match'
+    fixture.entities.seed('plug', plugBody())
+  })
+  await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain('Downloading firmware.bin failed: its checksum does not match'))
+})
+
+it('adds HTTP request and Download file to an entity definition, with forms that read as their settings say', async () => {
+  const { root } = setup('/entities/new?name=Plug')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Add HTTP request').click()
+  const field = (id: string) => inspector(root).querySelector<HTMLElement>(`[data-input-id="${id}"]`)!
+  const fields = () => [...inspector(root).querySelectorAll<HTMLElement>('[data-input-id]')].map(f => f.dataset.inputId)
+  expect(fields()).toEqual(['method', 'responseType', 'timeout', 'failOnStatus', 'hideResponse', 'url', 'headers', 'body'])
+  expect([...field('method').querySelectorAll('option')].map(o => o.textContent)).toEqual(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'])
+  expect([...field('responseType').querySelectorAll('option')].map(o => o.textContent)).toEqual(['Text', 'JSON object', 'JSON list'])
+  // The timeout a number of seconds, 10 unless changed; the two choices switches.
+  expect(field('timeout').querySelector('input')!.value).toBe('10')
+  expect(field('timeout').querySelector('input')!.inputMode).toBe('decimal')
+  expect(field('timeout').textContent).toContain('How many seconds the whole answer may take, from 1 to 300')
+  expect([field('failOnStatus'), field('hideResponse')].map(f => [f.querySelector('label')!.textContent, f.querySelector<HTMLInputElement>('input[role="switch"]')!.checked]))
+    .toEqual([['Fail on an error status', true], ['Keep the response out of run history', false]])
+  expect(['url', 'headers', 'body'].map(id => field(id).textContent?.includes(id === 'url' ? 'URL' : id === 'headers' ? 'Headers' : 'Body'))).toEqual([true, true, true])
+  expect([...inspector(root).querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Status', 'Body', 'Headers'])
+  deselect(root)
+  button(root, 'Add Download file').click()
+  expect(fields()).toEqual(['name', 'url', 'sha256'])
+  expect(field('sha256').textContent).toContain('SHA-256 checksum')
+  expect([...inspector(root).querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Path'])
 })

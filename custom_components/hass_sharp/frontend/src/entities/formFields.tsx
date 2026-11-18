@@ -33,6 +33,7 @@ export function TextField(props: {
   type?: string
   inputmode?: JSX.HTMLAttributes<HTMLInputElement>['inputmode']
   multiline?: boolean
+  required?: boolean
   errors?: string[]
   /** The new text; a message keeps it in the field and says why it is not taken. */
   commit(text: string): string | undefined | void
@@ -43,7 +44,7 @@ export function TextField(props: {
     <div class="hs-insp-field hs-def-field" data-field={props.name} aria-invalid={errors().length > 0 || undefined}>
       <label class="hs-insp-field__label" for={id}>{props.label}</label>
       <DraftField id={id} label={props.label} text={props.text} placeholder={props.placeholder} type={props.type} inputmode={props.inputmode}
-        multiline={props.multiline} shortcutHint={props.multiline} invalid={errors().length > 0}
+        multiline={props.multiline} shortcutHint={props.multiline} invalid={errors().length > 0} required={props.required}
         describedBy={describedBy(!!props.hint && hintId, errors().length > 0 && errorsId)} commit={text => props.commit(text) || undefined} />
       <Show when={props.hint}><small id={hintId} class="hs-field-hint">{props.hint}</small></Show>
       <FieldErrors id={errorsId} list={errors()} />
@@ -82,17 +83,19 @@ export function SelectField(props: { name: string; label: string; value: string;
 }
 
 /** An on/off switch with its label beside it. */
-export function SwitchField(props: { name: string; label: string; checked: boolean; hint?: string; disabled?: boolean; onChange(checked: boolean): void }) {
-  const id = createUniqueId(), hintId = `${id}-hint`
+export function SwitchField(props: { name: string; label: string; checked: boolean; hint?: string; disabled?: boolean; errors?: string[]; onChange(checked: boolean): void }) {
+  const id = createUniqueId(), hintId = `${id}-hint`, errorsId = `${id}-errors`
+  const errors = () => props.errors ?? []
   return (
-    <div class="hs-insp-field hs-def-field" data-field={props.name}>
+    <div class="hs-insp-field hs-def-field" data-field={props.name} aria-invalid={errors().length > 0 || undefined}>
       <div class="hs-insp-field__row">
         <label class="hs-insp-field__label" for={id}>{props.label}</label>
         <input id={id} type="checkbox" role="switch" class="hs-switch" checked={props.checked} disabled={props.disabled}
-          aria-describedby={props.hint ? hintId : undefined}
+          aria-describedby={describedBy(!!props.hint && hintId, errors().length > 0 && errorsId)}
           onChange={event => { const wanted = event.currentTarget.checked; event.currentTarget.checked = props.checked; props.onChange(wanted) }} />
       </div>
       <Show when={props.hint}><small id={hintId} class="hs-field-hint">{props.hint}</small></Show>
+      <FieldErrors id={errorsId} list={errors()} />
     </div>
   )
 }

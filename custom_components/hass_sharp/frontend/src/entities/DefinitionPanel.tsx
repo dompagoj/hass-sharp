@@ -1,4 +1,4 @@
-import { createMemo, For, Show } from 'solid-js'
+import { createEffect, createMemo, For, on, Show } from 'solid-js'
 import type { VisualDiagnostic } from '../visual/api'
 import type { EditorContext } from '../visual/adapter'
 import type { VisualCatalogSnapshot } from '../visual/contract'
@@ -33,7 +33,10 @@ export interface DefinitionPanelProps {
   savedDevice?: DefinitionDevice | null
   /** The device turned off while the editor was open (default: one of this form's own, gone with it). */
   deviceMemory?: DeviceMemory
-  /** A problem chosen in the Problems tab (`entity:<key>` or `setting:<key>`): its row opens, and focus goes into it. */
+  /**
+   * A problem chosen in the Problems tab: its row opens, and focus goes into it (`entity:<key>` or `setting:<key>`), or
+   * the list of problems no row shows takes it (`problems`).
+   */
   located?: { target: string }
   /** Changes the graph as one undo step. */
   commit(graph: VisualGraph, options?: { coalesce?: string }): void
@@ -55,10 +58,13 @@ export function DefinitionPanel(props: DefinitionPanelProps) {
   const entityIds = createMemo(() => new Map((props.liveEntities ?? []).flatMap(e => (e.entityId ? [[e.key, e.entityId] as const] : []))))
   const commit = (graph: VisualGraph) => props.commit(graph)
   const ownMemory = deviceMemory()
+  // A problem chosen in the Problems tab that no row shows: the list at the top takes the focus.
+  let list: HTMLUListElement | undefined
+  createEffect(on(() => props.located, located => { if (located?.target === 'problems') queueMicrotask(() => list?.focus()) }))
   return (
     <div class="hs-def">
       <Show when={problems().others.length}>
-        <ul class="hs-def-problems" aria-label="Problems of this entity definition">
+        <ul ref={list} class="hs-def-problems" aria-label="Problems of this entity definition" tabindex="-1">
           <For each={problems().others}>
             {problem => (
               <li classList={{ 'hs-def-problems__item': true, 'hs-def-problems__item--warning': problem.severity < 3 }}>

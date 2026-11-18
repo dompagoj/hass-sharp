@@ -35,6 +35,16 @@ describe('the summaries of an entity definition\'s steps', () => {
     expect(summary({ entity: 'blades', command: 'turn_on' })).toBe('When commanded ▸ Blades: Spin up')
     expect(summary({ entity: 'blades', command: 'set_speed' })).toBe('When commanded ▸ Blades: Set speed')
   })
+  it('name the new types\' commands by their labels', () => {
+    const things: Graph = { ...graph, definition: { entities: [{ key: 'level', domain: 'number', name: 'Level' }, { key: 'lamp', domain: 'light', name: 'Lamp' },
+      { key: 'blind', domain: 'cover', name: 'Blind' }, { key: 'mode', domain: 'select' }, { key: 'bell', domain: 'button', name: 'Bell' }], settings: [] } as unknown as Graph['definition'] }
+    const summary = (kind: string, config: Record<string, unknown>) => nodeSummary(node(kind, config), withGraphTypes(nodeCatalog, things), undefined, things)
+    expect(summary('entity_command', { entity: 'level', command: 'set_value' })).toBe('When commanded ▸ Level: Set value')
+    expect(summary('entity_command', { entity: 'blind', command: 'set_position' })).toBe('When commanded ▸ Blind: Set position')
+    expect(summary('entity_command', { entity: 'mode', command: 'select_option' })).toBe('When commanded ▸ mode: Select option')
+    expect(summary('entity_command', { entity: 'bell', command: 'press' })).toBe('When commanded ▸ Bell: Press')
+    expect(summary('set_entity_state', { entity: 'lamp', brightness: lit('number', 128) })).toBe('Set state ▸ Lamp')
+  })
   it('name a setting by its label, else its key, and never show its value', () => {
     expect(both(node('setting', { key: 'host' }))).toBe('Setting ▸ Address')
     expect(both(node('setting', { key: 'port' }))).toBe('Setting ▸ port')

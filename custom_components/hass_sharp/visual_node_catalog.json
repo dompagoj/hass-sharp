@@ -2187,7 +2187,8 @@
       "options": {
         "unit": {
           "type": "string",
-          "label": "Unit"
+          "label": "Unit",
+          "description": "The unit of its values, for example W or °C."
         },
         "stateClass": {
           "type": "string",
@@ -2196,11 +2197,13 @@
             "total",
             "total_increasing"
           ],
-          "label": "State class"
+          "label": "State class",
+          "description": "How Home Assistant records its statistics: a measurement, a total, or a total that only grows."
         },
         "options": {
           "type": "array",
-          "label": "Options"
+          "label": "Options",
+          "description": "One per line: every value it can have, for a sensor of the enum device class."
         }
       }
     },
@@ -2260,15 +2263,18 @@
       "options": {
         "min": {
           "type": "number",
-          "label": "Minimum"
+          "label": "Minimum",
+          "description": "The smallest value it takes; 0 when left empty."
         },
         "max": {
           "type": "number",
-          "label": "Maximum"
+          "label": "Maximum",
+          "description": "The largest value it takes; 100 when left empty."
         },
         "step": {
           "type": "number",
-          "label": "Step"
+          "label": "Step",
+          "description": "How far apart the values Home Assistant offers are, above 0; 1 when left empty."
         },
         "mode": {
           "type": "string",
@@ -2277,11 +2283,13 @@
             "box",
             "slider"
           ],
-          "label": "Shown as"
+          "label": "Shown as",
+          "description": "Whether Home Assistant shows a box or a slider; it chooses when left empty."
         },
         "unit": {
           "type": "string",
-          "label": "Unit"
+          "label": "Unit",
+          "description": "The unit of its value, for example °C or %."
         }
       }
     },
@@ -2312,6 +2320,7 @@
         "options": {
           "type": "array",
           "label": "Options",
+          "description": "One per line: every option it offers.",
           "required": true
         }
       }
@@ -2342,15 +2351,18 @@
       "options": {
         "min": {
           "type": "number",
-          "label": "Shortest length"
+          "label": "Shortest length",
+          "description": "The fewest characters it takes; 0 when left empty."
         },
         "max": {
           "type": "number",
-          "label": "Longest length"
+          "label": "Longest length",
+          "description": "The most characters it takes, up to 255; 100 when left empty."
         },
         "pattern": {
           "type": "string",
-          "label": "Pattern"
+          "label": "Pattern",
+          "description": "A regular expression every text it takes matches, such as ^[0-9]+$; any text when left empty."
         },
         "mode": {
           "type": "string",
@@ -2358,7 +2370,8 @@
             "text",
             "password"
           ],
-          "label": "Shown as"
+          "label": "Shown as",
+          "description": "Password hides the text in Home Assistant."
         }
       }
     },
@@ -2400,7 +2413,8 @@
       "options": {
         "dimmable": {
           "type": "boolean",
-          "label": "Can be dimmed"
+          "label": "Can be dimmed",
+          "description": "On: Home Assistant offers a brightness for it."
         }
       }
     },
@@ -2447,7 +2461,8 @@
       "options": {
         "positionable": {
           "type": "boolean",
-          "label": "Has a position"
+          "label": "Has a position",
+          "description": "On: Home Assistant offers a position from 0, closed, to 100, open."
         }
       }
     }

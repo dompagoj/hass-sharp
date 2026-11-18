@@ -74,6 +74,10 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
   onCleanup(() => window.removeEventListener('hass-sharp-libraries-changed', librariesChanged))
   // One subscription for every card's entities.
   const states = liveState(hass, () => items().flatMap(watchedEntityIds))
+  // The clock a button's last press is told from ("Pressed 5 minutes ago").
+  const [now, setNow] = createSignal(Date.now())
+  const clock = setInterval(() => setNow(Date.now()), 30_000)
+  onCleanup(() => clearInterval(clock))
 
   // ---- Focus: after a delete it goes to the next card, else the previous one, else "New entity definition".
   const focusAfter = (id: string) => {
@@ -213,6 +217,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
                     classTitle={classTitle(item())}
                     classFailed={types.isError}
                     states={states()}
+                    now={now()}
                     admin={admin()}
                     busy={deleting()}
                     switching={toggling().has(id)}

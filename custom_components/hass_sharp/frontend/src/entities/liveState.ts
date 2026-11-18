@@ -2,10 +2,11 @@ import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } 
 import type { HomeAssistant } from '../types'
 
 /**
- * An entity's state as Home Assistant has it now; `available` is false while its state is `unavailable`; `unit` is its
- * `unit_of_measurement` attribute, when it has one.
+ * An entity's state as Home Assistant has it now; `available` is false while its state is `unavailable`. The attributes
+ * a card shows, each only when the entity has it: `unit` (`unit_of_measurement`), a light's `brightness` (0–255), a
+ * cover's `position` (`current_position`, 0–100) and a text's `mode` (`text` or `password`).
  */
-export interface LiveState { state: string; available: boolean; unit?: string }
+export interface LiveState { state: string; available: boolean; unit?: string; brightness?: number; position?: number; mode?: string }
 export type LiveStates = Record<string, LiveState>
 
 /**
@@ -19,24 +20,43 @@ interface EntitiesEvent {
   r?: string[]
 }
 
-const unitKey = 'unit_of_measurement'
-const live = (state: string, unit: unknown): LiveState =>
-  ({ state, available: state !== 'unavailable', ...(typeof unit === 'string' && unit ? { unit } : {}) })
+/** The attributes kept, by Home Assistant's name: the member of {@link LiveState} each goes to, and the type it has there. */
+const kept = {
+  unit_of_measurement: { member: 'unit', type: 'string' },
+  brightness: { member: 'brightness', type: 'number' },
+  current_position: { member: 'position', type: 'number' },
+  mode: { member: 'mode', type: 'string' },
+} as const
+type Kept = Partial<Pick<LiveState, 'unit' | 'brightness' | 'position' | 'mode'>>
+/** The kept attributes of `attributes`, each of its type (a text not empty, a number finite). */
+function keptOf(attributes: Record<string, unknown>): Kept {
+  const result: Record<string, unknown> = {}
+  for (const [name, { member, type }] of Object.entries(kept)) {
+    const value = attributes[name]
+    if (type === 'string' ? typeof value === 'string' && value !== '' : typeof value === 'number' && Number.isFinite(value)) result[member] = value
+  }
+  return result as Kept
+}
+const live = (state: string, attributes: Kept): LiveState => ({ state, available: state !== 'unavailable', ...attributes })
+const same = (a: LiveState, b: LiveState) =>
+  a.state === b.state && a.unit === b.unit && a.brightness === b.brightness && a.position === b.position && a.mode === b.mode
 
-/** `current` with the event applied; the same object when the event changes no state and no unit. */
+/** `current` with the event applied; the same object when the event changes no state and no kept attribute. */
 function applied(current: LiveStates, event: EntitiesEvent): LiveStates {
   let next = current
   const write = () => (next === current ? (next = { ...current }) : next)
   for (const [id, entity] of Object.entries(event.a ?? {}))
-    if (typeof entity?.s === 'string') write()[id] = live(entity.s, entity.a?.[unitKey])
+    if (typeof entity?.s === 'string') write()[id] = live(entity.s, keptOf(entity.a ?? {}))
   for (const [id, change] of Object.entries(event.c ?? {})) {
     const old = next[id], added = change?.['+'], removed = change?.['-']?.a
     const state = typeof added?.s === 'string' ? added.s : old?.state
     if (state === undefined) continue
-    const unit = added?.a && Object.hasOwn(added.a, unitKey) ? added.a[unitKey]
-      : Array.isArray(removed) && removed.includes(unitKey) ? undefined : old?.unit
-    const changed = live(state, unit)
-    if (!old || old.state !== changed.state || old.unit !== changed.unit) write()[id] = changed
+    // The attributes it had, less those removed, with those changed.
+    const attributes: Record<string, unknown> = {}
+    for (const [name, { member }] of Object.entries(kept))
+      if (old && old[member] !== undefined && !(Array.isArray(removed) && removed.includes(name))) attributes[name] = old[member]
+    const changed = live(state, keptOf({ ...attributes, ...(added?.a ?? {}) }))
+    if (!old || !same(old, changed)) write()[id] = changed
   }
   for (const id of event.r ?? []) if (id in next) delete write()[id]
   return next

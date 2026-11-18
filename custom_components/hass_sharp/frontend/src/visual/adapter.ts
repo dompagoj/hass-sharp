@@ -188,9 +188,15 @@ export interface EditorAdapter<D extends EditorDocument = EditorDocument> {
   /**
    * The overview's row that shows a problem about no step (an entity definition's entity or setting), if any. Chosen
    * in the Problems tab, such a problem then selects nothing, shows the overview, and hands it the row as
-   * `context.located`. Without it (an automation) such a problem selects nothing, as before.
+   * `context.located` (a problem the overview lists at its top, its list). Without it (an automation) such a problem
+   * selects nothing, as before.
    */
   overviewProblem?(diagnostic: VisualDiagnostic): string | undefined
+  /**
+   * Problems the editor finds in the graph itself besides the validator's, each about no step (an entity definition's
+   * option left empty that its type needs): listed with the validator's, and an error blocks Save as one of its does.
+   */
+  check?(graph: VisualGraph, catalog: VisualCatalogSnapshot): VisualDiagnostic[]
   /**
    * What to tell the person once Save as a copy has saved `copied` (the graph as it was before the copy): what the
    * copy lacks (an entity definition's secrets that were not typed here). Without it, or an answer of undefined, nothing.

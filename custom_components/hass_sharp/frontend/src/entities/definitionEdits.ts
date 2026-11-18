@@ -1,4 +1,4 @@
-import type { GraphDefinition, JsonValue } from '../visual/contract'
+import { entityTypeLabel, words, type ConfigSpec, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
 import type { VisualDiagnostic } from '../visual/api'
 import type { VisualGraph } from '../visual/graph'
 import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionDevice, type DefinitionEntity, type DefinitionSetting, type EditorDefinition, type EntityDocument } from './model'
@@ -90,6 +90,63 @@ export function setEntityOption(graph: VisualGraph, key: string, option: string,
   if (value === undefined) delete options[option]
   else options[option] = value
   return updateEntity(graph, key, { options: Object.keys(options).length ? options : undefined })
+}
+
+/**
+ * Whether an option's value is one its type's rule takes: a list of texts for an array, a finite number, true or false,
+ * or a text; one of its values when it has an `enum`. What the server checks of each option's type (`DefinitionDocument`).
+ */
+export function optionFits(rule: ConfigSpec, value: unknown): boolean {
+  const allowed = (item: unknown) => !Array.isArray(rule.enum) || rule.enum.includes(item)
+  if (rule.type === 'array') return Array.isArray(value) && value.every(item => typeof item === 'string' && allowed(item))
+  if (rule.type === 'number') return typeof value === 'number' && Number.isFinite(value)
+  if (rule.type === 'boolean') return typeof value === 'boolean'
+  return typeof value === 'string' && allowed(value)
+}
+
+/**
+ * A number option's text as a number: digits, a sign, a fraction and an exponent, with a point; undefined for a text
+ * that is not one (a comma, a unit, an unfinished number), as the class page's number fields read theirs.
+ */
+export function readOptionNumber(text: string): number | undefined {
+  const trimmed = text.trim()
+  if (!/^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i.test(trimmed)) return
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+const optionProblem = (key: string, message: string): VisualDiagnostic =>
+  ({ nodeId: null, inputId: key, portId: null, message, severity: 3, startLine: null, startColumn: null, code: 'definition.entityOption' })
+/**
+ * What the form knows of the entities' options without asking the server, in the server's words (so its answer about
+ * the same option is not shown twice): an option the type needs left empty, and a number option holding a text that
+ * is not a number (kept as typed, so it can be finished). Each blocks Save; the server checks the rest.
+ */
+export function optionProblems(graph: VisualGraph, catalog: VisualCatalogSnapshot): VisualDiagnostic[] {
+  const problems: VisualDiagnostic[] = []
+  for (const entity of definitionOf(graph).entities) {
+    const domains = catalog.entityDomains
+    const row = domains && typeof entity.domain === 'string' && Object.hasOwn(domains, entity.domain) ? domains[entity.domain] : undefined
+    if (!row || typeof entity.key !== 'string') continue
+    const options = entity.options ?? {}, label = entityTypeLabel(catalog, entity.domain)
+    for (const [option, rule] of Object.entries(row.options ?? {})) {
+      const value = Object.hasOwn(options, option) ? options[option] : undefined
+      if (rule.type === 'number' && typeof value === 'string') problems.push(optionProblem(entity.key, `Option ${option} of entity ${entity.key} takes a number`))
+      else if (rule.required === true && (value === undefined || value === null))
+        problems.push(optionProblem(entity.key, `Give entity ${entity.key} the option ${option}: ${words.article(label)} ${label.toLowerCase()} needs it`))
+    }
+  }
+  return problems
+}
+
+/**
+ * The option a problem about an entity is about, by the words the server (`DefinitionDocument.Options`) and
+ * {@link optionProblems} use: "Option max of entity …", "Give entity … the option options: …", and a min not below
+ * the max, which is the min's. Undefined for any other problem, which the entity's row shows.
+ */
+export function problemOption(message: string): string | undefined {
+  return /^Option (\S+) of entity \S+ /.exec(message)?.[1] ?? /^Give entity \S+ the option (\S+):/.exec(message)?.[1]
+    ?? (/^Entity \S+ has a min of .+ which is not below its max/.test(message) ? 'min' : undefined)
 }
 
 /**

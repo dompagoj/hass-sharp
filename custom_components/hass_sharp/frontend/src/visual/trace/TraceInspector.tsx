@@ -253,7 +253,7 @@ function StepValues(props: {
                 empty="No outputs were recorded."
                 ports={Object.keys(outputs())}
                 value={port => outputs()[port]}
-                label={port => outputLabel(props.node, port, props.catalog)}
+                label={port => outputLabel(props.node, port, props.catalog, props.graph)}
                 side="out"
                 catalog={props.catalog}
               />

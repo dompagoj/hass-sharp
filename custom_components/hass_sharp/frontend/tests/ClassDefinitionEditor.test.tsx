@@ -946,3 +946,46 @@ it('keeps the top bar, with Save, at the top of the page while the form scrolls 
   expect(view.firstElementChild!.matches('header.hs-topbar')).toBe(true)
   expect(view.querySelector('header.hs-topbar')!.contains(save(root))).toBe(true)
 })
+
+it('says the range a whole or decimal setting declares: at least, at most or between, and nothing without one', async () => {
+  const ranged: FixtureEntityType = { ...thermometerType, id: 'library:shelly:NodeLib.Ranged', title: 'Ranged', settings: [
+    // An int's own bounds stand for the side it does not declare.
+    { key: 'Count', label: 'Count', description: 'How many to keep.', type: 'integer', secret: false, options: [], minimum: 1, maximum: 2147483647 },
+    { key: 'Seconds', label: 'Seconds', description: null, type: 'integer', secret: false, options: [], minimum: -2147483648, maximum: 60 },
+    { key: 'Delay', label: 'Delay', description: null, type: 'integer', secret: false, options: [], minimum: 1, maximum: 3600 },
+    { key: 'Any', label: 'Any', description: null, type: 'integer', secret: false, options: [], minimum: -2147483648, maximum: 2147483647 },
+    { key: 'Factor', label: 'Factor', description: null, type: 'number', secret: false, options: [], minimum: 0.5 },
+    { key: 'Ceiling', label: 'Ceiling', description: null, type: 'number', secret: false, options: [], maximum: 99.5 },
+    { key: 'Gain', label: 'Gain', description: null, type: 'number', secret: false, options: [], minimum: -1.5, maximum: 1.5 },
+    { key: 'Plain', label: 'Plain', description: null, type: 'number', secret: false, options: [] },
+    { key: 'Long', label: 'Long', description: null, type: 'integer', secret: false, options: [] },
+  ] }
+  const { root } = setup('/entities/new?logic=class', undefined, visualFixture({ entityTypes: [ranged] }))
+  await ready(root)
+  await vi.waitFor(() => expect(pickClass(root, ranged.id)).not.toBeNull())
+  pickClass(root, ranged.id).click()
+  await vi.waitFor(() => expect(control(root, 'Count')).not.toBeNull())
+  const hint = (label: string) => control(root, label).closest('[data-field]')!.querySelector('.hs-field-hint')?.textContent ?? null
+  expect(['Count', 'Seconds', 'Delay', 'Any', 'Factor', 'Ceiling', 'Gain', 'Plain', 'Long'].map(hint)).toEqual([
+    'At least 1. How many to keep.', 'At most 60.', 'Between 1 and 3600.', null, 'At least 0.5.', 'At most 99.5.', 'Between -1.5 and 1.5.', null, null,
+  ])
+})
+
+it('shows the state of each entity it made, by its type, as Home Assistant has it now', async () => {
+  const lights: FixtureEntityType = { ...thermometerType, id: 'library:shelly:NodeLib.Lights', title: 'Lights', kind: 'device', domain: null,
+    entities: [{ key: 'lamp', domain: 'light', name: 'Lamp' }, { key: 'bell', domain: 'button', name: 'Bell' }, { key: 'level', domain: 'number', name: 'Level' }] }
+  const subscriptions: { message: any; push(event: unknown): void }[] = []
+  const fixture = visualFixture({ entityTypes: [lights] })
+  fixture.entities.seed('lights', plug([], 'Lights', lights.id))
+  const subscribeMessage = vi.fn(async (push: (event: unknown) => void, message: unknown) => { subscriptions.push({ message, push }); return async () => {} })
+  ;(fixture as any).connection = { subscribeMessage }
+  const { root } = setup('/entities/lights', undefined, fixture)
+  await ready(root)
+  await vi.waitFor(() => expect(subscriptions).toHaveLength(1))
+  expect(subscriptions[0].message).toEqual({ type: 'subscribe_entities', entity_ids: ['button.lights_bell', 'light.lights_lamp', 'number.lights_level'] })
+  const entities = page(root)!.querySelector('section[aria-label="Entities"]')!
+  const states = () => [...entities.querySelectorAll('li')].map(li => [li.querySelector('strong')!.textContent, li.querySelector('.hs-cdef-entity__state')?.textContent])
+  expect(states()).toEqual([['Bell', '—No state'], ['Lamp', '—No state'], ['Level', '—No state']])
+  subscriptions[0].push({ a: { 'light.lights_lamp': { s: 'on', a: { brightness: 51 } }, 'button.lights_bell': { s: 'unknown', a: {} }, 'number.lights_level': { s: '7', a: { unit_of_measurement: 'min' } } } })
+  await vi.waitFor(() => expect(states()).toEqual([['Bell', 'Never pressed'], ['Lamp', 'On · 20 %'], ['Level', '7 min']]))
+})

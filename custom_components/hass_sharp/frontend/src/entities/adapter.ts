@@ -5,7 +5,7 @@ import type { VisualGraph } from '../visual/graph'
 import { definitionsQueryKey, EntityApiError, entityApi, type EntitySaveResult } from './api'
 import { DefinitionOverview } from './DefinitionPanel'
 import { icons } from '../visual/icons'
-import { copyNotice, problemRow, renameDefinition, savedSecrets } from './definitionEdits'
+import { copyNotice, optionProblems, problemRow, renameDefinition, savedSecrets } from './definitionEdits'
 import { deviceMemory } from './DeviceForm'
 import { EntityHelp } from './EntityHelp'
 import { definitionBody, definitionId, draftGraph, editorGraph, newGraphDefinition, type EntityDocument } from './model'
@@ -104,7 +104,9 @@ export function entityAdapter(
     texts: entityTexts,
     overview: context => createComponent(DefinitionOverview, { context, memory }),
     overviewIcon: icons.entity,
-    overviewProblem: problemRow,
+    // A problem about no step and no row of the form is listed at the form's top.
+    overviewProblem: diagnostic => problemRow(diagnostic) ?? (diagnostic.nodeId || diagnostic.startLine != null ? undefined : 'problems'),
+    check: optionProblems,
     copyNotice,
     help: EntityHelp,
   }

@@ -99,6 +99,8 @@ export interface FieldRow {
   /** The widget to edit the value with, and the entities its states are of, instead of the input's and the node's. */
   widget?: Widget
   context?: { targetEntityIds?: string[] }
+  /** An optional input that shows its editor while it has no value, as a required one does (a Set state's first value). */
+  ready?: boolean
 }
 
 /** The node an input row belongs to, read through accessors so the row survives edits of that node. */
@@ -125,7 +127,7 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
   const wired = () => input()?.mode === 'connected'
   const [setting, setSetting] = createSignal(false)
   // A service's target and the fields added on purpose always show their editor.
-  const muted = () => !wired() && !setting() && input()?.mode === 'muted' && !(ctx.node().kind === 'service' && (row.port === 'target' || row.port.startsWith('field:')))
+  const muted = () => !wired() && !setting() && !row.ready && input()?.mode === 'muted' && !(ctx.node().kind === 'service' && (row.port === 'target' || row.port.startsWith('field:')))
   const errors = () => input()?.errors ?? []
   const chip = () => inputTypeChip(input(), inputSpec(), ctx.catalog())
   const editSpec = (): InputSpec | undefined => { const s = inputSpec(); return s && row.description !== undefined ? { ...s, description: row.description } : s }
@@ -188,7 +190,7 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
           <button type="button" class="hs-button hs-button--ghost" aria-label={`Set ${label()}`}
             onClick={() => { setSetting(true); ctx.focus(row.port) }}>Set value</button>
         </div>
-        <Show when={inputSpec()?.description}><small class="hs-field-hint">{inputSpec()!.description}</small></Show>
+        <Show when={row.description ?? inputSpec()?.description}>{hint => <small class="hs-field-hint">{hint()}</small>}</Show>
         <Errors list={errors()} />
       </Show>
     </div>

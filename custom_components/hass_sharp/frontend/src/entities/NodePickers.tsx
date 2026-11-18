@@ -1,5 +1,5 @@
 import { createMemo, createUniqueId, Show, type Component, type JSX } from 'solid-js'
-import { dataInputs, dataOutputs, definitionEntities, definitionEntity, definitionSettings, entityChoices, entityCommandLabel, entityCommands, entityTypeLabel, isAssignable, withEntityCommand, words, type GraphNode, type VisualCatalogSnapshot } from '../visual/contract'
+import { dataInputs, dataOutputs, definitionEntities, definitionEntity, definitionSettings, entityChoices, entityDomain, entityCommandLabel, entityCommands, entityTypeLabel, isAssignable, withEntityCommand, words, type GraphNode, type VisualCatalogSnapshot } from '../visual/contract'
 import { graphTypes } from '../visual/connectionIndex'
 import { entityStateContext } from '../visual/entityStateContext'
 import { removeEdge, updateNode, type VisualGraph } from '../visual/graph'
@@ -7,11 +7,23 @@ import { Errors, type FieldRow } from '../visual/InputRow'
 import { typeLabel } from '../visual/typeLabels'
 import { stateField } from '../visual/widgets'
 import { SearchSelect, type SearchOption } from '../visual/widgets/SearchSelect'
+import { optionFits } from './definitionEdits'
 import { definitionEntityKinds } from './model'
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 const nodeSpec = (kind: string, catalog: VisualCatalogSnapshot) => (Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined)
+
+/** Where the definition's entities are edited, as a picker's hint says it. */
+const underEntities = 'under Entities, shown when no step is selected.'
+/** The steps that name an entity for its state values. */
+const stateKinds: readonly string[] = ['entity_state', 'set_entity_state']
+/** Whether the catalog's row of a type has state values (a button has none); true for a type it does not have. */
+function hasState(catalog: VisualCatalogSnapshot, domain: string): boolean {
+  const domains = catalog.entityDomains
+  const row = domains && Object.hasOwn(domains, domain) ? domains[domain] : undefined
+  return !row || (record(row.state) && Object.keys(row.state).length > 0)
+}
 
 /** A definition's entity as people read it: its name, else its key. */
 const entityName = (entity: Record<string, unknown>) => text(entity.name) || text(entity.key)
@@ -34,8 +46,8 @@ export function chooseEntity(graph: VisualGraph, nodeId: string, key: string, ca
 
 /**
  * The graph with the definition's entity `key` of the type `domain`, as one change: the options its new type does not
- * take go, and every step naming it is fitted to the new type as {@link chooseEntity} fits a step to a new entity, with
- * the same notice.
+ * have, or whose value it does not take, go, and every step naming it is fitted to the new type as
+ * {@link chooseEntity} fits a step to a new entity, with the same notice.
  */
 export function retypeEntity(graph: VisualGraph, key: string, domain: string, catalog: VisualCatalogSnapshot): { graph: VisualGraph; notice?: string } {
   const definition = record(graph.definition) ? (graph.definition as unknown as { entities: Record<string, unknown>[] }) : undefined
@@ -43,7 +55,8 @@ export function retypeEntity(graph: VisualGraph, key: string, domain: string, ca
   if (!definition || !entity || entity.domain === domain) return { graph }
   const spec = catalog.entityDomains && Object.hasOwn(catalog.entityDomains, domain) ? catalog.entityDomains[domain] : undefined
   const { options, ...rest } = entity
-  const kept = record(options) ? Object.fromEntries(Object.entries(options).filter(([option]) => !!spec && Object.hasOwn(spec.options, option))) : {}
+  // An option the new type has too stays when it takes the value (a number's min becomes a text's; its slider does not).
+  const kept = record(options) ? Object.fromEntries(Object.entries(options).filter(([option, value]) => !!spec && Object.hasOwn(spec.options, option) && optionFits(spec.options[option], value))) : {}
   const retyped = { ...rest, domain, ...(Object.keys(kept).length ? { options: kept } : {}) }
   let next: VisualGraph = { ...graph, definition: { ...definition, entities: definition.entities.map(e => (e === entity ? retyped : e)) } as unknown as VisualGraph['definition'] }
   const before = graphTypes(graph, catalog), after = graphTypes(next, catalog)
@@ -72,9 +85,10 @@ function refit(graph: VisualGraph, node: GraphNode, given: GraphNode['config'], 
   const fits = (type: unknown, accepted: string[]) => typeof type === 'string' && accepted.some(t => isAssignable(type, t, after))
   const label = (port: string) => words.portLabel(was[port], port)
 
-  // Values: a state input the new type also has keeps a value of a type it takes.
-  for (const port of Object.keys(was)) {
-    if (Object.hasOwn(spec.config, port) || Object.hasOwn(spec.inputs, port) || !Object.hasOwn(config, port)) continue
+  // Values: a state input the new type also has keeps a value of a type it takes. A value stored for an input the step
+  // did not show (its entity was missing, or of a type the catalog does not have) goes too, unless the new type takes it.
+  for (const port of Object.keys(config)) {
+    if (port === 'entity' || Object.hasOwn(spec.config, port) || Object.hasOwn(spec.inputs, port)) continue
     const value = config[port], input = Object.hasOwn(now, port) ? now[port] : undefined
     const literal = record(value) && value.kind === 'literal'
     if (input && (!literal || fits(value.type, input.types))) continue
@@ -157,8 +171,12 @@ function EntityPicker(props: { ctx: StepPickerContext }) {
   const ctx = props.ctx
   const current = () => text(ctx.node().config.entity)
   const choices = createMemo(() => entityChoices(ctx.catalog(), ctx.node().kind))
-  const option = (entity: Record<string, unknown>, detail?: string): SearchOption =>
-    ({ value: text(entity.key), label: entityName(entity), detail: detail ?? entityTypeLabel(ctx.catalog(), text(entity.domain)) })
+  // A State or Set state cannot name an entity whose type has no state (a button): offered, and marked so.
+  const stateless = (entity: Record<string, unknown>) => stateKinds.includes(ctx.node().kind) && !hasState(ctx.catalog(), text(entity.domain))
+  const option = (entity: Record<string, unknown>, detail?: string): SearchOption => {
+    const type = entityTypeLabel(ctx.catalog(), text(entity.domain))
+    return { value: text(entity.key), label: entityName(entity), detail: detail ?? (stateless(entity) ? `${type} · has no state` : type) }
+  }
   const known = () => definitionEntity(ctx.catalog(), current())
   const listed = () => choices().some(e => e.key === current())
   const missing = () => current() !== '' && !known()
@@ -168,8 +186,8 @@ function EntityPicker(props: { ctx: StepPickerContext }) {
     ...(current() !== '' && known() && !listed() ? [option(known()!, `${entityTypeLabel(ctx.catalog(), text(known()!.domain))} · takes no commands`)] : []),
     ...choices().map(e => option(e)),
   ])
-  const hint = () => !definitionEntities(ctx.catalog()).length ? 'This definition has no entities yet.'
-    : !choices().length ? 'None of this definition\'s entities takes commands.' : configHint(ctx, 'entity')
+  const hint = () => !definitionEntities(ctx.catalog()).length ? `This definition has no entities yet. Add one ${underEntities}`
+    : !choices().length ? `None of this definition's entities takes commands. Give one a type that does, such as a switch, ${underEntities}` : configHint(ctx, 'entity')
   return (
     <PickerField name="entity" label={configLabel(ctx, 'entity', 'Entity')} options={options()} value={current()} placeholder="Choose an entity"
       hint={hint()} invalid={missing()} disabled={!options().length} errors={ctx.errorsFor('entity')}
@@ -195,7 +213,7 @@ function CommandPicker(props: { ctx: StepPickerContext }) {
   const ready = () => commands().length > 0
   return (
     <PickerField name="command" label={configLabel(ctx, 'command', 'Command')} options={options()} value={current()}
-      placeholder={ready() ? 'Choose a command' : current() || 'Not set'} hint={ready() ? configHint(ctx, 'command') : 'Choose an entity first.'}
+      placeholder={ready() ? 'Choose a command' : current() || 'Not set'} hint={ready() ? configHint(ctx, 'command') : entityChoices(ctx.catalog(), ctx.node().kind).length ? 'Choose an entity first.' : 'Give an entity a type that takes commands first.'}
       invalid={ready() && current() !== '' && !commands().includes(current())} disabled={!ready()} errors={ctx.errorsFor('command')}
       onSelect={command => ctx.onChange({ ...ctx.node().config, command })} />
   )
@@ -232,6 +250,28 @@ export const stepPickers: Record<string, { keys: string[]; Section: Component<{ 
   set_entity_state: { keys: ['entity'], Section: EntitySection },
   set_entity_available: { keys: ['entity'], Section: EntitySection },
   setting: { keys: ['key'], Section: SettingSection },
+}
+
+/** Under a Set state's value other than its first: what leaving it empty does. */
+const keptHint = 'Leave empty to keep it as it is.'
+/** Under a State's value its type does not need. */
+const optionalHint = 'Optional.'
+
+/**
+ * How the inspector shows a state value of a State or Set state, by its entity's row: undefined for any other input.
+ * A Set state's first value (the first its row does not mark optional, else its first) is `ready`: its editor shows
+ * while it has no value, as it is what a new step is for (a switch's On, a light's On, a cover's Closed); the others
+ * say that left empty they are kept. A State's values its row marks optional say they are optional.
+ */
+export function stateValueRow(node: GraphNode, port: string, catalog: VisualCatalogSnapshot): { ready?: boolean; description?: string } | undefined {
+  if (!stateKinds.includes(node.kind)) return
+  const state = entityDomain(catalog, text(node.config.entity))?.state
+  if (!record(state) || !Object.hasOwn(state, port)) return
+  const entries = Object.entries(state)
+  const optional = ([, value]: (typeof entries)[number]) => record(value) && value.required === false
+  if (node.kind === 'entity_state') return optional([port, state[port]]) ? { description: optionalHint } : undefined
+  const first = (entries.find(entry => !optional(entry)) ?? entries[0])[0]
+  return port === first ? { ready: true } : { description: keptHint }
 }
 
 /**

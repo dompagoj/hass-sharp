@@ -16,11 +16,12 @@ import { describedBy } from '../visual/widgets/common'
 import { entityTexts } from './adapter'
 import { definitionsQueryKey, entityApi, entityError, entityTypesQueryKey } from './api'
 import { createClassSession, type ClassSession } from './classSession'
-import { cardEntities, definitionStatus } from './DefinitionCard'
+import { cardEntities, cardStateText, definitionStatus } from './DefinitionCard'
 import { DeleteDefinition } from './DeleteDefinition'
 import { problemRow } from './definitionEdits'
 import { deviceMemory, DeviceSection } from './DeviceForm'
 import { FieldErrors } from './formFields'
+import { liveState } from './liveState'
 import { maskedSetting, type DefinitionSetting, type EntityDocument, type EntityType, type EntityTypeSetting } from './model'
 import { SecretValue } from './SettingRows'
 
@@ -29,8 +30,19 @@ const typeParts = (id: string) => {
   const match = /^library:([^:]+):(.+)$/.exec(id)
   return match ? { sourceId: match[1], name: match[2].split('.').at(-1) ?? match[2] } : { sourceId: undefined, name: id }
 }
-/** What an `int` setting takes anyway: a range this wide is not worth a hint. */
-const intRange = (setting: EntityTypeSetting) => (setting.minimum ?? -Infinity) <= -2147483648 && (setting.maximum ?? Infinity) >= 2147483647
+/**
+ * The range a number setting declares, as its hint says it: "At least 1.", "At most 60." or "Between 1 and 3600."; none
+ * without one. An `int`'s own bounds, which the `types` answer gives for a side it does not declare, are no range.
+ */
+function rangeHint(setting: EntityTypeSetting): string | undefined {
+  if (setting.type !== 'integer' && setting.type !== 'number') return
+  const whole = setting.type === 'integer'
+  const minimum = setting.minimum !== undefined && !(whole && setting.minimum <= -2147483648) ? setting.minimum : undefined
+  const maximum = setting.maximum !== undefined && !(whole && setting.maximum >= 2147483647) ? setting.maximum : undefined
+  if (minimum !== undefined && maximum !== undefined) return `Between ${minimum} and ${maximum}.`
+  if (minimum !== undefined) return `At least ${minimum}.`
+  if (maximum !== undefined) return `At most ${maximum}.`
+}
 const kindLabel = (type: EntityType) => (type.kind === 'device' ? 'Device' : 'Single entity')
 
 /**
@@ -144,6 +156,11 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
 
   const status = createMemo(() => { const document = saved(); return document ? definitionStatus(document) : undefined })
   const entities = createMemo(() => { const document = saved(); return document ? cardEntities(document) : [] })
+  // Each entity's state as Home Assistant has it, as the cards show it; the clock tells a button's last press from.
+  const states = liveState(hass, () => entities().flatMap(e => (e.entityId && !e.disabled ? [e.entityId] : [])))
+  const [now, setNow] = createSignal(Date.now())
+  const clock = setInterval(() => setNow(Date.now()), 30_000)
+  onCleanup(() => clearInterval(clock))
   const memory = deviceMemory()
   const showInHomeAssistant = (event: MouseEvent, entityId: string) =>
     (event.currentTarget as HTMLElement).dispatchEvent(new CustomEvent('hass-more-info', { detail: { entityId }, bubbles: true, composed: true }))
@@ -271,6 +288,15 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
                         <strong>{entity.name}</strong>
                         <small>{entityTypeLabel(nodeCatalog, entity.domain)}{entity.disabled ? ' · Disabled in Home Assistant' : ''}</small>
                       </span>
+                      <Show when={!entity.disabled && cardStateText(entity, states(), now())}>
+                        {state => (
+                          <span class="hs-cdef-entity__state" classList={{ 'hs-cdef-entity__state--quiet': !!state().quiet || !!state().none }}>
+                            <Show when={state().none} fallback={state().text}>
+                              <span aria-hidden="true">{state().text}</span><span class="hs-visually-hidden">No state</span>
+                            </Show>
+                          </span>
+                        )}
+                      </Show>
                     </div>
                     <Show when={entity.entityId}>
                       {entityId => (
@@ -440,11 +466,7 @@ function SettingField(props: { setting: EntityTypeSetting; session: ClassSession
   const stored = () => props.session.setting(key())
   const value = () => stored()?.value
   const set = (next: JsonValue | null) => props.session.setValue(key(), next)
-  const range = () => {
-    const { minimum, maximum } = props.setting
-    if (props.setting.type !== 'integer' || minimum === undefined || maximum === undefined || intRange(props.setting)) return
-    return `Between ${minimum} and ${maximum}.`
-  }
+  const range = () => rangeHint(props.setting)
   const hint = () => [range(), props.setting.description].filter(Boolean).join(' ')
   // A number field's text that does not read as a number of its type, once it is told: said under the field.
   const [unreadable, setUnreadable] = createSignal<string>()

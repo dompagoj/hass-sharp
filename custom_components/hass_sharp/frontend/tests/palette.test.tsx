@@ -7,7 +7,7 @@ import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { nodeCatalog } from '../src/visual/contract'
 
 // The steps only an entity definition's graph takes: an automation's step library and quick-add never offer them.
-const entityOnly = ['entity_state', 'entity_command', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting']
+const entityOnly = ['entity_state', 'entity_command', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file']
 
 let dispose: (() => void) | undefined
 afterEach(() => {
@@ -25,7 +25,7 @@ it('the automation palette leaves out the entity-only steps and keeps the entity
   for (const kind of entityOnly) expect(nodeCatalog.nodes[kind]?.documents, kind).toEqual(['entity'])
   const kinds = catalogPalette().map(item => item.kind)
   for (const kind of entityOnly) expect(kinds, kind).not.toContain(kind)
-  for (const kind of ['entity_is', 'entity_current', 'trigger', 'log']) expect(kinds, kind).toContain(kind)
+  for (const kind of ['entity_is', 'entity_current', 'trigger', 'log', 'http_request']) expect(kinds, kind).toContain(kind)
   // An entity definition's graph offers them all.
   const entityKinds = catalogPalette(nodeCatalog, 'entity').map(item => item.kind)
   for (const kind of [...entityOnly, 'entity_is', 'entity_current', 'trigger']) expect(entityKinds, kind).toContain(kind)
@@ -38,6 +38,7 @@ it('the step library of an automation lists no entity-only step', () => {
   for (const kind of entityOnly) expect(offered, kind).not.toContain(`Add ${label(kind)}`)
   expect(offered).toContain(`Add ${label('entity_is')}`)
   expect(offered).toContain(`Add ${label('entity_current')}`)
+  expect(offered).toContain(`Add ${label('http_request')}`)
 })
 
 it('quick-add in an automation lists no entity-only step', () => {
@@ -50,7 +51,7 @@ it('quick-add in an automation lists no entity-only step', () => {
 })
 
 // An entity definition's graph: its own steps beside everything an automation offers (a trigger is how it polls).
-const entityKinds = [...entityOnly, 'entity_is', 'entity_current', 'trigger', 'log']
+const entityKinds = [...entityOnly, 'entity_is', 'entity_current', 'trigger', 'log', 'http_request']
 
 it('the step library of an entity definition lists its steps and every automation step', () => {
   const root = host()

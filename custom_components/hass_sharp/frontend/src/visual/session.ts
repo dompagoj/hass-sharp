@@ -98,7 +98,10 @@ export function createVisualSession<D extends EditorDocument = VisualDocument>(
     const graph = history.graph(), analysis = connectionIndex(graph, catalog()).analysis
     // A problem about a wire whose pin is missing names that wire, so it can be removed from the problem.
     const wires = danglingWireIds(graph, analysis)
-    const local = analysis.diagnostics.map((d, i) => ({ ...d, startLine: null, startColumn: null, ...(wires[i] ? { edgeId: wires[i]!.id, edgeIndex: wires[i]!.index } : {}) }))
+    const local = [
+      ...analysis.diagnostics.map((d, i) => ({ ...d, startLine: null, startColumn: null, ...(wires[i] ? { edgeId: wires[i]!.id, edgeIndex: wires[i]!.index } : {}) })),
+      ...(adapter.check?.(graph, catalog()) ?? []),
+    ]
     const backend = preview()?.diagnostics ?? []
     // The server sends a missing input as null; local diagnostics leave it out.
     return [

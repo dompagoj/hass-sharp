@@ -1,4 +1,4 @@
-import { createEffect, createSignal, createUniqueId, For, Index, on, Show } from 'solid-js'
+import { createEffect, createSignal, createUniqueId, For, Index, Match, on, Show, Switch } from 'solid-js'
 import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
 import { entityTypeLabel, words, type ConfigSpec, type VisualCatalogSnapshot } from '../visual/contract'
@@ -6,7 +6,7 @@ import type { VisualDiagnostic } from '../visual/api'
 import { Glyph } from '../visual/Glyph'
 import type { VisualGraph } from '../visual/graph'
 import { icons } from '../visual/icons'
-import { addEntity, definitionOf, keyProblem, keyRule, removeEntity, setEntityOption, stepsUsingEntity, updateEntity } from './definitionEdits'
+import { addEntity, definitionOf, keyProblem, keyRule, problemOption, readOptionNumber, removeEntity, setEntityOption, stepsUsingEntity, updateEntity } from './definitionEdits'
 import { FieldErrors, focusRow, ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
 import { renameEntityKey, type DefinitionEntity } from './model'
 import { retypeEntity } from './NodePickers'
@@ -14,11 +14,6 @@ import { retypeEntity } from './NodePickers'
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 const savedKeyHint = "The key is part of the entity's identity in Home Assistant and cannot change."
 const categories: Choice[] = [{ value: '', label: 'None' }, { value: 'config', label: 'Config' }, { value: 'diagnostic', label: 'Diagnostic' }]
-/** Hints of the options the catalog's types take, where the catalog has no description of its own. */
-const optionHints: Record<string, string> = {
-  unit: 'The unit of its values, for example W or °C.',
-  options: 'One per line: every value it can have, for a sensor of the enum device class.',
-}
 /** "N steps use this entity…": what removing a used entity or setting leaves. */
 export const usedBy = (count: number, noun: string) =>
   `${count} ${count === 1 ? 'step uses' : 'steps use'} this ${noun}. ${count === 1 ? 'It' : 'They'} will show a problem until you change or remove ${count === 1 ? 'it' : 'them'}.`
@@ -109,14 +104,20 @@ function EntityRow(props: {
   const id = createUniqueId()
   const rows = props.rows
   const key = () => props.entity.key
-  const problems = () => (rows.problems.get(key()) ?? []).map(d => d.message)
+  // An option's problem goes under that option's field; the rest at the top of the row.
+  const messages = () => (rows.problems.get(key()) ?? []).map(d => d.message)
+  const optionKeys = () => Object.keys(spec()?.options ?? {})
+  const onOption = (message: string) => { const option = problemOption(message); return option !== undefined && optionKeys().includes(option) ? option : undefined }
+  const problems = messages
+  const rowProblems = () => messages().filter(message => onOption(message) === undefined)
+  const optionErrors = (option: string) => messages().filter(message => onOption(message) === option)
   const typeLabel = () => entityTypeLabel(rows.catalog, props.entity.domain)
   const spec = () => { const domains = rows.catalog.entityDomains; return domains && Object.hasOwn(domains, props.entity.domain) ? domains[props.entity.domain] : undefined }
   const set = (changes: Partial<Record<keyof DefinitionEntity, unknown>>) => rows.commit(updateEntity(rows.graph, key(), changes))
   const others = () => definitionOf(rows.graph).entities.filter(e => e.key !== key()).map(e => e.key)
   const entityId = () => rows.entityIds.get(key())
   const typeChoices = () => [
-    ...(props.types.includes(props.entity.domain) ? [] : [{ value: props.entity.domain, label: words.key(props.entity.domain) }]),
+    ...(props.types.includes(props.entity.domain) ? [] : [{ value: props.entity.domain, label: entityTypeLabel(rows.catalog, props.entity.domain) }]),
     ...props.types.map(domain => ({ value: domain, label: entityTypeLabel(rows.catalog, domain) })),
   ]
   const retype = (domain: string) => {
@@ -149,7 +150,7 @@ function EntityRow(props: {
       </Show>
       <Show when={props.open}>
         <div id={`${id}-body`} class="hs-def-row__body">
-          <FieldErrors list={problems()} />
+          <FieldErrors list={rowProblems()} />
           <TextField name="name" label="Name" text={text(props.entity.name)} placeholder="Not set"
             hint="The name Home Assistant shows for it." commit={value => set({ name: value.trim() || undefined })} />
           <Show when={!rows.savedKeys.includes(key())} fallback={<ReadOnlyField name="key" label="Key" text={key()} hint={savedKeyHint} />}>
@@ -174,7 +175,7 @@ function EntityRow(props: {
           <SwitchField name="enabledByDefault" label="Enabled by default" checked={props.entity.enabledByDefault !== false}
             hint="Off: Home Assistant adds it turned off, to be turned on in its settings." onChange={on => set({ enabledByDefault: on ? undefined : false })} />
           <For each={Object.entries(spec()?.options ?? {})}>
-            {([option, rule]) => <OptionField option={option} rule={rule} value={props.entity.options?.[option]}
+            {([option, rule]) => <OptionField option={option} rule={rule} value={props.entity.options?.[option]} errors={optionErrors(option)}
               onChange={value => rows.commit(setEntityOption(rows.graph, key(), option, value))} />}
           </For>
           <div class="hs-def-actions">
@@ -186,24 +187,42 @@ function EntityRow(props: {
   )
 }
 
-/** One option the entity's type takes (`entityDomains[…].options`): a list of texts, a choice of its values, or a text. */
-function OptionField(props: { option: string; rule: ConfigSpec; value: unknown; onChange(value: unknown): void }) {
+/**
+ * One option the entity's type takes (`entityDomains[…].options`), by its rule: a list of texts (one per line), a
+ * choice of its values, a number, a switch, or a text; its hint is the catalog's, and one the type needs says so. A
+ * number is read as the class page's number fields read theirs: a text that is not one is kept as typed (the form
+ * then says so on the field, and Save waits). Empty, an option is left out (the type's default); so is a switch off.
+ */
+function OptionField(props: { option: string; rule: ConfigSpec; value: unknown; errors: string[]; onChange(value: unknown): void }) {
+  const name = () => `option:${props.option}`
   const label = () => text(props.rule.label) || words.key(props.option)
-  const hint = () => text(props.rule.description) || optionHints[props.option]
+  const required = () => props.rule.required === true
+  const hint = () => [text(props.rule.description), required() ? 'Required.' : ''].filter(Boolean).join(' ') || undefined
+  const placeholder = () => (required() ? 'Required' : 'None')
   const allowed = () => (Array.isArray(props.rule.enum) ? props.rule.enum.map(String) : undefined)
   return (
-    <Show when={props.rule.type !== 'array'} fallback={
-      <TextField name={`option:${props.option}`} label={label()} hint={hint()} multiline placeholder="None"
-        text={Array.isArray(props.value) ? props.value.map(String).join('\n') : ''}
-        commit={value => { const items = value.split('\n').map(item => item.trim()).filter(Boolean); props.onChange(items.length ? items : undefined) }} />
-    }>
+    <Switch fallback={
       <Show when={allowed()} fallback={
-        <TextField name={`option:${props.option}`} label={label()} hint={hint()} placeholder="None" text={text(props.value)}
+        <TextField name={name()} label={label()} hint={hint()} placeholder={placeholder()} required={required()} errors={props.errors} text={text(props.value)}
           commit={value => props.onChange(value.trim() ? value.trim() : undefined)} />
       }>
-        {values => <SelectField name={`option:${props.option}`} label={label()} hint={hint()} value={text(props.value)}
-          choices={[{ value: '', label: 'None' }, ...values().map(value => ({ value, label: words.key(value) }))]} onChange={value => props.onChange(value || undefined)} />}
+        {values => <SelectField name={name()} label={label()} hint={hint()} value={text(props.value)} errors={props.errors}
+          choices={[{ value: '', label: required() ? 'Choose one' : 'None' }, ...values().map(value => ({ value, label: words.key(value) }))]} onChange={value => props.onChange(value || undefined)} />}
       </Show>
-    </Show>
+    }>
+      <Match when={props.rule.type === 'array'}>
+        <TextField name={name()} label={label()} hint={hint()} multiline placeholder={placeholder()} required={required()} errors={props.errors}
+          text={Array.isArray(props.value) ? props.value.map(String).join('\n') : ''}
+          commit={value => { const items = value.split('\n').map(item => item.trim()).filter(Boolean); props.onChange(items.length ? items : undefined) }} />
+      </Match>
+      <Match when={props.rule.type === 'number'}>
+        <TextField name={name()} label={label()} hint={hint()} placeholder={placeholder()} required={required()} errors={props.errors} inputmode="decimal"
+          text={typeof props.value === 'number' ? String(props.value) : text(props.value)}
+          commit={value => { const trimmed = value.trim(); props.onChange(trimmed === '' ? undefined : readOptionNumber(trimmed) ?? value) }} />
+      </Match>
+      <Match when={props.rule.type === 'boolean'}>
+        <SwitchField name={name()} label={label()} hint={hint()} checked={props.value === true} errors={props.errors} onChange={on => props.onChange(on || undefined)} />
+      </Match>
+    </Switch>
   )
 }

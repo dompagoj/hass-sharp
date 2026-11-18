@@ -11,12 +11,19 @@ import type { OptionText } from './traceModel'
 const own = <T,>(record: Record<string, T> | undefined, key: string) => (record && Object.hasOwn(record, key) ? record[key] : undefined)
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 
+/**
+ * The catalog with the definition of the run's graph in it, when it is an entity definition's and the catalog has none
+ * yet: an entity step's state values and its command's data are named from the type of the entity it names.
+ */
+const lifted = (catalog: VisualCatalogSnapshot, graph: Graph | undefined): VisualCatalogSnapshot =>
+  !catalog.definition && graph?.definition && typeof graph.definition === 'object' ? { ...catalog, definition: graph.definition } : catalog
+
 export function inputLabel(graph: Graph, node: GraphNode, port: string, catalog: VisualCatalogSnapshot): string {
   if (node.kind === 'service' && port.startsWith('field:')) return serviceFieldLabel(text(node.config.service), port.slice(6), catalog.services)
-  return own(nodeInputs(graph, node, catalog), port)?.label ?? portLabel(port)
+  return own(nodeInputs(graph, node, lifted(catalog, graph)), port)?.label ?? portLabel(port)
 }
-export const outputLabel = (node: GraphNode | undefined, port: string, catalog: VisualCatalogSnapshot) =>
-  (node ? own(dataOutputs(node, catalog), port)?.label : undefined) ?? portLabel(port)
+export const outputLabel = (node: GraphNode | undefined, port: string, catalog: VisualCatalogSnapshot, graph?: Graph) =>
+  (node ? own(dataOutputs(node, lifted(catalog, graph)), port)?.label : undefined) ?? portLabel(port)
 
 /**
  * How a recorded value of a step's input reads when the input is a choice (a select or a state): the same option
@@ -24,7 +31,7 @@ export const outputLabel = (node: GraphNode | undefined, port: string, catalog: 
  * of the entities the step targets (from the registry's `entities`, once loaded), as its picker labels them.
  */
 export function inputOption(graph: Graph, node: GraphNode | undefined, port: string, catalog: VisualCatalogSnapshot, entities?: readonly StateEntity[]): OptionText | undefined {
-  const spec = node ? own(nodeInputs(graph, node, catalog), port) : undefined
+  const spec = node ? own(nodeInputs(graph, node, lifted(catalog, graph)), port) : undefined
   if (!node || !spec) return
   const base = widgetFor(spec, catalog)
   if (base.kind !== 'select' && base.kind !== 'state') return
@@ -36,14 +43,14 @@ export function inputOption(graph: Graph, node: GraphNode | undefined, port: str
 export function inputSource(graph: Graph, value: TraceValue, catalog: VisualCatalogSnapshot): string {
   if (value.src) {
     const source = graph.nodes.find(n => n.id === value.src!.node)
-    return `From ${nodeTitle(source, catalog, 'a removed step')} · ${outputLabel(source, value.src.port, catalog)}`
+    return `From ${nodeTitle(source, catalog, 'a removed step')} · ${outputLabel(source, value.src.port, catalog, graph)}`
   }
   return 'Value'
 }
 
 /** The order the panel lists a step's inputs in: the step's own order, then anything else that was recorded. */
 export function inputOrder(graph: Graph, node: GraphNode, recorded: Record<string, unknown>, catalog: VisualCatalogSnapshot): string[] {
-  const declared = Object.keys(nodeInputs(graph, node, catalog))
+  const declared = Object.keys(nodeInputs(graph, node, lifted(catalog, graph)))
   return [...declared.filter(port => Object.hasOwn(recorded, port)), ...Object.keys(recorded).filter(port => !declared.includes(port))]
 }
 

@@ -51,6 +51,8 @@ export function DraftField(props: {
   describedBy?: string
   invalid?: boolean
   disabled?: boolean
+  /** A value the form needs: said to assistive technology. */
+  required?: boolean
   /** Empty the field after each accepted commit (an "add item" field). */
   clearOnCommit?: boolean
   /** Show the "Ctrl+Enter to apply" hint of a multiline field ("⌘+Enter" on Apple platforms). */
@@ -89,7 +91,7 @@ export function DraftField(props: {
   const hint = () => props.multiline && props.shortcutHint
   const shared = () => ({
     id: props.id, class: `hs-input ${props.class ?? ''}`, 'aria-label': props.label, placeholder: props.placeholder, disabled: props.disabled,
-    'aria-invalid': props.invalid || !!error() || undefined,
+    'aria-invalid': props.invalid || !!error() || undefined, 'aria-required': props.required || undefined,
     'aria-describedby': describedBy(props.describedBy, !!error() && errorId(), hint() && hintId()),
     onInput: (event: InputEvent & { currentTarget: HTMLInputElement | HTMLTextAreaElement }) => setDraft(event.currentTarget.value),
     onBlur: finish, onKeyDown: keydown,

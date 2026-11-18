@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { nodeCatalog, type Graph, type GraphNode } from '../src/visual/contract'
 import { chipValue, flowTrace, framesAgree, inChosenFrame, parseFrame, traceModel, valueText } from '../src/visual/trace/traceModel'
-import { inputOption, inputSource, secretName } from '../src/visual/trace/traceWords'
+import { inputLabel, inputOption, inputOrder, inputSource, outputLabel, secretName } from '../src/visual/trace/traceWords'
 import services from '../../../../tests/fixtures/visual-services.json'
 import secretNames from '../../../../tests/fixtures/trace-secret-names.json'
 import type { RunTrace, TraceEvent } from '../src/types'
@@ -314,4 +314,13 @@ it('answers values read downstream in a long run without scanning the whole run 
   // 10,001 lookups, each reading at most the 5 runs that read that value (a full scan would read 2,000 each: 20 million).
   expect(scanned).toBeLessThanOrEqual(10_001 * 5)
   expect(model.eventsOf('log')).toHaveLength(2000)
+})
+
+it('names an entity step\'s state values and command data in a run as the panel names them', () => {
+  const g = { version: 5, name: 'Things', edges: [], nodes: [
+    { id: 'set', kind: 'set_entity_state', config: { entity: 'lamp' } }, { id: 'say', kind: 'entity_command', config: { entity: 'label', command: 'set_value' } }],
+    definition: { entities: [{ key: 'lamp', domain: 'light' }, { key: 'label', domain: 'text' }], settings: [] } } as unknown as Graph
+  expect(inputLabel(g, g.nodes[0], 'is_on', nodeCatalog)).toBe('On')
+  expect(inputOrder(g, g.nodes[0], { brightness: 1, is_on: true }, nodeCatalog)).toEqual(['is_on', 'brightness'])
+  expect(outputLabel(g.nodes[1], 'value', nodeCatalog, g)).toBe('Text')
 })

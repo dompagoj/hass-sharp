@@ -114,8 +114,21 @@ describe('the entity picker', () => {
 
   it('says when the definition has no entities yet', async () => {
     const { el } = mount(step(entityGraph({ entities: [] }), 'entity_state', 'state', {}), 'state')
-    expect(field(el, 'entity').textContent).toContain('This definition has no entities yet.')
+    expect(field(el, 'entity').textContent).toContain('This definition has no entities yet. Add one under Entities, shown when no step is selected.')
     expect(box(el, 'entity').disabled).toBe(true)
+  })
+
+  it('says where to give an entity a type that takes commands when none does', async () => {
+    const { el } = mount(step(entityGraph({ entities: [{ key: 'power', domain: 'sensor', name: 'Power' }] }), 'entity_command', 'cmd', {}), 'cmd')
+    expect(field(el, 'entity').textContent).toContain("None of this definition's entities takes commands. Give one a type that does, such as a switch, under Entities, shown when no step is selected.")
+    expect(field(el, 'command').textContent).toContain('Give an entity a type that takes commands first.')
+  })
+
+  it('marks a type with no state for State and Set state', async () => {
+    const graph = entityGraph({ entities: [{ key: 'bell', domain: 'button', name: 'Bell' }, { key: 'relay', domain: 'switch', name: 'Relay' }] })
+    const { el } = mount(step(graph, 'set_entity_state', 'set', { entity: 'bell' }), 'set')
+    expect(texts(await open(el, 'entity'))).toEqual(['Bell · Button · has no state', 'Relay · Switch'])
+    expect(el.querySelector('.hs-inspector section[aria-label="Inputs"]')).toBeNull()
   })
 })
 
@@ -212,12 +225,52 @@ describe('inputs follow the entity', () => {
     expect(notices).toEqual(['Removed 1 connection that no longer fits: On.'])
   })
 
+  it('clears a value kept hidden while its entity was missing, once another entity is chosen', () => {
+    const graph = step(entityGraph(), 'set_entity_state', 'set', { entity: 'heater', is_on: lit('boolean', true), level: lit('number', 3) })
+    const chosen = chooseEntity(graph, 'set', 'power', nodeCatalog)
+    expect(chosen.graph.nodes[0].config).toEqual({ entity: 'power' })
+    expect(chosen.notice).toBe('Cleared 2 values that no longer fit: Is on, Level.')
+    // One the new type takes stays.
+    expect(chooseEntity(graph, 'set', 'online', nodeCatalog).graph.nodes[0].config).toEqual({ entity: 'online', is_on: lit('boolean', true) })
+  })
+
   it('keeps the wires and values an entity of another type also takes', () => {
     const wired = chooseEntity(relaySet(true), 'set', 'online', nodeCatalog)
     expect(wired.graph.edges.map(e => e.id)).toEqual(relaySet(true).edges.map(e => e.id))
     expect(wired.notice).toBeUndefined()
     const typed = chooseEntity(relaySet(false), 'set', 'online', nodeCatalog)
     expect(typed.graph.nodes[0].config).toEqual({ entity: 'online', is_on: lit('boolean', true) })
+  })
+})
+
+describe('the state values of State and Set state', () => {
+  const things = entityGraph({ entities: [{ key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'lamp', domain: 'light', name: 'Lamp' }, { key: 'blind', domain: 'cover', name: 'Blind' }] })
+  const row = (el: Element, port: string) => ({
+    unset: !!field(el, port).querySelector('.hs-insp-unset'),
+    hint: field(el, port).querySelector('.hs-field-hint')?.textContent ?? null,
+  })
+  it('opens a new Set state with its only value ready to fill', () => {
+    const { el } = mount(step(things, 'set_entity_state', 'set', { entity: 'relay' }), 'set')
+    expect(row(el, 'is_on')).toEqual({ unset: false, hint: null })
+  })
+  it('opens a light\'s first value ready, and says the others are kept when left empty', () => {
+    const { el } = mount(step(things, 'set_entity_state', 'set', { entity: 'lamp' }), 'set')
+    expect(row(el, 'is_on')).toEqual({ unset: false, hint: null })
+    expect(row(el, 'brightness')).toEqual({ unset: true, hint: 'Leave empty to keep it as it is.' })
+  })
+  it('opens a cover\'s first value ready, though none is required', () => {
+    const { el } = mount(step(things, 'set_entity_state', 'set', { entity: 'blind' }), 'set')
+    expect(row(el, 'is_closed')).toEqual({ unset: false, hint: null })
+    expect(row(el, 'position')).toEqual({ unset: true, hint: 'Leave empty to keep it as it is.' })
+  })
+  it('says a State\'s optional values are optional', () => {
+    const { el } = mount(step(things, 'entity_state', 'state', { entity: 'lamp' }), 'state')
+    expect(row(el, 'is_on').unset).toBe(false)
+    expect(row(el, 'brightness')).toEqual({ unset: true, hint: 'Optional.' })
+  })
+  it('shows a When commanded\'s data as its outputs', () => {
+    const { el } = mount(step(things, 'entity_command', 'on', { entity: 'lamp', command: 'turn_on' }), 'on')
+    expect([...el.querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Brightness'])
   })
 })
 

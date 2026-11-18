@@ -23,6 +23,10 @@ const domainPaths: Record<string, string> = {
   scene: 'm12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3Z',
   notify: 'M6 17h12l-2-3V9a4 4 0 0 0-8 0v5ZM10 21h4',
   input_boolean: 'M8 6h8a6 6 0 0 1 0 12H8A6 6 0 0 1 8 6ZM5 12a3 3 0 1 0 6 0 3 3 0 1 0-6 0',
+  button: 'M4 15h16v4H4ZM8 15v-3a4 4 0 0 1 8 0v3',
+  number: 'M10 4 8 20M16 4l-2 16M5 9h15M4 15h15',
+  select: 'M4 5h16v6H4ZM14 7l2 2 2-2M4 15h12M4 19h8',
+  text: 'M5 6V4h14v2M12 4v16M9 20h6',
 }
 const DomainIcon = (props: { domain: string }) => <svg class="hs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
   <path d={domainPaths[props.domain] ?? 'M5 5h14v14H5ZM9 9h6v6H9Z'} />
