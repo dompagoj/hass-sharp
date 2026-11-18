@@ -60,7 +60,7 @@ export function automationAdapter(hass: Pick<HomeAssistant, 'callWS'>): EditorAd
     starter: createGraph,
     initialSelection: 'trigger-1',
     listHref: '/automations',
-    editorHref: id => `/visual/${id}`,
+    editorHref: id => `/visual/${encodeURIComponent(id)}`,
     runHref: (id, runId) => `/visual/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}`,
     queryKeys: [['visual-automations']],
     texts: automationTexts,

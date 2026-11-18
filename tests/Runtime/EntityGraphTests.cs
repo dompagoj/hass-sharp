@@ -1118,6 +1118,18 @@ static class EntityGraphTests
         string[] straySettings = [.. plugSettings, """{"key":"Pin","value":null,"secret":true,"hasValue":true}"""];
         Check(Shaped(strayRead, straySettings) && Shaped(strayListed, straySettings) && !(strayRead.ToJsonString() + strayListed.ToJsonString()).Contains("hunter2", StringComparison.Ordinal),
             "a setting the class does not declare is masked: " + strayRead["settings"]!.ToJsonString() + " / " + strayListed["settings"]!.ToJsonString());
+
+        // Two stored settings of a graph with one key (a file edited by hand), one of them secret: the key is secret, so
+        // both are masked.
+        var twin = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "level")))!.AsObject();
+        twin["id"] = "twin"; twin["enabled"] = false;
+        twin["settings"]!.AsArray().Add(new JsonObject { ["key"] = "token", ["type"] = "string", ["value"] = "twin-hunter2" });
+        File.WriteAllText(StoredFile(rig, "twin"), twin.ToJsonString());
+        var twinRead = await rig.Read("twin");
+        var twinListed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "twin")!;
+        string[] twinSettings = [.. levelSettings, """{"key":"token","value":null,"type":"string","secret":true,"hasValue":true}"""];
+        Check(Shaped(twinRead, twinSettings) && Shaped(twinListed, twinSettings) && !(twinRead.ToJsonString() + twinListed.ToJsonString()).Contains("hunter2", StringComparison.Ordinal),
+            "a key that one of its settings marks secret is masked in each: " + twinRead["settings"]!.ToJsonString() + " / " + twinListed["settings"]!.ToJsonString());
     }
 
     /// <summary>
@@ -1707,6 +1719,9 @@ static class EntityGraphTests
         Unquoted(string.Join("\n", errors), "the runs' and the commands' errors");
         string Shown(string error) => error.Replace(FakeSecret, "<secret>", StringComparison.Ordinal);
         Check(errors.All(e => e.Contains("secret setting", StringComparison.Ordinal)), "each error says the value is hidden: " + string.Join(" | ", errors.Select(Shown)));
+        // The error names the step and its input that could not use the value, as every guard's message does.
+        Check(errors[0] == "Convert · Value cannot use the value it was given, which is hidden because it comes from a secret setting" && errors[1] == errors[0],
+            "the conversion's error names its step and input: " + Shown(errors[0]) + " | " + Shown(errors[1]));
         Unquoted(string.Join("\n", rig.Home.Logs()), "the log");
     }
 }

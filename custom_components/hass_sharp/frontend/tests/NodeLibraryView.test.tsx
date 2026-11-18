@@ -278,7 +278,8 @@ it('says how many entity definitions a library save rebuilt, and names the ones 
   expect(section).not.toBeNull()
   const lines = [...section.querySelectorAll('p')].map(p => p.textContent)
   expect(lines).toEqual([
-    '2 entity definitions rebuilt',
+    // The answer lists only the rebuilt definitions that are on (those it started): the count says so.
+    'Rebuilt 2 entity definitions that are on',
     'Lamp: Saved; activation failed: Lamp could not start',
     'Old sensor: Not rebuilt, because the definition has errors: it is still running the previous version, with the previous library code',
   ])
@@ -293,7 +294,22 @@ it('counts one entity definition rebuilt in the singular', async () => {
   mountRouted(r => r.operation === 'save' ? { saved: true, document: { ...documents()[0], source: r.source, revision: 2 }, generation: 'g2', catalog: rich.catalog, automations: [], definitions: definitionAnswers.definitions.slice(0, 1), invalidDefinitions: [] } : undefined)
   await vi.advanceTimersByTimeAsync(900)
   await saveEdit()
-  expect(host.querySelector('[aria-label="Dependent entity definitions"]')!.textContent).toBe('1 entity definition rebuilt')
+  expect(host.querySelector('[aria-label="Dependent entity definitions"]')!.textContent).toBe('Rebuilt 1 entity definition that is on')
+})
+it('says that a library change touches the entity definitions too, and words a definition that did not start with no reason plainly', async () => {
+  const quiet = { ...definitionAnswers.definitions[1], activationError: null }
+  mountRouted(r => r.operation === 'save' ? { saved: true, document: { ...documents()[0], source: r.source, revision: 2 }, generation: 'g2', catalog: rich.catalog, automations: [], definitions: [quiet], invalidDefinitions: [] } : undefined)
+  await vi.advanceTimersByTimeAsync(900)
+  expect(host.querySelector('.hs-library-persistence')!.textContent).toBe('Saving checks every saved visual automation and entity definition, and rebuilds each at its next revision. '
+    + 'Those that are on run the rebuilt version. Running invocations keep their prepared source snapshot. Unsaved files are used together for previews; save each file to publish it.')
+  button('Delete file').click()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(document.querySelector('dialog[open]')!.textContent).toContain('Delete this file and discard its draft. Saved automations and entity definitions that use it must still compile without it, or it is not deleted.')
+  ;[...document.querySelectorAll<HTMLButtonElement>('dialog[open] button')].find(b => b.textContent === 'Keep editing')!.click()
+  await saveEdit()
+  const lines = [...host.querySelector('[aria-label="Dependent entity definitions"]')!.querySelectorAll('p')].map(p => p.textContent)
+  expect(lines).toEqual(['Rebuilt 1 entity definition that is on', 'Lamp: Saved, but it is not running'])
+  expect(host.textContent).not.toContain('current revision is not active')
 })
 it('lists the entity definitions a refused save would break under the refusal, linked, and counts their problems', async () => {
   const refusal = { version: 1, ok: false, error: { code: 'validation', detail: { diagnostics: [], automations: [], invalid: [],

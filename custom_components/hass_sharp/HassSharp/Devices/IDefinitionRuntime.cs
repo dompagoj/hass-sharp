@@ -71,8 +71,9 @@ internal interface IDefinitionRuntime
     /// setting is traced as <c>***</c>, while its value still reaches the nodes that use it; so are the inputs it reaches
     /// and the values worked out from it (true or false aside), and a failure, the Log step and a service call's debug
     /// log do not quote them. Asked by a traced run as it writes such a value, and by any run, traced or not, once per
-    /// Setting node, when a step that reads one fails, logs or calls a service. A throwing call fails the Setting node
-    /// that asked it; asked for a value it reached, a throwing call is taken as yes.
+    /// Setting node, when a step that reads one fails, logs or calls a service. When a Setting node asks and the call
+    /// throws, that Setting node fails. When the call throws while asked about a value that reached another step, the
+    /// value is treated as secret.
     /// </summary>
     bool IsSecret(string key);
 }

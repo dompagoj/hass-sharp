@@ -1,30 +1,43 @@
 import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from 'solid-js'
 import type { HomeAssistant } from '../types'
 
-/** An entity's state as Home Assistant has it now; `available` is false while its state is `unavailable`. */
-export interface LiveState { state: string; available: boolean }
+/**
+ * An entity's state as Home Assistant has it now; `available` is false while its state is `unavailable`; `unit` is its
+ * `unit_of_measurement` attribute, when it has one.
+ */
+export interface LiveState { state: string; available: boolean; unit?: string }
 export type LiveStates = Record<string, LiveState>
 
 /**
- * Home Assistant's compressed `subscribe_entities` event: `a` adds entities (`s` is the state), `c` changes them
- * (`'+'` holds what changed, `s` only when the state did), `r` removes them.
+ * Home Assistant's compressed `subscribe_entities` event: `a` adds entities (`s` is the state, `a` the attributes), `c`
+ * changes them (`'+'` holds what changed, `s` only when the state did, `a` the attributes that did; `'-'.a` the
+ * attributes removed), `r` removes them.
  */
 interface EntitiesEvent {
-  a?: Record<string, { s?: unknown }>
-  c?: Record<string, { '+'?: { s?: unknown } }>
+  a?: Record<string, { s?: unknown; a?: Record<string, unknown> }>
+  c?: Record<string, { '+'?: { s?: unknown; a?: Record<string, unknown> }; '-'?: { a?: unknown } }>
   r?: string[]
 }
 
-const live = (state: string): LiveState => ({ state, available: state !== 'unavailable' })
+const unitKey = 'unit_of_measurement'
+const live = (state: string, unit: unknown): LiveState =>
+  ({ state, available: state !== 'unavailable', ...(typeof unit === 'string' && unit ? { unit } : {}) })
 
-/** `current` with the event applied; the same object when the event changes no state. */
+/** `current` with the event applied; the same object when the event changes no state and no unit. */
 function applied(current: LiveStates, event: EntitiesEvent): LiveStates {
   let next = current
   const write = () => (next === current ? (next = { ...current }) : next)
   for (const [id, entity] of Object.entries(event.a ?? {}))
-    if (typeof entity?.s === 'string') write()[id] = live(entity.s)
-  for (const [id, change] of Object.entries(event.c ?? {}))
-    if (typeof change?.['+']?.s === 'string') write()[id] = live(change['+'].s)
+    if (typeof entity?.s === 'string') write()[id] = live(entity.s, entity.a?.[unitKey])
+  for (const [id, change] of Object.entries(event.c ?? {})) {
+    const old = next[id], added = change?.['+'], removed = change?.['-']?.a
+    const state = typeof added?.s === 'string' ? added.s : old?.state
+    if (state === undefined) continue
+    const unit = added?.a && Object.hasOwn(added.a, unitKey) ? added.a[unitKey]
+      : Array.isArray(removed) && removed.includes(unitKey) ? undefined : old?.unit
+    const changed = live(state, unit)
+    if (!old || old.state !== changed.state || old.unit !== changed.unit) write()[id] = changed
+  }
   for (const id of event.r ?? []) if (id in next) delete write()[id]
   return next
 }

@@ -315,6 +315,14 @@ static class EntityApiTests
         Check(await Fails(new { operation = "delete", id = "nothing", expectedRevision = 1 }) == "not_found" && await Fails(new { operation = "dance" }) == "invalid_request"
             && await Fails(new { operation = "read", id = "Bad Id" }) == "invalid_request", "error codes");
         Console.WriteLine("PASS entity api: delete checks the revision, unloads, removes the entities, and logs a removal that fails or is never answered");
+
+        // The id new is the panel's page for a new definition, so a save refuses it as it refuses an id outside the pattern.
+        var badId = await Entity(new { operation = "save", id = "Bad Id", expectedRevision = 0, definition = Definition("Plug bad", "10.0.0.9") });
+        Check(badId.ToJsonString() == """{"version":1,"ok":false,"error":{"code":"invalid_request","detail":"Invalid definition ID"}}""", "a save of an id outside the pattern: " + badId.ToJsonString());
+        var reserved = await Entity(new { operation = "save", id = "new", expectedRevision = 0, definition = Definition("Plug new", "10.0.0.9") });
+        Check(reserved.ToJsonString() == """{"version":1,"ok":false,"error":{"code":"invalid_request","detail":"Invalid definition ID: new is reserved"}}""", "a save of the id new: " + reserved.ToJsonString());
+        Check(await Fails(new { operation = "read", id = "new" }) == "not_found" && home.Syncs("new").Length == 0, "nothing is stored or synced under the id new");
+        Console.WriteLine("PASS entity api: a save refuses the reserved id new as it refuses an id outside the pattern");
     }
 
     static Exception? Thrown(Action action)

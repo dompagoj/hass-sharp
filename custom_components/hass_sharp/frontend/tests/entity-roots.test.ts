@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, nodeCatalog, type Graph } from '../src/visual/contract'
+import { addGraphNode, connectData, nodeCatalog, validateGraph, type Graph } from '../src/visual/contract'
 import { addNode, canConnect, connectNodes, createGraph, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { addConnected, canAddFor } from '../src/visual/flow/autoConnect'
@@ -30,9 +30,12 @@ const roots = () => {
 }
 
 it('no step order wire can be drawn into a root of an entity graph', () => {
-  const graph = roots()
+  // A second When commanded that runs nothing: a wire from Read entity into it would make no cycle, so only the root
+  // guard refuses it (one into the first, which runs Read entity, would also be a cycle).
+  const graph = add(roots(), 'entity_command', 'idle', { entity: 'relay', command: 'turn_off' })
   expect(graph.edges.some(e => e.kind !== 'data' && e.source === 'cmd' && e.target === 'read')).toBe(true)
-  for (const target of ['cmd', 'setup', 'state']) {
+  expect(graph.edges.some(e => e.source === 'idle' || e.target === 'idle')).toBe(false)
+  for (const target of ['idle', 'setup', 'state']) {
     expect(canConnect(graph, 'read', target), target).toBe(false)
     expect(connectNodes(graph, 'read', target), target).toBe(graph)
   }
@@ -118,4 +121,14 @@ it('an automation keeps its trigger-only roots on the canvas', () => {
   const trigger = buildNodeView(graph.nodes[0], { graph, catalog: nodeCatalog, diagnostics: [] })
   expect(trigger.execIn).toBeUndefined()
   expect(buildNodeView(graph.nodes.find(n => n.id === 'log')!, { graph, catalog: nodeCatalog, diagnostics: [] }).unreachable).toBe(true)
+})
+
+it('a new When commanded names the first command no other When commanded of the entity handles', () => {
+  // The switch's Turn on is handled, so the next When commanded is for Turn off, and nothing is handled twice.
+  const second = addGraphNode(add(entityGraph(), 'entity_command', 'on'), 'entity_command', 'off', nodeCatalog)
+  expect(second.nodes.map(n => n.config)).toMatchObject([{ entity: 'relay', command: 'turn_on' }, { entity: 'relay', command: 'turn_off' }])
+  expect(validateGraph(second, nodeCatalog).filter(d => d.code === 'command.duplicate')).toEqual([])
+  // Once every command is handled, a new one names the first again, as before.
+  const third = addGraphNode(second, 'entity_command', 'again', nodeCatalog)
+  expect(third.nodes.at(-1)!.config).toMatchObject({ entity: 'relay', command: 'turn_on' })
 })

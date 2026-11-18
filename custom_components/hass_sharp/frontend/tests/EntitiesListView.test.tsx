@@ -248,11 +248,24 @@ it('shows live states through one subscription, resubscribes only when the entit
     'sensor.plug_power': { s: '42', a: { unit_of_measurement: 'W' } }, 'switch.plug_relay': { s: 'on', a: {} },
     'camera.driveway': { s: 'unavailable', a: {} }, 'switch.porch': { s: 'unknown', a: {} },
   } })
-  await vi.waitFor(() => expect(rows(card(root, 'plug')).map(r => r[3])).toEqual(['—', '42', 'on', 'Disabled in Home Assistant']))
+  // A number is shown with its unit.
+  await vi.waitFor(() => expect(rows(card(root, 'plug')).map(r => r[3])).toEqual(['—', '42 W', 'on', 'Disabled in Home Assistant']))
   expect(rows(card(root, 'camera')).map(r => r[3])).toEqual(['Unavailable', 'Disabled in Home Assistant'])
   expect(rows(card(root, 'porch')).map(r => r[3])).toEqual(['Unknown'])
   subscriptions[0].push({ c: { 'sensor.plug_power': { '+': { s: '43.5', lu: 2 } }, 'switch.plug_relay': { '+': { a: { icon: 'mdi:power' } } } } })
-  await vi.waitFor(() => expect(rows(card(root, 'plug')).map(r => r[3])).toEqual(['—', '43.5', 'on', 'Disabled in Home Assistant']))
+  await vi.waitFor(() => expect(rows(card(root, 'plug')).map(r => r[3])).toEqual(['—', '43.5 W', 'on', 'Disabled in Home Assistant']))
+  // A change of unit is followed; no unit after a state that is not a number, nor after Unavailable or Unknown.
+  subscriptions[0].push({ c: { 'sensor.plug_power': { '+': { s: '0.04', a: { unit_of_measurement: 'kW' } } } } })
+  await vi.waitFor(() => expect(rows(card(root, 'plug'))[1][3]).toBe('0.04 kW'))
+  subscriptions[0].push({ c: { 'sensor.plug_power': { '+': { s: 'high' } } } })
+  await vi.waitFor(() => expect(rows(card(root, 'plug'))[1][3]).toBe('high'))
+  subscriptions[0].push({ c: { 'sensor.plug_power': { '+': { s: 'unknown' } } } })
+  await vi.waitFor(() => expect(rows(card(root, 'plug'))[1][3]).toBe('Unknown'))
+  subscriptions[0].push({ c: { 'sensor.plug_power': { '+': { s: 'unavailable' } } } })
+  await vi.waitFor(() => expect(rows(card(root, 'plug'))[1][3]).toBe('Unavailable'))
+  // A unit Home Assistant takes away is gone.
+  subscriptions[0].push({ c: { 'sensor.plug_power': { '+': { s: '12' }, '-': { a: ['unit_of_measurement'] } } } })
+  await vi.waitFor(() => expect(rows(card(root, 'plug'))[1][3]).toBe('12'))
   subscriptions[0].push({ r: ['sensor.plug_power'] })
   await vi.waitFor(() => expect(rows(card(root, 'plug'))[1][3]).toBe('—'))
 
@@ -350,14 +363,43 @@ it('deletes after the confirmation, moving focus to the next card, and recovers 
   await vi.waitFor(() => expect(card(root, 'porch')).toBeNull())
   expect(requests(fixture, 'delete').at(-1)).toEqual({ operation: 'delete', id: 'porch', expectedRevision: 9 })
 
-  // Any other refusal: its message, and the list read again (here it no longer has the definition).
+  // Already deleted elsewhere: the dialog closes, and the list, read again, no longer has it.
   fixture.entities.documents.delete('camera')
   menu(root, 'Driveway', 'Delete')
   reads = requests(fixture, 'list').length
   button(root.querySelector('dialog[open]')!, 'Delete').click()
-  await vi.waitFor(() => expect(alert()?.textContent).toBe('Could not delete it: Entity definition not found'))
+  await vi.waitFor(() => expect(root.querySelector('dialog[open]')).toBeNull())
+  expect(requests(fixture, 'delete').at(-1)).toMatchObject({ id: 'camera' })
   await vi.waitFor(() => expect(requests(fixture, 'list').length).toBeGreaterThan(reads))
   await vi.waitFor(() => expect(card(root, 'camera')).toBeNull())
+})
+
+it('keeps Reload the list out of reach until the list read after a conflict answers, and keeps any other refusal in the dialog', async () => {
+  const holding: string[] = []
+  const { root, fixture, release } = setup({ prepare: three, hold: holding })
+  await loaded(root)
+  fixture.entities.documents.get('plug')!.revision = 4
+  menu(root, 'Plug', 'Delete')
+  // The list read that follows the refusal is held: the delete is still settling, so Reload the list cannot be used.
+  holding.push('list')
+  button(root.querySelector('dialog[open]')!, 'Delete').click()
+  const alert = () => root.querySelector('dialog[open] [role="alert"]')
+  await vi.waitFor(() => expect(alert()?.textContent).toContain('Reload the list, then delete it.'))
+  expect(button(alert()!, 'Reload the list').disabled).toBe(true)
+  holding.splice(0)
+  await vi.waitFor(() => { release(); expect(button(alert()!, 'Reload the list').disabled).toBe(false) })
+  button(alert()!, 'Reload the list').click()
+  await vi.waitFor(() => expect(root.querySelector('dialog[open]')).toBeNull())
+
+  // Another refusal: its message stays in the dialog, which stays open.
+  const answer = fixture.callWS
+  fixture.callWS = async (message: any) => (message.request?.operation === 'delete'
+    ? { version: 1, ok: false, error: { code: 'invalid_request', detail: 'The registry is busy' } } : answer(message))
+  menu(root, 'Porch light', 'Delete')
+  button(root.querySelector('dialog[open]')!, 'Delete').click()
+  await vi.waitFor(() => expect(alert()?.textContent).toBe('Could not delete it: The registry is busy'))
+  expect(root.querySelector('dialog[open]')).not.toBeNull()
+  expect(card(root, 'porch')).not.toBeNull()
 })
 
 it('opens a definition from its menu', async () => {

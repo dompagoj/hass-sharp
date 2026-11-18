@@ -29,9 +29,11 @@ function names<T>(list: readonly T[] | undefined, id: (item: T) => string, name:
   }
   return map
 }
+/** The name Home Assistant gives the entity; undefined when it has none or does not know the entity. */
+const knownEntityName = (id: string, registry?: SummaryNames) => names(registry?.entities, e => e.entity_id, e => e.name).get(id) || undefined
 /** The friendly name of an entity, else its object id in words ("light.hallway_lamp" → "Hallway lamp"). */
 export function entityName(id: string, registry?: SummaryNames): string {
-  const known = names(registry?.entities, e => e.entity_id, e => e.name).get(id)
+  const known = knownEntityName(id, registry)
   if (known) return known
   if (id === 'all') return 'all entities'
   const dot = id.indexOf('.')
@@ -274,11 +276,16 @@ function definitionEntityName(ctx: Context): string | undefined {
   const key = text(ctx.node.config.entity)
   return key ? text(definitionEntity(definitionCatalog(ctx), key)?.name) || key : undefined
 }
-/** The Home Assistant entity a Has state or Current state reads: its id as typed in, or the output wired into it. */
+/**
+ * The Home Assistant entity a Has state or Current state reads: the one typed in, by the name Home Assistant gives it
+ * (else its id), or the output wired into it.
+ */
 function homeEntity(ctx: Context): string | undefined {
   const operand = inputValue(ctx.node, 'entity', ctx.catalog)
   const wired = ctx.graph?.edges.some(e => e?.kind === 'data' && e.target === ctx.node.id && e.targetPort === 'entity')
-  return !wired && record(operand) && operand.kind === 'literal' && typeof operand.value === 'string' ? text(operand.value) || undefined : operandText(ctx, 'entity')
+  if (wired || !record(operand) || operand.kind !== 'literal' || typeof operand.value !== 'string') return operandText(ctx, 'entity')
+  const id = text(operand.value)
+  return id ? knownEntityName(id, ctx.registry) ?? id : undefined
 }
 /** The state a Has state compares with, as stored. */
 function operandState(ctx: Context): string | undefined {

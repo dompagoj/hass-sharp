@@ -1,7 +1,7 @@
 import type { GraphDefinition, JsonValue } from '../visual/contract'
 import type { VisualDiagnostic } from '../visual/api'
 import type { VisualGraph } from '../visual/graph'
-import { definitionEntityKinds, entityKey, entityKeyPattern, renameEntityKey, type DefinitionDevice, type DefinitionEntity, type DefinitionSetting, type EditorDefinition, type EntityDocument } from './model'
+import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionDevice, type DefinitionEntity, type DefinitionSetting, type EditorDefinition, type EntityDocument } from './model'
 
 /**
  * The definition form's changes to an editor graph's `definition` (its entities, settings and device), each a new
@@ -45,8 +45,7 @@ export function settingKeyProblem(text: string, others: string[]): string | unde
  * A secret whose saved value is not here (masked; nothing typed in its place): its key cannot be renamed (ruling R16),
  * as the server keeps a saved value by the key it was saved under, and it cannot be made a plain setting.
  */
-export const maskedSecret = (setting: DefinitionSetting) =>
-  setting.secret === true && setting.hasValue === true && (setting.value === null || setting.value === undefined)
+export const maskedSecret = (setting: DefinitionSetting) => setting.secret === true && maskedSetting(setting)
 
 // ---- Entities
 

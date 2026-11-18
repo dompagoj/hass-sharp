@@ -7,7 +7,7 @@ import voluptuous as vol
 
 from . import utils
 from .const import logger
-from .authoring import AuthoringService
+from .authoring import AuthoringService, ready_entry
 
 RUN_STATUSES = ("Pending", "Running", "Succeeded", "Failed", "Cancelled", "Skipped", "Interrupted", "Stopped")
 NOT_READY = "HassSharp is not running: wait for it to finish starting, or turn the integration on under Settings → Devices & services"
@@ -23,14 +23,8 @@ REFUSALS = frozenset({
 })
 
 
-def ready_state(hass):
-    """The entry state that takes commands, or None. The commands are registered once; the automations exist only
-    while an entry is set up and not unloading."""
-    return next((state for state in hass.data.get("hass_sharp_llm", {}).values() if state.ready), None)
-
-
 def loaded(hass):
-    return ready_state(hass) is not None
+    return ready_entry(hass)[1] is not None
 
 
 def refusal(err):
@@ -45,7 +39,8 @@ def admin_command(handler):
         if not connection.user.is_admin:
             connection.send_error(msg["id"], "unauthorized", "Administrator required")
             return
-        if (state := ready_state(hass)) is None:
+        _, state = ready_entry(hass)
+        if state is None:
             connection.send_error(msg["id"], "not_ready", NOT_READY)
             return
         with state.command():

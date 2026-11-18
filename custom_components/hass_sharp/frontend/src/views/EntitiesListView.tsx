@@ -123,6 +123,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
 
   // ---- Delete, with the editor's confirmation. A refusal stays in it and the list is read again, so a retry deletes
   // the revision the list has then; a conflict (changed since the list was read) says so and offers Reload the list.
+  // One already deleted elsewhere is gone, as asked: the dialog closes once the list is read again.
   const [deleteItem, setDeleteItem] = createSignal<HomeDefinition>()
   const [deleteError, setDeleteError] = createSignal<{ text: string; conflict: boolean }>()
   const [deleting, setDeleting] = createSignal(false)
@@ -133,14 +134,18 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
     if (!item || deleting()) return
     setDeleting(true)
     setDeleteError(undefined)
-    try {
-      const focusNext = focusAfter(item.id)
-      await api.remove(item.id, byId().get(item.id)?.revision ?? item.revision)
+    const focusNext = focusAfter(item.id)
+    const done = async () => {
       await refresh()
       setDeleting(false)
       setDeleteItem(undefined)
       focusNext()
+    }
+    try {
+      await api.remove(item.id, byId().get(item.id)?.revision ?? item.revision)
+      await done()
     } catch (error) {
+      if (error instanceof EntityApiError && error.code === 'not_found') return await done().catch(() => setDeleteItem(undefined))
       const conflict = error instanceof EntityApiError && error.code === 'conflict'
       setDeleteError(conflict
         ? { text: 'This entity definition changed since the list was loaded. Reload the list, then delete it.', conflict }
@@ -246,7 +251,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
       <DeleteDefinitionDialog open={!!deleteItem()} name={deleteItem()?.name ?? ''} deleting={deleting()}
         error={deleteError() && <>
           {deleteError()!.text}
-          <Show when={deleteError()!.conflict}><Button onClick={() => { closeDelete(); void home.refetch() }}>Reload the list</Button></Show>
+          <Show when={deleteError()!.conflict}><Button disabled={deleting()} onClick={() => { closeDelete(); void home.refetch() }}>Reload the list</Button></Show>
         </>}
         onCancel={closeDelete} onConfirm={() => void confirmDelete()} />
     </section>

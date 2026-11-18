@@ -17,7 +17,7 @@ class HistoryApi(unittest.IsolatedAsyncioTestCase):
         for n in nodes:
             n.decorator_list = [d for d in n.decorator_list if isinstance(d, ast.Name) and d.id == "admin_command"]
         # The module-level readiness and refusal helpers the handlers use.
-        helpers = [n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name in ("ready_state", "loaded", "refusal", "admin_command")
+        helpers = [n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name in ("loaded", "refusal", "admin_command")
                    or isinstance(n, ast.Assign) and any(getattr(t, "id", None) in ("NOT_READY", "REFUSALS") for t in n.targets)]
         env = {"hass_sharp": backend, "json": json, "logger": Mock()}
         exec(compile(ast.Module(body=helpers + nodes, type_ignores=[]), "<history>", "exec"), env)

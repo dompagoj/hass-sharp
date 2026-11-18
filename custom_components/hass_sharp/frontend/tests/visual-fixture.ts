@@ -152,9 +152,10 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  * its fields, and before `not_found` (`read`, `set_enabled`, `delete` of an unknown id) and `conflict`. A save whose
  * `definition.logic` is `{kind: 'graph', graph: <an object>}` is first previewed, as Python does: `keep` with a value
  * (`invalid_request`), then `validation`, whatever its id and revision. Then, for every save: `id`, `expectedRevision`,
- * the `definition` (missing, not an object, `keep` with a value), `enabled`, the id pattern, a stale revision
- * (`conflict`), `enabled` for a saved definition, and a class's `validation`. A setting sent with `keep`, or with
- * `hasValue` and no value, is stored with the value (and secret flag) stored before; any other as sent.
+ * the `definition` (missing, not an object, `keep` with a value), `enabled`, the id pattern, the reserved id `new`
+ * ("Invalid definition ID: new is reserved"), a stale revision (`conflict`), `enabled` for a saved definition, and a
+ * class's `validation`. A setting sent with `keep`, or with `hasValue` and no value, is stored with the value (and
+ * secret flag) stored before; any other as sent.
  */
 function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generation: () => string) {
   const documents = new Map<string, EntityDocument>()
@@ -279,9 +280,11 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   /** The document as an answer gives it: secrets masked, the registry's entries. */
   const answered = (document: EntityDocument) => {
     const type = document.logic.kind === 'class' ? types.find(t => t.id === document.logic.type) : undefined
-    // As EntityLifecycle.WithoutSecretValues: a class's setting is answered only when its type declares it, not secret.
-    const masked = (key: string, secret?: boolean) => document.logic.kind === 'graph' ? secret === true : controls.libraryErrors || !type || !type.settings.some(s => s.key === key && !s.secret)
-    const settings = document.settings.map(s => (masked(s.key, s.secret) ? { ...s, value: null, secret: true, hasValue: !empty(s.value) } : s))
+    // As EntityLifecycle.WithoutSecretValues: a graph's setting is answered only when no setting of its key is secret, a
+    // class's only when its type declares it, not secret.
+    const masked = (key: string) => document.logic.kind === 'graph' ? document.settings.some(s => s.key === key && s.secret === true)
+      : controls.libraryErrors || !type || !type.settings.some(s => s.key === key && !s.secret)
+    const settings = document.settings.map(s => (masked(s.key) ? { ...s, value: null, secret: true, hasValue: !empty(s.value) } : s))
     const entries = [...(registry.get(document.id) ?? published.get(document.id) ?? [])].sort((a, b) => (a.uniqueId < b.uniqueId ? -1 : a.uniqueId > b.uniqueId ? 1 : 0))
     return structuredClone({ ...document, settings, registeredEntities: entries })
   }
@@ -319,6 +322,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     }
     const id = text(request, 'id'), expected = revision(request), definition = definitionOf(request), enabled = optionalFlag(request, 'enabled')
     checkId(id)
+    // As EntityDefinitionStore.Save: /entities/new is the new-definition page, so no definition is saved as new.
+    if (id === 'new') refuse('Invalid definition ID: new is reserved')
     const existing = documents.get(id)
     if ((existing?.revision ?? 0) !== expected) return fail('conflict', 'Revision conflict; reload the current document')
     if (existing && enabled !== undefined) refuse('enabled can only be given when saving a new definition; use set_enabled to turn a saved one on or off')

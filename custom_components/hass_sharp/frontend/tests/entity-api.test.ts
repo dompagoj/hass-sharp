@@ -152,6 +152,16 @@ describe('the in-memory entities backend', () => {
     expect(fixture.entities.documents.get('motion')!.settings[0].value).toBeNull()
     expect((await api.read('motion')).settings[0].hasValue).toBe(false)
   })
+  it('masks every setting of a key that one of them marks secret, as the real answer does', async () => {
+    const { fixture, api } = setup()
+    // Only a file edited by hand holds a key twice.
+    fixture.entities.seed('twin', { ...body(), settings: [{ key: 'token', type: 'string', secret: true, value: 'hunter2' }, { key: 'token', type: 'string', value: 'twin-hunter2' }] })
+    expect((await api.read('twin')).settings).toEqual([
+      { key: 'token', type: 'string', secret: true, value: null, hasValue: true },
+      { key: 'token', type: 'string', secret: true, value: null, hasValue: true },
+    ])
+    expect(JSON.stringify(await api.list())).not.toContain('hunter2')
+  })
   it('keeps a stored secret flag and refuses keep with a value', async () => {
     const { fixture, api } = setup()
     await api.save('motion', secretBody(), 0)
@@ -213,6 +223,13 @@ describe('the in-memory entities backend', () => {
     expect(fixture.entities.documents.size).toBe(0)
     await expect(api.save('a'.repeat(80), body(), 0)).resolves.toMatchObject({ saved: true })
     await expect(api.save('0-motion_2', body(), 0)).resolves.toMatchObject({ saved: true })
+  })
+  it('refuses to save the id new, which is the new-definition page, as the real save does', async () => {
+    const { fixture, api } = setup()
+    await expect(api.save('new', body(), 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID: new is reserved' })
+    await expect(api.save('new', { ...body(), logic: { kind: 'class', type: tokenType.id }, entities: null }, 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID: new is reserved' })
+    expect(fixture.entities.documents.has('new')).toBe(false)
+    await expect(api.read('new')).rejects.toMatchObject({ code: 'not_found' })
   })
   it('refuses a save in the order the real API does', async () => {
     const { fixture, api } = setup()

@@ -194,7 +194,8 @@ public partial class HassSharpManager
     /// <param name="snapshot">The libraries the definition is answered against.</param>
     static void WithoutSecretValues(JsonObject json, EntityDefinitionDocument document, VisualCatalogSnapshot snapshot)
     {
-        var open = (document.Logic.Kind == "graph" ? document.Settings.Where(s => !s.Secret).Select(s => s.Key)
+        // A graph's key is open only if no setting with it is secret: a file edited by hand may hold a key twice.
+        var open = (document.Logic.Kind == "graph" ? document.Settings.GroupBy(s => s.Key, StringComparer.Ordinal).Where(g => g.All(s => !s.Secret)).Select(g => g.Key)
             : !snapshot.LibraryDiagnostics.Any(d => d.Severity == 3) && document.Logic.Type is { } type && snapshot.EntityTypes.TryGetValue(type, out var described)
                 ? described.Settings.Where(s => !s.Secret).Select(s => s.Key)
             : []).ToHashSet(StringComparer.Ordinal);

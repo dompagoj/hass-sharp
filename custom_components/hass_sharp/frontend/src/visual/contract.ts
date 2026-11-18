@@ -222,12 +222,13 @@ export function entityChoices(catalog: VisualCatalogSnapshot, kind: string): Rec
 }
 /**
  * The config of a When commanded once its entity is set (ruling R12): a command the entity's type does not take, or none,
- * becomes the type's first command. Any other config, and one whose entity is unknown, as it is.
+ * becomes the type's first command not in `handled`, or its first when all are. Any other config, and one whose entity
+ * is unknown, as it is.
  */
-export function withEntityCommand(kind: string, config: Record<string, unknown>, catalog: VisualCatalogSnapshot): Record<string, unknown> {
+export function withEntityCommand(kind: string, config: Record<string, unknown>, catalog: VisualCatalogSnapshot, handled: readonly string[] = []): Record<string, unknown> {
   if (!Object.hasOwn(nodeSpec(kind, catalog)?.config ?? {}, 'command')) return config
   const commands = entityCommands(catalog, text(config.entity))
-  return commands.length && !commands.includes(text(config.command)) ? { ...config, command: commands[0] } : config
+  return commands.length && !commands.includes(text(config.command)) ? { ...config, command: commands.find(c => !handled.includes(c)) ?? commands[0] } : config
 }
 /** The type of the definition's setting with this key, when it is one a setting can have. */
 export function settingType(catalog: VisualCatalogSnapshot, key: string): string | undefined {
@@ -1436,14 +1437,21 @@ export function addGraphNode(graph: Graph, kind: string, id: string, catalog: Vi
   const storage = spec.argumentStorage === 'arguments' ? (config.arguments ??= {}) as Record<string, unknown> : config
   for (const [key, value] of Object.entries(spec.inputs)) if (value.default !== undefined) storage[key] = structuredClone(value.default)
   // A step of an entity definition names the definition's only entity (or setting) it can name (ruling R12).
-  const named = spec.documents?.includes('entity') && graphDocument(graph) === 'entity' ? prefilled(kind, spec, { ...catalog, definition: graph.definition }) : {}
+  const named = spec.documents?.includes('entity') && graphDocument(graph) === 'entity' ? prefilled(graph, kind, spec, { ...catalog, definition: graph.definition }) : {}
   // A Custom C# node is titled by its method until someone names it.
   return fillGraphLayout({ ...graph, nodes: [...graph.nodes, { id, kind, ...(spec.dynamicInputs === 'custom' ? {} : { label: spec.label }), config: { ...config, ...named } }] })
 }
-/** The definition's entity or setting a new step of the kind names: the only one it can name, else none. */
-function prefilled(kind: string, spec: NodeSpec, catalog: VisualCatalogSnapshot): Record<string, unknown> {
+/**
+ * The definition's entity or setting a new step of the kind names: the only one it can name, else none. A When commanded
+ * takes the first command of its entity that no other When commanded of the graph handles.
+ */
+function prefilled(graph: Graph, kind: string, spec: NodeSpec, catalog: VisualCatalogSnapshot): Record<string, unknown> {
   const entities = Object.hasOwn(spec.config, 'entity') ? entityChoices(catalog, kind) : []
-  if (entities.length === 1) return withEntityCommand(kind, { entity: entities[0].key }, catalog)
+  if (entities.length === 1) {
+    const entity = entities[0].key
+    const handled = graph.nodes.filter(n => n.kind === 'entity_command' && n.config.entity === entity).map(n => text(n.config.command))
+    return withEntityCommand(kind, { entity }, catalog, handled)
+  }
   const settings = Object.hasOwn(spec.config, 'key') ? definitionSettings(catalog) : []
   return settings.length === 1 ? { key: settings[0].key } : {}
 }

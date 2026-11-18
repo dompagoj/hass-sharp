@@ -94,11 +94,12 @@ const LibraryWorkspace = (props: LibraryWorkspaceProps) => {
     <Show when={session.activations().length || session.notRebuilt().length}><section class="hs-library-activations" aria-label="Dependent automations"><For each={session.activations()}>{activation => <p class={activation.active ? 'hs-notice' : 'hs-notice hs-notice--danger'} role={activation.active ? 'status' : 'alert'}>{activation.document?.graph?.name || activation.id}: {activation.active ? 'Saved and active' : `Saved; activation failed: ${activation.activationError ?? 'current revision is not active'}`}</p>}</For>
       {/* Those that already had errors were left as they were: say so, or the person never learns they were not rebuilt. */}
       <For each={session.notRebuilt()}>{automation => <p class="hs-notice hs-notice--danger" role="alert">{automation.name || automation.id}: {automation.message}</p>}</For></section></Show>
-    {/* The entity definitions that use the libraries, alike: how many were rebuilt, and each that did not start or was left as it was. */}
+    {/* The entity definitions that use the libraries, alike: how many were rebuilt and started (the answer lists only
+        those that are on), and each that did not start or was left as it was. */}
     <Show when={session.definitions().length || session.definitionsNotRebuilt().length}><section class="hs-library-activations" aria-label="Dependent entity definitions">
-      <Show when={session.definitions().length}><p class="hs-notice" role="status">{plural(session.definitions().length, 'entity definition')} rebuilt</p></Show>
+      <Show when={session.definitions().length}>{count => <p class="hs-notice" role="status">Rebuilt {plural(count(), 'entity definition')} that {count() === 1 ? 'is' : 'are'} on</p>}</Show>
       <For each={session.definitions().filter(definition => !definition.active)}>{definition => <p class="hs-notice hs-notice--danger" role="alert">
-        <DefinitionName id={definition.id} name={definition.document?.name} />: Saved; activation failed: {definition.activationError ?? 'current revision is not active'}</p>}</For>
+        <DefinitionName id={definition.id} name={definition.document?.name} />: {definition.activationError ? `Saved; activation failed: ${definition.activationError}` : 'Saved, but it is not running'}</p>}</For>
       <For each={session.definitionsNotRebuilt()}>{definition => <p class="hs-notice hs-notice--danger" role="alert"><DefinitionName id={definition.id} name={definition.name} />: {definition.message}</p>}</For>
     </section></Show>
     <Show when={session.loading()}><p role="status">Loading library files…</p></Show>
@@ -119,8 +120,8 @@ const LibraryWorkspace = (props: LibraryWorkspaceProps) => {
       <LibraryPreview catalog={session.preview()?.catalog} sourceId={session.selectedId() ?? ''} pending={session.previewing()} />
     </div>
     <section class="hs-library-diagnostics" aria-label="Library workspace diagnostics" aria-live="polite"><h2>Workspace diagnostics</h2>
-      {/* What a refused save would break in an automation counts and reads as the library's own: errors first, each
-          marked; a step by its title, as the editor names it. */}
+      {/* What a refused save would break in an automation or an entity definition counts and reads as the library's
+          own: errors first, each marked; a step by its title, as the editor names it. */}
       <p>{session.previewing() ? 'Checking workspace…' : errorWarningCounts(session.workspace())}</p>
       <ul><For each={session.workspace()}>{entry => {
         const mark = entry.severity === 3 ? 'Error' : 'Warning'
@@ -130,8 +131,8 @@ const LibraryWorkspace = (props: LibraryWorkspaceProps) => {
         return <li><button type="button" onClick={() => locate({ id: d.sourceId, range: { start: 0, length: 0, startLine: d.startLine, startColumn: d.startColumn, endLine: d.endLine, endColumn: d.endColumn } })}>{mark} · {session.files().find(f => f.id === d.sourceId)?.name ?? d.sourceId} {d.startLine}:{d.startColumn} · {d.message}</button></li>
       }}</For></ul>
     </section>
-    <p class="hs-muted hs-library-persistence">Saving validates every saved visual automation, advances its revision and activates the rebuilt generation. Running invocations keep their prepared source snapshot. Unsaved files are used together for previews; save each file to publish it.</p>
+    <p class="hs-muted hs-library-persistence">Saving checks every saved visual automation and entity definition, and rebuilds each at its next revision. Those that are on run the rebuilt version. Running invocations keep their prepared source snapshot. Unsaved files are used together for previews; save each file to publish it.</p>
     <Dialog open={newFile()} title="Add library file" onClose={() => setNewFile(false)} footer={<><Button onClick={() => setNewFile(false)}>Cancel</Button><Button variant="primary" disabled={!newName().trim() || /[\/\\\0\r\n]/.test(newName())} onClick={() => { session.create(newName()); setNewFile(false) }}>Create file</Button></>}><label>File name<input class="hs-input" autofocus value={newName()} maxLength={120} onInput={e => setNewName(e.currentTarget.value)} /></label></Dialog>
-    <Dialog open={!!confirm()} title={confirm() === 'delete' ? 'Delete library file?' : 'Reload library file?'} onClose={() => setConfirm(undefined)} footer={<><Button onClick={() => setConfirm(undefined)}>Keep editing</Button><Button variant="danger" onClick={() => { const action = confirm(); setConfirm(undefined); if (action === 'delete') void session.remove(); else if (session.selectedId()) void session.reload(session.selectedId()!) }}>{confirm() === 'delete' ? 'Delete file' : 'Discard draft and reload'}</Button></>}><p>{session.selected()?.name}: {confirm() === 'delete' ? 'Delete this file and discard its draft. Saved dependent automations must still compile before deletion can succeed.' : 'Discard this file’s draft and load the current saved revision. Other files keep their unsaved changes.'}</p></Dialog>
+    <Dialog open={!!confirm()} title={confirm() === 'delete' ? 'Delete library file?' : 'Reload library file?'} onClose={() => setConfirm(undefined)} footer={<><Button onClick={() => setConfirm(undefined)}>Keep editing</Button><Button variant="danger" onClick={() => { const action = confirm(); setConfirm(undefined); if (action === 'delete') void session.remove(); else if (session.selectedId()) void session.reload(session.selectedId()!) }}>{confirm() === 'delete' ? 'Delete file' : 'Discard draft and reload'}</Button></>}><p>{session.selected()?.name}: {confirm() === 'delete' ? 'Delete this file and discard its draft. Saved automations and entity definitions that use it must still compile without it, or it is not deleted.' : 'Discard this file’s draft and load the current saved revision. Other files keep their unsaved changes.'}</p></Dialog>
   </section>
 }

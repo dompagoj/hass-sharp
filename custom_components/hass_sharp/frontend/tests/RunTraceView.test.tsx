@@ -760,6 +760,43 @@ it('never shows a definition\'s secret setting value on its run\'s page', async 
   expect(fixture.entities.documents.get('plug')!.settings[1].value).toBe('stored-secret')
 })
 
+it('shows the error state with Try again, never the run, while the definition cannot be read', async () => {
+  // The definition read gets no answer once: the run (another definition's) cannot be told apart from its own.
+  let unanswered = true
+  const foreign = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:lamp', visualId: 'lamp', cause: 'Setup', trigger: { kind: 'setup' } }) }), {
+    prepare: fixture => {
+      const answer = fixture.callWS
+      fixture.callWS = async (message: any) => {
+        if (unanswered && message.request?.operation === 'read') { unanswered = false; throw { code: 3, message: 'Connection lost' } }
+        return answer(message)
+      }
+    },
+  })
+  await vi.waitFor(() => expect(foreign.root.querySelector('[role="alert"] h2')?.textContent).toBe('This run couldn’t load'))
+  expect(foreign.root.textContent).toContain('Connection lost')
+  expect(foreign.root.querySelector('.hs-flow')).toBeNull()
+  // Read again, it is another definition's run: said so, still not drawn.
+  button(foreign.root, 'Try again').click()
+  await vi.waitFor(() => expect(foreign.root.textContent).toContain('This run is not one of this entity definition’s runs.'))
+  expect(foreign.root.querySelector('.hs-flow')).toBeNull()
+  dispose?.(); document.body.innerHTML = ''
+  // Its own run is drawn once the definition reads.
+  unanswered = true
+  const own = mountDefinition(async () => definitionResponse(), {
+    prepare: fixture => {
+      const answer = fixture.callWS
+      fixture.callWS = async (message: any) => {
+        if (unanswered && message.request?.operation === 'read') { unanswered = false; throw { code: 3, message: 'Connection lost' } }
+        return answer(message)
+      }
+    },
+  })
+  await vi.waitFor(() => expect(own.root.querySelector('[role="alert"] h2')?.textContent).toBe('This run couldn’t load'))
+  expect(own.root.querySelector('.hs-flow')).toBeNull()
+  button(own.root, 'Try again').click()
+  await vi.waitFor(() => expect(own.root.querySelector('.hs-flow')).not.toBeNull())
+})
+
 it('shows the not-found state for a run of another definition, a definition that is gone, and one built from a class', async () => {
   // A run that belongs to another definition (or an automation).
   const foreign = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:lamp', visualId: 'lamp', cause: 'Setup', trigger: { kind: 'setup' } }) }))

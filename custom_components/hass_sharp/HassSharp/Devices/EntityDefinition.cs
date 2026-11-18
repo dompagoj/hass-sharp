@@ -199,7 +199,10 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
     {
         lock (Gate)
         {
-            var path = FilePath(id); var old = Read(id);
+            var path = FilePath(id);
+            // The panel's page for a new definition is /entities/new, so a definition saved as new could never be opened.
+            if (id == "new") throw new ArgumentException("Invalid definition ID: new is reserved");
+            var old = Read(id);
             if ((old?.Revision ?? 0) != expectedRevision) throw new VisualConflictException();
             if (old != null && enabled != null)
                 throw new ArgumentException("enabled can only be given when saving a new definition; use set_enabled to turn a saved one on or off");

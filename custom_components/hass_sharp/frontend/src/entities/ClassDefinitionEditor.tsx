@@ -15,13 +15,13 @@ import { saveChip } from '../visual/TopBar'
 import { describedBy } from '../visual/widgets/common'
 import { entityTexts } from './adapter'
 import { definitionsQueryKey, entityApi, entityError, entityTypesQueryKey } from './api'
-import { createClassSession, maskedValue, type ClassSession } from './classSession'
+import { createClassSession, type ClassSession } from './classSession'
 import { cardEntities, definitionStatus } from './DefinitionCard'
 import { DeleteDefinition } from './DeleteDefinition'
 import { problemRow } from './definitionEdits'
 import { deviceMemory, DeviceSection } from './DeviceForm'
 import { FieldErrors } from './formFields'
-import type { DefinitionSetting, EntityDocument, EntityType, EntityTypeSetting } from './model'
+import { maskedSetting, type DefinitionSetting, type EntityDocument, type EntityType, type EntityTypeSetting } from './model'
 import { entityTypeLabel } from './NodePickers'
 import { SecretValue } from './SettingRows'
 
@@ -122,17 +122,26 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
   // A save asked for while a number does not read: nothing is sent, and the field says why.
   const [reveal, setReveal] = createSignal(0)
   let frame: HTMLElement | undefined
+  /** Goes to the first number that does not read, which then says why; false when every number reads. */
+  const revealUnreadable = () => {
+    const unreadable = session.unreadable()[0]
+    if (!unreadable) return false
+    setReveal(n => n + 1)
+    frame?.querySelector<HTMLElement>(`[data-field="setting:${CSS.escape(unreadable.key)}"] input`)?.focus()
+    return true
+  }
   const save = () => {
     if (session.conflict()) return setConflictOpen(true)
-    const unreadable = session.unreadable()[0]
-    if (unreadable) {
-      setReveal(n => n + 1)
-      frame?.querySelector<HTMLElement>(`[data-field="setting:${CSS.escape(unreadable.key)}"] input`)?.focus()
-      return
-    }
-    if (saveReason()) return
+    if (revealUnreadable() || saveReason()) return
     void session.save().then(saved$)
   }
+  // After a conflict, as Save: the choices close first, so the field keeps the focus.
+  const saveAnyway = () => {
+    setConflictOpen(false)
+    if (!revealUnreadable()) void session.saveAnyway().then(saved$)
+  }
+  // A number that does not read is work the page would lose, as an unsaved change is.
+  const unsaved = () => session.dirty() || session.unreadable().length > 0
 
   const status = createMemo(() => { const document = saved(); return document ? definitionStatus(document) : undefined })
   const entities = createMemo(() => { const document = saved(); return document ? cardEntities(document) : [] })
@@ -282,8 +291,8 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
 
         <Show when={saved()}>
           {document => (
-            <DeleteDefinition document={document()} name={body().name} blocked={session.dirty() || busy() || session.conflict()}
-              hint={session.dirty() ? 'Save your changes before deleting it.' : undefined} onError={text => session.showNotice({ text, error: true })} />
+            <DeleteDefinition document={document()} name={body().name} blocked={unsaved() || busy() || session.conflict()}
+              hint={unsaved() ? 'Save your changes before deleting it.' : undefined} onError={text => session.showNotice({ text, error: true })} />
           )}
         </Show>
       </div>
@@ -291,12 +300,12 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
       <Dialog open={session.conflict() && conflictOpen()} title={entityTexts.conflictTitle} width="medium" onClose={() => setConflictOpen(false)}
         footer={<>
           <Button variant="danger" disabled={busy()} onClick={() => { setConflictOpen(false); void session.reload() }}>Reload</Button>
-          <Button variant="primary" disabled={busy()} onClick={() => { setConflictOpen(false); void session.saveAnyway().then(saved$) }}>Save anyway</Button>
+          <Button variant="primary" disabled={busy()} onClick={saveAnyway}>Save anyway</Button>
         </>}>
         <p>{entityTexts.conflictElsewhere}</p>
         <p><strong>Save anyway</strong> saves your changes over the saved one. <strong>Reload</strong> discards your changes and opens the saved version.</p>
       </Dialog>
-      <LeaveGuard dirty={session.dirty()} />
+      <LeaveGuard dirty={unsaved()} />
     </section>
   )
 }
@@ -454,7 +463,7 @@ function SettingField(props: { setting: EntityTypeSetting; session: ClassSession
   )
   const secretType = () => (props.setting.type === 'integer' || props.setting.type === 'number' ? 'number' : props.setting.type === 'boolean' ? 'boolean' : 'string')
   return (
-    <Show when={!props.setting.secret && !maskedValue(stored())} fallback={
+    <Show when={!props.setting.secret && !maskedSetting(stored())} fallback={
       <SecretValue type={secretType()} setting={stored() ?? { key: key(), value: null }} name={`setting:${key()}`} label={label()}
         note={props.setting.description ?? ''} errors={props.errors}
         onChange={typed => set(typed)} onClear={() => props.session.clearValue(key())} />
@@ -467,7 +476,7 @@ function SettingField(props: { setting: EntityTypeSetting; session: ClassSession
         }>
           <Match when={props.setting.type === 'integer' || props.setting.type === 'number'}>
             <NumberInput id={id} whole={props.setting.type === 'integer'} minimum={props.setting.minimum} value={value()} invalid={invalid()}
-              describedBy={describe()} reveal={props.reveal} onMessage={setUnreadable} onChange={set}
+              describedBy={describe()} reveal={props.reveal} reverted={props.session.reverted} onMessage={setUnreadable} onChange={set}
               onProblem={problem => props.session.markUnreadable(key(), problem && { label: label(), ...problem })} />
           </Match>
           <Match when={props.setting.type === 'boolean'}>
@@ -504,11 +513,12 @@ function readNumber(typed: string, whole: boolean): number | null | undefined {
  * A number setting's field. It keeps the text as typed: the value is committed whenever the whole text reads as a
  * number of its type, and emptied (the class's default) only when the text is empty. A text that does not read is a
  * problem of the definition (`onProblem`: nothing is saved while it is there), told under the field (`onMessage`) once
- * the field is left or a save asks for it (`reveal`). The text follows the stored value only when that changes to a
- * number other than the one the text reads as (a re-read, a reload), not on other changes of the definition.
+ * the field is left or a save asks for it (`reveal`). The text follows the stored value when that changes to a
+ * number other than the one the text reads as (a re-read, a reload), and after a reload that discards the page's
+ * changes (`reverted`), not on other changes of the definition.
  */
 function NumberInput(props: {
-  id: string; whole: boolean; minimum?: number; value: JsonValue | null | undefined; invalid: boolean; describedBy?: string; reveal: () => number
+  id: string; whole: boolean; minimum?: number; value: JsonValue | null | undefined; invalid: boolean; describedBy?: string; reveal: () => number; reverted: () => number
   onChange(value: number | null): void; onProblem(problem: { message: string; reason: string } | undefined): void; onMessage(message: string | undefined): void
 }) {
   const stored = () => (typeof props.value === 'number' ? String(props.value) : typeof props.value === 'string' ? props.value : '')
@@ -521,6 +531,7 @@ function NumberInput(props: {
   createEffect(() => props.onMessage(unreadable() && told() ? problem().message : undefined))
   onCleanup(() => { props.onProblem(undefined); props.onMessage(undefined) })
   createEffect(on(props.reveal, () => { if (unreadable()) setTold(true) }, { defer: true }))
+  createEffect(on(props.reverted, () => { setTyped(undefined); setTold(false) }, { defer: true }))
   const value = createMemo(() => props.value)
   createEffect(on(value, current => {
     const text = typed()

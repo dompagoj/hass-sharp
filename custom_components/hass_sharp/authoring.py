@@ -25,9 +25,10 @@ def definition_graph(request):
     return graph if isinstance(graph, dict) else None
 
 
-def serving_entry_id(hass):
-    """The config entry the commands are answered for: the ready one, as websocket.ready_state finds it; None without."""
-    return next((entry_id for entry_id, state in hass.data.get("hass_sharp_llm", {}).items() if state.ready), None)
+def ready_entry(hass):
+    """The config entry that takes commands, as (its id, its state), or (None, None). The commands are registered once;
+    the automations exist only while an entry is set up and not unloading."""
+    return next(((entry_id, state) for entry_id, state in hass.data.get("hass_sharp_llm", {}).items() if state.ready), (None, None))
 
 
 def registered_entities(hass, entry_id):
@@ -126,7 +127,7 @@ class AuthoringService:
             raise ValueError("Authoring request must be an object")
         # Before the first await: the entry whose ready state let the command in. An unload that starts meanwhile
         # waits for the command but no longer calls the entry ready.
-        entry_id = serving_entry_id(self.hass)
+        entry_id, _ = ready_entry(self.hass)
         # As visual(): a snapshot, so caller edits while Home Assistant validates do not change what .NET saves.
         request = json.loads(json.dumps(request))
         operation = request.get("operation")

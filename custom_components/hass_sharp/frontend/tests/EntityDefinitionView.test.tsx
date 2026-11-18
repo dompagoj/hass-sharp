@@ -516,6 +516,10 @@ it('starts a new definition named from the address, with one binary sensor named
   expect(fixture.calls.some((call: any) => call.type === 'hass_sharp/visual' || call.type === 'hass_sharp/run_now')).toBe(false)
   more(root, 'Help')
   expect(document.querySelector('dialog[open]')!.textContent).toContain('What an entity definition is')
+  // What a secret is kept out of, and where it can still show.
+  expect(document.querySelector('dialog[open]')!.textContent).toContain('once saved, its value is never shown again. It is left out of this browser\'s drafts and of Export graph. '
+    + 'Run traces, the Log step and the service logs show it as hidden. A true or false worked out from it is shown. '
+    + 'A step that returns what it was given, such as a custom step or a service response, can still show it.')
   expectClean(root)
 })
 

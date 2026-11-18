@@ -5,7 +5,7 @@ import type { JsonValue } from '../visual/contract'
 import { entityTexts } from './adapter'
 import { EntityApiError, entityApi, entityError, type EntityPreview } from './api'
 import { definitionPollInterval, noteStarting } from './DefinitionCard'
-import { definitionId, type DefinitionBody, type DefinitionDevice, type DefinitionSetting, type EntityDocument, type EntityType, type HomeDefinition } from './model'
+import { definitionId, maskedSetting, type DefinitionBody, type DefinitionDevice, type DefinitionSetting, type EntityDocument, type EntityType, type HomeDefinition } from './model'
 
 /**
  * What the class definition's page edits: its name, its class (a `types` id; empty while none is chosen), the values
@@ -19,8 +19,6 @@ export interface ClassBody {
 }
 
 const none = (value: unknown) => value === null || value === undefined
-/** A value the page was not sent (a secret, or every value of a class it cannot describe): untouched, it is kept. */
-export const maskedValue = (setting: DefinitionSetting | undefined) => !!setting && setting.hasValue === true && none(setting.value)
 
 /**
  * The device a request sends, its empty details left out. A single entity's is the switch's: on, a device even with no
@@ -49,7 +47,7 @@ export function classRequest(body: ClassBody, kind?: EntityType['kind']): Defini
   return {
     name: body.name,
     device: deviceToSend(body.device, kind),
-    settings: body.settings.map(setting => (maskedValue(setting) ? { key: setting.key, keep: true } : { key: setting.key, value: setting.value ?? null })),
+    settings: body.settings.map(setting => (maskedSetting(setting) ? { key: setting.key, keep: true } : { key: setting.key, value: setting.value ?? null })),
     logic: { kind: 'class', type: body.type },
   }
 }
@@ -57,7 +55,7 @@ export function classRequest(body: ClassBody, kind?: EntityType['kind']): Defini
 /** What counts as a change: an empty value that was never saved is the same as no value at all. */
 const comparable = (body: ClassBody, kind: EntityType['kind'] | undefined) => JSON.stringify({
   ...classRequest(body, kind),
-  settings: body.settings.filter(s => !none(s.value) || s.hasValue === true).map(s => (maskedValue(s) ? { key: s.key, keep: true } : { key: s.key, value: s.value })),
+  settings: body.settings.filter(s => !none(s.value) || s.hasValue === true).map(s => (maskedSetting(s) ? { key: s.key, keep: true } : { key: s.key, value: s.value })),
 })
 
 /** The members of a read that say how the definition runs, which a re-read takes even over unsaved changes. */
@@ -102,6 +100,8 @@ export function createClassSession(
   // Number fields whose text does not read as a number of their type, in the order they became so: nothing is saved
   // while there is one.
   const [unreadable, setUnreadable] = createSignal<UnreadableNumber[]>([])
+  // Counts the reloads that discarded the page's changes: a field then shows what is saved, whatever was typed in it.
+  const [reverted, setReverted] = createSignal(0)
 
   const type = createMemo(() => { const id = body().type; return id ? options.types()?.find(t => t.id === id) : undefined })
   const kind = () => type()?.kind
@@ -242,7 +242,7 @@ export function createClassSession(
   }))
 
   return {
-    document, body, dirty, type, diagnostics, error, conflict, saving, switching, notice, unreadable,
+    document, body, dirty, type, diagnostics, error, conflict, saving, switching, notice, unreadable, reverted,
     setting,
     /** A number field's text reads (no `problem`) or does not. */
     markUnreadable(key: string, problem: Omit<UnreadableNumber, 'key'> | undefined) {
@@ -271,7 +271,7 @@ export function createClassSession(
     async reload() {
       const saved = document()
       if (!saved) return
-      try { accept(await api.read(saved.id)) } catch (failure) { setError(entityError(failure)) }
+      try { accept(await api.read(saved.id)); setReverted(n => n + 1) } catch (failure) { setError(entityError(failure)) }
     },
     refresh,
     async setEnabled(enabled: boolean) {

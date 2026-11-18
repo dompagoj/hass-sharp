@@ -30,7 +30,8 @@ export const unanswered = (error: unknown) => typeof (error as { code?: unknown 
  * With another adapter (an entity definition's, {@link EntityRunTraceView}) the document is read, and the editor and
  * list linked, through it, in its words; `ownRunsOnly` then shows a run only on its own document's page: a run of
  * another document, a document that no longer exists and one that cannot be read as the adapter's (an entity definition
- * built from a class) each say so instead. An automation's page follows the run's automation, as it always has.
+ * built from a class) each say so instead, and a document that cannot be read just now offers Try again. An
+ * automation's page follows the run's automation, as it always has.
  */
 export function RunTraceView(props: { adapter?: EditorAdapter; ownRunsOnly?: boolean } = {}) {
   const hass = useHass()
@@ -83,17 +84,18 @@ export function RunTraceView(props: { adapter?: EditorAdapter; ownRunsOnly?: boo
   const back = () => navigate(`${editorHref()}?drawer=runs`)
   /**
    * Why a page that shows only its own runs does not show this one: the document is gone, cannot be read as this
-   * page's (its own words), or the run is another's. The run is known to be its own only once the document is read.
+   * page's (its own words), could not be read now (`retry`), or the run is another's. The run is known to be its own
+   * only once the document is read.
    */
-  const refused = (): { text: string; gone?: boolean } | undefined => {
+  const refused = (): { text: string; gone?: boolean; retry?: boolean } | undefined => {
     if (!own) return
     if (current.isError) {
       const code = adapter.apiError(current.error)?.code
       if (code === 'not_found') return { text: texts.traceDeleted ?? 'This automation no longer exists.', gone: true }
       // An entity definition built from a class, which has no recorded runs: the read's own words.
       if (code === classDefinitionCode) return { text: visualError(current.error) }
-      // Any other failure only leaves the revision now unknown, as on an automation's page.
-      return
+      // Any other failure: whether the run is its own is not known, so it is not shown until a read succeeds.
+      return { text: visualError(current.error), retry: true }
     }
     const run = data()?.run, document = current.data
     if (run && (run.visualId !== params.id || (document && run.automationId !== document.automationId)))
@@ -117,7 +119,10 @@ export function RunTraceView(props: { adapter?: EditorAdapter; ownRunsOnly?: boo
             <p>{reason().text}</p>
             <p>{reason().gone
               ? <Button onClick={() => navigate(adapter.listHref)}>{texts.back}</Button>
-              : <Button onClick={() => navigate(editorHref())}>Open in editor</Button>}</p>
+              : <>
+                {reason().retry && <><Button onClick={() => void current.refetch()}>Try again</Button>{' '}</>}
+                <Button onClick={() => navigate(editorHref())}>Open in editor</Button>
+              </>}</p>
           </div>
         )}
       </Match>

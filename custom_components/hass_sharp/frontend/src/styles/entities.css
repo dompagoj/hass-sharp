@@ -106,6 +106,10 @@
    sections scroll under it, and a field focused from Save is not left under it. */
 .hs-app .hs-cdef > .hs-topbar { position: sticky; top: 0; z-index: 10; }
 .hs-app .hs-cdef__body .hs-input, .hs-app .hs-cdef__body .hs-button { scroll-margin-top: 80px; }
+/* Below 700px the bar wraps onto two rows (editor-shell.css). */
+@media (max-width: 699px) {
+  .hs-app .hs-cdef__body .hs-input, .hs-app .hs-cdef__body .hs-button { scroll-margin-top: 128px; }
+}
 .hs-app .hs-cdef__body { display: grid; align-content: start; gap: 16px; width: 100%; max-width: 760px; min-width: 0; margin: 0 auto; padding: 24px 24px 64px; }
 .hs-app .hs-cdef__body > .hs-def-section { gap: 12px; padding: 16px; border: 1px solid var(--hs-line); border-radius: 12px; background: var(--hs-surface); }
 .hs-app .hs-cdef__body > .hs-def-delete { padding-top: 0; border-top: 0; }

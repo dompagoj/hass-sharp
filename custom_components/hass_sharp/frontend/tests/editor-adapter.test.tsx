@@ -10,6 +10,8 @@ import type { VisualPreview } from '../src/visual/api'
 import { graphDocument } from '../src/visual/contract'
 import type { VisualGraph } from '../src/visual/graph'
 import { visualFixture } from './visual-fixture'
+import { automationAdapter } from '../src/visual/automationAdapter'
+import { entityAdapter } from '../src/entities/adapter'
 
 // The editor driven by a second kind of document: a stub adapter with its own backend, ids, routes and words. Nothing
 // of the automation's may show (its words, its routes) and no automation request may be sent.
@@ -389,4 +391,12 @@ it('turns the widget off through the adapter, and links its runs to the adapter\
   expect(host.querySelector('a.hs-run-trace')!.getAttribute('href')).toBe('/widgets/spinner/runs/run-1')
   expectClean(host)
   expect(automationCalls).toEqual([])
+})
+
+it('encodes the id in the editor link of the automation and the entity definition, as in their run links', () => {
+  const hass = { callWS: async () => ({}) }
+  expect(automationAdapter(hass).editorHref('visual-a b/c?d')).toBe('/visual/visual-a%20b%2Fc%3Fd')
+  expect(automationAdapter(hass).editorHref('visual-0f3c')).toBe('/visual/visual-0f3c')
+  expect(entityAdapter(hass).editorHref('a b/c?d')).toBe('/entities/a%20b%2Fc%3Fd')
+  expect(automationAdapter(hass).runHref('visual-a b', 'r/1')).toBe('/visual/visual-a%20b/runs/r%2F1')
 })

@@ -68,14 +68,15 @@ export function cardEntities(item: Pick<HomeDefinition, 'id' | 'entities' | 'liv
 export const watchedEntityIds = (item: HomeDefinition) =>
   cardEntities(item).slice(0, shownEntities).flatMap(e => (e.entityId && !e.disabled ? [e.entityId] : []))
 
-/** An entity's state on its card: Home Assistant's text, Unavailable, Unknown, or none yet. */
+/** An entity's state on its card: Home Assistant's text (a number with its unit), Unavailable, Unknown, or none yet. */
 function stateText(entity: CardEntity, states: LiveStates): { text: string; none?: boolean; quiet?: boolean } {
   if (entity.disabled) return { text: 'Disabled in Home Assistant', quiet: true }
   const state = entity.entityId ? states[entity.entityId] : undefined
   if (!state) return { text: '—', none: true }
   if (state.state === 'unavailable') return { text: 'Unavailable', quiet: true }
   if (state.state === 'unknown') return { text: 'Unknown', quiet: true }
-  return { text: state.state }
+  const number = state.state.trim() !== '' && Number.isFinite(Number(state.state))
+  return { text: number && state.unit ? `${state.state} ${state.unit}` : state.state }
 }
 
 const starting = (item: HomeDefinition) => item.enabled && item.status === 'setup'

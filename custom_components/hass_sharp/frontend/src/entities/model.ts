@@ -138,7 +138,7 @@ export interface EditorDefinition {
   device: DefinitionDevice | null
 }
 
-/** What an entity's key looks like (`^[a-z][a-z0-9_]{0,39}$`); the definition form holds graph settings' keys to it too. */
+/** What an entity's key looks like (`^[a-z][a-z0-9_]{0,39}$`). A setting's key only has to be non-blank and unique (ruling R15). */
 export const entityKeyPattern = /^[a-z][a-z0-9_]{0,39}$/
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const editorDefinition = (graph: Graph) => graph.definition as unknown as EditorDefinition
@@ -159,12 +159,19 @@ export function editorGraph(body: DefinitionBody): Graph {
 }
 
 /**
- * A setting as a request sends it: a masked value nobody changed (`value` null, `hasValue` true) as `keep`, every
- * other without `hasValue` and `keep`.
+ * Whether the setting is masked as the API answers it and nobody changed it since: no value here (null or none) and
+ * one stored (`hasValue`). A save keeps the stored value of such a setting, as `EntityDefinitionStore`'s `Kept` does.
+ */
+export const maskedSetting = (setting: DefinitionSetting | undefined): boolean =>
+  !!setting && setting.hasValue === true && (setting.value === null || setting.value === undefined)
+
+/**
+ * A setting as a request sends it: a masked value nobody changed ({@link maskedSetting}) as `keep`, every other
+ * without `hasValue` and `keep`.
  */
 const settingToSend = (setting: DefinitionSetting): DefinitionSetting => {
-  const { hasValue, keep: _keep, ...sent } = setting
-  if ((sent.value === null || sent.value === undefined) && hasValue === true) {
+  const { hasValue: _hasValue, keep: _keep, ...sent } = setting
+  if (maskedSetting(setting)) {
     const { value: _value, ...described } = sent
     return { ...described, keep: true }
   }

@@ -52,6 +52,16 @@ describe('Has state and Current state', () => {
     // In an automation as well.
     expect(nodeSummary(node('entity_current', { entity: lit('entity_id', 'sensor.power') }))).toBe('Current state ▸ sensor.power')
   })
+  it('name the entity as Home Assistant names it, and by its id when Home Assistant does not know it', () => {
+    const registry = { entities: [{ entity_id: 'binary_sensor.motion_a', name: 'Hall motion' }, { entity_id: 'sensor.power', name: null }] }
+    const summary = (n: GraphNode) => nodeSummary(n, nodeCatalog, registry, graph)
+    expect(summary(node('entity_is', { entity: lit('entity_id', 'binary_sensor.motion_a'), state: lit('string', 'on') }))).toBe('Has state ▸ Hall motion is on')
+    expect(summary(node('entity_current', { entity: lit('entity_id', 'binary_sensor.motion_a') }))).toBe('Current state ▸ Hall motion')
+    expect(summary(node('entity_current', { entity: lit('entity_id', 'sensor.power') }))).toBe('Current state ▸ sensor.power')
+    expect(summary(node('entity_is', { entity: lit('entity_id', 'binary_sensor.gone'), state: lit('string', 'on') }))).toBe('Has state ▸ binary_sensor.gone is on')
+    // In an automation as well.
+    expect(nodeSummary(node('entity_current', { entity: lit('entity_id', 'binary_sensor.motion_a') }), nodeCatalog, registry)).toBe('Current state ▸ Hall motion')
+  })
   it('name a wired entity by the output it comes from', () => {
     const wired: Graph = { version: 5, name: 'A', nodes: [
       { id: 't', kind: 'trigger', config: { type: 'entity', entity: 'binary_sensor.motion' } },

@@ -12,7 +12,7 @@ export function EntityHelp(props: { open: boolean; onClose: () => void }) {
       <h3>Keys</h3>
       <p>Each entity has a key: lower-case letters, digits and underscores. Together with the entity definition's id, it is the entity's identity in Home Assistant, so it cannot change once saved. Before the first save, changing a key changes it in every step that uses the entity.</p>
       <h3>Settings and secrets</h3>
-      <p>A setting is a value the steps read with a Setting step, such as an address. Mark a password or a token as a secret: once saved, it is never shown again, and it is left out of this browser's drafts and of Export graph. Type a new value to replace it, or clear it.</p>
+      <p>A setting is a value the steps read with a Setting step, such as an address. Mark a password or a token as a secret: once saved, its value is never shown again. It is left out of this browser's drafts and of Export graph. Run traces, the Log step and the service logs show it as hidden. A true or false worked out from it is shown. A step that returns what it was given, such as a custom step or a service response, can still show it. Type a new value to replace it, or clear it.</p>
       <h3>In Home Assistant</h3>
       <p>Saving creates or updates the entities at once. Grouped as a device, they share a device page, named after the entity definition; otherwise each is an entity on its own. Find them under Settings, Devices &amp; services, Entities, and try a switch's commands there. Turned off, the definition's entities stay in Home Assistant as unavailable; deleting it removes them.</p>
       <h3>Keyboard</h3>
