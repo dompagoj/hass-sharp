@@ -104,6 +104,11 @@ export type FixtureRuns = Partial<Pick<HomeAutomation, 'recentRuns' | 'runsToday
 
 /** How a fixture definition runs once loaded (`controls.activation`). */
 export type FixtureActivation = 'running' | 'failed' | 'notLoaded'
+/**
+ * A class for the fixture's `types`, with the entities its instance reports once loaded (`entities`, fixture only: the
+ * real `types` answer lists none, and neither does the fixture's).
+ */
+export type FixtureEntityType = EntityType & { entities?: { key: string; domain: string; name?: string | null }[] }
 
 /**
  * The in-memory `hass_sharp/entities` backend of {@link visualFixture} (`fixture.entities`), answering as
@@ -116,8 +121,14 @@ export type FixtureActivation = 'running' | 'failed' | 'notLoaded'
  *   not compile).
  * - `seed(id, body, fields?)`: stores a definition at revision 1, as `controls.activation` says it runs (off with
  *   `{enabled: false}`); `fields` overrides any member of the stored document (`status`, `liveEntities`, …).
- * - `types`: the `types` answer's classes (from the `entityTypes` option); its `generation` is the library generation.
- * - `registry`: Home Assistant's entity registry entries by definition id, answered as `registeredEntities`.
+ * - `types`: the classes (`FixtureEntityType`, from the `entityTypes` option), answered by `types` without their
+ *   `entities`, whose `generation` is the library generation. A class's `entities` are what its instance reports.
+ * - Loaded (`running` or `failed`, whose start threw after its entities were made), a definition answers `liveEntities`:
+ *   a graph's entities, or its class's `entities`, each `{uniqueId: '<id>:<key>', key, domain, name, entityId:
+ *   '<domain>.<id>_<key>'}`. Each load also records them as Home Assistant's registry would (`published`, replaced on
+ *   the next load), answered as `registeredEntities` while the definition is off or not loaded too, until it is deleted.
+ * - `registry`: registry entries a test seeds by definition id; seeded for an id, they are its `registeredEntities`
+ *   instead of the recorded ones.
  * - `runs`: the run summary of the home list (`recentRuns`, `runsToday`, `failedLastDay`, `lastRunUtc`) by definition id.
  * - `requests`: every `request` received, in order (`fixture.calls` keeps the whole messages, as for every route).
  * - `controls.diagnostics`: what `preview` answers for a definition with no document problems: valid unless one is an
@@ -132,17 +143,20 @@ export type FixtureActivation = 'running' | 'failed' | 'notLoaded'
  * keyed `^[a-z][a-z0-9_]{0,39}$` (`definition.entityKey`) and uniquely (`definition.duplicateEntity`); with any of them
  * the seeded diagnostics are not answered.
  *
- * Refusals come in the real order. Every operation with an id refuses one outside `^[a-z0-9][a-z0-9_-]{0,79}$`
- * (`invalid_request` "Invalid definition ID") after the request's missing fields (`id`, `enabled`, `expectedRevision`)
- * and before `not_found` (`read`, `set_enabled`, `delete` of an unknown id) and `conflict`. A graph save is first
- * previewed, as Python does: `keep` with a value (`invalid_request`), then `validation`, whatever its id and revision.
- * Then, for every save: a missing `id` or `expectedRevision`, `keep` with a value, the id (`invalid_request`), a stale
- * revision (`conflict`), `enabled` for a saved definition (`invalid_request`), and a class's `validation`. A setting sent
- * with `keep`, or with `hasValue` and no value, is stored with the value (and secret flag) stored before; any other as sent.
+ * Refusals come in the real order, with the real `invalid_request` texts for a field missing (`id is required`) or of
+ * the wrong type (`id must be a string`, `expectedRevision must be a whole number`, `enabled must be true or false`).
+ * Every operation with an id refuses one outside `^[a-z0-9][a-z0-9_-]{0,79}$` ("Invalid definition ID") after reading
+ * its fields, and before `not_found` (`read`, `set_enabled`, `delete` of an unknown id) and `conflict`. A save whose
+ * `definition.logic` is `{kind: 'graph', graph: <an object>}` is first previewed, as Python does: `keep` with a value
+ * (`invalid_request`), then `validation`, whatever its id and revision. Then, for every save: `id`, `expectedRevision`,
+ * the `definition` (missing, not an object, `keep` with a value), `enabled`, the id pattern, a stale revision
+ * (`conflict`), `enabled` for a saved definition, and a class's `validation`. A setting sent with `keep`, or with
+ * `hasValue` and no value, is stored with the value (and secret flag) stored before; any other as sent.
  */
-function entitiesFixture(options: { entityTypes?: EntityType[] }, generation: () => string) {
+function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generation: () => string) {
   const documents = new Map<string, EntityDocument>()
   const registry = new Map<string, RegisteredEntity[]>()
+  const published = new Map<string, RegisteredEntity[]>()
   const runs = new Map<string, FixtureRuns>()
   const types = structuredClone(options.entityTypes ?? [])
   const requests: any[] = []
@@ -181,12 +195,21 @@ function entitiesFixture(options: { entityTypes?: EntityType[] }, generation: ()
   const running = (id: string, body: DefinitionBody, enabled: boolean): Partial<EntityDocument> => {
     const activation = enabled ? controls.activation : 'off'
     const loaded = activation === 'running' || activation === 'failed'
+    // A graph's entities, or those its class's instance reports (`FixtureEntityType.entities`).
+    const made = body.logic.kind === 'graph' ? body.entities ?? [] : types.find(t => t.id === body.logic.type)?.entities ?? []
     return {
       automationId: `entity:${id}`, active: loaded, currentRevisionActive: loaded,
       activationError: activation === 'off' ? 'Not active' : activation === 'running' ? null : controls.activationError,
       status: activation === 'running' ? 'running' : activation === 'failed' ? 'failed' : 'off',
-      liveEntities: activation === 'running' ? (body.entities ?? []).map(e => ({ uniqueId: `${id}:${e.key}`, key: e.key, domain: e.domain, name: (e.name as string | null | undefined) ?? null, entityId: `${e.domain}.${id}_${e.key}` })) : [],
+      liveEntities: loaded ? made.map(e => ({ uniqueId: `${id}:${e.key}`, key: e.key, domain: e.domain, name: (e.name as string | null | undefined) ?? null, entityId: `${e.domain}.${id}_${e.key}` })) : [],
     }
+  }
+  /** Keeps the document; a loaded one's entities as the registry has them from then on. */
+  const keep = (document: EntityDocument) => {
+    documents.set(document.id, document)
+    if (document.status === 'running' || document.status === 'failed')
+      published.set(document.id, document.liveEntities.map(e => ({ uniqueId: e.uniqueId, entityId: e.entityId ?? `${e.domain}.${document.id}_${e.key}`, domain: e.domain, name: e.name, disabled: false })))
+    return document
   }
   /** What a save or `set_enabled` answers of a definition's start: off by the user has no error. */
   const started = (document: EntityDocument) => ({ active: document.currentRevisionActive, activationError: document.enabled ? document.activationError : null })
@@ -218,87 +241,101 @@ function entitiesFixture(options: { entityTypes?: EntityType[] }, generation: ()
     // As EntityLifecycle.WithoutSecretValues: a class's setting is answered only when its type declares it, not secret.
     const masked = (key: string, secret?: boolean) => document.logic.kind === 'graph' ? secret === true : !type || !type.settings.some(s => s.key === key && !s.secret)
     const settings = document.settings.map(s => (masked(s.key, s.secret) ? { ...s, value: null, secret: true, hasValue: !empty(s.value) } : s))
-    const entries = [...(registry.get(document.id) ?? [])].sort((a, b) => (a.uniqueId < b.uniqueId ? -1 : a.uniqueId > b.uniqueId ? 1 : 0))
+    const entries = [...(registry.get(document.id) ?? published.get(document.id) ?? [])].sort((a, b) => (a.uniqueId < b.uniqueId ? -1 : a.uniqueId > b.uniqueId ? 1 : 0))
     return structuredClone({ ...document, settings, registeredEntities: entries })
   }
   const summary = (document: EntityDocument) => { const { source: _source, sourceMap: _sourceMap, ...rest } = answered(document); return rest }
   const sorted = () => [...documents.values()].sort((a, b) => (a.id < b.id ? -1 : 1))
-  /** A refusal of the request's `definition` as `EntityApi.DefinitionBody` reads it; none when it reads. */
-  const bodyRefusal = (definition: unknown) => {
-    if (definition === undefined || definition === null) return fail('invalid_request', 'definition is required')
-    if (typeof definition !== 'object' || Array.isArray(definition)) return fail('invalid_request', 'definition must be an object')
-    const both = (definition as DefinitionBody).settings?.find(s => s.keep === true && !empty(s.value))
-    return both && fail('invalid_request', `Setting ${both.key} has both a value and keep; give the value, or keep to leave the saved one as it is`)
+  /** A refusal, thrown by the field readers and answered by `callWS`. */
+  class Refused { constructor(readonly answer: unknown) {} }
+  const refuse = (message: string): never => { throw new Refused(fail('invalid_request', message)) }
+  const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
+  // As ApiRequest's readers: JSON null is a field not given.
+  const text = (request: any, key: string): string => empty(request[key]) ? refuse(`${key} is required`) : typeof request[key] === 'string' ? request[key] : refuse(`${key} must be a string`)
+  const optionalText = (request: any, key: string): string | undefined => empty(request[key]) ? undefined : typeof request[key] === 'string' ? request[key] : refuse(`${key} must be a string`)
+  const whole = (request: any, key: string, hint: string): number => empty(request[key]) ? refuse(`${key} is required: ${hint}`) : Number.isInteger(request[key]) ? request[key] : refuse(`${key} must be a whole number`)
+  const optionalFlag = (request: any, key: string): boolean | undefined => empty(request[key]) ? undefined : typeof request[key] === 'boolean' ? request[key] : refuse(`${key} must be true or false`)
+  const flag = (request: any, key: string): boolean => optionalFlag(request, key) ?? refuse(`${key} is required`)
+  const revision = (request: any) => whole(request, 'expectedRevision', 'the revision this replaces, 0 for a new definition')
+  /** The request's `definition` as `EntityApi.DefinitionBody` reads it. */
+  const definitionOf = (request: any): DefinitionBody => {
+    const definition = request.definition
+    if (empty(definition)) refuse('definition is required')
+    if (!object(definition)) refuse('definition must be an object')
+    const both = (definition as unknown as DefinitionBody).settings?.find(s => s.keep === true && !empty(s.value))
+    if (both) refuse(`Setting ${both.key} has both a value and keep; give the value, or keep to leave the saved one as it is`)
+    return definition as unknown as DefinitionBody
   }
-  const idRefusal = (id: string) => /^[a-z0-9][a-z0-9_-]{0,79}$/.test(id) ? undefined : fail('invalid_request', 'Invalid definition ID')
+  const checkId = (id: string) => { if (!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(id)) refuse('Invalid definition ID') }
+  /** The definition's stored document, or `not_found`. */
+  const found = (id: string) => documents.get(id) ?? (() => { throw new Refused(fail('not_found', 'Entity definition not found')) })()
   const save = (request: any) => {
-    const definition = request.definition as DefinitionBody
-    // Python previews a graph before .NET reads the save's other fields.
-    const graph = (definition as any)?.logic?.kind === 'graph' && typeof (definition as any).logic.graph === 'object' && (definition as any).logic.graph !== null
-    if (graph) {
-      const refused = bodyRefusal(definition)
-      if (refused) return refused
-      const checked = preview(definition)
+    // Python previews a graph (an object, as `definition_graph` reads it) before .NET reads the save's other fields.
+    const logic = object(request.definition) ? request.definition.logic : undefined
+    if (object(logic) && logic.kind === 'graph' && object(logic.graph)) {
+      const checked = preview(definitionOf(request))
       if (!checked.valid) return fail('validation', checked)
     }
-    if (typeof request.id !== 'string') return fail('invalid_request', 'id is required')
-    if (typeof request.expectedRevision !== 'number') return fail('invalid_request', 'expectedRevision is required: the revision this replaces, 0 for a new definition')
-    const refused = bodyRefusal(definition) ?? idRefusal(request.id)
-    if (refused) return refused
-    const existing = documents.get(request.id)
-    if ((existing?.revision ?? 0) !== request.expectedRevision) return fail('conflict', 'Revision conflict; reload the current document')
-    if (existing && request.enabled !== undefined) return fail('invalid_request', 'enabled can only be given when saving a new definition; use set_enabled to turn a saved one on or off')
+    const id = text(request, 'id'), expected = revision(request), definition = definitionOf(request), enabled = optionalFlag(request, 'enabled')
+    checkId(id)
+    const existing = documents.get(id)
+    if ((existing?.revision ?? 0) !== expected) return fail('conflict', 'Revision conflict; reload the current document')
+    if (existing && enabled !== undefined) refuse('enabled can only be given when saving a new definition; use set_enabled to turn a saved one on or off')
     const checked = preview(definition)
     if (!checked.valid) return fail('validation', checked)
-    const document = stored(request.id, definition, request.expectedRevision + 1, existing?.enabled ?? request.enabled ?? true, existing)
-    documents.set(request.id, document)
-    return ok({ id: request.id, saved: true, document: answered(document), ...started(document), ...(checked.diagnostics.length ? { diagnostics: checked.diagnostics } : {}) })
+    const document = keep(stored(id, definition, expected + 1, existing?.enabled ?? enabled ?? true, existing))
+    return ok({ id, saved: true, document: answered(document), ...started(document), ...(checked.diagnostics.length ? { diagnostics: checked.diagnostics } : {}) })
+  }
+  const answer = (request: any) => {
+    switch (request.operation) {
+      case 'types': return ok({ types: types.map(({ entities: _entities, ...type }) => structuredClone(type)), generation: generation() })
+      case 'list': {
+        const view = optionalText(request, 'view')
+        if (view !== undefined && view !== 'home') refuse('Unknown list view; the entity definitions list has the view home')
+        return ok(sorted().map(document => view === 'home'
+          ? { ...summary(document), recentRuns: [], runsToday: 0, failedLastDay: 0, lastRunUtc: null, ...structuredClone(runs.get(document.id) ?? {}) }
+          : summary(document)))
+      }
+      case 'preview': return ok(preview(definitionOf(request)))
+      case 'save': return save(request)
+      case 'read': { const id = text(request, 'id'); checkId(id); return ok(answered(found(id))) }
+      case 'set_enabled': {
+        const id = text(request, 'id'), enabled = flag(request, 'enabled')
+        checkId(id)
+        const existing = found(id)
+        const document = keep({ ...existing, enabled, ...running(id, existing, enabled) })
+        return ok({ id, enabled: document.enabled, ...started(document) })
+      }
+      case 'delete': {
+        const id = text(request, 'id'), expected = revision(request)
+        checkId(id)
+        if (found(id).revision !== expected) return fail('conflict', 'Revision conflict; reload the current document')
+        documents.delete(id)
+        registry.delete(id)
+        published.delete(id)
+        return ok({ deleted: true })
+      }
+      default: return refuse('Unknown entity operation')
+    }
   }
   const callWS = async (message: any) => {
     const request = message.request
     requests.push(structuredClone(request))
-    switch (request.operation) {
-      case 'types': return ok({ types: structuredClone(types), generation: generation() })
-      case 'list':
-        if (request.view !== undefined && request.view !== null && request.view !== 'home') return fail('invalid_request', 'Unknown list view; the entity definitions list has the view home')
-        return ok(sorted().map(document => request.view === 'home'
-          ? { ...summary(document), recentRuns: [], runsToday: 0, failedLastDay: 0, lastRunUtc: null, ...structuredClone(runs.get(document.id) ?? {}) }
-          : summary(document)))
-      case 'preview': return bodyRefusal(request.definition) ?? ok(preview(request.definition))
-      case 'save': return save(request)
-      case 'read': case 'set_enabled': case 'delete': {
-        // As EntityRequest reads them: the id, the operation's own field, then the store's id check.
-        if (typeof request.id !== 'string') return fail('invalid_request', 'id is required')
-        if (request.operation === 'set_enabled' && typeof request.enabled !== 'boolean') return fail('invalid_request', 'enabled is required')
-        if (request.operation === 'delete' && typeof request.expectedRevision !== 'number') return fail('invalid_request', 'expectedRevision is required: the revision this replaces, 0 for a new definition')
-        const refused = idRefusal(request.id)
-        if (refused) return refused
-        const existing = documents.get(request.id)
-        if (!existing) return fail('not_found', 'Entity definition not found')
-        if (request.operation === 'read') return ok(answered(existing))
-        if (request.operation === 'set_enabled') {
-          const document = { ...existing, enabled: request.enabled, ...running(existing.id, existing, request.enabled) }
-          documents.set(existing.id, document)
-          return ok({ id: existing.id, enabled: document.enabled, ...started(document) })
-        }
-        if (existing.revision !== request.expectedRevision) return fail('conflict', 'Revision conflict; reload the current document')
-        documents.delete(existing.id)
-        registry.delete(existing.id)
-        return ok({ deleted: true })
-      }
-      default: return fail('invalid_request', 'Unknown entity operation')
+    try {
+      return answer(request)
+    } catch (error) {
+      if (error instanceof Refused) return error.answer
+      throw error
     }
   }
   const seed = (id: string, body: DefinitionBody, fields: Partial<EntityDocument> = {}) => {
-    const document = { ...stored(id, body, 1, fields.enabled ?? true), ...structuredClone(fields) }
-    documents.set(id, document)
-    return document
+    return keep({ ...stored(id, body, 1, fields.enabled ?? true), ...structuredClone(fields) })
   }
-  return { documents, registry, runs, types, requests, controls, seed, callWS }
+  return { documents, registry, published, runs, types, requests, controls, seed, callWS }
 }
 
 export function visualFixture(
-  options: { catalog?: VisualCatalogSnapshot; libraries?: { id: string; name: string; revision: number; source: string }[]; entityTypes?: EntityType[] } = {},
+  options: { catalog?: VisualCatalogSnapshot; libraries?: { id: string; name: string; revision: number; source: string }[]; entityTypes?: FixtureEntityType[] } = {},
 ) {
   const documents = new Map<string, VisualDocument>()
   const runs = new Map<string, FixtureRuns>()

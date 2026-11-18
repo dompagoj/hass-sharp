@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { entityApi, EntityApiError, entityError } from '../src/entities/api'
 import { VisualApiError } from '../src/visual/api'
-import { definitionBody, editorGraph, newGraphDefinition, type DefinitionBody, type EntityType } from '../src/entities/model'
-import { visualFixture } from './visual-fixture'
+import { definitionBody, editorGraph, newGraphDefinition, type DefinitionBody } from '../src/entities/model'
+import { visualFixture, type FixtureEntityType } from './visual-fixture'
 
 const ok = (result: unknown) => ({ version: 1, ok: true, result })
 const fail = (code: string, detail: unknown) => ({ version: 1, ok: false, error: { code, detail } })
@@ -82,6 +82,12 @@ describe('entity API client', () => {
     expect(new VisualApiError('conflict', 'x')).not.toBeInstanceOf(EntityApiError)
     expect(new EntityApiError('validation', {})).toMatchObject({ code: 'validation', detail: {}, message: 'Fix the problems before saving.' })
   })
+  it('rethrows an Error as it is', async () => {
+    const thrown = new Error('Socket closed')
+    const hass = { callWS: async () => { throw thrown } }
+    await expect(entityApi(hass as any).list()).rejects.toBe(thrown)
+    expect(entityError(thrown)).toBe('Socket closed')
+  })
   it('passes a lost connection on in both forms the websocket library rejects with', async () => {
     const rejecting = (value: unknown) => entityApi({ callWS: async () => { throw value } } as any).list().catch(e => e)
     const result = await rejecting({ type: 'result', success: false, error: { code: 3, message: 'Connection lost' } })
@@ -97,7 +103,7 @@ describe('entity API client', () => {
 })
 
 describe('the in-memory entities backend', () => {
-  const tokenType: EntityType = {
+  const tokenType: FixtureEntityType = {
     id: 'library:shelly:NodeLib.FakePlug', sourceId: 'shelly', typeExpression: 'global::NodeLib.FakePlug', kind: 'device', domain: null,
     title: 'FakePlug', description: null, settings: [
       { key: 'Host', label: 'Host', description: null, type: 'string', secret: false, options: [] },
@@ -111,7 +117,8 @@ describe('the in-memory entities backend', () => {
     const { fixture, api } = setup()
     const saved = await api.save('motion', body(), 0)
     expect(saved).toMatchObject({ id: 'motion', saved: true, active: true, activationError: null })
-    expect(saved.document).toMatchObject({ id: 'motion', revision: 1, name: 'Any motion', enabled: true, status: 'running', automationId: 'entity:motion', currentRevisionActive: true, registeredEntities: [] })
+    expect(saved.document).toMatchObject({ id: 'motion', revision: 1, name: 'Any motion', enabled: true, status: 'running', automationId: 'entity:motion', currentRevisionActive: true })
+    expect(saved.document.registeredEntities).toEqual([{ uniqueId: 'motion:any_motion', entityId: 'binary_sensor.motion_any_motion', domain: 'binary_sensor', name: 'Any motion', disabled: false }])
     expect(saved.document.liveEntities).toEqual([{ uniqueId: 'motion:any_motion', key: 'any_motion', domain: 'binary_sensor', name: 'Any motion', entityId: 'binary_sensor.motion_any_motion' }])
     expect(saved.document.logic).toEqual({ kind: 'graph', type: null, graph: body().logic.kind === 'graph' && body().logic.graph })
     await expect(api.save('motion', body(), 0)).rejects.toMatchObject({ code: 'conflict' })
@@ -261,7 +268,8 @@ describe('the in-memory entities backend', () => {
     fixture.entities.controls.activationError = 'Start threw: no network'
     saved = await api.save('motion', body(), 1)
     expect([saved.active, saved.activationError, ...state(saved.document)]).toEqual([true, 'Start threw: no network', 'failed', true, true, 'Start threw: no network'])
-    expect(saved.document.liveEntities).toEqual([])
+    // Its start threw after its entities were made: they are listed (and shown unavailable in Home Assistant).
+    expect(saved.document.liveEntities.map(e => e.uniqueId)).toEqual(['motion:any_motion'])
     fixture.entities.controls.activation = 'notLoaded'
     fixture.entities.controls.activationError = 'The node libraries have errors; fix them first'
     saved = await api.save('motion', body(), 2)
@@ -277,5 +285,74 @@ describe('the in-memory entities backend', () => {
     expect(state(seeded)).toEqual(['off', false, false, 'Not active'])
     const fresh = await api.save('fresh', body(), 0, false)
     expect([fresh.active, fresh.activationError, fresh.document.status]).toEqual([false, null, 'off'])
+  })
+  it("lists a class definition's entities from what its class reports, and keeps them registered while it is off", async () => {
+    const plugType: FixtureEntityType = { ...tokenType, id: 'library:shelly:NodeLib.Plug', entities: [{ key: 'relay', domain: 'switch', name: null }, { key: 'power', domain: 'sensor', name: 'Power' }] }
+    const fixture = visualFixture({ entityTypes: [plugType] }), api = entityApi(fixture as any)
+    // The types answer is the real descriptor: no entities.
+    const { entities: _entities, ...descriptor } = plugType
+    expect((await api.types()).types).toStrictEqual([descriptor])
+    const plug: DefinitionBody = { name: 'Plug one', settings: [], logic: { kind: 'class', type: plugType.id } }
+    const saved = await api.save('plug1', plug, 0)
+    expect(saved.document.liveEntities).toEqual([
+      { uniqueId: 'plug1:relay', key: 'relay', domain: 'switch', name: null, entityId: 'switch.plug1_relay' },
+      { uniqueId: 'plug1:power', key: 'power', domain: 'sensor', name: 'Power', entityId: 'sensor.plug1_power' },
+    ])
+    const registered = [
+      { uniqueId: 'plug1:power', entityId: 'sensor.plug1_power', domain: 'sensor', name: 'Power', disabled: false },
+      { uniqueId: 'plug1:relay', entityId: 'switch.plug1_relay', domain: 'switch', name: null, disabled: false },
+    ]
+    expect(saved.document.registeredEntities).toEqual(registered)
+    // Failed in its start: still listed.
+    fixture.entities.controls.activation = 'failed'
+    expect((await api.save('plug1', plug, 1)).document.liveEntities).toHaveLength(2)
+    // Off, or not loaded: no live entities, the registry's as they were.
+    await api.setEnabled('plug1', false)
+    expect(await api.read('plug1')).toMatchObject({ status: 'off', liveEntities: [], registeredEntities: registered })
+    fixture.entities.controls.activation = 'notLoaded'
+    await api.setEnabled('plug1', true)
+    expect(await api.read('plug1')).toMatchObject({ status: 'off', liveEntities: [], registeredEntities: registered })
+    // Entries a test seeds win; a delete forgets them all.
+    fixture.entities.registry.set('plug1', [{ ...registered[1], disabled: true }])
+    expect((await api.read('plug1')).registeredEntities).toEqual([{ ...registered[1], disabled: true }])
+    await api.remove('plug1', 2)
+    fixture.entities.controls.activation = 'notLoaded'
+    expect((await api.save('plug1', plug, 0)).document.registeredEntities).toEqual([])
+    // A seeded running class definition reports its entities too.
+    fixture.entities.controls.activation = 'running'
+    expect(fixture.entities.seed('plug2', plug).liveEntities.map(e => e.entityId)).toEqual(['switch.plug2_relay', 'sensor.plug2_power'])
+    expect((await api.read('plug2')).registeredEntities.map(e => e.uniqueId)).toEqual(['plug2:power', 'plug2:relay'])
+  })
+  it('refuses a field of the wrong type with the real messages', async () => {
+    const { fixture, api } = setup()
+    const send = (request: Record<string, unknown>) => fixture.callWS({ type: 'hass_sharp/entities', request })
+    const refused = (detail: string) => ({ version: 1, ok: false, error: { code: 'invalid_request', detail } })
+    const classBody = { name: 'Plug one', settings: [], logic: { kind: 'class', type: tokenType.id } }
+    expect(await send({ operation: 'save', id: 7, expectedRevision: 0, definition: classBody })).toEqual(refused('id must be a string'))
+    expect(await send({ operation: 'save', id: 'plug', expectedRevision: 1.5, definition: classBody })).toEqual(refused('expectedRevision must be a whole number'))
+    expect(await send({ operation: 'save', id: 'plug', expectedRevision: '0', definition: classBody })).toEqual(refused('expectedRevision must be a whole number'))
+    expect(await send({ operation: 'save', id: 'plug', expectedRevision: 0, definition: [] })).toEqual(refused('definition must be an object'))
+    expect(await send({ operation: 'save', id: 'plug', expectedRevision: 0, definition: classBody, enabled: 'no' })).toEqual(refused('enabled must be true or false'))
+    // Read before the id's form: a bad enabled is refused first.
+    expect(await send({ operation: 'save', id: 'Bad id', expectedRevision: 0, definition: classBody, enabled: 1 })).toEqual(refused('enabled must be true or false'))
+    expect(await send({ operation: 'save', id: 'plug', expectedRevision: 0, definition: classBody, enabled: null })).toMatchObject({ ok: true })
+    expect(await send({ operation: 'read', id: ['plug'] })).toEqual(refused('id must be a string'))
+    expect(await send({ operation: 'read' })).toEqual(refused('id is required'))
+    expect(await send({ operation: 'set_enabled', id: 'plug', enabled: 'true' })).toEqual(refused('enabled must be true or false'))
+    expect(await send({ operation: 'set_enabled', id: 'plug' })).toEqual(refused('enabled is required'))
+    expect(await send({ operation: 'delete', id: 'plug', expectedRevision: 'one' })).toEqual(refused('expectedRevision must be a whole number'))
+    expect(await send({ operation: 'list', view: 3 })).toEqual(refused('view must be a string'))
+    expect(await send({ operation: 'list', view: 'all' })).toEqual(refused('Unknown list view; the entity definitions list has the view home'))
+    expect(await send({ operation: 'run' })).toEqual(refused('Unknown entity operation'))
+    expect(fixture.entities.documents.size).toBe(1)
+  })
+  it('previews first only a graph Python reads as one: an object', async () => {
+    const { fixture, api } = setup()
+    fixture.entities.controls.diagnostics = [{ nodeId: 's', message: 'On is required', severity: 3, startLine: null, startColumn: null }]
+    const arrayGraph = { ...body(), logic: { kind: 'graph', graph: [] } } as unknown as DefinitionBody
+    // Not previewed first: the id's form is refused before the validation.
+    await expect(api.save('Bad id', arrayGraph, 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
+    await expect(api.save('Bad id', body(), 0)).rejects.toMatchObject({ code: 'validation' })
+    await expect(api.save('motion', arrayGraph, 0)).rejects.toMatchObject({ code: 'validation' })
   })
 })
