@@ -137,6 +137,8 @@ class ScriptSyncRunner
         // A State of a definition built from nodes fails routinely (a source missing while Home Assistant starts): its host
         // says so once per reason, so its failure is not logged here.
         var state = host?.IsState(methodInfo.Name) == true;
+        // What a failing State's run threw, which its host words and logs.
+        Exception? stateFailure = null;
         try
         {
             // Fail closed: a run whose first record cannot be written fails before it executes, and restarts nothing.
@@ -167,10 +169,11 @@ class ScriptSyncRunner
                 catch (Exception ex)
                 {
                     record.Status = "Failed"; record.Error = ex.GetBaseException().Message;
-                    if (!state) Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}");
+                    if (state) stateFailure = ex;
+                    else Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}");
                 }
                 finally { record.DurationMs = timer.Elapsed.TotalMilliseconds; }
-                if (state) host!.StateEnded(methodInfo.Name, record.Status, record.Error);
+                if (state) host!.StateEnded(methodInfo.Name, record.Status, record.Error, stateFailure);
             });
         }
         catch (Exception ex)

@@ -176,8 +176,12 @@ public partial class HassSharpManager
         if (errors.Length > 0) _loadProblems[path] = errors.Length; else _loadProblems.TryRemove(path, out _);
         if (errors.Any(d => d.StartLine != null || d.Code == "definition.library")) _curableLoadErrors[path] = 0;
         else _curableLoadErrors.TryRemove(path, out _);
-        _loadErrors[path] = string.Join("\n", errors.Select(d => d.NodeId is { } node ? $"{node}: {d.Message}" : d.Message));
+        _loadErrors[path] = string.Join("\n", GraphProblems(diagnostics));
     }
+
+    /// <summary>A graph definition's problems as its load error and startup log line give them: its errors only, each after the id of its node.</summary>
+    static string[] GraphProblems(IEnumerable<VisualDiagnostic> diagnostics) =>
+        [.. diagnostics.Where(d => d.Severity >= 3).Select(d => d.NodeId is { } node ? $"{node}: {d.Message}" : d.Message)];
 
     /// <summary>
     /// Stores the definition's regenerated source, so the revision that runs it is recognised as current and a later

@@ -28,7 +28,9 @@ static class EntityGraphTests
             (nameof(AFailingCommandFlowFailsTheCommand), AFailingCommandFlowFailsTheCommand),
             (nameof(ACommandWithoutAFlowFails), ACommandWithoutAFlowFails),
             (nameof(ACommandThatDoesNotFinishTimesOut), ACommandThatDoesNotFinishTimesOut),
+            (nameof(ACommandWhoseFlowIsCancelledSaysWhy), ACommandWhoseFlowIsCancelledSaysWhy),
             (nameof(SetupRunsBeforeTheSyncAndItsFailureFailsTheSave), SetupRunsBeforeTheSyncAndItsFailureFailsTheSave),
+            (nameof(ASetupThatDoesNotFinishFailsTheSave), ASetupThatDoesNotFinishFailsTheSave),
             (nameof(ADeviceDefinitionGroupsItsEntities), ADeviceDefinitionGroupsItsEntities),
             (nameof(SettingsReachTheGraph), SettingsReachTheGraph),
             (nameof(ReplacingARevisionKeepsCustomisedEntities), ReplacingARevisionKeepsCustomisedEntities),
@@ -39,6 +41,9 @@ static class EntityGraphTests
             (nameof(ReactiveRunsAreNotRecordedAndCommandRunsAre), ReactiveRunsAreNotRecordedAndCommandRunsAre),
             (nameof(DeleteForgetsTheRunHistory), DeleteForgetsTheRunHistory),
             (nameof(AFailingStateWarnsOnceUntilItRecovers), AFailingStateWarnsOnceUntilItRecovers),
+            (nameof(AFailingNodeInAStateIsNamed), AFailingNodeInAStateIsNamed),
+            (nameof(AValueTheEntityRefusesMakesItUnavailable), AValueTheEntityRefusesMakesItUnavailable),
+            (nameof(SettingsAreReadWithoutThrowing), SettingsAreReadWithoutThrowing),
             (nameof(ATriggerFlowInADefinitionCanSetState), ATriggerFlowInADefinitionCanSetState),
             (nameof(AnUnknownSourceIsWarnedOfInPreviewAndSave), AnUnknownSourceIsWarnedOfInPreviewAndSave),
             (nameof(AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried), AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried) })
@@ -91,6 +96,8 @@ static class EntityGraphTests
 
     /// <summary>The acceptance definition: a binary sensor on while motion A or motion B is (the shared fixture's graph).</summary>
     static JsonObject Motion() => Definition("Any motion", EntityStoreTests.MotionGraph(), [.. EntityStoreTests.MotionEntities().Select(e => e!)]);
+    /// <summary>Waits, no longer than 5 s, for a Custom C# node's <c>Entered</c> to be released once: its run has reached it.</summary>
+    static async Task Reached(SemaphoreSlim entered, string what) => Check(await entered.WaitAsync(TimeSpan.FromSeconds(5)), "timed out waiting: " + what);
     /// <summary>A sensor whose value is <c>sensor.outside</c>'s state, as a number.</summary>
     static JsonObject Copy() => Definition("Outside", Graph("Outside",
         [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.outside") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), State("s", "outside")],
@@ -112,9 +119,11 @@ static class EntityGraphTests
     /// <summary>A Custom C# node whose code is <paramref name="source"/>, its pins written from the code as the editor writes them.</summary>
     static JsonObject Custom(string id, string source) => N(id, "custom", new JsonObject { ["source"] = source, ["arguments"] = new JsonObject() });
     /// <summary>A value node that hands its input on once the test releases <c>Gate</c>; cancelled with its run.</summary>
-    const string SlowValue = "public static class CustomNode\n{\n    public static readonly System.Threading.SemaphoreSlim Gate = new(0);\n    [Node(\"Slow\", Pure = true)]\n    public static async Task<bool> Run(bool value, CancellationToken token)\n    {\n        await Gate.WaitAsync(token);\n        return value;\n    }\n}";
+    const string SlowValue = "public static class CustomNode\n{\n    public static readonly System.Threading.SemaphoreSlim Gate = new(0), Entered = new(0);\n    [Node(\"Slow\", Pure = true)]\n    public static async Task<double> Run(double value, CancellationToken token)\n    {\n        Entered.Release();\n        await Gate.WaitAsync(token);\n        return value;\n    }\n}";
     /// <summary>A step that waits until the test releases <c>Gate</c>; cancelled with its run.</summary>
-    const string HoldStep = "public static class CustomNode\n{\n    public static readonly System.Threading.SemaphoreSlim Gate = new(0);\n    [Node(\"Hold\")]\n    public static async Task Run(NodeContext context)\n    {\n        await Gate.WaitAsync(context.CancellationToken);\n    }\n}";
+    const string HoldStep = "public static class CustomNode\n{\n    public static readonly System.Threading.SemaphoreSlim Gate = new(0), Entered = new(0);\n    [Node(\"Hold\")]\n    public static async Task Run(NodeContext context)\n    {\n        Entered.Release();\n        await Gate.WaitAsync(context.CancellationToken);\n    }\n}";
+    /// <summary>A value node that fails as a bug in it would: it reads a member of null.</summary>
+    const string BrokenValue = "public static class CustomNode\n{\n    [Node(\"Broken\", Pure = true)]\n    public static double Run(double value)\n    {\n        string? text = value > 1000 ? \"big\" : null;\n        return value + text!.Length;\n    }\n}";
 
     // ---- The rig ----
 
@@ -276,29 +285,40 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// Three changes in a row while the State is still working out the first: each newer one restarts it, and the last push
-    /// is the third's. The State's value node waits until the test releases it.
+    /// Three changes in a row, each while the State still works out the one before: each newer one cancels the run before
+    /// it, so no value of a cancelled run is ever pushed, and the last push is the third's. The State's value node passes
+    /// its source's value through (1, 2, 3, each run its own trigger's), and waits, one run at a time, until the test
+    /// releases it; a run that is not cancelled keeps waiting, so the next never reaches the node and the test times out.
     /// </summary>
     static async Task TheLastOfSeveralQuickChangesWins()
     {
-        await using var rig = await Rig.Start("quick", ("binary_sensor.motion_a", "off"));
+        await using var rig = await Rig.Start("quick", ("sensor.level", "0"));
         var graph = Derived(Graph("Quick",
-            [N("a", "entity_is", new JsonObject { ["entity"] = Lit("entity_id", "binary_sensor.motion_a"), ["state"] = Lit("string", "on") }), Custom("slow", SlowValue), State("s", "quick")],
-            Data("a", "slow", "value"), Data("slow", "s", "is_on", "result")));
-        await rig.Save("quick", Definition("Quick", graph, [Entity("quick", "binary_sensor")]));
-        var gate = rig.Static<SemaphoreSlim>("quick", "Gate");
+            [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.level") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), Custom("slow", SlowValue), State("s", "quick")],
+            Data("cur", "f", "entity"), Data("f", "slow", "value"), Data("slow", "s", "value", "result")));
+        await rig.Save("quick", Definition("Quick", graph, [Entity("quick", "sensor")]));
+        var (gate, entered) = (rig.Static<SemaphoreSlim>("quick", "Gate"), rig.Static<SemaphoreSlim>("quick", "Entered"));
         await rig.Started("quick");
         Check(rig.Pushed("quick:quick").Length == 0, "the entity was pushed before its State was worked out: " + Lines(rig.Home.Pushes()));
+        await Reached(entered, "the startup run reaches the value node");
         gate.Release();
-        await rig.Until("quick:quick", s => Available(s) && Is(s, "is_on", false), "the startup state once released");
+        await rig.Until("quick:quick", s => Available(s) && Is(s, "value", 0.0), "the startup state once released");
 
         var batches = rig.Batches;
-        var changes = new[] { rig.Change("binary_sensor.motion_a", "on"), rig.Change("binary_sensor.motion_a", "off"), rig.Change("binary_sensor.motion_a", "on") };
-        // Whichever runs are still waiting may go on: the earlier ones were cancelled, or end before the third starts.
-        gate.Release(changes.Length);
+        var changes = new List<Task>();
+        foreach (var value in new[] { "1", "2", "3" })
+        {
+            changes.Add(rig.Change("sensor.level", value));
+            // The run before this one was cancelled where it waited, and this one reached the node in its place.
+            await Reached(entered, $"the run of change {value} reaches the value node");
+        }
+        gate.Release();
         await Task.WhenAll(changes).WaitAsync(TimeSpan.FromSeconds(10));
         await rig.Flush();
-        Check(rig.Pushed("quick:quick", batches).LastOrDefault() is { } last && Available(last) && Is(last, "is_on", true), "the last push is the third change's: " + Lines(rig.Home.Pushes().Skip(batches)));
+        var pushed = rig.Pushed("quick:quick", batches);
+        Check(!pushed.Any(s => Is(s, "value", 1.0) || Is(s, "value", 2.0)), "a cancelled run's value was pushed: " + Lines(rig.Home.Pushes().Skip(batches)));
+        Check(pushed.LastOrDefault() is { } last && Available(last) && Is(last, "value", 3.0), "the last push is the third change's: " + Lines(rig.Home.Pushes().Skip(batches)));
+        Check(gate.CurrentCount == 0 && entered.CurrentCount == 0, "a run reached the value node or got past it unseen");
     }
 
     /// <summary>A switch's turn on and turn off flows run on its commands: each command completes once its flow has, and the state it set is pushed.</summary>
@@ -339,16 +359,23 @@ static class EntityGraphTests
     static async Task ACommandWithoutAFlowFails()
     {
         await using var rig = await Rig.Start("no-flow");
+        // The warning is the definition's, on no node: no node handles the command.
+        static bool Unhandled(JsonNode? diagnostics) => diagnostics?.AsArray().Any(d => d!["code"]!.GetValue<string>() == "command.unhandled" && d["severity"]!.GetValue<int>() == 2 && d["nodeId"] == null) == true;
+        var preview = await rig.Ok(new { operation = "preview", definition = Relay(turnOn: false) });
+        Check(preview["valid"]!.GetValue<bool>() && Unhandled(preview["diagnostics"]), "the preview warns of the command no flow handles: " + preview["diagnostics"]?.ToJsonString());
         var saved = await rig.Save("relay", Relay(turnOn: false));
-        Check(saved["diagnostics"]?.AsArray().Any(d => d!["code"]!.GetValue<string>() == "command.unhandled" && d["severity"]!.GetValue<int>() == 2) == true && saved["active"]!.GetValue<bool>(),
-            "the save warns of the command no flow handles, and runs: " + saved.ToJsonString());
+        Check(Unhandled(saved["diagnostics"]) && saved["active"]!.GetValue<bool>(), "the save warns of the command no flow handles, and runs: " + saved.ToJsonString());
         await rig.Until("relay:relay", _ => true, "the switch starts");
         var failed = await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("relay:relay", "turn_on", null), "a command without a flow");
         Check(failed.Message == "Relay has no flow for Turn on", "the message names the entity and the command: " + failed.Message);
         await rig.Api.EntityCommand("relay:relay", "turn_off", null);
     }
 
-    /// <summary>A command whose flow does not finish in time fails, naming the entity and the command; the flow is left to finish.</summary>
+    /// <summary>
+    /// A command whose flow does not finish in time fails, naming the entity and the command; the flow is left to finish.
+    /// A second command, queued behind that flow, waits for it, so it times out too without its own flow having started;
+    /// each flow runs to its end once released, one after the other.
+    /// </summary>
     static async Task ACommandThatDoesNotFinishTimesOut()
     {
         await using var rig = await Rig.Start("timeout");
@@ -356,12 +383,46 @@ static class EntityGraphTests
         definition["logic"]!["graph"] = Derived(definition["logic"]!["graph"]!.AsObject());
         await rig.Save("relay", definition);
         await rig.Until("relay:relay", _ => true, "the switch starts");
+        var (gate, entered) = (rig.Static<SemaphoreSlim>("relay", "Gate"), rig.Static<SemaphoreSlim>("relay", "Entered"));
         DefinitionHost.CommandTimeout = TimeSpan.FromMilliseconds(200);
         var batches = rig.Batches;
         var late = await Throws<TimeoutException>(() => rig.Api.EntityCommand("relay:relay", "turn_on", null), "a flow that does not finish");
-        Check(late.Message.Contains("Relay", StringComparison.Ordinal) && late.Message.Contains("Turn on", StringComparison.Ordinal), "the timeout names the entity and the command: " + late.Message);
-        rig.Static<SemaphoreSlim>("relay", "Gate").Release();
-        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the flow left to finish sets the state", batches);
+        Check(late.Message == "Relay: Turn on did not finish within 0.2 s; it goes on in the background", "the timeout names the entity and the command: " + late.Message);
+        await Reached(entered, "the first flow is held");
+        var queued = await Throws<TimeoutException>(() => rig.Api.EntityCommand("relay:relay", "turn_on", null), "a command queued behind it");
+        Check(queued.Message == late.Message, "the queued command's timeout: " + queued.Message);
+        Check(entered.CurrentCount == 0, "the queued command's flow started before the one ahead of it ended");
+        await rig.Flush();
+        Check(rig.Pushed("relay:relay", batches).Length == 0, "a held flow pushed: " + Lines(rig.Home.Pushes().Skip(batches)));
+        gate.Release();
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the first flow, left to finish, sets the state", batches);
+        await Reached(entered, "the queued flow starts once the first ended");
+        gate.Release();
+        DefinitionHost.CommandTimeout = TimeSpan.FromSeconds(10);
+        // Both flows ended: a third command runs at once.
+        var third = rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await Reached(entered, "a third command's flow starts");
+        gate.Release();
+        await third;
+    }
+
+    /// <summary>
+    /// A command whose flow is cancelled, here because a save replaces the definition while the flow waits, fails saying
+    /// so in words for a definition, not the runner's words for an automation.
+    /// </summary>
+    static async Task ACommandWhoseFlowIsCancelledSaysWhy()
+    {
+        await using var rig = await Rig.Start("cancelled");
+        var definition = Relay(before: [Custom("hold", HoldStep)]);
+        definition["logic"]!["graph"] = Derived(definition["logic"]!["graph"]!.AsObject());
+        await rig.Save("relay", definition);
+        await rig.Until("relay:relay", _ => true, "the switch starts");
+        var entered = rig.Static<SemaphoreSlim>("relay", "Entered");
+        var command = rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await Reached(entered, "the flow is held");
+        await rig.Save("relay", definition, 1);
+        var cancelled = await Throws<InvalidOperationException>(() => command.WaitAsync(TimeSpan.FromSeconds(5)), "a flow cancelled by a new revision");
+        Check(cancelled.Message == "Relay: Turn on did not finish: its flow was cancelled because the definition was reloaded", "the cancelled command's message: " + cancelled.Message);
     }
 
     /// <summary>
@@ -401,12 +462,29 @@ static class EntityGraphTests
             await rig.Flush();
             Check(!rig.Pushed("level:level", batches).Any(s => !Available(s)), "the running revision was shown unavailable: " + Lines(rig.Home.Pushes().Skip(batches)));
 
+            var stopped = await rig.Save("stopped", Level(N("halt", "stop")));
+            Check(stopped["activationError"]?.GetValue<string>() == "Level does not start: its When started flow stopped itself at a Stop step before it finished" && rig.Home.Syncs("stopped").Length == 0,
+                "a flow that stops itself fails the save: " + stopped.ToJsonString());
+
             var fresh = await rig.Save("fresh", Level(Read("read", "sensor.gone")));
             Check(!fresh["active"]!.GetValue<bool>() && fresh["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable." && Status(fresh["document"]!.AsObject()) == "off",
                 "a new definition whose flow fails does not run: " + fresh.ToJsonString());
             Check(rig.Home.Syncs("fresh").Length == 0, "a new definition whose flow fails registered its entities");
         }
         finally { PyInterop.BeginSyncEntities = sync; PyInterop.Log = log; }
+    }
+
+    /// <summary>
+    /// A When started flow that does not finish within the setup time fails the save, saying so; nothing is registered.
+    /// </summary>
+    static async Task ASetupThatDoesNotFinishFailsTheSave()
+    {
+        await using var rig = await Rig.Start("setup-timeout");
+        DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(300);
+        var graph = Derived(Graph("Level", [N("start", "entity_setup"), Custom("hold", HoldStep)], Next("start", "hold")));
+        var saved = await rig.Save("level", Definition("Level", graph, [Entity("level", "sensor")]));
+        Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == "Level does not start: its When started flow did not finish within 0.3 s" && rig.Home.Syncs("level").Length == 0,
+            "a setup that does not finish fails the save: " + saved.ToJsonString());
     }
 
     /// <summary>A definition with a device registers its three entities under it, each described as the document says.</summary>
@@ -509,6 +587,9 @@ static class EntityGraphTests
     {
         await using var rig = await Rig.Start("library");
         Check((await rig.Library("maths", 0, EntityStoreTests.Maths))["ok"]!.GetValue<bool>(), "the library saves");
+        // A class definition beside it, which the same library save rebuilds and runs again.
+        Check((await rig.Library("shelly", 0, EntityApiTests.Library))["ok"]!.GetValue<bool>(), "the class library saves");
+        await rig.Ok(new { operation = "save", id = "plug", expectedRevision = 0, definition = EntityApiTests.Definition("Plug", "10.0.9.1") });
         var half = await rig.LibraryNode("Half");
         var graph = Graph("Level", [N("k", "setting", new { key = "offset" }), N("h", half, new { arguments = new { } }), State("s", "level")], Data("k", "h", "value"), Data("h", "s", "value", "result"));
         await rig.Save("level", Definition("Level", graph, [Entity("level", "sensor")], [new JsonObject { ["key"] = "offset", ["type"] = "number", ["value"] = 4 }]));
@@ -517,7 +598,10 @@ static class EntityGraphTests
         var rebuilt = await rig.Library("maths", 1, EntityStoreTests.Maths.Replace("value / 2", "value / 4"));
         var answer = rebuilt["result"]?["definitions"]?.AsArray().SingleOrDefault(d => d!["id"]!.GetValue<string>() == "level");
         Check(answer?["active"]?.GetValue<bool>() == true && answer["document"]!["revision"]!.GetValue<long>() == 2, "the rebuilt definition runs: " + rebuilt.ToJsonString());
+        var plug = rebuilt["result"]!["definitions"]!.AsArray().SingleOrDefault(d => d!["id"]!.GetValue<string>() == "plug");
+        Check(plug?["active"]?.GetValue<bool>() == true && plug["document"]!["revision"]!.GetValue<long>() == 2 && Status(plug["document"]!.AsObject()) == "running", "the class definition is rebuilt and runs: " + plug?.ToJsonString());
         await rig.Until("level:level", s => Is(s, "value", 1.0), "the new code works out the state", batches);
+        await rig.Api.EntityCommand("plug:relay", "turn_on", null);
     }
 
     /// <summary>A library save that takes away a node a running graph definition uses is refused, naming the definition, which keeps running.</summary>
@@ -613,8 +697,8 @@ static class EntityGraphTests
         await rig.Save("copy", Copy());
         await EntityTestHome.Until(() => Warnings().Length == 1, "one warning for the failing State: " + Lines(rig.Home.Logs()));
         var warning = Warnings()[0];
-        Check(warning.StartsWith("Outside: ", StringComparison.Ordinal) && warning.Contains("Outside (outside)", StringComparison.Ordinal) && warning.Contains("unavailable", StringComparison.Ordinal),
-            "the warning names the definition, the entity and why: " + warning);
+        Check(warning.StartsWith("Outside: Outside (outside) is unavailable: ", StringComparison.Ordinal) && warning.Contains("(used by ", StringComparison.Ordinal) && warning.Contains("'unavailable'", StringComparison.Ordinal),
+            "the warning names the definition, the entity, the failing node and why: " + warning);
         await rig.Change("sensor.outside", "unavailable");
         await rig.Change("sensor.outside", "unavailable");
         Check(Warnings().Length == 1, "the same failure again warned again: " + Lines(Warnings()));
@@ -630,7 +714,71 @@ static class EntityGraphTests
         await rig.Change("sensor.outside", "unavailable");
         Check(Warnings().Length == 3, "a failure after the recovery warns again: " + Lines(Warnings()));
         Check(rig.Home.Logs(PyLogLevel.Error).Length == 0, "an error was logged: " + Lines(rig.Home.Logs(PyLogLevel.Error)));
-        Check(!rig.Home.Logs().Any(l => l.Contains("   at ", StringComparison.Ordinal)), "a stack trace was logged: " + Lines(rig.Home.Logs()));
+        Check(!rig.Home.Logs(PyLogLevel.Warn).Concat(rig.Home.Logs(PyLogLevel.Info)).Any(l => l.Contains("   at ", StringComparison.Ordinal)), "a stack trace was logged above Debug: " + Lines(rig.Home.Logs()));
+        // Each failed run is logged whole at Debug, for whoever looks for where it failed.
+        Check(rig.Home.Logs(PyLogLevel.Debug).Count(l => l.StartsWith("Outside: the State of Outside (outside) failed: ", StringComparison.Ordinal) && l.Contains("   at ", StringComparison.Ordinal)) >= 6,
+            "each failed run at Debug: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
+    }
+
+    /// <summary>
+    /// A bug in a value node of a State (a Custom C# node reading a member of null) is warned of naming that node and the
+    /// step it was used by, and logged whole at Debug, so that it can be found in a State of several nodes.
+    /// </summary>
+    static async Task AFailingNodeInAStateIsNamed()
+    {
+        await using var rig = await Rig.Start("bug", ("sensor.outside", "12"));
+        var graph = Derived(Graph("Outside", [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.outside") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }),
+            Custom("broken", BrokenValue), State("s", "outside")], Data("cur", "f", "entity"), Data("f", "broken", "value"), Data("broken", "s", "value", "result")));
+        await rig.Save("bug", Definition("Outside", graph, [Entity("outside", "sensor", new { name = "Outside" })]));
+        await rig.Until("bug:outside", s => !Available(s), "the entity is unavailable");
+        string[] Warnings() => rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Outside: ", StringComparison.Ordinal)).ToArray();
+        await EntityTestHome.Until(() => Warnings().Length == 1, "the warning: " + Lines(rig.Home.Logs()));
+        Check(Warnings()[0].StartsWith("Outside: Outside (outside) is unavailable: Broken (used by ", StringComparison.Ordinal) && Warnings()[0].Contains("Object reference not set", StringComparison.Ordinal),
+            "the warning names the failing node and its step: " + Warnings()[0]);
+        Check(rig.Home.Logs(PyLogLevel.Debug).Any(l => l.Contains("NullReferenceException", StringComparison.Ordinal) && l.Contains("   at ", StringComparison.Ordinal)), "the failure at Debug: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
+    }
+
+    /// <summary>
+    /// A value the entity does not take (a sensor's reading that is not one of its options) fails its State's run, as a
+    /// failure to work out its inputs does: the entity is unavailable, one warning says why, and a value it takes makes
+    /// it available again with that value, said once.
+    /// </summary>
+    static async Task AValueTheEntityRefusesMakesItUnavailable()
+    {
+        await using var rig = await Rig.Start("refused", ("sensor.mode", "low"));
+        var graph = Graph("Mode", [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.mode") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "string" }), State("s", "mode")],
+            Data("cur", "f", "entity"), Data("f", "s", "value"));
+        await rig.Save("mode", Definition("Mode", graph, [Entity("mode", "sensor", new { name = "Mode", deviceClass = "enum", options = new { options = new[] { "low", "high" } } })]));
+        await rig.Until("mode:mode", s => Available(s) && Is(s, "value", "low"), "the first push");
+        string[] Warnings() => rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Mode: ", StringComparison.Ordinal)).ToArray();
+        var batches = rig.Batches;
+        await rig.Change("sensor.mode", "bad");
+        await rig.Flush();
+        Check(rig.Pushed("mode:mode", batches).LastOrDefault() is { } refused && !Available(refused) && Is(refused, "value", "low"), "a refused value makes the entity unavailable: " + Lines(rig.Home.Pushes().Skip(batches)));
+        Check(Warnings().SequenceEqual(["Mode: Mode (mode) is unavailable: The value \"bad\" does not fit Mode (mode), which takes only one of low, high"]), "one warning names the refusal: " + Lines(Warnings()));
+        await rig.Change("sensor.mode", "bad");
+        Check(Warnings().Length == 1, "the same refusal warned again: " + Lines(Warnings()));
+        batches = rig.Batches;
+        await rig.Change("sensor.mode", "high");
+        await rig.Flush();
+        Check(rig.Pushed("mode:mode", batches).LastOrDefault() is { } back && Available(back) && Is(back, "value", "high"), "a value it takes makes it available: " + Lines(rig.Home.Pushes().Skip(batches)));
+        Check(rig.Home.Logs(PyLogLevel.Info).Count(l => l == "Mode: Mode (mode) has a state again") == 1, "one line says it recovered: " + Lines(rig.Home.Logs(PyLogLevel.Info)));
+    }
+
+    /// <summary>
+    /// A setting's value as a run reads it, whatever backs it: a number or text put in by code as well as one parsed; a
+    /// value that is neither text, true, false nor a finite number reads as none, never throwing.
+    /// </summary>
+    static Task SettingsAreReadWithoutThrowing()
+    {
+        var settings = DefinitionHost.GraphSettings([
+            new("whole", JsonValue.Create(4)), new("money", JsonValue.Create(2.5m)), new("text", JsonValue.Create("x")), new("flag", JsonValue.Create(true)),
+            new("parsed", JsonNode.Parse("7")), new("list", JsonNode.Parse("[1]")), new("nan", JsonValue.Create(double.NaN)), new("none", null),
+            new("secret", JsonValue.Create("s")) { Secret = true }]);
+        Check(settings["whole"].Value is 4.0 && settings["money"].Value is 2.5 && settings["text"].Value is "x" && settings["flag"].Value is true && settings["parsed"].Value is 7.0
+            && settings["list"].Value == null && settings["nan"].Value == null && settings["none"].Value == null && settings["secret"].Secret && !settings["text"].Secret,
+            "the settings as read: " + string.Join(", ", settings.Select(s => $"{s.Key}={s.Value.Value ?? "null"}")));
+        return Task.CompletedTask;
     }
 
     /// <summary>A trigger flow in a definition's graph runs as an automation's does, and its Set state step sets the entity's state.</summary>
@@ -679,6 +827,8 @@ static class EntityGraphTests
         var error = level["activationError"]!.GetValue<string>();
         Check(Status(level) == "off" && error.Split('\n').All(line => line.StartsWith("h: ", StringComparison.Ordinal) || line.StartsWith("s: ", StringComparison.Ordinal) || line.StartsWith("k: ", StringComparison.Ordinal)),
             "the problems are each after their node's id: " + level.ToJsonString());
+        Check(rig.Home.Logs(PyLogLevel.Error).Any(l => l.StartsWith("Cannot load entity definition \"Level\" (level): ", StringComparison.Ordinal) && l.Contains(": " + error.Split('\n')[0], StringComparison.Ordinal)
+            && l.Contains("; " + error.Split('\n')[1], StringComparison.Ordinal)), "the startup log line has the problems as the load error does: " + Lines(rig.Home.Logs(PyLogLevel.Error)));
         var curable = (System.Collections.Concurrent.ConcurrentDictionary<string, byte>)typeof(HassSharpManager).GetField("_curableLoadErrors", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(rig.Api)!;
         Check(!curable.Keys.Any(k => k.EndsWith("entity_level.cs", StringComparison.Ordinal)), "a graph that does not validate is retried on every push: " + string.Join(", ", curable.Keys));
     }

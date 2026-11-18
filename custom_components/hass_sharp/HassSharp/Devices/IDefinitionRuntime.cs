@@ -41,7 +41,8 @@ namespace HassSharp;
 /// <para>
 /// <b>When a call throws</b>, the run fails, recorded as any failed run is:
 /// <list type="bullet">
-/// <item>A throwing <see cref="SetState"/>, from a State or a step, fails the run with that error. The entity is not marked unavailable.</item>
+/// <item>A throwing <see cref="SetState"/>, from a State or a step, fails the run with that error. The runtime does not mark
+/// the entity unavailable; for a State, the host may once the run has ended (<see cref="DefinitionHost"/> does).</item>
 /// <item>A throwing <see cref="SetAvailable"/> fails the run with its error, with one exception. The call with false that
 /// follows a State's failed inputs does not replace that failure: the run fails with the State's own error, and the
 /// error of this call is logged.</item>

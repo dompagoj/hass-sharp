@@ -153,25 +153,72 @@ internal static class SharpDomains
     /// <exception cref="ArgumentException">The key is not an entity key.</exception>
     internal static SharpEntity Create(string domain, JsonObject description)
     {
-        static string? Text(JsonNode? node) => node is JsonValue value && value.GetValueKind() == JsonValueKind.String ? value.GetValue<string>() : null;
-        var key = Text(description["key"]) ?? "";
-        var name = Text(description["name"]);
-        var icon = Text(description["icon"]);
-        var deviceClass = Text(description["deviceClass"]);
-        EntityCategory? category = Text(description["entityCategory"]) switch { "config" => EntityCategory.Config, "diagnostic" => EntityCategory.Diagnostic, _ => null };
-        var enabled = description["enabledByDefault"] is not JsonValue flag || flag.GetValueKind() != JsonValueKind.False;
-        var options = description["options"] as JsonObject;
-        return domain switch
-        {
-            "binary_sensor" => new SharpBinarySensor(key, name) { Icon = icon, DeviceClass = deviceClass, Category = category, EnabledByDefault = enabled },
-            "sensor" => new SharpSensor(key, name)
+        var described = new EntityDescription(description);
+        return Graph.TryGetValue(domain, out var known) ? known.Create(described)
+            : throw new InvalidOperationException($"Entity {described.Key} has the domain {domain}, which a definition built from nodes cannot create");
+    }
+
+    /// <summary>
+    /// The domains a definition built from nodes creates: how to create each one's entity from the document's
+    /// description, and, for each of its state keys, which values it takes and how it keeps one. A domain added later is
+    /// one entry here, beside its <c>entityDomains</c> entry in the catalog (which gives its command labels).
+    /// </summary>
+    internal static readonly IReadOnlyDictionary<string, GraphDomain> Graph = new Dictionary<string, GraphDomain>(StringComparer.Ordinal)
+    {
+        ["binary_sensor"] = new(
+            d => new SharpBinarySensor(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault },
+            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["is_on"] = OnOff((entity, on) => ((SharpBinarySensor)entity).IsOn = on) }),
+        ["sensor"] = new(
+            d => new SharpSensor(d.Key, d.Name)
             {
-                Icon = icon, DeviceClass = deviceClass, Category = category, EnabledByDefault = enabled,
-                Unit = Text(options?["unit"]), StateClass = Text(options?["stateClass"]),
-                Options = options?["options"] is JsonArray values ? values.Select(Text).OfType<string>().ToArray() : null,
+                Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault,
+                Unit = EntityDescription.Text(d.Options?["unit"]), StateClass = EntityDescription.Text(d.Options?["stateClass"]),
+                Options = d.Options?["options"] is JsonArray values ? values.Select(EntityDescription.Text).OfType<string>().ToArray() : null,
             },
-            "switch" => new SharpSwitch(key, name) { Icon = icon, DeviceClass = deviceClass, Category = category, EnabledByDefault = enabled },
-            _ => throw new InvalidOperationException($"Entity {key} has the domain {domain}, which a definition built from nodes cannot create"),
-        };
+            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["value"] = new(SensorRefuses, (entity, value) => ((SharpSensor)entity).Value = value) }),
+        ["switch"] = new(
+            d => new SharpSwitch(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault },
+            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["is_on"] = OnOff((entity, on) => ((SharpSwitch)entity).IsOn = on) }),
+    };
+
+    // A state that is on, off or unknown.
+    static GraphState OnOff(Action<SharpEntity, bool?> keep) =>
+        new((_, value) => value is null or bool ? null : "which takes only true or false", (entity, value) => keep(entity, (bool?)value));
+
+    // A sensor's reading as Home Assistant takes it: a number or text; one of its options when it has them; a number when
+    // it has a unit or a state class. Unknown is always taken.
+    static string? SensorRefuses(SharpEntity entity, object? value)
+    {
+        var sensor = (SharpSensor)entity;
+        if (value is null) return null;
+        if (value is not (double or string)) return "which takes only a number or text";
+        if (sensor.Options is { } options) return value is string option && options.Contains(option, StringComparer.Ordinal) ? null : $"which takes only one of {string.Join(", ", options)}";
+        if ((sensor.Unit != null || sensor.StateClass != null) && value is string) return "which takes only a number, as it has a unit or a state class";
+        return null;
     }
 }
+
+/// <summary>The fields every entity of a graph definition's document has, read as <see cref="SharpDomains.Create"/> reads them.</summary>
+internal sealed class EntityDescription(JsonObject description)
+{
+    internal static string? Text(JsonNode? node) => node is JsonValue value && value.GetValueKind() == JsonValueKind.String ? value.GetValue<string>() : null;
+    public string Key { get; } = Text(description["key"]) ?? "";
+    public string? Name { get; } = Text(description["name"]);
+    public string? Icon { get; } = Text(description["icon"]);
+    public string? DeviceClass { get; } = Text(description["deviceClass"]);
+    public EntityCategory? Category { get; } = Text(description["entityCategory"]) switch { "config" => EntityCategory.Config, "diagnostic" => EntityCategory.Diagnostic, _ => null };
+    public bool EnabledByDefault { get; } = description["enabledByDefault"] is not JsonValue flag || flag.GetValueKind() != JsonValueKind.False;
+    /// <summary>The domain's own options, such as a sensor's unit; null for none.</summary>
+    public JsonObject? Options { get; } = description["options"] as JsonObject;
+}
+
+/// <summary>A domain a definition built from nodes creates: its entity from a description, and its state keys.</summary>
+internal sealed record GraphDomain(Func<EntityDescription, SharpEntity> Create, IReadOnlyDictionary<string, GraphState> State);
+
+/// <summary>
+/// One state key of a <see cref="GraphDomain"/>: <paramref name="Refuses"/> says why the entity does not take a value
+/// (worded to follow the entity's name, such as "which takes only true or false"), or null when it does;
+/// <paramref name="Keep"/> sets a value it takes on the entity.
+/// </summary>
+internal sealed record GraphState(Func<SharpEntity, object?, string?> Refuses, Action<SharpEntity, object?> Keep);
+

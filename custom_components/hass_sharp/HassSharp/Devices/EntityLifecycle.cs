@@ -58,7 +58,9 @@ public partial class HassSharpManager
         var name = $"\"{document.Name}\" ({document.Id})";
         if (error is DefinitionValidationException invalid)
         {
-            var problems = invalid.Preview.Diagnostics.Where(d => d.Severity >= 3).Select(d => d.Message).ToArray();
+            // A graph's problems read as its load error does, each after its node; a class's are its messages.
+            var problems = document.Logic.Kind == "graph" ? GraphProblems(invalid.Preview.Diagnostics)
+                : invalid.Preview.Diagnostics.Where(d => d.Severity >= 3).Select(d => d.Message).ToArray();
             return $"Cannot load entity definition {name}: {(problems.Length == 1 ? "1 problem" : $"{problems.Length} problems")}: {Listed(problems)}";
         }
         if (error is CompilationErrorException compilation)
